@@ -1,3 +1,7 @@
+"""
+python3 breadth.py --from-file sp500_top50_6mo.csv
+"""
+
 from __future__ import annotations
 import argparse
 from typing import List, Dict, Any
@@ -120,7 +124,7 @@ def summarize(df: pd.DataFrame) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Compute breadth metrics for tickers.")
     p.add_argument("tickers", nargs="*", help="Ticker symbols, space-separated.")
-    p.add_argument("--from-file", help="Path to file with one ticker per line.")
+    p.add_argument("--from-file", help="Path to CSV file with ticker column.")
     p.add_argument("--period", default="2y",
                    help="History period (e.g., 6mo, 1y, 2y). Default 2y.")
     return p.parse_args()
@@ -130,8 +134,11 @@ def main():
     args = parse_args()
     tickers: List[str] = []
     if args.from_file:
-        with open(args.from_file, "r", encoding="utf-8") as fh:
-            tickers.extend([ln.strip() for ln in fh if ln.strip()])
+        csv_df = pd.read_csv(args.from_file)
+        if "ticker" not in csv_df.columns:
+            print("Error: CSV file must have a 'ticker' column.")
+            return
+        tickers.extend(csv_df["ticker"].dropna().astype(str).tolist())
     tickers.extend(args.tickers)
     tickers = [t.upper() for t in tickers if t.strip()]
     if not tickers:
