@@ -345,8 +345,12 @@ def print_data_sources(crb_file_used):
 # ============================================================================
 
 def main():
+    # Default CRB file path is in the same directory as this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_crb_path = os.path.join(script_dir, 'crb.xlsx')
+
     parser = argparse.ArgumentParser(description='Market Performance Dashboard')
-    parser.add_argument('--crb-file', type=str, default='crb.xlsx',
+    parser.add_argument('--crb-file', type=str, default=default_crb_path,
                         help='Path to CRB Excel file from Moody\'s Analytics (.xls or .xlsx)')
     args = parser.parse_args()
     
