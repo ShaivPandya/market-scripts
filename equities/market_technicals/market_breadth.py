@@ -11,9 +11,9 @@ Dependencies:
   pip install pandas yfinance requests lxml
 
 Usage:
-  python market_breadth.py
-  python market_breadth.py --universe sp500
-  python market_breadth.py --universe /path/to/tickers.txt
+  python3 market_breadth.py
+  python3 market_breadth.py --universe sp500
+  python3 market_breadth.py --universe /path/to/tickers.txt
 """
 
 from __future__ import annotations

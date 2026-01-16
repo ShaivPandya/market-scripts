@@ -386,8 +386,10 @@ def load_universe(path: str) -> List[str]:
     p = path.lower()
     if p.endswith(".csv"):
         df = pd.read_csv(path)
-        if "ticker" in df.columns:
-            return df["ticker"].astype(str).tolist()
+        # Case-insensitive lookup for 'ticker' column
+        cols_lower = {c.lower(): c for c in df.columns}
+        if "ticker" in cols_lower:
+            return df[cols_lower["ticker"]].astype(str).tolist()
         # otherwise first column
         return df.iloc[:, 0].astype(str).tolist()
     else:
