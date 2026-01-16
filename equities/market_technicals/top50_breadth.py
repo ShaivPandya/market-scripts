@@ -1,5 +1,7 @@
 """
+python3 breadth.py                              # auto-generates top 50 S&P 500 and analyzes
 python3 breadth.py --from-file sp500_top50_6mo.csv
+python3 breadth.py AAPL MSFT NVDA
 """
 
 from __future__ import annotations
@@ -7,6 +9,8 @@ import argparse
 from typing import List, Dict, Any
 import pandas as pd
 import yfinance as yf
+
+from get_top50 import main as generate_top50
 
 
 def fetch_history(ticker: str, period: str = "2y") -> pd.DataFrame:
@@ -142,8 +146,10 @@ def main():
     tickers.extend(args.tickers)
     tickers = [t.upper() for t in tickers if t.strip()]
     if not tickers:
-        print("Provide tickers via args or --from-file.")
-        return
+        print("No tickers provided. Generating top 50 S&P 500 performers...")
+        generate_top50()
+        csv_df = pd.read_csv("sp500_top50_6mo.csv")
+        tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
     df = compute_metrics(tickers, period=args.period)
     summarize(df)
 
