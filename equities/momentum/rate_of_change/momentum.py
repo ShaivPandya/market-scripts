@@ -8,8 +8,10 @@ Computes:
 3) 10-day avg of ROC (%) of relative price to benchmark
 
 Usage:
-    python3 momentum.py AAPL SPY
-    python3 momentum.py MSFT QQQ --years 10
+    python3 momentum.py AAPL --benchmark SPY
+    python3 momentum.py --tickers-file tickers.txt --benchmark SPY
+    python3 momentum.py --tickers-file us_mega_cap --benchmark QQQ --years 10
+    python3 momentum.py --list-universes
 
 Requirements:
     pip install yfinance pandas
@@ -20,8 +22,13 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from common import load_universe, list_universes
 
 # ANSI color codes
 RED = "\033[91m"
@@ -70,22 +77,13 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
     return s
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description="Momentum ROC analysis")
-    p.add_argument("ticker", help="Ticker symbol (e.g., AAPL)")
-    p.add_argument("benchmark", help="Benchmark ticker (e.g., SPY)")
-    p.add_argument("--years", type=int, default=5, help="Years of history to download (default: 5)")
-    args = p.parse_args()
-
-    ticker = args.ticker.strip().upper()
-    benchmark = args.benchmark.strip().upper()
-
+def analyze_ticker(ticker: str, benchmark_prices: pd.Series, years: int) -> dict | None:
+    """Analyze a single ticker and return results dict, or None on error."""
     try:
-        ticker_prices = fetch_prices_yfinance(ticker, years=args.years)
-        benchmark_prices = fetch_prices_yfinance(benchmark, years=args.years)
+        ticker_prices = fetch_prices_yfinance(ticker, years=years)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        print(f"Error fetching {ticker}: {e}", file=sys.stderr)
+        return None
 
     # Align on common dates
     combined = pd.DataFrame({"ticker": ticker_prices, "benchmark": benchmark_prices}).dropna()
@@ -94,10 +92,10 @@ def main() -> int:
     min_points = 63 + 20
     if len(combined) < min_points:
         print(
-            f"Not enough data: need at least {min_points} trading days, got {len(combined)}.",
+            f"Not enough data for {ticker}: need at least {min_points} trading days, got {len(combined)}.",
             file=sys.stderr,
         )
-        return 2
+        return None
 
     prices = combined["ticker"]
 
@@ -114,21 +112,77 @@ def main() -> int:
     # 3. 10-day avg of ROC (%) of relative price
     avg10_rel_roc = rel_roc42.rolling(window=10, min_periods=10).mean()
 
-    # Extract latest values
-    latest_date = combined.index[-1]
-    latest_close = float(prices.iloc[-1])
-    latest_avg20_roc63 = float(avg20_roc63.iloc[-1])
-    latest_rel_roc42 = float(rel_roc42.iloc[-1])
-    latest_avg10_rel_roc = float(avg10_rel_roc.iloc[-1])
+    return {
+        "ticker": ticker,
+        "date": combined.index[-1],
+        "close": float(prices.iloc[-1]),
+        "avg20_roc63": float(avg20_roc63.iloc[-1]),
+        "rel_roc42": float(rel_roc42.iloc[-1]),
+        "avg10_rel_roc": float(avg10_rel_roc.iloc[-1]),
+    }
 
-    print(f"Ticker: {ticker}")
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Momentum ROC analysis")
+    p.add_argument("ticker", nargs="?", help="Single ticker symbol (e.g., AAPL)")
+    p.add_argument("--tickers-file", type=str, help="Universe name or path to file containing tickers")
+    p.add_argument("--benchmark", help="Benchmark ticker (e.g., SPY)")
+    p.add_argument("--years", type=int, default=5, help="Years of history to download (default: 5)")
+    p.add_argument("--list-universes", action="store_true", help="List available universe files and exit")
+    args = p.parse_args()
+
+    if args.list_universes:
+        universes = list_universes()
+        print("Available universes:", ", ".join(universes) if universes else "(none)")
+        return 0
+
+    # Benchmark is required for analysis
+    if not args.benchmark:
+        print("Error: --benchmark is required", file=sys.stderr)
+        return 1
+
+    # Determine tickers to process
+    if args.ticker and args.tickers_file:
+        print("Error: specify either a single ticker or --tickers-file, not both", file=sys.stderr)
+        return 1
+    elif args.ticker:
+        tickers = [args.ticker.strip().upper()]
+    elif args.tickers_file:
+        tickers = load_universe(args.tickers_file)
+    else:
+        print("Error: must specify either a ticker or --tickers-file", file=sys.stderr)
+        return 1
+
+    benchmark = args.benchmark.strip().upper()
+
+    try:
+        benchmark_prices = fetch_prices_yfinance(benchmark, years=args.years)
+    except Exception as e:
+        print(f"Error fetching benchmark {benchmark}: {e}", file=sys.stderr)
+        return 1
+
+    # Process each ticker
+    results = []
+    for ticker in tickers:
+        result = analyze_ticker(ticker, benchmark_prices, args.years)
+        if result:
+            results.append(result)
+
+    if not results:
+        print("No valid results.", file=sys.stderr)
+        return 1
+
+    # Print results
     print(f"Benchmark: {benchmark}")
-    print(f"As of:  {latest_date.date().isoformat()}")
-    print(f"Close:  {latest_close:.4f}")
+    print(f"As of: {results[0]['date'].date().isoformat()}")
     print()
-    print(f"20-day avg of 63-day ROC (%):        {colorize(latest_avg20_roc63, 1.5)}")
-    print(f"42-day ROC of relative price (%):   {colorize(latest_rel_roc42, 0)}")
-    print(f"10-day avg of relative ROC (%):     {colorize(latest_avg10_rel_roc, 0)}")
+
+    for r in results:
+        print(f"Ticker: {r['ticker']:<6}  Close: {r['close']:.4f}")
+        print(f"  20-day avg of 63-day ROC (%):        {colorize(r['avg20_roc63'], 1.5)}")
+        print(f"  42-day ROC of relative price (%):   {colorize(r['rel_roc42'], 0)}")
+        print(f"  10-day avg of relative ROC (%):     {colorize(r['avg10_rel_roc'], 0)}")
+        print()
 
     return 0
 
