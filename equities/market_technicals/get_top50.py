@@ -15,6 +15,7 @@ python3 get_top50.py
 from __future__ import annotations
 
 import math
+from io import StringIO
 from typing import Iterable, List
 
 import numpy as np
@@ -37,7 +38,7 @@ def get_sp500_tickers():
     r = requests.get(WIKI_SP500_URL, headers=headers, timeout=30)
     r.raise_for_status()
 
-    df = pd.read_html(r.text)[0]
+    df = pd.read_html(StringIO(r.text))[0]
     tickers = df["Symbol"].astype(str).str.strip().str.replace(".", "-", regex=False)
     return pd.unique(tickers).tolist()
 
@@ -116,11 +117,7 @@ def main():
         .drop(columns=["six_month_return"])
     )
 
-    # Pretty print
-    pd.set_option("display.float_format", lambda x: f"{x:,.2f}")
-    print(out)
-
-    # Save if you want:
+    # Save to CSV
     out.to_csv("sp500_top50_6mo.csv", index_label="ticker")
 
 
