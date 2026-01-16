@@ -51,11 +51,11 @@ import pandas as pd
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from common import load_universe, list_universes
 
 from momentum.price_momentum_single import (
     compute_price_momentum,
     compute_momentum_scores as compute_price_momentum_scores,
-    load_universe,
     MomentumMetrics as PriceMomentumMetrics,
 )
 from momentum.revenue_momentum_single import (
@@ -95,7 +95,11 @@ def main():
     ap = argparse.ArgumentParser(
         description="Screen a universe for combined quality + momentum ranking."
     )
-    ap.add_argument("input", help="Path to CSV/txt file with tickers")
+    ap.add_argument("input", nargs="?", help="Universe name or path to CSV/txt file with tickers")
+    ap.add_argument(
+        "--list-universes", action="store_true",
+        help="List available universe files and exit"
+    )
     ap.add_argument(
         "--quality-weight",
         type=float,
@@ -127,6 +131,14 @@ def main():
         "--out_csv", default="", help="Optional path to save full results as CSV"
     )
     args = ap.parse_args()
+
+    if args.list_universes:
+        universes = list_universes()
+        print("Available universes:", ", ".join(universes) if universes else "(none)")
+        sys.exit(0)
+
+    if not args.input:
+        ap.error("input is required unless using --list-universes")
 
     # Normalize weights
     total_weight = args.quality_weight + args.price_mom_weight + args.rev_mom_weight

@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -32,6 +33,10 @@ try:
     import yfinance as yf
 except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common import load_universe, list_universes, get_sp500_universe
 
 
 # ----------------------------
@@ -111,42 +116,6 @@ def compute_price_momentum(ticker: str) -> MomentumMetrics:
     return MomentumMetrics(mom_3m=mom_3m, mom_12_1=mom_12_1)
 
 
-def get_sp500_universe() -> List[str]:
-    """
-    Fetch S&P 500 tickers from Wikipedia.
-    """
-    import urllib.request
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req) as response:
-        html = response.read()
-    tables = pd.read_html(html)
-    df = tables[0]
-    tickers = df["Symbol"].astype(str).tolist()
-    # Yahoo uses '-' instead of '.' for some tickers (e.g., BRK.B -> BRK-B)
-    tickers = [t.replace(".", "-").strip() for t in tickers]
-    return tickers
-
-
-def load_universe(path: str) -> List[str]:
-    """
-    Load tickers from a text/CSV file.
-    """
-    p = path.lower()
-    if p.endswith(".csv"):
-        df = pd.read_csv(path)
-        cols_lower = {c.lower(): c for c in df.columns}
-        if "ticker" in cols_lower:
-            return df[cols_lower["ticker"]].astype(str).tolist()
-        return df.iloc[:, 0].astype(str).tolist()
-    else:
-        with open(path, "r", encoding="utf-8") as f:
-            return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
-
-
 def compute_momentum_scores(raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Given raw momentum metrics across universe, compute z-scores of ranks.
@@ -178,14 +147,24 @@ def main():
     ap = argparse.ArgumentParser(
         description="Compute price momentum score for a ticker relative to a universe."
     )
-    ap.add_argument("ticker", help="Ticker to score (e.g., AAPL)")
+    ap.add_argument("ticker", nargs="?", help="Ticker to score (e.g., AAPL)")
     ap.add_argument("--universe", default="sp500",
-                    help="Universe: 'sp500' or path to file (txt/csv) with tickers")
+                    help="Universe: 'sp500', universe name, or path to file (txt/csv)")
+    ap.add_argument("--list-universes", action="store_true",
+                    help="List available universe files and exit")
     ap.add_argument("--max_universe", type=int, default=0,
                     help="If >0, limit universe size (debug/speed)")
     ap.add_argument("--out_csv", default="",
                     help="Optional path to save full universe scores as CSV")
     args = ap.parse_args()
+
+    if args.list_universes:
+        universes = list_universes()
+        print("Available universes:", ", ".join(universes) if universes else "(none)")
+        sys.exit(0)
+
+    if not args.ticker:
+        ap.error("ticker is required unless using --list-universes")
 
     ticker = args.ticker.upper().strip()
 

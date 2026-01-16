@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -46,6 +47,10 @@ try:
     import yfinance as yf
 except ImportError as e:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance") from e
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common import load_universe, list_universes, get_sp500_universe, clean_ticker
 
 
 # -------------------------
@@ -144,47 +149,6 @@ def try_get_income_stmt(t: yf.Ticker, freq: str) -> Optional[pd.DataFrame]:
                     pass
 
     return None
-
-
-def clean_ticker(tk: str) -> str:
-    """Normalize tickers to the Yahoo Finance format."""
-    tk = tk.strip().upper()
-    return tk.replace(".", "-")
-
-
-def read_universe_file(path: str) -> List[str]:
-    """Read tickers from a txt (one per line) or csv (any column) file."""
-    import os
-
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
-
-    if path.lower().endswith(".csv"):
-        df = pd.read_csv(path)
-        tickers: List[str] = []
-        for c in df.columns:
-            tickers += [str(x) for x in df[c].dropna().tolist()]
-        return sorted({clean_ticker(t) for t in tickers if str(t).strip()})
-
-    with open(path, "r", encoding="utf-8") as f:
-        tickers = [clean_ticker(line) for line in f if line.strip()]
-    return sorted(set(tickers))
-
-
-def get_sp500_universe() -> List[str]:
-    """Fetch S&P 500 tickers from Wikipedia."""
-    import urllib.request
-
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req) as resp:
-        html = resp.read()
-
-    tables = pd.read_html(html)
-    df = tables[0]
-    syms = [clean_ticker(x) for x in df["Symbol"].astype(str).tolist()]
-    return sorted(set(syms))
 
 
 # -------------------------
@@ -352,19 +316,29 @@ def main():
     ap = argparse.ArgumentParser(
         description="Compute revenue momentum (quarterly YoY revenue change + ~5y revenue CAGR) and percentile in a universe."
     )
-    ap.add_argument("ticker", help="Ticker to score (e.g., AAPL)")
-    ap.add_argument("--universe", default="sp500", help="Universe: 'sp500' or path to file (txt/csv) with tickers")
+    ap.add_argument("ticker", nargs="?", help="Ticker to score (e.g., AAPL)")
+    ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
+    ap.add_argument("--list-universes", action="store_true",
+                    help="List available universe files and exit")
     ap.add_argument("--growth_years", type=int, default=5, help="Target revenue CAGR window in years")
     ap.add_argument("--max_universe", type=int, default=0, help="If >0, limit universe size")
     ap.add_argument("--out_csv", default="", help="Optional path to save full universe output as CSV")
     args = ap.parse_args()
+
+    if args.list_universes:
+        universes = list_universes()
+        print("Available universes:", ", ".join(universes) if universes else "(none)")
+        sys.exit(0)
+
+    if not args.ticker:
+        ap.error("ticker is required unless using --list-universes")
 
     ticker = clean_ticker(args.ticker)
 
     if args.universe.lower() == "sp500":
         universe = get_sp500_universe()
     else:
-        universe = read_universe_file(args.universe)
+        universe = load_universe(args.universe)
 
     if ticker not in universe:
         universe = [ticker] + universe

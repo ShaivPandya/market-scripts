@@ -15,7 +15,9 @@
 
 import argparse
 import math
+import sys
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -23,29 +25,27 @@ import pandas as pd
 # pip install yfinance
 import yfinance as yf
 
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common import load_universe, list_universes
+
 TRADING_DAYS = 252  # standard for equities/ETFs; use consistently across the book
-
-# --- 1) Define your instruments ---
-def load_tickers_from_file(filepath: str) -> list[str]:
-    """Load tickers from a text file, one per line, ignoring empty lines."""
-    tickers = []
-    with open(filepath, 'r') as f:
-        for line in f:
-            ticker = line.strip()
-            if ticker:
-                tickers.append(ticker)
-    return tickers
-
-def get_tickers(ticker_file: str) -> list[str]:
-    """Load tickers from the provided file."""
-    return load_tickers_from_file(ticker_file)
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Calculate realized volatility for tickers')
-parser.add_argument('--tickers-file', type=str, required=True, help='Path to file containing tickers (one per line)')
+parser.add_argument('--tickers-file', type=str, help='Universe name or path to file containing tickers')
+parser.add_argument('--list-universes', action='store_true', help='List available universe files and exit')
 args = parser.parse_args()
 
-tickers = get_tickers(args.tickers_file)
+if args.list_universes:
+    universes = list_universes()
+    print("Available universes:", ", ".join(universes) if universes else "(none)")
+    sys.exit(0)
+
+if not args.tickers_file:
+    parser.error("--tickers-file is required unless using --list-universes")
+
+tickers = load_universe(args.tickers_file)
 
 # --- 2) Download adjusted close prices ---
 end = date.today()

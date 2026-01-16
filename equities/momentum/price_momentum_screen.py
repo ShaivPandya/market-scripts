@@ -14,14 +14,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Dict
 
 import pandas as pd
 
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common import load_universe, list_universes
+
 from price_momentum_single import (
     compute_price_momentum,
     compute_momentum_scores,
-    load_universe,
     MomentumMetrics,
 )
 
@@ -30,9 +34,19 @@ def main():
     ap = argparse.ArgumentParser(
         description="Screen a universe of tickers for highest/lowest price momentum."
     )
-    ap.add_argument("input", help="Path to CSV/txt file with tickers")
+    ap.add_argument("input", nargs="?", help="Universe name or path to CSV/txt file with tickers")
+    ap.add_argument("--list-universes", action="store_true",
+                    help="List available universe files and exit")
     ap.add_argument("--out_csv", default="", help="Optional path to save full results as CSV")
     args = ap.parse_args()
+
+    if args.list_universes:
+        universes = list_universes()
+        print("Available universes:", ", ".join(universes) if universes else "(none)")
+        sys.exit(0)
+
+    if not args.input:
+        ap.error("input is required unless using --list-universes")
 
     # Load tickers
     universe = load_universe(args.input)
