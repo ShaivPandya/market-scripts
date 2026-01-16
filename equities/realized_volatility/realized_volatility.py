@@ -7,10 +7,10 @@
 #      pip install yfinance numpy pandas
 #
 #   2. Run with default tickers (hardcoded list in script):
-#      python realized_volatility.py
+#      python3 realized_volatility.py
 #
 #   3. Run with tickers from a file (one ticker per line):
-#      python realized_volatility.py --tickers-file tickers.txt
+#      python3 realized_volatility.py --tickers-file tickers.txt
 #
 # OUTPUT:
 #   - Prints realized volatility metrics to console
@@ -126,7 +126,18 @@ vol20_a = vol20_d * math.sqrt(TRADING_DAYS)
 vol60_a = vol60_d * math.sqrt(TRADING_DAYS)
 voldef_a = vol_def_d * math.sqrt(TRADING_DAYS)
 
-# --- 6) Output the latest available vols ---
+# --- 6) Fetch 5Y monthly beta from Yahoo Finance ---
+def get_beta(ticker: str) -> float:
+    """Fetch 5Y monthly beta from Yahoo Finance ticker info."""
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get("beta", np.nan)
+    except Exception:
+        return np.nan
+
+beta_dict = {ticker: get_beta(ticker) for ticker in rets_use.columns}
+
+# --- 7) Output the latest available vols ---
 # Use last valid value for each ticker (handles exchange holidays)
 latest = pd.DataFrame({
     "vol20_daily": vol20_d.apply(lambda col: col.dropna().iloc[-1] if col.notna().any() else np.nan),
@@ -135,6 +146,7 @@ latest = pd.DataFrame({
     "vol20_annual": vol20_a.apply(lambda col: col.dropna().iloc[-1] if col.notna().any() else np.nan),
     "vol60_annual": vol60_a.apply(lambda col: col.dropna().iloc[-1] if col.notna().any() else np.nan),
     "vol_def_annual(max20,60)": voldef_a.apply(lambda col: col.dropna().iloc[-1] if col.notna().any() else np.nan),
+    "beta_5Y": pd.Series(beta_dict),
 }).sort_index()
 
 # Optional: drop tickers with no data
@@ -143,6 +155,6 @@ latest = latest.dropna(how="all")
 pd.set_option("display.float_format", lambda x: f"{x:0.4f}")
 print(latest)
 
-# --- 7) (Optional) Save to CSV ---
-latest.to_csv("realized_vols_latest.csv")
-print("\nSaved: realized_vols_latest.csv")
+# # --- 8) (Optional) Save to CSV ---
+# latest.to_csv("realized_vols_latest.csv")
+# print("\nSaved: realized_vols_latest.csv")
