@@ -6,6 +6,7 @@ Calculates:
 1. % of stocks trading above their 200-day moving average
 2. % of stocks trading above their 20-day moving average
 3. % of stocks making 20-day highs
+4. % of stocks making 20-day lows
 
 Dependencies:
   pip install pandas yfinance requests lxml
@@ -78,6 +79,7 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
       - above_200dma: count and percentage above 200-day MA
       - above_20dma: count and percentage above 20-day MA
       - at_20day_high: count and percentage at 20-day high
+      - at_20day_low: count and percentage at 20-day low
       - total_analyzed: number of stocks with valid data
     """
     print(f"Downloading price data for {len(tickers)} tickers...")
@@ -95,25 +97,30 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
     if df.empty:
         raise RuntimeError("No data downloaded")
 
-    # Extract Close and High prices
+    # Extract Close, High, and Low prices
     if isinstance(df.columns, pd.MultiIndex):
         close = df["Close"]
         high = df["High"]
+        low = df["Low"]
     else:
         # Single ticker case
         close = df[["Close"]]
         close.columns = tickers[:1]
         high = df[["High"]]
         high.columns = tickers[:1]
+        low = df[["Low"]]
+        low.columns = tickers[:1]
 
     above_200dma = 0
     above_20dma = 0
     at_20day_high = 0
+    at_20day_low = 0
     total_analyzed = 0
 
     for ticker in close.columns:
         prices = close[ticker].dropna()
         highs = high[ticker].dropna()
+        lows = low[ticker].dropna()
 
         if len(prices) < 20:
             continue
@@ -129,6 +136,9 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
         # 20-day high (using high prices)
         high_20 = highs.tail(20).max() if len(highs) >= 20 else highs.max()
 
+        # 20-day low (using low prices)
+        low_20 = lows.tail(20).min() if len(lows) >= 20 else lows.min()
+
         total_analyzed += 1
 
         if ma_200 is not None and current_price > ma_200:
@@ -142,15 +152,31 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
         if current_high >= high_20:
             at_20day_high += 1
 
+        # Check if current low equals 20-day low (making new low)
+        current_low = lows.iloc[-1]
+        if current_low <= low_20:
+            at_20day_low += 1
+
     return {
         "above_200dma": above_200dma,
         "above_20dma": above_20dma,
         "at_20day_high": at_20day_high,
+        "at_20day_low": at_20day_low,
         "total_analyzed": total_analyzed,
         "pct_above_200dma": (above_200dma / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_above_20dma": (above_20dma / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_at_20day_high": (at_20day_high / total_analyzed * 100) if total_analyzed > 0 else 0,
+        "pct_at_20day_low": (at_20day_low / total_analyzed * 100) if total_analyzed > 0 else 0,
     }
+
+
+def colorize(text: str, color: str) -> str:
+    """Wrap text with ANSI color codes."""
+    colors = {
+        "green": "\033[92m",
+        "reset": "\033[0m",
+    }
+    return f"{colors.get(color, '')}{text}{colors['reset']}"
 
 
 def main():
@@ -174,14 +200,41 @@ def main():
 
     metrics = calculate_breadth_metrics(tickers, args.period)
 
+    # Determine color coding based on thresholds
+    pct_200 = metrics['pct_above_200dma']
+    pct_20 = metrics['pct_above_20dma']
+    pct_highs = metrics['pct_at_20day_high']
+    pct_lows = metrics['pct_at_20day_low']
+
+    # Green if > 80% or < 15%
+    line_200 = f"Above 200-day MA:  {metrics['above_200dma']:>4} / {metrics['total_analyzed']}  ({pct_200:.1f}%)"
+    if pct_200 > 80 or pct_200 < 15:
+        line_200 = colorize(line_200, "green")
+
+    # Green if > 80% or < 20%
+    line_20 = f"Above 20-day MA:   {metrics['above_20dma']:>4} / {metrics['total_analyzed']}  ({pct_20:.1f}%)"
+    if pct_20 > 80 or pct_20 < 20:
+        line_20 = colorize(line_20, "green")
+
+    # Green if > 50%
+    line_highs = f"At 20-day highs:   {metrics['at_20day_high']:>4} / {metrics['total_analyzed']}  ({pct_highs:.1f}%)"
+    if pct_highs > 50:
+        line_highs = colorize(line_highs, "green")
+
+    # Green if > 50% (capitulation signal)
+    line_lows = f"At 20-day lows:    {metrics['at_20day_low']:>4} / {metrics['total_analyzed']}  ({pct_lows:.1f}%)"
+    if pct_lows > 50:
+        line_lows = colorize(line_lows, "green")
+
     print("\n" + "=" * 50)
     print("MARKET BREADTH SUMMARY")
     print("=" * 50)
     print(f"Stocks analyzed: {metrics['total_analyzed']}")
     print("-" * 50)
-    print(f"Above 200-day MA:  {metrics['above_200dma']:>4} / {metrics['total_analyzed']}  ({metrics['pct_above_200dma']:.1f}%)")
-    print(f"Above 20-day MA:   {metrics['above_20dma']:>4} / {metrics['total_analyzed']}  ({metrics['pct_above_20dma']:.1f}%)")
-    print(f"At 20-day highs:   {metrics['at_20day_high']:>4} / {metrics['total_analyzed']}  ({metrics['pct_at_20day_high']:.1f}%)")
+    print(line_200)
+    print(line_20)
+    print(line_highs)
+    print(line_lows)
     print("=" * 50)
 
 
