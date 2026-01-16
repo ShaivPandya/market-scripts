@@ -1,12 +1,23 @@
 """
-python3 breadth.py --from-file sp500_top50_6mo.csv
+Compute breadth metrics for top 50 S&P 500 performers (by 6-month return).
+
+Metrics calculated:
+  1. % below 50-day moving average
+  2. % with 3+ distribution days in last 20 sessions
+  3. % that closed below prior 20-day low in last 5 days
+
+Distribution days: down days with above-average volume (50-day avg).
+
+Usage:
+  python3 top50_breadth.py
 """
 
 from __future__ import annotations
-import argparse
 from typing import List, Dict, Any
 import pandas as pd
 import yfinance as yf
+
+from get_top50 import main as generate_top50
 
 
 def fetch_history(ticker: str, period: str = "2y") -> pd.DataFrame:
@@ -121,30 +132,12 @@ def summarize(df: pd.DataFrame) -> None:
     print(", ".join(valid.loc[valid["broke_prior20_low_last_week"], "ticker"]) or "(none)")
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Compute breadth metrics for tickers.")
-    p.add_argument("tickers", nargs="*", help="Ticker symbols, space-separated.")
-    p.add_argument("--from-file", help="Path to CSV file with ticker column.")
-    p.add_argument("--period", default="2y",
-                   help="History period (e.g., 6mo, 1y, 2y). Default 2y.")
-    return p.parse_args()
-
-
 def main():
-    args = parse_args()
-    tickers: List[str] = []
-    if args.from_file:
-        csv_df = pd.read_csv(args.from_file)
-        if "ticker" not in csv_df.columns:
-            print("Error: CSV file must have a 'ticker' column.")
-            return
-        tickers.extend(csv_df["ticker"].dropna().astype(str).tolist())
-    tickers.extend(args.tickers)
-    tickers = [t.upper() for t in tickers if t.strip()]
-    if not tickers:
-        print("Provide tickers via args or --from-file.")
-        return
-    df = compute_metrics(tickers, period=args.period)
+    print("Generating top 50 S&P 500 performers...")
+    generate_top50()
+    csv_df = pd.read_csv("sp500_top50_6mo.csv")
+    tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
+    df = compute_metrics(tickers, period="2y")
     summarize(df)
 
 
