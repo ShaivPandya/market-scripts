@@ -6,10 +6,7 @@
 #   1. Install dependencies:
 #      pip install yfinance numpy pandas
 #
-#   2. Run with default tickers (hardcoded list in script):
-#      python3 realized_volatility.py
-#
-#   3. Run with tickers from a file (one ticker per line):
+#   2. Run with tickers from a file (one ticker per line):
 #      python3 realized_volatility.py --tickers-file tickers.txt
 #
 # OUTPUT:
@@ -39,35 +36,13 @@ def load_tickers_from_file(filepath: str) -> list[str]:
                 tickers.append(ticker)
     return tickers
 
-def get_tickers(ticker_file: str = None) -> list[str]:
-    """Get tickers from file if provided, otherwise use default list."""
-    if ticker_file:
-        return load_tickers_from_file(ticker_file)
-
-    # Default tickers list
-    # NOTE: For non-US listings, you may need exchange suffixes (e.g., "DRX.L", "METSO.HE").
-    return [
-        "MU",
-        "METSO.HE",   # Metso (Helsinki).
-        "FNMA",
-        "FMCC",
-        "EEM",
-        "EWZ",
-        "EWY",
-        "AUR",
-        "RCAT",
-        "OKLO",
-        "UEC",
-        "IPX",
-        "MSTR",
-        "GLD",
-        "SLV",
-        "EURUSD=X",
-    ]
+def get_tickers(ticker_file: str) -> list[str]:
+    """Load tickers from the provided file."""
+    return load_tickers_from_file(ticker_file)
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Calculate realized volatility for tickers')
-parser.add_argument('--tickers-file', type=str, help='Path to file containing tickers (one per line)')
+parser.add_argument('--tickers-file', type=str, required=True, help='Path to file containing tickers (one per line)')
 args = parser.parse_args()
 
 tickers = get_tickers(args.tickers_file)
@@ -119,7 +94,7 @@ vol60_d = realized_vol(rets_use, 60)
 
 # "Defense" vol input for sizing: conservative of 20d and 60d
 vol_def_d = pd.concat([vol20_d, vol60_d], axis=1, keys=["v20", "v60"])
-vol_def_d = vol_def_d.groupby(level=1, axis=1).max()  # max across v20/v60 for each ticker
+vol_def_d = vol_def_d.T.groupby(level=1).max().T  # max across v20/v60 for each ticker
 
 # Annualize
 vol20_a = vol20_d * math.sqrt(TRADING_DAYS)
