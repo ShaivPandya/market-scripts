@@ -8,8 +8,17 @@ UNIVERSES_DIR = Path(__file__).parent.parent / "universes"
 
 
 def clean_ticker(tk: str) -> str:
-    """Normalize ticker to Yahoo Finance format."""
-    return tk.strip().upper().replace(".", "-")
+    """Normalize ticker to Yahoo Finance format.
+
+    Preserves dots for international exchange suffixes (e.g., METSO.HE).
+    Only converts dots to dashes for US share classes (e.g., BRK.B -> BRK-B).
+    """
+    tk = tk.strip().upper()
+    # Common international exchange suffixes that use dots
+    intl_suffixes = (".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC", ".SI", ".HK", ".T", ".NS", ".BO")
+    if any(tk.endswith(suffix) for suffix in intl_suffixes):
+        return tk
+    return tk.replace(".", "-")
 
 
 def list_universes() -> List[str]:
