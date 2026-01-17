@@ -41,9 +41,11 @@ EQUITIES = {
     "S&P 500": "SPY",                    # SPDR S&P 500 ETF
     "Russell 2000": "IWM",               # iShares Russell 2000 ETF
     "S&P 600": "IJR",                    # iShares Core S&P Small-Cap ETF
-    "US Staples": "XLP",                 # Consumer Staples Select Sector SPDR
     "DJ Transport": "IYT",               # iShares Transportation Average ETF
     "KBW Banks": "KBWB",                 # Invesco KBW Bank ETF
+    "US Retail": "XRT",                  # SPDR S&P Retail ETF
+    "US Staples": "XLP",                 # Consumer Staples Select Sector SPDR
+    "US Utilities": "XLU",               # Utilities Select Sector SPDR
     "STOXX 600": "^STOXX",               # STOXX Europe 600 Index
     "Europe Banks": "EXV1.DE",           # iShares STOXX Europe 600 Banks UCITS ETF
     "MSCI Korea": "EWY",                 # iShares MSCI South Korea ETF
