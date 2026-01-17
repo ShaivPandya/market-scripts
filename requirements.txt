@@ -4,4 +4,5 @@ numpy
 pandas>=2.0.0
 requests
 rich
+sdmx1>=2.16.0
 yfinance
