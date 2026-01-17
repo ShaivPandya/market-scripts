@@ -11,6 +11,7 @@ Usage:
     python3 momentum.py AAPL --benchmark SPY
     python3 momentum.py --tickers-file tickers.txt --benchmark SPY
     python3 momentum.py --tickers-file us_mega_cap --benchmark QQQ --years 10
+    python3 momentum.py AAPL
     python3 momentum.py --list-universes
 
 Requirements:
@@ -77,6 +78,43 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
     return s
 
 
+def fetch_ticker_metadata(ticker: str) -> tuple[float | None, str | None, bool]:
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
+
+    yf_ticker = yf.Ticker(ticker)
+    info = yf_ticker.get_info()
+    if not info:
+        info = yf_ticker.info
+
+    market_cap = info.get("marketCap")
+    sector = info.get("sector")
+    quote_type = str(info.get("quoteType", "")).lower()
+    is_etf = quote_type == "etf"
+    return market_cap, sector, is_etf
+
+
+def select_benchmark_ticker(ticker: str) -> str:
+    try:
+        market_cap, sector, is_etf = fetch_ticker_metadata(ticker)
+    except Exception as e:
+        print(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.", file=sys.stderr)
+        return "SPY"
+
+    if is_etf:
+        return "SPY"
+
+    if market_cap is not None and market_cap <= 20_000_000_000:
+        return "IWM"
+
+    if sector and "technology" in sector.lower():
+        return "QQQ"
+
+    return "SPY"
+
+
 def analyze_ticker(ticker: str, benchmark_prices: pd.Series, years: int) -> dict | None:
     """Analyze a single ticker and return results dict, or None on error."""
     try:
@@ -126,7 +164,10 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Momentum ROC analysis")
     p.add_argument("ticker", nargs="?", help="Single ticker symbol (e.g., AAPL)")
     p.add_argument("--tickers-file", type=str, help="Universe name or path to file containing tickers")
-    p.add_argument("--benchmark", help="Benchmark ticker (e.g., SPY)")
+    p.add_argument(
+        "--benchmark",
+        help="Benchmark ticker (e.g., SPY). If omitted, auto-selects IWM for <= $20B market cap, QQQ for Technology, else SPY.",
+    )
     p.add_argument("--years", type=int, default=5, help="Years of history to download (default: 5)")
     p.add_argument("--list-universes", action="store_true", help="List available universe files and exit")
     args = p.parse_args()
@@ -135,11 +176,6 @@ def main() -> int:
         universes = list_universes()
         print("Available universes:", ", ".join(universes) if universes else "(none)")
         return 0
-
-    # Benchmark is required for analysis
-    if not args.benchmark:
-        print("Error: --benchmark is required", file=sys.stderr)
-        return 1
 
     # Determine tickers to process
     if args.ticker and args.tickers_file:
@@ -153,19 +189,25 @@ def main() -> int:
         print("Error: must specify either a ticker or --tickers-file", file=sys.stderr)
         return 1
 
-    benchmark = args.benchmark.strip().upper()
-
-    try:
-        benchmark_prices = fetch_prices_yfinance(benchmark, years=args.years)
-    except Exception as e:
-        print(f"Error fetching benchmark {benchmark}: {e}", file=sys.stderr)
-        return 1
+    benchmark_override = args.benchmark.strip().upper() if args.benchmark else None
+    benchmark_cache: dict[str, pd.Series] = {}
 
     # Process each ticker
     results = []
     for ticker in tickers:
+        benchmark_ticker = benchmark_override or select_benchmark_ticker(ticker)
+        benchmark_prices = benchmark_cache.get(benchmark_ticker)
+        if benchmark_prices is None:
+            try:
+                benchmark_prices = fetch_prices_yfinance(benchmark_ticker, years=args.years)
+            except Exception as e:
+                print(f"Error fetching benchmark {benchmark_ticker}: {e}", file=sys.stderr)
+                continue
+            benchmark_cache[benchmark_ticker] = benchmark_prices
+
         result = analyze_ticker(ticker, benchmark_prices, args.years)
         if result:
+            result["benchmark"] = benchmark_ticker
             results.append(result)
 
     if not results:
@@ -173,11 +215,15 @@ def main() -> int:
         return 1
 
     # Print results
-    print(f"Benchmark: {benchmark}")
-    print(f"As of: {results[0]['date'].date().isoformat()}")
-    print()
+    if benchmark_override:
+        print(f"Benchmark: {benchmark_override}")
+        print(f"As of: {results[0]['date'].date().isoformat()}")
+        print()
 
     for r in results:
+        if not benchmark_override:
+            print(f"Benchmark: {r['benchmark']}")
+            print(f"As of: {r['date'].date().isoformat()}")
         print(f"Ticker: {r['ticker']:<6}  Close: {r['close']:.4f}")
         print(f"  20-day avg of 63-day ROC (%):        {colorize(r['avg20_roc63'], 1.5)}")
         print(f"  42-day ROC of relative price (%):   {colorize(r['rel_roc42'], 0)}")
