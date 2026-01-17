@@ -10,21 +10,48 @@ from market_breadth import main as run_market_breadth
 from top50_breadth import main as run_top50_breadth
 from price_volume_signals import main as run_price_volume_signals
 
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich import box
+except ImportError:
+    Console = None
+
+CONSOLE = Console() if Console else None
+
+
+def print_header() -> None:
+    if CONSOLE:
+        title = Text("Market Technicals", style="bold cyan")
+        subtitle = Text("Breadth | Top 50 | Price/Volume", style="dim")
+        body = Text.assemble(title, "\n", subtitle)
+        CONSOLE.print(Panel.fit(body, box=box.ASCII, padding=(1, 4), style="cyan"))
+        return
+    print("=" * 60)
+    print("MARKET TECHNICALS")
+    print("=" * 60)
+
+
+def print_section(title: str) -> None:
+    if CONSOLE:
+        CONSOLE.print()
+        CONSOLE.rule(f"[bold]{title}[/bold]", characters="-", style="cyan")
+        return
+    print("\n" + "=" * 60)
+    print(title.upper())
+    print("=" * 60)
+
 
 def main():
-    print("=" * 60)
-    print("MARKET BREADTH ANALYSIS")
-    print("=" * 60)
+    print_header()
+    print_section("Market Breadth Analysis")
     run_market_breadth()
 
-    print("\n" + "=" * 60)
-    print("TOP 50 BREADTH ANALYSIS")
-    print("=" * 60)
+    print_section("Top 50 Breadth Analysis")
     run_top50_breadth()
 
-    print("\n" + "=" * 60)
-    print("PRICE/VOLUME SIGNALS")
-    print("=" * 60)
+    print_section("Price/Volume Signals")
     run_price_volume_signals()
 
 
