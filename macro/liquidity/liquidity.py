@@ -3,8 +3,8 @@
 Liquidity Dashboard
 Fetches macro liquidity inputs from FRED, builds a composite liquidity score
 tilted toward trend (4w changes in net liquidity/reserves and global CB assets),
-classifies regimes, and renders a Rich terminal dashboard. Optional charts are
-available with --plot.
+plus net liquidity level for regime context, classifies regimes, and renders a
+Rich terminal dashboard. Optional charts are available with --plot.
 
 Run:
   python macro/liquidity/liquidity.py
@@ -59,10 +59,11 @@ SERIES_META = {
 }
 
 COMPONENTS = [
-    {"key": "net_liquidity_change_4w", "label": "Net Liquidity (4w change)", "polarity": 1, "weight": 0.35, "value_kind": "billions"},
+    {"key": "net_liquidity_change_4w", "label": "Net Liquidity (4w change)", "polarity": 1, "weight": 0.20, "value_kind": "billions"},
+    {"key": "net_liquidity", "label": "Net Liquidity (level)", "polarity": 1, "weight": 0.15, "value_kind": "billions"},
     {"key": "reserves_change_4w", "label": "Reserve Balances (4w change)", "polarity": 1, "weight": 0.15, "value_kind": "billions"},
     {"key": "ecb_assets_change_4w", "label": "ECB Assets (4w change)", "polarity": 1, "weight": 0.10, "value_kind": "billions"},
-    {"key": "boj_assets_change_4w", "label": "BoJ Assets (4w change)", "polarity": 1, "weight": 0.10, "value_kind": "billions"},
+    {"key": "boj_assets_change_4w", "label": "BoJ Assets (1m change)", "polarity": 1, "weight": 0.10, "value_kind": "billions"},
     {"key": "ig_oas", "label": "IG OAS", "polarity": -1, "weight": 0.10, "value_kind": "percent"},
     {"key": "hy_oas", "label": "HY OAS", "polarity": -1, "weight": 0.10, "value_kind": "percent"},
     {"key": "nfci", "label": "NFCI", "polarity": -1, "weight": 0.05, "value_kind": "index"},
@@ -122,7 +123,15 @@ def build_weekly_panel(df, week_ending="W-WED"):
     return df_weekly.ffill()
 
 
-def add_derived_series(df_weekly):
+def align_series_to_weekly(series, week_ending="W-WED", target_index=None):
+    weekly = series.sort_index().resample(week_ending).last()
+    weekly = weekly.ffill()
+    if target_index is not None:
+        weekly = weekly.reindex(target_index).ffill()
+    return weekly
+
+
+def add_derived_series(df_weekly, df_raw, week_ending="W-WED"):
     df = df_weekly.copy()
     df["reserves"] = df["reserve_balances_wavg"]
     df["net_liquidity"] = df["fed_assets_wed_level"] - df["tga_wavg"] - df["on_rrp"]
@@ -130,7 +139,12 @@ def add_derived_series(df_weekly):
     df["net_liquidity_change_4w"] = df["net_liquidity"].diff(MOMENTUM_WINDOW_WEEKS)
     df["reserves_change_4w"] = df["reserves"].diff(MOMENTUM_WINDOW_WEEKS)
     df["ecb_assets_change_4w"] = df["ecb_assets"].diff(MOMENTUM_WINDOW_WEEKS)
-    df["boj_assets_change_4w"] = df["boj_assets"].diff(MOMENTUM_WINDOW_WEEKS)
+    boj_change_native = df_raw["boj_assets"].diff()
+    df["boj_assets_change_4w"] = align_series_to_weekly(
+        boj_change_native,
+        week_ending=week_ending,
+        target_index=df.index,
+    )
     return df
 
 
@@ -390,8 +404,9 @@ def main():
     fred = get_fred_client()
     df = fetch_fred_series(fred)
     df = apply_scales(df)
-    df_weekly = build_weekly_panel(df)
-    df_weekly = add_derived_series(df_weekly)
+    week_ending = "W-WED"
+    df_weekly = build_weekly_panel(df, week_ending=week_ending)
+    df_weekly = add_derived_series(df_weekly, df, week_ending=week_ending)
 
     composite, z_scores, contributions = compute_component_scores(df_weekly)
 
