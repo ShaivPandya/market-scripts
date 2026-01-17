@@ -261,13 +261,15 @@ def build_changes_table(changes, latest_date):
 
     for item in changes:
         row = [item["label"]]
+        polarity = item.get("polarity", 1)
         for _, days in CHANGE_WINDOWS.items():
             delta = change_over_days(item["series"], latest_date, days)
             if delta is None or pd.isna(delta):
                 row.append(Text("N/A", style="dim"))
             else:
                 text = format_value(delta, item["value_kind"], signed=True)
-                style = "green" if delta > 0 else "red" if delta < 0 else "yellow"
+                effective_delta = delta * polarity
+                style = "green" if effective_delta > 0 else "red" if effective_delta < 0 else "yellow"
                 row.append(Text(text, style=style))
         table.add_row(*row)
     return table
@@ -310,9 +312,9 @@ def render_dashboard(df, composite, z_scores, contributions):
         {"label": "Composite Score", "series": composite, "value_kind": "score"},
         {"label": "Net Liquidity", "series": df["net_liquidity"], "value_kind": "billions"},
         {"label": "Reserve Balances", "series": df["reserves"], "value_kind": "billions"},
-        {"label": "IG OAS", "series": df["ig_oas"], "value_kind": "percent"},
-        {"label": "HY OAS", "series": df["hy_oas"], "value_kind": "percent"},
-        {"label": "NFCI", "series": df["nfci"], "value_kind": "index"},
+        {"label": "IG OAS", "series": df["ig_oas"], "value_kind": "percent", "polarity": -1},
+        {"label": "HY OAS", "series": df["hy_oas"], "value_kind": "percent", "polarity": -1},
+        {"label": "NFCI", "series": df["nfci"], "value_kind": "index", "polarity": -1},
         {"label": "M2 / GDP", "series": df["m2_gdp"], "value_kind": "ratio"},
         {"label": "ECB Assets (EUR)", "series": df["ecb_assets"], "value_kind": "billions"},
         {"label": "BoJ Assets (JPY)", "series": df["boj_assets"], "value_kind": "billions"},
