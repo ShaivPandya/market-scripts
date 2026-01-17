@@ -21,6 +21,17 @@ import numpy as np
 import pandas as pd
 
 try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich import box
+except ImportError:
+    Console = None
+
+CONSOLE = Console() if Console else None
+
+try:
     import yfinance as yf
 except ImportError as e:
     raise SystemExit("Missing dependency yfinance. Install with: pip install yfinance") from e
@@ -44,6 +55,113 @@ def colorize_retpct(value: float) -> str:
         return f"{Color.RED}{formatted}{Color.RESET}"
     else:
         return formatted
+
+
+def print_header() -> None:
+    if CONSOLE:
+        title = Text("Price/Volume Signals", style="bold cyan")
+        subtitle = Text("Downside Record Vol | New High Low Vol | Hi-Vol Churn", style="dim")
+        body = Text.assemble(title, "\n", subtitle)
+        CONSOLE.print(Panel.fit(body, box=box.ASCII, padding=(1, 4), style="cyan"))
+        return
+    print("=" * 60)
+    print("PRICE/VOLUME SIGNALS")
+    print("=" * 60)
+
+
+def format_flag(value):
+    if value is None or pd.isna(value):
+        return Text("N/A", style="dim")
+    return Text("YES", style="green") if bool(value) else Text("no", style="dim")
+
+
+def format_retpct_text(value):
+    if value is None or pd.isna(value):
+        return Text("N/A", style="dim")
+    text = f"{value:.2f}"
+    if value > 0:
+        style = "green"
+    elif value < 0:
+        style = "red"
+    else:
+        style = "yellow"
+    return Text(text, style=style)
+
+
+def format_number(value, fmt: str):
+    if value is None or pd.isna(value):
+        return Text("N/A", style="dim")
+    return fmt.format(value)
+
+
+def render_latest_table(latest_df: pd.DataFrame) -> None:
+    table = Table(title="Latest Signals", box=box.ASCII)
+    table.add_column("Market", style="bold")
+    table.add_column("Date")
+    table.add_column("DownsideRecordVol", justify="center")
+    table.add_column("NewHigh_LowVol", justify="center")
+    table.add_column("HiVol_Churn", justify="center")
+    table.add_column("Close", justify="right")
+    table.add_column("RetPct", justify="right")
+    table.add_column("Volume", justify="right")
+
+    for _, row in latest_df.iterrows():
+        table.add_row(
+            row["Market"],
+            row["Date"] or "N/A",
+            format_flag(row["DownsideRecordVol"]),
+            format_flag(row["NewHigh_LowVol"]),
+            format_flag(row["HiVol_Churn"]),
+            format_number(row["Close"], "{:.2f}"),
+            format_retpct_text(row["RetPct"]),
+            format_number(row["Volume"], "{:,.1f}"),
+        )
+
+    CONSOLE.print()
+    CONSOLE.print(table)
+
+
+def render_hits_tables(hits_df: pd.DataFrame) -> None:
+    cols = [
+        "Date",
+        "Close",
+        "RetPct",
+        "Volume",
+        "DownsideRecordVol",
+        "NewHigh_LowVol",
+        "HiVol_Churn",
+    ]
+    CONSOLE.print()
+    CONSOLE.rule("Most Recent Signal Dates (by Index)", style="cyan")
+
+    for market_name in hits_df["MarketName"].unique():
+        market_hits = hits_df[hits_df["MarketName"] == market_name]
+        if market_hits.empty:
+            continue
+        used_ticker = market_hits.iloc[0]["UsedTicker"]
+        table = Table(
+            title=f"{market_name} ({used_ticker}) - Last 10 signals",
+            box=box.ASCII,
+        )
+        table.add_column("Date")
+        table.add_column("Close", justify="right")
+        table.add_column("RetPct", justify="right")
+        table.add_column("Volume", justify="right")
+        table.add_column("DownsideRecordVol", justify="center")
+        table.add_column("NewHigh_LowVol", justify="center")
+        table.add_column("HiVol_Churn", justify="center")
+
+        for _, row in market_hits[cols].head(10).iterrows():
+            table.add_row(
+                row["Date"] or "N/A",
+                format_number(row["Close"], "{:.2f}"),
+                format_retpct_text(row["RetPct"]),
+                format_number(row["Volume"], "{:,.1f}"),
+                format_flag(row["DownsideRecordVol"]),
+                format_flag(row["NewHigh_LowVol"]),
+                format_flag(row["HiVol_Churn"]),
+            )
+        CONSOLE.print(table)
 
 
 # ----------------------------
@@ -178,6 +296,7 @@ def summarize_latest(df: pd.DataFrame, label: str) -> pd.DataFrame:
 
 
 def main():
+    print_header()
     all_latest = []
     all_hits = []
 
@@ -220,43 +339,47 @@ def main():
         latest_df = pd.concat(all_latest, ignore_index=True)
         # Format numeric columns to 2 decimal places
         latest_df["Close"] = latest_df["Close"].round(2)
+        if CONSOLE:
+            render_latest_table(latest_df)
+        else:
+            print("\n=== Latest Signals ===")
+            # Print header
+            print(f"{'Market':<20} {'Date':<12} {'DownsideRecordVol':<18} {'NewHigh_LowVol':<16} {'HiVol_Churn':<12} {'Close':>10} {'RetPct':>8} {'Volume':>14}")
 
-        print("\n=== Latest Signals ===")
-        # Print header
-        print(f"{'Market':<20} {'Date':<12} {'DownsideRecordVol':<18} {'NewHigh_LowVol':<16} {'HiVol_Churn':<12} {'Close':>10} {'RetPct':>8} {'Volume':>14}")
+            # Print each row with colored RetPct
+            for _, row in latest_df.iterrows():
+                colored_retpct = colorize_retpct(row['RetPct'])
+                # ANSI codes add 11 chars (escape sequences), so pad accordingly
+                padding = 19 if '\033[' in colored_retpct else 8
 
-        # Print each row with colored RetPct
-        for _, row in latest_df.iterrows():
-            colored_retpct = colorize_retpct(row['RetPct'])
-            # ANSI codes add 11 chars (escape sequences), so pad accordingly
-            padding = 19 if '\033[' in colored_retpct else 8
-
-            print(f"{row['Market']:<20} {row['Date']:<12} {str(row['DownsideRecordVol']):<18} "
-                  f"{str(row['NewHigh_LowVol']):<16} {str(row['HiVol_Churn']):<12} "
-                  f"{row['Close']:>10.2f} {colored_retpct:>{padding}} {row['Volume']:>14.1f}")
+                print(f"{row['Market']:<20} {row['Date']:<12} {str(row['DownsideRecordVol']):<18} "
+                      f"{str(row['NewHigh_LowVol']):<16} {str(row['HiVol_Churn']):<12} "
+                      f"{row['Close']:>10.2f} {colored_retpct:>{padding}} {row['Volume']:>14.1f}")
 
     if all_hits:
         hits_df = pd.concat(all_hits, ignore_index=True)
         hits_df = hits_df.sort_values("Date", ascending=False)
         # Format numeric columns to 2 decimal places
         hits_df["Close"] = hits_df["Close"].round(2)
+        if CONSOLE:
+            render_hits_tables(hits_df)
+        else:
+            # Show most recent signals grouped by index
+            print("\n=== Most Recent Signal Dates (by Index) ===")
+            cols = ["Date", "Close", "RetPct", "Volume",
+                    "DownsideRecordVol", "NewHigh_LowVol", "HiVol_Churn"]
 
-        # Show most recent signals grouped by index
-        print("\n=== Most Recent Signal Dates (by Index) ===")
-        cols = ["Date", "Close", "RetPct", "Volume",
-                "DownsideRecordVol", "NewHigh_LowVol", "HiVol_Churn"]
+            for market_name in hits_df["MarketName"].unique():
+                market_hits = hits_df[hits_df["MarketName"] == market_name]
+                if not market_hits.empty:
+                    used_ticker = market_hits.iloc[0]["UsedTicker"]
 
-        for market_name in hits_df["MarketName"].unique():
-            market_hits = hits_df[hits_df["MarketName"] == market_name]
-            if not market_hits.empty:
-                used_ticker = market_hits.iloc[0]["UsedTicker"]
+                    # Create display dataframe with colored RetPct
+                    display_hits = market_hits[cols].head(10).copy()
+                    display_hits["RetPct"] = display_hits["RetPct"].apply(colorize_retpct)
 
-                # Create display dataframe with colored RetPct
-                display_hits = market_hits[cols].head(10).copy()
-                display_hits["RetPct"] = display_hits["RetPct"].apply(colorize_retpct)
-
-                print(f"\n{market_name} ({used_ticker}) - Last 10 signals:")
-                print(display_hits.to_string(index=False))
+                    print(f"\n{market_name} ({used_ticker}) - Last 10 signals:")
+                    print(display_hits.to_string(index=False))
 
 
 if __name__ == "__main__":

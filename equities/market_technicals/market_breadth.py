@@ -28,8 +28,38 @@ import pandas as pd
 import requests
 import yfinance as yf
 
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich import box
+except ImportError:
+    Console = None
+
+CONSOLE = Console() if Console else None
+
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+
+
+def print_header() -> None:
+    if CONSOLE:
+        title = Text("Market Breadth", style="bold cyan")
+        subtitle = Text("S&P 500 participation", style="dim")
+        body = Text.assemble(title, "\n", subtitle)
+        CONSOLE.print(Panel.fit(body, box=box.ASCII, padding=(1, 4), style="cyan"))
+        return
+    print("=" * 60)
+    print("MARKET BREADTH")
+    print("=" * 60)
+
+
+def format_pct(value: float, highlight: bool):
+    if value is None or pd.isna(value):
+        return Text("N/A", style="dim")
+    style = "green" if highlight else None
+    return Text(f"{value:.1f}%", style=style)
 
 
 def get_sp500_tickers() -> List[str]:
@@ -195,6 +225,7 @@ def main():
     )
     args = parser.parse_args()
 
+    print_header()
     tickers = get_tickers(args.universe)
     print(f"Found {len(tickers)} tickers\n")
 
@@ -226,16 +257,45 @@ def main():
     if pct_lows > 50:
         line_lows = colorize(line_lows, "green")
 
-    print("\n" + "=" * 50)
-    print("MARKET BREADTH SUMMARY")
-    print("=" * 50)
-    print(f"Stocks analyzed: {metrics['total_analyzed']}")
-    print("-" * 50)
-    print(line_200)
-    print(line_20)
-    print(line_highs)
-    print(line_lows)
-    print("=" * 50)
+    if CONSOLE:
+        summary = Table(title="Market Breadth Summary", box=box.ASCII)
+        summary.add_column("Metric")
+        summary.add_column("Count", justify="right")
+        summary.add_column("Percent", justify="right")
+        summary.add_row(
+            "Above 200-day MA",
+            f"{metrics['above_200dma']} / {metrics['total_analyzed']}",
+            format_pct(pct_200, pct_200 > 80 or pct_200 < 15),
+        )
+        summary.add_row(
+            "Above 20-day MA",
+            f"{metrics['above_20dma']} / {metrics['total_analyzed']}",
+            format_pct(pct_20, pct_20 > 80 or pct_20 < 20),
+        )
+        summary.add_row(
+            "At 20-day highs",
+            f"{metrics['at_20day_high']} / {metrics['total_analyzed']}",
+            format_pct(pct_highs, pct_highs > 50),
+        )
+        summary.add_row(
+            "At 20-day lows",
+            f"{metrics['at_20day_low']} / {metrics['total_analyzed']}",
+            format_pct(pct_lows, pct_lows > 50),
+        )
+        summary.caption = f"Stocks analyzed: {metrics['total_analyzed']}"
+        summary.caption_style = "dim"
+        CONSOLE.print(summary)
+    else:
+        print("\n" + "=" * 50)
+        print("MARKET BREADTH SUMMARY")
+        print("=" * 50)
+        print(f"Stocks analyzed: {metrics['total_analyzed']}")
+        print("-" * 50)
+        print(line_200)
+        print(line_20)
+        print(line_highs)
+        print(line_lows)
+        print("=" * 50)
 
 
 if __name__ == "__main__":

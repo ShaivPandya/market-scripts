@@ -16,8 +16,39 @@ from __future__ import annotations
 from typing import List, Dict, Any
 import pandas as pd
 import yfinance as yf
+from pathlib import Path
+
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich import box
+except ImportError:
+    Console = None
+
+CONSOLE = Console() if Console else None
 
 from get_top50 import main as generate_top50
+
+
+def print_header() -> None:
+    if CONSOLE:
+        title = Text("Top 50 Breadth", style="bold cyan")
+        subtitle = Text("Top performers | Leadership signals", style="dim")
+        body = Text.assemble(title, "\n", subtitle)
+        CONSOLE.print(Panel.fit(body, box=box.ASCII, padding=(1, 4), style="cyan"))
+        return
+    print("=" * 60)
+    print("TOP 50 BREADTH")
+    print("=" * 60)
+
+
+def format_ticker_list(series):
+    tickers = ", ".join(series) or "(none)"
+    if tickers == "(none)":
+        return Text(tickers, style="dim")
+    return tickers
 
 
 def fetch_history(ticker: str, period: str = "2y") -> pd.DataFrame:
@@ -110,32 +141,70 @@ def summarize(df: pd.DataFrame) -> None:
     valid = df[df["rows"] >= 30].copy()
     n = len(valid)
     if n == 0:
-        print("No tickers with sufficient history.")
+        if CONSOLE:
+            CONSOLE.print("No tickers with sufficient history.", style="yellow")
+        else:
+            print("No tickers with sufficient history.")
         return
 
     pct_below_50dma = 100 * valid["below_50dma"].mean()
     pct_3plus_dist = 100 * valid["has_3plus_dist_days"].mean()
     pct_broke_20low = 100 * valid["broke_prior20_low_last_week"].mean()
 
-    print(f"Universe size (sufficient data): {n}")
-    print(f"1) % below 50-DMA: {pct_below_50dma:.2f}%")
-    print(f"2) % with ≥3 distribution days (last 20): {pct_3plus_dist:.2f}%")
-    print(f"3) % that closed below prior 20-day low in last 5 days: {pct_broke_20low:.2f}%\n")
+    if CONSOLE:
+        summary = Table(title="Top 50 Breadth Summary", box=box.ASCII)
+        summary.add_column("Metric")
+        summary.add_column("Value", justify="right")
+        summary.add_row("Universe size (sufficient data)", str(n))
+        summary.add_row("% below 50-DMA", f"{pct_below_50dma:.2f}%")
+        summary.add_row("% with >=3 distribution days (last 20)", f"{pct_3plus_dist:.2f}%")
+        summary.add_row("% that closed below prior 20-day low in last 5 days", f"{pct_broke_20low:.2f}%")
+        CONSOLE.print(summary)
+        CONSOLE.print(
+            "Distribution days are defined as days where the stock closed lower "
+            "but volume was above the 50-day average volume.",
+            style="dim",
+        )
 
-    print("Distribution days are defined as days where the stock closed lower but volume was above the 50-day average volume.\n");
+        tickers_table = Table(title="Affected Tickers", box=box.ASCII)
+        tickers_table.add_column("Signal")
+        tickers_table.add_column("Tickers")
+        tickers_table.add_row(
+            "Below 50-DMA",
+            format_ticker_list(valid.loc[valid["below_50dma"], "ticker"]),
+        )
+        tickers_table.add_row(
+            ">=3 distribution days (last 20)",
+            format_ticker_list(valid.loc[valid["has_3plus_dist_days"], "ticker"]),
+        )
+        tickers_table.add_row(
+            "Broke prior 20-day low in last 5 days",
+            format_ticker_list(valid.loc[valid["broke_prior20_low_last_week"], "ticker"]),
+        )
+        CONSOLE.print(tickers_table)
+    else:
+        print(f"Universe size (sufficient data): {n}")
+        print(f"1) % below 50-DMA: {pct_below_50dma:.2f}%")
+        print(f"2) % with ≥3 distribution days (last 20): {pct_3plus_dist:.2f}%")
+        print(f"3) % that closed below prior 20-day low in last 5 days: {pct_broke_20low:.2f}%\n")
 
-    print("Tickers below 50-DMA:")
-    print(", ".join(valid.loc[valid["below_50dma"], "ticker"]) or "(none)")
-    print("Tickers with ≥3 distribution days (last 20):")
-    print(", ".join(valid.loc[valid["has_3plus_dist_days"], "ticker"]) or "(none)")
-    print("Tickers that broke prior 20-day low in last 5 days:")
-    print(", ".join(valid.loc[valid["broke_prior20_low_last_week"], "ticker"]) or "(none)")
+        print("Distribution days are defined as days where the stock closed lower but volume was above the 50-day average volume.\n");
+
+        print("Tickers below 50-DMA:")
+        print(", ".join(valid.loc[valid["below_50dma"], "ticker"]) or "(none)")
+        print("Tickers with ≥3 distribution days (last 20):")
+        print(", ".join(valid.loc[valid["has_3plus_dist_days"], "ticker"]) or "(none)")
+        print("Tickers that broke prior 20-day low in last 5 days:")
+        print(", ".join(valid.loc[valid["broke_prior20_low_last_week"], "ticker"]) or "(none)")
 
 
 def main():
+    print_header()
     print("Generating top 50 S&P 500 performers...")
     generate_top50()
-    csv_df = pd.read_csv("sp500_top50_6mo.csv")
+    script_dir = Path(__file__).parent
+    csv_path = script_dir / "sp500_top50_6mo.csv"
+    csv_df = pd.read_csv(csv_path)
     tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
     df = compute_metrics(tickers, period="2y")
     summarize(df)
