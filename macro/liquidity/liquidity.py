@@ -7,13 +7,18 @@ classifies regimes, and renders a Rich terminal dashboard. Optional charts are
 available with --plot.
 
 Run:
-  export FRED_API_KEY=your_key
   python macro/liquidity/liquidity.py
   python macro/liquidity/liquidity.py --plot
 """
 import argparse
 import os
 import sys
+from pathlib import Path
+
+# Load environment variables from .env file
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from load_env import load_env
+load_env()
 
 import pandas as pd
 from fredapi import Fred

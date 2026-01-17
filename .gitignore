@@ -1,3 +1,6 @@
 .claude
 *.DS_Store
 *__pycache__
+
+# Environment variables
+.env

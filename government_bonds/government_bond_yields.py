@@ -16,6 +16,13 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 import sys
 import os
+from pathlib import Path
+
+# Load environment variables from .env file
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from load_env import load_env
+load_env()
+
 try:
     from fredapi import Fred
     FRED_AVAILABLE = True
@@ -25,8 +32,6 @@ except ImportError:
     print("FRED API key also required. Get one at: https://fred.stlouisfed.org/docs/api/api_key.html", file=sys.stderr)
 
 # FRED API configuration
-# Set your FRED API key as an environment variable: export FRED_API_KEY='your_key_here'
-import os
 FRED_API_KEY = os.environ.get('FRED_API_KEY', None)
 
 # FRED series IDs for US Treasury yields
