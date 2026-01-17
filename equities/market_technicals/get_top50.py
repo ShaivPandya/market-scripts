@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from io import StringIO
+from pathlib import Path
 from typing import Iterable, List
 
 import numpy as np
@@ -117,8 +118,10 @@ def main():
         .drop(columns=["six_month_return"])
     )
 
-    # Save to CSV
-    out.to_csv("sp500_top50_6mo.csv", index_label="ticker")
+    # Save to CSV in the script's directory
+    script_dir = Path(__file__).parent
+    output_path = script_dir / "sp500_top50_6mo.csv"
+    out.to_csv(output_path, index_label="ticker")
 
 
 if __name__ == "__main__":
