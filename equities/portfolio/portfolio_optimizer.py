@@ -36,8 +36,14 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import yfinance as yf
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich import box
 
 from composite_signal import generate_composite_signals
+
+console = Console()
 
 # -----------------------------
 # Configuration
@@ -397,7 +403,7 @@ def main(book: Optional[float] = None):
     # Determine required FX tickers and download all prices from yfinance
     fx_tickers = get_required_fx_tickers(tickers)
     all_tickers_to_fetch = tickers + [MARKET_TICKER] if MARKET_TICKER not in tickers else tickers
-    print(f"Downloading prices for {len(all_tickers_to_fetch)} tickers + {len(fx_tickers)} FX rates...")
+    console.print(f"[cyan]Downloading prices for {len(all_tickers_to_fetch)} tickers + {len(fx_tickers)} FX rates...[/cyan]")
     prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
     missing_cols = [t for t in tickers if t not in prices_all.columns]
@@ -438,7 +444,7 @@ def main(book: Optional[float] = None):
 
     # Total-portfolio betas vs market (SPY) for ALL instruments
     # Try yfinance betas first, then compute missing ones manually
-    print("Fetching betas from yfinance...")
+    console.print("[cyan]Fetching betas from yfinance...[/cyan]")
     yf_betas = fetch_yfinance_betas(tickers)
     computed_betas = compute_betas(rets, MARKET_TICKER).reindex(tickers)
     # Use yfinance beta if available, otherwise use computed
@@ -447,7 +453,7 @@ def main(book: Optional[float] = None):
 
     # Generate composite signals for active tickers (those with direction)
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
-    print(f"Generating composite signals for {len(active_tickers)} active tickers...")
+    console.print(f"[cyan]Generating composite signals for {len(active_tickers)} active tickers...[/cyan]")
     asset_map = dict(zip(meta.index, meta["asset"]))
     signals_df, _ = generate_composite_signals(
         tickers=active_tickers,
@@ -542,18 +548,29 @@ def main(book: Optional[float] = None):
     feasible_band = vol_final >= VOL_MIN - 1e-6
 
     # Report
-    print("\n=== Solution ===")
-    print(f"Status: {prob.status}")
-    print(f"Vol (daily): {vol_final:.6f}  (target {VOL_TARGET:.6f}, band [{VOL_MIN:.6f}, {VOL_MAX:.6f}])")
-    print(f"Total beta vs {MARKET_TICKER}: {beta_final:.6e}")
-    print(f"Band feasible? {'YES' if feasible_band else 'NO (hit constraints before reaching VOL_MIN)'}\n")
+    console.print()
+    status_color = "green" if prob.status == "optimal" else "yellow"
+    feasible_text = "[green]YES[/green]" if feasible_band else "[red]NO[/red] (hit constraints before reaching VOL_MIN)"
+
+    solution_text = (
+        f"[bold]Status:[/bold]        [{status_color}]{prob.status}[/{status_color}]\n"
+        f"[bold]Vol (daily):[/bold]   {vol_final:.6f}  [dim](target {VOL_TARGET:.6f}, band [{VOL_MIN:.6f}, {VOL_MAX:.6f}])[/dim]\n"
+        f"[bold]Total beta:[/bold]    {beta_final:.6e} [dim]vs {MARKET_TICKER}[/dim]\n"
+        f"[bold]Band feasible:[/bold] {feasible_text}"
+    )
+    console.print(Panel(solution_text, title="[bold blue]Solution[/bold blue]", border_style="blue"))
 
     exp = exposures_by_class(w_final, meta)
-    print("=== Exposures ===")
+    exp_table = Table(title="[bold]Exposures[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan")
+    exp_table.add_column("Type", style="white")
+    exp_table.add_column("Value", justify="right", style="white")
     for k0 in sorted(exp.keys()):
-        print(f"{k0:14s}: {exp[k0]: .4f}")
+        val = exp[k0]
+        val_str = f"{val:+.4f}" if "net" in k0 else f"{val:.4f}"
+        exp_table.add_row(k0, val_str)
+    console.print(exp_table)
 
-    print("\n=== Weights (% NAV notional) ===")
+    console.print()
     out = pd.DataFrame({
         "asset": meta["asset"],
         "direction": meta["direction"],
@@ -566,14 +583,39 @@ def main(book: Optional[float] = None):
         out["dollar_weight"] = w_final * book
     out = out.sort_values("weight", ascending=False)
 
-    # Custom formatting with comma delimiters for dollar_weight
+    # Build rich table for weights
+    weights_table = Table(title="[bold]Weights (% NAV notional)[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan")
+    weights_table.add_column("Ticker", style="bold white")
+    weights_table.add_column("Asset", style="white")
+    weights_table.add_column("Direction", style="white")
+    weights_table.add_column("Signal", justify="right", style="white")
+    weights_table.add_column("Beta", justify="right", style="white")
+    weights_table.add_column("Vol", justify="right", style="white")
+    weights_table.add_column("Weight", justify="right")
     if book is not None:
-        formatters = {
-            "dollar_weight": lambda x: f"{x:,.2f}".rjust(15)
-        }
-        print(out.to_string(float_format=lambda x: f"{x: .6f}", formatters=formatters))
-    else:
-        print(out.to_string(float_format=lambda x: f"{x: .6f}"))
+        weights_table.add_column("Dollar", justify="right")
+
+    for ticker, row in out.iterrows():
+        weight_val = row["weight"]
+        weight_color = "green" if weight_val > 0 else "red" if weight_val < 0 else "white"
+        weight_str = f"[{weight_color}]{weight_val:+.4f}[/{weight_color}]"
+
+        row_data = [
+            str(ticker),
+            row["asset"],
+            row["direction"],
+            f"{row['signal']:+.2f}",
+            f"{row['beta_to_SPY']:.2f}",
+            f"{row['realized_volatility']:.4f}",
+            weight_str,
+        ]
+        if book is not None:
+            dollar_val = row["dollar_weight"]
+            dollar_color = "green" if dollar_val > 0 else "red" if dollar_val < 0 else "white"
+            row_data.append(f"[{dollar_color}]{dollar_val:+,.0f}[/{dollar_color}]")
+        weights_table.add_row(*row_data)
+
+    console.print(weights_table)
 
     # out.to_csv("optimized_weights.csv")
     # print("\nWrote: optimized_weights.csv")
@@ -585,22 +627,31 @@ def main(book: Optional[float] = None):
 
     binding = identify_binding_constraint(w_max_scaled, meta)
 
-    print(f"\n{'='*60}")
-    print(f"=== MAX SCALED PORTFOLIO (scale factor: {k_max:.4f}x) ===")
-    print(f"Binding constraint: {binding}")
-    print(f"Vol (daily): {vol_max_scaled:.6f}")
+    console.print()
+    max_scaled_text = (
+        f"[bold]Scale factor:[/bold]      {k_max:.4f}x\n"
+        f"[bold]Binding constraint:[/bold] [yellow]{binding}[/yellow]\n"
+        f"[bold]Vol (daily):[/bold]        {vol_max_scaled:.6f}"
+    )
+    console.print(Panel(max_scaled_text, title="[bold magenta]Max Scaled Portfolio[/bold magenta]", border_style="magenta"))
 
     exp_max = exposures_by_class(w_max_scaled, meta)
-    print("\n=== Max Scaled Exposures ===")
+    exp_max_table = Table(title="[bold]Max Scaled Exposures[/bold]", box=box.ROUNDED, show_header=True, header_style="bold magenta")
+    exp_max_table.add_column("Type", style="white")
+    exp_max_table.add_column("Value", justify="right", style="white")
     for k0 in sorted(exp_max.keys()):
-        print(f"{k0:14s}: {exp_max[k0]: .4f}")
+        val = exp_max[k0]
+        val_str = f"{val:+.4f}" if "net" in k0 else f"{val:.4f}"
+        exp_max_table.add_row(k0, val_str)
 
     # Add 10yr equivalent for bonds
     bond_10yr = compute_10yr_equivalent(w_max_scaled, meta)
     if bond_10yr > 0:
-        print(f"{'bond_10yr_equiv':14s}: {bond_10yr: .4f}")
+        exp_max_table.add_row("bond_10yr_equiv", f"{bond_10yr:.4f}")
 
-    print("\n=== Max Scaled Weights (% NAV notional) ===")
+    console.print(exp_max_table)
+
+    console.print()
     out_max = pd.DataFrame({
         "asset": meta["asset"],
         "direction": meta["direction"],
@@ -610,13 +661,33 @@ def main(book: Optional[float] = None):
         out_max["dollar_weight"] = w_max_scaled * book
     out_max = out_max.sort_values("weight", ascending=False)
 
+    # Build rich table for max scaled weights
+    max_weights_table = Table(title="[bold]Max Scaled Weights (% NAV notional)[/bold]", box=box.ROUNDED, show_header=True, header_style="bold magenta")
+    max_weights_table.add_column("Ticker", style="bold white")
+    max_weights_table.add_column("Asset", style="white")
+    max_weights_table.add_column("Direction", style="white")
+    max_weights_table.add_column("Weight", justify="right")
     if book is not None:
-        formatters = {
-            "dollar_weight": lambda x: f"{x:,.2f}".rjust(15)
-        }
-        print(out_max.to_string(float_format=lambda x: f"{x: .6f}", formatters=formatters))
-    else:
-        print(out_max.to_string(float_format=lambda x: f"{x: .6f}"))
+        max_weights_table.add_column("Dollar", justify="right")
+
+    for ticker, row in out_max.iterrows():
+        weight_val = row["weight"]
+        weight_color = "green" if weight_val > 0 else "red" if weight_val < 0 else "white"
+        weight_str = f"[{weight_color}]{weight_val:+.4f}[/{weight_color}]"
+
+        row_data = [
+            str(ticker),
+            row["asset"],
+            row["direction"],
+            weight_str,
+        ]
+        if book is not None:
+            dollar_val = row["dollar_weight"]
+            dollar_color = "green" if dollar_val > 0 else "red" if dollar_val < 0 else "white"
+            row_data.append(f"[{dollar_color}]{dollar_val:+,.0f}[/{dollar_color}]")
+        max_weights_table.add_row(*row_data)
+
+    console.print(max_weights_table)
 
 
 if __name__ == "__main__":
