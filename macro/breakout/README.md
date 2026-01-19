@@ -5,8 +5,6 @@ This project contains a Python script that scans a small universe of **major cur
 1) **Tight congestion** (a compressed, low-volatility range), followed by  
 2) A **close-based breakout** from that congestion, confirmed by **volume expansion** (or a proxy when volume is unavailable).
 
-The logic is inspired by Bruce Kovner’s idea that **tight congestions with unexplained breakouts** can offer strong risk/reward setups. This script focuses only on **detecting** those breakouts (no backtest, no trade sizing).
-
 ---
 
 ## Universe
