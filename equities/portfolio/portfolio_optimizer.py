@@ -230,6 +230,39 @@ def compute_betas(rets: pd.DataFrame, market_col: str) -> pd.Series:
     return pd.Series(betas)
 
 
+def compute_defense_volatility(prices: pd.DataFrame, tickers: list) -> pd.Series:
+    """
+    Compute defense volatility (max of 20d, 60d rolling vol) from log returns.
+    Returns daily volatility for each ticker.
+
+    This matches the methodology in realized_volatility.py:
+    - Uses log returns (not simple returns)
+    - Defense vol = max(20-day rolling vol, 60-day rolling vol)
+    """
+    # Log returns (consistent with realized_volatility.py)
+    log_rets = np.log(prices[tickers] / prices[tickers].shift(1))
+
+    # Rolling volatility
+    vol20 = log_rets.rolling(20).std()
+    vol60 = log_rets.rolling(60).std()
+
+    # Defense vol = max(20d, 60d) - latest value for each ticker
+    defense_vol = {}
+    for t in tickers:
+        v20 = vol20[t].dropna().iloc[-1] if vol20[t].notna().any() else np.nan
+        v60 = vol60[t].dropna().iloc[-1] if vol60[t].notna().any() else np.nan
+        if np.isnan(v20) and np.isnan(v60):
+            defense_vol[t] = np.nan
+        elif np.isnan(v20):
+            defense_vol[t] = v60
+        elif np.isnan(v60):
+            defense_vol[t] = v20
+        else:
+            defense_vol[t] = max(v20, v60)
+
+    return pd.Series(defense_vol)
+
+
 def build_raw_weights(
     meta: pd.DataFrame,
     signals: Optional[pd.Series] = None,
@@ -395,7 +428,7 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame) -> float:
 def main(book: Optional[float] = None):
     meta = pd.read_csv(PORTFOLIO_CSV)
     meta["direction"] = meta["direction"].fillna("")
-    meta["realized_vol"] = pd.to_numeric(meta["realized_vol"], errors="coerce")
+    # realized_vol will be computed from price data, not loaded from CSV
     meta = meta.set_index("ticker")
 
     tickers = meta.index.tolist()
@@ -428,6 +461,11 @@ def main(book: Optional[float] = None):
     # Ensure consistent ordering (keep only portfolio tickers, but rets still has MARKET_TICKER for beta)
     tickers = [t for t in tickers if t in rets.columns]
     meta = meta.loc[tickers]
+
+    # Compute defense volatility (max of 20d, 60d rolling vol) from USD prices
+    console.print("[cyan]Computing defense volatility (max 20d/60d)...[/cyan]")
+    defense_vol = compute_defense_volatility(usd_prices, tickers)
+    meta["realized_vol"] = defense_vol
 
     if len(tickers) < 2:
         raise ValueError("Need at least 2 instruments with returns to optimize.")
