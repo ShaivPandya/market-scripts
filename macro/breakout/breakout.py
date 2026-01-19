@@ -11,7 +11,7 @@ Note on FX "volume": Yahoo spot FX often has Volume=0. If so, this script falls 
 
 Usage:
   pip install yfinance pandas numpy
-  python breakout_detector.py
+  python3 breakout.py
 """
 
 from __future__ import annotations
