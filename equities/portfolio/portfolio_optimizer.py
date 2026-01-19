@@ -274,7 +274,7 @@ def build_raw_weights(
     signals: Optional[pd.Series] = None,
     G_L: float = 1.0,
     G_S: float = 1.0,
-    signal_scale: float = 0.4,
+    signal_scale: float = 0.6,
 ) -> pd.Series:
     """
     Inverse-vol raw weights, optionally tilted by momentum signals.
@@ -284,7 +284,7 @@ def build_raw_weights(
         signals: Optional z-scored momentum signals per ticker (higher = more conviction)
         G_L: Long gross target (default: 1.0)
         G_S: Short gross target (default: 1.0)
-        signal_scale: Scaling factor for signal tilt (default: 0.4)
+        signal_scale: Scaling factor for signal tilt (default: 0.6)
 
     Signal interpretation:
         - Positive signal on LONG = increase weight
