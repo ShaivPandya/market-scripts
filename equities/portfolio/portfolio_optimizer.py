@@ -37,7 +37,7 @@ from typing import Dict, Optional, Tuple
 
 import yfinance as yf
 
-from momentum_signal import generate_portfolio_signals
+from composite_signal import generate_composite_signals
 
 # -----------------------------
 # Configuration
@@ -56,7 +56,15 @@ GROSS_MAX = 4.0
 EQ_NET_MIN, EQ_NET_MAX = -0.50, 1.00
 FX_GROSS_MAX = 2.0
 CMDTY_GROSS_MAX = 0.50
-BOND_GROSS_MAX = 3.0
+BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
+
+# Duration (in years) for bond/Treasury futures instruments
+DURATION_OF_TICKER: Dict[str, float] = {
+    "ZN": 6.5,   # 10-year Treasury note futures
+    "ZT": 2.0,   # 2-year Treasury note futures
+    "ZF": 5.0,   # 5-year Treasury note futures
+    "ZB": 17.0,  # 30-year Treasury bond futures
+}
 
 # Objective tuning
 GAMMA_RISK = 1e-4     # small; increases preference for lower risk while staying close to w_raw
@@ -287,6 +295,53 @@ def exposures_by_class(w: pd.Series, meta: pd.DataFrame) -> Dict[str, float]:
     return out
 
 
+def compute_10yr_equivalent(w: pd.Series, meta: pd.DataFrame) -> float:
+    """Compute total 10-year equivalent exposure for bond positions."""
+    bond_mask = meta["asset"].str.lower().eq("bond")
+    if not bond_mask.any():
+        return 0.0
+
+    total_10yr_equiv = 0.0
+    for ticker in w[bond_mask].index:
+        duration = DURATION_OF_TICKER.get(ticker, 10.0)  # default to 10 if unknown
+        total_10yr_equiv += abs(w[ticker]) * (duration / 10.0)
+    return total_10yr_equiv
+
+
+def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame) -> str:
+    """Identify which constraint limits further scaling."""
+    checks = []
+
+    # Total gross
+    checks.append(("Total gross (400%)", abs(w).sum(), GROSS_MAX))
+
+    # Equity net
+    eq_mask = meta["asset"].str.lower().eq("equity")
+    eq_net = w[eq_mask].sum() if eq_mask.any() else 0.0
+    if eq_net >= 0:
+        checks.append(("Equity net long (100%)", eq_net, EQ_NET_MAX))
+    else:
+        checks.append(("Equity net short (-50%)", -eq_net, -EQ_NET_MIN))
+
+    # Asset class caps
+    for name, mask_col, cap in [
+        ("FX gross (200%)", "fx", FX_GROSS_MAX),
+        ("Commodity gross (50%)", "commodity", CMDTY_GROSS_MAX),
+    ]:
+        mask = meta["asset"].str.lower().eq(mask_col)
+        if mask.any():
+            checks.append((name, abs(w[mask]).sum(), cap))
+
+    # Bond 10yr equivalent
+    bond_10yr = compute_10yr_equivalent(w, meta)
+    if bond_10yr > 0:
+        checks.append(("Bond 10yr equiv (300%)", bond_10yr, BOND_10YR_EQUIV_MAX))
+
+    # Find binding (closest to limit)
+    binding = max(checks, key=lambda x: x[1] / x[2] if x[2] > 0 else 0)
+    return f"{binding[0]}: {binding[1]:.2%} of {binding[2]:.0%} limit"
+
+
 def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame) -> float:
     """
     Scaling w by k preserves beta neutrality and correlations.
@@ -307,7 +362,11 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame) -> float:
 
     add_gross_cap("fx", FX_GROSS_MAX)
     add_gross_cap("commodity", CMDTY_GROSS_MAX)
-    add_gross_cap("bond", BOND_GROSS_MAX)
+
+    # Bond 10-year equivalent cap
+    current_10yr = compute_10yr_equivalent(w, meta)
+    if current_10yr > eps:
+        k_list.append(BOND_10YR_EQUIV_MAX / current_10yr)
 
     # Equity net bounds
     eq_mask = meta["asset"].str.lower().eq("equity")
@@ -386,10 +445,17 @@ def main(book: Optional[float] = None):
     betas = yf_betas.combine_first(computed_betas).fillna(0.0)
     beta_vec = betas.values
 
-    # Generate momentum signals for active tickers (those with direction)
+    # Generate composite signals for active tickers (those with direction)
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
-    print(f"Generating momentum signals for {len(active_tickers)} active tickers...")
-    signals = generate_portfolio_signals(active_tickers, benchmark=MARKET_TICKER)
+    print(f"Generating composite signals for {len(active_tickers)} active tickers...")
+    asset_map = dict(zip(meta.index, meta["asset"]))
+    signals_df, _ = generate_composite_signals(
+        tickers=active_tickers,
+        asset_map=asset_map,
+        benchmark_override=MARKET_TICKER,
+    )
+    # Extract composite signal for weighting
+    signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
 
     # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
     w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0).reindex(tickers).fillna(0.0)
@@ -431,7 +497,10 @@ def main(book: Optional[float] = None):
     if cmdty_mask.any():
         constraints.append(cp.norm1(w[cmdty_mask]) <= CMDTY_GROSS_MAX)
     if bond_mask.any():
-        constraints.append(cp.norm1(w[bond_mask]) <= BOND_GROSS_MAX)
+        # Bond 10-year equivalent constraint: sum(|w_i| * duration_i / 10) <= limit
+        bond_tickers = [tickers[i] for i in range(n) if bond_mask[i]]
+        duration_coeffs = np.array([DURATION_OF_TICKER.get(t, 10.0) / 10.0 for t in bond_tickers])
+        constraints.append(cp.sum(cp.multiply(duration_coeffs, cp.abs(w[bond_mask]))) <= BOND_10YR_EQUIV_MAX)
 
     # Total-portfolio beta-neutral vs market
     constraints.append(beta_vec @ w == 0.0)
@@ -490,15 +559,64 @@ def main(book: Optional[float] = None):
         "direction": meta["direction"],
         "signal": signals.reindex(tickers).fillna(0.0),
         "beta_to_SPY": betas,
+        "realized_volatility": meta["realized_vol"],
         "weight": w_final,
     })
     if book is not None:
         out["dollar_weight"] = w_final * book
     out = out.sort_values("weight", ascending=False)
-    print(out.to_string(float_format=lambda x: f"{x: .6f}"))
 
-    out.to_csv("optimized_weights.csv")
-    print("\nWrote: optimized_weights.csv")
+    # Custom formatting with comma delimiters for dollar_weight
+    if book is not None:
+        formatters = {
+            "dollar_weight": lambda x: f"{x:,.2f}".rjust(15)
+        }
+        print(out.to_string(float_format=lambda x: f"{x: .6f}", formatters=formatters))
+    else:
+        print(out.to_string(float_format=lambda x: f"{x: .6f}"))
+
+    # out.to_csv("optimized_weights.csv")
+    # print("\nWrote: optimized_weights.csv")
+
+    # === Max Scaled Version ===
+    k_max = max_scale_to_respect_linear_caps(w_final, meta)
+    w_max_scaled = w_final * k_max
+    vol_max_scaled = port_vol(w_max_scaled.values)
+
+    binding = identify_binding_constraint(w_max_scaled, meta)
+
+    print(f"\n{'='*60}")
+    print(f"=== MAX SCALED PORTFOLIO (scale factor: {k_max:.4f}x) ===")
+    print(f"Binding constraint: {binding}")
+    print(f"Vol (daily): {vol_max_scaled:.6f}")
+
+    exp_max = exposures_by_class(w_max_scaled, meta)
+    print("\n=== Max Scaled Exposures ===")
+    for k0 in sorted(exp_max.keys()):
+        print(f"{k0:14s}: {exp_max[k0]: .4f}")
+
+    # Add 10yr equivalent for bonds
+    bond_10yr = compute_10yr_equivalent(w_max_scaled, meta)
+    if bond_10yr > 0:
+        print(f"{'bond_10yr_equiv':14s}: {bond_10yr: .4f}")
+
+    print("\n=== Max Scaled Weights (% NAV notional) ===")
+    out_max = pd.DataFrame({
+        "asset": meta["asset"],
+        "direction": meta["direction"],
+        "weight": w_max_scaled,
+    })
+    if book is not None:
+        out_max["dollar_weight"] = w_max_scaled * book
+    out_max = out_max.sort_values("weight", ascending=False)
+
+    if book is not None:
+        formatters = {
+            "dollar_weight": lambda x: f"{x:,.2f}".rjust(15)
+        }
+        print(out_max.to_string(float_format=lambda x: f"{x: .6f}", formatters=formatters))
+    else:
+        print(out_max.to_string(float_format=lambda x: f"{x: .6f}"))
 
 
 if __name__ == "__main__":
