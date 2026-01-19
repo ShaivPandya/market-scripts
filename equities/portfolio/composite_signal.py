@@ -653,9 +653,9 @@ def main() -> int:
             print(f"{col:20s}: no valid data")
 
     # Save to CSV
-    output_path = Path(args.out_csv) if args.out_csv else (Path(__file__).parent / "composite_signals.csv")
-    output.to_csv(output_path)
-    print(f"\nWrote signals to: {output_path}")
+    # output_path = Path(args.out_csv) if args.out_csv else (Path(__file__).parent / "composite_signals.csv")
+    # output.to_csv(output_path)
+    # print(f"\nWrote signals to: {output_path}")
 
     return 0
 
