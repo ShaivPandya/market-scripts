@@ -24,6 +24,12 @@ FX quote conventions:
 - yfinance FX tickers use "=X" suffix (e.g., "EURUSD=X" for USD per EUR)
 - "EURUSD=X" means USD per 1 EUR. Then USD_price = local_price * EURUSD.
 - "USDJPY=X" means JPY per 1 USD. Then USD_price = local_price / USDJPY.
+
+python3 portfolio_optimizer.py
+python3 portfolio_optimizer.py --book 100000
+
+python3 equities/portfolio/portfolio_optimizer.py
+python3 equities/portfolio/portfolio_optimizer.py --book 100000
 """
 
 import argparse
