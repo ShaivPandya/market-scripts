@@ -110,6 +110,56 @@ def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
 
 
 # -----------------------------
+# Benchmark Selection
+# -----------------------------
+def fetch_ticker_metadata(ticker: str) -> Tuple[Optional[float], Optional[str], bool]:
+    """
+    Fetch market cap, sector, and ETF status from yfinance.
+
+    Returns:
+        Tuple of (market_cap, sector, is_etf)
+    """
+    yf_ticker = yf.Ticker(ticker)
+    info = yf_ticker.get_info()
+    if not info:
+        info = yf_ticker.info
+
+    market_cap = info.get("marketCap")
+    sector = info.get("sector")
+    quote_type = str(info.get("quoteType", "")).lower()
+    is_etf = quote_type == "etf"
+    return market_cap, sector, is_etf
+
+
+def select_benchmark_ticker(ticker: str) -> str:
+    """
+    Auto-select benchmark based on ticker metadata.
+
+    Selection logic:
+        - ETFs → SPY
+        - Market cap <= $20B → IWM (small-cap)
+        - Technology sector → QQQ
+        - Default → SPY
+    """
+    try:
+        market_cap, sector, is_etf = fetch_ticker_metadata(ticker)
+    except Exception as e:
+        print(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.", file=sys.stderr)
+        return "SPY"
+
+    if is_etf:
+        return "SPY"
+
+    if market_cap is not None and market_cap <= 20_000_000_000:
+        return "IWM"
+
+    if sector and "technology" in sector.lower():
+        return "QQQ"
+
+    return "SPY"
+
+
+# -----------------------------
 # Momentum Metrics
 # -----------------------------
 def compute_momentum_metrics(
@@ -197,43 +247,59 @@ def clip_signal(signal: pd.Series, lower: float = -3.0, upper: float = 3.0) -> p
 # -----------------------------
 def generate_portfolio_signals(
     tickers: List[str],
-    benchmark: str = DEFAULT_BENCHMARK,
+    benchmark_override: Optional[str] = None,
     years: int = DEFAULT_YEARS,
     clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
-) -> pd.Series:
+) -> Tuple[pd.Series, Dict[str, str]]:
     """
     Generate momentum signals for a list of tickers.
 
     Args:
         tickers: List of ticker symbols
-        benchmark: Benchmark ticker for relative momentum (default: SPY)
+        benchmark_override: If specified, use this benchmark for all tickers.
+            If None, auto-selects benchmark per ticker based on metadata.
         years: Years of price history to fetch (default: 5)
         clip_bounds: (lower, upper) bounds for signal clipping (default: (-3, 3))
 
     Returns:
-        pd.Series of clipped z-scored signals indexed by ticker
+        Tuple of:
+            - pd.Series of clipped z-scored signals indexed by ticker
+            - Dict mapping ticker -> benchmark used
     """
     if not tickers:
-        return pd.Series(dtype="float64")
+        return pd.Series(dtype="float64"), {}
 
-    # Fetch all prices at once (more efficient than per-ticker)
-    all_tickers = list(set(tickers + [benchmark]))
-    print(f"Fetching prices for {len(all_tickers)} tickers...")
+    # Determine benchmark for each ticker
+    ticker_benchmarks: Dict[str, str] = {}
+    if benchmark_override:
+        print(f"Using benchmark override: {benchmark_override}")
+        for ticker in tickers:
+            ticker_benchmarks[ticker] = benchmark_override
+    else:
+        print("Auto-selecting benchmarks per ticker...")
+        for ticker in tickers:
+            benchmark = select_benchmark_ticker(ticker)
+            ticker_benchmarks[ticker] = benchmark
+            print(f"  {ticker} -> {benchmark}")
+
+    # Collect all unique tickers and benchmarks to fetch
+    unique_benchmarks = set(ticker_benchmarks.values())
+    all_tickers = list(set(tickers) | unique_benchmarks)
+    print(f"\nFetching prices for {len(all_tickers)} tickers...")
 
     try:
         prices = fetch_prices(all_tickers, years=years)
     except Exception as e:
         print(f"[ERROR] Failed to fetch prices: {e}", file=sys.stderr)
-        return pd.Series(0.0, index=tickers)
+        return pd.Series(0.0, index=tickers), ticker_benchmarks
 
-    # Check benchmark exists
-    if benchmark not in prices.columns:
-        print(f"[ERROR] Benchmark {benchmark} not found in downloaded data", file=sys.stderr)
-        return pd.Series(0.0, index=tickers)
+    # Verify all benchmarks exist
+    missing_benchmarks = [b for b in unique_benchmarks if b not in prices.columns]
+    if missing_benchmarks:
+        print(f"[ERROR] Missing benchmark(s): {missing_benchmarks}", file=sys.stderr)
+        return pd.Series(0.0, index=tickers), ticker_benchmarks
 
-    benchmark_prices = prices[benchmark].dropna()
-
-    # Compute momentum metrics for each ticker
+    # Compute momentum metrics for each ticker with its assigned benchmark
     raw_metrics: Dict[str, Dict[str, float]] = {}
     failed_tickers: List[str] = []
 
@@ -244,6 +310,8 @@ def generate_portfolio_signals(
             continue
 
         ticker_prices = prices[ticker].dropna()
+        benchmark = ticker_benchmarks[ticker]
+        benchmark_prices = prices[benchmark].dropna()
         metrics = compute_momentum_metrics(ticker_prices, benchmark_prices)
 
         if metrics is None:
@@ -255,7 +323,7 @@ def generate_portfolio_signals(
 
     if not raw_metrics:
         print("[ERROR] No valid momentum data for any ticker", file=sys.stderr)
-        return pd.Series(0.0, index=tickers)
+        return pd.Series(0.0, index=tickers), ticker_benchmarks
 
     # Build DataFrame and compute signal
     raw_df = pd.DataFrame(raw_metrics).T
@@ -267,7 +335,7 @@ def generate_portfolio_signals(
     # Reindex to include failed tickers with 0.0 signal
     signal = signal.reindex(tickers, fill_value=0.0)
 
-    return signal
+    return signal, ticker_benchmarks
 
 
 # -----------------------------
@@ -284,8 +352,9 @@ def main() -> int:
     )
     ap.add_argument(
         "--benchmark",
-        default=DEFAULT_BENCHMARK,
-        help=f"Benchmark ticker for relative momentum (default: {DEFAULT_BENCHMARK})",
+        default=None,
+        help="Benchmark ticker override. If not specified, auto-selects per ticker "
+             "(IWM for small-cap, QQQ for tech, SPY default).",
     )
     ap.add_argument(
         "--years",
@@ -330,20 +399,24 @@ def main() -> int:
         return 1
 
     print(f"Portfolio: {len(active_tickers)} active tickers")
-    print(f"Benchmark: {args.benchmark}")
+    if args.benchmark:
+        print(f"Benchmark override: {args.benchmark}")
+    else:
+        print("Benchmark: auto-select per ticker")
     print()
 
     # Generate signals
-    signals = generate_portfolio_signals(
+    signals, ticker_benchmarks = generate_portfolio_signals(
         tickers=active_tickers,
-        benchmark=args.benchmark,
+        benchmark_override=args.benchmark,
         years=args.years,
         clip_bounds=(args.clip_lower, args.clip_upper),
     )
 
-    # Build output DataFrame
+    # Build output DataFrame with benchmark info
     output = pd.DataFrame({
         "direction": meta.set_index("ticker").loc[active_tickers, "direction"],
+        "benchmark": pd.Series(ticker_benchmarks),
         "signal": signals,
     })
     output.index.name = "ticker"
