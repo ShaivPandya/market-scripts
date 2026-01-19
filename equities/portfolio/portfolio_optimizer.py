@@ -80,6 +80,7 @@ DURATION_OF_TICKER: Dict[str, float] = {
 
 # Objective tuning
 GAMMA_RISK = 1e-4     # small; increases preference for lower risk while staying close to w_raw
+VOL_POWER = 0.7       # power for inverse-vol weighting: 1/σ^p (p < 1 reduces concentration in low-vol names)
 
 
 # -----------------------------
@@ -238,33 +239,37 @@ def compute_betas(rets: pd.DataFrame, market_col: str) -> pd.Series:
 
 def compute_defense_volatility(prices: pd.DataFrame, tickers: list) -> pd.Series:
     """
-    Compute defense volatility (max of 20d, 60d rolling vol) from log returns.
+    Compute defense volatility from log returns using an EWMA blend and a floor.
     Returns daily volatility for each ticker.
 
-    This matches the methodology in realized_volatility.py:
+    Method:
     - Uses log returns (not simple returns)
-    - Defense vol = max(20-day rolling vol, 60-day rolling vol)
+    - Short/long EWMA variance blend
+    - Floor from rolling median of long-run EWMA volatility
     """
-    # Log returns (consistent with realized_volatility.py)
+    # Log returns
     log_rets = np.log(prices[tickers] / prices[tickers].shift(1))
 
-    # Rolling volatility
-    vol20 = log_rets.rolling(20).std()
-    vol60 = log_rets.rolling(60).std()
+    short_hl = 20
+    long_hl = 120
+    blend_w = 0.70
+    floor_window = 252
+    floor_min = 60
 
-    # Defense vol = max(20d, 60d) - latest value for each ticker
+    short_var = (log_rets ** 2).ewm(halflife=short_hl, adjust=False).mean()
+    long_var = (log_rets ** 2).ewm(halflife=long_hl, adjust=False).mean()
+    blend_var = blend_w * short_var + (1.0 - blend_w) * long_var
+    blend_vol = np.sqrt(blend_var)
+
+    long_vol = np.sqrt(long_var)
+    floor_vol = long_vol.rolling(floor_window, min_periods=floor_min).median()
+    floor_vol = floor_vol.fillna(long_vol)
+
+    # Defense vol = max(blended EWMA vol, long-run floor) - latest value for each ticker
     defense_vol = {}
     for t in tickers:
-        v20 = vol20[t].dropna().iloc[-1] if vol20[t].notna().any() else np.nan
-        v60 = vol60[t].dropna().iloc[-1] if vol60[t].notna().any() else np.nan
-        if np.isnan(v20) and np.isnan(v60):
-            defense_vol[t] = np.nan
-        elif np.isnan(v20):
-            defense_vol[t] = v60
-        elif np.isnan(v60):
-            defense_vol[t] = v20
-        else:
-            defense_vol[t] = max(v20, v60)
+        series = np.maximum(blend_vol[t], floor_vol[t])
+        defense_vol[t] = series.dropna().iloc[-1] if series.notna().any() else np.nan
 
     return pd.Series(defense_vol)
 
@@ -274,7 +279,8 @@ def build_raw_weights(
     signals: Optional[pd.Series] = None,
     G_L: float = 1.0,
     G_S: float = 1.0,
-    signal_scale: float = 0.6,
+    signal_scale: float = 0.9,
+    vol_power: float = 1.0,
 ) -> pd.Series:
     """
     Inverse-vol raw weights, optionally tilted by momentum signals.
@@ -284,7 +290,8 @@ def build_raw_weights(
         signals: Optional z-scored momentum signals per ticker (higher = more conviction)
         G_L: Long gross target (default: 1.0)
         G_S: Short gross target (default: 1.0)
-        signal_scale: Scaling factor for signal tilt (default: 0.6)
+        signal_scale: Scaling factor for signal tilt (default: 0.9)
+        vol_power: Power for inverse-vol weighting 1/σ^p (default: 1.0; use <1 to reduce low-vol concentration)
 
     Signal interpretation:
         - Positive signal on LONG = increase weight
@@ -296,7 +303,7 @@ def build_raw_weights(
     shorts = meta[meta["direction"].str.lower().eq("short")]
 
     if len(longs) > 0:
-        invv = 1.0 / longs["realized_vol"].replace(0, np.nan)
+        invv = 1.0 / (longs["realized_vol"].replace(0, np.nan) ** vol_power)
         invv = invv.fillna(0.0)
         if invv.sum() > 0:
             base_w = invv / invv.sum()
@@ -311,7 +318,7 @@ def build_raw_weights(
             w_raw.loc[longs.index] = G_L * base_w
 
     if len(shorts) > 0:
-        invv = 1.0 / shorts["realized_vol"].replace(0, np.nan)
+        invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power)
         invv = invv.fillna(0.0)
         if invv.sum() > 0:
             base_w = invv / invv.sum()
@@ -469,7 +476,7 @@ def main(book: Optional[float] = None):
     meta = meta.loc[tickers]
 
     # Compute defense volatility (max of 20d, 60d rolling vol) from USD prices
-    console.print("[cyan]Computing defense volatility (max 20d/60d)...[/cyan]")
+    console.print("[cyan]Computing defense volatility (EWMA blend + floor)...[/cyan]")
     defense_vol = compute_defense_volatility(usd_prices, tickers)
     meta["realized_vol"] = defense_vol
 
@@ -508,7 +515,7 @@ def main(book: Optional[float] = None):
     signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
 
     # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
-    w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0).reindex(tickers).fillna(0.0)
+    w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0, vol_power=VOL_POWER).reindex(tickers).fillna(0.0)
     w_raw_vec = w_raw.values
 
     # Masks
