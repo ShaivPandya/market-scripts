@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-QMJ-style Quality Score (AQR "Quality Minus Junk" paper; simplified, data-source constrained)
+QMJ-style Quality Score
 
 Implements:
 - Profitability: GPOA, ROE, ROA, CFOA, GMAR, ACC (low accruals)
