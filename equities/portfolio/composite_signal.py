@@ -140,16 +140,21 @@ def fetch_ticker_metadata(ticker: str) -> Tuple[Optional[float], Optional[str], 
     return market_cap, sector, is_etf
 
 
-def select_benchmark_ticker(ticker: str) -> str:
+def select_benchmark_ticker(ticker: str, asset_type: Optional[str] = None) -> str:
     """
-    Auto-select benchmark based on ticker metadata.
+    Auto-select benchmark based on ticker metadata and asset type.
 
     Selection logic:
+        - Commodities (including commodity ETFs) → ^BCOM (Bloomberg Commodity Index)
         - ETFs → SPY
         - Market cap <= $20B → IWM (small-cap)
         - Technology sector → QQQ
         - Default → SPY
     """
+    # Check if this is a commodity first
+    if asset_type == "commodity":
+        return "^BCOM"
+
     try:
         market_cap, sector, is_etf = fetch_ticker_metadata(ticker)
     except Exception as e:
@@ -412,7 +417,8 @@ def generate_composite_signals(
     else:
         print("Auto-selecting benchmarks per ticker...")
         for ticker in tickers:
-            benchmark = select_benchmark_ticker(ticker)
+            asset_type = asset_map.get(ticker, "equity")
+            benchmark = select_benchmark_ticker(ticker, asset_type)
             ticker_benchmarks[ticker] = benchmark
             print(f"  {ticker} -> {benchmark}")
 
