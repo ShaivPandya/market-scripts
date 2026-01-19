@@ -1,5 +1,5 @@
 """
-Kovner-style breakout detector (daily): tight congestion box -> close-based breakout + volume expansion confirmation.
+Breakout detector (daily): tight congestion box -> close-based breakout + volume expansion confirmation.
 
 Universe:
   FX (hybrid box): EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, USDJPY
