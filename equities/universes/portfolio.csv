@@ -4,6 +4,10 @@ SIVR,commodity,long
 MU,equity,long
 METSO.HE,equity,long
 LHX,equity,long
+NUE,equity,long
+EEM,equity,long
+EWY,equity,long
+EWZ,equity,long
 AUR,equity,short
 RCAT,equity,short
 OKLO,equity,short

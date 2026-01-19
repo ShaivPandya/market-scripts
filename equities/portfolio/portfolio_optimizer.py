@@ -69,6 +69,7 @@ EQ_NET_MIN, EQ_NET_MAX = -0.50, 1.00
 FX_GROSS_MAX = 2.0
 CMDTY_GROSS_MAX = 0.50
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
+BETA_TOL = 0.02  # beta-neutrality tolerance band (soft constraint, not exact)
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -279,24 +280,27 @@ def build_raw_weights(
     signals: Optional[pd.Series] = None,
     G_L: float = 1.0,
     G_S: float = 1.0,
-    signal_scale: float = 0.9,
-    vol_power: float = 1.0,
+    signal_scale_equity: float = 1.5,
+    signal_scale_other: float = 0.9,
+    vol_power: float = 0.8,
 ) -> pd.Series:
     """
     Inverse-vol raw weights, optionally tilted by momentum signals.
 
     Args:
-        meta: Portfolio metadata with 'direction' and 'realized_vol' columns
+        meta: Portfolio metadata with 'direction', 'asset', and 'realized_vol' columns
         signals: Optional z-scored momentum signals per ticker (higher = more conviction)
         G_L: Long gross target (default: 1.0)
         G_S: Short gross target (default: 1.0)
-        signal_scale: Scaling factor for signal tilt (default: 0.9)
-        vol_power: Power for inverse-vol weighting 1/σ^p (default: 1.0; use <1 to reduce low-vol concentration)
+        signal_scale_equity: Scaling factor for signal tilt on equities (default: 1.5)
+        signal_scale_other: Scaling factor for signal tilt on non-equities (default: 0.9)
+        vol_power: Power for inverse-vol weighting 1/σ^p (default: 0.8; use <1 to reduce low-vol concentration)
 
     Signal interpretation:
         - Positive signal on LONG = increase weight
         - Positive signal on SHORT = increase short conviction (more negative)
         - Signal multiplier: exp(signal_scale * signal)
+        - Different signal scales used for equities vs other assets
     """
     w_raw = pd.Series(0.0, index=meta.index)
     longs = meta[meta["direction"].str.lower().eq("long")]
@@ -308,9 +312,15 @@ def build_raw_weights(
         if invv.sum() > 0:
             base_w = invv / invv.sum()
 
-            # Apply signal tilt if provided
+            # Apply signal tilt if provided (use different scales for equities vs other assets)
             if signals is not None:
                 sig = signals.reindex(longs.index).fillna(0.0)
+                # Determine signal scale based on asset type
+                is_equity = longs["asset"].str.lower().eq("equity")
+                signal_scale = pd.Series(
+                    np.where(is_equity, signal_scale_equity, signal_scale_other),
+                    index=longs.index
+                )
                 signal_mult = np.exp(signal_scale * sig)
                 base_w = base_w * signal_mult
                 base_w = base_w / base_w.sum()  # Re-normalize
@@ -323,9 +333,15 @@ def build_raw_weights(
         if invv.sum() > 0:
             base_w = invv / invv.sum()
 
-            # Apply signal tilt if provided (higher signal = more short conviction)
+            # Apply signal tilt if provided (use different scales for equities vs other assets)
             if signals is not None:
                 sig = signals.reindex(shorts.index).fillna(0.0)
+                # Determine signal scale based on asset type
+                is_equity = shorts["asset"].str.lower().eq("equity")
+                signal_scale = pd.Series(
+                    np.where(is_equity, signal_scale_equity, signal_scale_other),
+                    index=shorts.index
+                )
                 signal_mult = np.exp(signal_scale * sig)
                 base_w = base_w * signal_mult
                 base_w = base_w / base_w.sum()  # Re-normalize
@@ -559,8 +575,8 @@ def main(book: Optional[float] = None):
         duration_coeffs = np.array([DURATION_OF_TICKER.get(t, 10.0) / 10.0 for t in bond_tickers])
         constraints.append(cp.sum(cp.multiply(duration_coeffs, cp.abs(w[bond_mask]))) <= BOND_10YR_EQUIV_MAX)
 
-    # Total-portfolio beta-neutral vs market
-    constraints.append(beta_vec @ w == 0.0)
+    # Total-portfolio beta-neutral vs market (soft constraint with tolerance band)
+    constraints.append(cp.abs(beta_vec @ w) <= BETA_TOL)
 
     # Total-portfolio vol cap (SOC form): ||L w||_2 <= VOL_MAX
     constraints.append(cp.norm(L @ w, 2) <= VOL_MAX)
