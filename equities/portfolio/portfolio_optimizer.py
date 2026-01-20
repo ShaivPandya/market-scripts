@@ -59,9 +59,9 @@ LOOKBACK_DAYS = 365  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
 MARKET_TICKER = "SPY"                 # SPY used for beta regression; must be in prices
-VOL_MIN = 0.0090                      # daily
-VOL_TARGET = 0.0100                   # daily
-VOL_MAX = 0.0110                      # daily
+VOL_MIN = 0.0140                      # daily
+VOL_TARGET = 0.0150                   # daily
+VOL_MAX = 0.0160                      # daily
 
 # Constraints
 GROSS_MAX = 4.0
@@ -69,7 +69,7 @@ EQ_NET_MIN, EQ_NET_MAX = -0.50, 1.00
 FX_GROSS_MAX = 2.0
 CMDTY_GROSS_MAX = 0.50
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
-BETA_TOL = 0.02  # beta-neutrality tolerance band (soft constraint, not exact)
+BETA_TOL = 0.03  # beta-neutrality tolerance band (soft constraint, not exact)
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -280,7 +280,8 @@ def build_raw_weights(
     signals: Optional[pd.Series] = None,
     G_L: float = 1.0,
     G_S: float = 1.0,
-    signal_scale_equity: float = 1.5,
+    signal_scale_equity_long: float = 1.5,
+    signal_scale_equity_short: float = 1.0,
     signal_scale_other: float = 0.9,
     vol_power: float = 0.8,
 ) -> pd.Series:
@@ -292,7 +293,8 @@ def build_raw_weights(
         signals: Optional z-scored momentum signals per ticker (higher = more conviction)
         G_L: Long gross target (default: 1.0)
         G_S: Short gross target (default: 1.0)
-        signal_scale_equity: Scaling factor for signal tilt on equities (default: 1.5)
+        signal_scale_equity_long: Scaling factor for signal tilt on equity longs (default: 1.5)
+        signal_scale_equity_short: Scaling factor for signal tilt on equity shorts (default: 1.0)
         signal_scale_other: Scaling factor for signal tilt on non-equities (default: 0.9)
         vol_power: Power for inverse-vol weighting 1/σ^p (default: 0.8; use <1 to reduce low-vol concentration)
 
@@ -318,7 +320,7 @@ def build_raw_weights(
                 # Determine signal scale based on asset type
                 is_equity = longs["asset"].str.lower().eq("equity")
                 signal_scale = pd.Series(
-                    np.where(is_equity, signal_scale_equity, signal_scale_other),
+                    np.where(is_equity, signal_scale_equity_long, signal_scale_other),
                     index=longs.index
                 )
                 signal_mult = np.exp(signal_scale * sig)
@@ -340,7 +342,7 @@ def build_raw_weights(
                 # Determine signal scale based on asset type
                 is_equity = shorts["asset"].str.lower().eq("equity")
                 signal_scale = pd.Series(
-                    np.where(is_equity, signal_scale_equity, signal_scale_other),
+                    np.where(is_equity, signal_scale_equity_short, signal_scale_other),
                     index=shorts.index
                 )
                 signal_mult = np.exp(signal_scale * sig)
