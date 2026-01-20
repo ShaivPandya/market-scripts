@@ -13,6 +13,9 @@ to inform raw target weights.
 
 Usage:
     python3 composite_signal.py
+    python3 composite_signal.py --ticker AAPL
+    python3 composite_signal.py --ticker AAPL,MSFT,GOOGL
+    python3 composite_signal.py --ticker GLD --asset commodity
     python3 composite_signal.py --benchmark QQQ
     python3 composite_signal.py --quality-weight 0.5 --price-weight 0.3 --revenue-weight 0.1 --eps-weight 0.1
 """
@@ -534,6 +537,16 @@ def main() -> int:
         help=f"Path to portfolio CSV (default: {PORTFOLIO_CSV})",
     )
     ap.add_argument(
+        "--ticker",
+        default=None,
+        help="Single ticker or comma-separated tickers (overrides --portfolio)",
+    )
+    ap.add_argument(
+        "--asset",
+        default="equity",
+        help="Asset type when using --ticker: 'equity' or 'commodity' (default: equity)",
+    )
+    ap.add_argument(
         "--benchmark",
         default=None,
         help="Benchmark ticker override (auto-selects per ticker if not specified)",
@@ -602,25 +615,33 @@ def main() -> int:
         print(f"[WARN] Weights sum to {weight_sum:.3f}, normalizing to 1.0")
         weights = {k: v / weight_sum for k, v in weights.items()}
 
-    # Load portfolio
-    portfolio_path = Path(args.portfolio)
-    if not portfolio_path.exists():
-        print(f"[ERROR] Portfolio file not found: {portfolio_path}", file=sys.stderr)
-        return 1
+    # Handle --ticker argument (overrides portfolio CSV)
+    if args.ticker:
+        active_tickers = [t.strip() for t in args.ticker.split(',')]
+        asset_map = {ticker: args.asset for ticker in active_tickers}
+        # Create dummy direction for output
+        direction_map = {ticker: "long" for ticker in active_tickers}
+    else:
+        # Load portfolio
+        portfolio_path = Path(args.portfolio)
+        if not portfolio_path.exists():
+            print(f"[ERROR] Portfolio file not found: {portfolio_path}", file=sys.stderr)
+            return 1
 
-    meta = pd.read_csv(portfolio_path)
-    meta["direction"] = meta["direction"].fillna("")
+        meta = pd.read_csv(portfolio_path)
+        meta["direction"] = meta["direction"].fillna("")
 
-    # Build asset map
-    asset_map = dict(zip(meta["ticker"], meta["asset"]))
+        # Build asset map
+        asset_map = dict(zip(meta["ticker"], meta["asset"]))
 
-    # Filter to active tickers (has direction)
-    active_mask = meta["direction"].str.strip().ne("")
-    active_tickers = meta.loc[active_mask, "ticker"].tolist()
+        # Filter to active tickers (has direction)
+        active_mask = meta["direction"].str.strip().ne("")
+        active_tickers = meta.loc[active_mask, "ticker"].tolist()
+        direction_map = dict(zip(meta["ticker"], meta["direction"]))
 
-    if not active_tickers:
-        print("[ERROR] No active tickers in portfolio", file=sys.stderr)
-        return 1
+        if not active_tickers:
+            print("[ERROR] No active tickers in portfolio", file=sys.stderr)
+            return 1
 
     print(f"Portfolio: {len(active_tickers)} active tickers")
     print(f"Weights: Quality={weights['quality']:.1%}, Price={weights['price_momentum']:.1%}, "
@@ -638,7 +659,7 @@ def main() -> int:
 
     # Add metadata columns
     output = pd.DataFrame({
-        "direction": meta.set_index("ticker").loc[active_tickers, "direction"],
+        "direction": pd.Series(direction_map),
         "benchmark": pd.Series(ticker_benchmarks),
     })
     output = output.join(signals_df)
