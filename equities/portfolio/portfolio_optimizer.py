@@ -59,9 +59,9 @@ LOOKBACK_DAYS = 365  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
 MARKET_TICKER = "SPY"                 # SPY used for beta regression; must be in prices
-VOL_MIN = 0.0030                      # daily
-VOL_TARGET = 0.0035                   # daily
-VOL_MAX = 0.0040                      # daily
+VOL_MIN = 0.0090                      # daily
+VOL_TARGET = 0.0100                   # daily
+VOL_MAX = 0.0110                      # daily
 
 # Constraints
 GROSS_MAX = 4.0
@@ -296,10 +296,10 @@ def build_raw_weights(
         signal_scale_other: Scaling factor for signal tilt on non-equities (default: 0.9)
         vol_power: Power for inverse-vol weighting 1/σ^p (default: 0.8; use <1 to reduce low-vol concentration)
 
-    Signal interpretation:
-        - Positive signal on LONG = increase weight
-        - Positive signal on SHORT = increase short conviction (more negative)
-        - Signal multiplier: exp(signal_scale * signal)
+    Signal interpretation (signals are direction-agnostic: higher = stronger/better stock):
+        - Positive signal on LONG = increase weight (strong stock, go longer)
+        - Negative signal on SHORT = increase short conviction (weak stock, short more)
+        - Signal multiplier: exp(signal_scale * signal), with signal inverted for shorts
         - Different signal scales used for equities vs other assets
     """
     w_raw = pd.Series(0.0, index=meta.index)
@@ -335,7 +335,8 @@ def build_raw_weights(
 
             # Apply signal tilt if provided (use different scales for equities vs other assets)
             if signals is not None:
-                sig = signals.reindex(shorts.index).fillna(0.0)
+                # Invert signal for shorts: negative signal (weak stock) -> more short conviction
+                sig = -signals.reindex(shorts.index).fillna(0.0)
                 # Determine signal scale based on asset type
                 is_equity = shorts["asset"].str.lower().eq("equity")
                 signal_scale = pd.Series(
