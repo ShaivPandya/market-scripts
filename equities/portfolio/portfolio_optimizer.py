@@ -59,9 +59,9 @@ LOOKBACK_DAYS = 365  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
 MARKET_TICKER = "SPY"                 # SPY used for beta regression; must be in prices
-VOL_MIN = 0.0140                      # daily
+VOL_MIN = 0.0120                      # daily
 VOL_TARGET = 0.0150                   # daily
-VOL_MAX = 0.0160                      # daily
+VOL_MAX = 0.0200                      # daily
 
 # Constraints
 GROSS_MAX = 4.0
@@ -69,7 +69,8 @@ EQ_NET_MIN, EQ_NET_MAX = -0.50, 1.00
 FX_GROSS_MAX = 2.0
 CMDTY_GROSS_MAX = 0.50
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
-BETA_TOL = 0.03  # beta-neutrality tolerance band (soft constraint, not exact)
+BETA_TOL = 0.10  # beta-neutrality tolerance band (soft constraint, not exact)
+MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -457,7 +458,7 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame) -> float:
 # -----------------------------
 # Main
 # -----------------------------
-def main(book: Optional[float] = None):
+def main(book: Optional[float] = None, debug_weights: bool = False):
     meta = pd.read_csv(PORTFOLIO_CSV)
     meta["direction"] = meta["direction"].fillna("")
     # realized_vol will be computed from price data, not loaded from CSV
@@ -549,14 +550,14 @@ def main(book: Optional[float] = None):
 
     constraints = []
 
-    # Enforce direction: longs >= 0, shorts <= 0
+    # Enforce direction: longs >= MIN_ABS_WEIGHT, shorts <= -MIN_ABS_WEIGHT
     direction = meta["direction"].str.lower()
     long_mask = direction.eq("long").values
     short_mask = direction.eq("short").values
     if long_mask.any():
-        constraints.append(w[long_mask] >= 0)
+        constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
     if short_mask.any():
-        constraints.append(w[short_mask] <= 0)
+        constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
 
     # Total gross leverage
     constraints.append(cp.norm1(w) <= GROSS_MAX)
@@ -604,15 +605,56 @@ def main(book: Optional[float] = None):
     if vol0 <= 0:
         raise RuntimeError("Optimized portfolio has ~0 volatility; check inputs.")
 
-    # Scaling cannot exceed vol cap, linear caps, or equity net bounds
+    # Scaling cannot exceed vol cap, linear caps, or equity net bounds.
+    # Also avoid scaling down below the minimum absolute weight for active positions.
     k_target = VOL_TARGET / vol0
     k_volcap = VOL_MAX / vol0
     k_linear = max_scale_to_respect_linear_caps(w_star, meta)
     k = min(k_target, k_volcap, k_linear)
 
+    active_mask = long_mask | short_mask
+    if MIN_ABS_WEIGHT > 0 and active_mask.any():
+        min_abs_active = float(np.min(np.abs(w_star.values[active_mask])))
+        if min_abs_active > 0:
+            k_floor = MIN_ABS_WEIGHT / min_abs_active
+            if k < k_floor:
+                k = k_floor
+
     w_final = w_star * k
     vol_final = port_vol(w_final.values)
     beta_final = float(betas.values @ w_final.values)
+
+    if debug_weights:
+        console.print()
+        dbg = pd.DataFrame({
+            "asset": meta["asset"],
+            "direction": meta["direction"],
+            "realized_vol": meta["realized_vol"],
+            "w_raw": w_raw,
+            "w_star": w_star,
+            "w_final": w_final,
+        }).sort_values("w_final", ascending=False)
+
+        dbg_table = Table(title="[bold]Weight Diagnostics[/bold]", box=box.ROUNDED, show_header=True, header_style="bold yellow")
+        dbg_table.add_column("Ticker", style="bold white")
+        dbg_table.add_column("Asset", style="white")
+        dbg_table.add_column("Direction", style="white")
+        dbg_table.add_column("Vol", justify="right", style="white")
+        dbg_table.add_column("w_raw", justify="right")
+        dbg_table.add_column("w_star", justify="right")
+        dbg_table.add_column("w_final", justify="right")
+
+        for ticker, row in dbg.iterrows():
+            dbg_table.add_row(
+                str(ticker),
+                row["asset"],
+                row["direction"],
+                f"{row['realized_vol']:.4f}" if pd.notna(row["realized_vol"]) else "nan",
+                f"{row['w_raw']:+.6f}",
+                f"{row['w_star']:+.6f}",
+                f"{row['w_final']:+.6f}",
+            )
+        console.print(dbg_table)
 
     # If vol_final < VOL_MIN, the band may be infeasible under constraints with this universe/shape.
     feasible_band = vol_final >= VOL_MIN - 1e-6
@@ -763,5 +805,6 @@ def main(book: Optional[float] = None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Portfolio optimizer with beta-neutral and volatility targeting.")
     parser.add_argument("--book", type=float, default=None, help="Book size in dollars to compute dollar weights")
+    parser.add_argument("--debug-weights", action="store_true", help="Print raw/optimized/final weights for diagnostics")
     args = parser.parse_args()
-    main(book=args.book)
+    main(book=args.book, debug_weights=args.debug_weights)
