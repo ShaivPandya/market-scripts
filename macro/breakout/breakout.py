@@ -155,6 +155,28 @@ class Signal:
     vol_method: str              # "VOLUME" or "TR_PROXY"
 
 
+@dataclass
+class DiagnosticInfo:
+    """Diagnostic information about an asset's breakout status."""
+    market: str
+    name: str
+    ticker: str
+    in_box: bool
+    box_upper: Optional[float]
+    box_lower: Optional[float]
+    days_in_box: Optional[int]
+    close: float
+    atr: float
+    buffer: float
+    dist_to_up_breakout_pct: Optional[float]    # % distance to upper breakout level
+    dist_to_down_breakout_pct: Optional[float]  # % distance to lower breakout level
+    vol_ratio: Optional[float]
+    vol_threshold: float
+    vol_method: str
+    status: str  # "in_box", "near_miss_up", "near_miss_down", "not_in_box"
+    near_miss_reason: Optional[str]  # e.g., "volume ratio 1.08x < 1.20x threshold"
+
+
 def _volume_confirmation(row: pd.Series, p: Params, use_tr_proxy: bool) -> Tuple[bool, Optional[float], str]:
     if use_tr_proxy:
         # "Participation" proxy using TR instead of volume
@@ -179,15 +201,26 @@ def detect_latest_breakout(
     name: str,
     ticker: str,
     p: Params
-) -> Optional[Signal]:
+) -> Tuple[Optional[Signal], DiagnosticInfo]:
     """
     Walk forward, maintain latest active congestion box, and return a signal only if the latest bar breaks out.
     Commodities: frozen box.
     FX: hybrid (allow small boundary updates within fx_tol_atr * ATR).
+
+    Returns:
+        Tuple of (Signal or None, DiagnosticInfo with current state)
     """
 
+    # Default diagnostic for empty dataframe
     if df.empty:
-        return None
+        return None, DiagnosticInfo(
+            market=market, name=name, ticker=ticker, in_box=False,
+            box_upper=None, box_lower=None, days_in_box=None,
+            close=0.0, atr=0.0, buffer=0.0,
+            dist_to_up_breakout_pct=None, dist_to_down_breakout_pct=None,
+            vol_ratio=None, vol_threshold=p.vol_mult, vol_method="UNKNOWN",
+            status="not_in_box", near_miss_reason=None
+        )
 
     is_fx = (market == "FX")
 
@@ -248,23 +281,53 @@ def detect_latest_breakout(
 
         if up_break or dn_break:
             confirm, vol_ratio, vol_method = _volume_confirmation(row, p, use_tr_proxy)
-            # Only return a signal if the breakout is on the latest bar
-            if i == len(df) - 1 and confirm:
-                direction = "UP" if up_break else "DOWN"
-                return Signal(
-                    market=market,
-                    name=name,
-                    ticker=ticker,
-                    date=dt,
-                    direction=direction,
-                    close=close,
-                    box_upper=box_upper,
-                    box_lower=box_lower,
-                    buffer=buffer,
-                    confirm=True,
-                    vol_ratio=vol_ratio,
-                    vol_method=vol_method,
-                )
+            direction = "UP" if up_break else "DOWN"
+
+            # Only return a signal if the breakout is on the latest bar AND volume confirms
+            if i == len(df) - 1:
+                days_in = i - box_start_idx if box_start_idx is not None else 0
+                atr_val = float(row["ATR"])
+
+                if confirm:
+                    # Confirmed breakout
+                    diag = DiagnosticInfo(
+                        market=market, name=name, ticker=ticker, in_box=True,
+                        box_upper=box_upper, box_lower=box_lower, days_in_box=days_in,
+                        close=close, atr=atr_val, buffer=buffer,
+                        dist_to_up_breakout_pct=0.0 if up_break else None,
+                        dist_to_down_breakout_pct=0.0 if dn_break else None,
+                        vol_ratio=vol_ratio, vol_threshold=p.vol_mult, vol_method=vol_method,
+                        status=f"breakout_{direction.lower()}", near_miss_reason=None
+                    )
+                    return Signal(
+                        market=market,
+                        name=name,
+                        ticker=ticker,
+                        date=dt,
+                        direction=direction,
+                        close=close,
+                        box_upper=box_upper,
+                        box_lower=box_lower,
+                        buffer=buffer,
+                        confirm=True,
+                        vol_ratio=vol_ratio,
+                        vol_method=vol_method,
+                    ), diag
+                else:
+                    # Near miss: price broke out but volume didn't confirm
+                    ratio_str = f"{vol_ratio:.2f}x" if vol_ratio else "N/A"
+                    near_miss_reason = f"volume ratio {ratio_str} < {p.vol_mult:.2f}x threshold"
+                    diag = DiagnosticInfo(
+                        market=market, name=name, ticker=ticker, in_box=True,
+                        box_upper=box_upper, box_lower=box_lower, days_in_box=days_in,
+                        close=close, atr=atr_val, buffer=buffer,
+                        dist_to_up_breakout_pct=0.0 if up_break else None,
+                        dist_to_down_breakout_pct=0.0 if dn_break else None,
+                        vol_ratio=vol_ratio, vol_threshold=p.vol_mult, vol_method=vol_method,
+                        status=f"near_miss_{direction.lower()}", near_miss_reason=near_miss_reason
+                    )
+                    return None, diag
+
             # Box resolves regardless of confirmation once price exits materially
             in_box = False
             box_upper = box_lower = np.nan
@@ -293,7 +356,42 @@ def detect_latest_breakout(
             miss_count = 0
             continue
 
-    return None
+    # Build diagnostic info from the final state (latest bar)
+    last_row = df.iloc[-1]
+    last_close = float(last_row["Close"])
+    last_atr = float(last_row["ATR"]) if not pd.isna(last_row["ATR"]) else 0.0
+    last_buffer = p.buffer_k * last_atr
+
+    # Get volume info for latest bar
+    _, last_vol_ratio, last_vol_method = _volume_confirmation(last_row, p, use_tr_proxy)
+
+    if in_box and not math.isnan(box_upper) and not math.isnan(box_lower):
+        # Currently in a box but no breakout on latest bar
+        days_in = (len(df) - 1 - box_start_idx) if box_start_idx is not None else 0
+        up_level = box_upper + last_buffer
+        down_level = box_lower - last_buffer
+        dist_up_pct = ((up_level - last_close) / last_close) * 100 if last_close > 0 else None
+        dist_down_pct = ((last_close - down_level) / last_close) * 100 if last_close > 0 else None
+
+        return None, DiagnosticInfo(
+            market=market, name=name, ticker=ticker, in_box=True,
+            box_upper=box_upper, box_lower=box_lower, days_in_box=days_in,
+            close=last_close, atr=last_atr, buffer=last_buffer,
+            dist_to_up_breakout_pct=dist_up_pct,
+            dist_to_down_breakout_pct=dist_down_pct,
+            vol_ratio=last_vol_ratio, vol_threshold=p.vol_mult, vol_method=last_vol_method,
+            status="in_box", near_miss_reason=None
+        )
+    else:
+        # Not currently in a congestion box
+        return None, DiagnosticInfo(
+            market=market, name=name, ticker=ticker, in_box=False,
+            box_upper=None, box_lower=None, days_in_box=None,
+            close=last_close, atr=last_atr, buffer=last_buffer,
+            dist_to_up_breakout_pct=None, dist_to_down_breakout_pct=None,
+            vol_ratio=last_vol_ratio, vol_threshold=p.vol_mult, vol_method=last_vol_method,
+            status="not_in_box", near_miss_reason=None
+        )
 
 
 # ----------------------------
@@ -335,6 +433,73 @@ def download_daily(tickers: List[str], period: str = "3y") -> Dict[str, pd.DataF
 
 
 # ----------------------------
+# Diagnostic output
+# ----------------------------
+
+def print_diagnostic_summary(diagnostics: List[DiagnosticInfo]) -> None:
+    """Print a comprehensive summary of breakout analysis for all assets."""
+
+    print("\n" + "=" * 70)
+    print("BREAKOUT ANALYSIS SUMMARY")
+    print("=" * 70)
+
+    # Categorize assets
+    in_box = [d for d in diagnostics if d.status == "in_box"]
+    near_misses = [d for d in diagnostics if d.status.startswith("near_miss")]
+    not_in_box = [d for d in diagnostics if d.status == "not_in_box"]
+
+    # Sort in_box by closest to breakout (minimum of up/down distance)
+    def min_distance(d: DiagnosticInfo) -> float:
+        up = d.dist_to_up_breakout_pct if d.dist_to_up_breakout_pct is not None else float('inf')
+        dn = d.dist_to_down_breakout_pct if d.dist_to_down_breakout_pct is not None else float('inf')
+        return min(abs(up), abs(dn))
+
+    in_box.sort(key=min_distance)
+
+    # Print assets in consolidation boxes
+    if in_box:
+        print(f"\nASSETS IN CONSOLIDATION BOX ({len(in_box)} potential breakouts):")
+        print("-" * 70)
+        for d in in_box:
+            box_str = f"[{d.box_lower:.4f} - {d.box_upper:.4f}]" if d.box_lower and d.box_upper else "[N/A]"
+            print(f"\n  {d.name} ({d.market})")
+            print(f"      Box: {box_str}  |  Day {d.days_in_box}/60  |  Close: {d.close:.4f}")
+
+            up_str = f"{d.dist_to_up_breakout_pct:+.2f}%" if d.dist_to_up_breakout_pct is not None else "N/A"
+            dn_str = f"{d.dist_to_down_breakout_pct:+.2f}%" if d.dist_to_down_breakout_pct is not None else "N/A"
+            print(f"      Distance to UP breakout: {up_str}  |  Distance to DOWN breakout: {dn_str}")
+
+            vol_str = f"{d.vol_ratio:.2f}x" if d.vol_ratio is not None else "N/A"
+            print(f"      Volume ratio: {vol_str} (need {d.vol_threshold:.2f}x) [{d.vol_method}]")
+    else:
+        print("\nASSETS IN CONSOLIDATION BOX: None")
+
+    # Print near misses
+    if near_misses:
+        print(f"\nNEAR MISSES ({len(near_misses)} - price broke but volume didn't confirm):")
+        print("-" * 70)
+        for d in near_misses:
+            direction = "UP" if "up" in d.status else "DOWN"
+            print(f"\n  {d.name} ({d.market})")
+            print(f"      Direction: {direction}  |  Close: {d.close:.4f}")
+            print(f"      Reason: {d.near_miss_reason}")
+    else:
+        print("\nNEAR MISSES: None")
+
+    # Print assets not in consolidation
+    if not_in_box:
+        print(f"\nNOT IN CONSOLIDATION ({len(not_in_box)}):")
+        print("-" * 70)
+        names = [f"{d.name}" for d in not_in_box]
+        # Print in a compact format
+        print(f"      {', '.join(names)}")
+
+    print("\n" + "=" * 70)
+    print("No confirmed breakouts found on the latest daily bar.")
+    print("=" * 70 + "\n")
+
+
+# ----------------------------
 # Main
 # ----------------------------
 
@@ -350,6 +515,7 @@ def main():
     data = download_daily(tickers, period="3y")
 
     signals: List[Signal] = []
+    diagnostics: List[DiagnosticInfo] = []
 
     for market, name, ticker in meta:
         df = data.get(ticker)
@@ -364,12 +530,13 @@ def main():
             continue
 
         feats = compute_features(df, P)
-        sig = detect_latest_breakout(feats, market, name, ticker, P)
+        sig, diag = detect_latest_breakout(feats, market, name, ticker, P)
+        diagnostics.append(diag)
         if sig:
             signals.append(sig)
 
     if not signals:
-        print("No confirmed breakouts found on the latest daily bar for the defined universe.")
+        print_diagnostic_summary(diagnostics)
         return
 
     # Print results
