@@ -82,7 +82,8 @@ DURATION_OF_TICKER: Dict[str, float] = {
 
 # Objective tuning
 GAMMA_RISK = 1e-4     # small; increases preference for lower risk while staying close to w_raw
-VOL_POWER = 0.7       # power for inverse-vol weighting: 1/σ^p (p < 1 reduces concentration in low-vol names)
+VOL_POWER_LONG = 0.7  # power for inverse-vol weighting for longs: 1/σ^p (p < 1 reduces concentration in low-vol names)
+VOL_POWER_SHORT = 1.0 # power for inverse-vol weighting for shorts: 1/σ^p
 
 
 # -----------------------------
@@ -284,7 +285,8 @@ def build_raw_weights(
     signal_scale_equity_long: float = 1.5,
     signal_scale_equity_short: float = 1.0,
     signal_scale_other: float = 0.9,
-    vol_power: float = 0.8,
+    vol_power_long: float = 0.7,
+    vol_power_short: float = 1.0,
 ) -> pd.Series:
     """
     Inverse-vol raw weights, optionally tilted by momentum signals.
@@ -297,7 +299,8 @@ def build_raw_weights(
         signal_scale_equity_long: Scaling factor for signal tilt on equity longs (default: 1.5)
         signal_scale_equity_short: Scaling factor for signal tilt on equity shorts (default: 1.0)
         signal_scale_other: Scaling factor for signal tilt on non-equities (default: 0.9)
-        vol_power: Power for inverse-vol weighting 1/σ^p (default: 0.8; use <1 to reduce low-vol concentration)
+        vol_power_long: Power for inverse-vol weighting 1/σ^p for longs (default: 0.7; use <1 to reduce low-vol concentration)
+        vol_power_short: Power for inverse-vol weighting 1/σ^p for shorts (default: 1.0)
 
     Signal interpretation (signals are direction-agnostic: higher = stronger/better stock):
         - Positive signal on LONG = increase weight (strong stock, go longer)
@@ -310,7 +313,7 @@ def build_raw_weights(
     shorts = meta[meta["direction"].str.lower().eq("short")]
 
     if len(longs) > 0:
-        invv = 1.0 / (longs["realized_vol"].replace(0, np.nan) ** vol_power)
+        invv = 1.0 / (longs["realized_vol"].replace(0, np.nan) ** vol_power_long)
         invv = invv.fillna(0.0)
         if invv.sum() > 0:
             base_w = invv / invv.sum()
@@ -331,7 +334,7 @@ def build_raw_weights(
             w_raw.loc[longs.index] = G_L * base_w
 
     if len(shorts) > 0:
-        invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power)
+        invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power_short)
         invv = invv.fillna(0.0)
         if invv.sum() > 0:
             base_w = invv / invv.sum()
@@ -535,7 +538,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
 
     # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
-    w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0, vol_power=VOL_POWER).reindex(tickers).fillna(0.0)
+    w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0, vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
     w_raw_vec = w_raw.values
 
     # Masks
