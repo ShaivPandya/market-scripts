@@ -83,7 +83,7 @@ DURATION_OF_TICKER: Dict[str, float] = {
 # Objective tuning
 GAMMA_RISK = 1e-4     # small; increases preference for lower risk while staying close to w_raw
 VOL_POWER_LONG = 0.7  # power for inverse-vol weighting for longs: 1/σ^p (p < 1 reduces concentration in low-vol names)
-VOL_POWER_SHORT = 1.0 # power for inverse-vol weighting for shorts: 1/σ^p
+VOL_POWER_SHORT = 1.4 # power for inverse-vol weighting for shorts: 1/σ^p
 
 
 # -----------------------------
@@ -286,7 +286,7 @@ def build_raw_weights(
     signal_scale_equity_short: float = 1.0,
     signal_scale_other: float = 0.9,
     vol_power_long: float = 0.7,
-    vol_power_short: float = 1.0,
+    vol_power_short: float = 1.4,
 ) -> pd.Series:
     """
     Inverse-vol raw weights, optionally tilted by momentum signals.
@@ -300,7 +300,7 @@ def build_raw_weights(
         signal_scale_equity_short: Scaling factor for signal tilt on equity shorts (default: 1.0)
         signal_scale_other: Scaling factor for signal tilt on non-equities (default: 0.9)
         vol_power_long: Power for inverse-vol weighting 1/σ^p for longs (default: 0.7; use <1 to reduce low-vol concentration)
-        vol_power_short: Power for inverse-vol weighting 1/σ^p for shorts (default: 1.0)
+        vol_power_short: Power for inverse-vol weighting 1/σ^p for shorts (default: 1.4)
 
     Signal interpretation (signals are direction-agnostic: higher = stronger/better stock):
         - Positive signal on LONG = increase weight (strong stock, go longer)
