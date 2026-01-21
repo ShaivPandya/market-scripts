@@ -71,6 +71,8 @@ CMDTY_GROSS_MAX = 0.50
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 BETA_TOL = 0.10  # beta-neutrality tolerance band (soft constraint, not exact)
 MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
+LONG_MAX = 0.25        # max 25% for any single long position
+SHORT_MIN = -0.25      # max 25% (abs) for any single short position
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -559,8 +561,10 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     short_mask = direction.eq("short").values
     if long_mask.any():
         constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
+        constraints.append(w[long_mask] <= LONG_MAX)  # cap longs at 20%
     if short_mask.any():
         constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
+        constraints.append(w[short_mask] >= SHORT_MIN)  # floor shorts at -10%
 
     # Total gross leverage
     constraints.append(cp.norm1(w) <= GROSS_MAX)
