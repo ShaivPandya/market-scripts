@@ -72,8 +72,8 @@ CMDTY_GROSS_MAX = 1.0
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 # Beta hedging is done post-optimization via explicit SPY/IWM hedge positions
 MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
-LONG_MAX = 0.25        # max 25% for any single long position
-SHORT_MIN = -0.25      # max 25% (abs) for any single short position
+LONG_MAX = 0.20        # max 25% for any single long position
+SHORT_MIN = -0.10      # max 25% (abs) for any single short position
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
