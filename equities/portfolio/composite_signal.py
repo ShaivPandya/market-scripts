@@ -13,6 +13,9 @@ to inform raw target weights.
 
 Usage:
     python3 composite_signal.py
+    python3 composite_signal.py --ticker AAPL
+    python3 composite_signal.py --ticker AAPL,MSFT,GOOGL
+    python3 composite_signal.py --ticker GLD --asset commodity
     python3 composite_signal.py --benchmark QQQ
     python3 composite_signal.py --quality-weight 0.5 --price-weight 0.3 --revenue-weight 0.1 --eps-weight 0.1
 """
@@ -52,6 +55,12 @@ DEFAULT_WEIGHTS = {
     'price_momentum': 0.33,
     'revenue_momentum': 0.20,
     'eps_momentum': 0.14,
+}
+DEFAULT_WEIGHTS_SHORT = {
+    'quality': 0.30,
+    'price_momentum': 0.40,
+    'revenue_momentum': 0.20,
+    'eps_momentum': 0.10,
 }
 
 
@@ -382,6 +391,8 @@ def generate_composite_signals(
     asset_map: Dict[str, str],
     benchmark_override: Optional[str] = None,
     weights: Dict[str, float] = None,
+    weights_short: Optional[Dict[str, float]] = None,
+    direction_map: Optional[Dict[str, str]] = None,
     years: int = DEFAULT_YEARS,
     clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
@@ -392,7 +403,9 @@ def generate_composite_signals(
         tickers: List of ticker symbols
         asset_map: Dict mapping ticker -> asset type (equity, commodity)
         benchmark_override: If specified, use this benchmark for all tickers
-        weights: Dict of signal weights (default: quality=0.33, price=0.33, revenue=0.20, eps=0.14)
+        weights: Dict of signal weights for longs (default: quality=0.33, price=0.33, revenue=0.20, eps=0.14)
+        weights_short: Dict of signal weights for shorts (default: None, uses same as longs)
+        direction_map: Dict mapping ticker -> direction ("long" or "short")
         years: Years of price history to fetch
         clip_bounds: (lower, upper) bounds for signal clipping
 
@@ -504,7 +517,26 @@ def generate_composite_signals(
         'revenue_momentum': rev_mom_signal,
         'price_momentum': price_signal,
     }
-    composite_signal = combine_signals(signal_dict, weights, tickers)
+
+    # Direction-specific composite signals
+    if direction_map is not None and weights_short is not None:
+        longs = [t for t in tickers if direction_map.get(t, "").lower() == "long"]
+        shorts = [t for t in tickers if direction_map.get(t, "").lower() == "short"]
+        others = [t for t in tickers if t not in longs and t not in shorts]
+
+        composite_signal = pd.Series(index=tickers, dtype="float64")
+
+        if longs:
+            composite_long = combine_signals(signal_dict, weights, longs)
+            composite_signal.loc[longs] = composite_long
+        if shorts:
+            composite_short = combine_signals(signal_dict, weights_short, shorts)
+            composite_signal.loc[shorts] = composite_short
+        if others:
+            composite_other = combine_signals(signal_dict, weights, others)
+            composite_signal.loc[others] = composite_other
+    else:
+        composite_signal = combine_signals(signal_dict, weights, tickers)
 
     # 4. Clip composite signal
     composite_signal = clip_signal(composite_signal, *clip_bounds)
@@ -532,6 +564,16 @@ def main() -> int:
         "--portfolio",
         default=str(PORTFOLIO_CSV),
         help=f"Path to portfolio CSV (default: {PORTFOLIO_CSV})",
+    )
+    ap.add_argument(
+        "--ticker",
+        default=None,
+        help="Single ticker or comma-separated tickers (overrides --portfolio)",
+    )
+    ap.add_argument(
+        "--asset",
+        default="equity",
+        help="Asset type when using --ticker: 'equity' or 'commodity' (default: equity)",
     )
     ap.add_argument(
         "--benchmark",
@@ -602,25 +644,33 @@ def main() -> int:
         print(f"[WARN] Weights sum to {weight_sum:.3f}, normalizing to 1.0")
         weights = {k: v / weight_sum for k, v in weights.items()}
 
-    # Load portfolio
-    portfolio_path = Path(args.portfolio)
-    if not portfolio_path.exists():
-        print(f"[ERROR] Portfolio file not found: {portfolio_path}", file=sys.stderr)
-        return 1
+    # Handle --ticker argument (overrides portfolio CSV)
+    if args.ticker:
+        active_tickers = [t.strip() for t in args.ticker.split(',')]
+        asset_map = {ticker: args.asset for ticker in active_tickers}
+        # Create dummy direction for output
+        direction_map = {ticker: "long" for ticker in active_tickers}
+    else:
+        # Load portfolio
+        portfolio_path = Path(args.portfolio)
+        if not portfolio_path.exists():
+            print(f"[ERROR] Portfolio file not found: {portfolio_path}", file=sys.stderr)
+            return 1
 
-    meta = pd.read_csv(portfolio_path)
-    meta["direction"] = meta["direction"].fillna("")
+        meta = pd.read_csv(portfolio_path)
+        meta["direction"] = meta["direction"].fillna("")
 
-    # Build asset map
-    asset_map = dict(zip(meta["ticker"], meta["asset"]))
+        # Build asset map
+        asset_map = dict(zip(meta["ticker"], meta["asset"]))
 
-    # Filter to active tickers (has direction)
-    active_mask = meta["direction"].str.strip().ne("")
-    active_tickers = meta.loc[active_mask, "ticker"].tolist()
+        # Filter to active tickers (has direction)
+        active_mask = meta["direction"].str.strip().ne("")
+        active_tickers = meta.loc[active_mask, "ticker"].tolist()
+        direction_map = dict(zip(meta["ticker"], meta["direction"]))
 
-    if not active_tickers:
-        print("[ERROR] No active tickers in portfolio", file=sys.stderr)
-        return 1
+        if not active_tickers:
+            print("[ERROR] No active tickers in portfolio", file=sys.stderr)
+            return 1
 
     print(f"Portfolio: {len(active_tickers)} active tickers")
     print(f"Weights: Quality={weights['quality']:.1%}, Price={weights['price_momentum']:.1%}, "
@@ -638,7 +688,7 @@ def main() -> int:
 
     # Add metadata columns
     output = pd.DataFrame({
-        "direction": meta.set_index("ticker").loc[active_tickers, "direction"],
+        "direction": pd.Series(direction_map),
         "benchmark": pd.Series(ticker_benchmarks),
     })
     output = output.join(signals_df)

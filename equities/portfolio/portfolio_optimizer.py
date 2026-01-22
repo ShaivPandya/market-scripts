@@ -47,7 +47,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from composite_signal import generate_composite_signals
+from composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
 
 console = Console()
 
@@ -67,10 +67,12 @@ VOL_MAX = 0.0200                      # daily
 GROSS_MAX = 4.0
 EQ_NET_MIN, EQ_NET_MAX = -0.50, 1.00
 FX_GROSS_MAX = 2.0
-CMDTY_GROSS_MAX = 0.50
+CMDTY_GROSS_MAX = 1.0
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 BETA_TOL = 0.10  # beta-neutrality tolerance band (soft constraint, not exact)
 MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
+LONG_MAX = 0.25        # max 25% for any single long position
+SHORT_MIN = -0.25      # max 25% (abs) for any single short position
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -82,7 +84,8 @@ DURATION_OF_TICKER: Dict[str, float] = {
 
 # Objective tuning
 GAMMA_RISK = 1e-4     # small; increases preference for lower risk while staying close to w_raw
-VOL_POWER = 0.7       # power for inverse-vol weighting: 1/σ^p (p < 1 reduces concentration in low-vol names)
+VOL_POWER_LONG = 0.7  # power for inverse-vol weighting for longs: 1/σ^p (p < 1 reduces concentration in low-vol names)
+VOL_POWER_SHORT = 1.4 # power for inverse-vol weighting for shorts: 1/σ^p
 
 
 # -----------------------------
@@ -284,7 +287,8 @@ def build_raw_weights(
     signal_scale_equity_long: float = 1.5,
     signal_scale_equity_short: float = 1.0,
     signal_scale_other: float = 0.9,
-    vol_power: float = 0.8,
+    vol_power_long: float = 0.7,
+    vol_power_short: float = 1.4,
 ) -> pd.Series:
     """
     Inverse-vol raw weights, optionally tilted by momentum signals.
@@ -297,7 +301,8 @@ def build_raw_weights(
         signal_scale_equity_long: Scaling factor for signal tilt on equity longs (default: 1.5)
         signal_scale_equity_short: Scaling factor for signal tilt on equity shorts (default: 1.0)
         signal_scale_other: Scaling factor for signal tilt on non-equities (default: 0.9)
-        vol_power: Power for inverse-vol weighting 1/σ^p (default: 0.8; use <1 to reduce low-vol concentration)
+        vol_power_long: Power for inverse-vol weighting 1/σ^p for longs (default: 0.7; use <1 to reduce low-vol concentration)
+        vol_power_short: Power for inverse-vol weighting 1/σ^p for shorts (default: 1.4)
 
     Signal interpretation (signals are direction-agnostic: higher = stronger/better stock):
         - Positive signal on LONG = increase weight (strong stock, go longer)
@@ -310,7 +315,7 @@ def build_raw_weights(
     shorts = meta[meta["direction"].str.lower().eq("short")]
 
     if len(longs) > 0:
-        invv = 1.0 / (longs["realized_vol"].replace(0, np.nan) ** vol_power)
+        invv = 1.0 / (longs["realized_vol"].replace(0, np.nan) ** vol_power_long)
         invv = invv.fillna(0.0)
         if invv.sum() > 0:
             base_w = invv / invv.sum()
@@ -331,7 +336,7 @@ def build_raw_weights(
             w_raw.loc[longs.index] = G_L * base_w
 
     if len(shorts) > 0:
-        invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power)
+        invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power_short)
         invv = invv.fillna(0.0)
         if invv.sum() > 0:
             base_w = invv / invv.sum()
@@ -526,16 +531,19 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
     console.print(f"[cyan]Generating composite signals for {len(active_tickers)} active tickers...[/cyan]")
     asset_map = dict(zip(meta.index, meta["asset"]))
+    direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
     signals_df, _ = generate_composite_signals(
         tickers=active_tickers,
         asset_map=asset_map,
         benchmark_override=MARKET_TICKER,
+        direction_map=direction_map,
+        weights_short=DEFAULT_WEIGHTS_SHORT,
     )
     # Extract composite signal for weighting
     signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
 
     # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
-    w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0, vol_power=VOL_POWER).reindex(tickers).fillna(0.0)
+    w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0, vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
     w_raw_vec = w_raw.values
 
     # Masks
@@ -556,8 +564,10 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     short_mask = direction.eq("short").values
     if long_mask.any():
         constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
+        constraints.append(w[long_mask] <= LONG_MAX)  # cap longs at 20%
     if short_mask.any():
         constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
+        constraints.append(w[short_mask] >= SHORT_MIN)  # floor shorts at -10%
 
     # Total gross leverage
     constraints.append(cp.norm1(w) <= GROSS_MAX)
