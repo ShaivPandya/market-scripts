@@ -56,6 +56,12 @@ DEFAULT_WEIGHTS = {
     'revenue_momentum': 0.20,
     'eps_momentum': 0.14,
 }
+DEFAULT_WEIGHTS_SHORT = {
+    'quality': 0.30,
+    'price_momentum': 0.40,
+    'revenue_momentum': 0.20,
+    'eps_momentum': 0.10,
+}
 
 
 # -----------------------------
@@ -385,6 +391,8 @@ def generate_composite_signals(
     asset_map: Dict[str, str],
     benchmark_override: Optional[str] = None,
     weights: Dict[str, float] = None,
+    weights_short: Optional[Dict[str, float]] = None,
+    direction_map: Optional[Dict[str, str]] = None,
     years: int = DEFAULT_YEARS,
     clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
@@ -395,7 +403,9 @@ def generate_composite_signals(
         tickers: List of ticker symbols
         asset_map: Dict mapping ticker -> asset type (equity, commodity)
         benchmark_override: If specified, use this benchmark for all tickers
-        weights: Dict of signal weights (default: quality=0.33, price=0.33, revenue=0.20, eps=0.14)
+        weights: Dict of signal weights for longs (default: quality=0.33, price=0.33, revenue=0.20, eps=0.14)
+        weights_short: Dict of signal weights for shorts (default: None, uses same as longs)
+        direction_map: Dict mapping ticker -> direction ("long" or "short")
         years: Years of price history to fetch
         clip_bounds: (lower, upper) bounds for signal clipping
 
@@ -507,7 +517,26 @@ def generate_composite_signals(
         'revenue_momentum': rev_mom_signal,
         'price_momentum': price_signal,
     }
-    composite_signal = combine_signals(signal_dict, weights, tickers)
+
+    # Direction-specific composite signals
+    if direction_map is not None and weights_short is not None:
+        longs = [t for t in tickers if direction_map.get(t, "").lower() == "long"]
+        shorts = [t for t in tickers if direction_map.get(t, "").lower() == "short"]
+        others = [t for t in tickers if t not in longs and t not in shorts]
+
+        composite_signal = pd.Series(index=tickers, dtype="float64")
+
+        if longs:
+            composite_long = combine_signals(signal_dict, weights, longs)
+            composite_signal.loc[longs] = composite_long
+        if shorts:
+            composite_short = combine_signals(signal_dict, weights_short, shorts)
+            composite_signal.loc[shorts] = composite_short
+        if others:
+            composite_other = combine_signals(signal_dict, weights, others)
+            composite_signal.loc[others] = composite_other
+    else:
+        composite_signal = combine_signals(signal_dict, weights, tickers)
 
     # 4. Clip composite signal
     composite_signal = clip_signal(composite_signal, *clip_bounds)

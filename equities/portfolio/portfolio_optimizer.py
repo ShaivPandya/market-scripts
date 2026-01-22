@@ -47,7 +47,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from composite_signal import generate_composite_signals
+from composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
 
 console = Console()
 
@@ -531,10 +531,13 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
     console.print(f"[cyan]Generating composite signals for {len(active_tickers)} active tickers...[/cyan]")
     asset_map = dict(zip(meta.index, meta["asset"]))
+    direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
     signals_df, _ = generate_composite_signals(
         tickers=active_tickers,
         asset_map=asset_map,
         benchmark_override=MARKET_TICKER,
+        direction_map=direction_map,
+        weights_short=DEFAULT_WEIGHTS_SHORT,
     )
     # Extract composite signal for weighting
     signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)

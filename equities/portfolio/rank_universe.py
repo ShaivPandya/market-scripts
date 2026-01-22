@@ -360,8 +360,8 @@ def main() -> int:
     ap.add_argument(
         "--top",
         type=int,
-        default=10,
-        help="Number of top/bottom performers to display (default: 10)",
+        default=20,
+        help="Number of top/bottom performers to display (default: 20)",
     )
     ap.add_argument(
         "--output",
