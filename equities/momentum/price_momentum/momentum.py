@@ -13,6 +13,7 @@ Usage:
     python3 momentum.py --tickers-file us_mega_cap --benchmark QQQ --years 10
     python3 momentum.py AAPL
     python3 momentum.py --list-universes
+    python3 momentum.py                    # Uses portfolio.csv by default
 
 Requirements:
     pip install yfinance pandas
@@ -186,8 +187,24 @@ def main() -> int:
     elif args.tickers_file:
         tickers = load_universe(args.tickers_file)
     else:
-        print("Error: must specify either a ticker or --tickers-file", file=sys.stderr)
-        return 1
+        # Default to reading from portfolio.csv
+        portfolio_path = Path(__file__).parent.parent.parent / "universes" / "portfolio.csv"
+        if not portfolio_path.exists():
+            print(f"Error: portfolio.csv not found at {portfolio_path}", file=sys.stderr)
+            return 1
+        try:
+            portfolio_df = pd.read_csv(portfolio_path)
+            if "ticker" not in portfolio_df.columns:
+                print("Error: portfolio.csv must have a 'ticker' column", file=sys.stderr)
+                return 1
+            tickers = [t.strip().upper() for t in portfolio_df["ticker"].dropna()]
+            if not tickers:
+                print("Error: no tickers found in portfolio.csv", file=sys.stderr)
+                return 1
+            print(f"Using {len(tickers)} tickers from portfolio.csv")
+        except Exception as e:
+            print(f"Error reading portfolio.csv: {e}", file=sys.stderr)
+            return 1
 
     benchmark_override = args.benchmark.strip().upper() if args.benchmark else None
     benchmark_cache: dict[str, pd.Series] = {}
