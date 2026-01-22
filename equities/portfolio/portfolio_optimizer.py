@@ -404,7 +404,7 @@ def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame) -> str:
     # Asset class caps
     for name, mask_col, cap in [
         ("FX gross (200%)", "fx", FX_GROSS_MAX),
-        ("Commodity gross (50%)", "commodity", CMDTY_GROSS_MAX),
+        ("Commodity gross (100%)", "commodity", CMDTY_GROSS_MAX),
     ]:
         mask = meta["asset"].str.lower().eq(mask_col)
         if mask.any():
