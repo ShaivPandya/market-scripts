@@ -640,6 +640,11 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     w_final = w_star * k
     vol_final = port_vol(w_final.values)
 
+    # Compute volatility for benchmark ETFs (SPY and IWM) for informational purposes
+    benchmark_vol = compute_defense_volatility(usd_prices, market_tickers)
+    vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
+    vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
+
     # Compute separate betas for longs and shorts
     beta_long_spy = float(betas_spy.values[long_mask] @ w_final.values[long_mask]) if long_mask.any() else 0.0
     beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
@@ -693,6 +698,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     solution_text = (
         f"[bold]Status:[/bold]        [{status_color}]{prob.status}[/{status_color}]\n"
         f"[bold]Vol (daily):[/bold]   {vol_final:.6f}  [dim](target {VOL_TARGET:.6f}, band [{VOL_MIN:.6f}, {VOL_MAX:.6f}])[/dim]\n"
+        f"[bold]SPY vol:[/bold]       {vol_spy:.6f}  [dim](for reference)[/dim]\n"
+        f"[bold]IWM vol:[/bold]       {vol_iwm:.6f}  [dim](for reference)[/dim]\n"
         f"[bold]Long β to SPY:[/bold] {beta_long_spy:+.4f}  [dim]→ Hedge: {hedge_spy_weight:+.4f} {MARKET_TICKER_LONG}[/dim]\n"
         f"[bold]Short β to IWM:[/bold] {beta_short_iwm:+.4f}  [dim]→ Hedge: {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}[/dim]\n"
         f"[bold]Band feasible:[/bold] {feasible_text}"
