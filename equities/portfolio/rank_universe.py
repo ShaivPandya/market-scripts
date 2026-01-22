@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -81,31 +82,110 @@ def zscore_of_ranks(values: pd.Series) -> pd.Series:
 # -----------------------------
 # Price Fetching
 # -----------------------------
-def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
-    """Download adjusted close prices for multiple tickers from yfinance."""
+def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100, delay: float = 1.0) -> pd.DataFrame:
+    """
+    Download adjusted close prices for multiple tickers from yfinance in batches.
+
+    Args:
+        tickers: List of ticker symbols
+        years: Number of years of history to fetch
+        batch_size: Number of tickers to download per batch
+        delay: Seconds to wait between batches
+
+    Returns:
+        DataFrame with dates as index and tickers as columns
+    """
     end = datetime.now(timezone.utc).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
-    df = yf.download(
-        tickers,
-        start=str(start),
-        end=str(end),
-        auto_adjust=True,
-        progress=False,
-        threads=True,
-    )
+    all_prices = []
+    failed_tickers = []
 
-    if df is None or df.empty:
-        raise RuntimeError(f"No data returned for tickers: {tickers}")
+    # Split tickers into batches
+    num_batches = (len(tickers) + batch_size - 1) // batch_size
 
-    if isinstance(df.columns, pd.MultiIndex):
-        prices = df["Close"].copy()
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+
+        print(f"  Batch {batch_num}/{num_batches}: Downloading {len(batch)} tickers...")
+
+        try:
+            df = yf.download(
+                batch,
+                start=str(start),
+                end=str(end),
+                auto_adjust=True,
+                progress=False,
+                threads=True,
+            )
+
+            if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    prices = df["Close"].copy()
+                else:
+                    # Single ticker case
+                    prices = df[["Close"]].copy()
+                    prices.columns = [batch[0]]
+
+                prices.index = pd.to_datetime(prices.index).tz_localize(None)
+                all_prices.append(prices)
+            else:
+                failed_tickers.extend(batch)
+
+        except Exception as e:
+            print(f"  Warning: Batch {batch_num} failed with error: {e}")
+            failed_tickers.extend(batch)
+
+        # Delay between batches to avoid rate limiting (except for last batch)
+        if i + batch_size < len(tickers):
+            time.sleep(delay)
+
+    if not all_prices:
+        raise RuntimeError(f"No price data downloaded for any tickers")
+
+    # Combine all batches
+    combined = pd.concat(all_prices, axis=1)
+
+    # Remove duplicate columns if any
+    combined = combined.loc[:, ~combined.columns.duplicated()]
+
+    if failed_tickers:
+        print(f"  Warning: Failed to download data for {len(failed_tickers)} tickers")
+
+    return combined.dropna(how="all")
+
+
+def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
+    """Download adjusted close prices for multiple tickers from yfinance."""
+    # For small batches (<=100), use direct download
+    if len(tickers) <= 100:
+        end = datetime.now(timezone.utc).date() + timedelta(days=1)
+        start = end - timedelta(days=365 * years)
+
+        df = yf.download(
+            tickers,
+            start=str(start),
+            end=str(end),
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+
+        if df is None or df.empty:
+            raise RuntimeError(f"No data returned for tickers: {tickers}")
+
+        if isinstance(df.columns, pd.MultiIndex):
+            prices = df["Close"].copy()
+        else:
+            prices = df[["Close"]].copy()
+            prices.columns = [tickers[0]]
+
+        prices.index = pd.to_datetime(prices.index).tz_localize(None)
+        return prices.dropna(how="all")
     else:
-        prices = df[["Close"]].copy()
-        prices.columns = [tickers[0]]
-
-    prices.index = pd.to_datetime(prices.index).tz_localize(None)
-    return prices.dropna(how="all")
+        # For large universes, use batched download
+        return fetch_prices_batch(tickers, years=years)
 
 
 # -----------------------------

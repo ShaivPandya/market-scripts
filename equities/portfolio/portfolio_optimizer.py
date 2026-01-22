@@ -58,7 +58,8 @@ PORTFOLIO_CSV = Path(__file__).parent.parent / "universes" / "portfolio.csv"
 LOOKBACK_DAYS = 365  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
-MARKET_TICKER = "SPY"                 # SPY used for beta regression; must be in prices
+MARKET_TICKER_LONG = "SPY"            # SPY used for beta regression on long positions
+MARKET_TICKER_SHORT = "IWM"           # Russell 2000 ETF for beta regression on short positions
 VOL_MIN = 0.0120                      # daily
 VOL_TARGET = 0.0150                   # daily
 VOL_MAX = 0.0200                      # daily
@@ -69,10 +70,10 @@ EQ_NET_MIN, EQ_NET_MAX = -0.50, 1.00
 FX_GROSS_MAX = 2.0
 CMDTY_GROSS_MAX = 1.0
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
-BETA_TOL = 0.10  # beta-neutrality tolerance band (soft constraint, not exact)
+# Beta hedging is done post-optimization via explicit SPY/IWM hedge positions
 MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
-LONG_MAX = 0.25        # max 25% for any single long position
-SHORT_MIN = -0.25      # max 25% (abs) for any single short position
+LONG_MAX = 0.20        # max 25% for any single long position
+SHORT_MIN = -0.10      # max 25% (abs) for any single short position
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -403,7 +404,7 @@ def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame) -> str:
     # Asset class caps
     for name, mask_col, cap in [
         ("FX gross (200%)", "fx", FX_GROSS_MAX),
-        ("Commodity gross (50%)", "commodity", CMDTY_GROSS_MAX),
+        ("Commodity gross (100%)", "commodity", CMDTY_GROSS_MAX),
     ]:
         mask = meta["asset"].str.lower().eq(mask_col)
         if mask.any():
@@ -473,7 +474,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     # Determine required FX tickers and download all prices from yfinance
     fx_tickers = get_required_fx_tickers(tickers)
-    all_tickers_to_fetch = tickers + [MARKET_TICKER] if MARKET_TICKER not in tickers else tickers
+    # Include both market tickers for beta regression
+    market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
+    all_tickers_to_fetch = list(set(tickers + market_tickers))
     console.print(f"[cyan]Downloading prices for {len(all_tickers_to_fetch)} tickers + {len(fx_tickers)} FX rates...[/cyan]")
     prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
@@ -481,12 +484,13 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if missing_cols:
         raise ValueError(f"yfinance failed to download tickers: {missing_cols}")
 
-    if MARKET_TICKER not in prices_all.columns:
-        raise ValueError(f"yfinance failed to download {MARKET_TICKER} for beta regression.")
+    for mt in market_tickers:
+        if mt not in prices_all.columns:
+            raise ValueError(f"yfinance failed to download {mt} for beta regression.")
 
-    # Convert all instrument prices to USD prices (include market ticker for beta calc)
+    # Convert all instrument prices to USD prices (include market tickers for beta calc)
     usd_prices = pd.DataFrame(index=prices_all.index)
-    tickers_plus_market = tickers + [MARKET_TICKER] if MARKET_TICKER not in tickers else tickers
+    tickers_plus_market = list(set(tickers + market_tickers))
     for t in tickers_plus_market:
         local_px = prices_all[t]
         ccy = CURRENCY_OF_TICKER.get(t, BASE_CCY)  # default USD if not specified
@@ -518,14 +522,17 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Cholesky for SOC vol constraint
     L = np.linalg.cholesky(Sigma)
 
-    # Total-portfolio betas vs market (SPY) for ALL instruments
-    # Try yfinance betas first, then compute missing ones manually
-    console.print("[cyan]Fetching betas from yfinance...[/cyan]")
-    yf_betas = fetch_yfinance_betas(tickers)
-    computed_betas = compute_betas(rets, MARKET_TICKER).reindex(tickers)
-    # Use yfinance beta if available, otherwise use computed
-    betas = yf_betas.combine_first(computed_betas).fillna(0.0)
-    beta_vec = betas.values
+    # Compute betas for ALL instruments vs both benchmarks
+    # SPY betas for long positions, IWM betas for short positions
+    console.print("[cyan]Computing betas vs SPY (longs) and IWM (shorts)...[/cyan]")
+
+    # SPY betas: try yfinance first, then compute missing ones manually
+    yf_betas_spy = fetch_yfinance_betas(tickers)
+    computed_betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers)
+    betas_spy = yf_betas_spy.combine_first(computed_betas_spy).fillna(0.0)
+
+    # IWM betas: compute manually (yfinance doesn't provide beta vs Russell 2000)
+    betas_iwm = compute_betas(rets, MARKET_TICKER_SHORT).reindex(tickers).fillna(0.0)
 
     # Generate composite signals for active tickers (those with direction)
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
@@ -535,7 +542,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     signals_df, _ = generate_composite_signals(
         tickers=active_tickers,
         asset_map=asset_map,
-        benchmark_override=MARKET_TICKER,
+        benchmark_override=MARKET_TICKER_LONG,
         direction_map=direction_map,
         weights_short=DEFAULT_WEIGHTS_SHORT,
     )
@@ -589,8 +596,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         duration_coeffs = np.array([DURATION_OF_TICKER.get(t, 10.0) / 10.0 for t in bond_tickers])
         constraints.append(cp.sum(cp.multiply(duration_coeffs, cp.abs(w[bond_mask]))) <= BOND_10YR_EQUIV_MAX)
 
-    # Total-portfolio beta-neutral vs market (soft constraint with tolerance band)
-    constraints.append(cp.abs(beta_vec @ w) <= BETA_TOL)
+    # Note: Beta hedging is done post-optimization via explicit SPY/IWM positions
+    # (not via constraints on the portfolio weights)
 
     # Total-portfolio vol cap (SOC form): ||L w||_2 <= VOL_MAX
     constraints.append(cp.norm(L @ w, 2) <= VOL_MAX)
@@ -632,7 +639,21 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     w_final = w_star * k
     vol_final = port_vol(w_final.values)
-    beta_final = float(betas.values @ w_final.values)
+
+    # Compute volatility for benchmark ETFs (SPY and IWM) for informational purposes
+    benchmark_vol = compute_defense_volatility(usd_prices, market_tickers)
+    vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
+    vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
+
+    # Compute separate betas for longs and shorts
+    beta_long_spy = float(betas_spy.values[long_mask] @ w_final.values[long_mask]) if long_mask.any() else 0.0
+    beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
+
+    # Calculate hedge positions:
+    # - Short SPY to hedge long positions' beta exposure to SPY
+    # - Long IWM to hedge short positions' beta exposure to IWM (short beta is negative, so -beta gives positive IWM weight)
+    hedge_spy_weight = -beta_long_spy   # Short SPY to offset long beta
+    hedge_iwm_weight = -beta_short_iwm  # Long IWM to offset short beta (shorts have negative beta contribution)
 
     if debug_weights:
         console.print()
@@ -677,7 +698,10 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     solution_text = (
         f"[bold]Status:[/bold]        [{status_color}]{prob.status}[/{status_color}]\n"
         f"[bold]Vol (daily):[/bold]   {vol_final:.6f}  [dim](target {VOL_TARGET:.6f}, band [{VOL_MIN:.6f}, {VOL_MAX:.6f}])[/dim]\n"
-        f"[bold]Total beta:[/bold]    {beta_final:.6e} [dim]vs {MARKET_TICKER}[/dim]\n"
+        f"[bold]SPY vol:[/bold]       {vol_spy:.6f}  [dim](for reference)[/dim]\n"
+        f"[bold]IWM vol:[/bold]       {vol_iwm:.6f}  [dim](for reference)[/dim]\n"
+        f"[bold]Long β to SPY:[/bold] {beta_long_spy:+.4f}  [dim]→ Hedge: {hedge_spy_weight:+.4f} {MARKET_TICKER_LONG}[/dim]\n"
+        f"[bold]Short β to IWM:[/bold] {beta_short_iwm:+.4f}  [dim]→ Hedge: {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}[/dim]\n"
         f"[bold]Band feasible:[/bold] {feasible_text}"
     )
     console.print(Panel(solution_text, title="[bold blue]Solution[/bold blue]", border_style="blue"))
@@ -697,7 +721,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         "asset": meta["asset"],
         "direction": meta["direction"],
         "signal": signals.reindex(tickers).fillna(0.0),
-        "beta_to_SPY": betas,
+        "beta_to_SPY": betas_spy,
+        "beta_to_IWM": betas_iwm,
         "realized_volatility": meta["realized_vol"],
         "weight": w_final,
     })
@@ -711,7 +736,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     weights_table.add_column("Asset", style="white")
     weights_table.add_column("Direction", style="white")
     weights_table.add_column("Signal", justify="right", style="white")
-    weights_table.add_column("Beta", justify="right", style="white")
+    weights_table.add_column("β SPY", justify="right", style="white")
+    weights_table.add_column("β IWM", justify="right", style="white")
     weights_table.add_column("Vol", justify="right", style="white")
     weights_table.add_column("Weight", justify="right")
     if book is not None:
@@ -728,6 +754,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
             row["direction"],
             f"{row['signal']:+.2f}",
             f"{row['beta_to_SPY']:.2f}",
+            f"{row['beta_to_IWM']:.2f}",
             f"{row['realized_volatility']:.4f}",
             weight_str,
         ]
@@ -736,6 +763,44 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
             dollar_color = "green" if dollar_val > 0 else "red" if dollar_val < 0 else "white"
             row_data.append(f"[{dollar_color}]{dollar_val:+,.0f}[/{dollar_color}]")
         weights_table.add_row(*row_data)
+
+    # Add separator and hedge positions
+    sep_cols = ["───"] * (8 if book is None else 9)
+    weights_table.add_row(*sep_cols)
+
+    # SPY hedge (short to hedge long beta)
+    spy_color = "green" if hedge_spy_weight > 0 else "red" if hedge_spy_weight < 0 else "white"
+    spy_row = [
+        f"[bold]{MARKET_TICKER_LONG}[/bold]",
+        "hedge",
+        "short" if hedge_spy_weight < 0 else "long",
+        "—",
+        "1.00",
+        "—",
+        "—",
+        f"[{spy_color}]{hedge_spy_weight:+.4f}[/{spy_color}]",
+    ]
+    if book is not None:
+        spy_dollar = hedge_spy_weight * book
+        spy_row.append(f"[{spy_color}]{spy_dollar:+,.0f}[/{spy_color}]")
+    weights_table.add_row(*spy_row)
+
+    # IWM hedge (long to hedge short beta)
+    iwm_color = "green" if hedge_iwm_weight > 0 else "red" if hedge_iwm_weight < 0 else "white"
+    iwm_row = [
+        f"[bold]{MARKET_TICKER_SHORT}[/bold]",
+        "hedge",
+        "long" if hedge_iwm_weight > 0 else "short",
+        "—",
+        "—",
+        "1.00",
+        "—",
+        f"[{iwm_color}]{hedge_iwm_weight:+.4f}[/{iwm_color}]",
+    ]
+    if book is not None:
+        iwm_dollar = hedge_iwm_weight * book
+        iwm_row.append(f"[{iwm_color}]{iwm_dollar:+,.0f}[/{iwm_color}]")
+    weights_table.add_row(*iwm_row)
 
     console.print(weights_table)
 
