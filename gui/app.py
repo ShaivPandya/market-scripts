@@ -32,20 +32,48 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Sidebar configuration
+# Initialize session state for navigation
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "📈 Market Technicals"
+
+# Sidebar: Settings Section
 st.sidebar.title("Settings")
 auto_refresh = st.sidebar.checkbox("Auto-refresh", value=False)
 if auto_refresh:
     refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 60, 600, 300)
     st.sidebar.info(f"Will refresh every {refresh_interval}s")
 
-# Tab navigation
-tab1, tab2, tab3 = st.tabs([
-    "📈 Market Technicals",
-    "📊 Market Dashboard",
-    "💧 Liquidity",
-])
+# Visual separator
+st.sidebar.divider()
 
+# Sidebar: Navigation Section
+st.sidebar.markdown("### Navigation")
+
+# Clickable text navigation
+if st.sidebar.button("📈 Market Technicals", use_container_width=True,
+                      type="primary" if st.session_state.current_page == "📈 Market Technicals" else "secondary"):
+    st.session_state.current_page = "📈 Market Technicals"
+    st.rerun()
+
+if st.sidebar.button("📊 Market Dashboard", use_container_width=True,
+                      type="primary" if st.session_state.current_page == "📊 Market Dashboard" else "secondary"):
+    st.session_state.current_page = "📊 Market Dashboard"
+    st.rerun()
+
+if st.sidebar.button("💧 Liquidity", use_container_width=True,
+                      type="primary" if st.session_state.current_page == "💧 Liquidity" else "secondary"):
+    st.session_state.current_page = "💧 Liquidity"
+    st.rerun()
+
+# Visual separator
+st.sidebar.divider()
+
+# Page-specific sidebar controls
+if st.session_state.current_page == "💧 Liquidity":
+    st.sidebar.title("Liquidity Options")
+    skip_ecb = st.sidebar.checkbox("Skip ECB data", value=False, help="Skip ECB SDMX fetch if it's slow")
+else:
+    skip_ecb = False  # Default for non-Liquidity pages
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -116,9 +144,9 @@ def color_zscore(val):
 
 
 # =============================================================================
-# TAB 1: Market Technicals
+# PAGE: Market Technicals
 # =============================================================================
-with tab1:
+if st.session_state.current_page == "📈 Market Technicals":
     st.header("Market Technicals")
 
     if st.button("Refresh Data", key="refresh_technicals"):
@@ -298,9 +326,9 @@ with tab1:
 
 
 # =============================================================================
-# TAB 2: Market Dashboard
+# PAGE: Market Dashboard
 # =============================================================================
-with tab2:
+elif st.session_state.current_page == "📊 Market Dashboard":
     st.header("Market Performance Dashboard")
 
     if st.button("Refresh Data", key="refresh_dashboard"):
@@ -389,15 +417,15 @@ with tab2:
 
 
 # =============================================================================
-# TAB 3: Liquidity
+# PAGE: Liquidity
 # =============================================================================
-with tab3:
+elif st.session_state.current_page == "💧 Liquidity":
     st.header("Liquidity Dashboard")
 
     if st.button("Refresh Data", key="refresh_liquidity"):
         st.cache_data.clear()
 
-    skip_ecb = st.sidebar.checkbox("Skip ECB data", value=False, help="Skip ECB SDMX fetch if it's slow")
+    # Note: skip_ecb is now defined in sidebar section above
 
     @st.cache_data(ttl=300)
     def fetch_liquidity(skip_ecb: bool):
