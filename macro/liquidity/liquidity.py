@@ -686,5 +686,120 @@ def main():
         plot_charts(df_weekly, composite)
 
 
+def get_snapshot(skip_ecb: bool = False) -> dict:
+    """
+    Fetch liquidity snapshot data for GUI consumption.
+
+    Args:
+        skip_ecb: If True, skip ECB SDMX data fetch
+
+    Returns dict with:
+      - composite_score: float (latest composite score)
+      - regime: str ("ample", "normal", "tight", "stress")
+      - regime_color: str
+      - latest_date: date
+      - regional_scores: dict of region -> score
+      - components: list of dicts with component details
+      - changes: dict of series -> {period -> change}
+      - df_weekly: full weekly DataFrame
+      - composite_series: full composite Series
+    """
+    fred = get_fred_client()
+    df = fetch_fred_series(fred)
+    df = apply_scales(df)
+
+    df_ecb = None
+    if not skip_ecb:
+        df_ecb = fetch_ecb_series()
+
+    week_ending = "W-WED"
+    df_weekly = build_weekly_panel(df, week_ending=week_ending)
+    df_weekly = add_derived_series(df_weekly)
+    df_weekly = add_japan_derived_series(df_weekly, df, week_ending=week_ending)
+    df_weekly = add_europe_derived_series(df_weekly, df_ecb, week_ending=week_ending)
+
+    composite, regional_scores, z_scores, contributions = compute_regional_scores(df_weekly)
+
+    composite_clean = composite.dropna()
+    if composite_clean.empty:
+        return {
+            "composite_score": None,
+            "regime": None,
+            "regime_color": None,
+            "latest_date": None,
+            "regional_scores": {},
+            "components": [],
+            "changes": {},
+            "df_weekly": df_weekly,
+            "composite_series": composite,
+        }
+
+    latest_date = composite_clean.index[-1]
+    latest_score = composite_clean.iloc[-1]
+    regime, color = classify_regime(latest_score)
+
+    regional_latest = {}
+    for region_key in ["us", "europe", "japan"]:
+        score_series = regional_scores.get(region_key)
+        if score_series is not None and not score_series.empty:
+            val = get_value_asof(score_series, latest_date)
+            if val is not None and not pd.isna(val):
+                reg, col = classify_regime(val)
+                regional_latest[region_key] = {"score": val, "regime": reg, "color": col}
+
+    components = []
+    for region_name, comp_list in ALL_REGIONS:
+        for comp in comp_list:
+            key = comp["key"]
+            if key not in df_weekly.columns:
+                continue
+            value = get_value_asof(df_weekly[key], latest_date)
+            z_val = get_value_asof(z_scores.get(key, pd.Series()), latest_date)
+            contrib = get_value_asof(contributions.get(key, pd.Series()), latest_date)
+            components.append({
+                "region": region_name,
+                "key": key,
+                "label": comp["label"],
+                "value": value,
+                "value_kind": comp["value_kind"],
+                "z_score": z_val,
+                "weight": comp["weight"],
+                "contribution": contrib,
+                "polarity": comp["polarity"],
+            })
+
+    changes = {}
+    change_series = [
+        ("Composite Score", composite, "score", 1),
+        ("Net Liquidity", df_weekly.get("net_liquidity"), "billions", 1),
+        ("Reserve Balances", df_weekly.get("reserves"), "billions", 1),
+        ("IG OAS", df_weekly.get("ig_oas"), "percent", -1),
+        ("HY OAS", df_weekly.get("hy_oas"), "percent", -1),
+        ("NFCI", df_weekly.get("nfci"), "index", -1),
+        ("M2 / GDP", df_weekly.get("m2_gdp"), "ratio", 1),
+    ]
+    for label, series, kind, polarity in change_series:
+        if series is None:
+            continue
+        changes[label] = {
+            "value_kind": kind,
+            "polarity": polarity,
+        }
+        for period_name, days in CHANGE_WINDOWS.items():
+            changes[label][period_name] = change_over_days(series, latest_date, days)
+
+    return {
+        "composite_score": latest_score,
+        "regime": regime,
+        "regime_color": color,
+        "latest_date": latest_date.date() if hasattr(latest_date, 'date') else latest_date,
+        "regional_scores": regional_latest,
+        "components": components,
+        "changes": changes,
+        "df_weekly": df_weekly,
+        "composite_series": composite,
+    }
+
+
 if __name__ == "__main__":
     main()

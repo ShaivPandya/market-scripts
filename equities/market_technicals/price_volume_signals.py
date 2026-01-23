@@ -382,5 +382,63 @@ def main():
                     print(display_hits.to_string(index=False))
 
 
+def get_data() -> dict:
+    """
+    Fetch price/volume signals data for GUI consumption.
+
+    Returns dict with:
+      - latest_df: DataFrame with latest signals per market
+      - hits_df: DataFrame with historical signal hits
+    """
+    all_latest = []
+    all_hits = []
+
+    for name, tickers in SYMBOLS.items():
+        primary = tickers["primary"]
+        fallback = tickers["fallback"]
+
+        df = download_ohlcv(primary, START_DATE)
+        used = primary
+
+        if not ensure_volume(df):
+            df_fb = download_ohlcv(fallback, START_DATE)
+            if ensure_volume(df_fb):
+                df = df_fb
+                used = fallback
+
+        if df.empty:
+            continue
+
+        sig = add_signals(df)
+        sig["UsedTicker"] = used
+        sig["MarketName"] = name
+
+        latest = summarize_latest(sig, f"{name} ({used})")
+        all_latest.append(latest)
+
+        hits = sig.loc[
+            sig["DownsideRecordVol"] | sig["NewHigh_LowVol"] | sig["HiVol_Churn"],
+            ["Close", "RetPct", "Volume", "DownsideRecordVol", "NewHigh_LowVol", "HiVol_Churn", "UsedTicker", "MarketName"]
+        ].copy()
+        hits.index = pd.to_datetime(hits.index)
+        hits["Date"] = hits.index.date.astype(str)
+        all_hits.append(hits.reset_index(drop=True))
+
+    latest_df = pd.concat(all_latest, ignore_index=True) if all_latest else pd.DataFrame()
+    hits_df = pd.concat(all_hits, ignore_index=True) if all_hits else pd.DataFrame()
+
+    if not hits_df.empty:
+        hits_df = hits_df.sort_values("Date", ascending=False)
+        hits_df["Close"] = hits_df["Close"].round(2)
+
+    if not latest_df.empty:
+        latest_df["Close"] = latest_df["Close"].round(2)
+
+    return {
+        "latest_df": latest_df,
+        "hits_df": hits_df,
+    }
+
+
 if __name__ == "__main__":
     main()
