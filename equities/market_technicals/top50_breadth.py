@@ -198,6 +198,58 @@ def summarize(df: pd.DataFrame) -> None:
         print(", ".join(valid.loc[valid["broke_prior20_low_last_week"], "ticker"]) or "(none)")
 
 
+def get_summary_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Extract summary metrics from the computed DataFrame for GUI consumption.
+
+    Returns dict with:
+      - pct_below_50dma, pct_3plus_dist, pct_broke_20low: percentages
+      - tickers_below_50dma, tickers_3plus_dist, tickers_broke_20low: lists
+      - universe_size: count of valid tickers
+      - raw_df: the full DataFrame for detailed views
+    """
+    valid = df[df["rows"] >= 30].copy()
+    n = len(valid)
+
+    if n == 0:
+        return {
+            "pct_below_50dma": None,
+            "pct_3plus_dist": None,
+            "pct_broke_20low": None,
+            "tickers_below_50dma": [],
+            "tickers_3plus_dist": [],
+            "tickers_broke_20low": [],
+            "universe_size": 0,
+            "raw_df": df,
+        }
+
+    return {
+        "pct_below_50dma": 100 * valid["below_50dma"].mean(),
+        "pct_3plus_dist": 100 * valid["has_3plus_dist_days"].mean(),
+        "pct_broke_20low": 100 * valid["broke_prior20_low_last_week"].mean(),
+        "tickers_below_50dma": valid.loc[valid["below_50dma"], "ticker"].tolist(),
+        "tickers_3plus_dist": valid.loc[valid["has_3plus_dist_days"], "ticker"].tolist(),
+        "tickers_broke_20low": valid.loc[valid["broke_prior20_low_last_week"], "ticker"].tolist(),
+        "universe_size": n,
+        "raw_df": df,
+    }
+
+
+def get_data(period: str = "2y") -> Dict[str, Any]:
+    """
+    Fetch top50 breadth data for GUI consumption.
+
+    Returns dict with summary metrics and raw DataFrame.
+    """
+    generate_top50()
+    script_dir = Path(__file__).parent
+    csv_path = script_dir / "sp500_top50_6mo.csv"
+    csv_df = pd.read_csv(csv_path)
+    tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
+    df = compute_metrics(tickers, period=period)
+    return get_summary_metrics(df)
+
+
 def main():
     print_header()
     print("Generating top 50 S&P 500 performers...")

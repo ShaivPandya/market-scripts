@@ -397,5 +397,52 @@ def main():
     print_data_sources(crb_file_used)
     console.print()
 
+def get_data(crb_file: str = None) -> dict:
+    """
+    Fetch market dashboard data for GUI consumption.
+
+    Args:
+        crb_file: Optional path to CRB Excel file
+
+    Returns dict with:
+      - commodities: dict of ticker -> {period -> return%}
+      - equities: dict of ticker -> {period -> return%}
+      - currencies: dict of pair -> {period -> return%}
+      - crb_available: bool
+      - timestamp: datetime of data fetch
+      - benchmarks: dict mapping tickers to their benchmark
+    """
+    if crb_file is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        crb_file = os.path.join(script_dir, 'crb.xlsx')
+
+    crb_returns = None
+    crb_available = False
+
+    if os.path.exists(crb_file):
+        crb_df = read_crb_from_xls(crb_file)
+        if crb_df is not None:
+            crb_returns = calculate_crb_returns(crb_df, EQUITY_PERIODS)
+            crb_available = True
+
+    commodities_results = fetch_all_returns(COMMODITIES, EQUITY_PERIODS, "Commodities", crb_returns)
+    equities_results = fetch_all_returns(EQUITIES, EQUITY_PERIODS, "Equities")
+    currency_results = fetch_all_returns(CURRENCIES, CURRENCY_PERIODS, "Currencies")
+
+    return {
+        "commodities": commodities_results,
+        "equities": equities_results,
+        "currencies": currency_results,
+        "crb_available": crb_available,
+        "timestamp": datetime.now(),
+        "benchmarks": {
+            "default": "S&P 500",
+            "Europe Banks": "STOXX 600",
+        },
+        "equity_periods": list(EQUITY_PERIODS.keys()),
+        "currency_periods": list(CURRENCY_PERIODS.keys()),
+    }
+
+
 if __name__ == "__main__":
     main()

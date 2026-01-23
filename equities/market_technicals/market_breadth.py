@@ -298,5 +298,21 @@ def main():
         print("=" * 50)
 
 
+def get_data(universe: str = "sp500", period: str = "1y") -> dict:
+    """
+    Fetch market breadth data for GUI consumption.
+
+    Returns dict with:
+      - above_200dma, above_20dma, at_20day_high, at_20day_low: counts
+      - pct_above_200dma, pct_above_20dma, pct_at_20day_high, pct_at_20day_low: percentages
+      - total_analyzed: number of stocks analyzed
+      - tickers: list of tickers analyzed
+    """
+    tickers = get_tickers(universe)
+    metrics = calculate_breadth_metrics(tickers, period)
+    metrics["tickers"] = tickers
+    return metrics
+
+
 if __name__ == "__main__":
     main()
