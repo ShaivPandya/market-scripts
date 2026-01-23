@@ -535,24 +535,39 @@ with tab3:
             df = pd.DataFrame(rows)
 
             # Custom styling that accounts for polarity (inverted for OAS, NFCI)
-            def color_change_with_polarity(val):
-                if pd.isna(val) or val == "N/A":
-                    return "color: gray"
-                try:
-                    # Extract numeric value
-                    num_str = val.replace("B", "").replace("%", "").replace("+", "").strip()
-                    num_val = float(num_str)
-                    if num_val > 0:
-                        return "color: #00c853; font-weight: bold"
-                    elif num_val < 0:
-                        return "color: #ff1744; font-weight: bold"
-                    return ""
-                except (ValueError, TypeError):
-                    return ""
+            def style_with_polarity(row):
+                """Style a row considering its polarity."""
+                series_name = row["Series"]
+                polarity = polarity_map.get(series_name, 1)
+                styles = [""] * len(row)
 
-            styled_df = df.style.applymap(color_change_with_polarity, subset=["1w", "1m", "3m"])
+                for i, (col_name, val) in enumerate(row.items()):
+                    if col_name not in ["1w", "1m", "3m"]:
+                        continue
+
+                    if pd.isna(val) or val == "N/A":
+                        styles[i] = "color: gray"
+                        continue
+
+                    try:
+                        # Extract numeric value
+                        num_str = val.replace("B", "").replace("%", "").replace("+", "").strip()
+                        num_val = float(num_str)
+                        # Apply polarity: positive polarity means increase is good
+                        # negative polarity means decrease is good (e.g., OAS, NFCI)
+                        effective_change = num_val * polarity
+                        if effective_change > 0:
+                            styles[i] = "color: #00c853; font-weight: bold"
+                        elif effective_change < 0:
+                            styles[i] = "color: #ff1744; font-weight: bold"
+                    except (ValueError, TypeError):
+                        pass
+
+                return styles
+
+            styled_df = df.style.apply(style_with_polarity, axis=1)
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
-            st.caption("Note: For OAS and NFCI, decreases are positive for liquidity")
+            st.caption("Green indicates liquidity-supportive changes, red indicates liquidity-tightening changes")
 
 
 # Auto-refresh logic
