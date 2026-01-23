@@ -175,6 +175,17 @@ class DiagnosticInfo:
     vol_method: str
     status: str  # "in_box", "near_miss_up", "near_miss_down", "not_in_box"
     near_miss_reason: Optional[str]  # e.g., "volume ratio 1.08x < 1.20x threshold"
+    # Extended diagnostics for detailed output
+    bb_width: Optional[float] = None              # Current Bollinger Band width
+    bb_width_percentile: Optional[float] = None   # Where current width sits vs historical (0-100)
+    tight_count: Optional[int] = None             # How many of last 20 days were "tight"
+    tight_threshold: int = 8                      # k_min threshold
+    pct_change_5d: Optional[float] = None         # 5-day price change %
+    pct_change_20d: Optional[float] = None        # 20-day price change %
+    high_20d: Optional[float] = None              # 20-day high
+    low_20d: Optional[float] = None               # 20-day low
+    dist_from_high_pct: Optional[float] = None    # % distance from 20-day high
+    dist_from_low_pct: Optional[float] = None     # % distance from 20-day low
 
 
 def _volume_confirmation(row: pd.Series, p: Params, use_tr_proxy: bool) -> Tuple[bool, Optional[float], str]:
@@ -193,6 +204,61 @@ def _volume_confirmation(row: pd.Series, p: Params, use_tr_proxy: bool) -> Tuple
         return False, None, "VOLUME"
     ratio = float(vol / vol_ma)
     return ratio > p.vol_mult, ratio, "VOLUME"
+
+
+def _compute_extended_diagnostics(df: pd.DataFrame, p: Params) -> Dict:
+    """Compute extended diagnostic metrics from the dataframe."""
+    if df.empty or len(df) < 20:
+        return {}
+
+    last_row = df.iloc[-1]
+    close = float(last_row["Close"])
+
+    result = {}
+
+    # BB Width and percentile
+    bb_width = last_row.get("BBWidth", np.nan)
+    if not pd.isna(bb_width):
+        result["bb_width"] = float(bb_width)
+        # Calculate percentile of current BB width in last 252 days
+        bb_hist = df["BBWidth"].dropna().tail(252)
+        if len(bb_hist) > 0:
+            percentile = (bb_hist < bb_width).sum() / len(bb_hist) * 100
+            result["bb_width_percentile"] = float(percentile)
+
+    # Tight count
+    tight_count = last_row.get("TightCount", np.nan)
+    if not pd.isna(tight_count):
+        result["tight_count"] = int(tight_count)
+    result["tight_threshold"] = p.k_min
+
+    # Price changes
+    if len(df) >= 6:
+        close_5d_ago = df["Close"].iloc[-6]
+        if not pd.isna(close_5d_ago) and close_5d_ago != 0:
+            result["pct_change_5d"] = ((close - close_5d_ago) / close_5d_ago) * 100
+
+    if len(df) >= 21:
+        close_20d_ago = df["Close"].iloc[-21]
+        if not pd.isna(close_20d_ago) and close_20d_ago != 0:
+            result["pct_change_20d"] = ((close - close_20d_ago) / close_20d_ago) * 100
+
+    # 20-day high/low
+    recent_20 = df.tail(20)
+    high_20d = recent_20["High"].max()
+    low_20d = recent_20["Low"].min()
+
+    if not pd.isna(high_20d):
+        result["high_20d"] = float(high_20d)
+        if close != 0:
+            result["dist_from_high_pct"] = ((high_20d - close) / close) * 100
+
+    if not pd.isna(low_20d):
+        result["low_20d"] = float(low_20d)
+        if close != 0:
+            result["dist_from_low_pct"] = ((close - low_20d) / close) * 100
+
+    return result
 
 
 def detect_latest_breakout(
@@ -233,6 +299,9 @@ def detect_latest_breakout(
     if use_tr_proxy:
         df = df.copy()
         df["TR_MA"] = df["TR"].rolling(p.vol_ma_n, min_periods=p.vol_ma_n).mean()
+
+    # Compute extended diagnostics once
+    ext_diag = _compute_extended_diagnostics(df, p)
 
     in_box = False
     box_upper = np.nan
@@ -297,7 +366,8 @@ def detect_latest_breakout(
                         dist_to_up_breakout_pct=0.0 if up_break else None,
                         dist_to_down_breakout_pct=0.0 if dn_break else None,
                         vol_ratio=vol_ratio, vol_threshold=p.vol_mult, vol_method=vol_method,
-                        status=f"breakout_{direction.lower()}", near_miss_reason=None
+                        status=f"breakout_{direction.lower()}", near_miss_reason=None,
+                        **ext_diag
                     )
                     return Signal(
                         market=market,
@@ -324,7 +394,8 @@ def detect_latest_breakout(
                         dist_to_up_breakout_pct=0.0 if up_break else None,
                         dist_to_down_breakout_pct=0.0 if dn_break else None,
                         vol_ratio=vol_ratio, vol_threshold=p.vol_mult, vol_method=vol_method,
-                        status=f"near_miss_{direction.lower()}", near_miss_reason=near_miss_reason
+                        status=f"near_miss_{direction.lower()}", near_miss_reason=near_miss_reason,
+                        **ext_diag
                     )
                     return None, diag
 
@@ -380,7 +451,8 @@ def detect_latest_breakout(
             dist_to_up_breakout_pct=dist_up_pct,
             dist_to_down_breakout_pct=dist_down_pct,
             vol_ratio=last_vol_ratio, vol_threshold=p.vol_mult, vol_method=last_vol_method,
-            status="in_box", near_miss_reason=None
+            status="in_box", near_miss_reason=None,
+            **ext_diag
         )
     else:
         # Not currently in a congestion box
@@ -390,7 +462,8 @@ def detect_latest_breakout(
             close=last_close, atr=last_atr, buffer=last_buffer,
             dist_to_up_breakout_pct=None, dist_to_down_breakout_pct=None,
             vol_ratio=last_vol_ratio, vol_threshold=p.vol_mult, vol_method=last_vol_method,
-            status="not_in_box", near_miss_reason=None
+            status="not_in_box", near_miss_reason=None,
+            **ext_diag
         )
 
 
@@ -414,8 +487,8 @@ def download_daily(tickers: List[str], period: str = "3y") -> Dict[str, pd.DataF
 
     out: Dict[str, pd.DataFrame] = {}
 
-    # If only one ticker, yfinance returns single-level columns
-    if isinstance(raw.columns, pd.Index):
+    # If only one ticker, yfinance returns single-level columns (not MultiIndex)
+    if not isinstance(raw.columns, pd.MultiIndex):
         # Single ticker case
         df = raw.dropna(how="all")
         out[tickers[0]] = df
@@ -433,15 +506,91 @@ def download_daily(tickers: List[str], period: str = "3y") -> Dict[str, pd.DataF
 
 
 # ----------------------------
+# Terminal colors and formatting
+# ----------------------------
+
+class Colors:
+    """ANSI color codes for terminal output."""
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+
+    # Colors
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    CYAN = "\033[36m"
+    MAGENTA = "\033[35m"
+    WHITE = "\033[37m"
+
+    # Bright variants
+    BRIGHT_GREEN = "\033[92m"
+    BRIGHT_RED = "\033[91m"
+    BRIGHT_YELLOW = "\033[93m"
+    BRIGHT_CYAN = "\033[96m"
+
+
+def _colorize(text: str, color: str) -> str:
+    """Wrap text with color codes."""
+    return f"{color}{text}{Colors.RESET}"
+
+
+def _progress_bar(value: float, max_value: float, width: int = 20, fill_char: str = "█", empty_char: str = "░") -> str:
+    """Create a simple progress bar."""
+    if max_value <= 0:
+        return empty_char * width
+    ratio = min(value / max_value, 1.0)
+    filled = int(ratio * width)
+    return fill_char * filled + empty_char * (width - filled)
+
+
+def _position_bar(pct_from_low: float, width: int = 20) -> str:
+    """Create a position indicator bar showing where price is in range."""
+    pct = max(0, min(100, pct_from_low))
+    pos = int((pct / 100) * (width - 1))
+    bar = "─" * pos + "●" + "─" * (width - 1 - pos)
+    return f"L [{bar}] H"
+
+
+# ----------------------------
 # Diagnostic output
 # ----------------------------
 
+def _volatility_description(percentile: Optional[float]) -> str:
+    """Return a human-readable volatility description based on BB width percentile."""
+    if percentile is None:
+        return "N/A"
+    if percentile <= 20:
+        return "very tight"
+    elif percentile <= 40:
+        return "relatively tight"
+    elif percentile <= 60:
+        return "normal"
+    elif percentile <= 80:
+        return "elevated"
+    else:
+        return "high"
+
+
+def _ordinal(n: int) -> str:
+    """Return ordinal string for a number (1st, 2nd, 3rd, 4th, etc.)."""
+    if 11 <= n % 100 <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def print_diagnostic_summary(diagnostics: List[DiagnosticInfo]) -> None:
     """Print a comprehensive summary of breakout analysis for all assets."""
+    C = Colors
 
-    print("\n" + "=" * 70)
-    print("BREAKOUT ANALYSIS SUMMARY")
-    print("=" * 70)
+    # Header
+    print()
+    print(f"{C.BOLD}{C.CYAN}╔{'═' * 68}╗{C.RESET}")
+    print(f"{C.BOLD}{C.CYAN}║{C.RESET}{C.BOLD}{'BREAKOUT ANALYSIS SUMMARY':^68}{C.RESET}{C.BOLD}{C.CYAN}║{C.RESET}")
+    print(f"{C.BOLD}{C.CYAN}╚{'═' * 68}╝{C.RESET}")
 
     # Categorize assets
     in_box = [d for d in diagnostics if d.status == "in_box"]
@@ -458,45 +607,115 @@ def print_diagnostic_summary(diagnostics: List[DiagnosticInfo]) -> None:
 
     # Print assets in consolidation boxes
     if in_box:
-        print(f"\nASSETS IN CONSOLIDATION BOX ({len(in_box)} potential breakouts):")
-        print("-" * 70)
+        print(f"\n{C.BOLD}{C.YELLOW}◆ CONSOLIDATION BOXES{C.RESET} {C.DIM}({len(in_box)} potential breakout{'s' if len(in_box) != 1 else ''}){C.RESET}")
+        print(f"{C.DIM}{'─' * 68}{C.RESET}")
+
         for d in in_box:
-            box_str = f"[{d.box_lower:.4f} - {d.box_upper:.4f}]" if d.box_lower and d.box_upper else "[N/A]"
-            print(f"\n  {d.name} ({d.market})")
-            print(f"      Box: {box_str}  |  Day {d.days_in_box}/60  |  Close: {d.close:.4f}")
+            box_str = f"{d.box_lower:.4f} → {d.box_upper:.4f}" if d.box_lower and d.box_upper else "N/A"
+            day_bar = _progress_bar(d.days_in_box or 0, 60, width=10)
 
-            up_str = f"{d.dist_to_up_breakout_pct:+.2f}%" if d.dist_to_up_breakout_pct is not None else "N/A"
-            dn_str = f"{d.dist_to_down_breakout_pct:+.2f}%" if d.dist_to_down_breakout_pct is not None else "N/A"
-            print(f"      Distance to UP breakout: {up_str}  |  Distance to DOWN breakout: {dn_str}")
+            print(f"\n  {C.BOLD}{C.WHITE}{d.name}{C.RESET} {C.DIM}({d.market}){C.RESET}")
+            print(f"  {C.DIM}├─{C.RESET} Box: {C.CYAN}{box_str}{C.RESET}")
+            print(f"  {C.DIM}├─{C.RESET} Duration: {day_bar} {C.DIM}Day {d.days_in_box}/60{C.RESET}")
+            print(f"  {C.DIM}├─{C.RESET} Close: {C.WHITE}{d.close:.4f}{C.RESET}")
 
+            # Distance indicators with color coding
+            if d.dist_to_up_breakout_pct is not None:
+                up_color = C.BRIGHT_GREEN if d.dist_to_up_breakout_pct < 1 else C.GREEN
+                up_str = f"{up_color}▲ {d.dist_to_up_breakout_pct:+.2f}%{C.RESET}"
+            else:
+                up_str = f"{C.DIM}▲ N/A{C.RESET}"
+
+            if d.dist_to_down_breakout_pct is not None:
+                dn_color = C.BRIGHT_RED if d.dist_to_down_breakout_pct < 1 else C.RED
+                dn_str = f"{dn_color}▼ {d.dist_to_down_breakout_pct:+.2f}%{C.RESET}"
+            else:
+                dn_str = f"{C.DIM}▼ N/A{C.RESET}"
+
+            print(f"  {C.DIM}├─{C.RESET} Distance: {up_str}  {dn_str}")
+
+            # Volume with threshold indicator
             vol_str = f"{d.vol_ratio:.2f}x" if d.vol_ratio is not None else "N/A"
-            print(f"      Volume ratio: {vol_str} (need {d.vol_threshold:.2f}x) [{d.vol_method}]")
+            vol_color = C.BRIGHT_GREEN if d.vol_ratio and d.vol_ratio >= d.vol_threshold else C.DIM
+            print(f"  {C.DIM}└─{C.RESET} Volume: {vol_color}{vol_str}{C.RESET} {C.DIM}(need {d.vol_threshold:.2f}x) [{d.vol_method}]{C.RESET}")
     else:
-        print("\nASSETS IN CONSOLIDATION BOX: None")
+        print(f"\n{C.BOLD}{C.YELLOW}◆ CONSOLIDATION BOXES{C.RESET} {C.DIM}(none){C.RESET}")
 
     # Print near misses
     if near_misses:
-        print(f"\nNEAR MISSES ({len(near_misses)} - price broke but volume didn't confirm):")
-        print("-" * 70)
+        print(f"\n{C.BOLD}{C.MAGENTA}◇ NEAR MISSES{C.RESET} {C.DIM}({len(near_misses)} - price broke but volume didn't confirm){C.RESET}")
+        print(f"{C.DIM}{'─' * 68}{C.RESET}")
+
         for d in near_misses:
             direction = "UP" if "up" in d.status else "DOWN"
-            print(f"\n  {d.name} ({d.market})")
-            print(f"      Direction: {direction}  |  Close: {d.close:.4f}")
-            print(f"      Reason: {d.near_miss_reason}")
+            dir_color = C.BRIGHT_GREEN if direction == "UP" else C.BRIGHT_RED
+            dir_symbol = "▲" if direction == "UP" else "▼"
+
+            print(f"\n  {C.BOLD}{C.WHITE}{d.name}{C.RESET} {C.DIM}({d.market}){C.RESET}")
+            print(f"  {C.DIM}├─{C.RESET} Direction: {dir_color}{dir_symbol} {direction}{C.RESET}  Close: {C.WHITE}{d.close:.4f}{C.RESET}")
+            print(f"  {C.DIM}└─{C.RESET} {C.YELLOW}⚠ {d.near_miss_reason}{C.RESET}")
     else:
-        print("\nNEAR MISSES: None")
+        print(f"\n{C.BOLD}{C.MAGENTA}◇ NEAR MISSES{C.RESET} {C.DIM}(none){C.RESET}")
 
-    # Print assets not in consolidation
+    # Print detailed info for assets not in consolidation
     if not_in_box:
-        print(f"\nNOT IN CONSOLIDATION ({len(not_in_box)}):")
-        print("-" * 70)
-        names = [f"{d.name}" for d in not_in_box]
-        # Print in a compact format
-        print(f"      {', '.join(names)}")
+        # Sort by how close they are to forming a congestion box (tight_count descending)
+        not_in_box_sorted = sorted(
+            not_in_box,
+            key=lambda d: d.tight_count if d.tight_count is not None else 0,
+            reverse=True
+        )
 
-    print("\n" + "=" * 70)
-    print("No confirmed breakouts found on the latest daily bar.")
-    print("=" * 70 + "\n")
+        print(f"\n{C.BOLD}{C.BLUE}○ NOT IN CONSOLIDATION{C.RESET} {C.DIM}({len(not_in_box)}){C.RESET}")
+        print(f"{C.DIM}{'─' * 68}{C.RESET}")
+
+        for d in not_in_box_sorted:
+            print(f"\n  {C.BOLD}{C.WHITE}{d.name}{C.RESET} {C.DIM}({d.market}){C.RESET}")
+
+            # Price info
+            print(f"  {C.DIM}├─{C.RESET} Price: {C.WHITE}{d.close:.4f}{C.RESET}  ATR: {C.CYAN}{d.atr:.4f}{C.RESET}")
+
+            # Range and position
+            if d.high_20d is not None and d.low_20d is not None:
+                if d.dist_from_low_pct is not None and d.dist_from_high_pct is not None:
+                    total_range = d.dist_from_low_pct + d.dist_from_high_pct
+                    if total_range > 0:
+                        pct_from_low = (d.dist_from_low_pct / total_range) * 100
+                        pos_bar = _position_bar(pct_from_low, width=16)
+                        print(f"  {C.DIM}├─{C.RESET} 20d Range: {pos_bar} {C.DIM}{d.low_20d:.4f} - {d.high_20d:.4f}{C.RESET}")
+
+            # Trend indicators
+            chg_5d = d.pct_change_5d
+            chg_20d = d.pct_change_20d
+            chg_5d_color = C.BRIGHT_GREEN if chg_5d and chg_5d > 0 else C.BRIGHT_RED if chg_5d and chg_5d < 0 else C.DIM
+            chg_20d_color = C.BRIGHT_GREEN if chg_20d and chg_20d > 0 else C.BRIGHT_RED if chg_20d and chg_20d < 0 else C.DIM
+            chg_5d_str = f"{chg_5d:+.2f}%" if chg_5d is not None else "N/A"
+            chg_20d_str = f"{chg_20d:+.2f}%" if chg_20d is not None else "N/A"
+            print(f"  {C.DIM}├─{C.RESET} Trend: 5d {chg_5d_color}{chg_5d_str}{C.RESET}  20d {chg_20d_color}{chg_20d_str}{C.RESET}")
+
+            # Volatility
+            vol_desc = _volatility_description(d.bb_width_percentile)
+            bb_str = f"{d.bb_width:.2%}" if d.bb_width is not None else "N/A"
+            pctl_str = _ordinal(int(d.bb_width_percentile)) if d.bb_width_percentile is not None else "N/A"
+            vol_color = C.BRIGHT_CYAN if vol_desc in ["very tight", "relatively tight"] else C.DIM
+            print(f"  {C.DIM}├─{C.RESET} Volatility: {vol_color}{vol_desc}{C.RESET} {C.DIM}(BB: {bb_str}, {pctl_str} pctl){C.RESET}")
+
+            # Congestion progress
+            tight = d.tight_count if d.tight_count is not None else 0
+            threshold = d.tight_threshold
+            tight_bar = _progress_bar(tight, threshold, width=10)
+            needed = max(0, threshold - tight)
+            if needed == 0:
+                status_str = f"{C.BRIGHT_YELLOW}watching for box{C.RESET}"
+            else:
+                status_str = f"{C.DIM}{needed} more needed{C.RESET}"
+            print(f"  {C.DIM}└─{C.RESET} Congestion: {tight_bar} {C.DIM}{tight}/{threshold}{C.RESET} {status_str}")
+
+    # Footer
+    print()
+    print(f"{C.DIM}{'─' * 68}{C.RESET}")
+    print(f"{C.DIM}No confirmed breakouts on latest bar.{C.RESET}")
+    print()
 
 
 # ----------------------------
@@ -539,26 +758,37 @@ def main():
         print_diagnostic_summary(diagnostics)
         return
 
-    # Print results
-    rows = []
-    for s in signals:
-        rows.append({
-            "Market": s.market,
-            "Name": s.name,
-            "Ticker": s.ticker,
-            "Date": s.date.date().isoformat(),
-            "Direction": s.direction,
-            "Close": round(s.close, 6),
-            "BoxUpper": round(s.box_upper, 6),
-            "BoxLower": round(s.box_lower, 6),
-            "Buffer": round(s.buffer, 6),
-            "Confirmed": s.confirm,
-            "VolMethod": s.vol_method,
-            "VolRatio": None if s.vol_ratio is None else round(s.vol_ratio, 3),
-        })
+    # Print confirmed breakouts with nice formatting
+    C = Colors
 
-    out_df = pd.DataFrame(rows).sort_values(["Market", "Name"])
-    print(out_df.to_string(index=False))
+    print()
+    print(f"{C.BOLD}{C.BRIGHT_GREEN}╔{'═' * 68}╗{C.RESET}")
+    print(f"{C.BOLD}{C.BRIGHT_GREEN}║{C.RESET}{C.BOLD}{'🚀 CONFIRMED BREAKOUTS':^68}{C.RESET}{C.BOLD}{C.BRIGHT_GREEN}║{C.RESET}")
+    print(f"{C.BOLD}{C.BRIGHT_GREEN}╚{'═' * 68}╝{C.RESET}")
+
+    # Sort by market then name
+    signals_sorted = sorted(signals, key=lambda s: (s.market, s.name))
+
+    for s in signals_sorted:
+        dir_color = C.BRIGHT_GREEN if s.direction == "UP" else C.BRIGHT_RED
+        dir_symbol = "▲" if s.direction == "UP" else "▼"
+        box_str = f"{s.box_lower:.4f} → {s.box_upper:.4f}"
+
+        print()
+        print(f"  {C.BOLD}{C.WHITE}{s.name}{C.RESET} {C.DIM}({s.market}){C.RESET}  {dir_color}{C.BOLD}{dir_symbol} {s.direction} BREAKOUT{C.RESET}")
+        print(f"  {C.DIM}{'─' * 50}{C.RESET}")
+        print(f"  {C.DIM}├─{C.RESET} Date:     {C.WHITE}{s.date.date().isoformat()}{C.RESET}")
+        print(f"  {C.DIM}├─{C.RESET} Close:    {dir_color}{C.BOLD}{s.close:.6f}{C.RESET}")
+        print(f"  {C.DIM}├─{C.RESET} Box:      {C.CYAN}{box_str}{C.RESET}")
+        print(f"  {C.DIM}├─{C.RESET} Buffer:   {C.DIM}{s.buffer:.6f}{C.RESET}")
+
+        vol_str = f"{s.vol_ratio:.2f}x" if s.vol_ratio else "N/A"
+        print(f"  {C.DIM}└─{C.RESET} Volume:   {C.BRIGHT_GREEN}{vol_str}{C.RESET} {C.DIM}[{s.vol_method}]{C.RESET}")
+
+    print()
+    print(f"{C.DIM}{'─' * 68}{C.RESET}")
+    print(f"{C.BOLD}{C.WHITE}Total: {len(signals)} confirmed breakout{'s' if len(signals) != 1 else ''}{C.RESET}")
+    print()
 
 
 if __name__ == "__main__":
