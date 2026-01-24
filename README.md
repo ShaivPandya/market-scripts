@@ -60,6 +60,27 @@ python load_env.py
 
 This will confirm that your environment variables are loaded properly.
 
+## GUI (Streamlit) Usage
+
+The project includes a Streamlit-based dashboard in `gui/app.py`.
+
+### 1. Install GUI Dependencies
+
+```bash
+pip install -r gui/requirements.txt
+```
+
+### 2. Run the GUI
+
+From the project root:
+
+```bash
+streamlit run gui/app.py
+```
+
+Streamlit will start a local server (by default at `http://localhost:8501`).
+Make sure your `.env` file is set up (see Environment Setup) so the GUI can access API keys.
+
 ## Usage in Scripts
 
 Add this to the top of your Python scripts:
