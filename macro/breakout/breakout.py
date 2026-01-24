@@ -719,6 +719,131 @@ def print_diagnostic_summary(diagnostics: List[DiagnosticInfo]) -> None:
 
 
 # ----------------------------
+# Data API for GUI
+# ----------------------------
+
+def get_data() -> dict:
+    """
+    Return breakout analysis data for GUI consumption.
+
+    Returns dict with:
+        - signals: list of confirmed breakout dicts
+        - in_box: list of assets in consolidation boxes
+        - near_misses: list of near-miss breakouts
+        - not_in_box: list of assets not in consolidation
+        - error: error message if something went wrong
+    """
+    try:
+        # Flatten tickers list
+        tickers = []
+        meta = []  # (market, name, ticker)
+        for market, items in UNIVERSE.items():
+            for name, t in items.items():
+                tickers.append(t)
+                meta.append((market, name, t))
+
+        data = download_daily(tickers, period="3y")
+
+        signals_list = []
+        in_box_list = []
+        near_misses_list = []
+        not_in_box_list = []
+
+        for market, name, ticker in meta:
+            df = data.get(ticker)
+            if df is None or df.empty:
+                continue
+
+            # Standardize columns and index
+            df = df.copy()
+            df.index = pd.to_datetime(df.index)
+            needed = {"Open", "High", "Low", "Close"}
+            if not needed.issubset(df.columns):
+                continue
+
+            feats = compute_features(df, P)
+            sig, diag = detect_latest_breakout(feats, market, name, ticker, P)
+
+            # Convert to dict for GUI
+            diag_dict = {
+                "market": diag.market,
+                "name": diag.name,
+                "ticker": diag.ticker,
+                "in_box": diag.in_box,
+                "box_upper": diag.box_upper,
+                "box_lower": diag.box_lower,
+                "days_in_box": diag.days_in_box,
+                "close": diag.close,
+                "atr": diag.atr,
+                "buffer": diag.buffer,
+                "dist_to_up_breakout_pct": diag.dist_to_up_breakout_pct,
+                "dist_to_down_breakout_pct": diag.dist_to_down_breakout_pct,
+                "vol_ratio": diag.vol_ratio,
+                "vol_threshold": diag.vol_threshold,
+                "vol_method": diag.vol_method,
+                "status": diag.status,
+                "near_miss_reason": diag.near_miss_reason,
+                "bb_width": diag.bb_width,
+                "bb_width_percentile": diag.bb_width_percentile,
+                "tight_count": diag.tight_count,
+                "tight_threshold": diag.tight_threshold,
+                "pct_change_5d": diag.pct_change_5d,
+                "pct_change_20d": diag.pct_change_20d,
+                "high_20d": diag.high_20d,
+                "low_20d": diag.low_20d,
+                "dist_from_high_pct": diag.dist_from_high_pct,
+                "dist_from_low_pct": diag.dist_from_low_pct,
+            }
+
+            # Categorize
+            if sig:
+                signals_list.append({
+                    "market": sig.market,
+                    "name": sig.name,
+                    "ticker": sig.ticker,
+                    "date": sig.date.isoformat(),
+                    "direction": sig.direction,
+                    "close": sig.close,
+                    "box_upper": sig.box_upper,
+                    "box_lower": sig.box_lower,
+                    "buffer": sig.buffer,
+                    "confirm": sig.confirm,
+                    "vol_ratio": sig.vol_ratio,
+                    "vol_method": sig.vol_method,
+                })
+
+            if diag.status == "in_box":
+                in_box_list.append(diag_dict)
+            elif diag.status.startswith("near_miss"):
+                near_misses_list.append(diag_dict)
+            else:
+                not_in_box_list.append(diag_dict)
+
+        # Sort in_box by closest to breakout
+        def min_distance(d):
+            up = d.get("dist_to_up_breakout_pct")
+            dn = d.get("dist_to_down_breakout_pct")
+            up = abs(up) if up is not None else float('inf')
+            dn = abs(dn) if dn is not None else float('inf')
+            return min(up, dn)
+
+        in_box_list.sort(key=min_distance)
+
+        # Sort not_in_box by tight_count descending
+        not_in_box_list.sort(key=lambda d: d.get("tight_count") or 0, reverse=True)
+
+        return {
+            "signals": signals_list,
+            "in_box": in_box_list,
+            "near_misses": near_misses_list,
+            "not_in_box": not_in_box_list,
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ----------------------------
 # Main
 # ----------------------------
 

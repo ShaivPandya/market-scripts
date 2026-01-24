@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "market_technicals"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "market_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "liquidity"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "breakout"))
 
 import streamlit as st
 import pandas as pd
@@ -63,6 +64,11 @@ if st.sidebar.button("📊 Market Dashboard", width='stretch',
 if st.sidebar.button("💧 Liquidity", width='stretch',
                       type="primary" if st.session_state.current_page == "💧 Liquidity" else "secondary"):
     st.session_state.current_page = "💧 Liquidity"
+    st.rerun()
+
+if st.sidebar.button("🔔 Breakout", width='stretch',
+                      type="primary" if st.session_state.current_page == "🔔 Breakout" else "secondary"):
+    st.session_state.current_page = "🔔 Breakout"
     st.rerun()
 
 # Visual separator
@@ -596,6 +602,310 @@ elif st.session_state.current_page == "💧 Liquidity":
             styled_df = df.style.apply(style_with_polarity, axis=1)
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
             st.caption("Green indicates liquidity-supportive changes, red indicates liquidity-tightening changes")
+
+
+# =============================================================================
+# PAGE: Breakout
+# =============================================================================
+elif st.session_state.current_page == "🔔 Breakout":
+    st.header("Breakout Detector")
+    st.caption("FX & Commodities: Tight congestion box breakouts with volume confirmation")
+
+    if st.button("Refresh Data", key="refresh_breakout"):
+        st.cache_data.clear()
+        st.rerun()
+
+    @st.cache_data(ttl=300)
+    def fetch_breakout():
+        try:
+            from breakout import get_data
+            result = get_data()
+            return result
+        except Exception as e:
+            import traceback
+            return {"error": f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"}
+
+    def render_position_bar(close, box_lower, box_upper, buffer):
+        """Render an HTML bar showing price position within the box."""
+        if box_lower is None or box_upper is None or box_lower >= box_upper:
+            return ""
+
+        # Calculate breakout levels
+        up_breakout = box_upper + buffer
+        down_breakout = box_lower - buffer
+
+        # Full range includes buffer zones
+        full_range = up_breakout - down_breakout
+        if full_range <= 0:
+            return ""
+
+        # Calculate positions as percentages
+        box_start_pct = ((box_lower - down_breakout) / full_range) * 100
+        box_end_pct = ((box_upper - down_breakout) / full_range) * 100
+        price_pct = ((close - down_breakout) / full_range) * 100
+        price_pct = max(0, min(100, price_pct))
+
+        return f'''
+        <div style="position: relative; height: 24px; background: linear-gradient(to right,
+            #ff1744 0%, #ff1744 {box_start_pct}%,
+            #2d2d2d {box_start_pct}%, #2d2d2d {box_end_pct}%,
+            #00c853 {box_end_pct}%, #00c853 100%);
+            border-radius: 4px; margin: 4px 0;">
+            <div style="position: absolute; left: {price_pct}%; top: 0; bottom: 0;
+                width: 3px; background: white; border-radius: 2px;
+                box-shadow: 0 0 4px rgba(255,255,255,0.8);"></div>
+            <div style="position: absolute; left: {box_start_pct}%; top: 0; bottom: 0;
+                width: 1px; background: rgba(255,255,255,0.3);"></div>
+            <div style="position: absolute; left: {box_end_pct}%; top: 0; bottom: 0;
+                width: 1px; background: rgba(255,255,255,0.3);"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888; margin-top: 2px;">
+            <span>▼ {down_breakout:.4f}</span>
+            <span style="color: #666;">Box: {box_lower:.4f} - {box_upper:.4f}</span>
+            <span>▲ {up_breakout:.4f}</span>
+        </div>
+        '''
+
+    def render_progress_bar(value, max_value, color="#00c853", label=""):
+        """Render a progress bar with percentage."""
+        if max_value <= 0:
+            pct = 0
+        else:
+            pct = min(100, (value / max_value) * 100)
+        return f'''
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="flex: 1; height: 8px; background: #2d2d2d; border-radius: 4px; overflow: hidden;">
+                <div style="width: {pct}%; height: 100%; background: {color}; border-radius: 4px;"></div>
+            </div>
+            <span style="font-size: 12px; color: #888; min-width: 60px;">{label}</span>
+        </div>
+        '''
+
+    def render_distance_indicator(dist_up, dist_down):
+        """Render visual distance indicators for breakout levels."""
+        up_color = "#00c853" if dist_up is not None and abs(dist_up) < 1 else "#4a4a4a"
+        down_color = "#ff1744" if dist_down is not None and abs(dist_down) < 1 else "#4a4a4a"
+
+        up_str = f"{dist_up:+.2f}%" if dist_up is not None else "N/A"
+        down_str = f"{dist_down:+.2f}%" if dist_down is not None else "N/A"
+
+        # Highlight if close to breakout
+        up_highlight = "font-weight: bold; text-shadow: 0 0 8px #00c853;" if dist_up is not None and abs(dist_up) < 1 else ""
+        down_highlight = "font-weight: bold; text-shadow: 0 0 8px #ff1744;" if dist_down is not None and abs(dist_down) < 1 else ""
+
+        return f'''
+        <div style="display: flex; justify-content: space-around; padding: 4px 0;">
+            <div style="text-align: center;">
+                <div style="font-size: 18px; color: {up_color}; {up_highlight}">▲</div>
+                <div style="font-size: 14px; color: {up_color}; {up_highlight}">{up_str}</div>
+                <div style="font-size: 10px; color: #666;">to breakout</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 18px; color: {down_color}; {down_highlight}">▼</div>
+                <div style="font-size: 14px; color: {down_color}; {down_highlight}">{down_str}</div>
+                <div style="font-size: 10px; color: #666;">to breakout</div>
+            </div>
+        </div>
+        '''
+
+    def render_volume_gauge(vol_ratio, threshold):
+        """Render a volume readiness gauge."""
+        if vol_ratio is None:
+            return '<div style="color: #666; font-size: 12px;">Volume: N/A</div>'
+
+        pct = min(100, (vol_ratio / threshold) * 100)
+        color = "#00c853" if vol_ratio >= threshold else "#ffc107" if pct >= 80 else "#666"
+        status = "Ready" if vol_ratio >= threshold else "Building" if pct >= 80 else "Low"
+
+        return f'''
+        <div style="text-align: center;">
+            <div style="font-size: 11px; color: #888; margin-bottom: 2px;">Volume</div>
+            <div style="width: 60px; height: 60px; border-radius: 50%; border: 3px solid {color};
+                display: flex; align-items: center; justify-content: center; margin: 0 auto;">
+                <div>
+                    <div style="font-size: 14px; font-weight: bold; color: {color};">{vol_ratio:.2f}x</div>
+                    <div style="font-size: 9px; color: #666;">/ {threshold:.2f}x</div>
+                </div>
+            </div>
+            <div style="font-size: 10px; color: {color}; margin-top: 4px;">{status}</div>
+        </div>
+        '''
+
+    with st.spinner("Fetching breakout data from Yahoo Finance..."):
+        breakout_data = fetch_breakout()
+
+    if "error" in breakout_data:
+        st.error(f"Error: {breakout_data['error']}")
+    else:
+        signals = breakout_data.get("signals", [])
+        in_box = breakout_data.get("in_box", [])
+        near_misses = breakout_data.get("near_misses", [])
+        not_in_box = breakout_data.get("not_in_box", [])
+
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Confirmed Breakouts", len(signals))
+        with col2:
+            st.metric("In Consolidation", len(in_box))
+        with col3:
+            st.metric("Near Misses", len(near_misses))
+        with col4:
+            st.metric("Not in Box", len(not_in_box))
+
+        st.divider()
+
+        # Confirmed Breakouts
+        if signals:
+            st.subheader("🚀 Confirmed Breakouts")
+            for sig in signals:
+                dir_color = "#00c853" if sig["direction"] == "UP" else "#ff1744"
+                dir_symbol = "▲" if sig["direction"] == "UP" else "▼"
+                bg_color = "rgba(0, 200, 83, 0.1)" if sig["direction"] == "UP" else "rgba(255, 23, 68, 0.1)"
+
+                st.markdown(f'''
+                <div style="background: {bg_color}; border: 1px solid {dir_color}; border-radius: 8px; padding: 16px; margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-size: 20px; font-weight: bold; color: white;">{sig['name']}</span>
+                            <span style="color: #888; margin-left: 8px;">({sig['market']})</span>
+                        </div>
+                        <div style="font-size: 24px; color: {dir_color}; font-weight: bold;">
+                            {dir_symbol} {sig['direction']} BREAKOUT
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 12px; color: #ccc;">
+                        <div><strong>Close:</strong> {sig['close']:.4f}</div>
+                        <div><strong>Box:</strong> {sig['box_lower']:.4f} - {sig['box_upper']:.4f}</div>
+                        <div><strong>Volume:</strong> {sig['vol_ratio']:.2f}x</div>
+                        <div><strong>Date:</strong> {sig['date'][:10]}</div>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+            st.divider()
+
+        # Assets in Consolidation Boxes - Visual Cards
+        st.subheader("📦 Consolidation Boxes")
+        if in_box:
+            st.info(f"{len(in_box)} asset(s) in consolidation - watching for breakouts")
+
+            # Create two columns for cards
+            cols = st.columns(2)
+            for idx, d in enumerate(in_box):
+                with cols[idx % 2]:
+                    # Determine if close to breakout
+                    close_to_up = d['dist_to_up_breakout_pct'] is not None and abs(d['dist_to_up_breakout_pct']) < 1
+                    close_to_down = d['dist_to_down_breakout_pct'] is not None and abs(d['dist_to_down_breakout_pct']) < 1
+                    border_color = "#00c853" if close_to_up else "#ff1744" if close_to_down else "#444"
+
+                    st.markdown(f'''
+                    <div style="background: #1e1e1e; border: 2px solid {border_color}; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-size: 16px; font-weight: bold; color: white;">{d['name']}</span>
+                            <span style="color: #888; font-size: 12px;">{d['market']}</span>
+                        </div>
+                        <div style="color: #ccc; margin-bottom: 8px;">
+                            <strong>Close:</strong> {d['close']:.4f}
+                        </div>
+                        {render_position_bar(d['close'], d['box_lower'], d['box_upper'], d['buffer'])}
+                        {render_distance_indicator(d['dist_to_up_breakout_pct'], d['dist_to_down_breakout_pct'])}
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                            <div style="flex: 1;">
+                                {render_progress_bar(d['days_in_box'] or 0, 60, "#ffc107", f"Day {d['days_in_box'] or 0}/60")}
+                            </div>
+                            <div style="margin-left: 12px;">
+                                {render_volume_gauge(d['vol_ratio'], d['vol_threshold'])}
+                            </div>
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+        else:
+            st.caption("No assets currently in consolidation boxes")
+
+        # Near Misses
+        st.subheader("⚠️ Near Misses")
+        if near_misses:
+            for d in near_misses:
+                direction = "UP" if "up" in d["status"] else "DOWN"
+                dir_color = "#00c853" if direction == "UP" else "#ff1744"
+                dir_symbol = "▲" if direction == "UP" else "▼"
+
+                st.markdown(f'''
+                <div style="background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-weight: bold; color: white;">{d['name']}</span>
+                            <span style="color: #888; margin-left: 8px;">({d['market']})</span>
+                        </div>
+                        <span style="color: {dir_color};">{dir_symbol} {direction}</span>
+                    </div>
+                    <div style="color: #ffc107; font-size: 13px; margin-top: 8px;">
+                        ⚠️ {d['near_miss_reason']}
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+        else:
+            st.caption("No near misses")
+
+        # Assets Not in Consolidation - Compact View
+        with st.expander(f"📊 Not in Consolidation ({len(not_in_box)})", expanded=False):
+            if not_in_box:
+                for d in not_in_box:
+                    tight = d['tight_count'] if d['tight_count'] is not None else 0
+                    threshold = d['tight_threshold']
+                    pct = (tight / threshold) * 100 if threshold > 0 else 0
+
+                    # Color based on how close to forming a box
+                    progress_color = "#00c853" if pct >= 100 else "#ffc107" if pct >= 60 else "#666"
+
+                    chg_5d = d['pct_change_5d']
+                    chg_20d = d['pct_change_20d']
+                    chg_5d_color = "#00c853" if chg_5d and chg_5d > 0 else "#ff1744" if chg_5d and chg_5d < 0 else "#666"
+                    chg_20d_color = "#00c853" if chg_20d and chg_20d > 0 else "#ff1744" if chg_20d and chg_20d < 0 else "#666"
+                    chg_5d_str = f"{chg_5d:+.2f}%" if chg_5d is not None else "N/A"
+                    chg_20d_str = f"{chg_20d:+.2f}%" if chg_20d is not None else "N/A"
+
+                    bb_pctl = d['bb_width_percentile']
+                    vol_status = "Very Tight" if bb_pctl and bb_pctl <= 20 else "Tight" if bb_pctl and bb_pctl <= 40 else "Normal" if bb_pctl and bb_pctl <= 60 else "Elevated" if bb_pctl and bb_pctl <= 80 else "High" if bb_pctl else "N/A"
+                    vol_color = "#00c853" if bb_pctl and bb_pctl <= 40 else "#ffc107" if bb_pctl and bb_pctl <= 60 else "#666"
+
+                    st.markdown(f'''
+                    <div style="background: #1a1a1a; border-radius: 6px; padding: 10px; margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-weight: bold; color: white;">{d['name']}</span>
+                                <span style="color: #666; margin-left: 8px; font-size: 12px;">{d['market']}</span>
+                            </div>
+                            <div style="font-size: 13px; color: #888;">
+                                Close: <span style="color: white;">{d['close']:.4f}</span>
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                            <div style="flex: 1;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 2px;">Congestion Progress</div>
+                                <div style="height: 6px; background: #2d2d2d; border-radius: 3px; overflow: hidden;">
+                                    <div style="width: {pct}%; height: 100%; background: {progress_color};"></div>
+                                </div>
+                                <div style="font-size: 10px; color: {progress_color}; margin-top: 2px;">{tight}/{threshold} days</div>
+                            </div>
+                            <div style="text-align: center; margin: 0 16px;">
+                                <div style="font-size: 10px; color: #666;">Volatility</div>
+                                <div style="font-size: 12px; color: {vol_color};">{vol_status}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 11px;">
+                                    <span style="color: #666;">5d:</span> <span style="color: {chg_5d_color};">{chg_5d_str}</span>
+                                </div>
+                                <div style="font-size: 11px;">
+                                    <span style="color: #666;">20d:</span> <span style="color: {chg_20d_color};">{chg_20d_str}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                st.caption("Congestion = tight days count / threshold needed for box formation")
+            else:
+                st.caption("All assets are in consolidation boxes")
 
 
 # Auto-refresh logic
