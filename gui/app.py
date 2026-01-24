@@ -181,13 +181,44 @@ if st.session_state.current_page == "📈 Market Technicals":
     if st.button("Refresh Data", key="refresh_technicals"):
         st.cache_data.clear()
 
-    # Use a selector so we only fetch data for the active view.
+    # Use a selector so we only fetch data for the active view, styled to match tabs.
+    st.markdown(
+        """
+        <style>
+        .market-tech-tabs [data-testid="stRadio"] > div {
+            flex-direction: row;
+            gap: 0.25rem;
+        }
+        .market-tech-tabs [data-testid="stRadio"] label {
+            background: #f6f7f9;
+            border: 1px solid transparent;
+            border-bottom: 2px solid transparent;
+            border-radius: 6px 6px 0 0;
+            cursor: pointer;
+            margin: 0;
+            padding: 0.35rem 0.9rem;
+        }
+        .market-tech-tabs [data-testid="stRadio"] label:has(input:checked) {
+            background: #ffffff;
+            border: 1px solid #e1e4e8;
+            border-bottom-color: #ffffff;
+            font-weight: 600;
+        }
+        .market-tech-tabs [data-testid="stRadio"] input {
+            display: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     tab_labels = [
         "VIX Term Structure",
         "Market Breadth",
         "Top 50 Breadth",
         "Price/Volume Signals",
     ]
+    st.markdown('<div class="market-tech-tabs">', unsafe_allow_html=True)
     selected_tab = st.radio(
         "Technicals View",
         tab_labels,
@@ -195,6 +226,7 @@ if st.session_state.current_page == "📈 Market Technicals":
         key="market_technicals_tab",
         label_visibility="collapsed",
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # Market Breadth
     if selected_tab == "Market Breadth":
