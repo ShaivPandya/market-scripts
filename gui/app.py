@@ -161,6 +161,17 @@ def color_zscore(val):
         return "color: gray"
 
 
+def color_vix_signal(val):
+    """Color VIX term-structure signals."""
+    if val == "Fear":
+        return "color: #ff1744; font-weight: bold"
+    if val == "Complacency":
+        return "color: #ffc107; font-weight: bold"
+    if val == "Neutral":
+        return "color: gray"
+    return "color: gray"
+
+
 # =============================================================================
 # PAGE: Market Technicals
 # =============================================================================
@@ -170,14 +181,15 @@ if st.session_state.current_page == "📈 Market Technicals":
     if st.button("Refresh Data", key="refresh_technicals"):
         st.cache_data.clear()
 
-    tech_tab1, tech_tab2, tech_tab3 = st.tabs([
+    vix_tab, breadth_tab, top50_tab, pv_tab = st.tabs([
+        "VIX Term Structure",
         "Market Breadth",
         "Top 50 Breadth",
         "Price/Volume Signals",
     ])
 
     # Market Breadth
-    with tech_tab1:
+    with breadth_tab:
         st.subheader("S&P 500 Market Breadth")
 
         @st.cache_data(ttl=300)
@@ -241,7 +253,7 @@ if st.session_state.current_page == "📈 Market Technicals":
                     st.warning("Capitulation Signal")
 
     # Top 50 Breadth
-    with tech_tab2:
+    with top50_tab:
         st.subheader("Top 50 S&P 500 Performers - Breadth")
 
         @st.cache_data(ttl=300)
@@ -286,7 +298,7 @@ if st.session_state.current_page == "📈 Market Technicals":
             st.info(f"Universe: {top50_data.get('universe_size', 0)} stocks with sufficient data")
 
     # Price/Volume Signals
-    with tech_tab3:
+    with pv_tab:
         st.subheader("Price/Volume Signals")
 
         @st.cache_data(ttl=300)
@@ -341,6 +353,70 @@ if st.session_state.current_page == "📈 Market Technicals":
                             color_positive_negative, subset=["RetPct"]
                         )
                         st.dataframe(styled_hits, width='stretch', hide_index=True)
+
+    # VIX Term Structure
+    with vix_tab:
+        st.subheader("VIX Term Structure (3M / 1M)")
+        st.caption("High ratio (>= 1.25): later volatility concerns. Low ratio (< 1.0): near-term fear.")
+
+        @st.cache_data(ttl=300)
+        def fetch_vix_term_structure():
+            try:
+                from vix_term_structure import get_data
+                return get_data()
+            except Exception as e:
+                return {"error": str(e)}
+
+        with st.spinner("Fetching VIX term structure data..."):
+            vix_data = fetch_vix_term_structure()
+
+        if "error" in vix_data:
+            st.error(f"Error: {vix_data['error']}")
+        else:
+            latest_df = vix_data.get("latest_df")
+            if latest_df is not None and not latest_df.empty:
+                latest = latest_df.iloc[0]
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("3M / 1M Ratio", f"{latest['Ratio']:.2f}")
+                with col2:
+                    st.metric("VIX", f"{latest['VIX']:.2f}")
+                with col3:
+                    st.metric(f"3M VIX ({latest['UsedTicker']})", f"{latest['VIX3M']:.2f}")
+                with col4:
+                    st.metric("Date", str(latest["Date"]))
+
+                signal = latest.get("Signal", "Neutral")
+                if signal == "Fear":
+                    st.warning("Signal: Fear (near-term volatility elevated)")
+                elif signal == "Complacency":
+                    st.info("Signal: Complacency (longer-term volatility elevated)")
+                else:
+                    st.caption("Signal: Neutral")
+
+            recent_df = vix_data.get("recent_df")
+            if recent_df is not None and not recent_df.empty:
+                st.write("**Recent Ratios**")
+                display_recent = recent_df[["Date", "VIX", "VIX3M", "Ratio", "Signal"]].copy()
+                display_recent["VIX"] = display_recent["VIX"].apply(lambda x: f"{x:.2f}")
+                display_recent["VIX3M"] = display_recent["VIX3M"].apply(lambda x: f"{x:.2f}")
+                display_recent["Ratio"] = display_recent["Ratio"].apply(lambda x: f"{x:.2f}")
+                styled_recent = display_recent.style.applymap(
+                    color_vix_signal, subset=["Signal"]
+                )
+                st.dataframe(styled_recent, width='stretch', hide_index=True)
+
+            hits_df = vix_data.get("hits_df")
+            if hits_df is not None and not hits_df.empty:
+                st.write("**Recent Signal Hits**")
+                display_hits = hits_df[["Date", "VIX", "VIX3M", "Ratio", "Signal"]].copy()
+                display_hits["VIX"] = display_hits["VIX"].apply(lambda x: f"{x:.2f}")
+                display_hits["VIX3M"] = display_hits["VIX3M"].apply(lambda x: f"{x:.2f}")
+                display_hits["Ratio"] = display_hits["Ratio"].apply(lambda x: f"{x:.2f}")
+                styled_hits = display_hits.style.applymap(
+                    color_vix_signal, subset=["Signal"]
+                )
+                st.dataframe(styled_hits, width='stretch', hide_index=True)
 
 
 # =============================================================================

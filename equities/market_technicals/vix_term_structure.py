@@ -218,5 +218,57 @@ def main() -> None:
             print_table(hits, used_vix3m, title)
 
 
+def get_data(
+    start: str = DEFAULT_START,
+    low: float = DEFAULT_LOW,
+    high: float = DEFAULT_HIGH,
+    tail: int = 10,
+    signals_count: int = 20,
+) -> dict:
+    """
+    Fetch VIX term-structure data for GUI consumption.
+
+    Returns dict with:
+      - latest_df: single-row DataFrame with latest values
+      - recent_df: last N rows of ratios
+      - hits_df: most recent non-neutral signals
+    """
+    data, used_vix3m = load_term_structure(start)
+    signals = add_signals(data, low, high)
+
+    if signals.empty:
+        return {"latest_df": pd.DataFrame(), "recent_df": pd.DataFrame(), "hits_df": pd.DataFrame()}
+
+    latest = signals.iloc[-1]
+    latest_df = pd.DataFrame([{
+        "Date": latest.name.date().isoformat(),
+        "VIX": float(latest["VIX"]),
+        "VIX3M": float(latest["VIX3M"]),
+        "Ratio": float(latest["Ratio"]),
+        "Signal": str(latest["Signal"]),
+        "UsedTicker": used_vix3m,
+    }])
+
+    recent_df = signals.tail(tail).copy() if tail > 0 else pd.DataFrame()
+    if not recent_df.empty:
+        recent_df = recent_df.reset_index().rename(columns={"index": "Date"})
+        recent_df["Date"] = pd.to_datetime(recent_df["Date"]).dt.date.astype(str)
+        recent_df["UsedTicker"] = used_vix3m
+
+    hits_df = signals[signals["Signal"] != "Neutral"].copy()
+    if signals_count > 0 and not hits_df.empty:
+        hits_df = hits_df.sort_index(ascending=False).head(signals_count)
+    if not hits_df.empty:
+        hits_df = hits_df.reset_index().rename(columns={"index": "Date"})
+        hits_df["Date"] = pd.to_datetime(hits_df["Date"]).dt.date.astype(str)
+        hits_df["UsedTicker"] = used_vix3m
+
+    return {
+        "latest_df": latest_df,
+        "recent_df": recent_df,
+        "hits_df": hits_df,
+    }
+
+
 if __name__ == "__main__":
     main()
