@@ -3,7 +3,7 @@ Breakout detector (daily): tight congestion box -> close-based breakout + volume
 
 Universe:
   FX (hybrid box): EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, USDJPY
-  Commodities (frozen box): Gold, Silver, Copper, Platinum
+  Commodities (frozen box): Gold, Silver, Copper, Platinum, Aluminum, Palladium
 
 Data source: Yahoo Finance via yfinance (daily bars).
 Note on FX "volume": Yahoo spot FX often has Volume=0. If so, this script falls back to a participation proxy
@@ -77,6 +77,8 @@ UNIVERSE: Dict[str, Dict[str, str]] = {
         "Silver": "SI=F",
         "Copper": "HG=F",
         "Platinum": "PL=F",
+        "Aluminum": "ALI=F",
+        "Palladium": "PA=F",
     }
 }
 
