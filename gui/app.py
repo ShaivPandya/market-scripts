@@ -878,7 +878,7 @@ elif st.session_state.current_page == "🔔 Breakout":
                     chg_20d_str = f"{chg_20d:+.2f}%" if chg_20d is not None else "N/A"
 
                     bb_pctl = d['bb_width_percentile']
-                    vol_status = "Very Tight" if bb_pctl and bb_pctl <= 20 else "Tight" if bb_pctl and bb_pctl <= 40 else "Normal" if bb_pctl and bb_pctl <= 60 else "Elevated" if bb_pctl and bb_pctl <= 80 else "High" if bb_pctl else "N/A"
+                    vol_status = "Very Tight" if bb_pctl and bb_pctl <= 25 else "Tight" if bb_pctl and bb_pctl <= 40 else "Normal" if bb_pctl and bb_pctl <= 60 else "Elevated" if bb_pctl and bb_pctl <= 80 else "High" if bb_pctl else "N/A"
                     vol_color = "#00c853" if bb_pctl and bb_pctl <= 40 else "#ffc107" if bb_pctl and bb_pctl <= 60 else "#666"
 
                     st.markdown(f'''

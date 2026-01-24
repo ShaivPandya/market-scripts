@@ -36,7 +36,7 @@ class Params:
     atr_n: int = 20
     bb_n: int = 20
     bb_k: float = 2.0
-    bb_q: float = 0.20           # 20th percentile threshold
+    bb_q: float = 0.25           # 25th percentile threshold
     bb_lookback: int = 252       # approx 1 trading year
     k_min: int = 8               # >= 8 of last 20 days meet tightness filters
     range_atr_mult: float = 2.0  # box_range <= 2.0 * ATR
@@ -114,7 +114,7 @@ def compute_features(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     lower_bb = ma - p.bb_k * sd
     df["BBWidth"] = (upper_bb - lower_bb) / ma.replace(0, np.nan)
 
-    # Rolling 20th percentile of BBWidth over ~1y lookback
+    # Rolling 25th percentile of BBWidth over ~1y lookback
     df["BBWidthQ"] = df["BBWidth"].rolling(p.bb_lookback, min_periods=p.bb_lookback).quantile(p.bb_q)
 
     # Tightness condition per day
@@ -563,7 +563,7 @@ def _volatility_description(percentile: Optional[float]) -> str:
     """Return a human-readable volatility description based on BB width percentile."""
     if percentile is None:
         return "N/A"
-    if percentile <= 20:
+    if percentile <= 25:
         return "very tight"
     elif percentile <= 40:
         return "relatively tight"
