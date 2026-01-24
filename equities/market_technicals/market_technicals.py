@@ -9,6 +9,7 @@ Usage:
 from market_breadth import main as run_market_breadth
 from top50_breadth import main as run_top50_breadth
 from price_volume_signals import main as run_price_volume_signals
+from vix_term_structure import main as run_vix_term_structure
 
 try:
     from rich.console import Console
@@ -24,7 +25,7 @@ CONSOLE = Console() if Console else None
 def print_header() -> None:
     if CONSOLE:
         title = Text("Market Technicals", style="bold cyan")
-        subtitle = Text("Breadth | Top 50 | Price/Volume", style="dim")
+        subtitle = Text("Breadth | Top 50 | Price/Volume | VIX Term", style="dim")
         body = Text.assemble(title, "\n", subtitle)
         CONSOLE.print(Panel.fit(body, box=box.ASCII, padding=(1, 4), style="cyan"))
         return
@@ -53,6 +54,9 @@ def main():
 
     print_section("Price/Volume Signals")
     run_price_volume_signals()
+
+    print_section("VIX Term Structure")
+    run_vix_term_structure()
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ cd equities/market_technicals
 python3 market_technicals.py
 ```
 
-This runs all three analyses in sequence.
+This runs all four analyses in sequence.
 
 ## Dependencies
 
@@ -47,6 +47,14 @@ Detects signals on major indices (S&P 500, Nasdaq, Russell 2000):
 
 Falls back to ETF proxies (SPY, QQQ, IWM) if index volume data is unavailable.
 
+### 4. VIX Term Structure (`vix_term_structure.py`)
+
+Calculates 3-month VIX / 1-month VIX ratio:
+- **High ratio (e.g., >= 1.25)**: later volatility concerns (potential complacency)
+- **Low ratio (< 1.0)**: near-term fear (can coincide with tactical lows)
+
+Uses ^VIX and ^VIX3M (falls back to ^VXV if needed).
+
 ## Supporting Files
 
 | File | Description |
@@ -64,4 +72,5 @@ python3 market_breadth.py --universe /path/to/tickers.txt  # Custom universe
 python3 top50_breadth.py               # Top 50 analysis
 
 python3 price_volume_signals.py        # Index signals
+python3 vix_term_structure.py          # VIX term structure ratio
 ```
