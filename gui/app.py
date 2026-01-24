@@ -3,8 +3,8 @@
 Market Analysis Dashboard - Streamlit GUI
 
 Provides a navigatable interface for:
-- Market Technicals (breadth, top 50, price/volume signals)
 - Market Dashboard (commodities, equities, currencies performance)
+- Market Technicals (breadth, top 50, price/volume signals)
 - Liquidity Dashboard (Fed/ECB/BoJ liquidity metrics)
 
 Run:
@@ -37,7 +37,7 @@ st.set_page_config(
 
 # Initialize session state for navigation
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "📈 Market Technicals"
+    st.session_state.current_page = "📊 Market Dashboard"
 
 # Sidebar: Settings Section
 st.sidebar.title("Settings")
@@ -53,14 +53,14 @@ st.sidebar.divider()
 st.sidebar.markdown("### Navigation")
 
 # Clickable text navigation
-if st.sidebar.button("📈 Market Technicals", width='stretch',
-                      type="primary" if st.session_state.current_page == "📈 Market Technicals" else "secondary"):
-    st.session_state.current_page = "📈 Market Technicals"
-    st.rerun()
-
 if st.sidebar.button("📊 Market Dashboard", width='stretch',
                       type="primary" if st.session_state.current_page == "📊 Market Dashboard" else "secondary"):
     st.session_state.current_page = "📊 Market Dashboard"
+    st.rerun()
+
+if st.sidebar.button("📈 Market Technicals", width='stretch',
+                      type="primary" if st.session_state.current_page == "📈 Market Technicals" else "secondary"):
+    st.session_state.current_page = "📈 Market Technicals"
     st.rerun()
 
 if st.sidebar.button("💧 Liquidity", width='stretch',

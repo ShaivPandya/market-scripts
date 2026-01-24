@@ -34,7 +34,7 @@ console = Console()
 COMMODITIES = {
     "Copper": "HG=F",                    # COMEX Copper Futures
     "GS Commodity Index": "GSG",         # iShares S&P GSCI Commodity ETF
-    "CRB Spot Index": None,              # Read from XLS file
+    "CRB Industrial Commodity Spot Index": None,              # Read from XLS file
 }
 
 EQUITIES = {
