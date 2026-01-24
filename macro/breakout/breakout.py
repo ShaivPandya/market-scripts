@@ -563,7 +563,7 @@ def _volatility_description(percentile: Optional[float]) -> str:
     """Return a human-readable volatility description based on BB width percentile."""
     if percentile is None:
         return "N/A"
-    if percentile <= 20:
+    if percentile <= 25:
         return "very tight"
     elif percentile <= 40:
         return "relatively tight"
