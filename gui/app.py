@@ -22,6 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "market_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "liquidity"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "breakout"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
+sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
 
 import streamlit as st
 import pandas as pd
@@ -75,6 +76,11 @@ if st.sidebar.button("🔔 Breakout", width='stretch',
 if st.sidebar.button("📈 Portfolio Optimizer", width='stretch',
                       type="primary" if st.session_state.current_page == "📈 Portfolio Optimizer" else "secondary"):
     st.session_state.current_page = "📈 Portfolio Optimizer"
+    st.rerun()
+
+if st.sidebar.button("🚀 Momentum", width='stretch',
+                      type="primary" if st.session_state.current_page == "🚀 Momentum" else "secondary"):
+    st.session_state.current_page = "🚀 Momentum"
     st.rerun()
 
 # Visual separator
@@ -1209,6 +1215,92 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
                     st.dataframe(styled_max, use_container_width=True, hide_index=True)
             else:
                 st.info("No max scaled data available")
+
+
+# =============================================================================
+# PAGE: Momentum
+# =============================================================================
+elif st.session_state.current_page == "🚀 Momentum":
+    st.header("Momentum Analysis")
+    st.caption("ROC-based momentum metrics for portfolio tickers")
+
+    if st.button("Refresh Data", key="refresh_momentum"):
+        st.cache_data.clear()
+
+    @st.cache_data(ttl=300)
+    def fetch_momentum():
+        try:
+            from momentum import get_data
+            return get_data()
+        except Exception as e:
+            import traceback
+            return {"error": f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"}
+
+    def color_momentum_threshold(val, threshold: float = 1.5):
+        """Color momentum values: green if >= threshold, red if < threshold."""
+        if pd.isna(val) or val == "N/A":
+            return "color: gray"
+        try:
+            if isinstance(val, str):
+                val = float(val.replace("%", "").replace("+", "").strip())
+            if val >= threshold:
+                return "color: #00c853; font-weight: bold"
+            else:
+                return "color: #ff1744; font-weight: bold"
+        except (ValueError, TypeError):
+            return "color: gray"
+
+    with st.spinner("Fetching momentum data from Yahoo Finance..."):
+        momentum_data = fetch_momentum()
+
+    if "error" in momentum_data:
+        st.error(f"Error: {momentum_data['error']}")
+    else:
+        results = momentum_data.get("results", [])
+        count = momentum_data.get("count", 0)
+        data_date = momentum_data.get("date")
+
+        # Summary metrics
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Tickers Analyzed", count)
+        with col2:
+            st.metric("As of", str(data_date) if data_date else "N/A")
+
+        st.divider()
+
+        if results:
+            # Build DataFrame for display
+            rows = []
+            for r in results:
+                rows.append({
+                    "Ticker": r["ticker"],
+                    "Benchmark": r["benchmark"],
+                    "Close": f"{r['close']:.2f}",
+                    "20d Avg 63d ROC (%)": f"{r['avg20_roc63']:+.2f}",
+                    "42d Rel ROC (%)": f"{r['rel_roc42']:+.2f}",
+                    "10d Avg Rel ROC (%)": f"{r['avg10_rel_roc']:+.2f}",
+                })
+
+            df = pd.DataFrame(rows)
+
+            # Apply styling
+            styled_df = df.style.applymap(
+                lambda x: color_momentum_threshold(x, threshold=1.5),
+                subset=["20d Avg 63d ROC (%)"]
+            ).applymap(
+                color_positive_negative,
+                subset=["42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
+            )
+
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+            # Legend
+            st.caption("**Color coding:**")
+            st.caption("- 20d Avg 63d ROC: Green if >= 1.5%, Red if < 1.5%")
+            st.caption("- Relative ROC metrics: Green if positive (outperforming benchmark), Red if negative")
+        else:
+            st.warning("No momentum data available")
 
 
 # Auto-refresh logic
