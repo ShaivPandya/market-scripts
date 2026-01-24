@@ -575,7 +575,347 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame) -> float:
 
 
 # -----------------------------
-# Main
+# API for GUI
+# -----------------------------
+def optimize_portfolio(
+    book: Optional[float] = None,
+    target_leverage: Optional[float] = None,
+) -> dict:
+    """
+    Run portfolio optimization and return structured results for GUI consumption.
+
+    Args:
+        book: Book size in dollars (optional, for dollar weight calculation)
+        target_leverage: Target gross leverage ratio (0.5-4.0). If None, uses volatility targeting.
+
+    Returns:
+        Dictionary with optimization results including weights, exposures, constraints, etc.
+    """
+    from datetime import datetime
+
+    try:
+        meta = pd.read_csv(PORTFOLIO_CSV)
+        meta["direction"] = meta["direction"].fillna("")
+        meta = meta.set_index("ticker")
+
+        tickers = meta.index.tolist()
+
+        # Determine required FX tickers and download all prices
+        fx_tickers = get_required_fx_tickers(tickers)
+        market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
+        all_tickers_to_fetch = list(set(tickers + market_tickers))
+        prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
+
+        missing_cols = [t for t in tickers if t not in prices_all.columns]
+        if missing_cols:
+            return {"error": f"Failed to download tickers: {missing_cols}"}
+
+        for mt in market_tickers:
+            if mt not in prices_all.columns:
+                return {"error": f"Failed to download {mt} for beta regression."}
+
+        # Convert all instrument prices to USD
+        usd_prices = pd.DataFrame(index=prices_all.index)
+        tickers_plus_market = list(set(tickers + market_tickers))
+        for t in tickers_plus_market:
+            local_px = prices_all[t]
+            ccy = CURRENCY_OF_TICKER.get(t, BASE_CCY)
+            usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
+
+        # Compute USD returns
+        usd_prices = usd_prices.ffill()
+        rets = usd_prices.pct_change(fill_method=None).dropna(how="all")
+        tickers = [t for t in tickers if t in rets.columns]
+        meta = meta.loc[tickers]
+
+        # Compute defense volatility
+        defense_vol = compute_defense_volatility(usd_prices, tickers)
+        meta["realized_vol"] = defense_vol
+
+        if len(tickers) < 2:
+            return {"error": "Need at least 2 instruments with returns to optimize."}
+
+        # Portfolio-only returns for covariance
+        rets_portfolio = rets[tickers]
+
+        # Covariance
+        Sigma = rets_portfolio.cov().values
+        Sigma = ensure_psd(Sigma, eps=1e-10)
+        L = np.linalg.cholesky(Sigma)
+
+        # Compute betas
+        yf_betas_spy = fetch_yfinance_betas(tickers)
+        computed_betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers)
+        betas_spy = yf_betas_spy.combine_first(computed_betas_spy).fillna(0.0)
+        betas_iwm = compute_betas(rets, MARKET_TICKER_SHORT).reindex(tickers).fillna(0.0)
+
+        # Generate composite signals
+        active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
+        asset_map = dict(zip(meta.index, meta["asset"]))
+        direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
+        signals_df, _ = generate_composite_signals(
+            tickers=active_tickers,
+            asset_map=asset_map,
+            benchmark_override=MARKET_TICKER_LONG,
+            direction_map=direction_map,
+            weights_short=DEFAULT_WEIGHTS_SHORT,
+        )
+        signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+
+        # Raw weights
+        w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0,
+                                   vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
+        w_raw_vec = w_raw.values
+
+        # Masks
+        asset = meta["asset"].str.lower()
+        eq_mask = asset.eq("equity").values
+        fx_mask = asset.eq("fx").values
+        cmdty_mask = asset.eq("commodity").values
+        bond_mask = asset.eq("bond").values
+
+        n = len(tickers)
+        w = cp.Variable(n)
+
+        constraints = []
+
+        # Direction constraints
+        direction = meta["direction"].str.lower()
+        long_mask = direction.eq("long").values
+        short_mask = direction.eq("short").values
+        if long_mask.any():
+            constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
+            constraints.append(w[long_mask] <= LONG_MAX)
+        if short_mask.any():
+            constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
+            constraints.append(w[short_mask] >= SHORT_MIN)
+
+        # Total gross leverage
+        constraints.append(cp.norm1(w) <= GROSS_MAX)
+
+        # Equity net bounds
+        if eq_mask.any():
+            w_eq = w[eq_mask]
+            constraints.append(cp.sum(w_eq) >= EQ_NET_MIN)
+            constraints.append(cp.sum(w_eq) <= EQ_NET_MAX)
+
+        # Asset-class gross caps
+        if fx_mask.any():
+            constraints.append(cp.norm1(w[fx_mask]) <= FX_GROSS_MAX)
+        if cmdty_mask.any():
+            constraints.append(cp.norm1(w[cmdty_mask]) <= CMDTY_GROSS_MAX)
+        if bond_mask.any():
+            bond_tickers = [tickers[i] for i in range(n) if bond_mask[i]]
+            duration_coeffs = np.array([DURATION_OF_TICKER.get(t, 10.0) / 10.0 for t in bond_tickers])
+            constraints.append(cp.sum(cp.multiply(duration_coeffs, cp.abs(w[bond_mask]))) <= BOND_10YR_EQUIV_MAX)
+
+        # Vol cap
+        constraints.append(cp.norm(L @ w, 2) <= VOL_MAX)
+
+        # Objective
+        objective = cp.Minimize(cp.sum_squares(w - w_raw_vec) + GAMMA_RISK * cp.sum_squares(L @ w))
+
+        prob = cp.Problem(objective, constraints)
+        prob.solve(verbose=False)
+
+        if w.value is None:
+            return {"error": "Optimization failed. Check data/constraints for feasibility.", "status": "infeasible"}
+
+        w_star = pd.Series(w.value, index=tickers)
+
+        # Post-solve scaling
+        def port_vol(w_vec: np.ndarray) -> float:
+            x = L @ w_vec
+            return float(np.sqrt(np.maximum(0.0, x.T @ x)))
+
+        vol0 = port_vol(w_star.values)
+        if vol0 <= 0:
+            return {"error": "Optimized portfolio has ~0 volatility; check inputs."}
+
+        # Scaling logic - use target_leverage if provided, otherwise use vol targeting
+        if target_leverage is not None:
+            # User specified a target gross leverage
+            current_gross = np.abs(w_star).sum()
+            k_user = target_leverage / current_gross if current_gross > 0 else 1.0
+            k_volcap = VOL_MAX / vol0
+            k_linear = max_scale_to_respect_linear_caps(w_star, meta)
+            k = min(k_user, k_volcap, k_linear)
+        else:
+            # Original behavior: scale toward vol target
+            k_target = VOL_TARGET / vol0
+            k_volcap = VOL_MAX / vol0
+            k_linear = max_scale_to_respect_linear_caps(w_star, meta)
+            k = min(k_target, k_volcap, k_linear)
+
+        active_mask = long_mask | short_mask
+        if MIN_ABS_WEIGHT > 0 and active_mask.any():
+            min_abs_active = float(np.min(np.abs(w_star.values[active_mask])))
+            if min_abs_active > 0:
+                k_floor = MIN_ABS_WEIGHT / min_abs_active
+                if k < k_floor:
+                    k = k_floor
+
+        w_final = w_star * k
+        vol_final = port_vol(w_final.values)
+
+        # Benchmark volatility
+        benchmark_vol = compute_defense_volatility(usd_prices, market_tickers)
+        vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
+        vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
+
+        # Beta exposures and hedges
+        beta_long_spy = float(betas_spy.values[long_mask] @ w_final.values[long_mask]) if long_mask.any() else 0.0
+        beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
+        hedge_spy_weight = -beta_long_spy
+        hedge_iwm_weight = -beta_short_iwm
+
+        # Build exposures dict
+        exp = exposures_by_class(w_final, meta)
+
+        # Build constraints utilization dict
+        constraints_util = {
+            "Total Gross (400%)": {
+                "limit": GROSS_MAX,
+                "current": exp["total_gross"],
+                "utilization": exp["total_gross"] / GROSS_MAX if GROSS_MAX > 0 else 0,
+            },
+            "FX Gross (200%)": {
+                "limit": FX_GROSS_MAX,
+                "current": exp.get("fx_gross", 0),
+                "utilization": exp.get("fx_gross", 0) / FX_GROSS_MAX if FX_GROSS_MAX > 0 else 0,
+            },
+            "Commodity Gross (100%)": {
+                "limit": CMDTY_GROSS_MAX,
+                "current": exp.get("commodity_gross", 0),
+                "utilization": exp.get("commodity_gross", 0) / CMDTY_GROSS_MAX if CMDTY_GROSS_MAX > 0 else 0,
+            },
+            "Equity Net Max (100%)": {
+                "limit": EQ_NET_MAX,
+                "current": exp.get("equity_net", 0),
+                "utilization": max(0, exp.get("equity_net", 0)) / EQ_NET_MAX if EQ_NET_MAX > 0 else 0,
+            },
+            "Equity Net Min (-50%)": {
+                "limit": EQ_NET_MIN,
+                "current": exp.get("equity_net", 0),
+                "utilization": max(0, -exp.get("equity_net", 0)) / abs(EQ_NET_MIN) if EQ_NET_MIN < 0 else 0,
+            },
+        }
+
+        # Add bond constraint if applicable
+        bond_10yr = compute_10yr_equivalent(w_final, meta)
+        if bond_10yr > 0:
+            constraints_util["Bond 10yr Equiv (300%)"] = {
+                "limit": BOND_10YR_EQUIV_MAX,
+                "current": bond_10yr,
+                "utilization": bond_10yr / BOND_10YR_EQUIV_MAX if BOND_10YR_EQUIV_MAX > 0 else 0,
+            }
+
+        # Build weights DataFrame
+        weights_df = pd.DataFrame({
+            "ticker": tickers,
+            "asset": meta["asset"].values,
+            "direction": meta["direction"].values,
+            "signal": signals.reindex(tickers).fillna(0.0).values,
+            "beta_spy": betas_spy.values,
+            "beta_iwm": betas_iwm.values,
+            "realized_vol": meta["realized_vol"].values,
+            "weight": w_final.values,
+        })
+        if book is not None:
+            weights_df["dollar_weight"] = w_final.values * book
+        weights_df = weights_df.sort_values("weight", ascending=False)
+
+        # Build hedges DataFrame
+        hedges_data = {
+            "ticker": [MARKET_TICKER_LONG, MARKET_TICKER_SHORT],
+            "type": ["hedge", "hedge"],
+            "direction": ["short" if hedge_spy_weight < 0 else "long", "long" if hedge_iwm_weight > 0 else "short"],
+            "weight": [hedge_spy_weight, hedge_iwm_weight],
+        }
+        if book is not None:
+            hedges_data["dollar_weight"] = [hedge_spy_weight * book, hedge_iwm_weight * book]
+        hedges_df = pd.DataFrame(hedges_data)
+
+        # Max scaled version
+        k_max = max_scale_to_respect_linear_caps(w_final, meta)
+        w_max_scaled = w_final * k_max
+        vol_max_scaled = port_vol(w_max_scaled.values)
+        binding = identify_binding_constraint(w_max_scaled, meta)
+        exp_max = exposures_by_class(w_max_scaled, meta)
+
+        max_scaled_weights_df = pd.DataFrame({
+            "ticker": tickers,
+            "asset": meta["asset"].values,
+            "direction": meta["direction"].values,
+            "weight": w_max_scaled.values,
+        })
+        if book is not None:
+            max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
+        max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
+
+        return {
+            "status": prob.status,
+            "error": None,
+            "timestamp": datetime.now(),
+            "book_size": book,
+            "target_leverage": target_leverage,
+
+            # Solution metrics
+            "vol_daily": vol_final,
+            "vol_target": VOL_TARGET,
+            "vol_band": [VOL_MIN, VOL_MAX],
+            "vol_spy": vol_spy,
+            "vol_iwm": vol_iwm,
+            "gross_leverage": exp["total_gross"],
+            "gross_max": GROSS_MAX,
+
+            # Beta hedging
+            "beta_long_spy": beta_long_spy,
+            "beta_short_iwm": beta_short_iwm,
+            "hedge_spy_weight": hedge_spy_weight,
+            "hedge_iwm_weight": hedge_iwm_weight,
+
+            # Exposures
+            "exposures": exp,
+
+            # Constraints utilization
+            "constraints": constraints_util,
+
+            # DataFrames
+            "weights_df": weights_df,
+            "hedges_df": hedges_df,
+
+            # Max scaled version
+            "max_scaled": {
+                "scale_factor": k_max,
+                "binding_constraint": binding,
+                "vol_daily": vol_max_scaled,
+                "weights_df": max_scaled_weights_df,
+                "exposures": exp_max,
+            },
+        }
+
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+def get_data(book: Optional[float] = None, target_leverage: Optional[float] = None) -> dict:
+    """
+    Fetch portfolio optimization results for GUI consumption.
+
+    Args:
+        book: Book size in dollars (optional)
+        target_leverage: Target gross leverage ratio (0.5-4.0). If None, uses volatility targeting.
+
+    Returns:
+        Dictionary with optimization results or error.
+    """
+    return optimize_portfolio(book=book, target_leverage=target_leverage)
+
+
+# -----------------------------
+# Main (CLI)
 # -----------------------------
 def main(book: Optional[float] = None, debug_weights: bool = False):
     meta = pd.read_csv(PORTFOLIO_CSV)
