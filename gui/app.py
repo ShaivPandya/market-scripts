@@ -363,7 +363,7 @@ if st.session_state.current_page == "📈 Market Technicals":
         def fetch_vix_term_structure():
             try:
                 from vix_term_structure import get_data
-                return get_data()
+                return get_data(tail=252, signals_count=20)
             except Exception as e:
                 return {"error": str(e)}
 
@@ -396,8 +396,14 @@ if st.session_state.current_page == "📈 Market Technicals":
 
             recent_df = vix_data.get("recent_df")
             if recent_df is not None and not recent_df.empty:
+                st.write("**Ratio Over Time (last 12 months)**")
+                chart_df = recent_df[["Date", "Ratio"]].copy()
+                chart_df["Date"] = pd.to_datetime(chart_df["Date"])
+                chart_df = chart_df.sort_values("Date").set_index("Date")
+                st.line_chart(chart_df["Ratio"], height=200)
+
                 st.write("**Recent Ratios**")
-                display_recent = recent_df[["Date", "VIX", "VIX3M", "Ratio", "Signal"]].copy()
+                display_recent = recent_df.tail(10)[["Date", "VIX", "VIX3M", "Ratio", "Signal"]].copy()
                 display_recent["VIX"] = display_recent["VIX"].apply(lambda x: f"{x:.2f}")
                 display_recent["VIX3M"] = display_recent["VIX3M"].apply(lambda x: f"{x:.2f}")
                 display_recent["Ratio"] = display_recent["Ratio"].apply(lambda x: f"{x:.2f}")
