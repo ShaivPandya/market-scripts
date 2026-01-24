@@ -3,8 +3,8 @@
 Market Analysis Dashboard - Streamlit GUI
 
 Provides a navigatable interface for:
-- Market Technicals (breadth, top 50, price/volume signals)
 - Market Dashboard (commodities, equities, currencies performance)
+- Market Technicals (breadth, top 50, price/volume signals)
 - Liquidity Dashboard (Fed/ECB/BoJ liquidity metrics)
 
 Run:
@@ -37,7 +37,7 @@ st.set_page_config(
 
 # Initialize session state for navigation
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "📈 Market Technicals"
+    st.session_state.current_page = "📊 Market Dashboard"
 
 # Sidebar: Settings Section
 st.sidebar.title("Settings")
@@ -53,14 +53,14 @@ st.sidebar.divider()
 st.sidebar.markdown("### Navigation")
 
 # Clickable text navigation
-if st.sidebar.button("📈 Market Technicals", width='stretch',
-                      type="primary" if st.session_state.current_page == "📈 Market Technicals" else "secondary"):
-    st.session_state.current_page = "📈 Market Technicals"
-    st.rerun()
-
 if st.sidebar.button("📊 Market Dashboard", width='stretch',
                       type="primary" if st.session_state.current_page == "📊 Market Dashboard" else "secondary"):
     st.session_state.current_page = "📊 Market Dashboard"
+    st.rerun()
+
+if st.sidebar.button("📈 Market Technicals", width='stretch',
+                      type="primary" if st.session_state.current_page == "📈 Market Technicals" else "secondary"):
+    st.session_state.current_page = "📈 Market Technicals"
     st.rerun()
 
 if st.sidebar.button("💧 Liquidity", width='stretch',
@@ -382,7 +382,7 @@ elif st.session_state.current_page == "📊 Market Dashboard":
                 rows.append(row)
             df = pd.DataFrame(rows)
             styled_df = df.style.applymap(color_positive_negative, subset=periods)
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
         # Equities
         st.subheader("Equities (vs Benchmark)")
@@ -414,7 +414,7 @@ elif st.session_state.current_page == "📊 Market Dashboard":
 
             df = pd.DataFrame(rows)
             styled_df = df.style.applymap(color_return_vs_benchmark, subset=periods)
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
             st.caption("(+) = outperforming benchmark, (-) = underperforming benchmark")
 
         # Currencies
@@ -431,7 +431,7 @@ elif st.session_state.current_page == "📊 Market Dashboard":
                 rows.append(row)
             df = pd.DataFrame(rows)
             styled_df = df.style.applymap(color_positive_negative, subset=periods)
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
 
 # =============================================================================
@@ -551,7 +551,7 @@ elif st.session_state.current_page == "💧 Liquidity":
                 lambda x: "color: #00c853; font-weight: bold" if x == "supportive" else ("color: #ff1744; font-weight: bold" if x == "tightening" else "color: gray"),
                 subset=["Signal"]
             )
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
         # Changes table
         st.subheader("Historical Changes")
@@ -612,7 +612,7 @@ elif st.session_state.current_page == "💧 Liquidity":
                 return styles
 
             styled_df = df.style.apply(style_with_polarity, axis=1)
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
             st.caption("Green indicates liquidity-supportive changes, red indicates liquidity-tightening changes")
 
 
@@ -969,7 +969,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
         st.caption("- Long max: +20%")
         st.caption("- Short max: -10%")
 
-    optimize_clicked = st.sidebar.button("Optimize Portfolio", type="primary", use_container_width=True)
+    optimize_clicked = st.sidebar.button("Optimize Portfolio", type="primary", width="stretch")
 
     if optimize_clicked:
         with st.spinner("Downloading price data and running optimization..."):
@@ -1075,7 +1075,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
                 styled_df = display_df[display_cols].style.applymap(
                     color_positive_negative, subset=["Weight %"] + (["Dollar"] if "Dollar" in display_df.columns else [])
                 )
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                st.dataframe(styled_df, width="stretch", hide_index=True)
 
             # Hedge positions
             st.subheader("Hedge Positions")
@@ -1093,7 +1093,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
                 styled_hedges = hedge_display[display_cols].style.applymap(
                     color_positive_negative, subset=["Weight %"] + (["Dollar"] if "Dollar" in hedge_display.columns else [])
                 )
-                st.dataframe(styled_hedges, use_container_width=True, hide_index=True)
+                st.dataframe(styled_hedges, width="stretch", hide_index=True)
 
         # Exposures Tab
         with tab2:
@@ -1212,7 +1212,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
                     styled_max = max_display[display_cols].style.applymap(
                         color_positive_negative, subset=["Weight %"] + (["Dollar"] if "Dollar" in max_display.columns else [])
                     )
-                    st.dataframe(styled_max, use_container_width=True, hide_index=True)
+                    st.dataframe(styled_max, width="stretch", hide_index=True)
             else:
                 st.info("No max scaled data available")
 
@@ -1293,7 +1293,7 @@ elif st.session_state.current_page == "🚀 Momentum":
                 subset=["42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
             )
 
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
             # Legend
             st.caption("**Color coding:**")
