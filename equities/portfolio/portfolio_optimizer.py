@@ -3,33 +3,146 @@
 Total-portfolio beta-neutral + full-portfolio volatility targeting (USD base),
 with currency conversion for non-USD instruments.
 
-What this script does:
+═══════════════════════════════════════════════════════════════════════════════
+WHAT THIS SCRIPT DOES
+═══════════════════════════════════════════════════════════════════════════════
 1) Loads portfolio metadata from equities/universes/portfolio.csv.
 2) Downloads daily price history for all tickers from yfinance.
 3) Downloads required FX rates from yfinance (e.g., EURUSD=X for EUR-denominated stocks).
 4) Converts each instrument's price series into USD (if not already USD).
-5) Computes USD daily returns, covariance (Sigma), and SPX betas for ALL instruments via regression on SPY.
-6) Solves a convex program:
-   - beta-neutral (total portfolio vs SPY)
-   - vol cap (entire portfolio)
-   - gross leverage, asset-class gross caps, equity net bounds
-7) Scales the solution toward a target vol (within constraints).
+5) Computes USD daily returns, covariance (Sigma), and SPX/Russell betas for ALL instruments.
+6) Generates composite momentum signals for each instrument (optional signal tilting).
+7) Solves a convex optimization program with constraints:
+   - Beta-neutral positioning (separate hedges for longs via SPY, shorts via IWM)
+   - Daily volatility target band (min/target/max)
+   - Gross leverage limits (overall + per asset class)
+   - Equity net exposure bounds
+   - Bond duration-adjusted exposure limits
+   - Individual position size constraints
+8) Scales the solution toward the target volatility (within all constraints).
+9) Outputs:
+   - Optimized weights (% of NAV)
+   - Dollar weights (if --book specified)
+   - Beta exposures and hedge positions (SPY/IWM)
+   - Max scaled portfolio (showing binding constraint)
 
-Data sources:
+═══════════════════════════════════════════════════════════════════════════════
+HOW TO RUN
+═══════════════════════════════════════════════════════════════════════════════
+Basic usage:
+    python3 equities/portfolio/portfolio_optimizer.py
+
+With dollar book size (shows dollar weights):
+    python3 equities/portfolio/portfolio_optimizer.py --book 100000
+
+With debug output (shows raw/optimized/final weight evolution):
+    python3 equities/portfolio/portfolio_optimizer.py --debug-weights
+
+Combined:
+    python3 equities/portfolio/portfolio_optimizer.py --book 250000 --debug-weights
+
+═══════════════════════════════════════════════════════════════════════════════
+CONFIGURING EXPOSURE LIMITS
+═══════════════════════════════════════════════════════════════════════════════
+All exposure limits are configured in the "Configuration" section (lines 54-89).
+Edit these constants directly in the code:
+
+VOLATILITY TARGETING (daily volatility):
+    VOL_MIN = 0.0120           # Minimum acceptable daily vol (1.2%)
+    VOL_TARGET = 0.0150        # Target daily vol (1.5%)
+    VOL_MAX = 0.0200           # Maximum allowed daily vol (2.0%)
+
+    The optimizer will try to hit VOL_TARGET while respecting VOL_MAX as a hard cap.
+    If constraints prevent reaching VOL_MIN, a warning is shown.
+
+GROSS LEVERAGE LIMITS (as multiples of NAV):
+    GROSS_MAX = 4.0            # Max total gross notional (400% of NAV)
+    FX_GROSS_MAX = 2.0         # Max FX gross notional (200% of NAV)
+    CMDTY_GROSS_MAX = 1.0      # Max commodity gross notional (100% of NAV)
+
+    Gross = sum of absolute values of all positions in that class.
+
+EQUITY NET EXPOSURE BOUNDS:
+    EQ_NET_MIN = -0.50         # Min equity net exposure (-50% = max net short)
+    EQ_NET_MAX = 1.00          # Max equity net exposure (100% = max net long)
+
+    Net = sum of signed weights. Allows -50% to +100% equity net.
+
+BOND DURATION LIMITS:
+    BOND_10YR_EQUIV_MAX = 3.0  # Max 10-year equivalent exposure (300% of NAV)
+
+    Bonds are converted to 10yr-equivalent: |weight| * (duration / 10).
+    Durations defined in DURATION_OF_TICKER dict (lines 79-84).
+    Add your bond futures there: {"ZN": 6.5, "ZT": 2.0, ...}
+
+INDIVIDUAL POSITION LIMITS:
+    MIN_ABS_WEIGHT = 0.01      # Minimum position size (1% of NAV)
+    LONG_MAX = 0.20            # Max single long position (20% of NAV)
+    SHORT_MIN = -0.10          # Max single short position (-10% of NAV)
+
+    These prevent over-concentration and ensure meaningful positions.
+
+OBJECTIVE TUNING (advanced):
+    GAMMA_RISK = 1e-4          # Risk penalty (higher = more risk-averse)
+    VOL_POWER_LONG = 0.7       # Inverse-vol weight exponent for longs (<1 = less concentration)
+    VOL_POWER_SHORT = 1.4      # Inverse-vol weight exponent for shorts (>1 = more concentration)
+
+    VOL_POWER < 1: reduces allocation to low-volatility names
+    VOL_POWER > 1: increases allocation to low-volatility names
+
+═══════════════════════════════════════════════════════════════════════════════
+PORTFOLIO INPUT FILE
+═══════════════════════════════════════════════════════════════════════════════
+Required: equities/universes/portfolio.csv
+
+Columns:
+    ticker      - Ticker symbol (e.g., AAPL, SPY, METSO.HE)
+    asset       - Asset class: equity, fx, commodity, bond
+    direction   - "long" or "short" (leave blank for inactive/hedges)
+
+For non-USD instruments, add to CURRENCY_OF_TICKER dict (line 96):
+    CURRENCY_OF_TICKER = {
+        "METSO.HE": "EUR",  # Helsinki-listed stock in EUR
+    }
+
+The script will automatically fetch required FX rates from yfinance.
+
+═══════════════════════════════════════════════════════════════════════════════
+DATA SOURCES
+═══════════════════════════════════════════════════════════════════════════════
 - Portfolio metadata: equities/universes/portfolio.csv
-- Price data: yfinance (live download)
+- Price data: yfinance (live download, last LOOKBACK_DAYS=365 days)
 - FX rates: yfinance (e.g., EURUSD=X, USDJPY=X)
+- Betas: yfinance API first, then computed via regression if unavailable
 
 FX quote conventions:
-- yfinance FX tickers use "=X" suffix (e.g., "EURUSD=X" for USD per EUR)
-- "EURUSD=X" means USD per 1 EUR. Then USD_price = local_price * EURUSD.
-- "USDJPY=X" means JPY per 1 USD. Then USD_price = local_price / USDJPY.
+    "EURUSD=X" = USD per 1 EUR → USD_price = EUR_price × EURUSD
+    "USDJPY=X" = JPY per 1 USD → USD_price = JPY_price ÷ USDJPY
 
-python3 portfolio_optimizer.py
-python3 portfolio_optimizer.py --book 100000
+═══════════════════════════════════════════════════════════════════════════════
+OUTPUT INTERPRETATION
+═══════════════════════════════════════════════════════════════════════════════
+WEIGHTS TABLE:
+    - Shows optimized portfolio weights as % of NAV (1.0 = 100% notional)
+    - Positive = long, negative = short
+    - Dollar column appears if --book specified
 
-python3 equities/portfolio/portfolio_optimizer.py
-python3 equities/portfolio/portfolio_optimizer.py --book 100000
+HEDGE POSITIONS:
+    - SPY hedge: Offsets beta exposure from long equity positions
+    - IWM hedge: Offsets beta exposure from short equity positions
+    - Allows portfolio to be market-neutral while maintaining factor exposures
+
+EXPOSURES:
+    - Shows gross and net by asset class
+    - total_gross: sum of |weights| across all positions
+    - equity_net: sum of signed weights for equities
+
+MAX SCALED PORTFOLIO:
+    - Shows how much you could scale up while respecting all constraints
+    - Identifies which constraint is binding (limiting further leverage)
+    - Useful to understand headroom in the portfolio
+
+═══════════════════════════════════════════════════════════════════════════════
 """
 
 import argparse
