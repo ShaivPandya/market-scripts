@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Top 50 S&P 500 performers over the past 6 months (total return proxy via adjusted prices).
+Top 50 S&P 500 performers over the past year (total return proxy via adjusted prices).
 
 Dependencies:
   pip install pandas yfinance lxml
@@ -51,7 +51,7 @@ def chunked(xs: List[str], n: int) -> Iterable[List[str]]:
 
 def download_close_prices(
     tickers: List[str],
-    period: str = "6mo",
+    period: str = "1y",
     interval: str = "1d",
     chunk_size: int = 100,
 ) -> pd.DataFrame:
@@ -106,21 +106,21 @@ def total_return_from_prices(close: pd.DataFrame) -> pd.Series:
 
 def main():
     tickers = get_sp500_tickers()
-    close = download_close_prices(tickers, period="6mo", interval="1d", chunk_size=100)
+    close = download_close_prices(tickers, period="1y", interval="1d", chunk_size=100)
 
     rets = total_return_from_prices(close).dropna()
     top50 = rets.sort_values(ascending=False).head(50)
 
     out = (
-        top50.rename("six_month_return")
+        top50.rename("one_year_return")
         .to_frame()
-        .assign(six_month_return_pct=lambda d: 100 * d["six_month_return"])
-        .drop(columns=["six_month_return"])
+        .assign(one_year_return_pct=lambda d: 100 * d["one_year_return"])
+        .drop(columns=["one_year_return"])
     )
 
     # Save to CSV in the script's directory
     script_dir = Path(__file__).parent
-    output_path = script_dir / "sp500_top50_6mo.csv"
+    output_path = script_dir / "sp500_top50.csv"
     out.to_csv(output_path, index_label="ticker")
 
 

@@ -161,6 +161,65 @@ def analyze_ticker(ticker: str, benchmark_prices: pd.Series, years: int) -> dict
     }
 
 
+def get_data(universe: str = None, years: int = 5) -> dict:
+    """Fetch momentum data for GUI consumption.
+
+    Args:
+        universe: Universe name or path to file. Defaults to portfolio.csv.
+        years: Years of history to download.
+
+    Returns:
+        dict with keys:
+            results: list of dicts with ticker momentum metrics
+            count: number of tickers analyzed
+            date: latest data date
+            error: error message if failed
+    """
+    try:
+        # Load tickers
+        if universe:
+            tickers = load_universe(universe)
+        else:
+            portfolio_path = Path(__file__).parent.parent.parent / "universes" / "portfolio.csv"
+            if not portfolio_path.exists():
+                return {"error": f"portfolio.csv not found at {portfolio_path}"}
+            portfolio_df = pd.read_csv(portfolio_path)
+            if "ticker" not in portfolio_df.columns:
+                return {"error": "portfolio.csv must have a 'ticker' column"}
+            tickers = [t.strip().upper() for t in portfolio_df["ticker"].dropna()]
+            if not tickers:
+                return {"error": "No tickers found in portfolio.csv"}
+
+        benchmark_cache: dict[str, pd.Series] = {}
+        results = []
+
+        for ticker in tickers:
+            benchmark_ticker = select_benchmark_ticker(ticker)
+            benchmark_prices = benchmark_cache.get(benchmark_ticker)
+            if benchmark_prices is None:
+                try:
+                    benchmark_prices = fetch_prices_yfinance(benchmark_ticker, years=years)
+                except Exception:
+                    continue
+                benchmark_cache[benchmark_ticker] = benchmark_prices
+
+            result = analyze_ticker(ticker, benchmark_prices, years)
+            if result:
+                result["benchmark"] = benchmark_ticker
+                results.append(result)
+
+        if not results:
+            return {"error": "No valid results"}
+
+        return {
+            "results": results,
+            "count": len(results),
+            "date": results[0]["date"].date() if results else None,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Momentum ROC analysis")
     p.add_argument("ticker", nargs="?", help="Single ticker symbol (e.g., AAPL)")
