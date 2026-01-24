@@ -120,7 +120,7 @@ def main():
 
     # Save to CSV in the script's directory
     script_dir = Path(__file__).parent
-    output_path = script_dir / "sp500_top50_1y.csv"
+    output_path = script_dir / "sp500_top50.csv"
     out.to_csv(output_path, index_label="ticker")
 
 
