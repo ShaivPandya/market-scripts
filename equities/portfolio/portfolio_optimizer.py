@@ -499,8 +499,15 @@ def compute_10yr_equivalent(w: pd.Series, meta: pd.DataFrame) -> float:
     return total_10yr_equiv
 
 
-def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame) -> str:
-    """Identify which constraint limits further scaling."""
+def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame, include_position_limits: bool = True) -> str:
+    """Identify which constraint limits further scaling.
+
+    Args:
+        w: Portfolio weights
+        meta: Portfolio metadata
+        include_position_limits: If True, check individual position limits (20% long, 10% short).
+                                 If False, only check asset class and gross exposure limits.
+    """
     checks = []
 
     # Total gross
@@ -528,15 +535,35 @@ def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame) -> str:
     if bond_10yr > 0:
         checks.append(("Bond 10yr equiv (300%)", bond_10yr, BOND_10YR_EQUIV_MAX))
 
+    # Individual position limits (only if requested)
+    if include_position_limits:
+        direction = meta["direction"].str.lower()
+        long_mask = direction.eq("long")
+        short_mask = direction.eq("short")
+
+        if long_mask.any():
+            max_long = w[long_mask].max()
+            checks.append(("Individual long (20%)", max_long, LONG_MAX))
+
+        if short_mask.any():
+            max_short_abs = abs(w[short_mask].min())
+            checks.append(("Individual short (10%)", max_short_abs, abs(SHORT_MIN)))
+
     # Find binding (closest to limit)
     binding = max(checks, key=lambda x: x[1] / x[2] if x[2] > 0 else 0)
     return f"{binding[0]}: {binding[1]:.2%} of {binding[2]:.0%} limit"
 
 
-def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame) -> float:
+def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame, include_position_limits: bool = True) -> float:
     """
     Scaling w by k preserves beta neutrality and correlations.
     Returns the max k such that linear caps remain satisfied (gross/net by class).
+
+    Args:
+        w: Portfolio weights
+        meta: Portfolio metadata
+        include_position_limits: If True, enforce individual position limits (20% long, 10% short).
+                                 If False, only enforce asset class and gross exposure limits.
     """
     eps = 1e-12
     k_list = []
@@ -570,6 +597,24 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame) -> float:
         # eq_net negative; EQ_NET_MIN is negative
         k_eq = EQ_NET_MIN / eq_net
     k_list.append(k_eq)
+
+    # Individual position limits (only if requested)
+    if include_position_limits:
+        direction = meta["direction"].str.lower()
+        long_mask = direction.eq("long")
+        short_mask = direction.eq("short")
+
+        # Longs cannot exceed LONG_MAX (20%)
+        if long_mask.any():
+            max_long_weight = w[long_mask].max()
+            if max_long_weight > eps:
+                k_list.append(LONG_MAX / max_long_weight)
+
+        # Shorts cannot exceed SHORT_MIN (-10%)
+        if short_mask.any():
+            min_short_weight = w[short_mask].min()  # Most negative value
+            if min_short_weight < -eps:
+                k_list.append(SHORT_MIN / min_short_weight)
 
     return float(min(k_list))
 
@@ -837,10 +882,10 @@ def optimize_portfolio(
         hedges_df = pd.DataFrame(hedges_data)
 
         # Max scaled version
-        k_max = max_scale_to_respect_linear_caps(w_final, meta)
+        k_max = max_scale_to_respect_linear_caps(w_final, meta, include_position_limits=False)
         w_max_scaled = w_final * k_max
         vol_max_scaled = port_vol(w_max_scaled.values)
-        binding = identify_binding_constraint(w_max_scaled, meta)
+        binding = identify_binding_constraint(w_max_scaled, meta, include_position_limits=False)
         exp_max = exposures_by_class(w_max_scaled, meta)
 
         max_scaled_weights_df = pd.DataFrame({
@@ -1261,11 +1306,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # print("\nWrote: optimized_weights.csv")
 
     # === Max Scaled Version ===
-    k_max = max_scale_to_respect_linear_caps(w_final, meta)
+    # For max scaled, ignore individual position limits - only respect asset class and gross limits
+    k_max = max_scale_to_respect_linear_caps(w_final, meta, include_position_limits=False)
     w_max_scaled = w_final * k_max
     vol_max_scaled = port_vol(w_max_scaled.values)
 
-    binding = identify_binding_constraint(w_max_scaled, meta)
+    binding = identify_binding_constraint(w_max_scaled, meta, include_position_limits=False)
 
     console.print()
     max_scaled_text = (
