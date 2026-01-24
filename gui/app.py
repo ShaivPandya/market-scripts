@@ -181,15 +181,23 @@ if st.session_state.current_page == "📈 Market Technicals":
     if st.button("Refresh Data", key="refresh_technicals"):
         st.cache_data.clear()
 
-    vix_tab, breadth_tab, top50_tab, pv_tab = st.tabs([
+    # Use a selector so we only fetch data for the active view.
+    tab_labels = [
         "VIX Term Structure",
         "Market Breadth",
         "Top 50 Breadth",
         "Price/Volume Signals",
-    ])
+    ]
+    selected_tab = st.radio(
+        "Technicals View",
+        tab_labels,
+        horizontal=True,
+        key="market_technicals_tab",
+        label_visibility="collapsed",
+    )
 
     # Market Breadth
-    with breadth_tab:
+    if selected_tab == "Market Breadth":
         st.subheader("S&P 500 Market Breadth")
 
         @st.cache_data(ttl=300)
@@ -253,7 +261,7 @@ if st.session_state.current_page == "📈 Market Technicals":
                     st.warning("Capitulation Signal")
 
     # Top 50 Breadth
-    with top50_tab:
+    elif selected_tab == "Top 50 Breadth":
         st.subheader("Top 50 S&P 500 Performers - Breadth")
 
         @st.cache_data(ttl=300)
@@ -298,7 +306,7 @@ if st.session_state.current_page == "📈 Market Technicals":
             st.info(f"Universe: {top50_data.get('universe_size', 0)} stocks with sufficient data")
 
     # Price/Volume Signals
-    with pv_tab:
+    elif selected_tab == "Price/Volume Signals":
         st.subheader("Price/Volume Signals")
 
         @st.cache_data(ttl=300)
@@ -355,7 +363,7 @@ if st.session_state.current_page == "📈 Market Technicals":
                         st.dataframe(styled_hits, width='stretch', hide_index=True)
 
     # VIX Term Structure
-    with vix_tab:
+    elif selected_tab == "VIX Term Structure":
         st.subheader("VIX Term Structure (3M / 1M)")
         st.caption("High ratio (>= 1.25): later volatility concerns. Low ratio (< 1.0): near-term fear.")
 
