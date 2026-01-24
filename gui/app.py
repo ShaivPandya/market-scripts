@@ -50,17 +50,17 @@ st.sidebar.divider()
 st.sidebar.markdown("### Navigation")
 
 # Clickable text navigation
-if st.sidebar.button("📈 Market Technicals", use_container_width=True,
+if st.sidebar.button("📈 Market Technicals", width='stretch',
                       type="primary" if st.session_state.current_page == "📈 Market Technicals" else "secondary"):
     st.session_state.current_page = "📈 Market Technicals"
     st.rerun()
 
-if st.sidebar.button("📊 Market Dashboard", use_container_width=True,
+if st.sidebar.button("📊 Market Dashboard", width='stretch',
                       type="primary" if st.session_state.current_page == "📊 Market Dashboard" else "secondary"):
     st.session_state.current_page = "📊 Market Dashboard"
     st.rerun()
 
-if st.sidebar.button("💧 Liquidity", use_container_width=True,
+if st.sidebar.button("💧 Liquidity", width='stretch',
                       type="primary" if st.session_state.current_page == "💧 Liquidity" else "secondary"):
     st.session_state.current_page = "💧 Liquidity"
     st.rerun()
@@ -303,7 +303,7 @@ if st.session_state.current_page == "📈 Market Technicals":
                 ).applymap(
                     color_positive_negative, subset=["RetPct"]
                 )
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                st.dataframe(styled_df, width='stretch', hide_index=True)
 
             hits_df = pv_data.get("hits_df")
             if hits_df is not None and not hits_df.empty:
@@ -322,7 +322,7 @@ if st.session_state.current_page == "📈 Market Technicals":
                         ).applymap(
                             color_positive_negative, subset=["RetPct"]
                         )
-                        st.dataframe(styled_hits, use_container_width=True, hide_index=True)
+                        st.dataframe(styled_hits, width='stretch', hide_index=True)
 
 
 # =============================================================================
