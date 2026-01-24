@@ -34,7 +34,7 @@ console = Console()
 COMMODITIES = {
     "Copper": "HG=F",                    # COMEX Copper Futures
     "GS Commodity Index": "GSG",         # iShares S&P GSCI Commodity ETF
-    "CRB Industrial Commodity Spot Index": None,              # Read from XLS file
+    "CRB Industrial Spot Index": None,   # Read from XLS file
 }
 
 EQUITIES = {
@@ -76,7 +76,7 @@ CURRENCY_PERIODS = {
 
 def read_crb_from_xls(xls_path):
     """
-    Read CRB Spot Index data from Excel file (.xlsx or .xls).
+    Read CRB Industrial Spot Index data from Excel file (.xlsx or .xls).
     Returns a DataFrame with date and value columns.
     """
     try:
@@ -180,8 +180,8 @@ def fetch_all_returns(ticker_dict, periods, category_name, crb_returns=None):
         for name, ticker in ticker_dict.items():
             progress.update(task, description=f"[cyan]Fetching {name}...")
             
-            # Handle CRB Spot Index specially
-            if name == "CRB Spot Index" and crb_returns is not None:
+            # Handle CRB Industrial Spot Index specially
+            if name == "CRB Industrial Spot Index" and crb_returns is not None:
                 results[name] = crb_returns
                 progress.advance(task)
                 continue
@@ -338,7 +338,7 @@ def print_data_sources(crb_file_used):
     console.print("[dim]Data Sources:[/dim]")
     console.print("[dim]  • Equities/Currencies: Yahoo Finance via yfinance[/dim]")
     if crb_file_used:
-        console.print("[dim]  • CRB Spot Index: Moody's Analytics (Barchart.com)[/dim]")
+        console.print("[dim]  • CRB Industrial Spot Index: Moody's Analytics (Barchart.com)[/dim]")
     console.print("[dim]  • STOXX 600 (^STOXX) = STOXX Europe 600 Index[/dim]")
     console.print("[dim]  • Europe Banks (EXV1.DE) = iShares STOXX Europe 600 Banks UCITS ETF[/dim]")
 
