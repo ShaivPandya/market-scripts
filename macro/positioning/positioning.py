@@ -348,8 +348,8 @@ def _zscore(series: pd.Series, window: Optional[int]) -> pd.Series:
 
     mu = s.mean(skipna=True)
     sd = s.std(skipna=True)
-    if not sd or sd <= 0:
-        return pd.Series(pd.NA, index=s.index)
+    if pd.isna(sd) or sd <= 0:
+        return pd.Series(np.nan, index=s.index)
     return (s - mu) / sd
 
 
@@ -397,8 +397,8 @@ def _add_group_metrics(
     df[f"{prefix}_deleveraging_z"] = _zscore(df[f"{prefix}_deleveraging"], window=z_window if z_window > 0 else None)
 
     forced = pd.Series(pd.NA, index=df.index, dtype="object")
-    forced_long = (df[net_col] > 0) & (df[f"{prefix}_deleveraging_z"] >= force_threshold)
-    forced_short = (df[net_col] < 0) & (df[f"{prefix}_deleveraging_z"] >= force_threshold)
+    forced_long = ((df[net_col] > 0) & (df[f"{prefix}_deleveraging_z"] >= force_threshold)).fillna(False)
+    forced_short = ((df[net_col] < 0) & (df[f"{prefix}_deleveraging_z"] >= force_threshold)).fillna(False)
     forced.loc[forced_long] = "long_liquidation"
     forced.loc[forced_short] = "short_covering"
     df[f"{prefix}_forced"] = forced
