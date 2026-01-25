@@ -435,33 +435,6 @@ def soda_iter_rows(
         offset += len(rows)
 
 
-def search_markets(domain: str, dataset_id: str, app_token: Optional[str], query: str, limit: int = 200) -> List[str]:
-    """
-    Return distinct market_and_exchange_names values matching query (case-insensitive LIKE).
-    """
-    # We still need the exact field name; fetch metadata and use the detected market field.
-    meta = get_dataset_metadata(domain, dataset_id, app_token)
-    fields = detect_fields(meta)
-
-    q = query.replace("'", "''")
-    soql = {
-        "$select": f"distinct({fields.market_name})",
-        "$where": f"upper({fields.market_name}) like upper('%{q}%')",
-        "$order": fields.market_name,
-    }
-
-    markets: List[str] = []
-    for row in soda_iter_rows(domain, dataset_id, app_token, soql_params=soql, page_size=50000):
-        # Socrata returns distinct field under its field name, but with a suffix when using distinct()
-        # Try both the original field name and the suffixed version
-        val = row.get(fields.market_name) or row.get(f"{fields.market_name}_1")
-        if isinstance(val, str) and val.strip():
-            markets.append(val.strip())
-        if len(markets) >= limit:
-            break
-    return markets
-
-
 def fetch_market_timeseries(
     domain: str,
     dataset_id: str,
@@ -703,7 +676,6 @@ def main() -> int:
         help=f"Dataset key in {list(DATASETS.keys())} or a raw dataset id (e.g. gpe5-46if).",
     )
     p.add_argument("--app-token", default=os.getenv("SODA_APP_TOKEN"), help="Optional Socrata App Token.")
-    p.add_argument("--search", default=None, help="Search markets by substring (prints matches and exits).")
     p.add_argument("--market", default=None, help="Exact market_and_exchange_names value to fetch.")
     p.add_argument("--start", default=None, help="Start date YYYY-MM-DD (optional).")
     p.add_argument("--end", default=None, help="End date YYYY-MM-DD (optional).")
@@ -741,17 +713,6 @@ def main() -> int:
             print(f"  {alias:<10} -> {market}")
         return 0
 
-    # Handle --search
-    if args.search:
-        markets = search_markets(args.domain, dataset_id, args.app_token, args.search)
-        if not markets:
-            print("No matches.")
-            return 0
-        print("Matches (use one with --market):")
-        for m in markets:
-            print(f"  {m}")
-        return 0
-
     # Handle --all or --instruments (multi-instrument mode)
     if args.all or args.instruments:
         if args.all:
@@ -782,7 +743,7 @@ def main() -> int:
 
     # Handle --market (single market mode)
     if not args.market:
-        print("Error: provide --market, --all, --instruments, or --search", file=sys.stderr)
+        print("Error: provide --market, --all, or --instruments", file=sys.stderr)
         return 2
 
     df = fetch_market_timeseries(

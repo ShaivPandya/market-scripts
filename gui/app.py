@@ -168,6 +168,16 @@ def color_zscore(val):
     except (ValueError, TypeError):
         return "color: gray"
 
+def color_forced_flow(val):
+    """Color forced-flow labels from positioning.py."""
+    if pd.isna(val) or val == "" or val == "N/A":
+        return "color: gray"
+    if val == "short_covering":
+        return "color: #00c853; font-weight: bold"
+    if val == "long_liquidation":
+        return "color: #ff1744; font-weight: bold"
+    return ""
+
 
 def color_vix_signal(val):
     """Color VIX term-structure signals."""
@@ -751,7 +761,7 @@ elif st.session_state.current_page == "💧 Liquidity":
 # =============================================================================
 elif st.session_state.current_page == "📌 Positioning":
     st.header("CFTC Positioning")
-    st.caption("Leveraged Funds futures positioning via the CFTC PRE/Socrata API")
+    st.caption("COT participant positioning + simple forced-flow proxies (deleveraging / short-covering) via the CFTC PRE/Socrata API")
 
     if st.button("Refresh Data", key="refresh_positioning"):
         st.cache_data.clear()
@@ -763,15 +773,28 @@ elif st.session_state.current_page == "📌 Positioning":
             INSTRUMENTS,
             fetch_market_timeseries,
             fetch_multiple_instruments,
-            search_markets,
         )
+        try:
+            from positioning import CANONICAL_GROUPS, GROUP_LABEL, GROUP_PREFIX
+        except Exception:
+            CANONICAL_GROUPS = ["lev_money", "dealer", "asset_mgr", "other_rept", "nonrept"]
+            GROUP_PREFIX = {
+                "lev_money": "lf",
+                "dealer": "dealer",
+                "asset_mgr": "asset_mgr",
+                "other_rept": "other_rept",
+                "nonrept": "nonrept",
+            }
+            GROUP_LABEL = {
+                "lev_money": "Leveraged Funds",
+                "dealer": "Dealer",
+                "asset_mgr": "Asset Manager",
+                "other_rept": "Other Reportables",
+                "nonrept": "Non-Reportables",
+            }
     except Exception as e:
         st.error(f"Failed to load positioning module: {e}")
         st.stop()
-
-    @st.cache_data(ttl=3600)
-    def cached_search_markets(domain, dataset_id, app_token, query):
-        return search_markets(domain=domain, dataset_id=dataset_id, app_token=app_token, query=query)
 
     @st.cache_data(ttl=3600)
     def cached_fetch_timeseries(
@@ -781,6 +804,9 @@ elif st.session_state.current_page == "📌 Positioning":
         market_exact,
         start,
         end,
+        groups,
+        z_window,
+        force_threshold,
     ):
         return fetch_market_timeseries(
             domain=domain,
@@ -789,6 +815,9 @@ elif st.session_state.current_page == "📌 Positioning":
             market_exact=market_exact,
             start=start,
             end=end,
+            groups=groups,
+            z_window=z_window,
+            force_threshold=force_threshold,
         )
 
     @st.cache_data(ttl=3600)
@@ -799,6 +828,9 @@ elif st.session_state.current_page == "📌 Positioning":
         instruments,
         start,
         end,
+        groups,
+        z_window,
+        force_threshold,
     ):
         return fetch_multiple_instruments(
             domain=domain,
@@ -807,6 +839,9 @@ elif st.session_state.current_page == "📌 Positioning":
             instruments=instruments,
             start=start,
             end=end,
+            groups=groups,
+            z_window=z_window,
+            force_threshold=force_threshold,
         )
 
     st.subheader("Data Settings")
@@ -820,6 +855,43 @@ elif st.session_state.current_page == "📌 Positioning":
         app_token = st.text_input("Socrata App Token (optional)", value=default_token, type="password")
 
     dataset_id = DATASETS.get(dataset_key, dataset_key)
+
+    st.subheader("Analytics Settings")
+    gcol1, gcol2, gcol3 = st.columns(3)
+    extra_group_options = ["dealer", "asset_mgr", "other_rept", "nonrept", "all"]
+    with gcol1:
+        selected_groups = st.multiselect(
+            "Include participant groups",
+            options=extra_group_options,
+            default=[],
+            help="Leveraged Funds are always included; add other groups or choose 'all'.",
+            format_func=lambda g: "All groups" if g == "all" else GROUP_LABEL.get(g, g),
+        )
+    with gcol2:
+        z_window = st.number_input(
+            "Z-score window (weeks)",
+            min_value=0,
+            max_value=520,
+            value=0,
+            step=26,
+            help="0 uses the full sample; otherwise uses a rolling window.",
+        )
+    with gcol3:
+        force_threshold = st.slider(
+            "Forced-flow threshold (z)",
+            min_value=0.5,
+            max_value=4.0,
+            value=2.0,
+            step=0.1,
+            help="Flags unusually large moves toward flat positioning (proxy for forced flows).",
+        )
+
+    if "all" in selected_groups:
+        groups_value = "all"
+    elif selected_groups:
+        groups_value = ",".join(selected_groups)
+    else:
+        groups_value = None
 
     date_cols = st.columns(3)
     with date_cols[0]:
@@ -849,7 +921,17 @@ elif st.session_state.current_page == "📌 Positioning":
         else:
             with st.spinner("Fetching positioning summary..."):
                 try:
-                    results = cached_fetch_summary(domain, dataset_id, token_value, selected, start_str, end_str)
+                    results = cached_fetch_summary(
+                        domain,
+                        dataset_id,
+                        token_value,
+                        selected,
+                        start_str,
+                        end_str,
+                        groups_value,
+                        z_window,
+                        force_threshold,
+                    )
                 except Exception as e:
                     st.error(f"Error fetching summary: {e}")
                     results = []
@@ -857,58 +939,116 @@ elif st.session_state.current_page == "📌 Positioning":
             if results:
                 df = pd.DataFrame(results)
                 df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce").dt.date
-                df["lf_net"] = pd.to_numeric(df["lf_net"], errors="coerce")
-                df["lf_net_pct_oi"] = pd.to_numeric(df["lf_net_pct_oi"], errors="coerce")
-                df["lf_z"] = pd.to_numeric(df["lf_z"], errors="coerce")
-                df["abs_z"] = df["lf_z"].abs()
+
+                for c in ["lf_net", "lf_net_pct_oi", "lf_z", "lf_deleveraging_z"]:
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+                df["abs_z"] = df["lf_z"].abs() if "lf_z" in df.columns else 0
                 df = df.sort_values("abs_z", ascending=False).drop(columns=["abs_z"])
 
-                styled = (
-                    df.style.format(
-                        {
-                            "lf_net": "{:,.0f}",
-                            "lf_net_pct_oi": "{:+.1f}%",
-                            "lf_z": "{:+.2f}",
-                        }
-                    )
-                    .applymap(color_positive_negative, subset=["lf_net_pct_oi"])
-                    .applymap(color_zscore, subset=["lf_z"])
+                base_cols = [
+                    "instrument",
+                    "report_date",
+                    "lf_net",
+                    "lf_net_pct_oi",
+                    "lf_z",
+                    "lf_deleveraging_z",
+                    "lf_forced",
+                ]
+                base_cols = [c for c in base_cols if c in df.columns]
+                base = df[base_cols].copy()
+
+                base_format = {
+                    "lf_net": "{:,.0f}",
+                    "lf_net_pct_oi": "{:+.1f}%",
+                    "lf_z": "{:+.2f}",
+                    "lf_deleveraging_z": "{:+.2f}",
+                }
+                base_format = {k: v for k, v in base_format.items() if k in base.columns}
+                styled_base = (
+                    base.style.format(base_format)
+                    .applymap(color_positive_negative, subset=[c for c in ["lf_net_pct_oi"] if c in base.columns])
+                    .applymap(color_zscore, subset=[c for c in ["lf_z", "lf_deleveraging_z"] if c in base.columns])
+                    .applymap(color_forced_flow, subset=[c for c in ["lf_forced"] if c in base.columns])
                 )
-                st.dataframe(styled, width="stretch", hide_index=True)
+                st.dataframe(styled_base, width="stretch", hide_index=True)
+
+                extra_groups = selected_groups
+                if "all" in extra_groups:
+                    extra_groups = [g for g in CANONICAL_GROUPS if g != "lev_money"]
+                if extra_groups:
+                    with st.expander("Other participant groups", expanded=False):
+                        extra_prefixes = [GROUP_PREFIX.get(g, g) for g in extra_groups if g != "all"]
+                        extra_cols = ["instrument", "report_date"]
+                        for prefix in extra_prefixes:
+                            extra_cols.extend(
+                                [
+                                    f"{prefix}_net_pct_oi",
+                                    f"{prefix}_z",
+                                    f"{prefix}_deleveraging_z",
+                                    f"{prefix}_forced",
+                                ]
+                            )
+                        extra_cols = [c for c in extra_cols if c in df.columns]
+                        extra = df[extra_cols].copy()
+
+                        for c in extra.columns:
+                            if c.endswith("_net_pct_oi") or c.endswith("_z") or c.endswith("_deleveraging_z"):
+                                extra[c] = pd.to_numeric(extra[c], errors="coerce")
+
+                        format_map = {}
+                        pct_cols = [c for c in extra.columns if c.endswith("_net_pct_oi")]
+                        z_cols = [c for c in extra.columns if c.endswith("_z") or c.endswith("_deleveraging_z")]
+                        forced_cols = [c for c in extra.columns if c.endswith("_forced")]
+                        for c in pct_cols:
+                            format_map[c] = "{:+.1f}%"
+                        for c in z_cols:
+                            format_map[c] = "{:+.2f}"
+
+                        styled_extra = (
+                            extra.style.format(format_map)
+                            .applymap(color_positive_negative, subset=pct_cols)
+                            .applymap(color_zscore, subset=z_cols)
+                            .applymap(color_forced_flow, subset=forced_cols)
+                        )
+                        st.dataframe(styled_extra, width="stretch", hide_index=True)
             else:
                 st.warning("No results returned.")
 
     else:
-        st.write("Select a predefined instrument alias or search for an exact market name.")
-        select_mode = st.radio("Market selection", ["Instrument alias", "Search market name"], horizontal=True)
-
-        market_name = None
-        if select_mode == "Instrument alias":
-            alias = st.selectbox("Instrument alias", options=sorted(INSTRUMENTS.keys()))
-            market_name = INSTRUMENTS.get(alias)
-            if market_name:
-                st.caption(market_name)
-        else:
-            query = st.text_input("Search query", value="S&P")
-            if st.button("Search markets"):
-                with st.spinner("Searching CFTC markets..."):
-                    try:
-                        st.session_state.positioning_market_results = cached_search_markets(
-                            domain, dataset_id, token_value, query
-                        )
-                    except Exception as e:
-                        st.error(f"Search failed: {e}")
-                        st.session_state.positioning_market_results = []
-            results = st.session_state.get("positioning_market_results", [])
-            if results:
-                market_name = st.selectbox("Matching markets", options=results)
-            else:
-                st.info("Run a search to load matching markets.")
+        st.write("Select a predefined instrument alias.")
+        alias = st.selectbox("Instrument alias", options=sorted(INSTRUMENTS.keys()))
+        market_name = INSTRUMENTS.get(alias)
+        if market_name:
+            st.caption(market_name)
 
         if market_name:
+            group_view_map = {"Leveraged Funds": "lf"}
+            view_groups = selected_groups
+            if "all" in view_groups:
+                view_groups = [g for g in CANONICAL_GROUPS if g != "lev_money"]
+            for g in view_groups:
+                if g in ("all", "lev_money"):
+                    continue
+                group_view_map[GROUP_LABEL.get(g, g)] = GROUP_PREFIX.get(g, g)
+
+            view_group_label = st.selectbox("View group", options=list(group_view_map.keys()), index=0)
+            prefix = group_view_map[view_group_label]
+
             with st.spinner("Fetching positioning time series..."):
                 try:
-                    df = cached_fetch_timeseries(domain, dataset_id, token_value, market_name, start_str, end_str)
+                    df = cached_fetch_timeseries(
+                        domain,
+                        dataset_id,
+                        token_value,
+                        market_name,
+                        start_str,
+                        end_str,
+                        groups_value,
+                        z_window,
+                        force_threshold,
+                    )
                 except Exception as e:
                     st.error(f"Error fetching time series: {e}")
                     df = None
@@ -916,9 +1056,9 @@ elif st.session_state.current_page == "📌 Positioning":
             if df is not None and not df.empty:
                 df = df.copy()
                 df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
-                df["lf_net"] = pd.to_numeric(df["lf_net"], errors="coerce")
-                df["lf_net_pct_oi"] = pd.to_numeric(df["lf_net_pct_oi"], errors="coerce")
-                df["lf_z"] = pd.to_numeric(df["lf_z"], errors="coerce")
+                for c in df.columns:
+                    if c.endswith(("_net", "_net_pct_oi", "_z", "_d_net", "_d_net_pct_oi", "_d_z", "_deleveraging", "_deleveraging_z")):
+                        df[c] = pd.to_numeric(df[c], errors="coerce")
                 df = df.sort_values("report_date")
 
                 valid_dates = df.dropna(subset=["report_date"])
@@ -928,51 +1068,81 @@ elif st.session_state.current_page == "📌 Positioning":
 
                 latest = valid_dates.iloc[-1]
                 st.subheader("Latest Reading")
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
+                row1 = st.columns(3)
+                row2 = st.columns(3)
+                with row1[0]:
                     report_date = latest.get("report_date")
                     st.metric("Report Date", report_date.date().isoformat() if pd.notna(report_date) else "N/A")
-                with col2:
-                    net = latest.get("lf_net")
+                with row1[1]:
+                    net = latest.get(f"{prefix}_net")
                     st.metric("Net Position", f"{net:,.0f}" if pd.notna(net) else "N/A")
-                with col3:
-                    pct = latest.get("lf_net_pct_oi")
+                with row1[2]:
+                    pct = latest.get(f"{prefix}_net_pct_oi")
                     st.metric("Net % OI", f"{pct:+.1f}%" if pd.notna(pct) else "N/A")
-                with col4:
-                    z = latest.get("lf_z")
+                with row2[0]:
+                    z = latest.get(f"{prefix}_z")
                     st.metric("Z-Score", f"{z:+.2f}" if pd.notna(z) else "N/A")
+                with row2[1]:
+                    dz = latest.get(f"{prefix}_deleveraging_z")
+                    st.metric("Deleveraging Z", f"{dz:+.2f}" if pd.notna(dz) else "N/A")
+                with row2[2]:
+                    forced = latest.get(f"{prefix}_forced")
+                    forced_str = str(forced) if forced is not None and not pd.isna(forced) else "N/A"
+                    st.metric("Forced Flow", forced_str)
 
                 st.divider()
                 chart_df = df.set_index("report_date")
                 st.write("**Net Position Over Time**")
-                st.line_chart(chart_df["lf_net"], height=200)
+                if f"{prefix}_net" in chart_df.columns:
+                    st.line_chart(chart_df[f"{prefix}_net"], height=200)
 
-                if "lf_net_pct_oi" in chart_df.columns:
+                if f"{prefix}_net_pct_oi" in chart_df.columns:
                     st.write("**Net % Open Interest**")
-                    st.line_chart(chart_df["lf_net_pct_oi"], height=200)
+                    st.line_chart(chart_df[f"{prefix}_net_pct_oi"], height=200)
 
                 st.write("**Z-Score**")
-                st.line_chart(chart_df["lf_z"], height=200)
+                if f"{prefix}_z" in chart_df.columns:
+                    st.line_chart(chart_df[f"{prefix}_z"], height=200)
+
+                if f"{prefix}_deleveraging_z" in chart_df.columns:
+                    st.write("**Deleveraging Z (proxy for forced flows)**")
+                    st.line_chart(chart_df[f"{prefix}_deleveraging_z"], height=200)
 
                 st.subheader("Recent History")
-                display_cols = ["report_date", "lf_net", "lf_net_pct_oi", "lf_z"]
+                display_cols = [
+                    "report_date",
+                    f"{prefix}_net",
+                    f"{prefix}_net_pct_oi",
+                    f"{prefix}_z",
+                    f"{prefix}_deleveraging_z",
+                    f"{prefix}_forced",
+                ]
                 if "open_interest" in df.columns:
                     display_cols.insert(2, "open_interest")
+                display_cols = [c for c in display_cols if c in df.columns]
                 recent = df.tail(20)[display_cols].copy()
                 recent["report_date"] = recent["report_date"].dt.date
 
-                format_map = {
-                    "lf_net": "{:,.0f}",
-                    "lf_net_pct_oi": "{:+.1f}%",
-                    "lf_z": "{:+.2f}",
-                }
+                format_map = {}
+                if f"{prefix}_net" in recent.columns:
+                    format_map[f"{prefix}_net"] = "{:,.0f}"
+                if f"{prefix}_net_pct_oi" in recent.columns:
+                    format_map[f"{prefix}_net_pct_oi"] = "{:+.1f}%"
+                if f"{prefix}_z" in recent.columns:
+                    format_map[f"{prefix}_z"] = "{:+.2f}"
+                if f"{prefix}_deleveraging_z" in recent.columns:
+                    format_map[f"{prefix}_deleveraging_z"] = "{:+.2f}"
                 if "open_interest" in recent.columns:
                     format_map["open_interest"] = "{:,.0f}"
 
+                pct_cols = [c for c in recent.columns if c.endswith("_net_pct_oi")]
+                z_cols = [c for c in recent.columns if c.endswith("_z") or c.endswith("_deleveraging_z")]
+                forced_cols = [c for c in recent.columns if c.endswith("_forced")]
                 styled_recent = (
                     recent.style.format(format_map)
-                    .applymap(color_positive_negative, subset=["lf_net_pct_oi"])
-                    .applymap(color_zscore, subset=["lf_z"])
+                    .applymap(color_positive_negative, subset=pct_cols)
+                    .applymap(color_zscore, subset=z_cols)
+                    .applymap(color_forced_flow, subset=forced_cols)
                 )
                 st.dataframe(styled_recent, width="stretch", hide_index=True)
 
