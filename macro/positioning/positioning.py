@@ -9,17 +9,14 @@ Sources:
 - Example TFF Futures Only dataset identifier (gpe5-46if) is on the CFTC Data Hub / Socrata backend. :contentReference[oaicite:1]{index=1}
 
 Usage examples:
-  # 1) Find the exact market_and_exchange_names string you want:
-  python3 positioning.py --search "S&P"
-
-  # 2) Pull Leveraged Funds positioning for an exact market name (copy from search results):
+  # 1) Pull Leveraged Funds positioning for an exact market name (copy from the CFTC Data Hub / PRE UI):
   python3 positioning.py --market "E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE" --start 2015-01-01 --out es_cot.csv
 
-  # 3) Same, but set an app token (optional) to reduce throttling risk:
+  # 2) Same, but set an app token (optional) to reduce throttling risk:
   export SODA_APP_TOKEN="YOUR_TOKEN"
   python3 positioning.py --market "E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE" --start 2015-01-01
 
-  # 4) Include other participant groups and use a rolling z-score window (~3y):
+  # 3) Include other participant groups and use a rolling z-score window (~3y):
   python3 positioning.py --market "E-MINI S&P 500 STOCK INDEX - CHICAGO MERCANTILE EXCHANGE" --start 2015-01-01 --groups all --z-window 156
 
 Notes:
@@ -491,7 +488,9 @@ def fetch_market_timeseries(
 
     rows = list(soda_iter_rows(domain, dataset_id, app_token, soql_params=soql, page_size=50000))
     if not rows:
-        raise RuntimeError("No rows returned. Check the market name (use --search) and date range.")
+        raise RuntimeError(
+            "No rows returned. Check the exact market name (market_and_exchange_names) and date range."
+        )
 
     df = pd.DataFrame(rows)
 
