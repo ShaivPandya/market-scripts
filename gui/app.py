@@ -6,11 +6,13 @@ Provides a navigatable interface for:
 - Market Dashboard (commodities, equities, currencies performance)
 - Market Technicals (breadth, top 50, price/volume signals)
 - Liquidity Dashboard (Fed/ECB/BoJ liquidity metrics)
+- CFTC Positioning (leveraged funds futures positioning)
 
 Run:
   streamlit run gui/app.py
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "equities" / "market_technicals"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "market_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "liquidity"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "breakout"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
 
@@ -66,6 +69,11 @@ if st.sidebar.button("📈 Market Technicals", width='stretch',
 if st.sidebar.button("💧 Liquidity", width='stretch',
                       type="primary" if st.session_state.current_page == "💧 Liquidity" else "secondary"):
     st.session_state.current_page = "💧 Liquidity"
+    st.rerun()
+
+if st.sidebar.button("📌 Positioning", width='stretch',
+                      type="primary" if st.session_state.current_page == "📌 Positioning" else "secondary"):
+    st.session_state.current_page = "📌 Positioning"
     st.rerun()
 
 if st.sidebar.button("🔔 Breakout", width='stretch',
@@ -736,6 +744,237 @@ elif st.session_state.current_page == "💧 Liquidity":
             styled_df = df.style.apply(style_with_polarity, axis=1)
             st.dataframe(styled_df, width="stretch", hide_index=True)
             st.caption("Green indicates liquidity-supportive changes, red indicates liquidity-tightening changes")
+
+
+# =============================================================================
+# PAGE: Positioning
+# =============================================================================
+elif st.session_state.current_page == "📌 Positioning":
+    st.header("CFTC Positioning")
+    st.caption("Leveraged Funds futures positioning via the CFTC PRE/Socrata API")
+
+    if st.button("Refresh Data", key="refresh_positioning"):
+        st.cache_data.clear()
+
+    try:
+        from positioning import (
+            DATASETS,
+            DEFAULT_DOMAIN,
+            INSTRUMENTS,
+            fetch_market_timeseries,
+            fetch_multiple_instruments,
+            search_markets,
+        )
+    except Exception as e:
+        st.error(f"Failed to load positioning module: {e}")
+        st.stop()
+
+    @st.cache_data(ttl=3600)
+    def cached_search_markets(domain, dataset_id, app_token, query):
+        return search_markets(domain=domain, dataset_id=dataset_id, app_token=app_token, query=query)
+
+    @st.cache_data(ttl=3600)
+    def cached_fetch_timeseries(
+        domain,
+        dataset_id,
+        app_token,
+        market_exact,
+        start,
+        end,
+    ):
+        return fetch_market_timeseries(
+            domain=domain,
+            dataset_id=dataset_id,
+            app_token=app_token,
+            market_exact=market_exact,
+            start=start,
+            end=end,
+        )
+
+    @st.cache_data(ttl=3600)
+    def cached_fetch_summary(
+        domain,
+        dataset_id,
+        app_token,
+        instruments,
+        start,
+        end,
+    ):
+        return fetch_multiple_instruments(
+            domain=domain,
+            dataset_id=dataset_id,
+            app_token=app_token,
+            instruments=instruments,
+            start=start,
+            end=end,
+        )
+
+    st.subheader("Data Settings")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        domain = st.text_input("Socrata domain", value=DEFAULT_DOMAIN)
+    with col2:
+        dataset_key = st.selectbox("Dataset", options=list(DATASETS.keys()), index=0)
+    with col3:
+        default_token = os.getenv("SODA_APP_TOKEN", "")
+        app_token = st.text_input("Socrata App Token (optional)", value=default_token, type="password")
+
+    dataset_id = DATASETS.get(dataset_key, dataset_key)
+
+    date_cols = st.columns(3)
+    with date_cols[0]:
+        start_date = st.date_input("Start date", value=datetime(2015, 1, 1).date())
+    with date_cols[1]:
+        use_end = st.checkbox("Use end date", value=False)
+    with date_cols[2]:
+        end_date = st.date_input("End date", value=datetime.now().date()) if use_end else None
+
+    if use_end and end_date and start_date and end_date < start_date:
+        st.error("End date must be on or after start date.")
+        st.stop()
+
+    start_str = start_date.isoformat() if start_date else None
+    end_str = end_date.isoformat() if use_end and end_date else None
+    token_value = app_token or None
+
+    st.divider()
+    view = st.radio("View", ["Instrument summary", "Single market"], horizontal=True)
+
+    if view == "Instrument summary":
+        sorted_aliases = sorted(INSTRUMENTS.keys())
+        default_aliases = [alias for alias in ["SP500", "NASDAQ", "US10Y", "EUR"] if alias in INSTRUMENTS]
+        selected = st.multiselect("Instrument aliases", options=sorted_aliases, default=default_aliases)
+        if not selected:
+            st.info("Select at least one instrument alias to fetch positioning.")
+        else:
+            with st.spinner("Fetching positioning summary..."):
+                try:
+                    results = cached_fetch_summary(domain, dataset_id, token_value, selected, start_str, end_str)
+                except Exception as e:
+                    st.error(f"Error fetching summary: {e}")
+                    results = []
+
+            if results:
+                df = pd.DataFrame(results)
+                df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce").dt.date
+                df["lf_net"] = pd.to_numeric(df["lf_net"], errors="coerce")
+                df["lf_net_pct_oi"] = pd.to_numeric(df["lf_net_pct_oi"], errors="coerce")
+                df["lf_z"] = pd.to_numeric(df["lf_z"], errors="coerce")
+                df["abs_z"] = df["lf_z"].abs()
+                df = df.sort_values("abs_z", ascending=False).drop(columns=["abs_z"])
+
+                styled = (
+                    df.style.format(
+                        {
+                            "lf_net": "{:,.0f}",
+                            "lf_net_pct_oi": "{:+.1f}%",
+                            "lf_z": "{:+.2f}",
+                        }
+                    )
+                    .applymap(color_positive_negative, subset=["lf_net_pct_oi"])
+                    .applymap(color_zscore, subset=["lf_z"])
+                )
+                st.dataframe(styled, width="stretch", hide_index=True)
+            else:
+                st.warning("No results returned.")
+
+    else:
+        st.write("Select a predefined instrument alias or search for an exact market name.")
+        select_mode = st.radio("Market selection", ["Instrument alias", "Search market name"], horizontal=True)
+
+        market_name = None
+        if select_mode == "Instrument alias":
+            alias = st.selectbox("Instrument alias", options=sorted(INSTRUMENTS.keys()))
+            market_name = INSTRUMENTS.get(alias)
+            if market_name:
+                st.caption(market_name)
+        else:
+            query = st.text_input("Search query", value="S&P")
+            if st.button("Search markets"):
+                with st.spinner("Searching CFTC markets..."):
+                    try:
+                        st.session_state.positioning_market_results = cached_search_markets(
+                            domain, dataset_id, token_value, query
+                        )
+                    except Exception as e:
+                        st.error(f"Search failed: {e}")
+                        st.session_state.positioning_market_results = []
+            results = st.session_state.get("positioning_market_results", [])
+            if results:
+                market_name = st.selectbox("Matching markets", options=results)
+            else:
+                st.info("Run a search to load matching markets.")
+
+        if market_name:
+            with st.spinner("Fetching positioning time series..."):
+                try:
+                    df = cached_fetch_timeseries(domain, dataset_id, token_value, market_name, start_str, end_str)
+                except Exception as e:
+                    st.error(f"Error fetching time series: {e}")
+                    df = None
+
+            if df is not None and not df.empty:
+                df = df.copy()
+                df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+                df["lf_net"] = pd.to_numeric(df["lf_net"], errors="coerce")
+                df["lf_net_pct_oi"] = pd.to_numeric(df["lf_net_pct_oi"], errors="coerce")
+                df["lf_z"] = pd.to_numeric(df["lf_z"], errors="coerce")
+                df = df.sort_values("report_date")
+
+                valid_dates = df.dropna(subset=["report_date"])
+                if valid_dates.empty:
+                    st.warning("No valid report dates returned for this market.")
+                    st.stop()
+
+                latest = valid_dates.iloc[-1]
+                st.subheader("Latest Reading")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    report_date = latest.get("report_date")
+                    st.metric("Report Date", report_date.date().isoformat() if pd.notna(report_date) else "N/A")
+                with col2:
+                    net = latest.get("lf_net")
+                    st.metric("Net Position", f"{net:,.0f}" if pd.notna(net) else "N/A")
+                with col3:
+                    pct = latest.get("lf_net_pct_oi")
+                    st.metric("Net % OI", f"{pct:+.1f}%" if pd.notna(pct) else "N/A")
+                with col4:
+                    z = latest.get("lf_z")
+                    st.metric("Z-Score", f"{z:+.2f}" if pd.notna(z) else "N/A")
+
+                st.divider()
+                chart_df = df.set_index("report_date")
+                st.write("**Net Position Over Time**")
+                st.line_chart(chart_df["lf_net"], height=200)
+
+                if "lf_net_pct_oi" in chart_df.columns:
+                    st.write("**Net % Open Interest**")
+                    st.line_chart(chart_df["lf_net_pct_oi"], height=200)
+
+                st.write("**Z-Score**")
+                st.line_chart(chart_df["lf_z"], height=200)
+
+                st.subheader("Recent History")
+                display_cols = ["report_date", "lf_net", "lf_net_pct_oi", "lf_z"]
+                if "open_interest" in df.columns:
+                    display_cols.insert(2, "open_interest")
+                recent = df.tail(20)[display_cols].copy()
+                recent["report_date"] = recent["report_date"].dt.date
+
+                format_map = {
+                    "lf_net": "{:,.0f}",
+                    "lf_net_pct_oi": "{:+.1f}%",
+                    "lf_z": "{:+.2f}",
+                }
+                if "open_interest" in recent.columns:
+                    format_map["open_interest"] = "{:,.0f}"
+
+                styled_recent = (
+                    recent.style.format(format_map)
+                    .applymap(color_positive_negative, subset=["lf_net_pct_oi"])
+                    .applymap(color_zscore, subset=["lf_z"])
+                )
+                st.dataframe(styled_recent, width="stretch", hide_index=True)
 
 
 # =============================================================================
