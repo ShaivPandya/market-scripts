@@ -15,6 +15,7 @@ from src.pipeline import run_pipeline
 
 
 def main():
+    script_dir = Path(__file__).resolve().parent
     available_pairs = list_pairs()
 
     ap = argparse.ArgumentParser(
@@ -72,8 +73,14 @@ def main():
 
     # Set up directories (pair-specific output subdirectory)
     pair_lower = args.pair.lower()
-    outdir = Path(args.outdir) / pair_lower
+    outdir_base = Path(args.outdir)
+    if not outdir_base.is_absolute():
+        outdir_base = script_dir / outdir_base
+    outdir = outdir_base / pair_lower
+
     cache = Path(args.cache)
+    if not cache.is_absolute():
+        cache = script_dir / cache
     outdir.mkdir(parents=True, exist_ok=True)
     cache.mkdir(parents=True, exist_ok=True)
 
