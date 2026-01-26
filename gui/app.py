@@ -27,7 +27,6 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx"))
-sys.path.insert(0, str(PROJECT_ROOT / "fx" / "src"))
 
 import streamlit as st
 import pandas as pd
@@ -118,7 +117,7 @@ fx_run_clicked = False
 if st.session_state.current_page == "💱 FX Model":
     st.sidebar.title("FX Model Settings")
     try:
-        from currency_config import list_pairs
+        from src.currency_config import list_pairs
         fx_available_pairs = list_pairs()
     except Exception:
         fx_available_pairs = ["USDCAD", "GBPUSD", "AUDUSD", "USDJPY"]
@@ -1876,8 +1875,8 @@ elif st.session_state.current_page == "💱 FX Model":
 
     # Import FX modules
     try:
-        from currency_config import get_config, list_pairs
-        from pipeline import run_pipeline
+        from src.currency_config import get_config, list_pairs
+        from src.pipeline import run_pipeline
         fx_module_loaded = True
     except Exception as e:
         st.error(f"Failed to load FX module: {e}")
