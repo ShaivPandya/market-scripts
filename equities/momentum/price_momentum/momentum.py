@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -79,6 +80,93 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
     return s
 
 
+def fetch_prices_batch(tickers: list[str], years: int = 5) -> dict[str, pd.Series]:
+    """Download multiple tickers in a single API call (much faster than sequential)."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
+
+    if not tickers:
+        return {}
+
+    end = datetime.now(UTC).date() + timedelta(days=1)
+    start = end - timedelta(days=365 * years)
+
+    df = yf.download(
+        tickers,
+        start=str(start),
+        end=str(end),
+        auto_adjust=False,
+        progress=False,
+        actions=False,
+        threads=True,
+    )
+
+    if df is None or df.empty:
+        return {}
+
+    result = {}
+    # Handle single vs multiple ticker response format
+    if len(tickers) == 1:
+        col = "Adj Close" if "Adj Close" in df.columns else "Close"
+        s = df[col].dropna().copy()
+        if isinstance(s, pd.DataFrame):
+            s = s.squeeze()
+        s.index = pd.to_datetime(s.index).tz_localize(None)
+        result[tickers[0]] = s
+    else:
+        # Multi-ticker: columns are MultiIndex (metric, ticker)
+        col = "Adj Close" if "Adj Close" in df.columns.get_level_values(0) else "Close"
+        for ticker in tickers:
+            try:
+                s = df[col][ticker].dropna().copy()
+                if isinstance(s, pd.DataFrame):
+                    s = s.squeeze()
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+                if len(s) > 0:
+                    result[ticker] = s
+            except (KeyError, TypeError):
+                continue
+
+    return result
+
+
+def fetch_metadata_batch(tickers: list[str], max_workers: int = 10) -> dict[str, tuple]:
+    """Fetch metadata for multiple tickers in parallel using threads."""
+    results = {}
+
+    def fetch_one(ticker: str) -> tuple[str, tuple]:
+        try:
+            return ticker, fetch_ticker_metadata(ticker)
+        except Exception:
+            return ticker, (None, None, False)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fetch_one, t): t for t in tickers}
+        for future in as_completed(futures):
+            ticker, metadata = future.result()
+            results[ticker] = metadata
+
+    return results
+
+
+def determine_benchmark(metadata: tuple[float | None, str | None, bool]) -> str:
+    """Determine benchmark from pre-fetched metadata (no API call)."""
+    market_cap, sector, is_etf = metadata
+
+    if is_etf:
+        return "SPY"
+
+    if market_cap is not None and market_cap <= 20_000_000_000:
+        return "IWM"
+
+    if sector and "technology" in sector.lower():
+        return "QQQ"
+
+    return "SPY"
+
+
 def fetch_ticker_metadata(ticker: str) -> tuple[float | None, str | None, bool]:
     try:
         import yfinance as yf
@@ -116,13 +204,26 @@ def select_benchmark_ticker(ticker: str) -> str:
     return "SPY"
 
 
-def analyze_ticker(ticker: str, benchmark_prices: pd.Series, years: int) -> dict | None:
-    """Analyze a single ticker and return results dict, or None on error."""
-    try:
-        ticker_prices = fetch_prices_yfinance(ticker, years=years)
-    except Exception as e:
-        print(f"Error fetching {ticker}: {e}", file=sys.stderr)
-        return None
+def analyze_ticker(
+    ticker: str,
+    benchmark_prices: pd.Series,
+    years: int,
+    ticker_prices: pd.Series | None = None,
+) -> dict | None:
+    """Analyze a single ticker and return results dict, or None on error.
+
+    Args:
+        ticker: Ticker symbol
+        benchmark_prices: Pre-fetched benchmark price series
+        years: Years of history (used only if ticker_prices not provided)
+        ticker_prices: Pre-fetched ticker prices (if None, will fetch)
+    """
+    if ticker_prices is None:
+        try:
+            ticker_prices = fetch_prices_yfinance(ticker, years=years)
+        except Exception as e:
+            print(f"Error fetching {ticker}: {e}", file=sys.stderr)
+            return None
 
     # Align on common dates
     combined = pd.DataFrame({"ticker": ticker_prices, "benchmark": benchmark_prices}).dropna()
@@ -190,20 +291,30 @@ def get_data(universe: str = None, years: int = 5) -> dict:
             if not tickers:
                 return {"error": "No tickers found in portfolio.csv"}
 
-        benchmark_cache: dict[str, pd.Series] = {}
+        # Fetch all metadata in parallel to determine benchmarks
+        metadata_map = fetch_metadata_batch(tickers)
+        ticker_to_benchmark = {t: determine_benchmark(metadata_map.get(t, (None, None, False))) for t in tickers}
+
+        # Collect all unique symbols to download (tickers + benchmarks)
+        all_benchmarks = set(ticker_to_benchmark.values())
+        all_symbols = list(set(tickers) | all_benchmarks)
+
+        # Batch download all prices at once
+        prices_map = fetch_prices_batch(all_symbols, years=years)
+
+        # Analyze each ticker using pre-fetched data
         results = []
-
         for ticker in tickers:
-            benchmark_ticker = select_benchmark_ticker(ticker)
-            benchmark_prices = benchmark_cache.get(benchmark_ticker)
-            if benchmark_prices is None:
-                try:
-                    benchmark_prices = fetch_prices_yfinance(benchmark_ticker, years=years)
-                except Exception:
-                    continue
-                benchmark_cache[benchmark_ticker] = benchmark_prices
+            ticker_prices = prices_map.get(ticker)
+            if ticker_prices is None:
+                continue
 
-            result = analyze_ticker(ticker, benchmark_prices, years)
+            benchmark_ticker = ticker_to_benchmark[ticker]
+            benchmark_prices = prices_map.get(benchmark_ticker)
+            if benchmark_prices is None:
+                continue
+
+            result = analyze_ticker(ticker, benchmark_prices, years, ticker_prices=ticker_prices)
             if result:
                 result["benchmark"] = benchmark_ticker
                 results.append(result)
@@ -266,22 +377,38 @@ def main() -> int:
             return 1
 
     benchmark_override = args.benchmark.strip().upper() if args.benchmark else None
-    benchmark_cache: dict[str, pd.Series] = {}
 
-    # Process each ticker
+    # Determine benchmarks for all tickers
+    if benchmark_override:
+        ticker_to_benchmark = {t: benchmark_override for t in tickers}
+    else:
+        print(f"Fetching metadata for {len(tickers)} tickers...")
+        metadata_map = fetch_metadata_batch(tickers)
+        ticker_to_benchmark = {t: determine_benchmark(metadata_map.get(t, (None, None, False))) for t in tickers}
+
+    # Collect all unique symbols to download
+    all_benchmarks = set(ticker_to_benchmark.values())
+    all_symbols = list(set(tickers) | all_benchmarks)
+
+    # Batch download all prices at once
+    print(f"Downloading prices for {len(all_symbols)} symbols...")
+    prices_map = fetch_prices_batch(all_symbols, years=args.years)
+
+    # Process each ticker using pre-fetched data
     results = []
     for ticker in tickers:
-        benchmark_ticker = benchmark_override or select_benchmark_ticker(ticker)
-        benchmark_prices = benchmark_cache.get(benchmark_ticker)
-        if benchmark_prices is None:
-            try:
-                benchmark_prices = fetch_prices_yfinance(benchmark_ticker, years=args.years)
-            except Exception as e:
-                print(f"Error fetching benchmark {benchmark_ticker}: {e}", file=sys.stderr)
-                continue
-            benchmark_cache[benchmark_ticker] = benchmark_prices
+        ticker_prices = prices_map.get(ticker)
+        if ticker_prices is None:
+            print(f"No data for {ticker}", file=sys.stderr)
+            continue
 
-        result = analyze_ticker(ticker, benchmark_prices, args.years)
+        benchmark_ticker = ticker_to_benchmark[ticker]
+        benchmark_prices = prices_map.get(benchmark_ticker)
+        if benchmark_prices is None:
+            print(f"No data for benchmark {benchmark_ticker}", file=sys.stderr)
+            continue
+
+        result = analyze_ticker(ticker, benchmark_prices, args.years, ticker_prices=ticker_prices)
         if result:
             result["benchmark"] = benchmark_ticker
             results.append(result)
