@@ -790,6 +790,21 @@ elif st.session_state.current_page == "📌 Positioning":
     st.header("CFTC Positioning")
     st.caption("COT participant positioning + simple forced-flow proxies (deleveraging / short-covering) via the CFTC PRE/Socrata API")
 
+    with st.expander("Metric Definitions", expanded=False):
+        st.markdown("""
+**Net Position** — Long contracts minus short contracts held by the participant group (e.g., leveraged funds).
+
+**Net % Open Interest** — Net position expressed as a percentage of total open interest. Normalizes across different contract sizes and markets.
+
+**Position Z-Score** — How extreme the current positioning is relative to history. Values above +2 or below -2 indicate unusually crowded long or short positioning.
+
+**Deleveraging Z-Score** — Measures how quickly participants are reducing exposure (moving toward flat). A high positive value means positions are being unwound faster than usual.
+
+**Forced Flow** — Flags unusually aggressive position reductions:
+- **Long Liquidation**: Longs being closed rapidly (often due to margin calls or stop-losses)
+- **Short Covering**: Shorts being closed rapidly (often a squeeze or risk-off unwind)
+        """)
+
     if st.button("Refresh Data", key="refresh_positioning"):
         st.cache_data.clear()
 
@@ -993,11 +1008,28 @@ elif st.session_state.current_page == "📌 Positioning":
                     "lf_deleveraging_z": "{:+.2f}",
                 }
                 base_format = {k: v for k, v in base_format.items() if k in base.columns}
+
+                # Rename columns for display
+                display_rename = {
+                    "instrument": "Instrument",
+                    "report_date": "Report Date",
+                    "lf_net": "Net Position",
+                    "lf_net_pct_oi": "Net % Open Int",
+                    "lf_z": "Position Z",
+                    "lf_deleveraging_z": "Delev Z",
+                    "lf_forced": "Forced Flow",
+                }
+                base = base.rename(columns=display_rename)
+                base_format = {display_rename.get(k, k): v for k, v in base_format.items()}
+                pct_col = "Net % Open Int" if "Net % Open Int" in base.columns else None
+                z_cols = [c for c in ["Position Z", "Delev Z"] if c in base.columns]
+                forced_col = "Forced Flow" if "Forced Flow" in base.columns else None
+
                 styled_base = (
                     base.style.format(base_format)
-                    .applymap(color_positive_negative, subset=[c for c in ["lf_net_pct_oi"] if c in base.columns])
-                    .applymap(color_zscore, subset=[c for c in ["lf_z", "lf_deleveraging_z"] if c in base.columns])
-                    .applymap(color_forced_flow, subset=[c for c in ["lf_forced"] if c in base.columns])
+                    .applymap(color_positive_negative, subset=[pct_col] if pct_col else [])
+                    .applymap(color_zscore, subset=z_cols)
+                    .applymap(color_forced_flow, subset=[forced_col] if forced_col else [])
                 )
                 st.dataframe(styled_base, width="stretch", hide_index=True)
 
@@ -1024,10 +1056,26 @@ elif st.session_state.current_page == "📌 Positioning":
                             if c.endswith("_net_pct_oi") or c.endswith("_z") or c.endswith("_deleveraging_z"):
                                 extra[c] = pd.to_numeric(extra[c], errors="coerce")
 
+                        # Create friendly column names for extra groups
+                        prefix_labels = {
+                            "dealer": "Dealer",
+                            "asset_mgr": "Asset Mgr",
+                            "other_rept": "Other Rept",
+                            "nonrept": "Non-Rept",
+                        }
+                        extra_rename = {"instrument": "Instrument", "report_date": "Report Date"}
+                        for prefix in extra_prefixes:
+                            label = prefix_labels.get(prefix, prefix.title())
+                            extra_rename[f"{prefix}_net_pct_oi"] = f"{label} Net % OI"
+                            extra_rename[f"{prefix}_z"] = f"{label} Pos Z"
+                            extra_rename[f"{prefix}_deleveraging_z"] = f"{label} Delev Z"
+                            extra_rename[f"{prefix}_forced"] = f"{label} Forced"
+                        extra = extra.rename(columns=extra_rename)
+
                         format_map = {}
-                        pct_cols = [c for c in extra.columns if c.endswith("_net_pct_oi")]
-                        z_cols = [c for c in extra.columns if c.endswith("_z") or c.endswith("_deleveraging_z")]
-                        forced_cols = [c for c in extra.columns if c.endswith("_forced")]
+                        pct_cols = [c for c in extra.columns if "Net % OI" in c]
+                        z_cols = [c for c in extra.columns if "Pos Z" in c or "Delev Z" in c]
+                        forced_cols = [c for c in extra.columns if "Forced" in c]
                         for c in pct_cols:
                             format_map[c] = "{:+.1f}%"
                         for c in z_cols:
@@ -1105,7 +1153,7 @@ elif st.session_state.current_page == "📌 Positioning":
                     st.metric("Net Position", f"{net:,.0f}" if pd.notna(net) else "N/A")
                 with row1[2]:
                     pct = latest.get(f"{prefix}_net_pct_oi")
-                    st.metric("Net % OI", f"{pct:+.1f}%" if pd.notna(pct) else "N/A")
+                    st.metric("Net % Open Interest", f"{pct:+.1f}%" if pd.notna(pct) else "N/A")
                 with row2[0]:
                     z = latest.get(f"{prefix}_z")
                     st.metric("Z-Score", f"{z:+.2f}" if pd.notna(z) else "N/A")
@@ -1162,9 +1210,22 @@ elif st.session_state.current_page == "📌 Positioning":
                 if "open_interest" in recent.columns:
                     format_map["open_interest"] = "{:,.0f}"
 
-                pct_cols = [c for c in recent.columns if c.endswith("_net_pct_oi")]
-                z_cols = [c for c in recent.columns if c.endswith("_z") or c.endswith("_deleveraging_z")]
-                forced_cols = [c for c in recent.columns if c.endswith("_forced")]
+                # Rename columns for display
+                history_rename = {
+                    "report_date": "Date",
+                    f"{prefix}_net": "Net Position",
+                    f"{prefix}_net_pct_oi": "Net % Open Int",
+                    f"{prefix}_z": "Position Z",
+                    f"{prefix}_deleveraging_z": "Delev Z",
+                    f"{prefix}_forced": "Forced Flow",
+                    "open_interest": "Open Interest",
+                }
+                recent = recent.rename(columns=history_rename)
+                format_map = {history_rename.get(k, k): v for k, v in format_map.items()}
+
+                pct_cols = [c for c in recent.columns if "Net % Open Int" in c]
+                z_cols = [c for c in recent.columns if "Position Z" in c or "Delev Z" in c]
+                forced_cols = [c for c in recent.columns if "Forced" in c]
                 styled_recent = (
                     recent.style.format(format_map)
                     .applymap(color_positive_negative, subset=pct_cols)
