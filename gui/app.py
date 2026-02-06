@@ -26,6 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "breakout"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
+sys.path.insert(0, str(PROJECT_ROOT / "fx"))
 
 import streamlit as st
 import pandas as pd
@@ -91,6 +92,11 @@ if st.sidebar.button("🚀 Momentum", width='stretch',
     st.session_state.current_page = "🚀 Momentum"
     st.rerun()
 
+if st.sidebar.button("💱 FX Model", width='stretch',
+                      type="primary" if st.session_state.current_page == "💱 FX Model" else "secondary"):
+    st.session_state.current_page = "💱 FX Model"
+    st.rerun()
+
 # Visual separator
 st.sidebar.divider()
 
@@ -100,6 +106,27 @@ if st.session_state.current_page == "💧 Liquidity":
     skip_ecb = st.sidebar.checkbox("Skip ECB data", value=False, help="Skip ECB SDMX fetch if it's slow")
 else:
     skip_ecb = False  # Default for non-Liquidity pages
+
+# FX Model sidebar controls
+fx_selected_pair = None
+fx_bootstrap = 1000
+fx_skip_bis = False
+fx_horizons_str = "12,24"
+fx_run_clicked = False
+
+if st.session_state.current_page == "💱 FX Model":
+    st.sidebar.title("FX Model Settings")
+    try:
+        from src.currency_config import list_pairs
+        fx_available_pairs = list_pairs()
+    except Exception:
+        fx_available_pairs = ["USDCAD", "GBPUSD", "AUDUSD", "USDJPY"]
+
+    fx_selected_pair = st.sidebar.selectbox("Currency Pair", options=fx_available_pairs)
+    fx_bootstrap = st.sidebar.number_input("Bootstrap Draws", min_value=100, max_value=5000, value=1000, step=100)
+    fx_skip_bis = st.sidebar.checkbox("Skip BIS data", value=False, help="Skip BIS downloads if slow")
+    fx_horizons_str = st.sidebar.text_input("Horizons (months)", value="12,24")
+    fx_run_clicked = st.sidebar.button("Run Model", type="primary", use_container_width=True)
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -1832,6 +1859,265 @@ elif st.session_state.current_page == "🚀 Momentum":
             st.caption("- Relative ROC metrics: Green if positive (outperforming benchmark), Red if negative")
         else:
             st.warning("No momentum data available")
+
+
+# =============================================================================
+# PAGE: FX Model
+# =============================================================================
+elif st.session_state.current_page == "💱 FX Model":
+    st.header("FX Macro Model")
+    st.caption("Multi-factor model for currency pair forecasting using FRED, IMF, and BIS data")
+
+    # Initialize session state for FX results
+    if "fx_results" not in st.session_state:
+        st.session_state.fx_results = None
+        st.session_state.fx_pair = None
+
+    # Import FX modules
+    try:
+        from src.currency_config import get_config, list_pairs
+        from src.pipeline import run_pipeline
+        fx_module_loaded = True
+    except Exception as e:
+        st.error(f"Failed to load FX module: {e}")
+        fx_module_loaded = False
+
+    if fx_module_loaded and fx_run_clicked and fx_selected_pair:
+        # Parse horizons
+        try:
+            horizons = [int(x.strip()) for x in fx_horizons_str.split(",") if x.strip()]
+        except ValueError:
+            horizons = [12, 24]
+
+        with st.spinner(f"Running FX model for {fx_selected_pair}... This may take a moment."):
+            try:
+                config = get_config(fx_selected_pair)
+                cache_dir = PROJECT_ROOT / "fx" / "data_cache"
+                outdir = PROJECT_ROOT / "fx" / "outputs" / fx_selected_pair.lower()
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                outdir.mkdir(parents=True, exist_ok=True)
+
+                results = run_pipeline(
+                    config=config,
+                    start="1970-01-01",
+                    outdir=outdir,
+                    cache_dir=cache_dir,
+                    refresh=False,
+                    use_bis=not fx_skip_bis,
+                    bootstrap_draws=fx_bootstrap,
+                    horizons=horizons,
+                )
+                st.session_state.fx_results = results
+                st.session_state.fx_pair = fx_selected_pair
+            except Exception as e:
+                import traceback
+                st.error(f"Model failed: {e}")
+                with st.expander("Error details"):
+                    st.code(traceback.format_exc())
+                st.session_state.fx_results = None
+
+    # Display results
+    if fx_module_loaded:
+        results = st.session_state.fx_results
+        pair = st.session_state.fx_pair
+
+        if results is None:
+            st.info("Select a currency pair and click 'Run Model' to generate forecasts.")
+        else:
+            st.success(f"Model results for {pair}")
+
+            # Get data from results
+            latest_forecast = results.get("latest_forecast", {})
+            panel = results.get("panel")
+            reference_points = results.get("reference_points")
+            models = results.get("models", {})
+
+            # Tabs for different views
+            tab1, tab2, tab3, tab4 = st.tabs(["Forecast", "Valuation", "Model Details", "Time Series"])
+
+            # Tab 1: Forecast Summary
+            with tab1:
+                st.subheader("Forecast Summary")
+
+                # Current spot
+                first_horizon = list(latest_forecast.keys())[0] if latest_forecast else None
+                if first_horizon:
+                    spot_now = latest_forecast[first_horizon].get("spot_now", 0)
+                    rer_z = latest_forecast[first_horizon].get("valuation_rer_z", 0)
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Current Spot", f"{spot_now:.4f}")
+                    with col2:
+                        z_color = "inverse" if abs(rer_z) > 1.5 else "normal"
+                        valuation = "Overvalued" if rer_z > 1.5 else "Undervalued" if rer_z < -1.5 else "Fair"
+                        st.metric("RER Z-Score", f"{rer_z:+.2f}", delta=valuation, delta_color=z_color)
+
+                st.divider()
+
+                # Forecasts for each horizon
+                for horizon, forecast in latest_forecast.items():
+                    st.write(f"**{horizon}-Month Forecast**")
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    point = forecast.get("point_level", 0)
+                    levels = forecast.get("level_q05_q50_q95", {})
+                    q05 = levels.get("q05", 0)
+                    q50 = levels.get("q50", 0)
+                    q95 = levels.get("q95", 0)
+
+                    # Calculate expected return
+                    if spot_now > 0:
+                        exp_return = ((point / spot_now) - 1) * 100
+                    else:
+                        exp_return = 0
+
+                    with col1:
+                        st.metric("Point Forecast", f"{point:.4f}", delta=f"{exp_return:+.1f}%")
+                    with col2:
+                        st.metric("5th Percentile", f"{q05:.4f}")
+                    with col3:
+                        st.metric("Median", f"{q50:.4f}")
+                    with col4:
+                        st.metric("95th Percentile", f"{q95:.4f}")
+
+                    # Visual range bar
+                    if q05 > 0 and q95 > 0:
+                        range_pct = ((spot_now - q05) / (q95 - q05)) * 100 if q95 != q05 else 50
+                        range_pct = max(0, min(100, range_pct))
+                        st.markdown(f'''
+                        <div style="position: relative; height: 24px; background: linear-gradient(to right, #ff1744, #ffc107, #00c853); border-radius: 4px; margin: 8px 0;">
+                            <div style="position: absolute; left: {range_pct}%; top: -2px; bottom: -2px; width: 4px; background: white; border-radius: 2px; box-shadow: 0 0 4px rgba(255,255,255,0.8);"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #888;">
+                            <span>{q05:.4f}</span>
+                            <span style="color: white;">Current: {spot_now:.4f}</span>
+                            <span>{q95:.4f}</span>
+                        </div>
+                        ''', unsafe_allow_html=True)
+
+                    st.write("")
+
+            # Tab 2: Valuation
+            with tab2:
+                st.subheader("Valuation Analysis")
+
+                if reference_points is not None and not reference_points.empty:
+                    # Latest reference points
+                    latest_ref = reference_points.iloc[-1]
+
+                    st.write("**Spot vs Implied Levels (RER Reversion)**")
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("Current Spot", f"{latest_ref.get('spot', 0):.4f}")
+                    with col2:
+                        implied_med = latest_ref.get("spot_implied_median", 0)
+                        if latest_ref.get("spot", 0) > 0:
+                            diff_pct = ((implied_med / latest_ref.get("spot", 1)) - 1) * 100
+                        else:
+                            diff_pct = 0
+                        st.metric("Implied (Median)", f"{implied_med:.4f}", delta=f"{diff_pct:+.1f}%")
+                    with col3:
+                        st.metric("Implied (25th pctl)", f"{latest_ref.get('spot_implied_p25', 0):.4f}")
+                    with col4:
+                        st.metric("Implied (75th pctl)", f"{latest_ref.get('spot_implied_p75', 0):.4f}")
+
+                    st.divider()
+
+                    # RER Z-score chart
+                    if panel is not None and "rer_z" in panel.columns:
+                        st.write("**Real Exchange Rate Z-Score (120-month rolling)**")
+                        rer_chart = panel[["rer_z"]].dropna().tail(240)
+                        if not rer_chart.empty:
+                            st.line_chart(rer_chart, height=250)
+                            st.caption("Positive = base currency overvalued, Negative = base currency undervalued")
+
+                    # Reference points table
+                    st.write("**Recent Reference Points**")
+                    display_ref = reference_points.tail(12).copy()
+                    for col in ["spot", "spot_implied_median", "spot_implied_p25", "spot_implied_p75"]:
+                        if col in display_ref.columns:
+                            display_ref[col] = display_ref[col].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "N/A")
+                    st.dataframe(display_ref, width="stretch", hide_index=False)
+                else:
+                    st.warning("No reference point data available")
+
+            # Tab 3: Model Details
+            with tab3:
+                st.subheader("Model Coefficients & Performance")
+
+                for horizon, model_data in models.items():
+                    with st.expander(f"**{horizon}-Month Model**", expanded=(horizon == list(models.keys())[0])):
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.metric("R-squared", f"{model_data.get('r2', 0):.4f}")
+                        with col2:
+                            st.metric("Observations", f"{model_data.get('nobs', 0):,}")
+
+                        # Coefficients table
+                        params = model_data.get("params", {})
+                        if params:
+                            st.write("**Regression Coefficients**")
+                            coef_rows = []
+                            for name, value in params.items():
+                                coef_rows.append({"Feature": name, "Coefficient": f"{value:+.4f}"})
+                            coef_df = pd.DataFrame(coef_rows)
+                            st.dataframe(coef_df, width="stretch", hide_index=True)
+
+                        # Distribution stats
+                        dist_log = model_data.get("dist_log_return", {})
+                        if dist_log:
+                            st.write("**Forecast Distribution (Log Returns)**")
+                            dist_cols = st.columns(5)
+                            with dist_cols[0]:
+                                st.metric("5th pctl", f"{dist_log.get('q05', 0)*100:+.1f}%")
+                            with dist_cols[1]:
+                                st.metric("25th pctl", f"{dist_log.get('q25', 0)*100:+.1f}%")
+                            with dist_cols[2]:
+                                st.metric("Median", f"{dist_log.get('q50', 0)*100:+.1f}%")
+                            with dist_cols[3]:
+                                st.metric("75th pctl", f"{dist_log.get('q75', 0)*100:+.1f}%")
+                            with dist_cols[4]:
+                                st.metric("95th pctl", f"{dist_log.get('q95', 0)*100:+.1f}%")
+
+            # Tab 4: Time Series
+            with tab4:
+                st.subheader("Historical Data")
+
+                if panel is not None and not panel.empty:
+                    # Spot rate
+                    if "spot" in panel.columns:
+                        st.write("**Spot Rate**")
+                        st.line_chart(panel[["spot"]].dropna().tail(240), height=200)
+
+                    # Carry
+                    if "carry" in panel.columns:
+                        st.write("**Carry (Interest Rate Differential)**")
+                        st.line_chart(panel[["carry"]].dropna().tail(240), height=200)
+
+                    # Oil momentum
+                    if "oil_mom12" in panel.columns:
+                        st.write("**Oil 12-Month Momentum**")
+                        st.line_chart(panel[["oil_mom12"]].dropna().tail(240), height=200)
+
+                    # Momentum
+                    if "mom12" in panel.columns:
+                        st.write("**Spot 12-Month Momentum**")
+                        st.line_chart(panel[["mom12"]].dropna().tail(240), height=200)
+
+                    # Data table
+                    st.write("**Recent Data**")
+                    display_cols = ["spot", "carry", "rer_z", "oil_mom12", "mom12", "vix"]
+                    display_cols = [c for c in display_cols if c in panel.columns]
+                    recent_data = panel[display_cols].tail(12).copy()
+                    for col in recent_data.columns:
+                        recent_data[col] = recent_data[col].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "N/A")
+                    st.dataframe(recent_data, width="stretch", hide_index=False)
+                else:
+                    st.warning("No time series data available")
 
 
 # Auto-refresh logic
