@@ -644,11 +644,11 @@ def print_summary_table(results: List[Dict[str, Any]]) -> None:
     )
 
     # Print header
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 110)
     print(
-        f"{'Instrument':<12} {'Date':<12} {'Net Position':>14} {'Net % OI':>10} {'Z-Score':>10} {'DelevZ':>10} {'Forced':>14}"
+        f"{'Instrument':<12} {'Date':<12} {'Net Position':>14} {'Net % Open Int':>15} {'Position Z':>11} {'Delev Z':>11} {'Forced Flow':>16}"
     )
-    print("=" * 100)
+    print("=" * 110)
 
     # Print rows
     for r in sorted_results:
@@ -660,10 +660,10 @@ def print_summary_table(results: List[Dict[str, Any]]) -> None:
             if r.get("lf_deleveraging_z") is not None and not pd.isna(r.get("lf_deleveraging_z"))
             else "N/A"
         )
-        forced = str(r.get("lf_forced") or "")
-        print(f"{r['instrument']:<12} {str(r['report_date']):<12} {net:>14} {pct:>10} {z:>10} {dz:>10} {forced:>14}")
+        forced = str(r.get("lf_forced") or "").replace("_", " ").title()
+        print(f"{r['instrument']:<12} {str(r['report_date']):<12} {net:>14} {pct:>15} {z:>11} {dz:>11} {forced:>16}")
 
-    print("=" * 100)
+    print("=" * 110)
 
 
 def main() -> int:
