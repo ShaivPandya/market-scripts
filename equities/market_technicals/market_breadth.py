@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import time
 from io import StringIO
 from pathlib import Path
 from typing import List
@@ -27,6 +28,11 @@ from typing import List
 import pandas as pd
 import requests
 import yfinance as yf
+
+# Download configuration
+CHUNK_SIZE = 50  # Tickers per batch
+MAX_RETRIES = 2  # Retry attempts for failed tickers
+RETRY_DELAY = 1.0  # Seconds between retries
 
 try:
     from rich.console import Console
@@ -101,6 +107,93 @@ def get_tickers(universe: str) -> List[str]:
         return load_tickers_from_file(universe)
 
 
+def download_with_retry(
+    tickers: List[str],
+    period: str = "1y",
+    chunk_size: int = CHUNK_SIZE,
+    max_retries: int = MAX_RETRIES,
+) -> tuple[pd.DataFrame, List[str]]:
+    """
+    Download price data in chunks with retry logic for reliability.
+
+    Returns:
+        tuple of (combined DataFrame, list of failed tickers)
+    """
+    all_data = []
+    failed_tickers = []
+
+    # Split into chunks
+    chunks = [tickers[i : i + chunk_size] for i in range(0, len(tickers), chunk_size)]
+    total_chunks = len(chunks)
+
+    for idx, chunk in enumerate(chunks, 1):
+        print(f"  Downloading batch {idx}/{total_chunks} ({len(chunk)} tickers)...")
+
+        for attempt in range(max_retries + 1):
+            try:
+                df = yf.download(
+                    tickers=chunk,
+                    period=period,
+                    interval="1d",
+                    auto_adjust=True,
+                    group_by="column",
+                    threads=True,
+                    progress=False,
+                )
+
+                if df is not None and not df.empty:
+                    all_data.append(df)
+
+                    # Check which tickers actually returned data
+                    if isinstance(df.columns, pd.MultiIndex):
+                        returned = set(df["Close"].columns.tolist())
+                    else:
+                        returned = set(chunk[:1])
+
+                    missing = set(chunk) - returned
+                    if missing:
+                        failed_tickers.extend(missing)
+
+                    break
+                elif attempt < max_retries:
+                    time.sleep(RETRY_DELAY)
+            except Exception as e:
+                if attempt < max_retries:
+                    time.sleep(RETRY_DELAY)
+                else:
+                    print(f"    Batch {idx} failed after {max_retries + 1} attempts: {e}")
+                    failed_tickers.extend(chunk)
+
+    if not all_data:
+        return pd.DataFrame(), failed_tickers
+
+    # Combine all chunks
+    if len(all_data) == 1:
+        combined = all_data[0]
+    else:
+        # Merge DataFrames along columns
+        combined_parts = {"Close": [], "High": [], "Low": []}
+        for df in all_data:
+            if isinstance(df.columns, pd.MultiIndex):
+                for col in combined_parts:
+                    if col in df.columns.get_level_values(0):
+                        combined_parts[col].append(df[col])
+            else:
+                # Single ticker in this chunk
+                for col in combined_parts:
+                    if col in df.columns:
+                        combined_parts[col].append(df[[col]])
+
+        merged = {}
+        for col, dfs in combined_parts.items():
+            if dfs:
+                merged[col] = pd.concat(dfs, axis=1)
+
+        combined = pd.concat(merged, axis=1)
+
+    return combined, failed_tickers
+
+
 def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
     """
     Calculate market breadth metrics for a list of tickers.
@@ -111,21 +204,17 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
       - at_20day_high: count and percentage at 20-day high
       - at_20day_low: count and percentage at 20-day low
       - total_analyzed: number of stocks with valid data
+      - failed_tickers: list of tickers that failed to download
     """
     print(f"Downloading price data for {len(tickers)} tickers...")
 
-    df = yf.download(
-        tickers=tickers,
-        period=period,
-        interval="1d",
-        auto_adjust=True,
-        group_by="column",
-        threads=True,
-        progress=True,
-    )
+    df, failed_tickers = download_with_retry(tickers, period)
 
     if df.empty:
         raise RuntimeError("No data downloaded")
+
+    if failed_tickers:
+        print(f"  Warning: {len(failed_tickers)} tickers failed to download")
 
     # Extract Close, High, and Low prices
     if isinstance(df.columns, pd.MultiIndex):
@@ -141,51 +230,40 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
         low = df[["Low"]]
         low.columns = tickers[:1]
 
-    above_200dma = 0
-    above_20dma = 0
-    at_20day_high = 0
-    at_20day_low = 0
-    total_analyzed = 0
+    # Vectorized calculations for performance
+    # Get the latest values
+    current_close = close.iloc[-1]
+    current_high = high.iloc[-1]
+    current_low = low.iloc[-1]
 
-    for ticker in close.columns:
-        prices = close[ticker].dropna()
-        highs = high[ticker].dropna()
-        lows = low[ticker].dropna()
+    # Calculate moving averages (vectorized across all tickers)
+    ma_200 = close.rolling(200).mean().iloc[-1]
+    ma_20 = close.rolling(20).mean().iloc[-1]
 
-        if len(prices) < 20:
-            continue
+    # Calculate 20-day highs and lows (vectorized)
+    high_20 = high.tail(20).max()
+    low_20 = low.tail(20).min()
 
-        current_price = prices.iloc[-1]
+    # Count valid tickers (at least 20 days of data)
+    valid_counts = close.notna().sum()
+    valid_tickers = valid_counts[valid_counts >= 20].index
 
-        # 200-day MA (need at least 200 days of data)
-        ma_200 = prices.rolling(200).mean().iloc[-1] if len(prices) >= 200 else None
+    # Filter to only valid tickers
+    current_close = current_close[valid_tickers]
+    current_high = current_high[valid_tickers]
+    current_low = current_low[valid_tickers]
+    ma_200 = ma_200[valid_tickers]
+    ma_20 = ma_20[valid_tickers]
+    high_20 = high_20[valid_tickers]
+    low_20 = low_20[valid_tickers]
 
-        # 20-day MA
-        ma_20 = prices.rolling(20).mean().iloc[-1]
+    total_analyzed = len(valid_tickers)
 
-        # 20-day high (using high prices)
-        high_20 = highs.tail(20).max() if len(highs) >= 20 else highs.max()
-
-        # 20-day low (using low prices)
-        low_20 = lows.tail(20).min() if len(lows) >= 20 else lows.min()
-
-        total_analyzed += 1
-
-        if ma_200 is not None and current_price > ma_200:
-            above_200dma += 1
-
-        if current_price > ma_20:
-            above_20dma += 1
-
-        # Check if current high equals 20-day high (making new high)
-        current_high = highs.iloc[-1]
-        if current_high >= high_20:
-            at_20day_high += 1
-
-        # Check if current low equals 20-day low (making new low)
-        current_low = lows.iloc[-1]
-        if current_low <= low_20:
-            at_20day_low += 1
+    # Vectorized comparisons
+    above_200dma = int((current_close > ma_200).sum())
+    above_20dma = int((current_close > ma_20).sum())
+    at_20day_high = int((current_high >= high_20).sum())
+    at_20day_low = int((current_low <= low_20).sum())
 
     return {
         "above_200dma": above_200dma,
@@ -197,6 +275,7 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
         "pct_above_20dma": (above_20dma / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_at_20day_high": (at_20day_high / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_at_20day_low": (at_20day_low / total_analyzed * 100) if total_analyzed > 0 else 0,
+        "failed_tickers": failed_tickers,
     }
 
 
@@ -257,6 +336,8 @@ def main():
     if pct_lows > 50:
         line_lows = colorize(line_lows, "green")
 
+    failed = metrics.get("failed_tickers", [])
+
     if CONSOLE:
         summary = Table(title="Market Breadth Summary", box=box.ASCII)
         summary.add_column("Metric")
@@ -282,20 +363,29 @@ def main():
             f"{metrics['at_20day_low']} / {metrics['total_analyzed']}",
             format_pct(pct_lows, pct_lows > 50),
         )
-        summary.caption = f"Stocks analyzed: {metrics['total_analyzed']}"
+        caption = f"Stocks analyzed: {metrics['total_analyzed']}"
+        if failed:
+            caption += f" | Failed: {len(failed)}"
+        summary.caption = caption
         summary.caption_style = "dim"
         CONSOLE.print(summary)
+        if failed:
+            CONSOLE.print(f"[dim]Failed tickers: {', '.join(sorted(failed)[:20])}{'...' if len(failed) > 20 else ''}[/dim]")
     else:
         print("\n" + "=" * 50)
         print("MARKET BREADTH SUMMARY")
         print("=" * 50)
         print(f"Stocks analyzed: {metrics['total_analyzed']}")
+        if failed:
+            print(f"Failed to download: {len(failed)}")
         print("-" * 50)
         print(line_200)
         print(line_20)
         print(line_highs)
         print(line_lows)
         print("=" * 50)
+        if failed:
+            print(f"\nFailed tickers: {', '.join(sorted(failed)[:20])}{'...' if len(failed) > 20 else ''}")
 
 
 def get_data(universe: str = "sp500", period: str = "1y") -> dict:
