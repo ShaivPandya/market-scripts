@@ -790,6 +790,21 @@ elif st.session_state.current_page == "📌 Positioning":
     st.header("CFTC Positioning")
     st.caption("COT participant positioning + simple forced-flow proxies (deleveraging / short-covering) via the CFTC PRE/Socrata API")
 
+    with st.expander("Metric Definitions", expanded=False):
+        st.markdown("""
+**Net Position** — Long contracts minus short contracts held by the participant group (e.g., leveraged funds).
+
+**Net % Open Interest** — Net position expressed as a percentage of total open interest. Normalizes across different contract sizes and markets.
+
+**Position Z-Score** — How extreme the current positioning is relative to history. Values above +2 or below -2 indicate unusually crowded long or short positioning.
+
+**Deleveraging Z-Score** — Measures how quickly participants are reducing exposure (moving toward flat). A high positive value means positions are being unwound faster than usual.
+
+**Forced Flow** — Flags unusually aggressive position reductions:
+- **Long Liquidation**: Longs being closed rapidly (often due to margin calls or stop-losses)
+- **Short Covering**: Shorts being closed rapidly (often a squeeze or risk-off unwind)
+        """)
+
     if st.button("Refresh Data", key="refresh_positioning"):
         st.cache_data.clear()
 

@@ -665,6 +665,19 @@ def print_summary_table(results: List[Dict[str, Any]]) -> None:
 
     print("=" * 110)
 
+    # Print legend explaining the metrics
+    print("\nMetric Definitions:")
+    print("-" * 60)
+    print("  Net Position    : Long contracts minus short contracts held by leveraged funds")
+    print("  Net % Open Int  : Net position as a percentage of total open interest")
+    print("  Position Z      : Z-score of net positioning (how extreme vs history)")
+    print("  Delev Z         : Z-score of position reduction toward flat")
+    print("                    (positive = reducing exposure faster than usual)")
+    print("  Forced Flow     : Flags unusually large deleveraging events:")
+    print("                    - Long Liquidation: longs being unwound aggressively")
+    print("                    - Short Covering: shorts being closed aggressively")
+    print()
+
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Fetch CFTC COT positioning via PRE/Socrata API.")
