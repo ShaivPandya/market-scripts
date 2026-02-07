@@ -27,6 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 
 import streamlit as st
 import pandas as pd
@@ -97,6 +98,11 @@ if st.sidebar.button("💱 FX Model", width='stretch',
     st.session_state.current_page = "💱 FX Model"
     st.rerun()
 
+if st.sidebar.button("🏦 Central Banks", width='stretch',
+                      type="primary" if st.session_state.current_page == "🏦 Central Banks" else "secondary"):
+    st.session_state.current_page = "🏦 Central Banks"
+    st.rerun()
+
 # Visual separator
 st.sidebar.divider()
 
@@ -126,7 +132,7 @@ if st.session_state.current_page == "💱 FX Model":
     fx_bootstrap = st.sidebar.number_input("Bootstrap Draws", min_value=100, max_value=5000, value=1000, step=100)
     fx_skip_bis = st.sidebar.checkbox("Skip BIS data", value=False, help="Skip BIS downloads if slow")
     fx_horizons_str = st.sidebar.text_input("Horizons (months)", value="12,24")
-    fx_run_clicked = st.sidebar.button("Run Model", type="primary", use_container_width=True)
+    fx_run_clicked = st.sidebar.button("Run Model", type="primary", width="stretch")
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -2179,6 +2185,142 @@ elif st.session_state.current_page == "💱 FX Model":
                     st.dataframe(recent_data, width="stretch", hide_index=False)
                 else:
                     st.warning("No time series data available")
+
+
+# =============================================================================
+# PAGE: Central Banks
+# =============================================================================
+elif st.session_state.current_page == "🏦 Central Banks":
+    st.header("Central Bank Monitor")
+    st.caption("Monetary policy releases from Fed, ECB, BoJ, BoE via RSS feeds")
+
+    if st.button("Refresh Data", key="refresh_central_banks"):
+        st.cache_data.clear()
+        st.rerun()
+
+    @st.cache_data(ttl=3600)
+    def fetch_central_bank_data():
+        try:
+            from central_bank import get_data
+            return get_data()
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner("Fetching central bank releases from RSS feeds..."):
+        cb_data = fetch_central_bank_data()
+
+    if "error" in cb_data:
+        st.error(f"Error: {cb_data['error']}")
+    else:
+        counts = cb_data.get("counts", {})
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("Total Releases", counts.get("total", 0))
+        with col2:
+            st.metric("Fed", counts.get("FED", 0))
+        with col3:
+            st.metric("ECB", counts.get("ECB", 0))
+        with col4:
+            st.metric("BoJ", counts.get("BOJ", 0))
+        with col5:
+            st.metric("BoE", counts.get("BOE", 0))
+
+        st.divider()
+
+        source_filter = st.multiselect(
+            "Filter by source",
+            options=["FED", "ECB", "BOJ", "BOE"],
+            default=["FED", "ECB", "BOJ", "BOE"],
+            key="cb_source_filter",
+        )
+
+        items = cb_data.get("items", [])
+        filtered_items = [i for i in items if i["source"] in source_filter]
+
+        SOURCE_COLORS = {"FED": "#1B5E20", "ECB": "#003399", "BOJ": "#B71C1C", "BOE": "#4A148C"}
+        SOURCE_LABELS = {"FED": "Fed", "ECB": "ECB", "BOJ": "BoJ", "BOE": "BoE"}
+
+        if not filtered_items:
+            st.info("No releases found matching the current filters.")
+        else:
+            for item in filtered_items:
+                source = item["source"]
+                badge_color = SOURCE_COLORS.get(source, "#444")
+                label = SOURCE_LABELS.get(source, source)
+                date_str = item["published_at"][:10]
+
+                import html as _html
+                bullets_html = ""
+                for b in item.get("summary_bullets", [])[:5]:
+                    b_safe = _html.escape(str(b))
+                    bullets_html += f'<li style="margin-bottom: 4px; opacity: 0.7; font-size: 15px;">{b_safe}</li>'
+
+                signals = item.get("signals", {})
+                signals_html = ""
+                if signals:
+                    signal_items = []
+                    for key, val in signals.items():
+                        if val and str(val).strip():
+                            display_key = key.replace("_", " ").title()
+                            signal_items.append(
+                                f'<span style="background: rgba(128,128,128,0.12); '
+                                f'padding: 2px 8px; border-radius: 4px; font-size: 13px; '
+                                f'opacity: 0.6;">{display_key}: {val}</span>'
+                            )
+                    if signal_items:
+                        signals_html = (
+                            '<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">'
+                            + " ".join(signal_items)
+                            + "</div>"
+                        )
+
+                st.markdown(f'''
+                <div style="background: rgba(128,128,128,0.06); border: 1px solid rgba(128,128,128,0.15);
+                     border-left: 3px solid {badge_color}; border-radius: 8px; padding: 16px 20px; margin-bottom: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span style="background: {badge_color}; color: white; padding: 3px 10px;
+                                  border-radius: 4px; font-size: 13px; font-weight: 600; letter-spacing: 0.5px;">
+                                {label}
+                            </span>
+                            <span style="font-size: 17px; font-weight: 600;">
+                                {item["title"]}
+                            </span>
+                        </div>
+                        <span style="font-size: 14px; opacity: 0.45; font-family: monospace;">
+                            {date_str}
+                        </span>
+                    </div>
+                    <div style="font-size: 14px; opacity: 0.5; margin-bottom: 8px;">
+                        {item["kind"]}
+                    </div>
+                    <ul style="padding-left: 20px; margin: 0;">
+                        {bullets_html}
+                    </ul>
+                    {signals_html}<a href="{item["url"]}" target="_blank" rel="noopener noreferrer"
+                       style="display: inline-block; margin-top: 8px; font-size: 14px;
+                              opacity: 0.5; text-decoration: none;">
+                        View original release &#8599;
+                    </a>
+                </div>
+                ''', unsafe_allow_html=True)
+
+        with st.expander("Raw Data Table", expanded=False):
+            if filtered_items:
+                rows = []
+                for item in filtered_items:
+                    rows.append({
+                        "Source": SOURCE_LABELS.get(item["source"], item["source"]),
+                        "Type": item["kind"],
+                        "Title": item["title"],
+                        "Date": item["published_at"][:10],
+                        "Has Text": "Yes" if item.get("has_full_text") else "No",
+                        "URL": item["url"],
+                    })
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+            else:
+                st.write("No data to display.")
 
 
 # Auto-refresh logic

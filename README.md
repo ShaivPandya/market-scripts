@@ -64,10 +64,10 @@ This will confirm that your environment variables are loaded properly.
 
 The project includes a Streamlit-based dashboard in `gui/app.py`.
 
-### 1. Install GUI Dependencies
+### 1. Install Dependencies
 
 ```bash
-pip install -r gui/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 2. Run the GUI
