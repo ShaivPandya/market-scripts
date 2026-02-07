@@ -2254,7 +2254,7 @@ elif st.session_state.current_page == "🏦 Central Banks":
                 bullets_html = ""
                 for b in item.get("summary_bullets", [])[:5]:
                     b_safe = _html.escape(str(b))
-                    bullets_html += f'<li style="margin-bottom: 4px; color: rgba(255,255,255,0.65); font-size: 13px;">{b_safe}</li>'
+                    bullets_html += f'<li style="margin-bottom: 4px; opacity: 0.7; font-size: 13px;">{b_safe}</li>'
 
                 signals = item.get("signals", {})
                 signals_html = ""
@@ -2264,9 +2264,9 @@ elif st.session_state.current_page == "🏦 Central Banks":
                         if val and str(val).strip():
                             display_key = key.replace("_", " ").title()
                             signal_items.append(
-                                f'<span style="background: rgba(255,255,255,0.06); '
+                                f'<span style="background: rgba(128,128,128,0.12); '
                                 f'padding: 2px 8px; border-radius: 4px; font-size: 11px; '
-                                f'color: rgba(255,255,255,0.5);">{display_key}: {val}</span>'
+                                f'opacity: 0.6;">{display_key}: {val}</span>'
                             )
                     if signal_items:
                         signals_html = (
@@ -2276,7 +2276,7 @@ elif st.session_state.current_page == "🏦 Central Banks":
                         )
 
                 st.markdown(f'''
-                <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+                <div style="background: rgba(128,128,128,0.06); border: 1px solid rgba(128,128,128,0.15);
                      border-left: 3px solid {badge_color}; border-radius: 8px; padding: 16px 20px; margin-bottom: 8px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <div style="display: flex; align-items: center; gap: 12px;">
@@ -2284,15 +2284,15 @@ elif st.session_state.current_page == "🏦 Central Banks":
                                   border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;">
                                 {label}
                             </span>
-                            <span style="font-size: 15px; font-weight: 600; color: white;">
+                            <span style="font-size: 15px; font-weight: 600;">
                                 {item["title"]}
                             </span>
                         </div>
-                        <span style="font-size: 12px; color: rgba(255,255,255,0.35); font-family: monospace;">
+                        <span style="font-size: 12px; opacity: 0.45; font-family: monospace;">
                             {date_str}
                         </span>
                     </div>
-                    <div style="font-size: 12px; color: rgba(255,255,255,0.4); margin-bottom: 8px;">
+                    <div style="font-size: 12px; opacity: 0.5; margin-bottom: 8px;">
                         {item["kind"]}
                     </div>
                     <ul style="padding-left: 20px; margin: 0;">
@@ -2301,7 +2301,7 @@ elif st.session_state.current_page == "🏦 Central Banks":
                     {signals_html}
                     <a href="{item["url"]}" target="_blank" rel="noopener noreferrer"
                        style="display: inline-block; margin-top: 8px; font-size: 12px;
-                              color: rgba(255,255,255,0.4); text-decoration: none;">
+                              opacity: 0.5; text-decoration: none;">
                         View original release &#8599;
                     </a>
                 </div>
