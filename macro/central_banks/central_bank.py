@@ -1,5 +1,5 @@
 """
-pip install feedparser httpx beautifulsoup4 lxml readability-lxml pdfminer.six
+pip install feedparser httpx beautifulsoup4 lxml readability-lxml pdfminer.six python-dotenv
 Optional (OpenAI): pip install openai
 """
 
@@ -17,7 +17,10 @@ from typing import Iterable, Optional
 import feedparser
 import httpx
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from readability import Document
+
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
 
 # ---------- Config ----------
 FEEDS = {
@@ -148,9 +151,13 @@ def extract_full_text(client: httpx.Client, url: str) -> str:
 # ---------- Summarization ----------
 def summarize_with_llm(text: str, meta: dict) -> dict:
     """
-    Placeholder. Replace with your provider.
-    Keep output structured so UI stays stable.
+    Summarize using OpenAI if OPENAI_API_KEY is set, otherwise fall back to naive truncation.
     """
+    if os.environ.get("OPENAI_API_KEY"):
+        try:
+            return summarize_with_openai(text, meta)
+        except Exception as ex:
+            print(f"[WARN] OpenAI summarization failed: {ex}")
     # naive fallback summary if no LLM
     first = " ".join(text.split()[:60])
     return {
@@ -200,7 +207,13 @@ Text:
         input=prompt,
     )
 
-    out = resp.output_text
+    out = (resp.output_text or "").strip()
+    # Strip markdown code fences if the model wrapped the JSON
+    if out.startswith("```"):
+        out = re.sub(r"^```(?:json)?\s*", "", out)
+        out = re.sub(r"\s*```$", "", out)
+    if not out:
+        raise ValueError("OpenAI returned empty response")
     return json.loads(out)
 
 # ---------- Main ----------
