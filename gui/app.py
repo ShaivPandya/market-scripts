@@ -2254,7 +2254,7 @@ elif st.session_state.current_page == "🏦 Central Banks":
                 bullets_html = ""
                 for b in item.get("summary_bullets", [])[:5]:
                     b_safe = _html.escape(str(b))
-                    bullets_html += f'<li style="margin-bottom: 4px; opacity: 0.7; font-size: 13px;">{b_safe}</li>'
+                    bullets_html += f'<li style="margin-bottom: 4px; opacity: 0.7; font-size: 15px;">{b_safe}</li>'
 
                 signals = item.get("signals", {})
                 signals_html = ""
@@ -2265,7 +2265,7 @@ elif st.session_state.current_page == "🏦 Central Banks":
                             display_key = key.replace("_", " ").title()
                             signal_items.append(
                                 f'<span style="background: rgba(128,128,128,0.12); '
-                                f'padding: 2px 8px; border-radius: 4px; font-size: 11px; '
+                                f'padding: 2px 8px; border-radius: 4px; font-size: 13px; '
                                 f'opacity: 0.6;">{display_key}: {val}</span>'
                             )
                     if signal_items:
@@ -2281,26 +2281,25 @@ elif st.session_state.current_page == "🏦 Central Banks":
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <span style="background: {badge_color}; color: white; padding: 3px 10px;
-                                  border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;">
+                                  border-radius: 4px; font-size: 13px; font-weight: 600; letter-spacing: 0.5px;">
                                 {label}
                             </span>
-                            <span style="font-size: 15px; font-weight: 600;">
+                            <span style="font-size: 17px; font-weight: 600;">
                                 {item["title"]}
                             </span>
                         </div>
-                        <span style="font-size: 12px; opacity: 0.45; font-family: monospace;">
+                        <span style="font-size: 14px; opacity: 0.45; font-family: monospace;">
                             {date_str}
                         </span>
                     </div>
-                    <div style="font-size: 12px; opacity: 0.5; margin-bottom: 8px;">
+                    <div style="font-size: 14px; opacity: 0.5; margin-bottom: 8px;">
                         {item["kind"]}
                     </div>
                     <ul style="padding-left: 20px; margin: 0;">
                         {bullets_html}
                     </ul>
-                    {signals_html}
-                    <a href="{item["url"]}" target="_blank" rel="noopener noreferrer"
-                       style="display: inline-block; margin-top: 8px; font-size: 12px;
+                    {signals_html}<a href="{item["url"]}" target="_blank" rel="noopener noreferrer"
+                       style="display: inline-block; margin-top: 8px; font-size: 14px;
                               opacity: 0.5; text-decoration: none;">
                         View original release &#8599;
                     </a>
