@@ -132,7 +132,7 @@ if st.session_state.current_page == "💱 FX Model":
     fx_bootstrap = st.sidebar.number_input("Bootstrap Draws", min_value=100, max_value=5000, value=1000, step=100)
     fx_skip_bis = st.sidebar.checkbox("Skip BIS data", value=False, help="Skip BIS downloads if slow")
     fx_horizons_str = st.sidebar.text_input("Horizons (months)", value="12,24")
-    fx_run_clicked = st.sidebar.button("Run Model", type="primary", use_container_width=True)
+    fx_run_clicked = st.sidebar.button("Run Model", type="primary", width="stretch")
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -2319,7 +2319,7 @@ elif st.session_state.current_page == "🏦 Central Banks":
                         "Has Text": "Yes" if item.get("has_full_text") else "No",
                         "URL": item["url"],
                     })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
             else:
                 st.write("No data to display.")
 
