@@ -51,22 +51,6 @@ def format_ticker_list(series):
     return tickers
 
 
-def fetch_history(ticker: str, period: str = "2y") -> pd.DataFrame:
-    df = yf.download(
-        tickers=ticker,
-        period=period,
-        interval="1d",
-        auto_adjust=False,
-        threads=True,
-        progress=False,
-    )
-    if df is None or df.empty:
-        return pd.DataFrame()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df.dropna(subset=["Close", "Volume"])
-
-
 def analyze_ticker(df: pd.DataFrame) -> Dict[str, Any]:
     out = {
         "below_50dma": False,
@@ -99,23 +83,47 @@ def analyze_ticker(df: pd.DataFrame) -> Dict[str, Any]:
     return out
 
 
+def _no_data_row(ticker: str, error: str = "no data") -> Dict[str, Any]:
+    return {
+        "ticker": ticker.upper(),
+        "rows": 0,
+        "below_50dma": None,
+        "dist_days_last20": None,
+        "has_3plus_dist_days": None,
+        "broke_prior20_low_last_week": None,
+        "error": error,
+    }
+
+
 def compute_metrics(tickers: List[str], period: str = "2y") -> pd.DataFrame:
+    raw = yf.download(
+        tickers=tickers,
+        period=period,
+        interval="1d",
+        auto_adjust=False,
+        threads=True,
+        progress=False,
+    )
+
+    if raw is None or raw.empty:
+        return pd.DataFrame([_no_data_row(t) for t in tickers])
+
     rows = []
+    is_multi = isinstance(raw.columns, pd.MultiIndex)
+
     for t in tickers:
         try:
-            hist = fetch_history(t, period=period)
-            if hist.empty:
-                rows.append({
-                    "ticker": t.upper(),
-                    "rows": 0,
-                    "below_50dma": None,
-                    "dist_days_last20": None,
-                    "has_3plus_dist_days": None,
-                    "broke_prior20_low_last_week": None,
-                    "error": "no data",
-                })
+            if is_multi:
+                ticker_df = raw.xs(t, level="Ticker", axis=1).dropna(subset=["Close", "Volume"])
+            else:
+                # Single ticker — columns are already flat
+                ticker_df = raw.dropna(subset=["Close", "Volume"])
+
+            if ticker_df.empty:
+                rows.append(_no_data_row(t))
                 continue
-            res = analyze_ticker(hist)
+
+            res = analyze_ticker(ticker_df)
             rows.append({
                 "ticker": t.upper(),
                 "rows": res["rows"],
@@ -125,15 +133,8 @@ def compute_metrics(tickers: List[str], period: str = "2y") -> pd.DataFrame:
                 "broke_prior20_low_last_week": res["broke_prior20_low_last_week"],
             })
         except Exception as e:
-            rows.append({
-                "ticker": t.upper(),
-                "rows": 0,
-                "below_50dma": None,
-                "dist_days_last20": None,
-                "has_3plus_dist_days": None,
-                "broke_prior20_low_last_week": None,
-                "error": str(e),
-            })
+            rows.append(_no_data_row(t, error=str(e)))
+
     return pd.DataFrame(rows)
 
 

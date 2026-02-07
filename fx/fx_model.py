@@ -98,7 +98,20 @@ def main():
 
     print(f"\nLatest forecast summary for {args.pair}:")
     print(json.dumps(results["latest_forecast"], indent=2))
-    print(f"\nOutputs saved to: {outdir}/")
+
+    # Print driver explanations
+    print("\n" + "=" * 80)
+    print("FORECAST DRIVER ANALYSIS")
+    print("=" * 80)
+    for h in horizons:
+        h_key = str(h)
+        forecast = results["latest_forecast"].get(h_key, {})
+        explanation = forecast.get("driver_explanation")
+        if explanation:
+            print("\n" + explanation["text"])
+            print()
+
+    print(f"Outputs saved to: {outdir}/")
 
 
 if __name__ == "__main__":
