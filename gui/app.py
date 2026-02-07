@@ -2064,6 +2064,55 @@ elif st.session_state.current_page == "💱 FX Model":
                         </div>
                         ''', unsafe_allow_html=True)
 
+                    # Driver explanation
+                    driver_explanation = forecast.get("driver_explanation")
+                    if driver_explanation:
+                        drivers = driver_explanation.get("drivers", [])
+                        conclusion = driver_explanation.get("conclusion", "")
+
+                        if drivers:
+                            st.write(f"**Forecast Drivers**")
+
+                            # Build HTML table with inline contribution bars
+                            max_abs = max((abs(d["contribution"]) for d in drivers), default=1)
+                            rows_html = ""
+                            for d in drivers:
+                                contrib = d["contribution"]
+                                bar_pct = int(abs(contrib) / max_abs * 100) if max_abs else 0
+                                bar_color = "#00c853" if contrib > 0 else "#ff1744"
+                                rows_html += f'''
+                                <tr>
+                                    <td style="padding: 6px 10px; white-space: nowrap;">{d["label"]}</td>
+                                    <td style="padding: 6px 10px; font-family: monospace; text-align: right;">{d["coefficient"]:+.4f}</td>
+                                    <td style="padding: 6px 10px; font-family: monospace; text-align: right;">{d["value"]:+.4f}</td>
+                                    <td style="padding: 6px 10px; font-family: monospace; text-align: right; color: {bar_color}; font-weight: bold;">{contrib:+.5f}</td>
+                                    <td style="padding: 6px 4px; width: 120px;">
+                                        <div style="background: {bar_color}; width: {bar_pct}%; height: 14px; border-radius: 2px; opacity: 0.7;"></div>
+                                    </td>
+                                    <td style="padding: 6px 10px; font-size: 13px; opacity: 0.7;">{d["description"]}</td>
+                                </tr>'''
+
+                            st.markdown(f'''
+                            <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid rgba(128,128,128,0.3);">
+                                        <th style="padding: 6px 10px; text-align: left;">Feature</th>
+                                        <th style="padding: 6px 10px; text-align: right;">Coeff</th>
+                                        <th style="padding: 6px 10px; text-align: right;">Value</th>
+                                        <th style="padding: 6px 10px; text-align: right;">Contribution</th>
+                                        <th style="padding: 6px 4px;"></th>
+                                        <th style="padding: 6px 10px; text-align: left;">Interpretation</th>
+                                    </tr>
+                                </thead>
+                                <tbody>{rows_html}</tbody>
+                            </table>
+                            ''', unsafe_allow_html=True)
+
+                            st.caption("Contribution = Coefficient x Current Value (impact on log return forecast)")
+
+                        if conclusion:
+                            st.info(conclusion)
+
                     st.write("")
 
             # Tab 2: Valuation
@@ -2124,15 +2173,45 @@ elif st.session_state.current_page == "💱 FX Model":
                         with col2:
                             st.metric("Observations", f"{model_data.get('nobs', 0):,}")
 
-                        # Coefficients table
+                        # Coefficients table with contributions
                         params = model_data.get("params", {})
+                        driver_expl = model_data.get("driver_explanation")
                         if params:
-                            st.write("**Regression Coefficients**")
+                            st.write("**Regression Coefficients & Current Contributions**")
+
+                            # Build lookup from driver explanation
+                            contrib_lookup = {}
+                            if driver_expl:
+                                for d in driver_expl.get("drivers", []):
+                                    contrib_lookup[d["name"]] = d
+
                             coef_rows = []
                             for name, value in params.items():
-                                coef_rows.append({"Feature": name, "Coefficient": f"{value:+.4f}"})
+                                if name == "const":
+                                    coef_rows.append({
+                                        "Feature": "Intercept",
+                                        "Coefficient": f"{value:+.4f}",
+                                        "Current Value": "—",
+                                        "Contribution": "—",
+                                    })
+                                elif name in contrib_lookup:
+                                    d = contrib_lookup[name]
+                                    coef_rows.append({
+                                        "Feature": d["label"],
+                                        "Coefficient": f"{value:+.4f}",
+                                        "Current Value": f"{d['value']:+.4f}",
+                                        "Contribution": f"{d['contribution']:+.5f}",
+                                    })
+                                else:
+                                    coef_rows.append({
+                                        "Feature": name,
+                                        "Coefficient": f"{value:+.4f}",
+                                        "Current Value": "—",
+                                        "Contribution": "—",
+                                    })
                             coef_df = pd.DataFrame(coef_rows)
                             st.dataframe(coef_df, width="stretch", hide_index=True)
+                            st.caption("Contribution = Coefficient x Current Value")
 
                         # Distribution stats
                         dist_log = model_data.get("dist_log_return", {})

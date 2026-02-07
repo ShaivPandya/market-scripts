@@ -18,6 +18,7 @@ from .report import (
     plot_valuation_zscore,
     plot_forecast_distribution,
     summarize_distribution,
+    build_driver_explanation,
 )
 
 log = logging.getLogger(__name__)
@@ -162,6 +163,22 @@ def run_pipeline(
             "dist_level": {k: float(v) for k, v in level_dist.items()},
         }
 
+        # Driver explanation
+        feature_values = {col: float(x_row[col].iloc[0]) for col in feature_cols}
+        driver_explanation = build_driver_explanation(
+            params={k: float(v) for k, v in res.params.to_dict().items()},
+            feature_values=feature_values,
+            pair_name=pair,
+            base_ccy=config.base_ccy,
+            quote_ccy=config.quote_ccy,
+            horizon=h,
+            spot_now=spot_now,
+            point_level=float(level_point),
+            r2=float(res.rsquared),
+            nobs=int(res.nobs),
+        )
+        results_by_h[h]["driver_explanation"] = driver_explanation
+
         latest_forecast[str(h)] = {
             "spot_now": spot_now,
             "point_level": float(level_point),
@@ -171,6 +188,7 @@ def run_pipeline(
                 "q95": float(level_dist.get("q95", float("nan"))),
             },
             "valuation_rer_z": rer_z_now,
+            "driver_explanation": driver_explanation,
         }
 
         plot_forecast_distribution(
