@@ -156,8 +156,6 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
     return {
         "bullets": [
             f"{meta['kind']}: {first}…",
-            "Add an LLM call here for real bullets.",
-            "Consider extracting policy rate / forward guidance / balance-sheet items.",
         ]
     }
 

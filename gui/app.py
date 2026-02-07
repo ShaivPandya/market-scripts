@@ -2250,9 +2250,11 @@ elif st.session_state.current_page == "🏦 Central Banks":
                 label = SOURCE_LABELS.get(source, source)
                 date_str = item["published_at"][:10]
 
+                import html as _html
                 bullets_html = ""
                 for b in item.get("summary_bullets", [])[:5]:
-                    bullets_html += f'<li style="margin-bottom: 4px; color: rgba(255,255,255,0.65); font-size: 13px;">{b}</li>'
+                    b_safe = _html.escape(str(b))
+                    bullets_html += f'<li style="margin-bottom: 4px; color: rgba(255,255,255,0.65); font-size: 13px;">{b_safe}</li>'
 
                 signals = item.get("signals", {})
                 signals_html = ""
