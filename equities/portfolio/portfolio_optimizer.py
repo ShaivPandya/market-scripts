@@ -149,6 +149,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import cvxpy as cp
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -320,40 +321,58 @@ def ensure_psd(Sigma: np.ndarray, eps: float = 1e-10) -> np.ndarray:
 
 def fetch_yfinance_betas(tickers: list) -> pd.Series:
     """
-    Fetch beta values from yfinance Ticker.info.
+    Fetch beta values from yfinance Ticker.info in parallel.
     Returns NaN for tickers where beta is unavailable.
     """
-    betas = {}
-    for t in tickers:
+    def _fetch_one(t: str):
         try:
             info = yf.Ticker(t).info
             beta = info.get('beta')
-            betas[t] = beta if beta is not None else np.nan
+            return t, beta if beta is not None else np.nan
         except Exception:
-            betas[t] = np.nan
+            return t, np.nan
+
+    betas = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(tickers))) as pool:
+        futures = {pool.submit(_fetch_one, t): t for t in tickers}
+        for future in as_completed(futures):
+            ticker, beta = future.result()
+            betas[ticker] = beta
     return pd.Series(betas)
 
 
 def compute_betas(rets: pd.DataFrame, market_col: str) -> pd.Series:
     """
-    Regression slope beta_i = Cov(r_i, r_m) / Var(r_m), for all columns.
-    Fallback for when yfinance beta is unavailable.
+    Regression slope beta_i = Cov(r_i, r_m) / Var(r_m), vectorized.
+    Columns with fewer than 20 overlapping observations get beta = 0.
     """
-    rm = rets[market_col].dropna()
+    rm = rets[market_col]
+    valid_market = rm.notna()
     var_m = rm.var(ddof=1)
     if var_m <= 0:
         raise ValueError("Market return variance is non-positive; check market data.")
 
-    betas = {}
-    for c in rets.columns:
-        ri = rets[c].dropna()
-        aligned = pd.concat([ri, rm], axis=1, join="inner").dropna()
-        if aligned.shape[0] < 20:
-            betas[c] = 0.0
+    # Mask: both asset and market must be non-NaN on the same day
+    valid = rets.notna() & valid_market.values[:, np.newaxis]
+    obs_counts = valid.sum(axis=0)
+
+    # Compute covariances using pairwise-valid observations
+    # Demean using only pairwise-valid rows (equivalent to per-column alignment)
+    rm_vals = rm.values
+    rets_vals = rets.values
+    cov_vec = np.full(rets.shape[1], np.nan)
+    for i in range(rets.shape[1]):
+        mask = valid.iloc[:, i].values
+        if mask.sum() < 20:
+            cov_vec[i] = 0.0
             continue
-        cov = np.cov(aligned.iloc[:, 0].values, aligned.iloc[:, 1].values, ddof=1)[0, 1]
-        betas[c] = cov / var_m
-    return pd.Series(betas)
+        ri = rets_vals[mask, i]
+        rm_aligned = rm_vals[mask]
+        cov_vec[i] = np.cov(ri, rm_aligned, ddof=1)[0, 1]
+
+    betas = cov_vec / var_m
+    betas[obs_counts.values < 20] = 0.0
+    return pd.Series(betas, index=rets.columns)
 
 
 def compute_defense_volatility(prices: pd.DataFrame, tickers: list) -> pd.Series:
@@ -856,6 +875,7 @@ def optimize_portfolio(
             }
 
         # Build weights DataFrame
+        latest_prices = usd_prices[tickers].iloc[-1]
         weights_df = pd.DataFrame({
             "ticker": tickers,
             "asset": meta["asset"].values,
@@ -865,20 +885,29 @@ def optimize_portfolio(
             "beta_iwm": betas_iwm.values,
             "realized_vol": meta["realized_vol"].values,
             "weight": w_final.values,
+            "price": latest_prices.values,
         })
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
+            weights_df["shares"] = (weights_df["dollar_weight"] / weights_df["price"]).round(0).astype(int)
         weights_df = weights_df.sort_values("weight", ascending=False)
 
         # Build hedges DataFrame
+        spy_price = float(usd_prices[MARKET_TICKER_LONG].iloc[-1])
+        iwm_price = float(usd_prices[MARKET_TICKER_SHORT].iloc[-1])
         hedges_data = {
             "ticker": [MARKET_TICKER_LONG, MARKET_TICKER_SHORT],
             "type": ["hedge", "hedge"],
             "direction": ["short" if hedge_spy_weight < 0 else "long", "long" if hedge_iwm_weight > 0 else "short"],
             "weight": [hedge_spy_weight, hedge_iwm_weight],
+            "price": [spy_price, iwm_price],
         }
         if book is not None:
             hedges_data["dollar_weight"] = [hedge_spy_weight * book, hedge_iwm_weight * book]
+            hedges_data["shares"] = [
+                int(round(hedge_spy_weight * book / spy_price)),
+                int(round(hedge_iwm_weight * book / iwm_price)),
+            ]
         hedges_df = pd.DataFrame(hedges_data)
 
         # Max scaled version
@@ -893,9 +922,11 @@ def optimize_portfolio(
             "asset": meta["asset"].values,
             "direction": meta["direction"].values,
             "weight": w_max_scaled.values,
+            "price": latest_prices.values,
         })
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
+            max_scaled_weights_df["shares"] = (max_scaled_weights_df["dollar_weight"] / max_scaled_weights_df["price"]).round(0).astype(int)
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
 
         return {
@@ -1226,6 +1257,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     })
     if book is not None:
         out["dollar_weight"] = w_final * book
+        latest_prices = usd_prices[tickers].iloc[-1]
+        out["price"] = latest_prices
+        out["shares"] = (out["dollar_weight"] / out["price"]).round(0).astype(int)
     out = out.sort_values("weight", ascending=False)
 
     # Build rich table for weights
@@ -1240,6 +1274,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     weights_table.add_column("Weight", justify="right")
     if book is not None:
         weights_table.add_column("Dollar", justify="right")
+        weights_table.add_column("Price", justify="right")
+        weights_table.add_column("Shares", justify="right")
 
     for ticker, row in out.iterrows():
         weight_val = row["weight"]
@@ -1260,10 +1296,13 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
             dollar_val = row["dollar_weight"]
             dollar_color = "green" if dollar_val > 0 else "red" if dollar_val < 0 else "white"
             row_data.append(f"[{dollar_color}]{dollar_val:+,.0f}[/{dollar_color}]")
+            row_data.append(f"{row['price']:.2f}")
+            shares_color = "green" if row["shares"] > 0 else "red" if row["shares"] < 0 else "white"
+            row_data.append(f"[{shares_color}]{row['shares']:+,}[/{shares_color}]")
         weights_table.add_row(*row_data)
 
     # Add separator and hedge positions
-    sep_cols = ["───"] * (8 if book is None else 9)
+    sep_cols = ["───"] * (8 if book is None else 11)
     weights_table.add_row(*sep_cols)
 
     # SPY hedge (short to hedge long beta)
@@ -1281,6 +1320,10 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if book is not None:
         spy_dollar = hedge_spy_weight * book
         spy_row.append(f"[{spy_color}]{spy_dollar:+,.0f}[/{spy_color}]")
+        spy_price = float(usd_prices[MARKET_TICKER_LONG].iloc[-1])
+        spy_shares = int(round(spy_dollar / spy_price))
+        spy_row.append(f"{spy_price:.2f}")
+        spy_row.append(f"[{spy_color}]{spy_shares:+,}[/{spy_color}]")
     weights_table.add_row(*spy_row)
 
     # IWM hedge (long to hedge short beta)
@@ -1298,6 +1341,10 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if book is not None:
         iwm_dollar = hedge_iwm_weight * book
         iwm_row.append(f"[{iwm_color}]{iwm_dollar:+,.0f}[/{iwm_color}]")
+        iwm_price = float(usd_prices[MARKET_TICKER_SHORT].iloc[-1])
+        iwm_shares = int(round(iwm_dollar / iwm_price))
+        iwm_row.append(f"{iwm_price:.2f}")
+        iwm_row.append(f"[{iwm_color}]{iwm_shares:+,}[/{iwm_color}]")
     weights_table.add_row(*iwm_row)
 
     console.print(weights_table)
@@ -1345,6 +1392,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     })
     if book is not None:
         out_max["dollar_weight"] = w_max_scaled * book
+        latest_prices = usd_prices[tickers].iloc[-1]
+        out_max["price"] = latest_prices
+        out_max["shares"] = (out_max["dollar_weight"] / out_max["price"]).round(0).astype(int)
     out_max = out_max.sort_values("weight", ascending=False)
 
     # Build rich table for max scaled weights
@@ -1355,6 +1405,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     max_weights_table.add_column("Weight", justify="right")
     if book is not None:
         max_weights_table.add_column("Dollar", justify="right")
+        max_weights_table.add_column("Price", justify="right")
+        max_weights_table.add_column("Shares", justify="right")
 
     for ticker, row in out_max.iterrows():
         weight_val = row["weight"]
@@ -1371,6 +1423,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
             dollar_val = row["dollar_weight"]
             dollar_color = "green" if dollar_val > 0 else "red" if dollar_val < 0 else "white"
             row_data.append(f"[{dollar_color}]{dollar_val:+,.0f}[/{dollar_color}]")
+            row_data.append(f"{row['price']:.2f}")
+            shares_color = "green" if row["shares"] > 0 else "red" if row["shares"] < 0 else "white"
+            row_data.append(f"[{shares_color}]{row['shares']:+,}[/{shares_color}]")
         max_weights_table.add_row(*row_data)
 
     console.print(max_weights_table)
