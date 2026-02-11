@@ -246,7 +246,7 @@ def download_prices(tickers: list, fx_tickers: list) -> pd.DataFrame:
     Download price data from yfinance for tickers and FX rates.
     """
     all_tickers = tickers + fx_tickers
-    end = date.today()
+    end = date.today() + timedelta(days=1)
     start = end - timedelta(days=LOOKBACK_DAYS)
 
     px = yf.download(
