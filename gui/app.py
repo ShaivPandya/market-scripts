@@ -1692,13 +1692,24 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
                 display_df["Beta IWM"] = display_df["beta_iwm"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
                 display_df["Vol"] = display_df["realized_vol"].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "N/A")
 
+                # Format price and shares if present
+                if "price" in display_df.columns:
+                    display_df["Price"] = display_df["price"].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "N/A")
+                if "shares" in display_df.columns:
+                    display_df["Shares"] = display_df["shares"].apply(lambda x: f"{x:+,}")
+
                 # Select columns to display
                 display_cols = ["ticker", "asset", "direction", "Signal", "Beta SPY", "Beta IWM", "Vol", "Weight %"]
                 if "Dollar" in display_df.columns:
                     display_cols.append("Dollar")
+                if "Price" in display_df.columns:
+                    display_cols.append("Price")
+                if "Shares" in display_df.columns:
+                    display_cols.append("Shares")
 
+                color_cols = ["Weight %"] + (["Dollar"] if "Dollar" in display_df.columns else []) + (["Shares"] if "Shares" in display_df.columns else [])
                 styled_df = display_df[display_cols].style.applymap(
-                    color_positive_negative, subset=["Weight %"] + (["Dollar"] if "Dollar" in display_df.columns else [])
+                    color_positive_negative, subset=color_cols
                 )
                 st.dataframe(styled_df, width="stretch", hide_index=True)
 
@@ -1710,13 +1721,22 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
                 hedge_display["Weight %"] = hedge_display["weight"].apply(lambda x: f"{x*100:+.2f}%")
                 if "dollar_weight" in hedge_display.columns:
                     hedge_display["Dollar"] = hedge_display["dollar_weight"].apply(lambda x: f"${x:+,.0f}")
+                if "price" in hedge_display.columns:
+                    hedge_display["Price"] = hedge_display["price"].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "N/A")
+                if "shares" in hedge_display.columns:
+                    hedge_display["Shares"] = hedge_display["shares"].apply(lambda x: f"{x:+,}")
 
                 display_cols = ["ticker", "type", "direction", "Weight %"]
                 if "Dollar" in hedge_display.columns:
                     display_cols.append("Dollar")
+                if "Price" in hedge_display.columns:
+                    display_cols.append("Price")
+                if "Shares" in hedge_display.columns:
+                    display_cols.append("Shares")
 
+                color_cols = ["Weight %"] + (["Dollar"] if "Dollar" in hedge_display.columns else []) + (["Shares"] if "Shares" in hedge_display.columns else [])
                 styled_hedges = hedge_display[display_cols].style.applymap(
-                    color_positive_negative, subset=["Weight %"] + (["Dollar"] if "Dollar" in hedge_display.columns else [])
+                    color_positive_negative, subset=color_cols
                 )
                 st.dataframe(styled_hedges, width="stretch", hide_index=True)
 
@@ -1829,13 +1849,22 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
                     max_display["Weight %"] = max_display["weight"].apply(lambda x: f"{x*100:+.2f}%")
                     if "dollar_weight" in max_display.columns:
                         max_display["Dollar"] = max_display["dollar_weight"].apply(lambda x: f"${x:+,.0f}")
+                    if "price" in max_display.columns:
+                        max_display["Price"] = max_display["price"].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "N/A")
+                    if "shares" in max_display.columns:
+                        max_display["Shares"] = max_display["shares"].apply(lambda x: f"{x:+,}")
 
                     display_cols = ["ticker", "asset", "direction", "Weight %"]
                     if "Dollar" in max_display.columns:
                         display_cols.append("Dollar")
+                    if "Price" in max_display.columns:
+                        display_cols.append("Price")
+                    if "Shares" in max_display.columns:
+                        display_cols.append("Shares")
 
+                    color_cols = ["Weight %"] + (["Dollar"] if "Dollar" in max_display.columns else []) + (["Shares"] if "Shares" in max_display.columns else [])
                     styled_max = max_display[display_cols].style.applymap(
-                        color_positive_negative, subset=["Weight %"] + (["Dollar"] if "Dollar" in max_display.columns else [])
+                        color_positive_negative, subset=color_cols
                     )
                     st.dataframe(styled_max, width="stretch", hide_index=True)
             else:
