@@ -1573,7 +1573,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
         "Target Gross Leverage",
         min_value=0.5,
         max_value=4.0,
-        value=2.0,
+        value=1.0,
         step=0.1,
         help="Target gross exposure as multiple of NAV (max 4.0x per script limits)"
     )
