@@ -27,6 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx"))
+sys.path.insert(0, str(PROJECT_ROOT / "fx" / "fx_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 
 import streamlit as st
@@ -96,6 +97,11 @@ if st.sidebar.button("🚀 Momentum", width='stretch',
 if st.sidebar.button("💱 FX Model", width='stretch',
                       type="primary" if st.session_state.current_page == "💱 FX Model" else "secondary"):
     st.session_state.current_page = "💱 FX Model"
+    st.rerun()
+
+if st.sidebar.button("📉 FX Dashboard", width='stretch',
+                      type="primary" if st.session_state.current_page == "📉 FX Dashboard" else "secondary"):
+    st.session_state.current_page = "📉 FX Dashboard"
     st.rerun()
 
 if st.sidebar.button("🏦 Central Banks", width='stretch',
@@ -1997,6 +2003,88 @@ elif st.session_state.current_page == "🚀 Momentum":
             st.caption("- Relative ROC metrics: Green if positive (outperforming benchmark), Red if negative")
         else:
             st.warning("No momentum data available")
+
+
+# =============================================================================
+# PAGE: FX Dashboard
+# =============================================================================
+elif st.session_state.current_page == "📉 FX Dashboard":
+    st.header("FX Currency Dashboard")
+    st.caption("Closing-price time series for 9 major currency pairs via Yahoo Finance")
+
+    if st.button("Refresh Data", key="refresh_fx_dashboard"):
+        st.cache_data.clear()
+
+    # Timeframe toggle
+    fx_timeframe = st.radio(
+        "Timeframe",
+        ["Daily", "Weekly", "Monthly"],
+        horizontal=True,
+        key="fx_dashboard_timeframe",
+    )
+
+    @st.cache_data(ttl=300)
+    def fetch_fx_dashboard(timeframe: str):
+        try:
+            from fx_dashboard import get_data
+            return get_data(timeframe=timeframe)
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner("Fetching FX data from Yahoo Finance..."):
+        fx_dash_data = fetch_fx_dashboard(fx_timeframe)
+
+    if "error" in fx_dash_data:
+        st.error(f"Error: {fx_dash_data['error']}")
+    else:
+        pairs = fx_dash_data.get("pairs", {})
+        timestamp = fx_dash_data.get("timestamp")
+        if timestamp:
+            st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if not pairs:
+            st.warning("No currency data returned")
+        else:
+            from fx_dashboard import PAIR_ORDER
+
+            # 3x3 grid: 3 rows of st.columns(3)
+            for row_idx in range(3):
+                cols = st.columns(3)
+                for col_idx in range(3):
+                    pair_idx = row_idx * 3 + col_idx
+                    if pair_idx >= len(PAIR_ORDER):
+                        break
+                    pair_name = PAIR_ORDER[pair_idx]
+                    series = pairs.get(pair_name)
+
+                    with cols[col_idx]:
+                        if series is not None and not series.empty:
+                            latest = series.iloc[-1]
+                            first = series.iloc[0]
+                            pct = ((latest - first) / first) * 100
+                            st.metric(
+                                pair_name,
+                                f"{latest:.4f}",
+                                f"{pct:+.2f}%",
+                            )
+                            import altair as alt
+                            chart_df = pd.DataFrame(
+                                {"date": series.index, pair_name: series.values},
+                            )
+                            chart = (
+                                alt.Chart(chart_df)
+                                .mark_line()
+                                .encode(
+                                    x=alt.X("date:T", title=None),
+                                    y=alt.Y(f"{pair_name}:Q", scale=alt.Scale(zero=False), title=None),
+                                )
+                                .properties(height=200)
+                            )
+                            st.altair_chart(chart, width="stretch")
+                        else:
+                            st.metric(pair_name, "N/A")
+                            st.warning(f"No data for {pair_name}")
 
 
 # =============================================================================
