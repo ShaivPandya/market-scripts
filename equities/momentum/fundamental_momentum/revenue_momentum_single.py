@@ -29,6 +29,8 @@ Scoring:
 Data source: yfinance (Yahoo Finance). Statement availability varies by ticker.
 
 python3 revenue_momentum_single.py AAPL --universe sp500
+python3 revenue_momentum_single.py MCO SPGI EFX EXPN.L --universe sp500
+python3 revenue_momentum_single.py --tickers_file ../../universes/tickers.txt --universe sp500
 python3 revenue_momentum_single.py AAPL --universe sp500 --growth_years 3
 """
 
@@ -316,7 +318,8 @@ def main():
     ap = argparse.ArgumentParser(
         description="Compute revenue momentum (quarterly YoY revenue change + ~5y revenue CAGR) and percentile in a universe."
     )
-    ap.add_argument("ticker", nargs="?", help="Ticker to score (e.g., AAPL)")
+    ap.add_argument("tickers", nargs="*", help="Ticker(s) to score (e.g., AAPL or MCO SPGI EFX)")
+    ap.add_argument("--tickers_file", default="", help="Path to file with tickers (one per line, txt/csv)")
     ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
     ap.add_argument("--list-universes", action="store_true",
                     help="List available universe files and exit")
@@ -330,23 +333,32 @@ def main():
         print("Available universes:", ", ".join(universes) if universes else "(none)")
         sys.exit(0)
 
-    if not args.ticker:
-        ap.error("ticker is required unless using --list-universes")
+    # Build target ticker list from positional args and/or --tickers_file
+    targets: List[str] = [clean_ticker(t) for t in args.tickers]
+    if args.tickers_file:
+        file_tickers = load_universe(args.tickers_file)
+        for t in file_tickers:
+            ct = clean_ticker(t)
+            if ct not in targets:
+                targets.append(ct)
 
-    ticker = clean_ticker(args.ticker)
+    if not targets:
+        ap.error("at least one ticker is required (positional or via --tickers_file) unless using --list-universes")
 
     if args.universe.lower() == "sp500":
         universe = get_sp500_universe()
     else:
         universe = load_universe(args.universe)
 
-    if ticker not in universe:
-        universe = [ticker] + universe
+    # Ensure all targets are in the universe
+    for t in targets:
+        if t not in universe:
+            universe = [t] + universe
 
     if args.max_universe and args.max_universe > 0:
         universe = universe[: args.max_universe]
 
-    print(f"Universe size: {len(universe)} | Target: {ticker}")
+    print(f"Universe size: {len(universe)} | Targets: {', '.join(targets)}")
 
     raws: Dict[str, RevenueMetrics] = {}
     for i, tk in enumerate(universe, 1):
@@ -358,37 +370,67 @@ def main():
         if i % 25 == 0:
             print(f"  processed {i}/{len(universe)}")
 
-    if ticker not in raws:
-        raise SystemExit(f"Failed to fetch required data for target ticker: {ticker}")
+    # Check that at least one target was fetched
+    failed_targets = [t for t in targets if t not in raws]
+    if failed_targets:
+        print(f"[WARN] Failed to fetch data for: {', '.join(failed_targets)}", file=sys.stderr)
+    valid_targets = [t for t in targets if t in raws]
+    if not valid_targets:
+        raise SystemExit("Failed to fetch data for any target tickers")
 
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T
 
     z_metrics, score = compute_universe_scores(raw_df)
     pct_score = score.rank(pct=True)
 
-    tm = raws[ticker]
-    print("\nTarget ticker raw metrics:")
-    if tm.q0_end is not None:
-        print(f"  Latest quarter end: {tm.q0_end.date()} | Year-ago quarter end: {tm.q4_end.date() if tm.q4_end is not None else 'NA'}")
-    if tm.a0_end is not None:
-        print(f"  Latest fiscal year end: {tm.a0_end.date()} | {tm.years_used}y-ago fiscal year end: {tm.aN_end.date() if tm.aN_end is not None else 'NA'}")
+    # Print detailed metrics for each target
+    for ticker in valid_targets:
+        tm = raws[ticker]
+        print(f"\n{'=' * 60}")
+        print(f"  {ticker}")
+        print(f"{'=' * 60}")
+        print("Raw metrics:")
+        if tm.q0_end is not None:
+            print(f"  Latest quarter end: {tm.q0_end.date()} | Year-ago quarter end: {tm.q4_end.date() if tm.q4_end is not None else 'NA'}")
+        if tm.a0_end is not None:
+            print(f"  Latest fiscal year end: {tm.a0_end.date()} | {tm.years_used}y-ago fiscal year end: {tm.aN_end.date() if tm.aN_end is not None else 'NA'}")
 
-    print(f"  Revenue (latest quarter):      {fmt_revenue(tm.revenue_q0)}")
-    print(f"  Revenue (same qtr 1y ago):     {fmt_revenue(tm.revenue_q4)}")
-    print(f"  Revenue YoY change (q/q-4):    {fmt_pct(tm.revenue_yoy_change)}")
-    print(f"  Revenue YoY difference:        {fmt_revenue(tm.revenue_yoy_diff)}")
-    print(f"  Revenue CAGR ({tm.years_used}y):           {fmt_pct(tm.revenue_cagr)}")
-    print(f"  Revenue growth acceleration:   {fmt_num(tm.revenue_growth_acceleration)}")
-    if tm.revenue_growth_rates is not None:
-        rates_str = ", ".join([fmt_pct(r) for r in tm.revenue_growth_rates])
-        print(f"  Revenue QoQ growth rates (5Q): [{rates_str}]")
+        print(f"  Revenue (latest quarter):      {fmt_revenue(tm.revenue_q0)}")
+        print(f"  Revenue (same qtr 1y ago):     {fmt_revenue(tm.revenue_q4)}")
+        print(f"  Revenue YoY change (q/q-4):    {fmt_pct(tm.revenue_yoy_change)}")
+        print(f"  Revenue YoY difference:        {fmt_revenue(tm.revenue_yoy_diff)}")
+        print(f"  Revenue CAGR ({tm.years_used}y):           {fmt_pct(tm.revenue_cagr)}")
+        print(f"  Revenue growth acceleration:   {fmt_num(tm.revenue_growth_acceleration)}")
+        if tm.revenue_growth_rates is not None:
+            rates_str = ", ".join([fmt_pct(r) for r in tm.revenue_growth_rates])
+            print(f"  Revenue QoQ growth rates (5Q): [{rates_str}]")
 
-    print("\nUniverse-relative scores:")
-    print(f"  z_revenue_yoy_change:    {z_metrics.loc[ticker, 'revenue_yoy_change'] if ticker in z_metrics.index else np.nan: .3f}")
-    print(f"  z_revenue_cagr:          {z_metrics.loc[ticker, 'revenue_cagr'] if ticker in z_metrics.index else np.nan: .3f}")
-    print(f"  z_revenue_growth_accel:  {z_metrics.loc[ticker, 'revenue_growth_acceleration'] if ticker in z_metrics.index else np.nan: .3f}")
-    print(f"  Revenue Momentum z:      {score.loc[ticker] if ticker in score.index else np.nan: .3f}")
-    print(f"  Revenue Momentum pct:    {pct_score.loc[ticker] if ticker in pct_score.index else np.nan: .3%}")
+        print(f"\nUniverse-relative scores:")
+        print(f"  z_revenue_yoy_change:    {z_metrics.loc[ticker, 'revenue_yoy_change'] if ticker in z_metrics.index else np.nan: .3f}")
+        print(f"  z_revenue_cagr:          {z_metrics.loc[ticker, 'revenue_cagr'] if ticker in z_metrics.index else np.nan: .3f}")
+        print(f"  z_revenue_growth_accel:  {z_metrics.loc[ticker, 'revenue_growth_acceleration'] if ticker in z_metrics.index else np.nan: .3f}")
+        print(f"  Revenue Momentum z:      {score.loc[ticker] if ticker in score.index else np.nan: .3f}")
+        print(f"  Revenue Momentum pct:    {pct_score.loc[ticker] if ticker in pct_score.index else np.nan: .3%}")
+
+    # Print comparison summary table
+    if len(valid_targets) > 1:
+        print(f"\n{'=' * 105}")
+        print("COMPARISON SUMMARY (ranked by Revenue Momentum)")
+        print(f"{'=' * 105}")
+        print(f"{'Ticker':<10} {'Rev Mom z':>10} {'Percentile':>11} {'Rev YoY':>12} {'Rev CAGR':>12} {'Growth Accel':>13}")
+        print(f"{'-' * 105}")
+
+        # Sort targets by revenue momentum score descending
+        target_scores = {t: score.loc[t] if t in score.index else np.nan for t in valid_targets}
+        sorted_targets = sorted(valid_targets, key=lambda t: target_scores[t] if not np.isnan(target_scores[t]) else -999, reverse=True)
+
+        for ticker in sorted_targets:
+            tm = raws[ticker]
+            z = score.loc[ticker] if ticker in score.index else np.nan
+            pct = pct_score.loc[ticker] if ticker in pct_score.index else np.nan
+            print(f"{ticker:<10} {fmt_num(z):>10} {f'{pct:.1%}' if not np.isnan(pct) else 'NA':>11} {fmt_pct(tm.revenue_yoy_change):>12} {fmt_pct(tm.revenue_cagr):>12} {fmt_num(tm.revenue_growth_acceleration):>13}")
+
+        print(f"{'=' * 105}")
 
     if args.out_csv:
         out = raw_df.join(z_metrics.add_prefix("z_"))

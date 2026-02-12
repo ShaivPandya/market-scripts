@@ -88,8 +88,8 @@ try:
 except ImportError as e:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance") from e
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add equities/ to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from common import load_universe, list_universes, get_sp500_universe, clean_ticker
 
 

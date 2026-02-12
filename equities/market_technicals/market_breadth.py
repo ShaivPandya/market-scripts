@@ -7,6 +7,10 @@ Calculates:
 2. % of stocks trading above their 20-day moving average
 3. % of stocks making 20-day highs
 4. % of stocks making 20-day lows
+5. % of stocks making 52-week (252-day) highs
+6. % of stocks making 52-week (252-day) lows
+7. % of stocks making 24-week (120-day) highs
+8. % of stocks making 24-week (120-day) lows
 
 Dependencies:
   pip install pandas yfinance requests lxml
@@ -203,6 +207,10 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
       - above_20dma: count and percentage above 20-day MA
       - at_20day_high: count and percentage at 20-day high
       - at_20day_low: count and percentage at 20-day low
+      - at_52wk_high: count and percentage at 52-week high
+      - at_52wk_low: count and percentage at 52-week low
+      - at_24wk_high: count and percentage at 24-week high
+      - at_24wk_low: count and percentage at 24-week low
       - total_analyzed: number of stocks with valid data
       - failed_tickers: list of tickers that failed to download
     """
@@ -244,6 +252,14 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
     high_20 = high.tail(20).max()
     low_20 = low.tail(20).min()
 
+    # Calculate 52-week (252-day) highs and lows (vectorized)
+    high_252 = high.tail(252).max()
+    low_252 = low.tail(252).min()
+
+    # Calculate 24-week (120-day) highs and lows (vectorized)
+    high_120 = high.tail(120).max()
+    low_120 = low.tail(120).min()
+
     # Count valid tickers (at least 20 days of data)
     valid_counts = close.notna().sum()
     valid_tickers = valid_counts[valid_counts >= 20].index
@@ -256,6 +272,10 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
     ma_20 = ma_20[valid_tickers]
     high_20 = high_20[valid_tickers]
     low_20 = low_20[valid_tickers]
+    high_252 = high_252[valid_tickers]
+    low_252 = low_252[valid_tickers]
+    high_120 = high_120[valid_tickers]
+    low_120 = low_120[valid_tickers]
 
     total_analyzed = len(valid_tickers)
 
@@ -264,17 +284,29 @@ def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
     above_20dma = int((current_close > ma_20).sum())
     at_20day_high = int((current_high >= high_20).sum())
     at_20day_low = int((current_low <= low_20).sum())
+    at_52wk_high = int((current_high >= high_252).sum())
+    at_52wk_low = int((current_low <= low_252).sum())
+    at_24wk_high = int((current_high >= high_120).sum())
+    at_24wk_low = int((current_low <= low_120).sum())
 
     return {
         "above_200dma": above_200dma,
         "above_20dma": above_20dma,
         "at_20day_high": at_20day_high,
         "at_20day_low": at_20day_low,
+        "at_52wk_high": at_52wk_high,
+        "at_52wk_low": at_52wk_low,
+        "at_24wk_high": at_24wk_high,
+        "at_24wk_low": at_24wk_low,
         "total_analyzed": total_analyzed,
         "pct_above_200dma": (above_200dma / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_above_20dma": (above_20dma / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_at_20day_high": (at_20day_high / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_at_20day_low": (at_20day_low / total_analyzed * 100) if total_analyzed > 0 else 0,
+        "pct_at_52wk_high": (at_52wk_high / total_analyzed * 100) if total_analyzed > 0 else 0,
+        "pct_at_52wk_low": (at_52wk_low / total_analyzed * 100) if total_analyzed > 0 else 0,
+        "pct_at_24wk_high": (at_24wk_high / total_analyzed * 100) if total_analyzed > 0 else 0,
+        "pct_at_24wk_low": (at_24wk_low / total_analyzed * 100) if total_analyzed > 0 else 0,
         "failed_tickers": failed_tickers,
     }
 
@@ -315,6 +347,10 @@ def main():
     pct_20 = metrics['pct_above_20dma']
     pct_highs = metrics['pct_at_20day_high']
     pct_lows = metrics['pct_at_20day_low']
+    pct_52wk_highs = metrics['pct_at_52wk_high']
+    pct_52wk_lows = metrics['pct_at_52wk_low']
+    pct_24wk_highs = metrics['pct_at_24wk_high']
+    pct_24wk_lows = metrics['pct_at_24wk_low']
 
     # Green if > 80% or < 15%
     line_200 = f"Above 200-day MA:  {metrics['above_200dma']:>4} / {metrics['total_analyzed']}  ({pct_200:.1f}%)"
@@ -335,6 +371,26 @@ def main():
     line_lows = f"At 20-day lows:    {metrics['at_20day_low']:>4} / {metrics['total_analyzed']}  ({pct_lows:.1f}%)"
     if pct_lows > 50:
         line_lows = colorize(line_lows, "green")
+
+    # Green if > 15%
+    line_52wk_highs = f"At 52-week highs:  {metrics['at_52wk_high']:>4} / {metrics['total_analyzed']}  ({pct_52wk_highs:.1f}%)"
+    if pct_52wk_highs > 15:
+        line_52wk_highs = colorize(line_52wk_highs, "green")
+
+    # Green if > 15%
+    line_52wk_lows = f"At 52-week lows:   {metrics['at_52wk_low']:>4} / {metrics['total_analyzed']}  ({pct_52wk_lows:.1f}%)"
+    if pct_52wk_lows > 15:
+        line_52wk_lows = colorize(line_52wk_lows, "green")
+
+    # Green if > 20%
+    line_24wk_highs = f"At 24-week highs:  {metrics['at_24wk_high']:>4} / {metrics['total_analyzed']}  ({pct_24wk_highs:.1f}%)"
+    if pct_24wk_highs > 20:
+        line_24wk_highs = colorize(line_24wk_highs, "green")
+
+    # Green if > 20%
+    line_24wk_lows = f"At 24-week lows:   {metrics['at_24wk_low']:>4} / {metrics['total_analyzed']}  ({pct_24wk_lows:.1f}%)"
+    if pct_24wk_lows > 20:
+        line_24wk_lows = colorize(line_24wk_lows, "green")
 
     failed = metrics.get("failed_tickers", [])
 
@@ -363,6 +419,26 @@ def main():
             f"{metrics['at_20day_low']} / {metrics['total_analyzed']}",
             format_pct(pct_lows, pct_lows > 50),
         )
+        summary.add_row(
+            "At 52-week highs",
+            f"{metrics['at_52wk_high']} / {metrics['total_analyzed']}",
+            format_pct(pct_52wk_highs, pct_52wk_highs > 15),
+        )
+        summary.add_row(
+            "At 52-week lows",
+            f"{metrics['at_52wk_low']} / {metrics['total_analyzed']}",
+            format_pct(pct_52wk_lows, pct_52wk_lows > 15),
+        )
+        summary.add_row(
+            "At 24-week highs",
+            f"{metrics['at_24wk_high']} / {metrics['total_analyzed']}",
+            format_pct(pct_24wk_highs, pct_24wk_highs > 20),
+        )
+        summary.add_row(
+            "At 24-week lows",
+            f"{metrics['at_24wk_low']} / {metrics['total_analyzed']}",
+            format_pct(pct_24wk_lows, pct_24wk_lows > 20),
+        )
         caption = f"Stocks analyzed: {metrics['total_analyzed']}"
         if failed:
             caption += f" | Failed: {len(failed)}"
@@ -383,6 +459,10 @@ def main():
         print(line_20)
         print(line_highs)
         print(line_lows)
+        print(line_52wk_highs)
+        print(line_52wk_lows)
+        print(line_24wk_highs)
+        print(line_24wk_lows)
         print("=" * 50)
         if failed:
             print(f"\nFailed tickers: {', '.join(sorted(failed)[:20])}{'...' if len(failed) > 20 else ''}")
@@ -394,7 +474,9 @@ def get_data(universe: str = "sp500", period: str = "1y") -> dict:
 
     Returns dict with:
       - above_200dma, above_20dma, at_20day_high, at_20day_low: counts
+      - at_52wk_high, at_52wk_low, at_24wk_high, at_24wk_low: counts
       - pct_above_200dma, pct_above_20dma, pct_at_20day_high, pct_at_20day_low: percentages
+      - pct_at_52wk_high, pct_at_52wk_low, pct_at_24wk_high, pct_at_24wk_low: percentages
       - total_analyzed: number of stocks analyzed
       - tickers: list of tickers analyzed
     """
