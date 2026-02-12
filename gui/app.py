@@ -343,6 +343,48 @@ if st.session_state.current_page == "📈 Market Technicals":
                 if highlight:
                     st.warning("Capitulation Signal")
 
+            col5, col6, col7, col8 = st.columns(4)
+
+            with col5:
+                pct = breadth_data.get("pct_at_52wk_high", 0)
+                st.metric(
+                    "At 52-Week Highs",
+                    f"{pct:.1f}%",
+                    f"{breadth_data.get('at_52wk_high', 0)} / {breadth_data.get('total_analyzed', 0)}",
+                )
+                if pct > 15:
+                    st.success("Signal Active")
+
+            with col6:
+                pct = breadth_data.get("pct_at_52wk_low", 0)
+                st.metric(
+                    "At 52-Week Lows",
+                    f"{pct:.1f}%",
+                    f"{breadth_data.get('at_52wk_low', 0)} / {breadth_data.get('total_analyzed', 0)}",
+                )
+                if pct > 15:
+                    st.warning("Capitulation Signal")
+
+            with col7:
+                pct = breadth_data.get("pct_at_24wk_high", 0)
+                st.metric(
+                    "At 24-Week Highs",
+                    f"{pct:.1f}%",
+                    f"{breadth_data.get('at_24wk_high', 0)} / {breadth_data.get('total_analyzed', 0)}",
+                )
+                if pct > 20:
+                    st.success("Signal Active")
+
+            with col8:
+                pct = breadth_data.get("pct_at_24wk_low", 0)
+                st.metric(
+                    "At 24-Week Lows",
+                    f"{pct:.1f}%",
+                    f"{breadth_data.get('at_24wk_low', 0)} / {breadth_data.get('total_analyzed', 0)}",
+                )
+                if pct > 20:
+                    st.warning("Capitulation Signal")
+
     # Top 50 Breadth
     elif selected_tab == "Top 50 Breadth":
         st.subheader("Top 50 S&P 500 Performers - Breadth")

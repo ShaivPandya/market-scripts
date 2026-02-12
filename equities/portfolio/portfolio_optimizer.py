@@ -264,7 +264,17 @@ def download_prices(tickers: list, fx_tickers: list) -> pd.DataFrame:
         prices = px.copy()
         prices.columns = [all_tickers[0]]
 
-    return prices.dropna(how="all")
+    prices = prices.dropna(how="all")
+
+    # Debug: print latest date and prices for each ticker
+    if not prices.empty:
+        console.print(f"\n[yellow]Latest date in price data: {prices.index[-1]}[/yellow]")
+        latest = prices.iloc[-1].dropna().sort_index()
+        for t, p in latest.items():
+            console.print(f"  {t}: ${p:.2f}")
+        console.print()
+
+    return prices
 
 
 def fx_series_for_ccy(prices: pd.DataFrame, ccy: str) -> Tuple[Optional[pd.Series], Optional[str]]:
