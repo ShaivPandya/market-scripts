@@ -26,7 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "breakout"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
-sys.path.insert(0, str(PROJECT_ROOT / "fx"))
+sys.path.insert(0, str(PROJECT_ROOT / "fx" / "model"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx" / "fx_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 
@@ -2118,8 +2118,8 @@ elif st.session_state.current_page == "💱 FX Model":
         with st.spinner(f"Running FX model for {fx_selected_pair}... This may take a moment."):
             try:
                 config = get_config(fx_selected_pair)
-                cache_dir = PROJECT_ROOT / "fx" / "data_cache"
-                outdir = PROJECT_ROOT / "fx" / "outputs" / fx_selected_pair.lower()
+                cache_dir = PROJECT_ROOT / "fx" / "model" / "data_cache"
+                outdir = PROJECT_ROOT / "fx" / "model" / "outputs" / fx_selected_pair.lower()
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 outdir.mkdir(parents=True, exist_ok=True)
 
