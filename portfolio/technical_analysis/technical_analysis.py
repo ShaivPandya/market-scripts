@@ -21,8 +21,8 @@ import yfinance as yf
 # Data fetching
 # ---------------------------------------------------------------------------
 
-def _fetch_daily(ticker: str, years: int = 6) -> pd.Series:
-    """Download daily close prices (enough history for 200-week MA)."""
+def _fetch_daily(ticker: str, years: int = 9) -> pd.Series:
+    """Download daily close prices (enough history for 200-week MA over 5Y)."""
     raw = yf.download(
         ticker,
         period=f"{years}y",
