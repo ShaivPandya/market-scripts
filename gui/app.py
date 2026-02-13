@@ -952,47 +952,33 @@ elif st.session_state.current_page == "📌 Positioning":
             force_threshold=force_threshold,
         )
 
-    st.subheader("Data Settings")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        domain = st.text_input("Socrata domain", value=DEFAULT_DOMAIN)
-    with col2:
-        dataset_key = st.selectbox("Dataset", options=list(DATASETS.keys()), index=0)
-    with col3:
-        default_token = os.getenv("SODA_APP_TOKEN", "")
-        app_token = st.text_input("Socrata App Token (optional)", value=default_token, type="password")
-
+    # Fixed data settings (domain and dataset are not user-configurable)
+    domain = DEFAULT_DOMAIN
+    dataset_key = "tff_futures_only"
     dataset_id = DATASETS.get(dataset_key, dataset_key)
 
-    st.subheader("Analytics Settings")
-    gcol1, gcol2, gcol3 = st.columns(3)
-    extra_group_options = ["dealer", "asset_mgr", "other_rept", "nonrept", "all"]
-    with gcol1:
-        selected_groups = st.multiselect(
-            "Include participant groups",
-            options=extra_group_options,
-            default=[],
-            help="Leveraged Funds are always included; add other groups or choose 'all'.",
-            format_func=lambda g: "All groups" if g == "all" else GROUP_LABEL.get(g, g),
-        )
-    with gcol2:
-        z_window = st.number_input(
-            "Z-score window (weeks)",
-            min_value=0,
-            max_value=520,
-            value=0,
-            step=26,
-            help="0 uses the full sample; otherwise uses a rolling window.",
-        )
-    with gcol3:
-        force_threshold = st.slider(
-            "Forced-flow threshold (z)",
-            min_value=0.5,
-            max_value=4.0,
-            value=2.0,
-            step=0.1,
-            help="Flags unusually large moves toward flat positioning (proxy for forced flows).",
-        )
+    # Initialize session state defaults for positioning settings
+    _pos_defaults = {
+        "pos_app_token": os.getenv("SODA_APP_TOKEN", ""),
+        "pos_groups": [],
+        "pos_z_window": 0,
+        "pos_force_threshold": 2.0,
+        "pos_start_date": datetime(2015, 1, 1).date(),
+        "pos_use_end": False,
+        "pos_end_date": datetime.now().date(),
+    }
+    for _k, _v in _pos_defaults.items():
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    # Read current settings from session state
+    app_token = st.session_state.pos_app_token
+    selected_groups = st.session_state.pos_groups
+    z_window = st.session_state.pos_z_window
+    force_threshold = st.session_state.pos_force_threshold
+    start_date = st.session_state.pos_start_date
+    use_end = st.session_state.pos_use_end
+    end_date = st.session_state.pos_end_date
 
     if "all" in selected_groups:
         groups_value = "all"
@@ -1000,14 +986,6 @@ elif st.session_state.current_page == "📌 Positioning":
         groups_value = ",".join(selected_groups)
     else:
         groups_value = None
-
-    date_cols = st.columns(3)
-    with date_cols[0]:
-        start_date = st.date_input("Start date", value=datetime(2015, 1, 1).date())
-    with date_cols[1]:
-        use_end = st.checkbox("Use end date", value=False)
-    with date_cols[2]:
-        end_date = st.date_input("End date", value=datetime.now().date()) if use_end else None
 
     if use_end and end_date and start_date and end_date < start_date:
         st.error("End date must be on or after start date.")
@@ -1017,7 +995,6 @@ elif st.session_state.current_page == "📌 Positioning":
     end_str = end_date.isoformat() if use_end and end_date else None
     token_value = app_token or None
 
-    st.divider()
     view = st.radio("View", ["Instrument summary", "Single market"], horizontal=True)
 
     if view == "Instrument summary":
@@ -1299,6 +1276,59 @@ elif st.session_state.current_page == "📌 Positioning":
                     .applymap(color_forced_flow, subset=forced_cols)
                 )
                 st.dataframe(styled_recent, width="stretch", hide_index=True)
+
+    st.divider()
+
+    with st.expander("Data Settings", expanded=False):
+        _dc1, _dc2, _dc3 = st.columns(3)
+        with _dc1:
+            st.markdown(f"**Socrata domain:** `{DEFAULT_DOMAIN}`")
+        with _dc2:
+            st.markdown(f"**Dataset:** `{dataset_key}`")
+        with _dc3:
+            st.text_input(
+                "Socrata App Token (optional)",
+                type="password",
+                key="pos_app_token",
+            )
+        _dt1, _dt2, _dt3 = st.columns(3)
+        with _dt1:
+            st.date_input("Start date", key="pos_start_date")
+        with _dt2:
+            st.checkbox("Use end date", key="pos_use_end")
+        with _dt3:
+            if st.session_state.pos_use_end:
+                st.date_input("End date", key="pos_end_date")
+
+    _extra_group_options = ["dealer", "asset_mgr", "other_rept", "nonrept", "all"]
+    with st.expander("Analytics Settings", expanded=False):
+        _ac1, _ac2, _ac3 = st.columns(3)
+        with _ac1:
+            st.multiselect(
+                "Include participant groups",
+                options=_extra_group_options,
+                help="Leveraged Funds are always included; add other groups or choose 'all'.",
+                format_func=lambda g: "All groups" if g == "all" else GROUP_LABEL.get(g, g),
+                key="pos_groups",
+            )
+        with _ac2:
+            st.number_input(
+                "Z-score window (weeks)",
+                min_value=0,
+                max_value=520,
+                step=26,
+                help="0 uses the full sample; otherwise uses a rolling window.",
+                key="pos_z_window",
+            )
+        with _ac3:
+            st.slider(
+                "Forced-flow threshold (z)",
+                min_value=0.5,
+                max_value=4.0,
+                step=0.1,
+                help="Flags unusually large moves toward flat positioning (proxy for forced flows).",
+                key="pos_force_threshold",
+            )
 
 
 # =============================================================================
