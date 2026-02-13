@@ -11,21 +11,26 @@ Usage:
     python economic_growth.py [--crb-file path/to/crb.xlsx]
 """
 
-import yfinance as yf
-import pandas as pd
-from datetime import datetime, timedelta
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
-import os
 import argparse
+from datetime import datetime, timedelta
+from pathlib import Path
 import warnings
 
-warnings.filterwarnings('ignore')
+import pandas as pd
+import yfinance as yf
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.progress import Progress, SpinnerColumn, TextColumn
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 console = Console()
+
+CRB_INDEX_NAME = "CRB Industrial Spot Index"
+DEFAULT_YF_PERIOD = "2y"
+DEFAULT_CRB_PATH = Path(__file__).resolve().with_name("crb.xlsx")
 
 # ============================================================================
 # TICKER DEFINITIONS
@@ -34,7 +39,7 @@ console = Console()
 COMMODITIES = {
     "Copper": "HG=F",                    # COMEX Copper Futures
     "GS Commodity Index": "GSG",         # iShares S&P GSCI Commodity ETF
-    "CRB Industrial Spot Index": None,   # Read from XLS file
+    CRB_INDEX_NAME: None,                # Read from XLS file
 }
 
 EQUITIES = {
@@ -80,127 +85,187 @@ def read_crb_from_xls(xls_path):
     Returns a DataFrame with date and value columns.
     """
     try:
-        # Read Excel file (works for both .xlsx and .xls)
-        df = pd.read_excel(xls_path, engine='openpyxl', header=None, skiprows=5)
-
-        # Extract first two columns as date and value
-        df = df.iloc[:, :2]
-        df.columns = ['date', 'value']
+        df = pd.read_excel(
+            xls_path,
+            engine="openpyxl",
+            header=None,
+            skiprows=5,
+            usecols=[0, 1],
+            names=["date", "value"],
+        )
 
         # Parse and clean data
-        df['date'] = pd.to_datetime(df['date'], errors='coerce')
-        df['value'] = pd.to_numeric(df['value'], errors='coerce')
-        df = df.dropna(subset=['date', 'value'])
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df = df.dropna(subset=["date", "value"])
 
-        if len(df) > 0:
-            return df.sort_values('date')
+        if not df.empty:
+            return df.sort_values("date", ignore_index=True)
 
         console.print("[yellow]Warning: No valid data found in CRB file[/yellow]")
         return None
 
-    except Exception as e:
-        console.print(f"[yellow]Warning: Could not read CRB file: {e}[/yellow]")
+    except Exception as exc:
+        console.print(f"[yellow]Warning: Could not read CRB file: {exc}[/yellow]")
         console.print(f"[yellow]Make sure the file is in .xlsx format and openpyxl is installed[/yellow]")
         return None
 
 def calculate_crb_returns(df, periods):
     """Calculate returns from CRB DataFrame for given periods."""
-    if df is None or len(df) == 0:
+    if df is None or df.empty:
         return {period: None for period in periods}
-    
-    latest = df['value'].iloc[-1]
-    latest_date = df['date'].iloc[-1]
-    
+
+    date_index = pd.DatetimeIndex(df["date"])
+    values = df["value"].to_numpy()
+    latest = values[-1]
+    latest_date = date_index[-1]
+
     returns = {}
     for period_name, days in periods.items():
         target_date = latest_date - timedelta(days=days)
-        past_df = df[df['date'] <= target_date]
-        
-        if len(past_df) > 0:
-            past_value = past_df['value'].iloc[-1]
+        past_idx = date_index.searchsorted(target_date, side="right") - 1
+
+        if past_idx >= 0:
+            past_value = values[past_idx]
+            if past_value == 0:
+                returns[period_name] = None
+                continue
             ret = ((latest - past_value) / past_value) * 100
-            returns[period_name] = round(ret, 1)
+            returns[period_name] = round(float(ret), 1)
         else:
             returns[period_name] = None
-    
+
     return returns
 
 # ============================================================================
 # DATA FETCHING FUNCTIONS
 # ============================================================================
 
-def get_historical_data(ticker, period="2y"):
-    """Fetch historical data for a ticker."""
+def download_close_series(ticker_dict, period=DEFAULT_YF_PERIOD):
+    """Download close-price series for name->ticker mappings in one yfinance call."""
+    valid_tickers = {name: ticker for name, ticker in ticker_dict.items() if ticker}
+    if not valid_tickers:
+        return {}
+
+    tickers = list(valid_tickers.values())
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period=period)
-        if hist.empty:
-            return None
-        return hist
-    except Exception as e:
+        raw = yf.download(
+            tickers=tickers if len(tickers) > 1 else tickers[0],
+            period=period,
+            auto_adjust=False,
+            group_by="ticker",
+            threads=True,
+            progress=False,
+        )
+    except Exception:
+        return {}
+
+    if raw is None or raw.empty:
+        return {}
+
+    series_by_name = {}
+    is_multi = isinstance(raw.columns, pd.MultiIndex)
+
+    if is_multi:
+        available = set(raw.columns.get_level_values(0))
+        for name, ticker in valid_tickers.items():
+            if ticker not in available:
+                continue
+
+            close = raw[ticker].get("Close")
+            if close is None:
+                continue
+
+            close = close.dropna()
+            if not close.empty:
+                series_by_name[name] = close.sort_index()
+        return series_by_name
+
+    # Single ticker fallback: yfinance returns non-MultiIndex columns.
+    close = raw.get("Close")
+    if close is None:
+        return {}
+    close = close.dropna()
+    if close.empty:
+        return {}
+
+    only_name = next(iter(valid_tickers))
+    series_by_name[only_name] = close.sort_index()
+    return series_by_name
+
+def _normalize_reference_time(reference_time, index):
+    """Align a timestamp with a DatetimeIndex timezone."""
+    if index.tz is None:
+        if reference_time.tzinfo is None:
+            return reference_time
+        return reference_time.tz_localize(None)
+
+    if reference_time.tzinfo is None:
+        return reference_time.tz_localize(index.tz)
+    return reference_time.tz_convert(index.tz)
+
+def calculate_return(close_series, days, reference_time=None):
+    """Calculate return over a calendar-day lookback from a close-price series."""
+    if close_series is None:
         return None
 
-def calculate_return(hist, days):
-    """Calculate return over specified number of calendar days."""
-    if hist is None or len(hist) < 2:
+    close_series = close_series.dropna()
+    if close_series.size < 2:
         return None
-    
-    try:
-        current_price = hist['Close'].iloc[-1]
-        target_date = datetime.now() - timedelta(days=days)
-        
-        if hist.index.tz is not None:
-            target_date = target_date.replace(tzinfo=hist.index.tz)
-        
-        hist_before = hist[hist.index <= pd.Timestamp(target_date)]
-        
-        if len(hist_before) == 0:
-            past_price = hist['Close'].iloc[0]
-        else:
-            past_price = hist_before['Close'].iloc[-1]
-        
-        if past_price == 0:
-            return None
-        
-        return ((current_price - past_price) / past_price) * 100
-    except Exception as e:
+
+    if not isinstance(close_series.index, pd.DatetimeIndex):
         return None
+
+    reference_ts = pd.Timestamp.now() if reference_time is None else pd.Timestamp(reference_time)
+    reference_ts = _normalize_reference_time(reference_ts, close_series.index)
+    target_date = reference_ts - timedelta(days=days)
+
+    past_idx = close_series.index.searchsorted(target_date, side="right") - 1
+    past_price = close_series.iloc[past_idx] if past_idx >= 0 else close_series.iloc[0]
+    current_price = close_series.iloc[-1]
+
+    if past_price == 0:
+        return None
+
+    return float((current_price - past_price) / past_price * 100)
 
 def fetch_all_returns(ticker_dict, periods, category_name, crb_returns=None):
     """Fetch returns for all tickers in a category."""
     results = {}
-    
+    reference_time = pd.Timestamp.now()
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
         task = progress.add_task(f"[cyan]Fetching {category_name}...", total=len(ticker_dict))
-        
+        progress.update(task, description=f"[cyan]Downloading {category_name} quotes...")
+        close_series_map = download_close_series(ticker_dict, period=DEFAULT_YF_PERIOD)
+
         for name, ticker in ticker_dict.items():
-            progress.update(task, description=f"[cyan]Fetching {name}...")
-            
+            progress.update(task, description=f"[cyan]Calculating {name}...")
+
             # Handle CRB Industrial Spot Index specially
-            if name == "CRB Industrial Spot Index" and crb_returns is not None:
-                results[name] = crb_returns
+            if name == CRB_INDEX_NAME and crb_returns is not None:
+                results[name] = dict(crb_returns)
                 progress.advance(task)
                 continue
-            
+
             if ticker is None:
                 results[name] = {period: None for period in periods}
                 progress.advance(task)
                 continue
-            
-            hist = get_historical_data(ticker, period="2y")
-            
+
+            close_series = close_series_map.get(name)
             returns = {}
             for period_name, days in periods.items():
-                ret = calculate_return(hist, days)
+                ret = calculate_return(close_series, days, reference_time=reference_time)
                 returns[period_name] = round(ret, 1) if ret is not None else None
-            
+
             results[name] = returns
             progress.advance(task)
-    
+
     return results
 
 # ============================================================================
@@ -347,14 +412,15 @@ def print_data_sources(crb_file_used):
 # ============================================================================
 
 def main():
-    # Default CRB file path is in the same directory as this script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_crb_path = os.path.join(script_dir, 'crb.xlsx')
-
     parser = argparse.ArgumentParser(description='Market Performance Dashboard')
-    parser.add_argument('--crb-file', type=str, default=default_crb_path,
-                        help='Path to CRB Excel file from Moody\'s Analytics (.xls or .xlsx)')
+    parser.add_argument(
+        "--crb-file",
+        type=Path,
+        default=DEFAULT_CRB_PATH,
+        help="Path to CRB Excel file from Moody's Analytics (.xls or .xlsx)",
+    )
     args = parser.parse_args()
+    crb_path = Path(args.crb_file).expanduser()
     
     console.print()
     print_header()
@@ -364,9 +430,9 @@ def main():
     crb_returns = None
     crb_file_used = False
     
-    if os.path.exists(args.crb_file):
-        console.print(f"[bold yellow]Reading CRB data from {args.crb_file}...[/bold yellow]")
-        crb_df = read_crb_from_xls(args.crb_file)
+    if crb_path.exists():
+        console.print(f"[bold yellow]Reading CRB data from {crb_path}...[/bold yellow]")
+        crb_df = read_crb_from_xls(crb_path)
         if crb_df is not None:
             crb_returns = calculate_crb_returns(crb_df, EQUITY_PERIODS)
             crb_file_used = True
@@ -374,7 +440,7 @@ def main():
         else:
             console.print("[yellow]Could not read CRB file, will show N/A[/yellow]")
     else:
-        console.print(f"[yellow]CRB file not found: {args.crb_file}[/yellow]")
+        console.print(f"[yellow]CRB file not found: {crb_path}[/yellow]")
     
     console.print()
     console.print("[bold yellow]Fetching market data...[/bold yellow]\n")
@@ -412,15 +478,13 @@ def get_data(crb_file: str = None) -> dict:
       - timestamp: datetime of data fetch
       - benchmarks: dict mapping tickers to their benchmark
     """
-    if crb_file is None:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        crb_file = os.path.join(script_dir, 'crb.xlsx')
+    crb_path = Path(crb_file).expanduser() if crb_file else DEFAULT_CRB_PATH
 
     crb_returns = None
     crb_available = False
 
-    if os.path.exists(crb_file):
-        crb_df = read_crb_from_xls(crb_file)
+    if crb_path.exists():
+        crb_df = read_crb_from_xls(crb_path)
         if crb_df is not None:
             crb_returns = calculate_crb_returns(crb_df, EQUITY_PERIODS)
             crb_available = True
