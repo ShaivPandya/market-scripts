@@ -161,14 +161,17 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
+try:
+    from .composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
+except ImportError:
+    from composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
 
 console = Console()
 
 # -----------------------------
 # Configuration
 # -----------------------------
-PORTFOLIO_CSV = Path(__file__).parent.parent / "universes" / "portfolio.csv"
+PORTFOLIO_CSV = Path(__file__).parent.parent / "portfolio.csv"
 LOOKBACK_DAYS = 365  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"

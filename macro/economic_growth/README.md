@@ -1,8 +1,8 @@
-# Market Performance Dashboard
+# Economic Growth Dashboard
 
 ## Overview
 
-The Market Performance Dashboard is a Python-based tool that tracks key economic indicators across multiple time periods (1-month, 3-month, 6-month, and 1-year). It fetches live data from Yahoo Finance and displays performance metrics color-coded relative to benchmarks, helping investors identify economic trends and relative strength across asset classes.
+The Economic Growth Dashboard is a Python-based tool that tracks key economic indicators across multiple time periods (1-month, 3-month, 6-month, and 1-year). It fetches live data from Yahoo Finance and displays performance metrics color-coded relative to benchmarks, helping investors identify economic trends and relative strength across asset classes.
 
 ## How It Works
 
@@ -90,10 +90,10 @@ Historically used by macro investors as a proxy for global economic optimism.
 pip install yfinance rich pandas openpyxl
 
 # Run with default CRB file (crb.xlsx)
-python market_dashboard.py
+python economic_growth.py
 
 # Run with custom CRB file path
-python market_dashboard.py --crb-file path/to/your/crb.xlsx
+python economic_growth.py --crb-file path/to/your/crb.xlsx
 ```
 
 ## Interpreting the Dashboard

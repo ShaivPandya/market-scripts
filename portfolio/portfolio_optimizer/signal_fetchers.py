@@ -26,7 +26,8 @@ except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
 
 # Import from existing single-ticker scripts
-sys.path.insert(0, str(Path(__file__).parent.parent / "quality"))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "momentum" / "fundamental_momentum"))
 
 from quality_single import fetch_raw_metrics as fetch_quality_raw_metrics, RawMetrics

@@ -3,7 +3,7 @@
 Market Analysis Dashboard - Streamlit GUI
 
 Provides a navigatable interface for:
-- Market Dashboard (commodities, equities, currencies performance)
+- Economic Growth (commodities, equities, currencies performance)
 - Market Technicals (breadth, top 50, price/volume signals)
 - Liquidity Dashboard (Fed/ECB/BoJ liquidity metrics)
 - CFTC Positioning (leveraged funds futures positioning)
@@ -20,7 +20,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "market_technicals"))
-sys.path.insert(0, str(PROJECT_ROOT / "macro" / "market_dashboard"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "economic_growth"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "liquidity"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "breakout"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
@@ -29,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"
 sys.path.insert(0, str(PROJECT_ROOT / "fx" / "model"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx" / "fx_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "commodities"))
+sys.path.insert(0, str(PROJECT_ROOT / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 
 import streamlit as st
@@ -44,7 +45,7 @@ st.set_page_config(
 
 # Initialize session state for navigation
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "📊 Market Dashboard"
+    st.session_state.current_page = "💼 Portfolio Dashboard"
 
 # Sidebar: Settings Section
 st.sidebar.title("Settings")
@@ -60,9 +61,34 @@ st.sidebar.divider()
 st.sidebar.markdown("### Navigation")
 
 # Clickable text navigation
-if st.sidebar.button("📊 Market Dashboard", width='stretch',
-                      type="primary" if st.session_state.current_page == "📊 Market Dashboard" else "secondary"):
-    st.session_state.current_page = "📊 Market Dashboard"
+if st.sidebar.button("💼 Portfolio Dashboard", width='stretch',
+                      type="primary" if st.session_state.current_page == "💼 Portfolio Dashboard" else "secondary"):
+    st.session_state.current_page = "💼 Portfolio Dashboard"
+    st.rerun()
+
+if st.sidebar.button("📈 Portfolio Optimizer", width='stretch',
+                      type="primary" if st.session_state.current_page == "📈 Portfolio Optimizer" else "secondary"):
+    st.session_state.current_page = "📈 Portfolio Optimizer"
+    st.rerun()
+
+if st.sidebar.button("🚀 Momentum", width='stretch',
+                      type="primary" if st.session_state.current_page == "🚀 Momentum" else "secondary"):
+    st.session_state.current_page = "🚀 Momentum"
+    st.rerun()
+
+if st.sidebar.button("📉 FX Dashboard", width='stretch',
+                      type="primary" if st.session_state.current_page == "📉 FX Dashboard" else "secondary"):
+    st.session_state.current_page = "📉 FX Dashboard"
+    st.rerun()
+
+if st.sidebar.button("🛢️ Commodities", width='stretch',
+                      type="primary" if st.session_state.current_page == "🛢️ Commodities" else "secondary"):
+    st.session_state.current_page = "🛢️ Commodities"
+    st.rerun()
+
+if st.sidebar.button("📊 Economic Growth", width='stretch',
+                      type="primary" if st.session_state.current_page == "📊 Economic Growth" else "secondary"):
+    st.session_state.current_page = "📊 Economic Growth"
     st.rerun()
 
 if st.sidebar.button("📈 Market Technicals", width='stretch',
@@ -85,29 +111,9 @@ if st.sidebar.button("🔔 Breakout", width='stretch',
     st.session_state.current_page = "🔔 Breakout"
     st.rerun()
 
-if st.sidebar.button("📈 Portfolio Optimizer", width='stretch',
-                      type="primary" if st.session_state.current_page == "📈 Portfolio Optimizer" else "secondary"):
-    st.session_state.current_page = "📈 Portfolio Optimizer"
-    st.rerun()
-
-if st.sidebar.button("🚀 Momentum", width='stretch',
-                      type="primary" if st.session_state.current_page == "🚀 Momentum" else "secondary"):
-    st.session_state.current_page = "🚀 Momentum"
-    st.rerun()
-
 if st.sidebar.button("💱 FX Model", width='stretch',
                       type="primary" if st.session_state.current_page == "💱 FX Model" else "secondary"):
     st.session_state.current_page = "💱 FX Model"
-    st.rerun()
-
-if st.sidebar.button("📉 FX Dashboard", width='stretch',
-                      type="primary" if st.session_state.current_page == "📉 FX Dashboard" else "secondary"):
-    st.session_state.current_page = "📉 FX Dashboard"
-    st.rerun()
-
-if st.sidebar.button("🛢️ Commodities", width='stretch',
-                      type="primary" if st.session_state.current_page == "🛢️ Commodities" else "secondary"):
-    st.session_state.current_page = "🛢️ Commodities"
     st.rerun()
 
 if st.sidebar.button("🏦 Central Banks", width='stretch',
@@ -571,24 +577,24 @@ if st.session_state.current_page == "📈 Market Technicals":
 
 
 # =============================================================================
-# PAGE: Market Dashboard
+# PAGE: Economic Growth
 # =============================================================================
-elif st.session_state.current_page == "📊 Market Dashboard":
-    st.header("Market Performance Dashboard")
+elif st.session_state.current_page == "📊 Economic Growth":
+    st.header("Economic Growth Dashboard")
 
     if st.button("Refresh Data", key="refresh_dashboard"):
         st.cache_data.clear()
 
     @st.cache_data(ttl=300)
-    def fetch_market_dashboard():
+    def fetch_economic_growth():
         try:
-            from market_dashboard import get_data
+            from economic_growth import get_data
             return get_data()
         except Exception as e:
             return {"error": str(e)}
 
-    with st.spinner("Fetching market data from Yahoo Finance..."):
-        dashboard_data = fetch_market_dashboard()
+    with st.spinner("Fetching economic growth data from Yahoo Finance..."):
+        dashboard_data = fetch_economic_growth()
 
     if "error" in dashboard_data:
         st.error(f"Error: {dashboard_data['error']}")
@@ -1653,7 +1659,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
     if optimize_clicked:
         with st.spinner("Downloading price data and running optimization..."):
             try:
-                from portfolio_optimizer import get_data as get_portfolio_data
+                from portfolio_optimizer.portfolio_optimizer import get_data as get_portfolio_data
                 result = get_portfolio_data(book=book_size, target_leverage=target_leverage)
                 st.session_state.optimization_result = result
             except Exception as e:
@@ -1938,7 +1944,7 @@ elif st.session_state.current_page == "🚀 Momentum":
     @st.cache_data(ttl=300)
     def fetch_momentum():
         try:
-            from momentum import get_data
+            from momentum.price_momentum.momentum import get_data
             return get_data()
         except Exception as e:
             import traceback
@@ -2178,6 +2184,100 @@ elif st.session_state.current_page == "🛢️ Commodities":
                         else:
                             st.metric(commodity_name, "N/A")
                             st.warning(f"No data for {commodity_name}")
+
+
+# =============================================================================
+# PAGE: Portfolio Dashboard
+# =============================================================================
+elif st.session_state.current_page == "💼 Portfolio Dashboard":
+    st.header("Portfolio Dashboard")
+    st.caption("Closing-price time series for portfolio positions via Yahoo Finance")
+
+    if st.button("Refresh Data", key="refresh_portfolio_dashboard"):
+        st.cache_data.clear()
+
+    # Timeframe toggle
+    portfolio_timeframe = st.radio(
+        "Timeframe",
+        ["Daily", "Weekly", "Monthly"],
+        horizontal=True,
+        key="portfolio_dashboard_timeframe",
+    )
+
+    @st.cache_data(ttl=300)
+    def fetch_portfolio_dashboard(timeframe: str):
+        try:
+            from portfolio_dashboard import get_data
+            return get_data(timeframe=timeframe)
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner("Fetching Portfolio data from Yahoo Finance..."):
+        portfolio_dash_data = fetch_portfolio_dashboard(portfolio_timeframe)
+
+    if "error" in portfolio_dash_data:
+        st.error(f"Error: {portfolio_dash_data['error']}")
+    else:
+        positions = portfolio_dash_data.get("positions", {})
+        metadata = portfolio_dash_data.get("metadata", {})
+        timestamp = portfolio_dash_data.get("timestamp")
+        if timestamp:
+            st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if not positions:
+            st.warning("No portfolio data returned")
+        else:
+            from portfolio_dashboard import POSITION_ORDER
+            import math
+
+            def _fmt_portfolio_price(v: float) -> str:
+                if abs(v) >= 100:
+                    return f"{v:,.2f}"
+                return f"{v:.4f}"
+
+            num_cols = 3
+            num_rows = math.ceil(len(POSITION_ORDER) / num_cols)
+
+            for row_idx in range(num_rows):
+                cols = st.columns(num_cols)
+                for col_idx in range(num_cols):
+                    pos_idx = row_idx * num_cols + col_idx
+                    if pos_idx >= len(POSITION_ORDER):
+                        break
+                    ticker = POSITION_ORDER[pos_idx]
+                    series = positions.get(ticker)
+                    meta = metadata.get(ticker, {})
+                    direction = meta.get("direction", "").upper()
+
+                    with cols[col_idx]:
+                        if series is not None and not series.empty:
+                            latest = series.iloc[-1]
+                            first = series.iloc[0]
+                            pct = ((latest - first) / first) * 100
+                            label = f"{ticker} ({direction})"
+                            st.metric(
+                                label,
+                                _fmt_portfolio_price(latest),
+                                f"{pct:+.2f}%",
+                            )
+                            import altair as alt
+                            chart_df = pd.DataFrame(
+                                {"date": series.index, ticker: series.values},
+                            )
+                            chart = (
+                                alt.Chart(chart_df)
+                                .mark_line()
+                                .encode(
+                                    x=alt.X("date:T", title=None),
+                                    y=alt.Y(f"{ticker}:Q", scale=alt.Scale(zero=False), title=None),
+                                )
+                                .properties(height=200)
+                            )
+                            st.altair_chart(chart, width="stretch")
+                        else:
+                            st.metric(f"{ticker} ({direction})", "N/A")
+                            st.warning(f"No data for {ticker}")
 
 
 # =============================================================================
