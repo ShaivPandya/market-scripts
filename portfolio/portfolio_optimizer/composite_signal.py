@@ -36,17 +36,25 @@ try:
 except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
 
-from signal_fetchers import (
-    fetch_price_momentum_batch,
-    fetch_quality_batch,
-    fetch_eps_momentum_batch,
-    fetch_revenue_momentum_batch,
-)
+try:
+    from .signal_fetchers import (
+        fetch_price_momentum_batch,
+        fetch_quality_batch,
+        fetch_eps_momentum_batch,
+        fetch_revenue_momentum_batch,
+    )
+except ImportError:
+    from signal_fetchers import (
+        fetch_price_momentum_batch,
+        fetch_quality_batch,
+        fetch_eps_momentum_batch,
+        fetch_revenue_momentum_batch,
+    )
 
 # -----------------------------
 # Configuration
 # -----------------------------
-PORTFOLIO_CSV = Path(__file__).parent.parent / "universes" / "portfolio.csv"
+PORTFOLIO_CSV = Path(__file__).parent.parent / "portfolio.csv"
 DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)

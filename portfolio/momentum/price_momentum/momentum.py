@@ -29,14 +29,16 @@ from pathlib import Path
 
 import pandas as pd
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from common import load_universe, list_universes
+# Add project root to path for imports
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT))
+from equities.common import load_universe, list_universes
 
 # ANSI color codes
 RED = "\033[91m"
 GREEN = "\033[38;2;52;199;89m"
 RESET = "\033[0m"
+PORTFOLIO_CSV = Path(__file__).resolve().parents[2] / "portfolio.csv"
 
 
 def colorize(value: float, threshold: float, below_is_red: bool = True) -> str:
@@ -281,7 +283,7 @@ def get_data(universe: str = None, years: int = 5) -> dict:
         if universe:
             tickers = load_universe(universe)
         else:
-            portfolio_path = Path(__file__).parent.parent.parent / "universes" / "portfolio.csv"
+            portfolio_path = PORTFOLIO_CSV
             if not portfolio_path.exists():
                 return {"error": f"portfolio.csv not found at {portfolio_path}"}
             portfolio_df = pd.read_csv(portfolio_path)
@@ -358,7 +360,7 @@ def main() -> int:
         tickers = load_universe(args.tickers_file)
     else:
         # Default to reading from portfolio.csv
-        portfolio_path = Path(__file__).parent.parent.parent / "universes" / "portfolio.csv"
+        portfolio_path = PORTFOLIO_CSV
         if not portfolio_path.exists():
             print(f"Error: portfolio.csv not found at {portfolio_path}", file=sys.stderr)
             return 1

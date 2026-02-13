@@ -1659,7 +1659,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
     if optimize_clicked:
         with st.spinner("Downloading price data and running optimization..."):
             try:
-                from portfolio_optimizer import get_data as get_portfolio_data
+                from portfolio_optimizer.portfolio_optimizer import get_data as get_portfolio_data
                 result = get_portfolio_data(book=book_size, target_leverage=target_leverage)
                 st.session_state.optimization_result = result
             except Exception as e:
@@ -1944,7 +1944,7 @@ elif st.session_state.current_page == "🚀 Momentum":
     @st.cache_data(ttl=300)
     def fetch_momentum():
         try:
-            from momentum import get_data
+            from momentum.price_momentum.momentum import get_data
             return get_data()
         except Exception as e:
             import traceback
