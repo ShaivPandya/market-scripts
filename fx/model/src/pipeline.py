@@ -7,8 +7,10 @@ from dotenv import load_dotenv
 
 from .currency_config import CurrencyPairConfig
 from .data_fred import fetch_fred_series
+from .data_yfinance import fetch_yfinance_series
 from .data_imf import fetch_imf_datamapper_indicator
 from .data_bis import fetch_bis_ws_eer_m, BisError
+from .data_worldbank import fetch_worldbank_cpi
 from .features import build_monthly_panel, compute_features, implied_spot_reference_points
 from .models import fit_horizon_ols, predict_latest, bootstrap_forecast_distribution
 from .report import (
@@ -43,6 +45,55 @@ def _fetch_with_candidates(
     raise RuntimeError(f"All candidates failed for {name}: {candidates}") from last_err
 
 
+def _extend_cpi_if_stale(
+    fred_cpi: pd.Series,
+    iso3: str,
+    name: str,
+    cache_dir: Path,
+    refresh: bool,
+    stale_months: int = 12,
+) -> pd.Series:
+    """If FRED CPI ends more than stale_months ago, extend with World Bank data."""
+    last_date = fred_cpi.dropna().index.max()
+    months_old = (pd.Timestamp.now() - last_date).days / 30
+    if months_old <= stale_months:
+        return fred_cpi
+
+    log.warning(
+        f"FRED {name} is stale (last: {last_date.date()}, {months_old:.0f}m old). "
+        f"Extending with World Bank CPI for {iso3}."
+    )
+    try:
+        wb = fetch_worldbank_cpi(iso3, cache_dir=cache_dir, refresh=refresh)
+    except Exception as e:
+        log.warning(f"World Bank CPI fallback failed for {iso3}: {e}")
+        return fred_cpi
+
+    # Resample both to month-end so dates align
+    fred_me = fred_cpi.dropna().resample("ME").last().dropna()
+    wb_me = wb.dropna().resample("ME").last().dropna()
+
+    overlap = fred_me.index.intersection(wb_me.index)
+    if overlap.empty:
+        log.warning("No overlap between FRED and World Bank CPI; cannot extend.")
+        return fred_cpi
+
+    anchor_date = overlap.max()
+    scale = float(fred_me.loc[anchor_date]) / float(wb_me.loc[anchor_date])
+    wb_scaled = wb_me * scale
+
+    # Append World Bank data after FRED ends
+    fred_last_me = fred_me.index.max()
+    extension = wb_scaled[wb_scaled.index > fred_last_me]
+    if extension.empty:
+        log.warning("World Bank CPI has no data beyond FRED end date.")
+        return fred_cpi
+
+    combined = pd.concat([fred_me, extension])
+    log.info(f"Extended {name} from {fred_last_me.date()} to {combined.index.max().date()} via World Bank")
+    return combined
+
+
 def run_pipeline(
     config: CurrencyPairConfig,
     start: str,
@@ -63,9 +114,9 @@ def run_pipeline(
     # -------- Download FRED --------
     fred = {}
 
-    # Spot rate
-    log.info(f"Downloading FRED {config.fred_spot_id} -> spot")
-    spot_raw = fetch_fred_series(config.fred_spot_id, start=start, cache_dir=cache_dir, refresh=refresh)
+    # Spot rate (from Yahoo Finance)
+    log.info(f"Downloading yFinance {config.yf_spot_ticker} -> spot")
+    spot_raw = fetch_yfinance_series(config.yf_spot_ticker, start=start, cache_dir=cache_dir, refresh=refresh)
     if config.fred_spot_invert:
         spot_raw = 1.0 / spot_raw
     fred["spot"] = spot_raw
@@ -74,10 +125,16 @@ def run_pipeline(
     fred["cpi_base"] = _fetch_with_candidates(
         config.cpi_base_ids, "cpi_base", start, cache_dir, refresh
     )
+    fred["cpi_base"] = _extend_cpi_if_stale(
+        fred["cpi_base"], config.imf_iso3_base, "cpi_base", cache_dir, refresh
+    )
 
     # CPI for quote currency
     fred["cpi_quote"] = _fetch_with_candidates(
         config.cpi_quote_ids, "cpi_quote", start, cache_dir, refresh
+    )
+    fred["cpi_quote"] = _extend_cpi_if_stale(
+        fred["cpi_quote"], config.imf_iso3_quote, "cpi_quote", cache_dir, refresh
     )
 
     # Interest rates
@@ -87,12 +144,12 @@ def run_pipeline(
     log.info(f"Downloading FRED {config.rate_quote_id} -> r_quote")
     fred["r_quote"] = fetch_fred_series(config.rate_quote_id, start=start, cache_dir=cache_dir, refresh=refresh)
 
-    # Oil and VIX (common to all pairs)
-    log.info(f"Downloading FRED {config.fred_oil_id} -> wti")
-    fred["wti"] = fetch_fred_series(config.fred_oil_id, start=start, cache_dir=cache_dir, refresh=refresh)
+    # Oil and VIX (from Yahoo Finance)
+    log.info(f"Downloading yFinance {config.yf_oil_ticker} -> wti")
+    fred["wti"] = fetch_yfinance_series(config.yf_oil_ticker, start=start, cache_dir=cache_dir, refresh=refresh)
 
-    log.info(f"Downloading FRED {config.fred_vix_id} -> vix")
-    fred["vix"] = fetch_fred_series(config.fred_vix_id, start=start, cache_dir=cache_dir, refresh=refresh)
+    log.info(f"Downloading yFinance {config.yf_vix_ticker} -> vix")
+    fred["vix"] = fetch_yfinance_series(config.yf_vix_ticker, start=start, cache_dir=cache_dir, refresh=refresh)
 
     # -------- Download IMF (current account % GDP) --------
     log.info(f"Downloading IMF BCA_NGDPD for {config.imf_iso3_quote} and {config.imf_iso3_base}")

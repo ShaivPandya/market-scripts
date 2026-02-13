@@ -42,6 +42,11 @@ class CurrencyPairConfig:
     fred_oil_id: str = "DCOILWTICO"
     fred_vix_id: str = "VIXCLS"
 
+    # Yahoo Finance tickers (for spot, oil, VIX)
+    yf_spot_ticker: str = ""
+    yf_oil_ticker: str = "CL=F"
+    yf_vix_ticker: str = "^VIX"
+
 
 # Pre-defined configurations
 CURRENCY_CONFIGS = {
@@ -59,6 +64,7 @@ CURRENCY_CONFIGS = {
         imf_iso3_quote="CAN",
         bis_key="M.R.B.CA",
         spot_label="CAD per USD",
+        yf_spot_ticker="CAD=X",
     ),
     "GBPUSD": CurrencyPairConfig(
         pair_name="GBPUSD",
@@ -74,6 +80,7 @@ CURRENCY_CONFIGS = {
         imf_iso3_quote="USA",
         bis_key="M.R.B.GB",
         spot_label="USD per GBP",
+        yf_spot_ticker="GBPUSD=X",
     ),
     "AUDUSD": CurrencyPairConfig(
         pair_name="AUDUSD",
@@ -90,6 +97,7 @@ CURRENCY_CONFIGS = {
         imf_iso3_quote="USA",
         bis_key="M.R.B.AU",
         spot_label="USD per AUD",
+        yf_spot_ticker="AUDUSD=X",
     ),
     "USDJPY": CurrencyPairConfig(
         pair_name="USDJPY",
@@ -105,6 +113,7 @@ CURRENCY_CONFIGS = {
         imf_iso3_quote="JPN",
         bis_key="M.R.B.JP",
         spot_label="JPY per USD",
+        yf_spot_ticker="JPY=X",
     ),
 }
 

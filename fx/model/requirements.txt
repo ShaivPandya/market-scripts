@@ -5,3 +5,4 @@ statsmodels>=0.14
 matplotlib>=3.7
 python-dotenv>=1.0
 pandaSDMX>=1.10
+yfinance>=0.2
