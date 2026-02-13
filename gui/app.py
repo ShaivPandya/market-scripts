@@ -28,6 +28,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "equities" / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx" / "model"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx" / "fx_dashboard"))
+sys.path.insert(0, str(PROJECT_ROOT / "commodities"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 
 import streamlit as st
@@ -102,6 +103,11 @@ if st.sidebar.button("💱 FX Model", width='stretch',
 if st.sidebar.button("📉 FX Dashboard", width='stretch',
                       type="primary" if st.session_state.current_page == "📉 FX Dashboard" else "secondary"):
     st.session_state.current_page = "📉 FX Dashboard"
+    st.rerun()
+
+if st.sidebar.button("🛢️ Commodities", width='stretch',
+                      type="primary" if st.session_state.current_page == "🛢️ Commodities" else "secondary"):
+    st.session_state.current_page = "🛢️ Commodities"
     st.rerun()
 
 if st.sidebar.button("🏦 Central Banks", width='stretch',
@@ -2085,6 +2091,93 @@ elif st.session_state.current_page == "📉 FX Dashboard":
                         else:
                             st.metric(pair_name, "N/A")
                             st.warning(f"No data for {pair_name}")
+
+
+# =============================================================================
+# PAGE: Commodities Dashboard
+# =============================================================================
+elif st.session_state.current_page == "🛢️ Commodities":
+    st.header("Commodities Dashboard")
+    st.caption("Closing-price time series for 9 major commodities via Yahoo Finance")
+
+    if st.button("Refresh Data", key="refresh_commodities_dashboard"):
+        st.cache_data.clear()
+
+    # Timeframe toggle
+    commodities_timeframe = st.radio(
+        "Timeframe",
+        ["Daily", "Weekly", "Monthly"],
+        horizontal=True,
+        key="commodities_dashboard_timeframe",
+    )
+
+    @st.cache_data(ttl=300)
+    def fetch_commodities_dashboard(timeframe: str):
+        try:
+            from commodities_dashboard import get_data
+            return get_data(timeframe=timeframe)
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner("Fetching Commodities data from Yahoo Finance..."):
+        commodities_dash_data = fetch_commodities_dashboard(commodities_timeframe)
+
+    if "error" in commodities_dash_data:
+        st.error(f"Error: {commodities_dash_data['error']}")
+    else:
+        commodities = commodities_dash_data.get("commodities", {})
+        timestamp = commodities_dash_data.get("timestamp")
+        if timestamp:
+            st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if not commodities:
+            st.warning("No commodities data returned")
+        else:
+            from commodities_dashboard import COMMODITY_ORDER
+
+            def _fmt_price(v: float) -> str:
+                if abs(v) >= 100:
+                    return f"{v:,.2f}"
+                return f"{v:.4f}"
+
+            # 3x3 grid: 3 rows of st.columns(3)
+            for row_idx in range(3):
+                cols = st.columns(3)
+                for col_idx in range(3):
+                    commodity_idx = row_idx * 3 + col_idx
+                    if commodity_idx >= len(COMMODITY_ORDER):
+                        break
+                    commodity_name = COMMODITY_ORDER[commodity_idx]
+                    series = commodities.get(commodity_name)
+
+                    with cols[col_idx]:
+                        if series is not None and not series.empty:
+                            latest = series.iloc[-1]
+                            first = series.iloc[0]
+                            pct = ((latest - first) / first) * 100
+                            st.metric(
+                                commodity_name,
+                                _fmt_price(latest),
+                                f"{pct:+.2f}%",
+                            )
+                            import altair as alt
+                            chart_df = pd.DataFrame(
+                                {"date": series.index, commodity_name: series.values},
+                            )
+                            chart = (
+                                alt.Chart(chart_df)
+                                .mark_line()
+                                .encode(
+                                    x=alt.X("date:T", title=None),
+                                    y=alt.Y(f"{commodity_name}:Q", scale=alt.Scale(zero=False), title=None),
+                                )
+                                .properties(height=200)
+                            )
+                            st.altair_chart(chart, width="stretch")
+                        else:
+                            st.metric(commodity_name, "N/A")
+                            st.warning(f"No data for {commodity_name}")
 
 
 # =============================================================================
