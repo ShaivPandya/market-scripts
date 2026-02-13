@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Market Performance Dashboard - Live Data Version
+Economic Growth Dashboard - Live Data Version
 Fetches real-time data from Yahoo Finance and reads CRB data from XLS file.
 Green = Outperforming S&P 500 (for equities), Red = Underperforming S&P 500
 
@@ -8,7 +8,7 @@ Requirements:
     pip install yfinance rich pandas openpyxl
 
 Usage:
-    python market_dashboard_live.py [--crb-file path/to/crb.xls]
+    python economic_growth.py [--crb-file path/to/crb.xlsx]
 """
 
 import yfinance as yf

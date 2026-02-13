@@ -3,7 +3,7 @@
 Market Analysis Dashboard - Streamlit GUI
 
 Provides a navigatable interface for:
-- Market Dashboard (commodities, equities, currencies performance)
+- Economic Growth (commodities, equities, currencies performance)
 - Market Technicals (breadth, top 50, price/volume signals)
 - Liquidity Dashboard (Fed/ECB/BoJ liquidity metrics)
 - CFTC Positioning (leveraged funds futures positioning)
@@ -20,7 +20,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "market_technicals"))
-sys.path.insert(0, str(PROJECT_ROOT / "macro" / "market_dashboard"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "economic_growth"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "liquidity"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "breakout"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "positioning"))
@@ -45,7 +45,7 @@ st.set_page_config(
 
 # Initialize session state for navigation
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "📊 Market Dashboard"
+    st.session_state.current_page = "💼 Portfolio Dashboard"
 
 # Sidebar: Settings Section
 st.sidebar.title("Settings")
@@ -61,9 +61,34 @@ st.sidebar.divider()
 st.sidebar.markdown("### Navigation")
 
 # Clickable text navigation
-if st.sidebar.button("📊 Market Dashboard", width='stretch',
-                      type="primary" if st.session_state.current_page == "📊 Market Dashboard" else "secondary"):
-    st.session_state.current_page = "📊 Market Dashboard"
+if st.sidebar.button("💼 Portfolio Dashboard", width='stretch',
+                      type="primary" if st.session_state.current_page == "💼 Portfolio Dashboard" else "secondary"):
+    st.session_state.current_page = "💼 Portfolio Dashboard"
+    st.rerun()
+
+if st.sidebar.button("📈 Portfolio Optimizer", width='stretch',
+                      type="primary" if st.session_state.current_page == "📈 Portfolio Optimizer" else "secondary"):
+    st.session_state.current_page = "📈 Portfolio Optimizer"
+    st.rerun()
+
+if st.sidebar.button("🚀 Momentum", width='stretch',
+                      type="primary" if st.session_state.current_page == "🚀 Momentum" else "secondary"):
+    st.session_state.current_page = "🚀 Momentum"
+    st.rerun()
+
+if st.sidebar.button("📉 FX Dashboard", width='stretch',
+                      type="primary" if st.session_state.current_page == "📉 FX Dashboard" else "secondary"):
+    st.session_state.current_page = "📉 FX Dashboard"
+    st.rerun()
+
+if st.sidebar.button("🛢️ Commodities", width='stretch',
+                      type="primary" if st.session_state.current_page == "🛢️ Commodities" else "secondary"):
+    st.session_state.current_page = "🛢️ Commodities"
+    st.rerun()
+
+if st.sidebar.button("📊 Economic Growth", width='stretch',
+                      type="primary" if st.session_state.current_page == "📊 Economic Growth" else "secondary"):
+    st.session_state.current_page = "📊 Economic Growth"
     st.rerun()
 
 if st.sidebar.button("📈 Market Technicals", width='stretch',
@@ -86,34 +111,9 @@ if st.sidebar.button("🔔 Breakout", width='stretch',
     st.session_state.current_page = "🔔 Breakout"
     st.rerun()
 
-if st.sidebar.button("📈 Portfolio Optimizer", width='stretch',
-                      type="primary" if st.session_state.current_page == "📈 Portfolio Optimizer" else "secondary"):
-    st.session_state.current_page = "📈 Portfolio Optimizer"
-    st.rerun()
-
-if st.sidebar.button("🚀 Momentum", width='stretch',
-                      type="primary" if st.session_state.current_page == "🚀 Momentum" else "secondary"):
-    st.session_state.current_page = "🚀 Momentum"
-    st.rerun()
-
 if st.sidebar.button("💱 FX Model", width='stretch',
                       type="primary" if st.session_state.current_page == "💱 FX Model" else "secondary"):
     st.session_state.current_page = "💱 FX Model"
-    st.rerun()
-
-if st.sidebar.button("📉 FX Dashboard", width='stretch',
-                      type="primary" if st.session_state.current_page == "📉 FX Dashboard" else "secondary"):
-    st.session_state.current_page = "📉 FX Dashboard"
-    st.rerun()
-
-if st.sidebar.button("🛢️ Commodities", width='stretch',
-                      type="primary" if st.session_state.current_page == "🛢️ Commodities" else "secondary"):
-    st.session_state.current_page = "🛢️ Commodities"
-    st.rerun()
-
-if st.sidebar.button("💼 Portfolio Dashboard", width='stretch',
-                      type="primary" if st.session_state.current_page == "💼 Portfolio Dashboard" else "secondary"):
-    st.session_state.current_page = "💼 Portfolio Dashboard"
     st.rerun()
 
 if st.sidebar.button("🏦 Central Banks", width='stretch',
@@ -577,24 +577,24 @@ if st.session_state.current_page == "📈 Market Technicals":
 
 
 # =============================================================================
-# PAGE: Market Dashboard
+# PAGE: Economic Growth
 # =============================================================================
-elif st.session_state.current_page == "📊 Market Dashboard":
-    st.header("Market Performance Dashboard")
+elif st.session_state.current_page == "📊 Economic Growth":
+    st.header("Economic Growth Dashboard")
 
     if st.button("Refresh Data", key="refresh_dashboard"):
         st.cache_data.clear()
 
     @st.cache_data(ttl=300)
-    def fetch_market_dashboard():
+    def fetch_economic_growth():
         try:
-            from market_dashboard import get_data
+            from economic_growth import get_data
             return get_data()
         except Exception as e:
             return {"error": str(e)}
 
-    with st.spinner("Fetching market data from Yahoo Finance..."):
-        dashboard_data = fetch_market_dashboard()
+    with st.spinner("Fetching economic growth data from Yahoo Finance..."):
+        dashboard_data = fetch_economic_growth()
 
     if "error" in dashboard_data:
         st.error(f"Error: {dashboard_data['error']}")
