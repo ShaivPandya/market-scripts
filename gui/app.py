@@ -31,6 +31,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "fx" / "fx_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "commodities"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
+sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
 
 import streamlit as st
 import pandas as pd
@@ -121,6 +122,11 @@ if st.sidebar.button("🏦 Central Banks", width='stretch',
     st.session_state.current_page = "🏦 Central Banks"
     st.rerun()
 
+if st.sidebar.button("📐 Technical Analysis", width='stretch',
+                      type="primary" if st.session_state.current_page == "📐 Technical Analysis" else "secondary"):
+    st.session_state.current_page = "📐 Technical Analysis"
+    st.rerun()
+
 # Visual separator
 st.sidebar.divider()
 
@@ -151,6 +157,17 @@ if st.session_state.current_page == "💱 FX Model":
     fx_skip_bis = st.sidebar.checkbox("Skip BIS data", value=False, help="Skip BIS downloads if slow")
     fx_horizons_str = st.sidebar.text_input("Horizons (months)", value="12,24")
     fx_run_clicked = st.sidebar.button("Run Model", type="primary", width="stretch")
+
+# Technical Analysis sidebar controls
+ta_ticker = "SPY"
+ta_lookback = "2Y"
+ta_run_clicked = False
+
+if st.session_state.current_page == "📐 Technical Analysis":
+    st.sidebar.title("Technical Analysis")
+    ta_ticker = st.sidebar.text_input("Ticker", value="SPY", help="Enter a stock ticker symbol")
+    ta_lookback = st.sidebar.radio("Lookback", ["3M", "1Y", "2Y", "5Y"], index=2, horizontal=True)
+    ta_run_clicked = st.sidebar.button("Analyze", type="primary", width="stretch")
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -2782,6 +2799,177 @@ elif st.session_state.current_page == "🏦 Central Banks":
                 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
             else:
                 st.write("No data to display.")
+
+
+# =============================================================================
+# PAGE: Technical Analysis
+# =============================================================================
+elif st.session_state.current_page == "📐 Technical Analysis":
+    st.header("Technical Analysis")
+    st.caption("Moving averages and rate-of-change analysis for a single ticker")
+
+    if st.button("Refresh Data", key="refresh_technical_analysis"):
+        st.cache_data.clear()
+
+    @st.cache_data(ttl=300)
+    def fetch_technical_analysis(ticker: str, lookback: str = "2Y"):
+        try:
+            from technical_analysis import get_data
+            return get_data(ticker, lookback=lookback)
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    if ta_run_clicked or ("ta_last_ticker" in st.session_state):
+        if ta_run_clicked:
+            st.session_state.ta_last_ticker = ta_ticker.strip().upper()
+        active_ticker = st.session_state.get("ta_last_ticker", ta_ticker.strip().upper())
+
+        with st.spinner(f"Fetching data for {active_ticker}..."):
+            ta_result = fetch_technical_analysis(active_ticker, lookback=ta_lookback)
+
+        if "error" in ta_result:
+            st.error(f"Error: {ta_result['error']}")
+        else:
+            import altair as alt
+
+            price_df = ta_result["price_data"]
+            roc_df = ta_result["roc_data"]
+            summary = ta_result["summary"]
+
+            st.subheader(f"{active_ticker} – Price & Moving Averages")
+
+            # --- Price chart with MAs ---
+            # Melt price_df for Altair multi-line chart
+            plot_price = price_df.dropna(subset=["Close"]).copy()
+            plot_price["date"] = plot_price.index
+            price_melted = plot_price.melt(
+                id_vars=["date"],
+                value_vars=["Close", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"],
+                var_name="Series",
+                value_name="Price",
+            ).dropna(subset=["Price"])
+
+            ma_color_map = {
+                "Close": "#1f77b4",
+                "200D SMA": "#FF6B6B",
+                "40W SMA": "#4ECDC4",
+                "200W SMA": "#FFE66D",
+                "10M SMA": "#A78BFA",
+                "20M SMA": "#F472B6",
+            }
+            color_scale = alt.Scale(
+                domain=list(ma_color_map.keys()),
+                range=list(ma_color_map.values()),
+            )
+
+            price_chart = (
+                alt.Chart(price_melted)
+                .mark_line(strokeWidth=1.5)
+                .encode(
+                    x=alt.X("date:T", title=None),
+                    y=alt.Y("Price:Q", scale=alt.Scale(zero=False), title="Price"),
+                    color=alt.Color("Series:N", scale=color_scale, legend=alt.Legend(
+                        title=None, orient="top", direction="horizontal",
+                        columns=6, labelFontSize=11,
+                    )),
+                    strokeWidth=alt.condition(
+                        alt.datum.Series == "Close",
+                        alt.value(2),
+                        alt.value(1),
+                    ),
+                    opacity=alt.condition(
+                        alt.datum.Series == "Close",
+                        alt.value(1),
+                        alt.value(0.75),
+                    ),
+                )
+                .properties(height=420)
+            )
+            st.altair_chart(price_chart, width="stretch")
+
+            # --- ROC chart ---
+            st.subheader("Rate of Change")
+            plot_roc = roc_df.dropna(how="all").copy()
+            plot_roc["date"] = plot_roc.index
+            roc_melted = plot_roc.melt(
+                id_vars=["date"],
+                value_vars=["1M ROC", "3M ROC", "12M ROC"],
+                var_name="Period",
+                value_name="ROC %",
+            ).dropna(subset=["ROC %"])
+
+            roc_color_map = {
+                "1M ROC": "#FF6B6B",
+                "3M ROC": "#4ECDC4",
+                "12M ROC": "#FFE66D",
+            }
+
+            zero_line = (
+                alt.Chart(pd.DataFrame({"y": [0]}))
+                .mark_rule(color="gray", strokeDash=[4, 4])
+                .encode(y="y:Q")
+            )
+
+            roc_lines = (
+                alt.Chart(roc_melted)
+                .mark_line(strokeWidth=1.5)
+                .encode(
+                    x=alt.X("date:T", title=None),
+                    y=alt.Y("ROC %:Q", title="ROC (%)"),
+                    color=alt.Color("Period:N", scale=alt.Scale(
+                        domain=list(roc_color_map.keys()),
+                        range=list(roc_color_map.values()),
+                    ), legend=alt.Legend(
+                        title=None, orient="top", direction="horizontal",
+                        columns=3, labelFontSize=11,
+                    )),
+                )
+                .properties(height=220)
+            )
+
+            st.altair_chart(zero_line + roc_lines, width="stretch")
+
+            # --- Summary table ---
+            st.subheader("Signal Summary")
+            summary_df = pd.DataFrame(summary)
+
+            bullish_count = sum(1 for r in summary if r["Bias"] == "Bullish")
+            total = len(summary)
+            if bullish_count > total / 2:
+                overall = "Bullish"
+                overall_color = "green"
+            elif bullish_count < total / 2:
+                overall = "Bearish"
+                overall_color = "red"
+            else:
+                overall = "Neutral"
+                overall_color = "orange"
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Overall Bias", overall)
+            with col2:
+                st.metric("Bullish Signals", f"{bullish_count}/{total}")
+            with col3:
+                st.metric("Latest Close", f"${price_df['Close'].dropna().iloc[-1]:,.2f}")
+
+            def color_bias(val):
+                if val == "Bullish":
+                    return "color: #4CAF50"
+                elif val == "Bearish":
+                    return "color: #FF5252"
+                return "color: gray"
+
+            styled_summary = (
+                summary_df.style
+                .applymap(color_bias, subset=["Bias"])
+                .applymap(color_bias, subset=["Signal"])
+            )
+            st.dataframe(styled_summary, width="stretch", hide_index=True)
+
+    else:
+        st.info("Enter a ticker in the sidebar and click **Analyze** to get started.")
 
 
 # Auto-refresh logic
