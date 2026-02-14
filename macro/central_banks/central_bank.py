@@ -310,17 +310,19 @@ def _query_items(conn: sqlite3.Connection) -> list[dict]:
         })
     return items
 
-def get_data(db_path: str = None) -> dict:
+def get_data(db_path: str = None, refresh: bool = False) -> dict:
     """
-    Fetch central bank releases and return structured data for GUI consumption.
+    Return structured data for GUI consumption.
 
+    Only fetches RSS feeds and extracts content when refresh=True.
     Returns dict with keys: items, by_source, counts, last_updated, error (on failure).
     """
     db_path = _resolve_db_path(db_path)
     try:
         conn = sqlite3.connect(db_path)
         init_db(conn)
-        _fetch_and_store(conn)
+        if refresh:
+            _fetch_and_store(conn)
         items = _query_items(conn)
         conn.close()
 
