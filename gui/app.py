@@ -31,6 +31,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "fx" / "fx_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "commodities"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
 
 import streamlit as st
@@ -125,6 +126,11 @@ if st.sidebar.button("🏦 Central Banks", width='stretch',
 if st.sidebar.button("📐 Technical Analysis", width='stretch',
                       type="primary" if st.session_state.current_page == "📐 Technical Analysis" else "secondary"):
     st.session_state.current_page = "📐 Technical Analysis"
+    st.rerun()
+
+if st.sidebar.button("🏭 Industry Monitor", width='stretch',
+                      type="primary" if st.session_state.current_page == "🏭 Industry Monitor" else "secondary"):
+    st.session_state.current_page = "🏭 Industry Monitor"
     st.rerun()
 
 # Visual separator
@@ -2663,6 +2669,203 @@ elif st.session_state.current_page == "💱 FX Model":
                     st.dataframe(recent_data, width="stretch", hide_index=False)
                 else:
                     st.warning("No time series data available")
+
+
+# =============================================================================
+# PAGE: Industry Monitor
+# =============================================================================
+elif st.session_state.current_page == "🏭 Industry Monitor":
+    st.header("Industry Earnings Monitor")
+    st.caption("Macro signal monitor from leading and coincident industry earnings calls")
+
+    if st.button("Refresh Data", key="refresh_industry_monitor"):
+        st.cache_data.clear()
+        st.rerun()
+
+    @st.cache_data(ttl=3600)
+    def fetch_industry_data():
+        try:
+            from industry_monitor import get_data
+            return get_data()
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner("Fetching industry transcript summaries..."):
+        industry_data = fetch_industry_data()
+
+    if "error" in industry_data:
+        st.error(f"Error: {industry_data['error']}")
+    else:
+        counts = industry_data.get("counts", {})
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Companies", counts.get("total_companies", 0))
+        with col2:
+            st.metric("Fresh", counts.get("fresh_companies", 0))
+        with col3:
+            st.metric("Stale / Missing", counts.get("stale_or_missing_companies", 0))
+
+        st.divider()
+
+        sector_options = ["Housing", "Trucking", "Banks", "Retail"]
+        selected_sector = st.radio(
+            "Sector",
+            options=sector_options,
+            horizontal=True,
+            key="industry_sector_tab",
+        )
+
+        by_sector = industry_data.get("by_sector", {})
+        sector_payload = by_sector.get(selected_sector, {})
+        if not sector_payload:
+            st.info("No sector data available.")
+        else:
+            import html as _html
+
+            sector_type = str(sector_payload.get("type", "")).lower()
+            sector_summary = sector_payload.get("sector_summary", {})
+            companies = sector_payload.get("companies", [])
+
+            type_color = {"leading": "#1565C0", "coincident": "#FF8F00"}.get(sector_type, "#616161")
+            signal = str(sector_summary.get("economic_signal", "stable")).lower()
+            signal_color = {
+                "expanding": "#2E7D32",
+                "stable": "#1565C0",
+                "slowing": "#EF6C00",
+                "contracting": "#C62828",
+            }.get(signal, "#616161")
+
+            themes = sector_summary.get("key_themes", [])
+            themes_html = ""
+            if themes:
+                for t in themes[:6]:
+                    themes_html += (
+                        f'<li style="margin-bottom:4px; opacity:0.75; font-size:14px;">'
+                        f'{_html.escape(str(t))}'
+                        "</li>"
+                    )
+            else:
+                themes_html = '<li style="opacity:0.6; font-size:14px;">No themes available yet.</li>'
+
+            fresh_n = sector_summary.get("fresh_companies", 0)
+            total_n = sector_summary.get("total_companies", len(companies))
+            headline = _html.escape(str(sector_summary.get("sector_headline", "")))
+
+            st.markdown(
+                f"""
+                <div style="background: rgba(128,128,128,0.06); border: 1px solid rgba(128,128,128,0.15);
+                     border-left: 4px solid {type_color}; border-radius: 8px; padding: 16px 20px; margin-bottom: 12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span style="background:{type_color}; color:white; padding:3px 10px; border-radius:4px;
+                                  font-size:12px; font-weight:600;">{sector_type.upper()}</span>
+                            <span style="background:{signal_color}; color:white; padding:3px 10px; border-radius:4px;
+                                  font-size:12px; font-weight:600;">{signal.upper()}</span>
+                        </div>
+                        <span style="font-size:13px; opacity:0.55; font-family:monospace;">
+                            Fresh: {fresh_n}/{total_n}
+                        </span>
+                    </div>
+                    <div style="margin-top:8px; font-size:16px; font-weight:600;">{headline}</div>
+                    <div style="margin-top:10px; font-size:13px; opacity:0.7;">Key Themes</div>
+                    <ul style="padding-left:18px; margin-top:6px; margin-bottom:0;">
+                        {themes_html}
+                    </ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            sentiment_colors = {
+                "bullish": "#2E7D32",
+                "neutral": "#1565C0",
+                "bearish": "#C62828",
+            }
+
+            for company in companies:
+                ticker = _html.escape(str(company.get("ticker", "")))
+                name = _html.escape(str(company.get("company_name", "")))
+                sub_sector = _html.escape(str(company.get("sub_sector", "")))
+                sentiment = str(company.get("sentiment", "neutral")).lower()
+                sentiment_color = sentiment_colors.get(sentiment, "#616161")
+
+                quarter = company.get("quarter")
+                year = company.get("year")
+                quarter_str = f"Q{quarter} {year}" if quarter and year else "N/A"
+                stale = bool(company.get("is_stale")) or bool(company.get("missing_data"))
+                stale_badge = "STALE" if stale else "FRESH"
+                stale_color = "#EF6C00" if stale else "#2E7D32"
+
+                headline = _html.escape(str(company.get("summary_headline", "")))
+                demand = _html.escape(str(company.get("demand_trends", "")))
+                pricing = _html.escape(str(company.get("pricing_commentary", "")))
+                guidance = _html.escape(str(company.get("guidance_outlook", "")))
+
+                conditions_html = ""
+                for cond in company.get("business_conditions", [])[:6]:
+                    conditions_html += (
+                        f'<li style="margin-bottom:4px; opacity:0.75; font-size:14px;">'
+                        f'{_html.escape(str(cond))}'
+                        "</li>"
+                    )
+                if not conditions_html:
+                    conditions_html = '<li style="opacity:0.6; font-size:14px;">No business condition bullets yet.</li>'
+
+                quotes_html = ""
+                for q in company.get("macro_quotes", [])[:4]:
+                    quotes_html += (
+                        f'<li style="margin-bottom:4px; opacity:0.75; font-size:14px;">'
+                        f'"{_html.escape(str(q))}"'
+                        "</li>"
+                    )
+                if not quotes_html:
+                    quotes_html = '<li style="opacity:0.6; font-size:14px;">No macro quotes extracted.</li>'
+
+                st.markdown(
+                    f"""
+                    <div style="background: rgba(128,128,128,0.04); border: 1px solid rgba(128,128,128,0.12);
+                         border-radius: 8px; padding: 14px 16px; margin-bottom: 10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <span style="background:{type_color}; color:white; padding:3px 10px; border-radius:4px;
+                                      font-size:11px; font-weight:600;">{sector_type.upper()}</span>
+                                <span style="background:{sentiment_color}; color:white; padding:3px 10px; border-radius:4px;
+                                      font-size:11px; font-weight:600;">{sentiment.upper()}</span>
+                                <span style="background:{stale_color}; color:white; padding:3px 10px; border-radius:4px;
+                                      font-size:11px; font-weight:600;">{stale_badge}</span>
+                                <span style="font-size:16px; font-weight:600;">{ticker} - {name}</span>
+                                <span style="font-size:13px; opacity:0.6;">({sub_sector})</span>
+                            </div>
+                            <span style="font-size:13px; opacity:0.55; font-family:monospace;">{quarter_str}</span>
+                        </div>
+                        <div style="margin-top:8px; font-size:15px; font-weight:600; opacity:0.92;">{headline}</div>
+                        <div style="margin-top:10px; font-size:13px; opacity:0.7;">Business Conditions</div>
+                        <ul style="padding-left:18px; margin-top:6px; margin-bottom:8px;">
+                            {conditions_html}
+                        </ul>
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px;">
+                            <div>
+                                <div style="font-size:13px; opacity:0.7;">Demand Trends</div>
+                                <div style="font-size:14px; opacity:0.85;">{demand}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:13px; opacity:0.7;">Pricing Commentary</div>
+                                <div style="font-size:14px; opacity:0.85;">{pricing}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:13px; opacity:0.7;">Guidance Outlook</div>
+                                <div style="font-size:14px; opacity:0.85;">{guidance}</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:10px; font-size:13px; opacity:0.7;">Macro Quotes</div>
+                        <ul style="padding-left:18px; margin-top:6px; margin-bottom:0;">
+                            {quotes_html}
+                        </ul>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 
 # =============================================================================

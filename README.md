@@ -21,7 +21,9 @@ This will install:
 - fredapi - FRED API client
 - matplotlib - Data visualization
 - numpy - Numerical computing
+- openai - LLM summarization
 - pandas - Data manipulation
+- python-dotenv - environment variable loading
 - requests - HTTP library
 - rich - Terminal formatting
 - yfinance - Yahoo Finance data
@@ -49,6 +51,15 @@ This project uses environment variables to securely manage API keys.
    - Visit: https://fred.stlouisfed.org/docs/api/api_key.html
    - Sign up for a free account
    - Copy your API key into the `.env` file
+
+4. **Get your Financial Modeling Prep API key (for industry transcripts):**
+   - Visit: https://site.financialmodelingprep.com/developer/docs
+   - Sign up for an API key
+   - Add `FMP_API_KEY=...` to `.env`
+
+5. **Get your OpenAI API key (for transcript summarization):**
+   - Visit: https://platform.openai.com/api-keys
+   - Add `OPENAI_API_KEY=...` to `.env`
 
 ### 3. Verify Installation
 
@@ -94,6 +105,8 @@ load_env()
 # Now you can use os.environ as usual
 import os
 fred_key = os.environ.get('FRED_API_KEY')
+fmp_key = os.environ.get('FMP_API_KEY')
+openai_key = os.environ.get('OPENAI_API_KEY')
 ```
 
 ## Security Notes
