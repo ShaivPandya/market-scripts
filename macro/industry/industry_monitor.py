@@ -132,8 +132,11 @@ def _get_pdf_path(sector: str, ticker: str) -> str:
 
 
 def _extract_text_from_pdf(pdf_path: str) -> str:
+    import logging
+
     from pdfminer.high_level import extract_text
 
+    logging.getLogger("pdfminer").setLevel(logging.ERROR)
     return extract_text(pdf_path) or ""
 
 
@@ -625,6 +628,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
 
     # Phase 2: Summarize via LLM in parallel
     if not to_summarize:
+        print("[INFO] Industry data fetch complete — all transcripts up to date, no new summaries needed.")
         return
 
     def _do_summarize(item: tuple[str, str, dict]) -> tuple[str, dict]:
@@ -636,6 +640,8 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
         for future in as_completed(futures):
             row_id, summary = future.result()
             _set_summary(conn, row_id, summary)
+
+    print(f"[INFO] Industry data fetch and summarization complete — {len(to_summarize)} transcript(s) summarized.")
 
 
 def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:

@@ -258,9 +258,12 @@ def iter_feed_items() -> Iterable[Item]:
 def _fetch_and_store(conn: sqlite3.Connection) -> None:
     """Fetch RSS feeds, extract content, store in DB."""
     headers = {"User-Agent": "cb-summarizer/0.1 (+contact: you@example.com)"}
+    fetched = 0
+    summarized = 0
     with httpx.Client(headers=headers) as client:
         for item in iter_feed_items():
             upsert_item(conn, item)
+            fetched += 1
 
             row = conn.execute("SELECT content_text FROM items WHERE guid=?", (item.guid,)).fetchone()
             if row and row[0]:
@@ -279,8 +282,11 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
                     }
                     summary = summarize_with_llm(text, meta)
                     set_summary(conn, item.guid, summary)
+                    summarized += 1
             except Exception as ex:
                 print(f"[WARN] {item.source} fetch failed: {item.url} -> {ex}")
+
+    print(f"[INFO] Central bank data fetch and summarization complete — {fetched} item(s) fetched, {summarized} new summary(ies) generated.")
 
 def _query_items(conn: sqlite3.Connection) -> list[dict]:
     """Query stored items and return as list of dicts."""
