@@ -1,6 +1,6 @@
 """
 Industry earnings monitor:
-- Fetch latest earnings call transcripts from Financial Modeling Prep (FMP)
+- Read earnings call transcripts from local PDF files in macro/industry/files/
 - Summarize with OpenAI (optional fallback if key/package is unavailable)
 - Cache transcripts + summaries in SQLite
 - Return structured data for Streamlit GUI consumption
@@ -13,11 +13,9 @@ import json
 import os
 import re
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
@@ -71,19 +69,9 @@ SECTORS = {
     },
 }
 
-FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 DB_PATH = "industry_transcripts.sqlite3"
 SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", "gpt-4.1-mini")
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
-
-
-# ---------- Data model ----------
-@dataclass(frozen=True)
-class TranscriptPeriod:
-    ticker: str
-    year: int
-    quarter: int
-    transcript_date: str
 
 
 # ---------- Helpers ----------
@@ -99,32 +87,6 @@ def _resolve_db_path(db_path: Optional[str] = None) -> str:
 
 def _make_id(ticker: str, year: int, quarter: int) -> str:
     return f"{ticker}_{year}_Q{quarter}"
-
-
-def _coerce_int(value) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    s = str(value).strip()
-    if not s:
-        return None
-    try:
-        return int(float(s))
-    except Exception:
-        return None
-
-
-def _parse_quarter(value) -> Optional[int]:
-    q = _coerce_int(value)
-    if q in (1, 2, 3, 4):
-        return q
-    if value is None:
-        return None
-    m = re.search(r"([1-4])", str(value).upper())
-    if not m:
-        return None
-    return int(m.group(1))
 
 
 def _extract_text_sample(text: str, max_words: int = 70) -> str:
@@ -156,6 +118,87 @@ def _sentiment_value(sentiment: str) -> int:
     if v == "bearish":
         return -1
     return 0
+
+
+# ---------- PDF helpers ----------
+_TICKER_FILENAME_MAP = {"ODFL": "ODL"}
+
+
+def _get_pdf_path(sector: str, ticker: str) -> str:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    base = _TICKER_FILENAME_MAP.get(ticker, ticker)
+    return os.path.join(script_dir, "files", sector.lower(), f"{base}.pdf")
+
+
+def _extract_text_from_pdf(pdf_path: str) -> str:
+    from pdfminer.high_level import extract_text
+
+    return extract_text(pdf_path) or ""
+
+
+_QUARTER_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4,
+}
+
+
+def _parse_period_from_text(text: str, pdf_path: str) -> tuple[int, int, str]:
+    header = text[:3000]
+    year: Optional[int] = None
+    quarter: Optional[int] = None
+    transcript_date = ""
+
+    m = re.search(r"Q([1-4])\s+(\d{4})", header)
+    if m:
+        quarter, year = int(m.group(1)), int(m.group(2))
+    else:
+        m = re.search(r"(\d{4})\s+Q([1-4])", header)
+        if m:
+            year, quarter = int(m.group(1)), int(m.group(2))
+
+    if quarter is None:
+        for word, num in _QUARTER_WORDS.items():
+            if re.search(rf"\b{word}\s+quarter", header, re.IGNORECASE):
+                quarter = num
+                break
+
+    if year is None:
+        m = re.search(r"\b(20[2-3]\d)\b", header)
+        if m:
+            year = int(m.group(1))
+
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", header)
+    if m:
+        transcript_date = m.group(0)
+    else:
+        months = (
+            "January|February|March|April|May|June|"
+            "July|August|September|October|November|December"
+        )
+        m = re.search(
+            rf"({months})\s+(\d{{1,2}}),?\s+(\d{{4}})", header
+        )
+        if m:
+            month_map = {
+                "January": "01", "February": "02", "March": "03",
+                "April": "04", "May": "05", "June": "06",
+                "July": "07", "August": "08", "September": "09",
+                "October": "10", "November": "11", "December": "12",
+            }
+            transcript_date = (
+                f"{m.group(3)}-{month_map[m.group(1)]}-{int(m.group(2)):02d}"
+            )
+
+    if year is None or quarter is None:
+        dt = datetime.fromtimestamp(os.path.getmtime(pdf_path))
+        if year is None:
+            year = dt.year
+        if quarter is None:
+            quarter = (dt.month - 1) // 3 + 1
+    if not transcript_date:
+        dt = datetime.fromtimestamp(os.path.getmtime(pdf_path))
+        transcript_date = dt.strftime("%Y-%m-%d")
+
+    return year, quarter, transcript_date
 
 
 # ---------- Storage ----------
@@ -274,112 +317,6 @@ def _set_summary(conn: sqlite3.Connection, row_id: str, summary: dict) -> None:
         (json.dumps(summary, ensure_ascii=False), _now_iso(), row_id),
     )
     conn.commit()
-
-
-# ---------- FMP ----------
-def _fmp_get(client: httpx.Client, path: str, params: dict) -> list | dict:
-    api_key = os.environ.get("FMP_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("FMP_API_KEY is not set")
-
-    payload = dict(params)
-    payload["apikey"] = api_key
-    url = f"{FMP_BASE_URL}/{path.lstrip('/')}"
-    resp = client.get(url, params=payload, timeout=45)
-    resp.raise_for_status()
-    data = resp.json()
-    if isinstance(data, dict):
-        if data.get("Error Message"):
-            raise RuntimeError(str(data.get("Error Message")))
-        if data.get("error"):
-            raise RuntimeError(str(data.get("error")))
-    return data
-
-
-def _parse_period_row(ticker: str, row: dict) -> Optional[TranscriptPeriod]:
-    year = _coerce_int(row.get("year") or row.get("fiscalYear") or row.get("calendarYear"))
-    quarter = _parse_quarter(row.get("quarter") or row.get("fiscalQuarter"))
-    if year is None or quarter is None:
-        return None
-
-    transcript_date = str(
-        row.get("date")
-        or row.get("fillingDate")
-        or row.get("acceptedDate")
-        or row.get("publishedDate")
-        or ""
-    ).strip()
-
-    return TranscriptPeriod(
-        ticker=ticker,
-        year=year,
-        quarter=quarter,
-        transcript_date=transcript_date,
-    )
-
-
-def fetch_latest_period(client: httpx.Client, ticker: str) -> Optional[TranscriptPeriod]:
-    raw = _fmp_get(client, "earning-call-transcript-dates", {"symbol": ticker})
-    if isinstance(raw, dict):
-        rows = [raw]
-    elif isinstance(raw, list):
-        rows = raw
-    else:
-        rows = []
-
-    periods: list[TranscriptPeriod] = []
-    for row in rows:
-        if isinstance(row, dict):
-            p = _parse_period_row(ticker, row)
-            if p:
-                periods.append(p)
-    if not periods:
-        return None
-
-    periods.sort(key=lambda p: (p.year, p.quarter, p.transcript_date))
-    return periods[-1]
-
-
-def fetch_transcript_text(
-    client: httpx.Client, ticker: str, year: int, quarter: int
-) -> tuple[str, str]:
-    raw = _fmp_get(
-        client,
-        "earning-call-transcript",
-        {"symbol": ticker, "year": year, "quarter": quarter},
-    )
-    if isinstance(raw, dict):
-        rows = [raw]
-    elif isinstance(raw, list):
-        rows = raw
-    else:
-        rows = []
-
-    transcript_date = ""
-    text_keys = (
-        "content",
-        "transcript",
-        "text",
-        "preparedRemarks",
-        "prepared_remarks",
-    )
-    date_keys = ("date", "fillingDate", "acceptedDate", "publishedDate")
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if not transcript_date:
-            for key in date_keys:
-                val = str(row.get(key) or "").strip()
-                if val:
-                    transcript_date = val
-                    break
-        for key in text_keys:
-            val = row.get(key)
-            if isinstance(val, str) and val.strip():
-                return val.strip(), transcript_date
-
-    return "", transcript_date
 
 
 # ---------- Summarization ----------
@@ -613,84 +550,79 @@ def _company_from_row(
 
 # ---------- Main ----------
 def _fetch_and_store(conn: sqlite3.Connection) -> None:
-    headers = {"User-Agent": "industry-monitor/0.1 (+local)"}
-    with httpx.Client(headers=headers) as client:
-        for sector, cfg in SECTORS.items():
-            sector_type = cfg["type"]
-            for ticker, company_name, sub_sector in cfg["companies"]:
-                latest = None
-                try:
-                    latest = fetch_latest_period(client, ticker)
-                except Exception as ex:
-                    print(f"[WARN] Failed to fetch transcript dates for {ticker}: {ex}")
+    for sector, cfg in SECTORS.items():
+        sector_type = cfg["type"]
+        for ticker, company_name, sub_sector in cfg["companies"]:
+            pdf_path = _get_pdf_path(sector, ticker)
 
-                if latest is None:
-                    _set_fresh_row(conn, ticker, None)
-                    continue
+            if not os.path.isfile(pdf_path):
+                print(f"[WARN] PDF file not found for {ticker}: {pdf_path}")
+                _set_fresh_row(conn, ticker, None)
+                continue
 
-                row_id = _make_id(ticker, latest.year, latest.quarter)
-                existing = _get_row_by_id(conn, row_id)
+            try:
+                transcript_text = _extract_text_from_pdf(pdf_path)
+            except Exception as ex:
+                print(f"[WARN] Failed to extract text from PDF for {ticker}: {ex}")
+                _set_fresh_row(conn, ticker, None)
+                continue
 
-                if existing and existing["transcript_text"] and existing["summary_json"]:
-                    _set_fresh_row(conn, ticker, row_id)
-                    continue
+            if not transcript_text.strip():
+                print(f"[WARN] No text extracted from PDF for {ticker}")
+                _set_fresh_row(conn, ticker, None)
+                continue
 
-                transcript_text = ""
-                transcript_date = latest.transcript_date
-                try:
-                    transcript_text, fetched_date = fetch_transcript_text(
-                        client,
-                        ticker,
-                        latest.year,
-                        latest.quarter,
-                    )
-                    if fetched_date:
-                        transcript_date = fetched_date
-                except Exception as ex:
-                    print(f"[WARN] Failed to fetch transcript for {ticker}: {ex}")
-
-                if not transcript_text.strip():
-                    _set_fresh_row(conn, ticker, None)
-                    continue
-
-                sha = hashlib.sha256(
-                    transcript_text.encode("utf-8", errors="ignore")
-                ).hexdigest()
-                now_iso = _now_iso()
-
-                _upsert_transcript(
-                    conn,
-                    row_id=row_id,
-                    ticker=ticker,
-                    company_name=company_name,
-                    sector=sector,
-                    sector_type=sector_type,
-                    sub_sector=sub_sector,
-                    year=latest.year,
-                    quarter=latest.quarter,
-                    transcript_text=transcript_text,
-                    transcript_date=transcript_date,
-                    content_sha256=sha,
-                    fetched_at=now_iso,
+            try:
+                year, quarter, transcript_date = _parse_period_from_text(
+                    transcript_text, pdf_path
                 )
+            except Exception as ex:
+                print(f"[WARN] Failed to parse period from PDF for {ticker}: {ex}")
+                _set_fresh_row(conn, ticker, None)
+                continue
+
+            sha = hashlib.sha256(
+                transcript_text.encode("utf-8", errors="ignore")
+            ).hexdigest()
+
+            row_id = _make_id(ticker, year, quarter)
+            existing = _get_row_by_id(conn, row_id)
+
+            if existing and existing["content_sha256"] == sha and existing["summary_json"]:
                 _set_fresh_row(conn, ticker, row_id)
+                continue
 
-                if existing and existing["content_sha256"] == sha and existing["summary_json"]:
-                    continue
+            now_iso = _now_iso()
+            _upsert_transcript(
+                conn,
+                row_id=row_id,
+                ticker=ticker,
+                company_name=company_name,
+                sector=sector,
+                sector_type=sector_type,
+                sub_sector=sub_sector,
+                year=year,
+                quarter=quarter,
+                transcript_text=transcript_text,
+                transcript_date=transcript_date,
+                content_sha256=sha,
+                fetched_at=now_iso,
+            )
+            _set_fresh_row(conn, ticker, row_id)
 
-                summary = summarize_with_llm(
-                    transcript_text,
-                    {
-                        "ticker": ticker,
-                        "company_name": company_name,
-                        "sector": sector,
-                        "sector_type": sector_type,
-                        "sub_sector": sub_sector,
-                        "quarter": latest.quarter,
-                        "year": latest.year,
-                    },
-                )
-                _set_summary(conn, row_id, summary)
+            summary = summarize_with_llm(
+                transcript_text,
+                {
+                    "ticker": ticker,
+                    "company_name": company_name,
+                    "sector": sector,
+                    "sector_type": sector_type,
+                    "sub_sector": sub_sector,
+                    "quarter": quarter,
+                    "year": year,
+                },
+            )
+            _set_summary(conn, row_id, summary)
 
 
 def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
