@@ -676,14 +676,15 @@ def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
     return by_sector, sectors, counts
 
 
-def get_data(db_path: str = None) -> dict:
+def get_data(db_path: str = None, refresh: bool = False) -> dict:
     db_path = _resolve_db_path(db_path)
     conn = None
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         init_db(conn)
-        _fetch_and_store(conn)
+        if refresh:
+            _fetch_and_store(conn)
         by_sector, sectors, counts = _query_data(conn)
         return {
             "by_sector": by_sector,

@@ -2631,21 +2631,24 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
     st.header("Industry Earnings Monitor")
     st.caption("Macro signal monitor from leading and coincident industry earnings calls")
 
-    if st.button("Refresh Data", key="refresh_industry_monitor"):
-        st.cache_data.clear()
-        st.rerun()
+    refresh_clicked = st.button("Refresh Data", key="refresh_industry_monitor")
 
     @st.cache_data(ttl=3600)
-    def fetch_industry_data():
+    def fetch_industry_data(refresh: bool = False):
         try:
             from industry_monitor import get_data
-            return get_data()
+            return get_data(refresh=refresh)
         except Exception as e:
             import traceback
             return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
-    with st.spinner("Fetching industry transcript summaries..."):
-        industry_data = fetch_industry_data()
+    if refresh_clicked:
+        st.cache_data.clear()
+        with st.spinner("Refreshing industry transcript summaries from PDFs..."):
+            industry_data = fetch_industry_data(refresh=True)
+    else:
+        with st.spinner("Loading industry data from cache..."):
+            industry_data = fetch_industry_data(refresh=False)
 
     if "error" in industry_data:
         st.error(f"Error: {industry_data['error']}")
