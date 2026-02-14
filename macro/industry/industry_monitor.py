@@ -70,7 +70,7 @@ SECTORS = {
 }
 
 DB_PATH = "industry_transcripts.sqlite3"
-SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", "gpt-4.1-mini")
+SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", "gpt-5-mini")
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
 
 
