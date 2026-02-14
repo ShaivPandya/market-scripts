@@ -2832,20 +2832,23 @@ elif st.session_state.current_page == "🏦 Central Banks":
     st.caption("Monetary policy releases from Fed, ECB, BoJ, BoE via RSS feeds")
 
     if st.button("Refresh Data", key="refresh_central_banks"):
+        st.session_state["cb_refresh"] = True
         st.cache_data.clear()
         st.rerun()
 
+    _cb_refresh = st.session_state.pop("cb_refresh", False)
+
     @st.cache_data(ttl=3600)
-    def fetch_central_bank_data():
+    def fetch_central_bank_data(_refresh: bool = False):
         try:
             from central_bank import get_data
-            return get_data()
+            return get_data(refresh=_refresh)
         except Exception as e:
             import traceback
             return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
     with st.spinner("Fetching central bank releases from RSS feeds..."):
-        cb_data = fetch_central_bank_data()
+        cb_data = fetch_central_bank_data(_refresh=_cb_refresh)
 
     if "error" in cb_data:
         st.error(f"Error: {cb_data['error']}")
