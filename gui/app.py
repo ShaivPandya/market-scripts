@@ -62,76 +62,29 @@ st.sidebar.divider()
 # Sidebar: Navigation Section
 st.sidebar.markdown("### Navigation")
 
-# Clickable text navigation
-if st.sidebar.button("💼 Portfolio Dashboard", width='stretch',
-                      type="primary" if st.session_state.current_page == "💼 Portfolio Dashboard" else "secondary"):
-    st.session_state.current_page = "💼 Portfolio Dashboard"
-    st.rerun()
+# Clickable navigation (grouped into sections)
+def nav_button(label: str) -> None:
+    if st.sidebar.button(
+        label,
+        width="stretch",
+        type="primary" if st.session_state.current_page == label else "secondary",
+    ):
+        st.session_state.current_page = label
+        st.rerun()
 
-if st.sidebar.button("📈 Portfolio Optimizer", width='stretch',
-                      type="primary" if st.session_state.current_page == "📈 Portfolio Optimizer" else "secondary"):
-    st.session_state.current_page = "📈 Portfolio Optimizer"
-    st.rerun()
+NAV_SECTIONS = [
+    ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum", "📐 Technical Analysis"],
+    ["📉 FX Dashboard", "🛢️ Commodities"],
+    ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
+    ["📊 Economic Growth", "💧 Liquidity"],
+    ["🏦 Central Banks", "🏭 Industry Monitor"],
+]
 
-if st.sidebar.button("🚀 Momentum", width='stretch',
-                      type="primary" if st.session_state.current_page == "🚀 Momentum" else "secondary"):
-    st.session_state.current_page = "🚀 Momentum"
-    st.rerun()
-
-if st.sidebar.button("📉 FX Dashboard", width='stretch',
-                      type="primary" if st.session_state.current_page == "📉 FX Dashboard" else "secondary"):
-    st.session_state.current_page = "📉 FX Dashboard"
-    st.rerun()
-
-if st.sidebar.button("🛢️ Commodities", width='stretch',
-                      type="primary" if st.session_state.current_page == "🛢️ Commodities" else "secondary"):
-    st.session_state.current_page = "🛢️ Commodities"
-    st.rerun()
-
-if st.sidebar.button("📊 Economic Growth", width='stretch',
-                      type="primary" if st.session_state.current_page == "📊 Economic Growth" else "secondary"):
-    st.session_state.current_page = "📊 Economic Growth"
-    st.rerun()
-
-if st.sidebar.button("📈 Market Technicals", width='stretch',
-                      type="primary" if st.session_state.current_page == "📈 Market Technicals" else "secondary"):
-    st.session_state.current_page = "📈 Market Technicals"
-    st.rerun()
-
-if st.sidebar.button("💧 Liquidity", width='stretch',
-                      type="primary" if st.session_state.current_page == "💧 Liquidity" else "secondary"):
-    st.session_state.current_page = "💧 Liquidity"
-    st.rerun()
-
-if st.sidebar.button("📌 Positioning", width='stretch',
-                      type="primary" if st.session_state.current_page == "📌 Positioning" else "secondary"):
-    st.session_state.current_page = "📌 Positioning"
-    st.rerun()
-
-if st.sidebar.button("🔔 Breakout", width='stretch',
-                      type="primary" if st.session_state.current_page == "🔔 Breakout" else "secondary"):
-    st.session_state.current_page = "🔔 Breakout"
-    st.rerun()
-
-if st.sidebar.button("💱 FX Model", width='stretch',
-                      type="primary" if st.session_state.current_page == "💱 FX Model" else "secondary"):
-    st.session_state.current_page = "💱 FX Model"
-    st.rerun()
-
-if st.sidebar.button("🏦 Central Banks", width='stretch',
-                      type="primary" if st.session_state.current_page == "🏦 Central Banks" else "secondary"):
-    st.session_state.current_page = "🏦 Central Banks"
-    st.rerun()
-
-if st.sidebar.button("📐 Technical Analysis", width='stretch',
-                      type="primary" if st.session_state.current_page == "📐 Technical Analysis" else "secondary"):
-    st.session_state.current_page = "📐 Technical Analysis"
-    st.rerun()
-
-if st.sidebar.button("🏭 Industry Monitor", width='stretch',
-                      type="primary" if st.session_state.current_page == "🏭 Industry Monitor" else "secondary"):
-    st.session_state.current_page = "🏭 Industry Monitor"
-    st.rerun()
+for i, pages in enumerate(NAV_SECTIONS):
+    for page in pages:
+        nav_button(page)
+    if i < len(NAV_SECTIONS) - 1:
+        st.sidebar.divider()
 
 # Visual separator
 st.sidebar.divider()
@@ -2678,21 +2631,24 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
     st.header("Industry Earnings Monitor")
     st.caption("Macro signal monitor from leading and coincident industry earnings calls")
 
-    if st.button("Refresh Data", key="refresh_industry_monitor"):
-        st.cache_data.clear()
-        st.rerun()
+    refresh_clicked = st.button("Refresh Data", key="refresh_industry_monitor")
 
     @st.cache_data(ttl=3600)
-    def fetch_industry_data():
+    def fetch_industry_data(refresh: bool = False):
         try:
             from industry_monitor import get_data
-            return get_data()
+            return get_data(refresh=refresh)
         except Exception as e:
             import traceback
             return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
-    with st.spinner("Fetching industry transcript summaries..."):
-        industry_data = fetch_industry_data()
+    if refresh_clicked:
+        st.cache_data.clear()
+        with st.spinner("Refreshing industry transcript summaries from PDFs..."):
+            industry_data = fetch_industry_data(refresh=True)
+    else:
+        with st.spinner("Loading industry data from cache..."):
+            industry_data = fetch_industry_data(refresh=False)
 
     if "error" in industry_data:
         st.error(f"Error: {industry_data['error']}")

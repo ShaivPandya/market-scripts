@@ -52,12 +52,7 @@ This project uses environment variables to securely manage API keys.
    - Sign up for a free account
    - Copy your API key into the `.env` file
 
-4. **Get your Financial Modeling Prep API key (for industry transcripts):**
-   - Visit: https://site.financialmodelingprep.com/developer/docs
-   - Sign up for an API key
-   - Add `FMP_API_KEY=...` to `.env`
-
-5. **Get your OpenAI API key (for transcript summarization):**
+4. **Get your OpenAI API key (for transcript summarization):**
    - Visit: https://platform.openai.com/api-keys
    - Add `OPENAI_API_KEY=...` to `.env`
 
@@ -105,7 +100,6 @@ load_env()
 # Now you can use os.environ as usual
 import os
 fred_key = os.environ.get('FRED_API_KEY')
-fmp_key = os.environ.get('FMP_API_KEY')
 openai_key = os.environ.get('OPENAI_API_KEY')
 ```
 
