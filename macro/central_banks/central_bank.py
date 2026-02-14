@@ -10,6 +10,7 @@ import re
 import json
 import hashlib
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Optional
@@ -259,34 +260,66 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
     """Fetch RSS feeds, extract content, store in DB."""
     headers = {"User-Agent": "cb-summarizer/0.1 (+contact: you@example.com)"}
     fetched = 0
-    summarized = 0
+    to_summarize: list[tuple[str, str, dict]] = []  # (guid, text, meta)
+
+    # Phase 1: Fetch feeds and extract content (sequential, involves HTTP + DB)
     with httpx.Client(headers=headers) as client:
         for item in iter_feed_items():
             upsert_item(conn, item)
             fetched += 1
 
-            row = conn.execute("SELECT content_text FROM items WHERE guid=?", (item.guid,)).fetchone()
-            if row and row[0]:
+            row = conn.execute("SELECT content_text, summary_json FROM items WHERE guid=?", (item.guid,)).fetchone()
+            has_content = row and row[0]
+            has_proper_summary = False
+            if has_content and row[1]:
+                try:
+                    existing = json.loads(row[1])
+                    has_proper_summary = bool(existing.get("signals"))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            if has_content and has_proper_summary:
                 continue
 
-            try:
-                text = extract_full_text(client, item.url)
-                if text.strip():
-                    set_content(conn, item.guid, text)
-                    meta = {
-                        "source": item.source,
-                        "kind": item.kind,
-                        "title": item.title,
-                        "published_at": item.published_at.isoformat(),
-                        "url": item.url,
-                    }
-                    summary = summarize_with_llm(text, meta)
-                    set_summary(conn, item.guid, summary)
-                    summarized += 1
-            except Exception as ex:
-                print(f"[WARN] {item.source} fetch failed: {item.url} -> {ex}")
+            meta = {
+                "source": item.source,
+                "kind": item.kind,
+                "title": item.title,
+                "published_at": item.published_at.isoformat(),
+                "url": item.url,
+            }
 
-    print(f"[INFO] Central bank data fetch and summarization complete — {fetched} item(s) fetched, {summarized} new summary(ies) generated.")
+            if has_content:
+                to_summarize.append((item.guid, row[0], meta))
+            else:
+                try:
+                    text = extract_full_text(client, item.url)
+                    if text.strip():
+                        set_content(conn, item.guid, text)
+                        to_summarize.append((item.guid, text, meta))
+                except Exception as ex:
+                    print(f"[WARN] {item.source} fetch failed: {item.url} -> {ex}")
+
+    # Phase 2: Summarize via LLM in parallel
+    if not to_summarize:
+        print(f"[INFO] Central bank data fetch complete — {fetched} item(s) checked, no new summaries needed.")
+        return
+
+    def _do_summarize(item: tuple[str, str, dict]) -> tuple[str, dict]:
+        guid, text, meta = item
+        return guid, summarize_with_llm(text, meta)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_do_summarize, item): item for item in to_summarize}
+        for future in as_completed(futures):
+            try:
+                guid, summary = future.result()
+                set_summary(conn, guid, summary)
+            except Exception as ex:
+                failed = futures[future]
+                print(f"[WARN] Summarization failed for {failed[2]['source']} {failed[2]['kind']}: {ex}")
+
+    print(f"[INFO] Central bank data fetch and summarization complete — {fetched} item(s) fetched, {len(to_summarize)} new summary(ies) generated.")
 
 def _query_items(conn: sqlite3.Connection) -> list[dict]:
     """Query stored items and return as list of dicts."""
