@@ -24,10 +24,20 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), overrid
 
 # ---------- Config ----------
 FEEDS = {
-    "ECB": "https://www.ecb.europa.eu/rss/press.html",
-    "FED": "https://www.federalreserve.gov/feeds/press_monetary.xml",
-    "BOJ": "https://www.boj.or.jp/en/rss/whatsnew.xml",
-    "BOE": "https://www.bankofengland.co.uk/rss/news",
+    "ECB": [
+        "https://www.ecb.europa.eu/rss/press.html",
+    ],
+    "FED": [
+        "https://www.federalreserve.gov/feeds/press_monetary.xml",
+        "https://www.federalreserve.gov/feeds/press_other.xml",
+    ],
+    "BOJ": [
+        "https://www.boj.or.jp/en/rss/whatsnew.xml",
+    ],
+    "BOE": [
+        "https://www.bankofengland.co.uk/rss/news",
+        "https://www.bankofengland.co.uk/rss/publications",
+    ],
 }
 
 # Heuristic classifiers (tune over time)
@@ -38,6 +48,13 @@ CLASSIFIERS = [
     ("ECB", "Monetary policy statement", re.compile(r"\bMonetary policy statement\b", re.I)),
     ("BOJ", "Statement on Monetary Policy", re.compile(r"\bStatement on Monetary Policy\b", re.I)),
     ("BOE", "Monetary Policy Summary and Minutes", re.compile(r"\bMonetary Policy Summary and Minutes\b", re.I)),
+    ("ECB", "Economic Bulletin", re.compile(r"\bEconomic Bulletin\b", re.I)),
+    ("BOJ", "Summary of Opinions", re.compile(r"\bSummary of Opinions\b", re.I)),
+    ("BOJ", "Regional Economic Report (Sakura Report)", re.compile(r"\bRegional Economic Report\b", re.I)),
+    ("FED", "FOMC Economic Projections (SEP)", re.compile(r"\beconomic projections\b", re.I)),
+    ("FED", "Beige Book", re.compile(r"\bBeige Book\b", re.I)),
+    ("ECB", "Macroeconomic projections", re.compile(r"\bmacroeconomic projections\b", re.I)),
+    ("BOE", "Monetary Policy Report", re.compile(r"\bMonetary Policy Report\b", re.I)),
 ]
 
 DB_PATH = "centralbank_summaries.sqlite3"
@@ -223,19 +240,20 @@ def _resolve_db_path(db_path: Optional[str] = None) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
 
 def iter_feed_items() -> Iterable[Item]:
-    for source, feed_url in FEEDS.items():
-        feed = feedparser.parse(feed_url)
-        for e in feed.entries:
-            title = e.get("title", "").strip()
-            url = (e.get("link") or "").strip()
-            if not title or not url:
-                continue
-            kind = classify(source, title, url)
-            if not kind:
-                continue
-            published_at = _to_dt(e)
-            guid = (e.get("id") or url).strip()
-            yield Item(source=source, title=title, url=url, published_at=published_at, guid=guid, kind=kind)
+    for source, feed_urls in FEEDS.items():
+        for feed_url in feed_urls:
+            feed = feedparser.parse(feed_url)
+            for e in feed.entries:
+                title = e.get("title", "").strip()
+                url = (e.get("link") or "").strip()
+                if not title or not url:
+                    continue
+                kind = classify(source, title, url)
+                if not kind:
+                    continue
+                published_at = _to_dt(e)
+                guid = (e.get("id") or url).strip()
+                yield Item(source=source, title=title, url=url, published_at=published_at, guid=guid, kind=kind)
 
 def _fetch_and_store(conn: sqlite3.Connection) -> None:
     """Fetch RSS feeds, extract content, store in DB."""
