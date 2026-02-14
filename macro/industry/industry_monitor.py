@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -408,12 +409,10 @@ Transcript:
     resp = client.responses.create(
         model=SUMMARY_MODEL,
         input=prompt,
+        text={"format": {"type": "json_object"}},
     )
 
     out = (resp.output_text or "").strip()
-    if out.startswith("```"):
-        out = re.sub(r"^```(?:json)?\s*", "", out)
-        out = re.sub(r"\s*```$", "", out)
     if not out:
         raise ValueError("OpenAI returned empty response")
     parsed = json.loads(out)
@@ -550,6 +549,9 @@ def _company_from_row(
 
 # ---------- Main ----------
 def _fetch_and_store(conn: sqlite3.Connection) -> None:
+    # Phase 1: Extract PDFs and upsert transcripts (fast, sequential)
+    to_summarize: list[tuple[str, str, dict]] = []  # (row_id, text, meta)
+
     for sector, cfg in SECTORS.items():
         sector_type = cfg["type"]
         for ticker, company_name, sub_sector in cfg["companies"]:
@@ -610,18 +612,29 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
             )
             _set_fresh_row(conn, ticker, row_id)
 
-            summary = summarize_with_llm(
-                transcript_text,
-                {
-                    "ticker": ticker,
-                    "company_name": company_name,
-                    "sector": sector,
-                    "sector_type": sector_type,
-                    "sub_sector": sub_sector,
-                    "quarter": quarter,
-                    "year": year,
-                },
-            )
+            meta = {
+                "ticker": ticker,
+                "company_name": company_name,
+                "sector": sector,
+                "sector_type": sector_type,
+                "sub_sector": sub_sector,
+                "quarter": quarter,
+                "year": year,
+            }
+            to_summarize.append((row_id, transcript_text, meta))
+
+    # Phase 2: Summarize via LLM in parallel
+    if not to_summarize:
+        return
+
+    def _do_summarize(item: tuple[str, str, dict]) -> tuple[str, dict]:
+        row_id, text, meta = item
+        return row_id, summarize_with_llm(text, meta)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_do_summarize, item): item for item in to_summarize}
+        for future in as_completed(futures):
+            row_id, summary = future.result()
             _set_summary(conn, row_id, summary)
 
 
