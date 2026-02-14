@@ -29,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "equities" / "momentum" / "price_momentum"
 sys.path.insert(0, str(PROJECT_ROOT / "fx" / "model"))
 sys.path.insert(0, str(PROJECT_ROOT / "fx" / "fx_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "commodities"))
+sys.path.insert(0, str(PROJECT_ROOT / "equities" / "index_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
@@ -74,7 +75,7 @@ def nav_button(label: str) -> None:
 
 NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum", "📐 Technical Analysis"],
-    ["📉 FX Dashboard", "🛢️ Commodities"],
+    ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodities"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity"],
     ["🏦 Central Banks", "🏭 Industry Monitor"],
@@ -2190,6 +2191,91 @@ elif st.session_state.current_page == "🛢️ Commodities":
                         else:
                             st.metric(commodity_name, "N/A")
                             st.warning(f"No data for {commodity_name}")
+
+
+# =============================================================================
+# PAGE: Index Dashboard
+# =============================================================================
+elif st.session_state.current_page == "📊 Index Dashboard":
+    st.header("Index Dashboard")
+    st.caption("Closing-price time series for 5 major equity indices via Yahoo Finance")
+
+    if st.button("Refresh Data", key="refresh_index_dashboard"):
+        st.cache_data.clear()
+
+    # Timeframe toggle
+    index_timeframe = st.radio(
+        "Timeframe",
+        ["Daily", "Weekly", "Monthly"],
+        horizontal=True,
+        key="index_dashboard_timeframe",
+    )
+
+    @st.cache_data(ttl=300)
+    def fetch_index_dashboard(timeframe: str):
+        try:
+            from index_dashboard import get_data
+            return get_data(timeframe=timeframe)
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner("Fetching Index data from Yahoo Finance..."):
+        index_dash_data = fetch_index_dashboard(index_timeframe)
+
+    if "error" in index_dash_data:
+        st.error(f"Error: {index_dash_data['error']}")
+    else:
+        indices = index_dash_data.get("indices", {})
+        timestamp = index_dash_data.get("timestamp")
+        if timestamp:
+            st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if not indices:
+            st.warning("No index data returned")
+        else:
+            from index_dashboard import INDEX_ORDER
+            import math
+
+            num_cols = 3
+            num_rows = math.ceil(len(INDEX_ORDER) / num_cols)
+
+            for row_idx in range(num_rows):
+                cols = st.columns(num_cols)
+                for col_idx in range(num_cols):
+                    index_idx = row_idx * num_cols + col_idx
+                    if index_idx >= len(INDEX_ORDER):
+                        break
+                    index_name = INDEX_ORDER[index_idx]
+                    series = indices.get(index_name)
+
+                    with cols[col_idx]:
+                        if series is not None and not series.empty:
+                            latest = series.iloc[-1]
+                            first = series.iloc[0]
+                            pct = ((latest - first) / first) * 100
+                            st.metric(
+                                index_name,
+                                f"{latest:,.2f}",
+                                f"{pct:+.2f}%",
+                            )
+                            import altair as alt
+                            chart_df = pd.DataFrame(
+                                {"date": series.index, index_name: series.values},
+                            )
+                            chart = (
+                                alt.Chart(chart_df)
+                                .mark_line()
+                                .encode(
+                                    x=alt.X("date:T", title=None),
+                                    y=alt.Y(f"{index_name}:Q", scale=alt.Scale(zero=False), title=None),
+                                )
+                                .properties(height=200)
+                            )
+                            st.altair_chart(chart, width="stretch")
+                        else:
+                            st.metric(index_name, "N/A")
+                            st.warning(f"No data for {index_name}")
 
 
 # =============================================================================
