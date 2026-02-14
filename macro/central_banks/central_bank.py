@@ -44,17 +44,17 @@ FEEDS = {
 CLASSIFIERS = [
     ("FED", "FOMC statement", re.compile(r"\bFOMC statement\b", re.I)),
     ("FED", "FOMC minutes (press release)", re.compile(r"\bMinutes of the Federal Open Market Committee\b", re.I)),
-    ("ECB", "Monetary policy decisions", re.compile(r"\bMonetary policy decisions?\b", re.I)),
-    ("ECB", "Monetary policy statement", re.compile(r"\bMonetary policy statement\b", re.I)),
-    ("BOJ", "Statement on Monetary Policy", re.compile(r"\bStatement on Monetary Policy\b", re.I)),
-    ("BOE", "Monetary Policy Summary and Minutes", re.compile(r"\bMonetary Policy Summary and Minutes\b", re.I)),
-    ("ECB", "Economic Bulletin", re.compile(r"\bEconomic Bulletin\b", re.I)),
-    ("BOJ", "Summary of Opinions", re.compile(r"\bSummary of Opinions\b", re.I)),
-    ("BOJ", "Regional Economic Report (Sakura Report)", re.compile(r"\bRegional Economic Report\b", re.I)),
     ("FED", "FOMC Economic Projections (SEP)", re.compile(r"\beconomic projections\b", re.I)),
     ("FED", "Beige Book", re.compile(r"\bBeige Book\b", re.I)),
+    ("ECB", "Monetary policy decisions", re.compile(r"\bMonetary policy decisions?\b", re.I)),
+    ("ECB", "Monetary policy statement", re.compile(r"\bMonetary policy statement\b", re.I)),
+    ("ECB", "Economic Bulletin", re.compile(r"\bEconomic Bulletin\b", re.I)),
     ("ECB", "Macroeconomic projections", re.compile(r"\bmacroeconomic projections\b", re.I)),
+    ("BOE", "Monetary Policy Summary and Minutes", re.compile(r"\bMonetary Policy Summary and Minutes\b", re.I)),
     ("BOE", "Monetary Policy Report", re.compile(r"\bMonetary Policy Report\b", re.I)),
+    ("BOJ", "Summary of Opinions", re.compile(r"\bSummary of Opinions\b", re.I)),
+    ("BOJ", "Regional Economic Report (Sakura Report)", re.compile(r"\bRegional Economic Report\b", re.I)),
+    ("BOJ", "Statement on Monetary Policy", re.compile(r"\bStatement on Monetary Policy\b", re.I)),
 ]
 
 DB_PATH = "centralbank_summaries.sqlite3"
