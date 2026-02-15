@@ -50,9 +50,6 @@ st.set_page_config(
 if "current_page" not in st.session_state:
     st.session_state.current_page = "💼 Portfolio Dashboard"
 
-# Visual separator
-st.sidebar.divider()
-
 # Sidebar: Navigation Section
 st.sidebar.markdown("### Navigation")
 
