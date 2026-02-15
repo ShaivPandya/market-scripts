@@ -1984,11 +1984,13 @@ elif st.session_state.current_page == "🚀 Momentum":
             # Build DataFrame for display
             rows = []
             for r in results:
+                vol_roc = r.get('avg20_vol_roc63')
                 rows.append({
                     "Ticker": r["ticker"],
                     "Benchmark": r["benchmark"],
                     "Close": f"{r['close']:.2f}",
                     "20d Avg 63d ROC (%)": f"{r['avg20_roc63']:+.2f}",
+                    "20d Avg 63d Vol ROC (%)": f"{vol_roc:+.2f}" if vol_roc is not None else "N/A",
                     "42d Rel ROC (%)": f"{r['rel_roc42']:+.2f}",
                     "10d Avg Rel ROC (%)": f"{r['avg10_rel_roc']:+.2f}",
                 })
@@ -2001,7 +2003,7 @@ elif st.session_state.current_page == "🚀 Momentum":
                 subset=["20d Avg 63d ROC (%)"]
             ).applymap(
                 color_positive_negative,
-                subset=["42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
+                subset=["20d Avg 63d Vol ROC (%)", "42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
             )
 
             st.dataframe(styled_df, width="stretch", hide_index=True)

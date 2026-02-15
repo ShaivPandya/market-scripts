@@ -52,12 +52,14 @@ def safe_div(a: float, b: float) -> float:
 def compute_momentum_metrics(
     ticker_prices: pd.Series,
     benchmark_prices: pd.Series,
+    ticker_volume: Optional[pd.Series] = None,
 ) -> Optional[Dict[str, float]]:
     """
     Compute momentum metrics for a single ticker relative to benchmark.
 
     Returns dict with:
         - avg20_roc63: 20-day average of 63-day ROC (%)
+        - avg20_vol_roc63: 20-day average of 63-day volume ROC (%)
         - rel_roc42: 42-day ROC of relative price (%)
         - avg10_rel_roc: 10-day average of relative ROC (%)
 
@@ -79,13 +81,24 @@ def compute_momentum_metrics(
     roc63 = (prices / prices.shift(63) - 1.0) * 100.0
     avg20_roc63 = roc63.rolling(window=20, min_periods=20).mean()
 
-    # 2. Relative price calculations
+    # 2. 20-day avg of 63-day ROC (%) - volume
+    avg20_vol_roc63 = np.nan
+    if ticker_volume is not None:
+        vol = ticker_volume.reindex(combined.index)
+        vol = vol[vol > 0].reindex(combined.index)
+        if vol.notna().sum() >= MIN_DATA_POINTS:
+            vol_roc63 = (vol / vol.shift(63) - 1.0) * 100.0
+            avg20_vol_roc63_series = vol_roc63.rolling(window=20, min_periods=20).mean()
+            if not pd.isna(avg20_vol_roc63_series.iloc[-1]):
+                avg20_vol_roc63 = float(avg20_vol_roc63_series.iloc[-1])
+
+    # 3. Relative price calculations
     relative_price = prices / benchmark
 
     # 42-day ROC of relative price
     rel_roc42 = (relative_price / relative_price.shift(42) - 1.0) * 100.0
 
-    # 3. 10-day avg of relative ROC
+    # 4. 10-day avg of relative ROC
     avg10_rel_roc = rel_roc42.rolling(window=10, min_periods=10).mean()
 
     # Get latest values
@@ -94,6 +107,7 @@ def compute_momentum_metrics(
 
     return {
         "avg20_roc63": float(avg20_roc63.iloc[-1]),
+        "avg20_vol_roc63": float(avg20_vol_roc63),
         "rel_roc42": float(rel_roc42.iloc[-1]),
         "avg10_rel_roc": float(avg10_rel_roc.iloc[-1]),
     }
@@ -107,6 +121,7 @@ def fetch_price_momentum_batch(
     tickers: List[str],
     benchmark_map: Dict[str, str],
     prices: pd.DataFrame,
+    volumes: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     Compute price momentum metrics for multiple tickers in batch.
@@ -115,9 +130,10 @@ def fetch_price_momentum_batch(
         tickers: List of ticker symbols
         benchmark_map: Dict mapping ticker -> benchmark ticker
         prices: DataFrame with tickers as columns, dates as index (already fetched)
+        volumes: DataFrame with tickers as columns, dates as index (already fetched)
 
     Returns:
-        DataFrame with tickers as index and columns: avg20_roc63, rel_roc42, avg10_rel_roc
+        DataFrame with tickers as index and columns: avg20_roc63, avg20_vol_roc63, rel_roc42, avg10_rel_roc
     """
     raw_metrics: Dict[str, Dict[str, float]] = {}
     failed_tickers: List[str] = []
@@ -135,7 +151,10 @@ def fetch_price_momentum_batch(
             continue
 
         benchmark_prices = prices[benchmark].dropna()
-        metrics = compute_momentum_metrics(ticker_prices, benchmark_prices)
+        ticker_volume = None
+        if volumes is not None and ticker in volumes.columns:
+            ticker_volume = volumes[ticker].dropna()
+        metrics = compute_momentum_metrics(ticker_prices, benchmark_prices, ticker_volume)
 
         if metrics is None:
             failed_tickers.append(ticker)
