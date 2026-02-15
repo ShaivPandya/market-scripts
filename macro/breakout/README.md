@@ -1,11 +1,6 @@
 # Breakout Detector (Daily)
 
-This project contains a Python script that scans a small universe of **major currency pairs** and **major commodity futures** for:
-
-1) **Tight congestion** (a compressed, low-volatility range), followed by  
-2) A **close-based breakout** from that congestion, confirmed by **volume expansion** (or a proxy when volume is unavailable).
-
----
+This module scans the FX/commodity universe for a strict congestion regime and prior-bar breakout signals.
 
 ## Universe
 
@@ -23,95 +18,81 @@ This project contains a Python script that scans a small universe of **major cur
 - Silver (`SI=F`)
 - Copper (`HG=F`)
 - Platinum (`PL=F`)
+- Aluminum (`ALI=F`)
+- Palladium (`PA=F`)
 
----
+## Formula
 
-## What the Script Does
+Inputs:
+- `ATR period = 14` (Wilder ATR / RMA)
+- `Congestion lookback = 30`
+- `ATR compression lookback = 100`
+- `SMA period = 20`
 
-For each symbol:
-1. Downloads **daily OHLCV** data from Yahoo Finance using `yfinance`.
-2. Computes features/indicators needed for congestion and breakout detection.
-3. Detects an **active congestion box** and checks whether the **latest daily bar** is a confirmed breakout.
-4. Prints a table of any confirmed breakouts found on the most recent bar.
+Definitions:
+- `atr = ATR(14)`
+- `range_high = highest(high, 30)`
+- `range_low = lowest(low, 30)`
 
-If there is no confirmed breakout on the latest bar for any instrument, it prints a message indicating none were found.
+Congestion conditions (all required):
+- `atr <= lowest(atr, 100) * 1.25`
+- `(range_high - range_low) / atr <= 6`
+- `abs(close - SMA(20)) <= atr`
 
----
+Regime flag:
+- `congestion = all conditions true`
 
-## Congestion Definition (Step 3)
+Breakouts (no stops, no exits):
+- `long_breakout = congestion[1] AND close > range_high[1]`
+- `short_breakout = congestion[1] AND close < range_low[1]`
 
-The script defines congestion as a **Donchian range box** + **compression filters** + **minimum duration**.
+## Data API (`get_data()`)
 
-### Box boundaries (Donchian)
-Using a rolling window `Wc` (default 20):
-- `upper = highest High over Wc`
-- `lower = lowest Low over Wc`
-- `box_range = upper - lower`
+`get_data()` returns:
 
-### Tightness filters
-A day is considered “tight” when:
-- `box_range <= range_atr_mult * ATR(atr_n)`  
-- Bollinger Band width is low relative to history:  
-  `BBWidth <= rolling_quantile(BBWidth, lookback=252, q=0.20)`
+- `latest`: one row per asset for the latest bar with flags and core indicator values.
+- `events`: all historical breakout events (`LONG`/`SHORT`).
+- `history`: per-ticker full daily rows (OHLC + formula columns + flags).
+- `params`: active parameter values.
+- `error`: included only if analysis fails.
 
-### Duration requirement
-Congestion is “confirmed” when at least `k_min` of the last `Wc` days are “tight”.
+### `latest` row fields
 
-Default: `k_min = 8` of the last `Wc = 20`.
+- `market`, `name`, `ticker`, `date`
+- `close`, `atr`, `atr_min100`, `range_high30`, `range_low30`, `sma20`, `range_atr_ratio`
+- `cond_atr_compression`, `cond_range_atr`, `cond_sma_distance`
+- `congestion`, `long_breakout`, `short_breakout`, `direction`
 
----
+### `events` row fields
 
-## Box Handling: Commodities vs FX
+- `market`, `name`, `ticker`, `date`, `direction`
+- `close`, `atr`, `range_high30_prev`, `range_low30_prev`, `congestion_prev`
 
-### Commodities: Frozen Box
-Once congestion is confirmed, the script freezes `upper/lower` until the box resolves (breakout or invalidation).
+### `history[ticker].rows` row fields
 
-### FX: Hybrid Box
-Once congestion is confirmed, the script freezes `upper/lower` but allows small boundary updates **only if they are within a tolerance**:
-- `tol = fx_tol_atr * ATR(atr_n)` (default `0.15 * ATR(20)`)
+- `date`, `open`, `high`, `low`, `close`
+- `atr`, `atr_min100`, `range_high30`, `range_low30`, `sma20`, `range_atr_ratio`
+- `cond_atr_compression`, `cond_range_atr`, `cond_sma_distance`
+- `congestion`, `long_breakout`, `short_breakout`
 
-This helps capture slow “drifting” compressions in FX without letting the boundary creep too much.
+## CLI
 
----
+Run:
 
-## Breakout Definition (Step 4)
+```bash
+python3 macro/breakout/breakout.py
+```
 
-### Close-based trigger
-A breakout occurs when the **Close** exits the congestion box by a volatility-scaled buffer:
-
-- `buffer = buffer_k * ATR(atr_n)` (default `0.20 * ATR(20)`)
-
-Then:
-- Up breakout: `Close > upper + buffer`
-- Down breakout: `Close < lower - buffer`
-
-### Confirmation: Volume expansion
-Breakouts are confirmed only if:
-- `Volume > vol_mult * VolMA(vol_ma_n)`  
-Default: `Volume > 1.20 * SMA(Volume, 20)`
-
----
-
-## Important Note About FX Volume (Yahoo Finance)
-
-Yahoo Finance spot FX data frequently has **no reliable volume** (often 0 or missing).
-
-In that case, the script uses a **proxy for participation/expansion**:
-- `TR > vol_mult * SMA(TR, vol_ma_n)`  
-It will label the output with `VolMethod = TR_PROXY`.
-
-For commodities, Yahoo futures volume is typically present, so the script uses real `Volume`.
-
----
+CLI output shows:
+- latest long breakouts
+- latest short breakouts
+- assets currently in congestion
+- recent historical breakout events
 
 ## Requirements
 
-- Python 3.9+
-- Packages:
-  - `yfinance`
-  - `pandas`
-  - `numpy`
-
 Install:
+
 ```bash
 pip install yfinance pandas numpy
+```

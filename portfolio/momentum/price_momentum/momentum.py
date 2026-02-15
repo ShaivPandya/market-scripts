@@ -4,8 +4,9 @@ Momentum ROC Analysis
 
 Computes:
 1) 20-day avg of 63-day ROC (%) - absolute price
-2) 42-day ROC (%) of relative price to benchmark
-3) 10-day avg of ROC (%) of relative price to benchmark
+2) 20-day avg of 63-day ROC (%) - volume
+3) 42-day ROC (%) of relative price to benchmark
+4) 10-day avg of ROC (%) of relative price to benchmark
 
 Usage:
     python3 momentum.py AAPL --benchmark SPY
@@ -50,7 +51,12 @@ def colorize(value: float, threshold: float, below_is_red: bool = True) -> str:
     return f"{color}{value:.6f}{RESET}"
 
 
-def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
+def fetch_prices_yfinance(ticker: str, years: int = 5) -> tuple[pd.Series, pd.Series]:
+    """Fetch price and volume series for a single ticker.
+
+    Returns:
+        Tuple of (price_series, volume_series).
+    """
     try:
         import yfinance as yf
     except ImportError:
@@ -74,23 +80,31 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
 
     col = "Adj Close" if "Adj Close" in df.columns else "Close"
     s = df[col].dropna().copy()
+    v = df["Volume"].dropna().copy()
 
     if isinstance(s, pd.DataFrame):
         s = s.squeeze()
+    if isinstance(v, pd.DataFrame):
+        v = v.squeeze()
 
     s.index = pd.to_datetime(s.index).tz_localize(None)
-    return s
+    v.index = pd.to_datetime(v.index).tz_localize(None)
+    return s, v
 
 
-def fetch_prices_batch(tickers: list[str], years: int = 5) -> dict[str, pd.Series]:
-    """Download multiple tickers in a single API call (much faster than sequential)."""
+def fetch_prices_batch(tickers: list[str], years: int = 5) -> tuple[dict[str, pd.Series], dict[str, pd.Series]]:
+    """Download multiple tickers in a single API call (much faster than sequential).
+
+    Returns:
+        Tuple of (prices_map, volumes_map) where each maps ticker -> Series.
+    """
     try:
         import yfinance as yf
     except ImportError:
         raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
 
     if not tickers:
-        return {}
+        return {}, {}
 
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
@@ -106,32 +120,44 @@ def fetch_prices_batch(tickers: list[str], years: int = 5) -> dict[str, pd.Serie
     )
 
     if df is None or df.empty:
-        return {}
+        return {}, {}
 
-    result = {}
+    prices = {}
+    volumes = {}
     # Handle single vs multiple ticker response format
     if len(tickers) == 1:
         col = "Adj Close" if "Adj Close" in df.columns else "Close"
         s = df[col].dropna().copy()
+        v = df["Volume"].dropna().copy()
         if isinstance(s, pd.DataFrame):
             s = s.squeeze()
+        if isinstance(v, pd.DataFrame):
+            v = v.squeeze()
         s.index = pd.to_datetime(s.index).tz_localize(None)
-        result[tickers[0]] = s
+        v.index = pd.to_datetime(v.index).tz_localize(None)
+        prices[tickers[0]] = s
+        volumes[tickers[0]] = v
     else:
         # Multi-ticker: columns are MultiIndex (metric, ticker)
         col = "Adj Close" if "Adj Close" in df.columns.get_level_values(0) else "Close"
         for ticker in tickers:
             try:
                 s = df[col][ticker].dropna().copy()
+                v = df["Volume"][ticker].dropna().copy()
                 if isinstance(s, pd.DataFrame):
                     s = s.squeeze()
+                if isinstance(v, pd.DataFrame):
+                    v = v.squeeze()
                 s.index = pd.to_datetime(s.index).tz_localize(None)
+                v.index = pd.to_datetime(v.index).tz_localize(None)
                 if len(s) > 0:
-                    result[ticker] = s
+                    prices[ticker] = s
+                if len(v) > 0:
+                    volumes[ticker] = v
             except (KeyError, TypeError):
                 continue
 
-    return result
+    return prices, volumes
 
 
 def fetch_metadata_batch(tickers: list[str], max_workers: int = 10) -> dict[str, tuple]:
@@ -211,6 +237,7 @@ def analyze_ticker(
     benchmark_prices: pd.Series,
     years: int,
     ticker_prices: pd.Series | None = None,
+    ticker_volume: pd.Series | None = None,
 ) -> dict | None:
     """Analyze a single ticker and return results dict, or None on error.
 
@@ -219,10 +246,11 @@ def analyze_ticker(
         benchmark_prices: Pre-fetched benchmark price series
         years: Years of history (used only if ticker_prices not provided)
         ticker_prices: Pre-fetched ticker prices (if None, will fetch)
+        ticker_volume: Pre-fetched ticker volume (if None, will fetch)
     """
     if ticker_prices is None:
         try:
-            ticker_prices = fetch_prices_yfinance(ticker, years=years)
+            ticker_prices, ticker_volume = fetch_prices_yfinance(ticker, years=years)
         except Exception as e:
             print(f"Error fetching {ticker}: {e}", file=sys.stderr)
             return None
@@ -245,13 +273,25 @@ def analyze_ticker(
     roc63 = (prices / prices.shift(63) - 1.0) * 100.0
     avg20_roc63 = roc63.rolling(window=20, min_periods=20).mean()
 
+    # 2. 20-day avg of 63-day ROC (%) - volume
+    avg20_vol_roc63 = None
+    if ticker_volume is not None:
+        vol = ticker_volume.reindex(combined.index)
+        vol = vol.where(vol > 0)
+        if vol.notna().sum() >= min_points:
+            vol_roc63 = (vol / vol.shift(63) - 1.0) * 100.0
+            avg20_vol_roc63_series = vol_roc63.rolling(window=20, min_periods=20).mean()
+            valid = avg20_vol_roc63_series.dropna()
+            if not valid.empty:
+                avg20_vol_roc63 = float(valid.iloc[-1])
+
     # Relative price calculations
     relative_price = combined["ticker"] / combined["benchmark"]
 
-    # 2. 42-day ROC (%) of relative price
+    # 3. 42-day ROC (%) of relative price
     rel_roc42 = (relative_price / relative_price.shift(42) - 1.0) * 100.0
 
-    # 3. 10-day avg of ROC (%) of relative price
+    # 4. 10-day avg of ROC (%) of relative price
     avg10_rel_roc = rel_roc42.rolling(window=10, min_periods=10).mean()
 
     return {
@@ -259,6 +299,7 @@ def analyze_ticker(
         "date": combined.index[-1],
         "close": float(prices.iloc[-1]),
         "avg20_roc63": float(avg20_roc63.iloc[-1]),
+        "avg20_vol_roc63": avg20_vol_roc63,
         "rel_roc42": float(rel_roc42.iloc[-1]),
         "avg10_rel_roc": float(avg10_rel_roc.iloc[-1]),
     }
@@ -302,7 +343,7 @@ def get_data(universe: str = None, years: int = 5) -> dict:
         all_symbols = list(set(tickers) | all_benchmarks)
 
         # Batch download all prices at once
-        prices_map = fetch_prices_batch(all_symbols, years=years)
+        prices_map, volumes_map = fetch_prices_batch(all_symbols, years=years)
 
         # Analyze each ticker using pre-fetched data
         results = []
@@ -316,7 +357,7 @@ def get_data(universe: str = None, years: int = 5) -> dict:
             if benchmark_prices is None:
                 continue
 
-            result = analyze_ticker(ticker, benchmark_prices, years, ticker_prices=ticker_prices)
+            result = analyze_ticker(ticker, benchmark_prices, years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker))
             if result:
                 result["benchmark"] = benchmark_ticker
                 results.append(result)
@@ -394,7 +435,7 @@ def main() -> int:
 
     # Batch download all prices at once
     print(f"Downloading prices for {len(all_symbols)} symbols...")
-    prices_map = fetch_prices_batch(all_symbols, years=args.years)
+    prices_map, volumes_map = fetch_prices_batch(all_symbols, years=args.years)
 
     # Process each ticker using pre-fetched data
     results = []
@@ -410,7 +451,7 @@ def main() -> int:
             print(f"No data for benchmark {benchmark_ticker}", file=sys.stderr)
             continue
 
-        result = analyze_ticker(ticker, benchmark_prices, args.years, ticker_prices=ticker_prices)
+        result = analyze_ticker(ticker, benchmark_prices, args.years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker))
         if result:
             result["benchmark"] = benchmark_ticker
             results.append(result)
@@ -431,6 +472,8 @@ def main() -> int:
             print(f"As of: {r['date'].date().isoformat()}")
         print(f"Ticker: {r['ticker']:<6}  Close: {r['close']:.4f}")
         print(f"  20-day avg of 63-day ROC (%):        {colorize(r['avg20_roc63'], 1.5)}")
+        vol_str = colorize(r['avg20_vol_roc63'], 0) if r.get('avg20_vol_roc63') is not None else "N/A"
+        print(f"  20-day avg of 63-day vol ROC (%):    {vol_str}")
         print(f"  42-day ROC of relative price (%):   {colorize(r['rel_roc42'], 0)}")
         print(f"  10-day avg of relative ROC (%):     {colorize(r['avg10_rel_roc'], 0)}")
         print()

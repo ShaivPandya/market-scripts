@@ -50,16 +50,6 @@ st.set_page_config(
 if "current_page" not in st.session_state:
     st.session_state.current_page = "💼 Portfolio Dashboard"
 
-# Sidebar: Settings Section
-st.sidebar.title("Settings")
-auto_refresh = st.sidebar.checkbox("Auto-refresh", value=False)
-if auto_refresh:
-    refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 60, 600, 300)
-    st.sidebar.info(f"Will refresh every {refresh_interval}s")
-
-# Visual separator
-st.sidebar.divider()
-
 # Sidebar: Navigation Section
 st.sidebar.markdown("### Navigation")
 
@@ -75,10 +65,10 @@ def nav_button(label: str) -> None:
 
 NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum", "📐 Technical Analysis"],
-    ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodities"],
+    ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity"],
-    ["🏦 Central Banks", "🏭 Industry Monitor"],
+    ["🏦 Central Bank Monitor", "🏭 Industry Monitor"],
 ]
 
 for i, pages in enumerate(NAV_SECTIONS):
@@ -976,7 +966,7 @@ elif st.session_state.current_page == "📌 Positioning":
 
     if view == "Instrument summary":
         sorted_aliases = sorted(INSTRUMENTS.keys())
-        default_aliases = [alias for alias in ["SP500", "NASDAQ", "US10Y", "EUR"] if alias in INSTRUMENTS]
+        default_aliases = [alias for alias in ["SP500", "NASDAQ", "RUSSELL", "US10Y", "EUR"] if alias in INSTRUMENTS]
         selected = st.multiselect("Instrument aliases", options=sorted_aliases, default=default_aliases)
         if not selected:
             st.info("Select at least one instrument alias to fetch positioning.")
@@ -1313,7 +1303,7 @@ elif st.session_state.current_page == "📌 Positioning":
 # =============================================================================
 elif st.session_state.current_page == "🔔 Breakout":
     st.header("Breakout Detector")
-    st.caption("FX & Commodities: Tight congestion box breakouts with volume confirmation")
+    st.caption("Daily congestion regime + prior-bar range breakouts (formula-only)")
 
     if st.button("Refresh Data", key="refresh_breakout"):
         st.cache_data.clear()
@@ -1329,287 +1319,295 @@ elif st.session_state.current_page == "🔔 Breakout":
             import traceback
             return {"error": f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"}
 
-    def render_position_bar(close, box_lower, box_upper, buffer):
-        """Render an HTML bar showing price position within the box."""
-        if box_lower is None or box_upper is None or box_lower >= box_upper:
-            return ""
-
-        # Calculate breakout levels
-        up_breakout = box_upper + buffer
-        down_breakout = box_lower - buffer
-
-        # Full range includes buffer zones
-        full_range = up_breakout - down_breakout
-        if full_range <= 0:
-            return ""
-
-        # Calculate positions as percentages
-        box_start_pct = ((box_lower - down_breakout) / full_range) * 100
-        box_end_pct = ((box_upper - down_breakout) / full_range) * 100
-        price_pct = ((close - down_breakout) / full_range) * 100
-        price_pct = max(0, min(100, price_pct))
-
-        return f'''
-        <div style="position: relative; height: 24px; background: linear-gradient(to right,
-            #ff1744 0%, #ff1744 {box_start_pct}%,
-            #2d2d2d {box_start_pct}%, #2d2d2d {box_end_pct}%,
-            #00c853 {box_end_pct}%, #00c853 100%);
-            border-radius: 4px; margin: 4px 0;">
-            <div style="position: absolute; left: {price_pct}%; top: 0; bottom: 0;
-                width: 3px; background: white; border-radius: 2px;
-                box-shadow: 0 0 4px rgba(255,255,255,0.8);"></div>
-            <div style="position: absolute; left: {box_start_pct}%; top: 0; bottom: 0;
-                width: 1px; background: rgba(255,255,255,0.3);"></div>
-            <div style="position: absolute; left: {box_end_pct}%; top: 0; bottom: 0;
-                width: 1px; background: rgba(255,255,255,0.3);"></div>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888; margin-top: 2px;">
-            <span>▼ {down_breakout:.4f}</span>
-            <span style="color: #666;">Box: {box_lower:.4f} - {box_upper:.4f}</span>
-            <span>▲ {up_breakout:.4f}</span>
-        </div>
-        '''
-
-    def render_progress_bar(value, max_value, color="#00c853", label=""):
-        """Render a progress bar with percentage."""
-        if max_value <= 0:
-            pct = 0
-        else:
-            pct = min(100, (value / max_value) * 100)
-        return f'''
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <div style="flex: 1; height: 8px; background: #2d2d2d; border-radius: 4px; overflow: hidden;">
-                <div style="width: {pct}%; height: 100%; background: {color}; border-radius: 4px;"></div>
-            </div>
-            <span style="font-size: 12px; color: #888; min-width: 60px;">{label}</span>
-        </div>
-        '''
-
-    def render_distance_indicator(dist_up, dist_down):
-        """Render visual distance indicators for breakout levels."""
-        up_color = "#00c853" if dist_up is not None and abs(dist_up) < 1 else "#4a4a4a"
-        down_color = "#ff1744" if dist_down is not None and abs(dist_down) < 1 else "#4a4a4a"
-
-        up_str = f"{dist_up:+.2f}%" if dist_up is not None else "N/A"
-        down_str = f"{dist_down:+.2f}%" if dist_down is not None else "N/A"
-
-        # Highlight if close to breakout
-        up_highlight = "font-weight: bold; text-shadow: 0 0 8px #00c853;" if dist_up is not None and abs(dist_up) < 1 else ""
-        down_highlight = "font-weight: bold; text-shadow: 0 0 8px #ff1744;" if dist_down is not None and abs(dist_down) < 1 else ""
-
-        return f'''
-        <div style="display: flex; justify-content: space-around; padding: 4px 0;">
-            <div style="text-align: center;">
-                <div style="font-size: 18px; color: {up_color}; {up_highlight}">▲</div>
-                <div style="font-size: 14px; color: {up_color}; {up_highlight}">{up_str}</div>
-                <div style="font-size: 10px; color: #666;">to breakout</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 18px; color: {down_color}; {down_highlight}">▼</div>
-                <div style="font-size: 14px; color: {down_color}; {down_highlight}">{down_str}</div>
-                <div style="font-size: 10px; color: #666;">to breakout</div>
-            </div>
-        </div>
-        '''
-
-    def render_volume_gauge(vol_ratio, threshold):
-        """Render a volume readiness gauge."""
-        if vol_ratio is None:
-            return '<div style="color: #666; font-size: 12px;">Volume: N/A</div>'
-
-        pct = min(100, (vol_ratio / threshold) * 100)
-        color = "#00c853" if vol_ratio >= threshold else "#ffc107" if pct >= 80 else "#666"
-        status = "Ready" if vol_ratio >= threshold else "Building" if pct >= 80 else "Low"
-
-        return f'''
-        <div style="text-align: center;">
-            <div style="font-size: 11px; color: #888; margin-bottom: 2px;">Volume</div>
-            <div style="width: 60px; height: 60px; border-radius: 50%; border: 3px solid {color};
-                display: flex; align-items: center; justify-content: center; margin: 0 auto;">
-                <div>
-                    <div style="font-size: 14px; font-weight: bold; color: {color};">{vol_ratio:.2f}x</div>
-                    <div style="font-size: 9px; color: #666;">/ {threshold:.2f}x</div>
-                </div>
-            </div>
-            <div style="font-size: 10px; color: {color}; margin-top: 4px;">{status}</div>
-        </div>
-        '''
-
     with st.spinner("Fetching breakout data from Yahoo Finance..."):
         breakout_data = fetch_breakout()
 
     if "error" in breakout_data:
         st.error(f"Error: {breakout_data['error']}")
     else:
-        signals = breakout_data.get("signals", [])
-        in_box = breakout_data.get("in_box", [])
-        near_misses = breakout_data.get("near_misses", [])
-        not_in_box = breakout_data.get("not_in_box", [])
+        latest = breakout_data.get("latest", [])
+        events = breakout_data.get("events", [])
+        history = breakout_data.get("history", {})
+        params = breakout_data.get("params", {})
 
-        # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
+        latest_df = pd.DataFrame(latest)
+        events_df = pd.DataFrame(events)
+
+        if not latest_df.empty and "date" in latest_df.columns:
+            latest_df["date"] = pd.to_datetime(latest_df["date"], errors="coerce")
+        if not events_df.empty and "date" in events_df.columns:
+            events_df["date"] = pd.to_datetime(events_df["date"], errors="coerce")
+
+        assets_count = len(latest_df)
+        congestion_count = int(latest_df["congestion"].fillna(False).sum()) if "congestion" in latest_df else 0
+        latest_long_count = int(latest_df["long_breakout"].fillna(False).sum()) if "long_breakout" in latest_df else 0
+        latest_short_count = int(latest_df["short_breakout"].fillna(False).sum()) if "short_breakout" in latest_df else 0
+        total_events = len(events_df)
+
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("Confirmed Breakouts", len(signals))
+            st.metric("Assets", assets_count)
         with col2:
-            st.metric("In Consolidation", len(in_box))
+            st.metric("In Congestion", congestion_count)
         with col3:
-            st.metric("Near Misses", len(near_misses))
+            st.metric("Latest Long", latest_long_count)
         with col4:
-            st.metric("Not in Box", len(not_in_box))
+            st.metric("Latest Short", latest_short_count)
+        with col5:
+            st.metric("Historical Events", total_events)
 
         st.divider()
 
-        # Confirmed Breakouts
-        if signals:
-            st.subheader("🚀 Confirmed Breakouts")
-            for sig in signals:
-                dir_color = "#00c853" if sig["direction"] == "UP" else "#ff1744"
-                dir_symbol = "▲" if sig["direction"] == "UP" else "▼"
-                bg_color = "rgba(0, 200, 83, 0.1)" if sig["direction"] == "UP" else "rgba(255, 23, 68, 0.1)"
+        with st.expander("Formula and Parameters", expanded=False):
+            st.code(
+                "atr = ATR(14)\n"
+                "congestion = (\n"
+                "  atr <= lowest(atr, 100) * 1.25\n"
+                "  AND (highest(high, 30) - lowest(low, 30)) / atr <= 6\n"
+                "  AND abs(close - SMA(20)) <= atr\n"
+                ")\n"
+                "long_breakout = congestion[1] AND close > range_high[1]\n"
+                "short_breakout = congestion[1] AND close < range_low[1]"
+            )
+            st.json(params)
 
-                st.markdown(f'''
-                <div style="background: {bg_color}; border: 1px solid {dir_color}; border-radius: 8px; padding: 16px; margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <span style="font-size: 20px; font-weight: bold; color: white;">{sig['name']}</span>
-                            <span style="color: #888; margin-left: 8px;">({sig['market']})</span>
-                        </div>
-                        <div style="font-size: 24px; color: {dir_color}; font-weight: bold;">
-                            {dir_symbol} {sig['direction']} BREAKOUT
-                        </div>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 12px; color: #ccc;">
-                        <div><strong>Close:</strong> {sig['close']:.4f}</div>
-                        <div><strong>Box:</strong> {sig['box_lower']:.4f} - {sig['box_upper']:.4f}</div>
-                        <div><strong>Volume:</strong> {sig['vol_ratio']:.2f}x</div>
-                        <div><strong>Date:</strong> {sig['date'][:10]}</div>
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
-            st.divider()
-
-        # Assets in Consolidation Boxes - Visual Cards
-        st.subheader("📦 Consolidation Boxes")
-        if in_box:
-            st.info(f"{len(in_box)} asset(s) in consolidation - watching for breakouts")
-
-            # Create two columns for cards
-            cols = st.columns(2)
-            for idx, d in enumerate(in_box):
-                with cols[idx % 2]:
-                    # Determine if close to breakout
-                    close_to_up = d['dist_to_up_breakout_pct'] is not None and abs(d['dist_to_up_breakout_pct']) < 1
-                    close_to_down = d['dist_to_down_breakout_pct'] is not None and abs(d['dist_to_down_breakout_pct']) < 1
-                    border_color = "#00c853" if close_to_up else "#ff1744" if close_to_down else "#444"
-
-                    st.markdown(f'''
-                    <div style="background: #1e1e1e; border: 2px solid {border_color}; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-size: 16px; font-weight: bold; color: white;">{d['name']}</span>
-                            <span style="color: #888; font-size: 12px;">{d['market']}</span>
-                        </div>
-                        <div style="color: #ccc; margin-bottom: 8px;">
-                            <strong>Close:</strong> {d['close']:.4f}
-                        </div>
-                        {render_position_bar(d['close'], d['box_lower'], d['box_upper'], d['buffer'])}
-                        {render_distance_indicator(d['dist_to_up_breakout_pct'], d['dist_to_down_breakout_pct'])}
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                            <div style="flex: 1;">
-                                {render_progress_bar(d['days_in_box'] or 0, 60, "#ffc107", f"Day {d['days_in_box'] or 0}/60")}
-                            </div>
-                            <div style="margin-left: 12px;">
-                                {render_volume_gauge(d['vol_ratio'], d['vol_threshold'])}
-                            </div>
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
+        st.subheader("Latest Snapshot")
+        if latest_df.empty:
+            st.caption("No assets available from data source.")
         else:
-            st.caption("No assets currently in consolidation boxes")
+            latest_view = latest_df.copy().sort_values(["market", "name"])
+            latest_view["date"] = latest_view["date"].dt.date
+            for col in [
+                "cond_atr_compression",
+                "cond_range_atr",
+                "cond_sma_distance",
+                "congestion",
+                "long_breakout",
+                "short_breakout",
+            ]:
+                if col in latest_view.columns:
+                    latest_view[col] = latest_view[col].map(lambda x: "YES" if bool(x) else "")
 
-        # Near Misses
-        st.subheader("⚠️ Near Misses")
-        if near_misses:
-            for d in near_misses:
-                direction = "UP" if "up" in d["status"] else "DOWN"
-                dir_color = "#00c853" if direction == "UP" else "#ff1744"
-                dir_symbol = "▲" if direction == "UP" else "▼"
+            snapshot_cols = [
+                "date",
+                "market",
+                "name",
+                "ticker",
+                "close",
+                "atr",
+                "atr_min100",
+                "range_high30",
+                "range_low30",
+                "sma20",
+                "range_atr_ratio",
+                "cond_atr_compression",
+                "cond_range_atr",
+                "cond_sma_distance",
+                "congestion",
+                "long_breakout",
+                "short_breakout",
+            ]
+            snapshot_cols = [c for c in snapshot_cols if c in latest_view.columns]
+            st.dataframe(latest_view[snapshot_cols], use_container_width=True, hide_index=True)
 
-                st.markdown(f'''
-                <div style="background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <span style="font-weight: bold; color: white;">{d['name']}</span>
-                            <span style="color: #888; margin-left: 8px;">({d['market']})</span>
-                        </div>
-                        <span style="color: {dir_color};">{dir_symbol} {direction}</span>
-                    </div>
-                    <div style="color: #ffc107; font-size: 13px; margin-top: 8px;">
-                        ⚠️ {d['near_miss_reason']}
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
+        st.subheader("Historical Breakout Events")
+        if events_df.empty:
+            st.caption("No historical events in current data window.")
         else:
-            st.caption("No near misses")
-
-        # Assets Not in Consolidation - Compact View
-        with st.expander(f"📊 Not in Consolidation ({len(not_in_box)})", expanded=False):
-            if not_in_box:
-                for d in not_in_box:
-                    tight = d['tight_count'] if d['tight_count'] is not None else 0
-                    threshold = d['tight_threshold']
-                    pct = (tight / threshold) * 100 if threshold > 0 else 0
-
-                    # Color based on how close to forming a box
-                    progress_color = "#00c853" if pct >= 100 else "#ffc107" if pct >= 60 else "#666"
-
-                    chg_5d = d['pct_change_5d']
-                    chg_20d = d['pct_change_20d']
-                    chg_5d_color = "#00c853" if chg_5d and chg_5d > 0 else "#ff1744" if chg_5d and chg_5d < 0 else "#666"
-                    chg_20d_color = "#00c853" if chg_20d and chg_20d > 0 else "#ff1744" if chg_20d and chg_20d < 0 else "#666"
-                    chg_5d_str = f"{chg_5d:+.2f}%" if chg_5d is not None else "N/A"
-                    chg_20d_str = f"{chg_20d:+.2f}%" if chg_20d is not None else "N/A"
-
-                    bb_pctl = d['bb_width_percentile']
-                    vol_status = "Very Tight" if bb_pctl and bb_pctl <= 25 else "Tight" if bb_pctl and bb_pctl <= 40 else "Normal" if bb_pctl and bb_pctl <= 60 else "Elevated" if bb_pctl and bb_pctl <= 80 else "High" if bb_pctl else "N/A"
-                    vol_color = "#00c853" if bb_pctl and bb_pctl <= 40 else "#ffc107" if bb_pctl and bb_pctl <= 60 else "#666"
-
-                    st.markdown(f'''
-                    <div style="background: #1a1a1a; border-radius: 6px; padding: 10px; margin-bottom: 8px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div>
-                                <span style="font-weight: bold; color: white;">{d['name']}</span>
-                                <span style="color: #666; margin-left: 8px; font-size: 12px;">{d['market']}</span>
-                            </div>
-                            <div style="font-size: 13px; color: #888;">
-                                Close: <span style="color: white;">{d['close']:.4f}</span>
-                            </div>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                            <div style="flex: 1;">
-                                <div style="font-size: 11px; color: #666; margin-bottom: 2px;">Congestion Progress</div>
-                                <div style="height: 6px; background: #2d2d2d; border-radius: 3px; overflow: hidden;">
-                                    <div style="width: {pct}%; height: 100%; background: {progress_color};"></div>
-                                </div>
-                                <div style="font-size: 10px; color: {progress_color}; margin-top: 2px;">{tight}/{threshold} days</div>
-                            </div>
-                            <div style="text-align: center; margin: 0 16px;">
-                                <div style="font-size: 10px; color: #666;">Volatility</div>
-                                <div style="font-size: 12px; color: {vol_color};">{vol_status}</div>
-                            </div>
-                            <div style="text-align: right;">
-                                <div style="font-size: 11px;">
-                                    <span style="color: #666;">5d:</span> <span style="color: {chg_5d_color};">{chg_5d_str}</span>
-                                </div>
-                                <div style="font-size: 11px;">
-                                    <span style="color: #666;">20d:</span> <span style="color: {chg_20d_color};">{chg_20d_str}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                st.caption("Congestion = tight days count / threshold needed for box formation")
+            events_df = events_df.sort_values("date", ascending=False)
+            max_rows = len(events_df)
+            if max_rows == 1:
+                rows_to_show = 1
             else:
-                st.caption("All assets are in consolidation boxes")
+                min_rows = min(10, max_rows)
+                default_rows = min(100, max_rows)
+                if default_rows < min_rows:
+                    default_rows = min_rows
+                rows_to_show = st.slider(
+                    "Rows to display",
+                    min_value=min_rows,
+                    max_value=max_rows,
+                    value=default_rows,
+                    key="breakout_events_rows",
+                )
+
+            event_view = events_df.head(rows_to_show).copy()
+            event_view["date"] = event_view["date"].dt.date
+            event_cols = [
+                "date",
+                "market",
+                "name",
+                "ticker",
+                "direction",
+                "close",
+                "atr",
+                "range_high30_prev",
+                "range_low30_prev",
+                "congestion_prev",
+            ]
+            event_cols = [c for c in event_cols if c in event_view.columns]
+            st.dataframe(event_view[event_cols], use_container_width=True, hide_index=True)
+
+        st.subheader("History Charts")
+        if not history or latest_df.empty:
+            st.caption("No history available for charting.")
+        else:
+            import matplotlib.pyplot as plt
+
+            labels = []
+            label_to_ticker = {}
+            for row in latest:
+                label = f"{row['name']} ({row['market']}) [{row['ticker']}]"
+                labels.append(label)
+                label_to_ticker[label] = row["ticker"]
+
+            labels = sorted(labels)
+            selected_label = st.selectbox("Asset", options=labels, key="breakout_asset_select")
+            selected_ticker = label_to_ticker[selected_label]
+
+            selected_history = history.get(selected_ticker, {})
+            hist_rows = selected_history.get("rows", [])
+            if not hist_rows:
+                st.caption("No historical rows for selected asset.")
+            else:
+                hist_df = pd.DataFrame(hist_rows)
+                hist_df["date"] = pd.to_datetime(hist_df["date"], errors="coerce")
+                hist_df = hist_df.dropna(subset=["date"]).sort_values("date")
+
+                numeric_cols = [
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "atr",
+                    "atr_min100",
+                    "range_high30",
+                    "range_low30",
+                    "sma20",
+                    "range_atr_ratio",
+                ]
+                for col in numeric_cols:
+                    if col in hist_df.columns:
+                        hist_df[col] = pd.to_numeric(hist_df[col], errors="coerce")
+
+                for col in [
+                    "cond_atr_compression",
+                    "cond_range_atr",
+                    "cond_sma_distance",
+                    "congestion",
+                    "long_breakout",
+                    "short_breakout",
+                ]:
+                    if col in hist_df.columns:
+                        hist_df[col] = hist_df[col].fillna(False).astype(bool)
+
+                max_bars = len(hist_df)
+                if max_bars == 0:
+                    st.caption("No chartable rows for selected asset.")
+                else:
+                    min_lookback = min(30, max_bars)
+                    default_lookback = min(252, max_bars)
+                    if max_bars == min_lookback:
+                        lookback = max_bars
+                    else:
+                        lookback = st.slider(
+                            "Lookback bars",
+                            min_value=min_lookback,
+                            max_value=max_bars,
+                            value=default_lookback,
+                            key="breakout_lookback",
+                        )
+
+                    plot_df = hist_df.tail(lookback).copy()
+
+                    fig, ax = plt.subplots(figsize=(12, 5))
+                    ax.plot(plot_df["date"], plot_df["close"], color="#1f77b4", linewidth=1.8, label="Close")
+                    ax.plot(
+                        plot_df["date"],
+                        plot_df["range_high30"],
+                        color="#00c853",
+                        linewidth=1.2,
+                        linestyle="--",
+                        label="RangeHigh30",
+                    )
+                    ax.plot(
+                        plot_df["date"],
+                        plot_df["range_low30"],
+                        color="#ff1744",
+                        linewidth=1.2,
+                        linestyle="--",
+                        label="RangeLow30",
+                    )
+
+                    congestion_mask = (
+                        plot_df["congestion"]
+                        & plot_df["range_high30"].notna()
+                        & plot_df["range_low30"].notna()
+                    )
+                    if congestion_mask.any():
+                        ax.fill_between(
+                            plot_df["date"],
+                            plot_df["range_low30"],
+                            plot_df["range_high30"],
+                            where=congestion_mask,
+                            color="#ffc107",
+                            alpha=0.2,
+                            label="Congestion Regime",
+                        )
+
+                    long_pts = plot_df[plot_df["long_breakout"]]
+                    short_pts = plot_df[plot_df["short_breakout"]]
+
+                    if not long_pts.empty:
+                        ax.scatter(
+                            long_pts["date"],
+                            long_pts["close"],
+                            color="#00c853",
+                            marker="^",
+                            s=70,
+                            label="Long Breakout",
+                            zorder=5,
+                        )
+                    if not short_pts.empty:
+                        ax.scatter(
+                            short_pts["date"],
+                            short_pts["close"],
+                            color="#ff1744",
+                            marker="v",
+                            s=70,
+                            label="Short Breakout",
+                            zorder=5,
+                        )
+
+                    ax.set_title(selected_label)
+                    ax.set_xlabel("Date")
+                    ax.set_ylabel("Price")
+                    ax.grid(True, alpha=0.25)
+                    ax.legend(loc="best")
+                    fig.autofmt_xdate()
+                    st.pyplot(fig, clear_figure=True)
+
+                    with st.expander("Raw Daily Flags (Selected Asset)", expanded=False):
+                        raw_cols = [
+                            "date",
+                            "close",
+                            "atr",
+                            "atr_min100",
+                            "range_high30",
+                            "range_low30",
+                            "sma20",
+                            "range_atr_ratio",
+                            "cond_atr_compression",
+                            "cond_range_atr",
+                            "cond_sma_distance",
+                            "congestion",
+                            "long_breakout",
+                            "short_breakout",
+                        ]
+                        raw_cols = [c for c in raw_cols if c in plot_df.columns]
+                        raw_view = plot_df[raw_cols].sort_values("date", ascending=False).copy()
+                        raw_view["date"] = raw_view["date"].dt.date
+                        st.dataframe(raw_view, use_container_width=True, hide_index=True)
 
 
 # =============================================================================
@@ -1994,11 +1992,13 @@ elif st.session_state.current_page == "🚀 Momentum":
             # Build DataFrame for display
             rows = []
             for r in results:
+                vol_roc = r.get('avg20_vol_roc63')
                 rows.append({
                     "Ticker": r["ticker"],
                     "Benchmark": r["benchmark"],
                     "Close": f"{r['close']:.2f}",
                     "20d Avg 63d ROC (%)": f"{r['avg20_roc63']:+.2f}",
+                    "20d Avg 63d Vol ROC (%)": f"{vol_roc:+.2f}" if vol_roc is not None else "N/A",
                     "42d Rel ROC (%)": f"{r['rel_roc42']:+.2f}",
                     "10d Avg Rel ROC (%)": f"{r['avg10_rel_roc']:+.2f}",
                 })
@@ -2011,7 +2011,7 @@ elif st.session_state.current_page == "🚀 Momentum":
                 subset=["20d Avg 63d ROC (%)"]
             ).applymap(
                 color_positive_negative,
-                subset=["42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
+                subset=["20d Avg 63d Vol ROC (%)", "42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
             )
 
             st.dataframe(styled_df, width="stretch", hide_index=True)
@@ -2109,7 +2109,7 @@ elif st.session_state.current_page == "📉 FX Dashboard":
 # =============================================================================
 # PAGE: Commodities Dashboard
 # =============================================================================
-elif st.session_state.current_page == "🛢️ Commodities":
+elif st.session_state.current_page == "🛢️ Commodity Dashboard":
     st.header("Commodities Dashboard")
     st.caption("Closing-price time series for 9 major commodities via Yahoo Finance")
 
@@ -2913,9 +2913,35 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
 # =============================================================================
 # PAGE: Central Banks
 # =============================================================================
-elif st.session_state.current_page == "🏦 Central Banks":
+elif st.session_state.current_page == "🏦 Central Bank Monitor":
     st.header("Central Bank Monitor")
-    st.caption("Monetary policy releases from Fed, ECB, BoJ, BoE via RSS feeds")
+    st.caption("Monetary policy releases from central banks worldwide via RSS feeds")
+
+    try:
+        from central_bank import DEFAULT_SOURCES, FEEDS as CB_FEEDS
+        _all_cb_sources = list(CB_FEEDS.keys())
+    except Exception:
+        DEFAULT_SOURCES = ["FED", "ECB", "BOJ", "BOE"]
+        _all_cb_sources = DEFAULT_SOURCES
+
+    SOURCE_COLORS = {
+        "FED": "#1B5E20", "ECB": "#003399", "BOJ": "#B71C1C", "BOE": "#4A148C",
+        "BOC": "#D32F2F", "SNB": "#C62828", "NORGES": "#1565C0",
+        "RBA": "#006064", "RBNZ": "#1B5E20", "RIKSBANK": "#4527A0",
+    }
+    SOURCE_LABELS = {
+        "FED": "Fed", "ECB": "ECB", "BOJ": "BoJ", "BOE": "BoE",
+        "BOC": "BoC", "SNB": "SNB", "NORGES": "Norges",
+        "RBA": "RBA", "RBNZ": "RBNZ", "RIKSBANK": "Riksbank",
+    }
+
+    source_filter = st.multiselect(
+        "Sources",
+        options=_all_cb_sources,
+        default=DEFAULT_SOURCES,
+        format_func=lambda s: SOURCE_LABELS.get(s, s),
+        key="cb_source_filter",
+    )
 
     if st.button("Refresh Data", key="refresh_central_banks"):
         st.session_state["cb_refresh"] = True
@@ -2925,47 +2951,37 @@ elif st.session_state.current_page == "🏦 Central Banks":
     _cb_refresh = st.session_state.pop("cb_refresh", False)
 
     @st.cache_data(ttl=3600)
-    def fetch_central_bank_data(_refresh: bool = False):
+    def fetch_central_bank_data(_refresh: bool = False, _sources: tuple = ()):
         try:
             from central_bank import get_data
-            return get_data(refresh=_refresh)
+            return get_data(refresh=_refresh, sources=list(_sources) if _sources else None)
         except Exception as e:
             import traceback
             return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
     with st.spinner("Fetching central bank releases from RSS feeds..."):
-        cb_data = fetch_central_bank_data(_refresh=_cb_refresh)
+        cb_data = fetch_central_bank_data(
+            _refresh=_cb_refresh,
+            _sources=tuple(source_filter) if source_filter else (),
+        )
 
     if "error" in cb_data:
         st.error(f"Error: {cb_data['error']}")
     else:
         counts = cb_data.get("counts", {})
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
+
+        # Dynamic metrics row for selected sources
+        metric_cols = st.columns(min(len(source_filter) + 1, 6))
+        with metric_cols[0]:
             st.metric("Total Releases", counts.get("total", 0))
-        with col2:
-            st.metric("Fed", counts.get("FED", 0))
-        with col3:
-            st.metric("ECB", counts.get("ECB", 0))
-        with col4:
-            st.metric("BoJ", counts.get("BOJ", 0))
-        with col5:
-            st.metric("BoE", counts.get("BOE", 0))
+        for i, src in enumerate(source_filter[:5]):
+            with metric_cols[min(i + 1, 5)]:
+                st.metric(SOURCE_LABELS.get(src, src), counts.get(src, 0))
 
         st.divider()
 
-        source_filter = st.multiselect(
-            "Filter by source",
-            options=["FED", "ECB", "BOJ", "BOE"],
-            default=["FED", "ECB", "BOJ", "BOE"],
-            key="cb_source_filter",
-        )
-
         items = cb_data.get("items", [])
         filtered_items = [i for i in items if i["source"] in source_filter]
-
-        SOURCE_COLORS = {"FED": "#1B5E20", "ECB": "#003399", "BOJ": "#B71C1C", "BOE": "#4A148C"}
-        SOURCE_LABELS = {"FED": "Fed", "ECB": "ECB", "BOJ": "BoJ", "BOE": "BoE"}
 
         if not filtered_items:
             st.info("No releases found matching the current filters.")
@@ -3218,10 +3234,3 @@ elif st.session_state.current_page == "📐 Technical Analysis":
 
     else:
         st.info("Enter a ticker in the sidebar and click **Analyze** to get started.")
-
-
-# Auto-refresh logic
-if auto_refresh:
-    import time
-    time.sleep(refresh_interval)
-    st.rerun()
