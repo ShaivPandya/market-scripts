@@ -966,7 +966,7 @@ elif st.session_state.current_page == "📌 Positioning":
 
     if view == "Instrument summary":
         sorted_aliases = sorted(INSTRUMENTS.keys())
-        default_aliases = [alias for alias in ["SP500", "NASDAQ", "US10Y", "EUR"] if alias in INSTRUMENTS]
+        default_aliases = [alias for alias in ["SP500", "NASDAQ", "RUSSELL", "US10Y", "EUR"] if alias in INSTRUMENTS]
         selected = st.multiselect("Instrument aliases", options=sorted_aliases, default=default_aliases)
         if not selected:
             st.info("Select at least one instrument alias to fetch positioning.")
