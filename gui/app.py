@@ -50,13 +50,6 @@ st.set_page_config(
 if "current_page" not in st.session_state:
     st.session_state.current_page = "💼 Portfolio Dashboard"
 
-# Sidebar: Settings Section
-st.sidebar.title("Settings")
-auto_refresh = st.sidebar.checkbox("Auto-refresh", value=False)
-if auto_refresh:
-    refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 60, 600, 300)
-    st.sidebar.info(f"Will refresh every {refresh_interval}s")
-
 # Visual separator
 st.sidebar.divider()
 
@@ -75,10 +68,10 @@ def nav_button(label: str) -> None:
 
 NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum", "📐 Technical Analysis"],
-    ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodities"],
+    ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity"],
-    ["🏦 Central Banks", "🏭 Industry Monitor"],
+    ["🏦 Central Bank Monitor", "🏭 Industry Monitor"],
 ]
 
 for i, pages in enumerate(NAV_SECTIONS):
@@ -2109,7 +2102,7 @@ elif st.session_state.current_page == "📉 FX Dashboard":
 # =============================================================================
 # PAGE: Commodities Dashboard
 # =============================================================================
-elif st.session_state.current_page == "🛢️ Commodities":
+elif st.session_state.current_page == "🛢️ Commodity Dashboard":
     st.header("Commodities Dashboard")
     st.caption("Closing-price time series for 9 major commodities via Yahoo Finance")
 
@@ -2913,7 +2906,7 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
 # =============================================================================
 # PAGE: Central Banks
 # =============================================================================
-elif st.session_state.current_page == "🏦 Central Banks":
+elif st.session_state.current_page == "🏦 Central Bank Monitor":
     st.header("Central Bank Monitor")
     st.caption("Monetary policy releases from Fed, ECB, BoJ, BoE via RSS feeds")
 
@@ -3218,10 +3211,3 @@ elif st.session_state.current_page == "📐 Technical Analysis":
 
     else:
         st.info("Enter a ticker in the sidebar and click **Analyze** to get started.")
-
-
-# Auto-refresh logic
-if auto_refresh:
-    import time
-    time.sleep(refresh_interval)
-    st.rerun()
