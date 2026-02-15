@@ -39,7 +39,28 @@ FEEDS = {
         "https://www.bankofengland.co.uk/rss/news",
         "https://www.bankofengland.co.uk/rss/publications",
     ],
+    "BOC": [
+        "https://www.bankofcanada.ca/content_type/press-releases/feed/",
+    ],
+    "SNB": [
+        "https://www.snb.ch/public/en/rss/pressrel",
+        "https://www.snb.ch/public/en/rss/mopo",
+    ],
+    "NORGES": [
+        "https://www.norges-bank.no/en/rss-feeds/Press-releases---Norges-Bank/",
+    ],
+    "RBA": [
+        "https://www.rba.gov.au/rss/rss-cb-media-releases.xml",
+    ],
+    "RBNZ": [
+        "https://www.rbnz.govt.nz/feeds/news",
+    ],
+    "RIKSBANK": [
+        "https://www.riksbank.se/sv/rss/pressmeddelanden/",
+    ],
 }
+
+DEFAULT_SOURCES = ["FED", "ECB", "BOJ", "BOE"]
 
 # Heuristic classifiers (tune over time)
 CLASSIFIERS = [
@@ -56,6 +77,29 @@ CLASSIFIERS = [
     ("BOJ", "Summary of Opinions", re.compile(r"\bSummary of Opinions\b", re.I)),
     ("BOJ", "Regional Economic Report (Sakura Report)", re.compile(r"\bRegional Economic Report\b", re.I)),
     ("BOJ", "Statement on Monetary Policy", re.compile(r"\bStatement on Monetary Policy\b", re.I)),
+    # Bank of Canada
+    ("BOC", "Interest rate announcement", re.compile(r"\b(policy rate|interest rate|overnight rate)\b", re.I)),
+    ("BOC", "Monetary Policy Report", re.compile(r"\bMonetary Policy Report\b", re.I)),
+    ("BOC", "Summary of Deliberations", re.compile(r"\bSummary of (Governing Council )?Deliberations\b", re.I)),
+    # Swiss National Bank
+    ("SNB", "Monetary policy assessment", re.compile(r"\bMonetary policy assessment\b", re.I)),
+    ("SNB", "Monetary policy decision", re.compile(r"\b(Monetary policy decision|policy rate)\b", re.I)),
+    ("SNB", "Quarterly Bulletin", re.compile(r"\bQuarterly Bulletin\b", re.I)),
+    # Norges Bank
+    ("NORGES", "Policy rate decision", re.compile(r"\b[Pp]olicy rate\b", re.I)),
+    ("NORGES", "Monetary Policy Report", re.compile(r"\bMonetary Policy Report\b", re.I)),
+    # Reserve Bank of Australia
+    ("RBA", "Monetary Policy Decision", re.compile(r"\bMonetary Policy Decision\b", re.I)),
+    ("RBA", "Statement on Monetary Policy", re.compile(r"\bStatement on Monetary Policy\b", re.I)),
+    ("RBA", "Board Minutes", re.compile(r"\bMinutes of the (Monetary Policy )?Board\b", re.I)),
+    # Reserve Bank of New Zealand
+    ("RBNZ", "Official Cash Rate", re.compile(r"\b(OCR|Official Cash Rate)\b", re.I)),
+    ("RBNZ", "Monetary Policy Statement", re.compile(r"\bMonetary Policy Statement\b", re.I)),
+    ("RBNZ", "Financial Stability Report", re.compile(r"\bFinancial Stability Report\b", re.I)),
+    # Sveriges Riksbank
+    ("RIKSBANK", "Policy rate decision", re.compile(r"\b(policy rate|repo rate)\b", re.I)),
+    ("RIKSBANK", "Monetary Policy Report", re.compile(r"\bMonetary Policy Report\b", re.I)),
+    ("RIKSBANK", "Minutes of monetary policy meeting", re.compile(r"\bMinutes of the (Executive Board.s )?monetary policy meeting\b", re.I)),
 ]
 
 DB_PATH = "centralbank_summaries.sqlite3"
@@ -240,8 +284,10 @@ def _resolve_db_path(db_path: Optional[str] = None) -> str:
         return db_path
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
 
-def iter_feed_items() -> Iterable[Item]:
+def iter_feed_items(sources: Optional[list[str]] = None) -> Iterable[Item]:
     for source, feed_urls in FEEDS.items():
+        if sources and source not in sources:
+            continue
         for feed_url in feed_urls:
             feed = feedparser.parse(feed_url)
             for e in feed.entries:
@@ -256,7 +302,7 @@ def iter_feed_items() -> Iterable[Item]:
                 guid = (e.get("id") or url).strip()
                 yield Item(source=source, title=title, url=url, published_at=published_at, guid=guid, kind=kind)
 
-def _fetch_and_store(conn: sqlite3.Connection) -> None:
+def _fetch_and_store(conn: sqlite3.Connection, sources: Optional[list[str]] = None) -> None:
     """Fetch RSS feeds, extract content, store in DB."""
     headers = {"User-Agent": "cb-summarizer/0.1 (+contact: you@example.com)"}
     fetched = 0
@@ -264,7 +310,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
 
     # Phase 1: Fetch feeds and extract content (sequential, involves HTTP + DB)
     with httpx.Client(headers=headers) as client:
-        for item in iter_feed_items():
+        for item in iter_feed_items(sources=sources):
             upsert_item(conn, item)
             fetched += 1
 
@@ -321,17 +367,29 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
 
     print(f"[INFO] Central bank data fetch and summarization complete — {fetched} item(s) fetched, {len(to_summarize)} new summary(ies) generated.")
 
-def _query_items(conn: sqlite3.Connection) -> list[dict]:
+def _query_items(conn: sqlite3.Connection, sources: Optional[list[str]] = None) -> list[dict]:
     """Query stored items and return as list of dicts."""
-    rows = conn.execute(
+    if sources:
+        placeholders = ",".join("?" for _ in sources)
+        query = f"""
+            SELECT source, kind, title, url, published_at,
+                   summary_json, content_text
+            FROM items
+            WHERE source IN ({placeholders})
+            ORDER BY published_at DESC
+            LIMIT 100
         """
-        SELECT source, kind, title, url, published_at,
-               summary_json, content_text
-        FROM items
-        ORDER BY published_at DESC
-        LIMIT 100
-        """
-    ).fetchall()
+        rows = conn.execute(query, sources).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT source, kind, title, url, published_at,
+                   summary_json, content_text
+            FROM items
+            ORDER BY published_at DESC
+            LIMIT 100
+            """
+        ).fetchall()
 
     items = []
     for source, kind, title, url, published_at, summary_json, content_text in rows:
@@ -349,11 +407,12 @@ def _query_items(conn: sqlite3.Connection) -> list[dict]:
         })
     return items
 
-def get_data(db_path: str = None, refresh: bool = False) -> dict:
+def get_data(db_path: str = None, refresh: bool = False, sources: Optional[list[str]] = None) -> dict:
     """
     Return structured data for GUI consumption.
 
     Only fetches RSS feeds and extracts content when refresh=True.
+    *sources* filters which central banks to fetch/query (default: all in FEEDS).
     Returns dict with keys: items, by_source, counts, last_updated, error (on failure).
     """
     db_path = _resolve_db_path(db_path)
@@ -361,17 +420,18 @@ def get_data(db_path: str = None, refresh: bool = False) -> dict:
         conn = sqlite3.connect(db_path)
         init_db(conn)
         if refresh:
-            _fetch_and_store(conn)
-        items = _query_items(conn)
+            _fetch_and_store(conn, sources=sources)
+        items = _query_items(conn, sources=sources)
         conn.close()
 
-        by_source: dict[str, list] = {k: [] for k in FEEDS}
+        active_sources = sources or list(FEEDS.keys())
+        by_source: dict[str, list] = {k: [] for k in active_sources}
         for item in items:
             if item["source"] in by_source:
                 by_source[item["source"]].append(item)
 
         counts = {"total": len(items)}
-        for k in FEEDS:
+        for k in active_sources:
             counts[k] = len(by_source[k])
 
         return {

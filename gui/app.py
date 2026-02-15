@@ -2915,7 +2915,33 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
 # =============================================================================
 elif st.session_state.current_page == "🏦 Central Bank Monitor":
     st.header("Central Bank Monitor")
-    st.caption("Monetary policy releases from Fed, ECB, BoJ, BoE via RSS feeds")
+    st.caption("Monetary policy releases from central banks worldwide via RSS feeds")
+
+    try:
+        from central_bank import DEFAULT_SOURCES, FEEDS as CB_FEEDS
+        _all_cb_sources = list(CB_FEEDS.keys())
+    except Exception:
+        DEFAULT_SOURCES = ["FED", "ECB", "BOJ", "BOE"]
+        _all_cb_sources = DEFAULT_SOURCES
+
+    SOURCE_COLORS = {
+        "FED": "#1B5E20", "ECB": "#003399", "BOJ": "#B71C1C", "BOE": "#4A148C",
+        "BOC": "#D32F2F", "SNB": "#C62828", "NORGES": "#1565C0",
+        "RBA": "#006064", "RBNZ": "#1B5E20", "RIKSBANK": "#4527A0",
+    }
+    SOURCE_LABELS = {
+        "FED": "Fed", "ECB": "ECB", "BOJ": "BoJ", "BOE": "BoE",
+        "BOC": "BoC", "SNB": "SNB", "NORGES": "Norges",
+        "RBA": "RBA", "RBNZ": "RBNZ", "RIKSBANK": "Riksbank",
+    }
+
+    source_filter = st.multiselect(
+        "Sources",
+        options=_all_cb_sources,
+        default=DEFAULT_SOURCES,
+        format_func=lambda s: SOURCE_LABELS.get(s, s),
+        key="cb_source_filter",
+    )
 
     if st.button("Refresh Data", key="refresh_central_banks"):
         st.session_state["cb_refresh"] = True
@@ -2925,47 +2951,37 @@ elif st.session_state.current_page == "🏦 Central Bank Monitor":
     _cb_refresh = st.session_state.pop("cb_refresh", False)
 
     @st.cache_data(ttl=3600)
-    def fetch_central_bank_data(_refresh: bool = False):
+    def fetch_central_bank_data(_refresh: bool = False, _sources: tuple = ()):
         try:
             from central_bank import get_data
-            return get_data(refresh=_refresh)
+            return get_data(refresh=_refresh, sources=list(_sources) if _sources else None)
         except Exception as e:
             import traceback
             return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
     with st.spinner("Fetching central bank releases from RSS feeds..."):
-        cb_data = fetch_central_bank_data(_refresh=_cb_refresh)
+        cb_data = fetch_central_bank_data(
+            _refresh=_cb_refresh,
+            _sources=tuple(source_filter) if source_filter else (),
+        )
 
     if "error" in cb_data:
         st.error(f"Error: {cb_data['error']}")
     else:
         counts = cb_data.get("counts", {})
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
+
+        # Dynamic metrics row for selected sources
+        metric_cols = st.columns(min(len(source_filter) + 1, 6))
+        with metric_cols[0]:
             st.metric("Total Releases", counts.get("total", 0))
-        with col2:
-            st.metric("Fed", counts.get("FED", 0))
-        with col3:
-            st.metric("ECB", counts.get("ECB", 0))
-        with col4:
-            st.metric("BoJ", counts.get("BOJ", 0))
-        with col5:
-            st.metric("BoE", counts.get("BOE", 0))
+        for i, src in enumerate(source_filter[:5]):
+            with metric_cols[min(i + 1, 5)]:
+                st.metric(SOURCE_LABELS.get(src, src), counts.get(src, 0))
 
         st.divider()
 
-        source_filter = st.multiselect(
-            "Filter by source",
-            options=["FED", "ECB", "BOJ", "BOE"],
-            default=["FED", "ECB", "BOJ", "BOE"],
-            key="cb_source_filter",
-        )
-
         items = cb_data.get("items", [])
         filtered_items = [i for i in items if i["source"] in source_filter]
-
-        SOURCE_COLORS = {"FED": "#1B5E20", "ECB": "#003399", "BOJ": "#B71C1C", "BOE": "#4A148C"}
-        SOURCE_LABELS = {"FED": "Fed", "ECB": "ECB", "BOJ": "BoJ", "BOE": "BoE"}
 
         if not filtered_items:
             st.info("No releases found matching the current filters.")
