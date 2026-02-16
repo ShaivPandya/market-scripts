@@ -34,6 +34,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "portfolio"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
+sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
 
 import streamlit as st
 import pandas as pd
@@ -64,7 +65,7 @@ def nav_button(label: str) -> None:
         st.rerun()
 
 NAV_SECTIONS = [
-    ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum", "📐 Technical Analysis"],
+    ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum", "📐 Technical Analysis", "🏅 Quality Screen"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity"],
@@ -118,6 +119,39 @@ if st.session_state.current_page == "📐 Technical Analysis":
     ta_ticker = st.sidebar.text_input("Ticker", value="SPY", help="Enter a stock ticker symbol")
     ta_lookback = st.sidebar.radio("Lookback", ["3M", "1Y", "2Y", "5Y"], index=2, horizontal=True)
     ta_run_clicked = st.sidebar.button("Analyze", type="primary", width="stretch")
+
+# Quality Screen sidebar controls
+quality_input_mode = "Universe"
+quality_universe = "sp500"
+quality_tickers_str = ""
+quality_benchmark = "S&P 500"
+quality_run_clicked = False
+
+if st.session_state.current_page == "🏅 Quality Screen":
+    st.sidebar.title("Quality Screen")
+    quality_input_mode = st.sidebar.radio("Input Mode", ["Universe", "Custom Tickers"], horizontal=True)
+
+    # Build universe options
+    try:
+        from common import list_universes as _list_universes
+        _available = _list_universes()
+    except Exception:
+        _available = []
+    _universe_options = ["S&P 500"] + sorted(_available)
+
+    if quality_input_mode == "Universe":
+        quality_universe = st.sidebar.selectbox("Universe", options=_universe_options, index=0)
+    else:
+        quality_tickers_str = st.sidebar.text_input(
+            "Tickers",
+            placeholder="AAPL, MSFT, GOOG",
+            help="Comma-separated ticker symbols",
+        )
+
+    _benchmark_options = ["S&P 500", "Same as Input"] + sorted(_available)
+    quality_benchmark = st.sidebar.selectbox("Benchmark", options=_benchmark_options, index=0)
+
+    quality_run_clicked = st.sidebar.button("Run Screen", type="primary", width="stretch")
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -3234,3 +3268,143 @@ elif st.session_state.current_page == "📐 Technical Analysis":
 
     else:
         st.info("Enter a ticker in the sidebar and click **Analyze** to get started.")
+
+
+# =============================================================================
+# PAGE: Quality Screen
+# =============================================================================
+elif st.session_state.current_page == "🏅 Quality Screen":
+    st.header("Quality Screen")
+    st.caption("QMJ-style quality scoring: profitability, growth, and safety pillars")
+
+    # Initialize session state for quality results
+    if "quality_result" not in st.session_state:
+        st.session_state.quality_result = None
+
+    if quality_run_clicked:
+        # Determine input tickers
+        if quality_input_mode == "Universe":
+            if quality_universe == "S&P 500":
+                try:
+                    from common import get_sp500_universe
+                    _input_tickers = get_sp500_universe()
+                except Exception as e:
+                    st.error(f"Failed to load S&P 500: {e}")
+                    _input_tickers = []
+            else:
+                try:
+                    from common import load_universe
+                    _input_tickers = load_universe(quality_universe)
+                except Exception as e:
+                    st.error(f"Failed to load universe '{quality_universe}': {e}")
+                    _input_tickers = []
+        else:
+            _input_tickers = [
+                t.strip().upper()
+                for t in quality_tickers_str.replace(";", ",").split(",")
+                if t.strip()
+            ]
+
+        if not _input_tickers:
+            st.warning("No tickers to score. Enter tickers or select a universe.")
+        else:
+            # Determine benchmark
+            if quality_benchmark == "S&P 500":
+                _bench = "sp500"
+            elif quality_benchmark == "Same as Input":
+                _bench = "self"
+            else:
+                _bench = quality_benchmark
+
+            progress_bar = st.progress(0, text="Fetching data...")
+
+            def _quality_progress(current, total):
+                progress_bar.progress(
+                    current / total,
+                    text=f"Processing {current}/{total} tickers...",
+                )
+
+            try:
+                from quality import get_data as get_quality_data
+
+                result = get_quality_data(
+                    tickers=_input_tickers,
+                    benchmark=_bench,
+                    progress_callback=_quality_progress,
+                )
+                st.session_state.quality_result = result
+            except Exception as e:
+                import traceback
+                st.session_state.quality_result = {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+            progress_bar.empty()
+
+    # Display results
+    qdata = st.session_state.quality_result
+
+    if qdata is None:
+        st.info("Configure settings in the sidebar and click **Run Screen** to score tickers.")
+    elif "error" in qdata:
+        st.error(f"Error: {qdata['error']}")
+        if qdata.get("failed"):
+            st.caption(f"Failed tickers: {', '.join(qdata['failed'])}")
+    else:
+        results_df = qdata["results_df"]
+        failed = qdata.get("failed", [])
+
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Tickers Scored", len(results_df))
+        with col2:
+            st.metric("Benchmark", qdata["benchmark_name"])
+        with col3:
+            st.metric("Universe Size", qdata["universe_size"])
+        with col4:
+            st.metric("Data Success Rate", f"{qdata['scored_count']}/{qdata['universe_size']}")
+
+        if failed:
+            st.warning(f"Failed tickers: {', '.join(failed)}")
+
+        st.divider()
+
+        # Build display table
+        display = results_df[["quality", "profitability", "growth", "safety"]].copy()
+        display.insert(0, "Rank", range(1, len(display) + 1))
+        display.index.name = "Ticker"
+        display = display.reset_index()
+
+        # Add percentile columns if available
+        if "quality_pct" in results_df.columns:
+            display["Quality %ile"] = (results_df["quality_pct"].values * 100).round(1)
+            display["Profit %ile"] = (results_df["profitability_pct"].values * 100).round(1)
+            display["Growth %ile"] = (results_df["growth_pct"].values * 100).round(1)
+            display["Safety %ile"] = (results_df["safety_pct"].values * 100).round(1)
+
+        # Format score columns
+        for col in ["quality", "profitability", "growth", "safety"]:
+            display[col] = display[col].apply(lambda x: f"{x:+.3f}")
+
+        # Rename for display
+        display = display.rename(columns={
+            "quality": "Quality",
+            "profitability": "Profitability",
+            "growth": "Growth",
+            "safety": "Safety",
+        })
+
+        score_cols = ["Quality", "Profitability", "Growth", "Safety"]
+        pctl_cols = [c for c in ["Quality %ile", "Profit %ile", "Growth %ile", "Safety %ile"] if c in display.columns]
+
+        styled = display.style.applymap(
+            color_positive_negative, subset=score_cols
+        )
+        st.dataframe(styled, width="stretch", hide_index=True)
+
+        # Metric detail expander
+        z_metrics_df = qdata.get("z_metrics_df")
+        if z_metrics_df is not None and not z_metrics_df.empty:
+            with st.expander("Underlying Metric Z-Scores", expanded=False):
+                z_display = z_metrics_df.round(3)
+                z_styled = z_display.style.applymap(color_zscore)
+                st.dataframe(z_styled, width="stretch")
