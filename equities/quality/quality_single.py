@@ -26,6 +26,8 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -106,22 +108,43 @@ def get_item(s: Optional[pd.Series], keys: List[str]) -> float:
     return np.nan
 
 
+_market_cache: Dict[str, pd.Series] = {}
+_market_cache_lock = threading.Lock()
+
+
+def _get_market_prices(market: str, window_years: float) -> pd.Series:
+    """Download and cache market prices for beta computation."""
+    cache_key = f"{market}_{window_years}"
+    with _market_cache_lock:
+        if cache_key in _market_cache:
+            return _market_cache[cache_key]
+
+    hist = yf.download(market, period=f"{int(window_years * 365)}d", interval="1d", auto_adjust=True, progress=False)
+    if hist is None or hist.empty:
+        return pd.Series(dtype="float64")
+
+    px = hist["Close"].squeeze().dropna()
+
+    with _market_cache_lock:
+        _market_cache[cache_key] = px
+    return px
+
+
 def compute_beta(stock: str, market: str = "SPY", window_years: float = 3.0) -> float:
     """
     Estimate beta by regressing daily returns of stock on market over a lookback window.
     """
-    lookback_days = int(window_years * 365.25)
-    hist = yf.download([stock, market], period=f"{int(window_years*365)}d", interval="1d", auto_adjust=True, progress=False)
+    # Get cached market prices
+    px_m = _get_market_prices(market, window_years)
+    if px_m.empty:
+        return np.nan
+
+    # Download only the stock
+    hist = yf.download(stock, period=f"{int(window_years * 365)}d", interval="1d", auto_adjust=True, progress=False)
     if hist is None or hist.empty:
         return np.nan
 
-    # yfinance returns multi-index columns when multiple tickers
-    if isinstance(hist.columns, pd.MultiIndex):
-        px_s = hist["Close"][stock].dropna()
-        px_m = hist["Close"][market].dropna()
-    else:
-        # Single ticker downloaded unexpectedly
-        return np.nan
+    px_s = hist["Close"].squeeze().dropna()
 
     df = pd.concat([px_s, px_m], axis=1).dropna()
     if df.shape[0] < 60:
@@ -457,18 +480,22 @@ def main():
 
     print(f"Universe size: {len(universe)} | Target: {ticker}")
 
-    # Collect raw metrics
+    # Collect raw metrics (parallelized)
     raws: Dict[str, RawMetrics] = {}
-    for i, tk in enumerate(universe, 1):
-        try:
-            rm = fetch_raw_metrics(tk, market=args.market, growth_years=args.growth_years, beta_years=args.beta_years)
-            raws[tk] = rm
-        except Exception as e:
-            # Keep going; missing tickers get dropped
-            print(f"[WARN] {tk}: failed ({e})", file=sys.stderr)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(fetch_raw_metrics, tk, market=args.market, growth_years=args.growth_years, beta_years=args.beta_years): tk
+            for tk in universe
+        }
+        for i, future in enumerate(as_completed(futures), 1):
+            tk = futures[future]
+            try:
+                raws[tk] = future.result()
+            except Exception as e:
+                print(f"[WARN] {tk}: failed ({e})", file=sys.stderr)
 
-        if i % 25 == 0:
-            print(f"  processed {i}/{len(universe)}")
+            if i % 25 == 0:
+                print(f"  processed {i}/{len(universe)}")
 
     if ticker not in raws:
         raise SystemExit(f"Failed to fetch required data for target ticker: {ticker}")
