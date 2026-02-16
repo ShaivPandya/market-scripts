@@ -150,9 +150,13 @@ def get_data(
     pct_filtered = pct.loc[scored_inputs]
     results_df = results_df.join(pct_filtered.add_suffix("_pct"))
 
+    # Raw metrics for input tickers (for score explanations)
+    raw_filtered = raw_df.loc[[t for t in scored_inputs if t in raw_df.index]]
+
     return {
         "results_df": results_df,
         "z_metrics_df": z_metrics_filtered,
+        "raw_metrics_df": raw_filtered,
         "failed": [t for t in failed if t in input_tickers],
         "benchmark_name": benchmark_name,
         "input_count": len(input_tickers),

@@ -3401,8 +3401,198 @@ elif st.session_state.current_page == "🏅 Quality Screen":
         )
         st.dataframe(styled, width="stretch", hide_index=True)
 
-        # Metric detail expander
+        # Per-ticker score explanations (Custom Tickers mode only)
+        raw_metrics_df = qdata.get("raw_metrics_df")
         z_metrics_df = qdata.get("z_metrics_df")
+        if (
+            quality_input_mode == "Custom Tickers"
+            and raw_metrics_df is not None
+            and not raw_metrics_df.empty
+            and z_metrics_df is not None
+        ):
+            st.divider()
+            st.subheader("Score Explanations")
+            st.caption("Per-ticker breakdown of what drives each quality pillar score")
+
+            # Metric display names and pillar groupings
+            _profitability_metrics = {
+                "gpoa": ("Gross Profit / Assets", "Measures asset-level profitability"),
+                "roe": ("Return on Equity", "Net income relative to shareholder equity"),
+                "roa": ("Return on Assets", "Net income relative to total assets"),
+                "cfoa": ("Cash Flow / Assets", "Operating cash flow relative to assets"),
+                "gmar": ("Gross Margin", "Gross profit as a fraction of revenue"),
+                "acc": ("Low Accruals", "Earnings quality; lower accruals = higher quality"),
+            }
+            _growth_metrics = {
+                "dgpoa": ("Gross Profit Growth", "Change in gross profit over lagged assets"),
+                "droe": ("ROE Growth", "Change in net income over lagged equity"),
+                "droa": ("ROA Growth", "Change in net income over lagged assets"),
+                "dcfoa": ("Cash Flow Growth", "Change in operating cash flow over lagged assets"),
+                "dgmar": ("Margin Growth", "Change in gross profit over lagged revenue"),
+            }
+            _safety_metrics = {
+                "bab": ("Low Beta", "Lower market beta = safer; sign inverted so higher is better"),
+                "lev": ("Low Leverage", "Lower debt/assets = safer; sign inverted so higher is better"),
+                "zscore": ("Altman Z-Score", "Higher Z-score = lower bankruptcy risk"),
+                "evol": ("Low ROE Volatility", "Lower earnings volatility = safer; sign inverted"),
+            }
+            # Raw metric names that map to z-score metrics
+            _raw_to_label = {
+                "gpoa": "Gross Profit / Assets",
+                "roe": "Return on Equity",
+                "roa": "Return on Assets",
+                "cfoa": "Cash Flow / Assets",
+                "gmar": "Gross Margin",
+                "acc_low_is_good": "Accruals (neg = good)",
+                "dgpoa": "GP Growth",
+                "droe": "ROE Growth",
+                "droa": "ROA Growth",
+                "dcfoa": "CF Growth",
+                "dgmar": "Margin Growth",
+                "beta_low_is_good": "Beta",
+                "leverage_low_is_good": "Debt / Assets",
+                "zscore_high_is_good": "Altman Z-Score",
+                "roe_vol_low_is_good": "ROE Volatility",
+            }
+
+            for ticker in results_df.index:
+                scores_row = results_df.loc[ticker]
+                quality_pctl = scores_row.get("quality_pct", 0) * 100
+
+                # Determine overall assessment
+                if quality_pctl >= 75:
+                    assessment = "High quality"
+                    badge_color = "#00c853"
+                elif quality_pctl >= 50:
+                    assessment = "Above average"
+                    badge_color = "#4CAF50"
+                elif quality_pctl >= 25:
+                    assessment = "Below average"
+                    badge_color = "#FF9800"
+                else:
+                    assessment = "Low quality"
+                    badge_color = "#ff1744"
+
+                with st.expander(
+                    f"**{ticker}** — Quality: {scores_row['quality']:+.3f} "
+                    f"({quality_pctl:.0f}th percentile) — {assessment}",
+                    expanded=True,
+                ):
+                    # Pillar summary
+                    pcols = st.columns(3)
+                    pillar_data = [
+                        ("Profitability", "profitability", "profitability_pct"),
+                        ("Growth", "growth", "growth_pct"),
+                        ("Safety", "safety", "safety_pct"),
+                    ]
+                    for i, (label, score_key, pct_key) in enumerate(pillar_data):
+                        with pcols[i]:
+                            s = scores_row[score_key]
+                            p = scores_row.get(pct_key, 0) * 100
+                            delta_color = "normal" if s >= 0 else "inverse"
+                            st.metric(label, f"{s:+.3f}", delta=f"{p:.0f}th pctl", delta_color=delta_color)
+
+                    # Per-pillar metric tables
+                    if ticker in z_metrics_df.index and ticker in raw_metrics_df.index:
+                        z_row = z_metrics_df.loc[ticker]
+                        raw_row = raw_metrics_df.loc[ticker]
+
+                        def _build_pillar_table(metrics_dict, raw_row, z_row):
+                            rows = []
+                            for z_key, (label, desc) in metrics_dict.items():
+                                z_val = z_row.get(z_key)
+                                # Map z_key back to raw metric name
+                                raw_key_map = {
+                                    "gpoa": "gpoa", "roe": "roe", "roa": "roa",
+                                    "cfoa": "cfoa", "gmar": "gmar", "acc": "acc_low_is_good",
+                                    "dgpoa": "dgpoa", "droe": "droe", "droa": "droa",
+                                    "dcfoa": "dcfoa", "dgmar": "dgmar",
+                                    "bab": "beta_low_is_good", "lev": "leverage_low_is_good",
+                                    "zscore": "zscore_high_is_good", "evol": "roe_vol_low_is_good",
+                                }
+                                raw_key = raw_key_map.get(z_key, z_key)
+                                raw_val = raw_row.get(raw_key)
+
+                                # Format raw value
+                                if pd.notna(raw_val):
+                                    if raw_key in ("gmar", "gpoa", "roe", "roa", "cfoa", "leverage_low_is_good"):
+                                        raw_str = f"{raw_val:.1%}"
+                                    elif raw_key == "beta_low_is_good":
+                                        raw_str = f"{raw_val:.2f}"
+                                    elif raw_key == "zscore_high_is_good":
+                                        raw_str = f"{raw_val:.2f}"
+                                    elif raw_key == "roe_vol_low_is_good":
+                                        raw_str = f"{raw_val:.3f}"
+                                    else:
+                                        raw_str = f"{raw_val:+.3f}"
+                                else:
+                                    raw_str = "N/A"
+
+                                z_str = f"{z_val:+.3f}" if pd.notna(z_val) else "N/A"
+                                # Interpret z-score
+                                if pd.notna(z_val):
+                                    if z_val >= 1.0:
+                                        interp = "Strong"
+                                    elif z_val >= 0.25:
+                                        interp = "Good"
+                                    elif z_val >= -0.25:
+                                        interp = "Average"
+                                    elif z_val >= -1.0:
+                                        interp = "Weak"
+                                    else:
+                                        interp = "Poor"
+                                else:
+                                    interp = "—"
+                                rows.append({
+                                    "Metric": label,
+                                    "Raw Value": raw_str,
+                                    "Z-Score": z_str,
+                                    "Rating": interp,
+                                    "Description": desc,
+                                })
+                            return pd.DataFrame(rows)
+
+                        st.write("")
+                        tab_p, tab_g, tab_s = st.tabs(["Profitability", "Growth", "Safety"])
+
+                        with tab_p:
+                            df_p = _build_pillar_table(_profitability_metrics, raw_row, z_row)
+                            styled_p = df_p.style.applymap(color_zscore, subset=["Z-Score"])
+                            st.dataframe(styled_p, width="stretch", hide_index=True)
+
+                        with tab_g:
+                            df_g = _build_pillar_table(_growth_metrics, raw_row, z_row)
+                            styled_g = df_g.style.applymap(color_zscore, subset=["Z-Score"])
+                            st.dataframe(styled_g, width="stretch", hide_index=True)
+
+                        with tab_s:
+                            df_s = _build_pillar_table(_safety_metrics, raw_row, z_row)
+                            styled_s = df_s.style.applymap(color_zscore, subset=["Z-Score"])
+                            st.dataframe(styled_s, width="stretch", hide_index=True)
+
+                    # Generate text summary
+                    _strengths = []
+                    _weaknesses = []
+                    if ticker in z_metrics_df.index:
+                        z_row = z_metrics_df.loc[ticker]
+                        _all_metrics = {**_profitability_metrics, **_growth_metrics, **_safety_metrics}
+                        for z_key, (label, _) in _all_metrics.items():
+                            z_val = z_row.get(z_key)
+                            if pd.notna(z_val):
+                                if z_val >= 0.75:
+                                    _strengths.append(label)
+                                elif z_val <= -0.75:
+                                    _weaknesses.append(label)
+
+                    if _strengths or _weaknesses:
+                        parts = []
+                        if _strengths:
+                            parts.append(f"**Strengths:** {', '.join(_strengths[:5])}")
+                        if _weaknesses:
+                            parts.append(f"**Weaknesses:** {', '.join(_weaknesses[:5])}")
+                        st.caption(" | ".join(parts))
+
+        # Metric detail expander
         if z_metrics_df is not None and not z_metrics_df.empty:
             with st.expander("Underlying Metric Z-Scores", expanded=False):
                 z_display = z_metrics_df.round(3)
