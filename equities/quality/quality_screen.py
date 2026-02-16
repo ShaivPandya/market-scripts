@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict
 
@@ -60,21 +61,27 @@ def main():
     raws: Dict[str, RawMetrics] = {}
     failed = []
 
-    for i, ticker in enumerate(universe, 1):
-        try:
-            rm = fetch_raw_metrics(
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(
+                fetch_raw_metrics,
                 ticker,
                 market=args.market,
                 growth_years=args.growth_years,
-                beta_years=args.beta_years
-            )
-            raws[ticker] = rm
-        except Exception as e:
-            failed.append(ticker)
-            print(f"[WARN] {ticker}: failed ({e})", file=sys.stderr)
+                beta_years=args.beta_years,
+            ): ticker
+            for ticker in universe
+        }
+        for i, future in enumerate(as_completed(futures), 1):
+            ticker = futures[future]
+            try:
+                raws[ticker] = future.result()
+            except Exception as e:
+                failed.append(ticker)
+                print(f"[WARN] {ticker}: failed ({e})", file=sys.stderr)
 
-        if i % 10 == 0 or i == len(universe):
-            print(f"  Processed {i}/{len(universe)}")
+            if i % 10 == 0 or i == len(universe):
+                print(f"  Processed {i}/{len(universe)}")
 
     if len(raws) < 10:
         raise SystemExit(f"Only {len(raws)} tickers succeeded. Need at least 10 for meaningful ranking.")

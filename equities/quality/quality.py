@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -97,24 +98,30 @@ def get_data(
     except Exception as e:
         return {"error": f"Failed to build universe: {e}"}
 
-    # Fetch raw metrics for the full scoring universe
+    # Fetch raw metrics for the full scoring universe (parallelized)
     raws: Dict[str, RawMetrics] = {}
     failed = []
 
-    for i, ticker in enumerate(scoring_universe, 1):
-        try:
-            rm = fetch_raw_metrics(
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(
+                fetch_raw_metrics,
                 ticker,
                 market=market,
                 growth_years=growth_years,
                 beta_years=beta_years,
-            )
-            raws[ticker] = rm
-        except Exception as e:
-            failed.append(ticker)
+            ): ticker
+            for ticker in scoring_universe
+        }
+        for i, future in enumerate(as_completed(futures), 1):
+            ticker = futures[future]
+            try:
+                raws[ticker] = future.result()
+            except Exception:
+                failed.append(ticker)
 
-        if progress_callback and (i % 10 == 0 or i == len(scoring_universe)):
-            progress_callback(i, len(scoring_universe))
+            if progress_callback and (i % 10 == 0 or i == len(scoring_universe)):
+                progress_callback(i, len(scoring_universe))
 
     if len(raws) < 3:
         return {
