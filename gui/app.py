@@ -35,6 +35,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "country_dashboard"))
 
 import streamlit as st
 import pandas as pd
@@ -69,7 +70,7 @@ NAV_SECTIONS = [
     ["📐 Chart", "🏅 Quality Screen"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
-    ["📊 Economic Growth", "💧 Liquidity"],
+    ["📊 Economic Growth", "💧 Liquidity", "🌍 Country Dashboard"],
     ["🏦 Central Bank Monitor", "🏭 Industry Monitor"],
 ]
 
@@ -849,6 +850,147 @@ elif st.session_state.current_page == "💧 Liquidity":
             styled_df = df.style.apply(style_with_polarity, axis=1)
             st.dataframe(styled_df, width="stretch", hide_index=True)
             st.caption("Green indicates liquidity-supportive changes, red indicates liquidity-tightening changes")
+
+
+# =============================================================================
+# PAGE: Country Dashboard
+# =============================================================================
+elif st.session_state.current_page == "🌍 Country Dashboard":
+    st.header("Country Dashboard")
+    st.caption("Macroeconomic indicators for 9 major economies via FRED")
+
+    if st.button("Refresh Data", key="refresh_country_dashboard"):
+        st.cache_data.clear()
+
+    country_metric = st.radio(
+        "Metric",
+        ["Inflation", "Unemployment", "GDP"],
+        horizontal=True,
+        key="country_dashboard_metric",
+    )
+
+    @st.cache_data(ttl=300)
+    def fetch_country_dashboard(metric: str):
+        try:
+            from country_dashboard import get_data
+            return get_data(metric=metric)
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner(f"Fetching {country_metric} data from FRED..."):
+        country_dash_data = fetch_country_dashboard(country_metric)
+
+    if "error" in country_dash_data:
+        st.error(f"Error: {country_dash_data['error']}")
+    else:
+        from country_dashboard import COUNTRY_ORDER
+        import altair as alt
+
+        countries = country_dash_data.get("countries", {})
+        errors = country_dash_data.get("errors", {})
+        series_used = country_dash_data.get("series_used", {})
+        latest_observation_dates = country_dash_data.get("latest_observation_dates", {})
+        timestamp = country_dash_data.get("timestamp")
+        if timestamp:
+            st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if not countries:
+            st.warning("No country data returned")
+            if errors:
+                with st.expander("Series diagnostics", expanded=True):
+                    for country_name in COUNTRY_ORDER:
+                        messages = errors.get(country_name)
+                        if not messages:
+                            continue
+                        st.markdown(f"**{country_name}**")
+                        for message in messages:
+                            st.caption(message)
+        else:
+            metric_label = {
+                "Inflation": "CPI YoY %",
+                "Unemployment": "Rate %",
+                "GDP": "Real GDP YoY %",
+            }.get(country_metric, "")
+            st.caption(f"Showing: {metric_label}")
+
+            if errors:
+                with st.expander("Series diagnostics", expanded=False):
+                    for country_name in COUNTRY_ORDER:
+                        messages = errors.get(country_name)
+                        if not messages:
+                            continue
+                        st.markdown(f"**{country_name}**")
+                        for message in messages:
+                            st.caption(message)
+
+            for row_idx in range(3):
+                cols = st.columns(3)
+                for col_idx in range(3):
+                    country_idx = row_idx * 3 + col_idx
+                    if country_idx >= len(COUNTRY_ORDER):
+                        break
+                    country_name = COUNTRY_ORDER[country_idx]
+                    series = countries.get(country_name)
+
+                    with cols[col_idx]:
+                        if series is not None and not series.empty:
+                            latest = series.iloc[-1]
+                            if len(series) > 1:
+                                previous = series.iloc[-2]
+                                delta = latest - previous
+                                delta_str = f"{delta:+.1f}pp"
+                            else:
+                                delta_str = None
+
+                            st.metric(
+                                country_name,
+                                f"{latest:.1f}%",
+                                delta_str,
+                                delta_color=(
+                                    "normal" if country_metric == "GDP"
+                                    else "inverse"
+                                ),
+                            )
+
+                            obs_date = latest_observation_dates.get(country_name)
+                            source_id = series_used.get(country_name)
+                            if obs_date is not None:
+                                obs_ts = pd.to_datetime(obs_date)
+                                age_days = (pd.Timestamp.now() - obs_ts).days
+                                stale_label = f" (stale: {age_days}d)" if age_days > 180 else ""
+                                source_label = f" · {source_id}" if source_id else ""
+                                st.caption(
+                                    f"Latest obs: {obs_ts.strftime('%Y-%m-%d')}{stale_label}{source_label}"
+                                )
+
+                            chart_df = pd.DataFrame({
+                                "date": series.index,
+                                "value": series.values,
+                            })
+                            chart = (
+                                alt.Chart(chart_df)
+                                .mark_line()
+                                .encode(
+                                    x=alt.X("date:T", title=None),
+                                    y=alt.Y(
+                                        "value:Q",
+                                        scale=alt.Scale(zero=False),
+                                        title=None,
+                                    ),
+                                )
+                                .properties(height=200)
+                            )
+                            st.altair_chart(chart, use_container_width=True)
+                        else:
+                            st.metric(country_name, "N/A")
+                            st.caption("No data available")
+                            err = errors.get(country_name, [])
+                            if err:
+                                reason = err[0]
+                                if len(reason) > 120:
+                                    reason = reason[:117] + "..."
+                                st.caption(f"Reason: {reason}")
 
 
 # =============================================================================
