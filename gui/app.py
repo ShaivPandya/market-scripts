@@ -66,7 +66,7 @@ def nav_button(label: str) -> None:
 
 NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum"],
-    ["📐 Technical Analysis", "🏅 Quality Screen"],
+    ["📐 Chart", "🏅 Quality Screen"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity"],
@@ -110,13 +110,13 @@ if st.session_state.current_page == "💱 FX Model":
     fx_horizons_str = st.sidebar.text_input("Horizons (months)", value="12,24")
     fx_run_clicked = st.sidebar.button("Run Model", type="primary", width="stretch")
 
-# Technical Analysis sidebar controls
+# Chart sidebar controls
 ta_ticker = "SPY"
 ta_lookback = "2Y"
 ta_run_clicked = False
 
-if st.session_state.current_page == "📐 Technical Analysis":
-    st.sidebar.title("Technical Analysis")
+if st.session_state.current_page == "📐 Chart":
+    st.sidebar.title("Chart")
     ta_ticker = st.sidebar.text_input("Ticker", value="SPY", help="Enter a stock ticker symbol")
     ta_lookback = st.sidebar.radio("Lookback", ["3M", "1Y", "2Y", "5Y"], index=2, horizontal=True)
     ta_run_clicked = st.sidebar.button("Analyze", type="primary", width="stretch")
@@ -3101,10 +3101,10 @@ elif st.session_state.current_page == "🏦 Central Bank Monitor":
 
 
 # =============================================================================
-# PAGE: Technical Analysis
+# PAGE: Chart
 # =============================================================================
-elif st.session_state.current_page == "📐 Technical Analysis":
-    st.header("Technical Analysis")
+elif st.session_state.current_page == "📐 Chart":
+    st.header("Chart")
     st.caption("Moving averages and rate-of-change analysis for a single ticker")
 
     if st.button("Refresh Data", key="refresh_technical_analysis"):
