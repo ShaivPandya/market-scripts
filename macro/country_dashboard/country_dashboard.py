@@ -3,7 +3,8 @@
 Country Dashboard
 
 Fetches macroeconomic time series (Inflation, Unemployment, GDP) for 9 countries
-primarily from FRED (Canada inflation via Statistics Canada WDS). Displays a 3x3 grid
+primarily from FRED (Canada inflation via Statistics Canada WDS, UK inflation
+via ONS). Displays a 3x3 grid
 of line charts with metric radio toggles (GUI),
 or prints summary tables in the terminal.
 
@@ -43,6 +44,15 @@ try:
 except ValueError:
     STATCAN_CPI_CANADA_VECTOR_ID = _DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID
 
+_DEFAULT_ONS_CPI_UK_SERIES_ID = "d7g7"
+_DEFAULT_ONS_CPI_UK_DATASET_ID = "mm23"
+ONS_CPI_UK_SERIES_ID = os.environ.get(
+    "ONS_CPI_UK_SERIES_ID", _DEFAULT_ONS_CPI_UK_SERIES_ID
+)
+ONS_CPI_UK_DATASET_ID = os.environ.get(
+    "ONS_CPI_UK_DATASET_ID", _DEFAULT_ONS_CPI_UK_DATASET_ID
+)
+
 # ── Country definitions: display_name -> FRED series IDs per metric ──────────
 # For inflation, we prefer direct YoY series and keep fallbacks where needed.
 COUNTRIES = {
@@ -70,6 +80,15 @@ COUNTRIES = {
     },
     "United Kingdom": {
         "inflation": [
+            # ONS: CPI Annual Rate, All Items (2015=100) — already YoY %.
+            {
+                "source": "ons",
+                "id": f"ONS {ONS_CPI_UK_SERIES_ID}/{ONS_CPI_UK_DATASET_ID}",
+                "series_id": ONS_CPI_UK_SERIES_ID,
+                "dataset_id": ONS_CPI_UK_DATASET_ID,
+                "transform": "none",
+            },
+            # FRED fallbacks
             {"id": "CPALTT01GBM659N", "transform": "none"},
             {"id": "FPCPITOTLZGGBR", "transform": "none"},
         ],
@@ -251,6 +270,73 @@ def _fetch_statcan_vector_latest_n(
     return series
 
 
+def _fetch_ons_timeseries(
+    *,
+    series_id: str,
+    dataset_id: str,
+    timeout: int = 20,
+) -> pd.Series:
+    """
+    Fetch monthly time series data from the ONS website API.
+
+    Returns a pd.Series indexed by datetime.
+    """
+    base_url = os.environ.get(
+        "ONS_API_BASE_URL",
+        "https://www.ons.gov.uk",
+    ).rstrip("/")
+    url = (
+        f"{base_url}/economy/inflationandpriceindices"
+        f"/timeseries/{series_id}/{dataset_id}/data"
+    )
+
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    months = data.get("months")
+    if not months:
+        raise RuntimeError(
+            f"ONS timeseries {series_id}/{dataset_id}: no monthly data returned"
+        )
+
+    dates = []
+    values = []
+    for point in months:
+        val_str = point.get("value", "").strip()
+        if not val_str:
+            continue
+        try:
+            val = float(val_str)
+        except (TypeError, ValueError):
+            continue
+
+        date_str = point.get("date", "")
+        dt = pd.to_datetime(date_str, format="%Y %b", errors="coerce")
+        if pd.isna(dt):
+            year = point.get("year", "")
+            month_name = point.get("month", "")
+            if year and month_name:
+                dt = pd.to_datetime(
+                    f"{year} {month_name}", format="%Y %B", errors="coerce"
+                )
+        if pd.isna(dt):
+            continue
+
+        dates.append(dt)
+        values.append(val)
+
+    if not dates:
+        raise RuntimeError(
+            f"ONS timeseries {series_id}/{dataset_id}: "
+            "no data points could be parsed"
+        )
+
+    series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
+    series = series[~series.index.duplicated(keep="last")]
+    return series
+
+
 def _get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
@@ -339,8 +425,18 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                         vector_id=int(vector_id),
                         latest_n=int((_FETCH_YEARS + 1) * 12),
                     )
-                    # Mirror FRED behavior: keep a larger window for transforms, then
-                    # trim for display.
+                    series = series[series.index >= observation_start]
+                elif source == "ons":
+                    sid = candidate.get("series_id")
+                    did = candidate.get("dataset_id")
+                    if not sid or not did:
+                        raise ValueError(
+                            "Missing series_id or dataset_id for ONS source"
+                        )
+                    series = _fetch_ons_timeseries(
+                        series_id=sid,
+                        dataset_id=did,
+                    )
                     series = series[series.index >= observation_start]
                 else:
                     series = fred.get_series(
@@ -403,7 +499,7 @@ def print_terminal():
 
     header = Panel(
         "[bold white]COUNTRY DASHBOARD[/bold white]\n"
-        f"[dim]Data from FRED (Canada inflation via Statistics Canada WDS)[/dim]\n"
+        f"[dim]Data from FRED (Canada inflation via Statistics Canada WDS, UK inflation via ONS)[/dim]\n"
         f"[dim]Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/dim]",
         border_style="bold blue",
         padding=(1, 2),
