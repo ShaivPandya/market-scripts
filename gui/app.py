@@ -869,7 +869,7 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
         key="country_dashboard_metric",
     )
 
-    @st.cache_data(ttl=300)
+    @st.cache_data(ttl=60)
     def fetch_country_dashboard(metric: str):
         try:
             from country_dashboard import get_data

@@ -35,7 +35,8 @@ warnings.filterwarnings("ignore")
 COUNTRIES = {
     "US": {
         "inflation": [
-            {"id": "CPIAUCSL", "transform": "yoy12"},
+            # Match FRED's "Percent Change from Year Ago" view exactly.
+            {"id": "CPIAUCSL", "transform": "none", "params": {"units": "pc1"}},
         ],
         "unemployment": "UNRATE",
         "gdp": "NAEXKP01USQ189S",
@@ -133,22 +134,23 @@ def _apply_transform(series: pd.Series, transform: str) -> pd.Series:
     raise ValueError(f"Unknown transform: {transform}")
 
 
-def _metric_candidates(metric_key: str, config: dict) -> List[Dict[str, str]]:
+def _metric_candidates(metric_key: str, config: dict) -> List[Dict[str, object]]:
     metric_config = config[metric_key]
 
     if isinstance(metric_config, str):
         transform = "yoy4" if metric_key == "gdp" else "none"
-        return [{"id": metric_config, "transform": transform}]
+        return [{"id": metric_config, "transform": transform, "params": {}}]
 
-    candidates: List[Dict[str, str]] = []
+    candidates: List[Dict[str, object]] = []
     for item in metric_config:
         if isinstance(item, str):
-            candidates.append({"id": item, "transform": "none"})
+            candidates.append({"id": item, "transform": "none", "params": {}})
         else:
             candidates.append(
                 {
                     "id": item["id"],
                     "transform": item.get("transform", "none"),
+                    "params": item.get("params", {}),
                 }
             )
     return candidates
@@ -189,8 +191,13 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
         for candidate in candidates:
             series_id = candidate["id"]
             transform = candidate["transform"]
+            params = candidate.get("params", {})
             try:
-                series = fred.get_series(series_id, observation_start=observation_start)
+                series = fred.get_series(
+                    series_id,
+                    observation_start=observation_start,
+                    **params,
+                )
                 if series is None or series.empty:
                     country_errors.append(f"{series_id}: no observations returned")
                     continue
