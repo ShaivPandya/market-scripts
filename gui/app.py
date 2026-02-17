@@ -65,7 +65,8 @@ def nav_button(label: str) -> None:
         st.rerun()
 
 NAV_SECTIONS = [
-    ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum", "📐 Technical Analysis", "🏅 Quality Screen"],
+    ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum"],
+    ["📐 Technical Analysis", "🏅 Quality Screen"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity"],
@@ -2959,9 +2960,9 @@ elif st.session_state.current_page == "🏦 Central Bank Monitor":
         _all_cb_sources = DEFAULT_SOURCES
 
     SOURCE_COLORS = {
-        "FED": "#1B5E20", "ECB": "#003399", "BOJ": "#B71C1C", "BOE": "#4A148C",
-        "BOC": "#D32F2F", "SNB": "#C62828", "NORGES": "#1565C0",
-        "RBA": "#006064", "RBNZ": "#1B5E20", "RIKSBANK": "#4527A0",
+        "FED": "#30D158", "ECB": "#0091FF", "BOJ": "#FF4245", "BOE": "#6D7CFF",
+        "BOC": "#FF9230", "SNB": "#00DAC3", "NORGES": "#3CD3FE",
+        "RBA": "#FFD600", "RBNZ": "#DB34F2", "RIKSBANK": "#FF375F",
     }
     SOURCE_LABELS = {
         "FED": "Fed", "ECB": "ECB", "BOJ": "BoJ", "BOE": "BoE",
@@ -2985,18 +2986,18 @@ elif st.session_state.current_page == "🏦 Central Bank Monitor":
     _cb_refresh = st.session_state.pop("cb_refresh", False)
 
     @st.cache_data(ttl=3600)
-    def fetch_central_bank_data(_refresh: bool = False, _sources: tuple = ()):
+    def fetch_central_bank_data(refresh: bool = False, sources: tuple = ()):
         try:
             from central_bank import get_data
-            return get_data(refresh=_refresh, sources=list(_sources) if _sources else None)
+            return get_data(refresh=refresh, sources=list(sources) if sources else None)
         except Exception as e:
             import traceback
             return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
     with st.spinner("Fetching central bank releases from RSS feeds..."):
         cb_data = fetch_central_bank_data(
-            _refresh=_cb_refresh,
-            _sources=tuple(source_filter) if source_filter else (),
+            refresh=_cb_refresh,
+            sources=tuple(source_filter) if source_filter else (),
         )
 
     if "error" in cb_data:
