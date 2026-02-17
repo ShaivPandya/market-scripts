@@ -3,7 +3,8 @@
 Country Dashboard
 
 Fetches macroeconomic time series (Inflation, Unemployment, GDP) for 9 countries
-from FRED. Displays a 3x3 grid of line charts with metric radio toggles (GUI),
+primarily from FRED (Canada inflation via Statistics Canada WDS). Displays a 3x3 grid
+of line charts with metric radio toggles (GUI),
 or prints summary tables in the terminal.
 
 Terminal:
@@ -26,9 +27,21 @@ from load_env import load_env
 load_env()
 
 import pandas as pd
+import requests
 from fredapi import Fred
 
 warnings.filterwarnings("ignore")
+
+_DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID = 41690973
+try:
+    STATCAN_CPI_CANADA_VECTOR_ID = int(
+        os.environ.get(
+            "STATCAN_CPI_CANADA_VECTOR_ID",
+            str(_DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID),
+        )
+    )
+except ValueError:
+    STATCAN_CPI_CANADA_VECTOR_ID = _DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID
 
 # ── Country definitions: display_name -> FRED series IDs per metric ──────────
 # For inflation, we prefer direct YoY series and keep fallbacks where needed.
@@ -43,8 +56,14 @@ COUNTRIES = {
     },
     "Canada": {
         "inflation": [
-            {"id": "CPALTT01CAM659N", "transform": "none"},
-            {"id": "FPCPITOTLZGCAN", "transform": "none"},
+            # Statistics Canada WDS: CPI (2002=100), All-items, Canada.
+            # We compute YoY % change to match the dashboard's inflation definition.
+            {
+                "source": "statcan_wds",
+                "id": f"STATCAN v{STATCAN_CPI_CANADA_VECTOR_ID}",
+                "vector_id": STATCAN_CPI_CANADA_VECTOR_ID,
+                "transform": "yoy12",
+            },
         ],
         "unemployment": "LRUNTTTTCAM156S",
         "gdp": "NAEXKP01CAQ189S",
@@ -117,6 +136,121 @@ _DISPLAY_YEARS = 5
 
 # ── Data fetching ────────────────────────────────────────────────────────────
 
+def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
+    """
+    Minimal Statistics Canada Web Data Service (WDS) client.
+
+    Docs: https://www.statcan.gc.ca/en/developers/wds
+    """
+    base_url = os.environ.get(
+        "STATCAN_WDS_BASE_URL",
+        "https://www150.statcan.gc.ca/t1/wds/rest",
+    ).rstrip("/")
+    url = f"{base_url}/{method}"
+
+    resp = requests.post(url, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, list):
+        if not data:
+            raise RuntimeError("Statistics Canada WDS returned an empty list response")
+        if not all(isinstance(item, dict) for item in data):
+            raise RuntimeError("Statistics Canada WDS returned an unexpected list response")
+
+        for item in data:
+            status = item.get("status")
+            if status and status != "SUCCESS":
+                message = item.get("message") or item.get("object") or item
+                raise RuntimeError(f"Statistics Canada WDS error: {message}")
+
+        if len(data) == 1:
+            data = data[0]
+        else:
+            data = {"status": "SUCCESS", "object": [item.get("object") for item in data]}
+
+    status = data.get("status")
+    if status and status != "SUCCESS":
+        message = data.get("message") or data.get("object") or data
+        raise RuntimeError(f"Statistics Canada WDS error: {message}")
+
+    return data
+
+
+def _fetch_statcan_vector_latest_n(
+    *,
+    vector_id: int,
+    latest_n: int,
+    timeout: int = 10,
+) -> pd.Series:
+    """
+    Fetch the latest N observations for a StatCan vector.
+
+    Returns a pd.Series indexed by datetime.
+    """
+    vector_id_int = int(vector_id)
+
+    # StatCan WDS docs specify: POST array with numeric vectorId and latestN.
+    payload = [{"vectorId": vector_id_int, "latestN": int(latest_n)}]
+    data = _statcan_wds_post(
+        "getDataFromVectorsAndLatestNPeriods",
+        payload=payload,
+        timeout=timeout,
+    )
+
+    obj = data.get("object")
+    if isinstance(obj, dict):
+        obj = [obj]
+    if not isinstance(obj, list) or not obj:
+        raise RuntimeError("Statistics Canada WDS returned no data object")
+
+    def _matches_vector(b: dict) -> bool:
+        raw = b.get("vectorId") or b.get("vector_id") or b.get("vector") or ""
+        s = str(raw).lstrip("v")
+        return s == str(vector_id_int)
+
+    block = obj[0] if len(obj) == 1 else next((b for b in obj if _matches_vector(b)), obj[0])
+    points = (
+        block.get("vectorDataPoint")
+        or block.get("vectorDataPoints")
+        or block.get("dataPoints")
+        or []
+    )
+    if not isinstance(points, list) or not points:
+        raise RuntimeError("Statistics Canada WDS returned no datapoints")
+
+    dates = []
+    values = []
+    for p in points:
+        ref = p.get("refPer") or p.get("refper") or p.get("ref_period")
+        val = p.get("value")
+        if ref is None or val in (None, ""):
+            continue
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+
+        dt = pd.to_datetime(ref, errors="coerce")
+        if pd.isna(dt) and isinstance(ref, str):
+            if ref.isdigit() and len(ref) == 6:
+                dt = pd.to_datetime(ref + "01", format="%Y%m%d", errors="coerce")
+            elif ref.isdigit() and len(ref) == 8:
+                dt = pd.to_datetime(ref, format="%Y%m%d", errors="coerce")
+
+        if pd.isna(dt):
+            continue
+
+        dates.append(dt)
+        values.append(num)
+
+    if not dates:
+        raise RuntimeError("Statistics Canada WDS datapoints could not be parsed")
+
+    series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
+    series = series[~series.index.duplicated(keep="last")]
+    return series
+
+
 def _get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
@@ -139,20 +273,23 @@ def _metric_candidates(metric_key: str, config: dict) -> List[Dict[str, object]]
 
     if isinstance(metric_config, str):
         transform = "yoy4" if metric_key == "gdp" else "none"
-        return [{"id": metric_config, "transform": transform, "params": {}}]
+        return [{"source": "fred", "id": metric_config, "transform": transform, "params": {}}]
 
     candidates: List[Dict[str, object]] = []
     for item in metric_config:
         if isinstance(item, str):
-            candidates.append({"id": item, "transform": "none", "params": {}})
+            candidates.append({"source": "fred", "id": item, "transform": "none", "params": {}})
         else:
-            candidates.append(
-                {
-                    "id": item["id"],
-                    "transform": item.get("transform", "none"),
-                    "params": item.get("params", {}),
-                }
-            )
+            candidate: Dict[str, object] = {
+                "source": item.get("source", "fred"),
+                "id": item["id"],
+                "transform": item.get("transform", "none"),
+                "params": item.get("params", {}),
+            }
+            for k, v in item.items():
+                if k not in candidate:
+                    candidate[k] = v
+            candidates.append(candidate)
     return candidates
 
 
@@ -189,15 +326,28 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
         candidates = _metric_candidates(metric_key, config)
 
         for candidate in candidates:
+            source = candidate.get("source", "fred")
             series_id = candidate["id"]
             transform = candidate["transform"]
             params = candidate.get("params", {})
             try:
-                series = fred.get_series(
-                    series_id,
-                    observation_start=observation_start,
-                    **params,
-                )
+                if source == "statcan_wds":
+                    vector_id = candidate.get("vector_id")
+                    if not vector_id:
+                        raise ValueError("Missing vector_id for statcan_wds series")
+                    series = _fetch_statcan_vector_latest_n(
+                        vector_id=int(vector_id),
+                        latest_n=int((_FETCH_YEARS + 1) * 12),
+                    )
+                    # Mirror FRED behavior: keep a larger window for transforms, then
+                    # trim for display.
+                    series = series[series.index >= observation_start]
+                else:
+                    series = fred.get_series(
+                        series_id,
+                        observation_start=observation_start,
+                        **params,
+                    )
                 if series is None or series.empty:
                     country_errors.append(f"{series_id}: no observations returned")
                     continue
@@ -253,7 +403,7 @@ def print_terminal():
 
     header = Panel(
         "[bold white]COUNTRY DASHBOARD[/bold white]\n"
-        f"[dim]Data from FRED[/dim]\n"
+        f"[dim]Data from FRED (Canada inflation via Statistics Canada WDS)[/dim]\n"
         f"[dim]Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/dim]",
         border_style="bold blue",
         padding=(1, 2),

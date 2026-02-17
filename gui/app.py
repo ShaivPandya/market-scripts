@@ -857,7 +857,7 @@ elif st.session_state.current_page == "💧 Liquidity":
 # =============================================================================
 elif st.session_state.current_page == "🌍 Country Dashboard":
     st.header("Country Dashboard")
-    st.caption("Macroeconomic indicators for 9 major economies via FRED")
+    st.caption("Macroeconomic indicators for 9 major economies (FRED; Canada inflation via Statistics Canada WDS)")
 
     if st.button("Refresh Data", key="refresh_country_dashboard"):
         st.cache_data.clear()
@@ -878,7 +878,7 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
             import traceback
             return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
-    with st.spinner(f"Fetching {country_metric} data from FRED..."):
+    with st.spinner(f"Fetching {country_metric} data..."):
         country_dash_data = fetch_country_dashboard(country_metric)
 
     if "error" in country_dash_data:
