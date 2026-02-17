@@ -981,7 +981,7 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
                                 )
                                 .properties(height=200)
                             )
-                            st.altair_chart(chart, use_container_width=True)
+                            st.altair_chart(chart, width="stretch")
                         else:
                             st.metric(country_name, "N/A")
                             st.caption("No data available")
@@ -1585,7 +1585,7 @@ elif st.session_state.current_page == "🔔 Breakout":
                 "short_breakout",
             ]
             snapshot_cols = [c for c in snapshot_cols if c in latest_view.columns]
-            st.dataframe(latest_view[snapshot_cols], use_container_width=True, hide_index=True)
+            st.dataframe(latest_view[snapshot_cols], width="stretch", hide_index=True)
 
         st.subheader("Historical Breakout Events")
         if events_df.empty:
@@ -1623,7 +1623,7 @@ elif st.session_state.current_page == "🔔 Breakout":
                 "congestion_prev",
             ]
             event_cols = [c for c in event_cols if c in event_view.columns]
-            st.dataframe(event_view[event_cols], use_container_width=True, hide_index=True)
+            st.dataframe(event_view[event_cols], width="stretch", hide_index=True)
 
         st.subheader("History Charts")
         if not history or latest_df.empty:
@@ -1784,7 +1784,7 @@ elif st.session_state.current_page == "🔔 Breakout":
                         raw_cols = [c for c in raw_cols if c in plot_df.columns]
                         raw_view = plot_df[raw_cols].sort_values("date", ascending=False).copy()
                         raw_view["date"] = raw_view["date"].dt.date
-                        st.dataframe(raw_view, use_container_width=True, hide_index=True)
+                        st.dataframe(raw_view, width="stretch", hide_index=True)
 
 
 # =============================================================================
