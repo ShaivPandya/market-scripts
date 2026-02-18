@@ -362,7 +362,7 @@ def _fetch_genesis_cpi(
     base_url = GENESIS_BASE_URL.rstrip("/")
     url = f"{base_url}/data/tablefile"
 
-    params = {
+    data = {
         "name": table,
         "area": "free",
         "compress": "false",
@@ -370,14 +370,18 @@ def _fetch_genesis_cpi(
         "format": "ffcsv",
         "language": "de",
     }
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
     if GENESIS_API_KEY:
-        params["token"] = GENESIS_API_KEY
+        headers["username"] = GENESIS_API_KEY
+        headers["password"] = ""
     else:
         # Fall back to guest access
-        params["username"] = "GAST"
-        params["password"] = "GAST"
+        headers["username"] = "GAST"
+        headers["password"] = "GAST"
 
-    resp = requests.get(url, params=params, timeout=timeout, allow_redirects=False)
+    resp = requests.post(url, data=data, headers=headers, timeout=timeout, allow_redirects=False)
     if resp.status_code in (301, 302, 303, 307, 308):
         raise RuntimeError(
             f"GENESIS table {table}: API redirected (likely down for maintenance)"
