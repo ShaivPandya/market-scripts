@@ -4,7 +4,7 @@ Country Dashboard
 
 Fetches macroeconomic time series (Inflation, Unemployment, GDP) for 9 countries
 primarily from FRED (Canada inflation via Statistics Canada WDS, UK inflation
-via ONS, Germany inflation via Eurostat). Displays a 3x3 grid
+via ONS, EU/Germany/France inflation+GDP+unemployment via Eurostat). Displays a 3x3 grid
 of line charts with metric radio toggles (GUI),
 or prints summary tables in the terminal.
 
@@ -46,6 +46,8 @@ except ValueError:
 
 _DEFAULT_EUROSTAT_HICP_DATASET = "prc_hicp_midx"
 EUROSTAT_HICP_DATASET = os.environ.get("EUROSTAT_HICP_DATASET", _DEFAULT_EUROSTAT_HICP_DATASET)
+EUROSTAT_GDP_DATASET = os.environ.get("EUROSTAT_GDP_DATASET", "namq_10_gdp")
+EUROSTAT_UNEMPLOYMENT_DATASET = os.environ.get("EUROSTAT_UNEMPLOYMENT_DATASET", "une_rt_m")
 
 _DEFAULT_ONS_CPI_UK_SERIES_ID = "d7g7"
 _DEFAULT_ONS_CPI_UK_DATASET_ID = "mm23"
@@ -110,8 +112,30 @@ COUNTRIES = {
             {"id": "CP0000EZ19M086NEST", "transform": "yoy12"},
             {"id": "FPCPITOTLZGEMU", "transform": "none"},
         ],
-        "unemployment": "LRUNTTTTEZM156S",
-        "gdp": "NAEXKP01EZQ189S",
+        "unemployment": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_UNEMPLOYMENT_DATASET}",
+                "dataset": EUROSTAT_UNEMPLOYMENT_DATASET,
+                "geo": "EA20",
+                "query_params": {"unit": "PC_ACT", "sex": "T", "age": "TOTAL", "s_adj": "SA"},
+                "freq": "monthly",
+                "transform": "none",
+            },
+            {"id": "LRUNTTTTEZM156S"},
+        ],
+        "gdp": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
+                "dataset": EUROSTAT_GDP_DATASET,
+                "geo": "EA20",
+                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
+                "freq": "quarterly",
+                "transform": "none",
+            },
+            {"id": "NAEXKP01EZQ189S", "transform": "yoy4"},
+        ],
     },
     "Germany": {
         "inflation": [
@@ -122,8 +146,30 @@ COUNTRIES = {
                 "transform": "yoy12",
             },
         ],
-        "unemployment": "LRUNTTTTDEM156S",
-        "gdp": "NAEXKP01DEQ189S",
+        "unemployment": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_UNEMPLOYMENT_DATASET}",
+                "dataset": EUROSTAT_UNEMPLOYMENT_DATASET,
+                "geo": "DE",
+                "query_params": {"unit": "PC_ACT", "sex": "T", "age": "TOTAL", "s_adj": "SA"},
+                "freq": "monthly",
+                "transform": "none",
+            },
+            {"id": "LRUNTTTTDEM156S"},
+        ],
+        "gdp": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
+                "dataset": EUROSTAT_GDP_DATASET,
+                "geo": "DE",
+                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
+                "freq": "quarterly",
+                "transform": "none",
+            },
+            {"id": "NAEXKP01DEQ189S", "transform": "yoy4"},
+        ],
     },
     "Japan": {
         "inflation": [
@@ -145,8 +191,30 @@ COUNTRIES = {
             {"id": "CPALTT01FRM659N", "transform": "none"},
             {"id": "FPCPITOTLZGFRA", "transform": "none"},
         ],
-        "unemployment": "LRUNTTTTFRM156S",
-        "gdp": "NAEXKP01FRQ189S",
+        "unemployment": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_UNEMPLOYMENT_DATASET}",
+                "dataset": EUROSTAT_UNEMPLOYMENT_DATASET,
+                "geo": "FR",
+                "query_params": {"unit": "PC_ACT", "sex": "T", "age": "TOTAL", "s_adj": "SA"},
+                "freq": "monthly",
+                "transform": "none",
+            },
+            {"id": "LRUNTTTTFRM156S"},
+        ],
+        "gdp": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
+                "dataset": EUROSTAT_GDP_DATASET,
+                "geo": "FR",
+                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
+                "freq": "quarterly",
+                "transform": "none",
+            },
+            {"id": "NAEXKP01FRQ189S", "transform": "yoy4"},
+        ],
     },
     "Switzerland": {
         "inflation": [
@@ -416,6 +484,72 @@ def _fetch_eurostat_hicp(
     return series
 
 
+def _fetch_eurostat_series(
+    *,
+    dataset: str,
+    geo: str,
+    query_params: dict,
+    freq: str = "monthly",
+    timeout: int = 20,
+) -> pd.Series:
+    """
+    Fetch a generic Eurostat JSON-stat series (monthly or quarterly).
+
+    Args:
+        dataset: Eurostat dataset code (e.g. "namq_10_gdp", "une_rt_m").
+        geo: Eurostat geo code (e.g. "EA20", "DE", "FR").
+        query_params: Additional query parameters (e.g. unit, na_item, s_adj).
+        freq: "monthly" for YYYY-MM periods, "quarterly" for YYYY-Q# periods.
+
+    Returns a pd.Series indexed by datetime.
+    """
+    import re as _re
+
+    base_url = os.environ.get(
+        "EUROSTAT_API_BASE_URL",
+        "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0",
+    ).rstrip("/")
+    qs = "&".join(f"{k}={v}" for k, v in query_params.items())
+    url = f"{base_url}/data/{dataset}?format=JSON&geo={geo}&{qs}"
+
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    time_dim = data.get("dimension", {}).get("time", {})
+    time_index = time_dim.get("category", {}).get("index", {})
+    if not time_index:
+        raise RuntimeError(f"Eurostat {dataset}: no time dimension in response")
+
+    raw_values = data.get("value", {})
+    if not raw_values:
+        raise RuntimeError(f"Eurostat {dataset}: no values in response")
+
+    dates, values = [], []
+    for period, pos in sorted(time_index.items(), key=lambda x: x[1]):
+        val = raw_values.get(str(pos))
+        if val is None:
+            continue
+        if freq == "quarterly":
+            m = _re.match(r"(\d{4})-Q(\d)", period)
+            if not m:
+                continue
+            year, q = int(m.group(1)), int(m.group(2))
+            dt = pd.Timestamp(year=year, month=(q - 1) * 3 + 1, day=1)
+        else:
+            dt = pd.to_datetime(period, format="%Y-%m", errors="coerce")
+            if pd.isna(dt):
+                continue
+        dates.append(dt)
+        values.append(float(val))
+
+    if not dates:
+        raise RuntimeError(f"Eurostat {dataset}: no data points could be parsed")
+
+    series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
+    return series[~series.index.duplicated(keep="last")]
+
+
 def _get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
@@ -522,7 +656,14 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     if not ds:
                         raise ValueError("Missing dataset for Eurostat source")
                     geo = candidate.get("geo", "DE")
-                    series = _fetch_eurostat_hicp(dataset=ds, geo=geo)
+                    qp = candidate.get("query_params")
+                    if qp:
+                        freq = candidate.get("freq", "monthly")
+                        series = _fetch_eurostat_series(
+                            dataset=ds, geo=geo, query_params=qp, freq=freq
+                        )
+                    else:
+                        series = _fetch_eurostat_hicp(dataset=ds, geo=geo)
                     series = series[series.index >= observation_start]
                 else:
                     series = fred.get_series(

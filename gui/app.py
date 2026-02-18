@@ -48,6 +48,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
+@st.cache_data(ttl=3600)
+def fetch_country_dashboard(metric: str):
+    try:
+        from country_dashboard import get_data
+        return get_data(metric=metric)
+    except Exception as e:
+        import traceback
+        return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
 # Initialize session state for navigation
 if "current_page" not in st.session_state:
     st.session_state.current_page = "💼 Portfolio Dashboard"
@@ -868,15 +878,6 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
         horizontal=True,
         key="country_dashboard_metric",
     )
-
-    @st.cache_data(ttl=60)
-    def fetch_country_dashboard(metric: str):
-        try:
-            from country_dashboard import get_data
-            return get_data(metric=metric)
-        except Exception as e:
-            import traceback
-            return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
     with st.spinner(f"Fetching {country_metric} data..."):
         country_dash_data = fetch_country_dashboard(country_metric)
