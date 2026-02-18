@@ -3286,13 +3286,15 @@ elif st.session_state.current_page == "📐 Chart":
             plot_price["date"] = plot_price.index
             price_melted = plot_price.melt(
                 id_vars=["date"],
-                value_vars=["Close", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"],
+                value_vars=["Close", "100D SMA", "150D SMA", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"],
                 var_name="Series",
                 value_name="Price",
             ).dropna(subset=["Price"])
 
             ma_color_map = {
                 "Close": "#1f77b4",
+                "100D SMA": "#FB923C",
+                "150D SMA": "#38BDF8",
                 "200D SMA": "#FF6B6B",
                 "40W SMA": "#4ECDC4",
                 "200W SMA": "#FFE66D",
@@ -3312,7 +3314,7 @@ elif st.session_state.current_page == "📐 Chart":
                     y=alt.Y("Price:Q", scale=alt.Scale(zero=False), title="Price"),
                     color=alt.Color("Series:N", scale=color_scale, legend=alt.Legend(
                         title=None, orient="top", direction="horizontal",
-                        columns=6, labelFontSize=11,
+                        columns=8, labelFontSize=11,
                     )),
                     strokeWidth=alt.condition(
                         alt.datum.Series == "Close",

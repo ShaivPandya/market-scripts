@@ -47,6 +47,8 @@ def _moving_averages(close: pd.Series) -> pd.DataFrame:
     df = close.to_frame("Close")
 
     # Daily
+    df["100D SMA"] = close.rolling(100, min_periods=100).mean()
+    df["150D SMA"] = close.rolling(150, min_periods=150).mean()
     df["200D SMA"] = close.rolling(200, min_periods=200).mean()
 
     # Weekly
@@ -92,7 +94,7 @@ def _build_summary(price_df: pd.DataFrame, roc_df: pd.DataFrame) -> list[dict]:
     rows: list[dict] = []
 
     # MA signals
-    for col in ["200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"]:
+    for col in ["100D SMA", "150D SMA", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"]:
         ma_val = latest.get(col)
         if pd.notna(ma_val):
             above = close >= ma_val
@@ -184,6 +186,8 @@ def _cli(ticker: str) -> None:
     # Price + MAs
     ax1.plot(price_df.index, price_df["Close"], label="Close", linewidth=1.4, color="white")
     ma_colors = {
+        "100D SMA": "#FB923C",
+        "150D SMA": "#38BDF8",
         "200D SMA": "#FF6B6B",
         "40W SMA": "#4ECDC4",
         "200W SMA": "#FFE66D",

@@ -100,6 +100,13 @@ COUNTRIES = {
     },
     "EU": {
         "inflation": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_HICP_DATASET}",
+                "dataset": EUROSTAT_HICP_DATASET,
+                "geo": "EA20",
+                "transform": "yoy12",
+            },
             {"id": "CP0000EZ19M086NEST", "transform": "yoy12"},
             {"id": "FPCPITOTLZGEMU", "transform": "none"},
         ],
@@ -128,6 +135,13 @@ COUNTRIES = {
     },
     "France": {
         "inflation": [
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_HICP_DATASET}",
+                "dataset": EUROSTAT_HICP_DATASET,
+                "geo": "FR",
+                "transform": "yoy12",
+            },
             {"id": "CPALTT01FRM659N", "transform": "none"},
             {"id": "FPCPITOTLZGFRA", "transform": "none"},
         ],
@@ -507,7 +521,8 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     ds = candidate.get("dataset")
                     if not ds:
                         raise ValueError("Missing dataset for Eurostat source")
-                    series = _fetch_eurostat_hicp(dataset=ds)
+                    geo = candidate.get("geo", "DE")
+                    series = _fetch_eurostat_hicp(dataset=ds, geo=geo)
                     series = series[series.index >= observation_start]
                 else:
                     series = fred.get_series(
