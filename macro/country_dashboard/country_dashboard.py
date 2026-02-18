@@ -4,7 +4,7 @@ Country Dashboard
 
 Fetches macroeconomic time series (Inflation, Unemployment, GDP) for 9 countries
 primarily from FRED (Canada inflation via Statistics Canada WDS, UK inflation
-via ONS, Germany inflation via Destatis GENESIS). Displays a 3x3 grid
+via ONS, Germany inflation via Eurostat). Displays a 3x3 grid
 of line charts with metric radio toggles (GUI),
 or prints summary tables in the terminal.
 
@@ -44,11 +44,8 @@ try:
 except ValueError:
     STATCAN_CPI_CANADA_VECTOR_ID = _DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID
 
-_DEFAULT_GENESIS_BASE_URL = "https://www-genesis.destatis.de/genesisWS/rest/2020"
-_DEFAULT_GENESIS_CPI_TABLE = "61111-0002"
-GENESIS_BASE_URL = os.environ.get("GENESIS_BASE_URL", _DEFAULT_GENESIS_BASE_URL)
-GENESIS_API_KEY = os.environ.get("GENESIS_API_KEY", "")
-GENESIS_CPI_TABLE = os.environ.get("GENESIS_CPI_TABLE", _DEFAULT_GENESIS_CPI_TABLE)
+_DEFAULT_EUROSTAT_HICP_DATASET = "prc_hicp_midx"
+EUROSTAT_HICP_DATASET = os.environ.get("EUROSTAT_HICP_DATASET", _DEFAULT_EUROSTAT_HICP_DATASET)
 
 _DEFAULT_ONS_CPI_UK_SERIES_ID = "d7g7"
 _DEFAULT_ONS_CPI_UK_DATASET_ID = "mm23"
@@ -112,9 +109,9 @@ COUNTRIES = {
     "Germany": {
         "inflation": [
             {
-                "source": "genesis",
-                "id": f"GENESIS {GENESIS_CPI_TABLE}",
-                "table": GENESIS_CPI_TABLE,
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_HICP_DATASET}",
+                "dataset": EUROSTAT_HICP_DATASET,
                 "transform": "yoy12",
             },
         ],
@@ -347,124 +344,57 @@ def _fetch_ons_timeseries(
     return series
 
 
-def _fetch_genesis_cpi(
+def _fetch_eurostat_hicp(
     *,
-    table: str,
+    dataset: str,
+    geo: str = "DE",
     timeout: int = 20,
 ) -> pd.Series:
     """
-    Fetch monthly CPI index data from the Destatis GENESIS web service API.
+    Fetch monthly HICP index data from the Eurostat API (JSON-stat format).
 
-    Returns a pd.Series indexed by datetime with CPI index values.
+    Returns a pd.Series indexed by datetime with HICP index values.
     """
-    import io
+    base_url = os.environ.get(
+        "EUROSTAT_API_BASE_URL",
+        "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0",
+    ).rstrip("/")
+    url = (
+        f"{base_url}/data/{dataset}"
+        f"?format=JSON&geo={geo}&unit=I15&coicop=CP00"
+    )
 
-    base_url = GENESIS_BASE_URL.rstrip("/")
-    url = f"{base_url}/data/tablefile"
-
-    data = {
-        "name": table,
-        "area": "free",
-        "compress": "false",
-        "transpose": "false",
-        "format": "ffcsv",
-        "language": "de",
-    }
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-    if GENESIS_API_KEY:
-        headers["username"] = GENESIS_API_KEY
-        headers["password"] = ""
-    else:
-        # Fall back to guest access
-        headers["username"] = "GAST"
-        headers["password"] = "GAST"
-
-    resp = requests.post(url, data=data, headers=headers, timeout=timeout, allow_redirects=False)
-    if resp.status_code in (301, 302, 303, 307, 308):
-        raise RuntimeError(
-            f"GENESIS table {table}: API redirected (likely down for maintenance)"
-        )
+    resp = requests.get(url, timeout=timeout)
     resp.raise_for_status()
-    resp.encoding = "utf-8"
+    data = resp.json()
 
-    text = resp.text
-    if not text.strip() or "<html" in text[:500].lower():
-        raise RuntimeError(f"GENESIS table {table}: unexpected response (not CSV)")
-
-    # ffcsv is semicolon-delimited
-    lines = text.splitlines()
-    if not lines:
-        raise RuntimeError(f"GENESIS table {table}: no data lines in response")
-
-    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=";", dtype=str)
-
-    # Identify the time column (contains MONAT or Zeit) and value column
-    time_col = None
-    for col in df.columns:
-        col_lower = col.lower()
-        if "zeit" in col_lower or "monat" in col_lower:
-            time_col = col
-            break
-    if time_col is None:
-        # Fall back to column containing date-like patterns (e.g. "2024M01")
-        for col in df.columns:
-            sample = df[col].dropna().iloc[0] if not df[col].dropna().empty else ""
-            if isinstance(sample, str) and len(sample) >= 6 and "M" in sample.upper():
-                time_col = col
-                break
-    if time_col is None:
+    time_dim = data.get("dimension", {}).get("time", {})
+    time_index = time_dim.get("category", {}).get("index", {})
+    if not time_index:
         raise RuntimeError(
-            f"GENESIS table {table}: could not identify time column in {list(df.columns)}"
+            f"Eurostat {dataset}: no time dimension in response"
         )
 
-    # Find the value column (typically contains "PREIS1" or is the last numeric column)
-    val_col = None
-    for col in df.columns:
-        if "preis" in col.lower() or "verbraucherpreisindex" in col.lower():
-            val_col = col
-            break
-    if val_col is None:
-        # Use the last column as fallback (typically the value)
-        val_col = df.columns[-1]
+    raw_values = data.get("value", {})
+    if not raw_values:
+        raise RuntimeError(f"Eurostat {dataset}: no values in response")
 
+    # time_index maps period string -> position, raw_values maps position -> value
     dates = []
     values = []
-    for _, row in df.iterrows():
-        time_str = str(row[time_col]).strip()
-        val_str = str(row[val_col]).strip().replace(",", ".")
-
-        try:
-            val = float(val_str)
-        except (TypeError, ValueError):
+    for period, pos in sorted(time_index.items(), key=lambda x: x[1]):
+        val = raw_values.get(str(pos))
+        if val is None:
             continue
-
-        # Parse time formats: "2024M01", "2024-01", "Januar 2024", etc.
-        dt = pd.NaT
-        # Try "YYYYMMM" format like "2024M01" or "2024JAN01"
-        if "M" in time_str.upper() and len(time_str) >= 6:
-            parts = time_str.upper().split("M")
-            if len(parts) == 2:
-                try:
-                    year = int(parts[0].strip())
-                    month = int(parts[1].strip())
-                    dt = pd.Timestamp(year=year, month=month, day=1)
-                except (ValueError, TypeError):
-                    pass
-
-        if pd.isna(dt):
-            dt = pd.to_datetime(time_str, errors="coerce")
-
+        dt = pd.to_datetime(period, format="%Y-%m", errors="coerce")
         if pd.isna(dt):
             continue
-
         dates.append(dt)
-        values.append(val)
+        values.append(float(val))
 
     if not dates:
         raise RuntimeError(
-            f"GENESIS table {table}: no data points could be parsed"
+            f"Eurostat {dataset}: no data points could be parsed"
         )
 
     series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
@@ -573,11 +503,11 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                         dataset_id=did,
                     )
                     series = series[series.index >= observation_start]
-                elif source == "genesis":
-                    tbl = candidate.get("table")
-                    if not tbl:
-                        raise ValueError("Missing table for GENESIS source")
-                    series = _fetch_genesis_cpi(table=tbl)
+                elif source == "eurostat":
+                    ds = candidate.get("dataset")
+                    if not ds:
+                        raise ValueError("Missing dataset for Eurostat source")
+                    series = _fetch_eurostat_hicp(dataset=ds)
                     series = series[series.index >= observation_start]
                 else:
                     series = fred.get_series(
@@ -640,7 +570,7 @@ def print_terminal():
 
     header = Panel(
         "[bold white]COUNTRY DASHBOARD[/bold white]\n"
-        f"[dim]Data from FRED (Canada via Statistics Canada WDS, UK via ONS, Germany via GENESIS)[/dim]\n"
+        f"[dim]Data from FRED (Canada via Statistics Canada WDS, UK via ONS, Germany via Eurostat)[/dim]\n"
         f"[dim]Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/dim]",
         border_style="bold blue",
         padding=(1, 2),
