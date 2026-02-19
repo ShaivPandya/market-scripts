@@ -35,6 +35,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
+sys.path.insert(0, str(PROJECT_ROOT / "macro" / "country_dashboard"))
 
 import streamlit as st
 import pandas as pd
@@ -46,6 +47,16 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+@st.cache_data(ttl=3600)
+def fetch_country_dashboard(metric: str):
+    try:
+        from country_dashboard import get_data
+        return get_data(metric=metric)
+    except Exception as e:
+        import traceback
+        return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
 # Initialize session state for navigation
 if "current_page" not in st.session_state:
@@ -66,10 +77,10 @@ def nav_button(label: str) -> None:
 
 NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum"],
-    ["📐 Technical Analysis", "🏅 Quality Screen"],
+    ["📐 Chart", "🏅 Quality Screen"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
-    ["📊 Economic Growth", "💧 Liquidity"],
+    ["📊 Economic Growth", "💧 Liquidity", "🌍 Country Dashboard"],
     ["🏦 Central Bank Monitor", "🏭 Industry Monitor"],
 ]
 
@@ -110,13 +121,13 @@ if st.session_state.current_page == "💱 FX Model":
     fx_horizons_str = st.sidebar.text_input("Horizons (months)", value="12,24")
     fx_run_clicked = st.sidebar.button("Run Model", type="primary", width="stretch")
 
-# Technical Analysis sidebar controls
+# Chart sidebar controls
 ta_ticker = "SPY"
 ta_lookback = "2Y"
 ta_run_clicked = False
 
-if st.session_state.current_page == "📐 Technical Analysis":
-    st.sidebar.title("Technical Analysis")
+if st.session_state.current_page == "📐 Chart":
+    st.sidebar.title("Chart")
     ta_ticker = st.sidebar.text_input("Ticker", value="SPY", help="Enter a stock ticker symbol")
     ta_lookback = st.sidebar.radio("Lookback", ["3M", "1Y", "2Y", "5Y"], index=2, horizontal=True)
     ta_run_clicked = st.sidebar.button("Analyze", type="primary", width="stretch")
@@ -852,6 +863,137 @@ elif st.session_state.current_page == "💧 Liquidity":
 
 
 # =============================================================================
+# PAGE: Country Dashboard
+# =============================================================================
+elif st.session_state.current_page == "🌍 Country Dashboard":
+    st.header("Country Dashboard")
+
+    if st.button("Refresh Data", key="refresh_country_dashboard"):
+        st.cache_data.clear()
+
+    country_metric = st.radio(
+        "Metric",
+        ["Inflation", "Unemployment", "GDP"],
+        horizontal=True,
+        key="country_dashboard_metric",
+    )
+
+    with st.spinner(f"Fetching {country_metric} data..."):
+        country_dash_data = fetch_country_dashboard(country_metric)
+
+    if "error" in country_dash_data:
+        st.error(f"Error: {country_dash_data['error']}")
+    else:
+        from country_dashboard import COUNTRY_ORDER
+        import altair as alt
+
+        countries = country_dash_data.get("countries", {})
+        errors = country_dash_data.get("errors", {})
+        series_used = country_dash_data.get("series_used", {})
+        latest_observation_dates = country_dash_data.get("latest_observation_dates", {})
+        timestamp = country_dash_data.get("timestamp")
+        if timestamp:
+            st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if not countries:
+            st.warning("No country data returned")
+            if errors:
+                with st.expander("Series diagnostics", expanded=True):
+                    for country_name in COUNTRY_ORDER:
+                        messages = errors.get(country_name)
+                        if not messages:
+                            continue
+                        st.markdown(f"**{country_name}**")
+                        for message in messages:
+                            st.caption(message)
+        else:
+            metric_label = {
+                "Inflation": "CPI YoY %",
+                "Unemployment": "Rate %",
+                "GDP": "Real GDP YoY %",
+            }.get(country_metric, "")
+            st.caption(f"Showing: {metric_label}")
+
+            if errors:
+                with st.expander("Series diagnostics", expanded=False):
+                    for country_name in COUNTRY_ORDER:
+                        messages = errors.get(country_name)
+                        if not messages:
+                            continue
+                        st.markdown(f"**{country_name}**")
+                        for message in messages:
+                            st.caption(message)
+
+            for row_idx in range(3):
+                cols = st.columns(3)
+                for col_idx in range(3):
+                    country_idx = row_idx * 3 + col_idx
+                    if country_idx >= len(COUNTRY_ORDER):
+                        break
+                    country_name = COUNTRY_ORDER[country_idx]
+                    series = countries.get(country_name)
+
+                    with cols[col_idx]:
+                        if series is not None and not series.empty:
+                            latest = series.iloc[-1]
+                            if len(series) > 1:
+                                previous = series.iloc[-2]
+                                delta = latest - previous
+                                delta_str = f"{delta:+.1f}pp"
+                            else:
+                                delta_str = None
+
+                            st.metric(
+                                country_name,
+                                f"{latest:.1f}%",
+                                delta_str,
+                                delta_color=(
+                                    "normal" if country_metric == "GDP"
+                                    else "inverse"
+                                ),
+                            )
+
+                            obs_date = latest_observation_dates.get(country_name)
+                            source_id = series_used.get(country_name)
+                            if obs_date is not None:
+                                obs_ts = pd.to_datetime(obs_date)
+                                age_days = (pd.Timestamp.now() - obs_ts).days
+                                stale_label = f" (stale: {age_days}d)" if age_days > 180 else ""
+                                source_label = f" · {source_id}" if source_id else ""
+                                st.caption(
+                                    f"Latest obs: {obs_ts.strftime('%Y-%m-%d')}{stale_label}{source_label}"
+                                )
+
+                            chart_df = pd.DataFrame({
+                                "date": series.index,
+                                "value": series.values,
+                            })
+                            chart = (
+                                alt.Chart(chart_df)
+                                .mark_line()
+                                .encode(
+                                    x=alt.X("date:T", title=None),
+                                    y=alt.Y(
+                                        "value:Q",
+                                        scale=alt.Scale(zero=False),
+                                        title=None,
+                                    ),
+                                )
+                                .properties(height=200)
+                            )
+                            st.altair_chart(chart, width="stretch")
+                        else:
+                            st.metric(country_name, "N/A")
+                            st.caption("No data available")
+                            err = errors.get(country_name, [])
+                            if err:
+                                reason = err[0]
+                                if len(reason) > 120:
+                                    reason = reason[:117] + "..."
+                                st.caption(f"Reason: {reason}")
+
+
+# =============================================================================
 # PAGE: Positioning
 # =============================================================================
 elif st.session_state.current_page == "📌 Positioning":
@@ -1443,7 +1585,7 @@ elif st.session_state.current_page == "🔔 Breakout":
                 "short_breakout",
             ]
             snapshot_cols = [c for c in snapshot_cols if c in latest_view.columns]
-            st.dataframe(latest_view[snapshot_cols], use_container_width=True, hide_index=True)
+            st.dataframe(latest_view[snapshot_cols], width="stretch", hide_index=True)
 
         st.subheader("Historical Breakout Events")
         if events_df.empty:
@@ -1481,7 +1623,7 @@ elif st.session_state.current_page == "🔔 Breakout":
                 "congestion_prev",
             ]
             event_cols = [c for c in event_cols if c in event_view.columns]
-            st.dataframe(event_view[event_cols], use_container_width=True, hide_index=True)
+            st.dataframe(event_view[event_cols], width="stretch", hide_index=True)
 
         st.subheader("History Charts")
         if not history or latest_df.empty:
@@ -1642,7 +1784,7 @@ elif st.session_state.current_page == "🔔 Breakout":
                         raw_cols = [c for c in raw_cols if c in plot_df.columns]
                         raw_view = plot_df[raw_cols].sort_values("date", ascending=False).copy()
                         raw_view["date"] = raw_view["date"].dt.date
-                        st.dataframe(raw_view, use_container_width=True, hide_index=True)
+                        st.dataframe(raw_view, width="stretch", hide_index=True)
 
 
 # =============================================================================
@@ -1673,7 +1815,7 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
         "Target Gross Leverage",
         min_value=0.5,
         max_value=4.0,
-        value=1.0,
+        value=2.0,
         step=0.1,
         help="Target gross exposure as multiple of NAV (max 4.0x per script limits)"
     )
@@ -3101,10 +3243,10 @@ elif st.session_state.current_page == "🏦 Central Bank Monitor":
 
 
 # =============================================================================
-# PAGE: Technical Analysis
+# PAGE: Chart
 # =============================================================================
-elif st.session_state.current_page == "📐 Technical Analysis":
-    st.header("Technical Analysis")
+elif st.session_state.current_page == "📐 Chart":
+    st.header("Chart")
     st.caption("Moving averages and rate-of-change analysis for a single ticker")
 
     if st.button("Refresh Data", key="refresh_technical_analysis"):
@@ -3144,13 +3286,15 @@ elif st.session_state.current_page == "📐 Technical Analysis":
             plot_price["date"] = plot_price.index
             price_melted = plot_price.melt(
                 id_vars=["date"],
-                value_vars=["Close", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"],
+                value_vars=["Close", "100D SMA", "150D SMA", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"],
                 var_name="Series",
                 value_name="Price",
             ).dropna(subset=["Price"])
 
             ma_color_map = {
                 "Close": "#1f77b4",
+                "100D SMA": "#FB923C",
+                "150D SMA": "#38BDF8",
                 "200D SMA": "#FF6B6B",
                 "40W SMA": "#4ECDC4",
                 "200W SMA": "#FFE66D",
@@ -3170,7 +3314,7 @@ elif st.session_state.current_page == "📐 Technical Analysis":
                     y=alt.Y("Price:Q", scale=alt.Scale(zero=False), title="Price"),
                     color=alt.Color("Series:N", scale=color_scale, legend=alt.Legend(
                         title=None, orient="top", direction="horizontal",
-                        columns=6, labelFontSize=11,
+                        columns=8, labelFontSize=11,
                     )),
                     strokeWidth=alt.condition(
                         alt.datum.Series == "Close",
