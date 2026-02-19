@@ -4,7 +4,8 @@ Country Dashboard
 
 Fetches macroeconomic time series (Inflation, Unemployment, GDP) for 9 countries
 primarily from FRED (Canada inflation via Statistics Canada WDS, UK inflation
-via ONS, EU/Germany/France inflation+GDP+unemployment via Eurostat). Displays a 3x3 grid
+via ONS, EU/Germany/France inflation+GDP+unemployment via Eurostat,
+Switzerland inflation+GDP via SNB). Displays a 3x3 grid
 of line charts with metric radio toggles (GUI),
 or prints summary tables in the terminal.
 
@@ -97,8 +98,32 @@ COUNTRIES = {
             {"id": "CPALTT01GBM659N", "transform": "none"},
             {"id": "FPCPITOTLZGGBR", "transform": "none"},
         ],
-        "unemployment": "LRUNTTTTGBM156S",
-        "gdp": "NAEXKP01GBQ189S",
+        "unemployment": [
+            # ONS: LFS Unemployment rate, 16+, SA, monthly, already in %.
+            {
+                "source": "ons",
+                "id": "ONS MGSX/LMS",
+                "series_id": "MGSX",
+                "dataset_id": "LMS",
+                "url_path": "/employmentandlabourmarket/peoplenotinwork/unemployment",
+                "transform": "none",
+            },
+            # FRED fallback
+            {"id": "LRUNTTTTGBM156S"},
+        ],
+        "gdp": [
+            # ONS: GDP q-on-q4 growth rate, CVM SA — already YoY %.
+            {
+                "source": "ons",
+                "id": "ONS IHYR/UKEA",
+                "series_id": "IHYR",
+                "dataset_id": "UKEA",
+                "url_path": "/economy/grossdomesticproductgdp",
+                "transform": "none",
+            },
+            # FRED fallback
+            {"id": "NAEXKP01GBQ189S", "transform": "yoy4"},
+        ],
     },
     "EU": {
         "inflation": [
@@ -218,11 +243,28 @@ COUNTRIES = {
     },
     "Switzerland": {
         "inflation": [
+            {
+                "source": "snb",
+                "id": "SNB plkopr VVP",
+                "cube": "plkopr",
+                "dim_sel": "D0(VVP)",
+                "transform": "none",
+            },
             {"id": "CPALTT01CHM659N", "transform": "none"},
             {"id": "FPCPITOTLZGCHE", "transform": "none"},
         ],
         "unemployment": "LRUNTTTTCHM156S",
-        "gdp": "NAEXKP01CHQ189S",
+        "gdp": [
+            {
+                "source": "snb",
+                "id": "SNB gdprpq WMF BBIP",
+                "cube": "gdprpq",
+                "dim_sel": "D0(WMF),D1(BBIP)",
+                "freq": "quarterly",
+                "transform": "yoy4",
+            },
+            {"id": "NAEXKP01CHQ189S", "transform": "yoy4"},
+        ],
     },
     "Australia": {
         "inflation": [
@@ -359,14 +401,22 @@ def _fetch_statcan_vector_latest_n(
     return series
 
 
+_ONS_QUARTER_TO_MONTH = {"Q1": 1, "Q2": 4, "Q3": 7, "Q4": 10}
+
+
 def _fetch_ons_timeseries(
     *,
     series_id: str,
     dataset_id: str,
+    url_path: str | None = None,
     timeout: int = 20,
 ) -> pd.Series:
     """
-    Fetch monthly time series data from the ONS website API.
+    Fetch time series data (monthly or quarterly) from the ONS website API.
+
+    url_path overrides the topic prefix in the URL, e.g.
+      "/economy/employmentandlabourmarket/peoplenotinwork/unemployment"
+    Defaults to "/economy/inflationandpriceindices".
 
     Returns a pd.Series indexed by datetime.
     """
@@ -374,46 +424,69 @@ def _fetch_ons_timeseries(
         "ONS_API_BASE_URL",
         "https://www.ons.gov.uk",
     ).rstrip("/")
-    url = (
-        f"{base_url}/economy/inflationandpriceindices"
-        f"/timeseries/{series_id}/{dataset_id}/data"
-    )
+    topic = (url_path or "/economy/inflationandpriceindices").rstrip("/")
+    url = f"{base_url}{topic}/timeseries/{series_id}/{dataset_id}/data"
 
     resp = requests.get(url, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
     months = data.get("months")
-    if not months:
+    quarters = data.get("quarters")
+    if not months and not quarters:
         raise RuntimeError(
-            f"ONS timeseries {series_id}/{dataset_id}: no monthly data returned"
+            f"ONS timeseries {series_id}/{dataset_id}: no monthly or quarterly data returned"
         )
 
     dates = []
     values = []
-    for point in months:
-        val_str = point.get("value", "").strip()
-        if not val_str:
-            continue
-        try:
-            val = float(val_str)
-        except (TypeError, ValueError):
-            continue
 
-        date_str = point.get("date", "")
-        dt = pd.to_datetime(date_str, format="%Y %b", errors="coerce")
-        if pd.isna(dt):
-            year = point.get("year", "")
-            month_name = point.get("month", "")
-            if year and month_name:
-                dt = pd.to_datetime(
-                    f"{year} {month_name}", format="%Y %B", errors="coerce"
-                )
-        if pd.isna(dt):
-            continue
+    if months:
+        for point in months:
+            val_str = point.get("value", "").strip()
+            if not val_str:
+                continue
+            try:
+                val = float(val_str)
+            except (TypeError, ValueError):
+                continue
 
-        dates.append(dt)
-        values.append(val)
+            date_str = point.get("date", "")
+            dt = pd.to_datetime(date_str, format="%Y %b", errors="coerce")
+            if pd.isna(dt):
+                year = point.get("year", "")
+                month_name = point.get("month", "")
+                if year and month_name:
+                    dt = pd.to_datetime(
+                        f"{year} {month_name}", format="%Y %B", errors="coerce"
+                    )
+            if pd.isna(dt):
+                continue
+
+            dates.append(dt)
+            values.append(val)
+    else:
+        for point in quarters:
+            val_str = point.get("value", "").strip()
+            if not val_str:
+                continue
+            try:
+                val = float(val_str)
+            except (TypeError, ValueError):
+                continue
+
+            year_str = point.get("year", "")
+            quarter_str = point.get("quarter", "")
+            month_num = _ONS_QUARTER_TO_MONTH.get(quarter_str)
+            if not year_str or month_num is None:
+                continue
+            try:
+                dt = pd.Timestamp(year=int(year_str), month=month_num, day=1)
+            except (TypeError, ValueError):
+                continue
+
+            dates.append(dt)
+            values.append(val)
 
     if not dates:
         raise RuntimeError(
@@ -550,6 +623,63 @@ def _fetch_eurostat_series(
     return series[~series.index.duplicated(keep="last")]
 
 
+def _fetch_snb_series(
+    *,
+    cube: str,
+    dim_sel: str,
+    observation_start: datetime,
+    freq: str = "monthly",
+    timeout: int = 20,
+) -> pd.Series:
+    """
+    Fetch a time series from the SNB Data Portal API.
+
+    Args:
+        cube: SNB cube code (e.g. "plkopr" for CPI, "gdprpq" for GDP).
+        dim_sel: Dimension selection (e.g. "D0(VVP)" or "D0(WMF),D1(BBIP)").
+        observation_start: Fetch data from this date onward.
+        freq: "monthly" (YYYY-MM) or "quarterly" (YYYY-QN) date format.
+
+    Returns a pd.Series indexed by datetime.
+    """
+    import io
+    import re as _re
+
+    from_date = observation_start.strftime("%Y-%m")
+    url = (
+        f"https://data.snb.ch/api/cube/{cube}/data/csv/en"
+        f"?dimSel={dim_sel}&fromDate={from_date}"
+    )
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+
+    lines = resp.text.strip().splitlines()
+    data_lines = [
+        l for l in lines
+        if not l.startswith('"CubeId"') and not l.startswith('"PublishingDate"')
+    ]
+    df = pd.read_csv(io.StringIO("\n".join(data_lines)), sep=";", quotechar='"')
+    df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
+    df = df.dropna(subset=["Value"])
+
+    dates = []
+    for d in df["Date"]:
+        if freq == "quarterly":
+            m = _re.match(r"(\d{4})-Q(\d)", str(d))
+            if m:
+                year, q = int(m.group(1)), int(m.group(2))
+                dates.append(pd.Timestamp(year=year, month=(q - 1) * 3 + 1, day=1))
+            else:
+                dates.append(pd.NaT)
+        else:
+            dates.append(pd.to_datetime(d, format="%Y-%m", errors="coerce"))
+
+    df["Date"] = dates
+    df = df.dropna(subset=["Date"])
+    series = pd.Series(df["Value"].values, index=pd.to_datetime(df["Date"])).sort_index()
+    return series[~series.index.duplicated(keep="last")]
+
+
 def _get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
@@ -649,6 +779,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     series = _fetch_ons_timeseries(
                         series_id=sid,
                         dataset_id=did,
+                        url_path=candidate.get("url_path"),
                     )
                     series = series[series.index >= observation_start]
                 elif source == "eurostat":
@@ -664,6 +795,19 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                         )
                     else:
                         series = _fetch_eurostat_hicp(dataset=ds, geo=geo)
+                    series = series[series.index >= observation_start]
+                elif source == "snb":
+                    cube = candidate.get("cube")
+                    dim_sel = candidate.get("dim_sel")
+                    if not cube or not dim_sel:
+                        raise ValueError("Missing cube or dim_sel for SNB source")
+                    freq = candidate.get("freq", "monthly")
+                    series = _fetch_snb_series(
+                        cube=cube,
+                        dim_sel=dim_sel,
+                        observation_start=observation_start,
+                        freq=freq,
+                    )
                     series = series[series.index >= observation_start]
                 else:
                     series = fred.get_series(
