@@ -36,6 +36,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "country_dashboard"))
+sys.path.insert(0, str(PROJECT_ROOT / "equities" / "short_screen"))
 
 import streamlit as st
 import pandas as pd
@@ -77,7 +78,7 @@ def nav_button(label: str) -> None:
 
 NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum"],
-    ["📐 Chart", "🏅 Quality Screen"],
+    ["📐 Chart", "🏅 Quality Screen", "📉 Short Screen"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity", "🌍 Country Dashboard"],
@@ -164,6 +165,35 @@ if st.session_state.current_page == "🏅 Quality Screen":
     quality_benchmark = st.sidebar.selectbox("Benchmark", options=_benchmark_options, index=0)
 
     quality_run_clicked = st.sidebar.button("Run Screen", type="primary", width="stretch")
+
+# Short Screen sidebar controls
+short_pb_threshold = 3.0
+short_loss_type = "Gross Loss"
+short_check_issuance = False
+short_run_clicked = False
+
+if st.session_state.current_page == "📉 Short Screen":
+    st.sidebar.title("Short Screen")
+    short_pb_threshold = st.sidebar.slider(
+        "P/B Threshold",
+        min_value=3.0,
+        max_value=5.0,
+        value=3.0,
+        step=0.1,
+        help="Stocks with P/B above this value pass the valuation filter",
+    )
+    short_loss_type = st.sidebar.radio(
+        "Loss Type",
+        options=["Gross Loss", "Operating Loss"],
+        index=0,
+        help="Gross Loss: gross profit < 0. Operating Loss: operating income < 0.",
+    )
+    short_check_issuance = st.sidebar.checkbox(
+        "High Net Equity Issuance (top quartile)",
+        value=False,
+        help="Keeps only stocks in the top quartile of net equity issuance among screened stocks (uses SEC EDGAR XBRL API; adds time)",
+    )
+    short_run_clicked = st.sidebar.button("Run Screen", type="primary", width="stretch")
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -2166,11 +2196,12 @@ elif st.session_state.current_page == "🚀 Momentum":
         st.divider()
 
         if results:
-            # Build DataFrame for display
-            rows = []
+            # Build rows and split into longs / shorts by portfolio direction
+            longs_rows = []
+            shorts_rows = []
             for r in results:
                 vol_roc = r.get('avg20_vol_roc63')
-                rows.append({
+                row = {
                     "Ticker": r["ticker"],
                     "Benchmark": r["benchmark"],
                     "Close": f"{r['close']:.2f}",
@@ -2178,20 +2209,36 @@ elif st.session_state.current_page == "🚀 Momentum":
                     "20d Avg 63d Vol ROC (%)": f"{vol_roc:+.2f}" if vol_roc is not None else "N/A",
                     "42d Rel ROC (%)": f"{r['rel_roc42']:+.2f}",
                     "10d Avg Rel ROC (%)": f"{r['avg10_rel_roc']:+.2f}",
-                })
+                }
+                if r.get('direction', 'long') == 'long':
+                    longs_rows.append(row)
+                else:
+                    shorts_rows.append(row)
 
-            df = pd.DataFrame(rows)
+            def style_momentum_df(df):
+                return df.style.applymap(
+                    lambda x: color_momentum_threshold(x, threshold=1.5),
+                    subset=["20d Avg 63d ROC (%)"]
+                ).applymap(
+                    color_positive_negative,
+                    subset=["20d Avg 63d Vol ROC (%)", "42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
+                )
 
-            # Apply styling
-            styled_df = df.style.applymap(
-                lambda x: color_momentum_threshold(x, threshold=1.5),
-                subset=["20d Avg 63d ROC (%)"]
-            ).applymap(
-                color_positive_negative,
-                subset=["20d Avg 63d Vol ROC (%)", "42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
-            )
+            # Longs table
+            st.subheader(f"Longs ({len(longs_rows)})")
+            if longs_rows:
+                st.dataframe(style_momentum_df(pd.DataFrame(longs_rows)), width="stretch", hide_index=True)
+            else:
+                st.info("No long signals.")
 
-            st.dataframe(styled_df, width="stretch", hide_index=True)
+            st.divider()
+
+            # Shorts table
+            st.subheader(f"Shorts ({len(shorts_rows)})")
+            if shorts_rows:
+                st.dataframe(style_momentum_df(pd.DataFrame(shorts_rows)), width="stretch", hide_index=True)
+            else:
+                st.info("No short signals.")
 
             # Legend
             st.caption("**Color coding:**")
@@ -3743,3 +3790,128 @@ elif st.session_state.current_page == "🏅 Quality Screen":
                 z_display = z_metrics_df.round(3)
                 z_styled = z_display.style.applymap(color_zscore)
                 st.dataframe(z_styled, width="stretch")
+
+
+# =============================================================================
+# PAGE: Short Screen
+# =============================================================================
+elif st.session_state.current_page == "📉 Short Screen":
+    st.header("Short Screen")
+    st.caption(
+        "Identifies potential short candidates from the Russell 2000: "
+        "elevated P/B ratio, gross or operating loss, and optionally heavy net equity issuance."
+    )
+
+    if "short_screen_result" not in st.session_state:
+        st.session_state.short_screen_result = None
+
+    if short_run_clicked:
+        progress_bar = st.progress(0, text="Loading Russell 2000 universe...")
+
+        def _short_progress(done: int, total: int) -> None:
+            progress_bar.progress(
+                done / total,
+                text=f"Phase 1 — screening {done}/{total} tickers...",
+            )
+
+        try:
+            from short_screen import get_data as get_short_data
+
+            result = get_short_data(
+                pb_threshold=short_pb_threshold,
+                loss_type=short_loss_type,
+                check_issuance=short_check_issuance,
+                progress_callback=_short_progress,
+            )
+            st.session_state.short_screen_result = result
+        except Exception as e:
+            import traceback
+            st.session_state.short_screen_result = {
+                "error": f"{e}\n\n{traceback.format_exc()}"
+            }
+
+        progress_bar.empty()
+
+    sdata = st.session_state.short_screen_result
+
+    if sdata is None:
+        st.info("Configure screening criteria in the sidebar and click **Run Screen**.")
+    elif "error" in sdata:
+        st.error(f"Screen failed: {sdata['error']}")
+    else:
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Universe", f"{sdata.get('phase1_count', 0)} tickers")
+        with col2:
+            st.metric("Phase 1 Pass (P/B + Loss)", sdata.get("phase1_pass_count", 0))
+        with col3:
+            st.metric("Final Candidates", sdata.get("final_count", 0))
+        with col4:
+            st.metric("Data Errors", len(sdata.get("failed_tickers", [])))
+
+        failed = sdata.get("failed_tickers", [])
+        if failed:
+            with st.expander(f"Failed tickers ({len(failed)})", expanded=False):
+                st.caption(", ".join(sorted(failed)))
+
+        st.divider()
+        results_df = sdata.get("results_df", pd.DataFrame())
+
+        if results_df.empty:
+            st.info("No tickers passed all screening criteria with the current settings.")
+        else:
+            st.subheader(f"Short Candidates ({sdata.get('final_count', 0)})")
+
+            def color_pb_short(val):
+                """Color P/B: high values are the short signal (orange/red)."""
+                if pd.isna(val):
+                    return "color: gray"
+                try:
+                    v = float(val)
+                    if v >= 5.0:
+                        return "color: #ff1744; font-weight: bold"
+                    elif v >= 3.0:
+                        return "color: #ff6d00; font-weight: bold"
+                    return ""
+                except (ValueError, TypeError):
+                    return ""
+
+            display_cols = [c for c in [
+                "Ticker", "Company", "P/B Ratio",
+                "Gross Profit ($M)", "Operating Income ($M)", "Market Cap ($M)",
+                "Net Issuance ($M)", "Issuance % Mkt Cap",
+            ] if c in results_df.columns]
+            display_df = results_df[display_cols].copy()
+
+            loss_cols = [c for c in ["Gross Profit ($M)", "Operating Income ($M)"] if c in display_df.columns]
+
+            styled = display_df.style
+            if "P/B Ratio" in display_df.columns:
+                styled = styled.applymap(color_pb_short, subset=["P/B Ratio"])
+            if loss_cols:
+                styled = styled.applymap(color_positive_negative, subset=loss_cols)
+            if "Issuance % Mkt Cap" in display_df.columns:
+                styled = styled.applymap(color_positive_negative, subset=["Issuance % Mkt Cap"])
+
+            st.dataframe(styled, width="stretch", hide_index=True)
+
+            if short_check_issuance:
+                st.caption(
+                    "Issuance filter: tickers with SEC EDGAR data unavailable "
+                    "or net issuance ≤ 5% of market cap are excluded."
+                )
+
+        with st.expander("Screening Methodology", expanded=False):
+            st.markdown(f"""
+**Universe:** Russell 2000 (~{sdata.get('phase1_count', 1948)} tickers from `equities/universes/russell2000.csv`)
+
+**Phase 1 — yfinance (parallel, 8 threads):**
+- P/B Ratio > {short_pb_threshold:.1f} (from `yf.info["priceToBook"]`; fallback: market cap / book equity)
+- {"Gross profit < 0" if short_loss_type == "Gross Loss" else "Operating income < 0"} (most recent annual filing)
+
+**Phase 2 — SEC EDGAR (sequential, rate-limited):**
+{"- Net issuance (ProceedsFromIssuanceOfCommonStock − PaymentsForRepurchaseOfCommonStock from most recent 10-K within 18 months) > 5% of market cap" if short_check_issuance else "- Disabled (checkbox unchecked)"}
+
+**Missing data:** Tickers with no usable P/B or loss data are excluded from Phase 1.
+Tickers where SEC EDGAR data is unavailable are excluded when the issuance filter is active.
+            """)
