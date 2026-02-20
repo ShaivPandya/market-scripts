@@ -320,6 +320,7 @@ def get_data(universe: str = None, years: int = 5) -> dict:
             error: error message if failed
     """
     try:
+        direction_map: dict = {}
         # Load tickers
         if universe:
             tickers = load_universe(universe)
@@ -330,7 +331,15 @@ def get_data(universe: str = None, years: int = 5) -> dict:
             portfolio_df = pd.read_csv(portfolio_path)
             if "ticker" not in portfolio_df.columns:
                 return {"error": "portfolio.csv must have a 'ticker' column"}
-            tickers = [t.strip().upper() for t in portfolio_df["ticker"].dropna()]
+            portfolio_df["ticker"] = portfolio_df["ticker"].str.strip().str.upper()
+            tickers = list(portfolio_df["ticker"].dropna())
+            direction_map = (
+                portfolio_df.dropna(subset=["ticker"])
+                .set_index("ticker")["direction"]
+                .to_dict()
+                if "direction" in portfolio_df.columns
+                else {}
+            )
             if not tickers:
                 return {"error": "No tickers found in portfolio.csv"}
 
@@ -360,6 +369,7 @@ def get_data(universe: str = None, years: int = 5) -> dict:
             result = analyze_ticker(ticker, benchmark_prices, years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker))
             if result:
                 result["benchmark"] = benchmark_ticker
+                result["direction"] = direction_map.get(ticker, "long")
                 results.append(result)
 
         if not results:

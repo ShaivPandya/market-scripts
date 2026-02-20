@@ -2196,11 +2196,12 @@ elif st.session_state.current_page == "🚀 Momentum":
         st.divider()
 
         if results:
-            # Build DataFrame for display
-            rows = []
+            # Build rows and split into longs / shorts by portfolio direction
+            longs_rows = []
+            shorts_rows = []
             for r in results:
                 vol_roc = r.get('avg20_vol_roc63')
-                rows.append({
+                row = {
                     "Ticker": r["ticker"],
                     "Benchmark": r["benchmark"],
                     "Close": f"{r['close']:.2f}",
@@ -2208,20 +2209,36 @@ elif st.session_state.current_page == "🚀 Momentum":
                     "20d Avg 63d Vol ROC (%)": f"{vol_roc:+.2f}" if vol_roc is not None else "N/A",
                     "42d Rel ROC (%)": f"{r['rel_roc42']:+.2f}",
                     "10d Avg Rel ROC (%)": f"{r['avg10_rel_roc']:+.2f}",
-                })
+                }
+                if r.get('direction', 'long') == 'long':
+                    longs_rows.append(row)
+                else:
+                    shorts_rows.append(row)
 
-            df = pd.DataFrame(rows)
+            def style_momentum_df(df):
+                return df.style.applymap(
+                    lambda x: color_momentum_threshold(x, threshold=1.5),
+                    subset=["20d Avg 63d ROC (%)"]
+                ).applymap(
+                    color_positive_negative,
+                    subset=["20d Avg 63d Vol ROC (%)", "42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
+                )
 
-            # Apply styling
-            styled_df = df.style.applymap(
-                lambda x: color_momentum_threshold(x, threshold=1.5),
-                subset=["20d Avg 63d ROC (%)"]
-            ).applymap(
-                color_positive_negative,
-                subset=["20d Avg 63d Vol ROC (%)", "42d Rel ROC (%)", "10d Avg Rel ROC (%)"]
-            )
+            # Longs table
+            st.subheader(f"Longs ({len(longs_rows)})")
+            if longs_rows:
+                st.dataframe(style_momentum_df(pd.DataFrame(longs_rows)), width="stretch", hide_index=True)
+            else:
+                st.info("No long signals.")
 
-            st.dataframe(styled_df, width="stretch", hide_index=True)
+            st.divider()
+
+            # Shorts table
+            st.subheader(f"Shorts ({len(shorts_rows)})")
+            if shorts_rows:
+                st.dataframe(style_momentum_df(pd.DataFrame(shorts_rows)), width="stretch", hide_index=True)
+            else:
+                st.info("No short signals.")
 
             # Legend
             st.caption("**Color coding:**")
