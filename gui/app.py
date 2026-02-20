@@ -189,9 +189,9 @@ if st.session_state.current_page == "📉 Short Screen":
         help="Gross Loss: gross profit < 0. Operating Loss: operating income < 0.",
     )
     short_check_issuance = st.sidebar.checkbox(
-        "Heavy Net Equity Issuance (>5% of market cap)",
+        "High Net Equity Issuance (top quartile)",
         value=False,
-        help="Requires net issuance > 5% of market cap (uses SEC EDGAR XBRL API; adds time)",
+        help="Keeps only stocks in the top quartile of net equity issuance among screened stocks (uses SEC EDGAR XBRL API; adds time)",
     )
     short_run_clicked = st.sidebar.button("Run Screen", type="primary", width="stretch")
 

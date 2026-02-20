@@ -5,7 +5,7 @@ Short Screen: Identify potential short candidates from the Russell 2000.
 Screening criteria (all must be met to pass):
   1. P/B ratio above threshold (priceToBook from yfinance; fallback: market_cap / book_equity)
   2. Gross loss OR operating loss (from most recent annual income statement)
-  3. (Optional) Heavy net equity issuance > 5% of market cap (SEC EDGAR XBRL API)
+  3. (Optional) Net equity issuance in the top quartile among Phase 1 passers (SEC EDGAR XBRL API)
 
 Execution is phased:
   Phase 1 — parallel yfinance fetch for all ~1,948 Russell 2000 tickers, filter by P/B + loss
@@ -107,14 +107,23 @@ def fetch_yf_data(ticker: str) -> dict:
             except (TypeError, ValueError):
                 pass
 
-        # Market cap
+        # Market cap — try fast_info first (uses chart API, immune to crumb invalidation)
+        # then fall back to info dict. This matters because t.info returns {} when Yahoo
+        # Finance rejects the request crumb, but fast_info uses a different endpoint.
         market_cap: float = np.nan
-        mc_raw = info.get("marketCap")
-        if mc_raw is not None:
-            try:
-                market_cap = float(mc_raw)
-            except (TypeError, ValueError):
-                pass
+        try:
+            mc_fast = t.fast_info.market_cap
+            if mc_fast is not None:
+                market_cap = float(mc_fast)
+        except Exception:
+            pass
+        if np.isnan(market_cap):
+            mc_raw = info.get("marketCap")
+            if mc_raw is not None:
+                try:
+                    market_cap = float(mc_raw)
+                except (TypeError, ValueError):
+                    pass
 
         # Book value from balance sheet
         book_value = get_item(bal_last, [
@@ -370,7 +379,7 @@ def get_data(
     Args:
         pb_threshold:       P/B ratio must exceed this value (3.0 – 5.0)
         loss_type:          "Gross Loss" | "Operating Loss"
-        check_issuance:     If True, apply heavy net equity issuance filter via SEC EDGAR
+        check_issuance:     If True, keep only the top quartile by net equity issuance (SEC EDGAR)
         progress_callback:  Optional callable(done: int, total: int)
 
     Returns on success:
@@ -394,6 +403,16 @@ def get_data(
         return {"error": "Russell 2000 universe is empty"}
 
     total = len(universe)
+
+    # ------------------------------------------------------------------
+    # Pre-warm yfinance session so the authentication crumb is fresh
+    # before spawning 8 parallel threads.  A stale/missing crumb causes
+    # t.info to silently return {} for every ticker, producing 0 results.
+    # ------------------------------------------------------------------
+    try:
+        yf.Ticker(universe[0]).fast_info.last_price
+    except Exception:
+        pass
 
     # ------------------------------------------------------------------
     # Phase 1: Parallel yfinance fetch + P/B + loss filter
@@ -436,17 +455,21 @@ def get_data(
     # ------------------------------------------------------------------
     # Phase 2 (optional): Sequential SEC EDGAR issuance check
     # Runs only for Phase 1 passers to minimise SEC API calls.
+    # Keeps only stocks in the top quartile of net equity issuance
+    # among the Phase 1 passers that have valid SEC data.
     # ------------------------------------------------------------------
     final_rows: List[dict] = []
 
-    for data in phase1_pass_data:
-        row = _build_result_row(data)
-
-        if check_issuance:
+    if not check_issuance:
+        for data in phase1_pass_data:
+            final_rows.append(_build_result_row(data))
+    else:
+        # Step 1: fetch issuance data for all Phase 1 passers
+        issuance_records: List[dict] = []
+        for data in phase1_pass_data:
             sec = fetch_sec_issuance(data["ticker"])
             if "error" in sec:
-                # SEC data unavailable — exclude when filter is active (conservative)
-                continue
+                continue  # SEC data unavailable — exclude (conservative)
 
             net = sec.get("net_issuance", np.nan)
             mktcap = data.get("market_cap", np.nan)
@@ -456,16 +479,26 @@ def get_data(
             ) or (
                 isinstance(mktcap, float) and np.isnan(mktcap)
             ) or mktcap <= 0:
-                continue  # Cannot compute issuance %; exclude
+                continue  # Cannot compute issuance; exclude
 
-            pct = net / mktcap
-            if pct <= 0.05:
-                continue  # Net issuance ≤ 5% of market cap; does not pass
+            issuance_records.append({
+                "data": data,
+                "net": net,
+                "pct": net / mktcap,
+            })
 
-            row["Net Issuance ($M)"] = round(net / 1e6, 1)
-            row["Issuance % Mkt Cap"] = round(pct * 100, 1)
+        if issuance_records:
+            # Step 2: top-quartile cutoff (75th percentile of net issuance)
+            net_values = [r["net"] for r in issuance_records]
+            cutoff = float(np.percentile(net_values, 75))
 
-        final_rows.append(row)
+            # Step 3: keep only stocks at or above the cutoff
+            for rec in issuance_records:
+                if rec["net"] >= cutoff:
+                    row = _build_result_row(rec["data"])
+                    row["Net Issuance ($M)"] = round(rec["net"] / 1e6, 1)
+                    row["Issuance % Mkt Cap"] = round(rec["pct"] * 100, 1)
+                    final_rows.append(row)
 
     results_df = pd.DataFrame(final_rows)
 
@@ -493,7 +526,7 @@ def main() -> None:
     parser.add_argument("--loss", choices=["gross", "operating"], default="gross",
                         help="Loss type: gross (default) or operating")
     parser.add_argument("--issuance", action="store_true",
-                        help="Enable heavy net equity issuance filter (SEC EDGAR)")
+                        help="Keep only top-quartile net equity issuers among screened stocks (SEC EDGAR)")
     args = parser.parse_args()
 
     loss_type = "Gross Loss" if args.loss == "gross" else "Operating Loss"
