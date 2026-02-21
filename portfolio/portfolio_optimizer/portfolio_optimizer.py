@@ -840,11 +840,11 @@ def optimize_portfolio(
         vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
         vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
 
-        # Beta exposures and hedges
-        beta_long_spy = float(betas_spy.values[long_mask] @ w_final.values[long_mask]) if long_mask.any() else 0.0
-        beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
-        hedge_spy_weight = -beta_long_spy
-        hedge_iwm_weight = -beta_short_iwm
+        # Net portfolio beta exposures and hedges (across all positions)
+        net_beta_spy = float(betas_spy.values @ w_final.values)
+        net_beta_iwm = float(betas_iwm.values @ w_final.values)
+        hedge_spy_weight = -net_beta_spy
+        hedge_iwm_weight = -net_beta_iwm
 
         # Build exposures dict
         exp = exposures_by_class(w_final, meta)
@@ -959,8 +959,8 @@ def optimize_portfolio(
             "gross_max": GROSS_MAX,
 
             # Beta hedging
-            "beta_long_spy": beta_long_spy,
-            "beta_short_iwm": beta_short_iwm,
+            "net_beta_spy": net_beta_spy,
+            "net_beta_iwm": net_beta_iwm,
             "hedge_spy_weight": hedge_spy_weight,
             "hedge_iwm_weight": hedge_iwm_weight,
 
@@ -1187,15 +1187,15 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
     vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
 
-    # Compute separate betas for longs and shorts
-    beta_long_spy = float(betas_spy.values[long_mask] @ w_final.values[long_mask]) if long_mask.any() else 0.0
-    beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
+    # Compute net portfolio beta across all positions (longs and shorts together)
+    net_beta_spy = float(betas_spy.values @ w_final.values)
+    net_beta_iwm = float(betas_iwm.values @ w_final.values)
 
-    # Calculate hedge positions:
-    # - Short SPY to hedge long positions' beta exposure to SPY
-    # - Long IWM to hedge short positions' beta exposure to IWM (short beta is negative, so -beta gives positive IWM weight)
-    hedge_spy_weight = -beta_long_spy   # Short SPY to offset long beta
-    hedge_iwm_weight = -beta_short_iwm  # Long IWM to offset short beta (shorts have negative beta contribution)
+    # Calculate hedge positions to zero out net beta exposure:
+    # - Negative net SPY beta → long SPY; positive → short SPY
+    # - Negative net IWM beta → long IWM; positive → short IWM
+    hedge_spy_weight = -net_beta_spy
+    hedge_iwm_weight = -net_beta_iwm
 
     if debug_weights:
         console.print()
@@ -1242,8 +1242,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         f"[bold]Vol (daily):[/bold]   {vol_final:.6f}  [dim](target {VOL_TARGET:.6f}, band [{VOL_MIN:.6f}, {VOL_MAX:.6f}])[/dim]\n"
         f"[bold]SPY vol:[/bold]       {vol_spy:.6f}  [dim](for reference)[/dim]\n"
         f"[bold]IWM vol:[/bold]       {vol_iwm:.6f}  [dim](for reference)[/dim]\n"
-        f"[bold]Long β to SPY:[/bold] {beta_long_spy:+.4f}  [dim]→ Hedge: {hedge_spy_weight:+.4f} {MARKET_TICKER_LONG}[/dim]\n"
-        f"[bold]Short β to IWM:[/bold] {beta_short_iwm:+.4f}  [dim]→ Hedge: {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}[/dim]\n"
+        f"[bold]Net β to SPY:[/bold]  {net_beta_spy:+.4f}  [dim]→ Hedge: {hedge_spy_weight:+.4f} {MARKET_TICKER_LONG}[/dim]\n"
+        f"[bold]Net β to IWM:[/bold]  {net_beta_iwm:+.4f}  [dim]→ Hedge: {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}[/dim]\n"
         f"[bold]Band feasible:[/bold] {feasible_text}"
     )
     console.print(Panel(solution_text, title="[bold blue]Solution[/bold blue]", border_style="blue"))
