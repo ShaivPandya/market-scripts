@@ -1930,13 +1930,13 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
         # Beta hedging info
         col1, col2 = st.columns(2)
         with col1:
-            beta_long = data.get("beta_long_spy", 0)
+            net_beta_spy = data.get("net_beta_spy", 0)
             hedge_spy = data.get("hedge_spy_weight", 0)
-            st.metric("Long Beta to SPY", f"{beta_long:+.4f}", delta=f"Hedge: {hedge_spy:+.4f} SPY")
+            st.metric("Net Beta to SPY", f"{net_beta_spy:+.4f}", delta=f"Hedge: {hedge_spy:+.4f} SPY")
         with col2:
-            beta_short = data.get("beta_short_iwm", 0)
+            net_beta_iwm = data.get("net_beta_iwm", 0)
             hedge_iwm = data.get("hedge_iwm_weight", 0)
-            st.metric("Short Beta to IWM", f"{beta_short:+.4f}", delta=f"Hedge: {hedge_iwm:+.4f} IWM")
+            st.metric("Net Beta to IWM", f"{net_beta_iwm:+.4f}", delta=f"Hedge: {hedge_iwm:+.4f} IWM")
 
         st.divider()
 
