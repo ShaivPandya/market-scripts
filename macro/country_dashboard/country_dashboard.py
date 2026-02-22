@@ -197,12 +197,21 @@ COUNTRIES = {
         ],
     },
     "Japan": {
-        "inflation": [
-            {"id": "FPCPITOTLZGJPN", "transform": "none"},
-            {"id": "CPALTT01JPM659N", "transform": "none"},
-        ],
+        "inflation": {
+            "source": "oecd",
+            "id": "OECD PRICES_CPI JPN.TOT.GY.M",
+            "dataset": "PRICES_CPI",
+            "key": "JPN.TOT.GY.M",
+            "transform": "none",
+        },
         "unemployment": "LRUNTTTTJPM156S",
-        "gdp": "NAEXKP01JPQ189S",
+        "gdp": {
+            "source": "oecd",
+            "id": "OECD QNA JPN.B1_GE.GYSA.Q",
+            "dataset": "QNA",
+            "key": "JPN.B1_GE.GYSA.Q",
+            "transform": "none",
+        },
     },
     "France": {
         "inflation": [
@@ -680,6 +689,68 @@ def _fetch_snb_series(
     return series[~series.index.duplicated(keep="last")]
 
 
+def _fetch_oecd_series(
+    *,
+    dataset: str,
+    key: str,
+    observation_start: datetime,
+    timeout: int = 30,
+) -> pd.Series:
+    """
+    Fetch a time series from the OECD SDMX-JSON API.
+
+    Args:
+        dataset: OECD dataset name (e.g. "PRICES_CPI", "QNA").
+        key: Dimension filter string (e.g. "JPN.TOT.GY.M").
+        observation_start: Fetch data from this date onward.
+
+    Returns a pd.Series indexed by datetime with values already in the
+    units delivered by OECD (typically YoY % for GY/GYSA measures).
+    """
+    base_url = os.environ.get(
+        "OECD_API_BASE_URL", "https://stats.oecd.org/sdmx-json/data"
+    )
+    url = f"{base_url}/{dataset}/{key}/OECD"
+
+    if key.endswith(".Q"):
+        q = (observation_start.month - 1) // 3 + 1
+        start_str = f"{observation_start.year}-Q{q}"
+    else:
+        start_str = observation_start.strftime("%Y-%m")
+
+    resp = requests.get(url, params={"startTime": start_str}, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    structure = data["structure"]
+    dataset_obj = data["dataSets"][0]
+
+    time_dim = next(
+        d for d in structure["dimensions"]["observation"]
+        if d["id"] == "TIME_PERIOD"
+    )
+    time_values = [v["id"] for v in time_dim["values"]]
+
+    series_key = next(iter(dataset_obj["series"]))
+    observations = dataset_obj["series"][series_key]["observations"]
+
+    records: Dict[pd.Timestamp, float] = {}
+    for idx_str, obs in observations.items():
+        period = time_values[int(idx_str)]
+        value = obs[0]
+        if value is not None:
+            ts = (
+                pd.Period(period, freq="Q").to_timestamp(how="end")
+                if "Q" in period
+                else pd.Timestamp(period)
+            )
+            records[ts] = float(value)
+
+    series = pd.Series(records).sort_index().dropna()
+    series.index = pd.to_datetime(series.index)
+    return series
+
+
 def _get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
@@ -807,6 +878,17 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                         dim_sel=dim_sel,
                         observation_start=observation_start,
                         freq=freq,
+                    )
+                    series = series[series.index >= observation_start]
+                elif source == "oecd":
+                    ds = candidate.get("dataset")
+                    key = candidate.get("key")
+                    if not ds or not key:
+                        raise ValueError("Missing dataset or key for OECD source")
+                    series = _fetch_oecd_series(
+                        dataset=ds,
+                        key=key,
+                        observation_start=observation_start,
                     )
                     series = series[series.index >= observation_start]
                 else:
