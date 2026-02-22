@@ -197,21 +197,25 @@ COUNTRIES = {
         ],
     },
     "Japan": {
-        "inflation": {
-            "source": "oecd",
-            "id": "OECD PRICES_CPI JPN.TOT.GY.M",
-            "dataset": "PRICES_CPI",
-            "key": "JPN.TOT.GY.M",
-            "transform": "none",
-        },
+        "inflation": [
+            {
+                "source": "oecd",
+                "id": "OECD PRICES_CPI JPN.TOT.GY.M",
+                "dataset": "PRICES_CPI",
+                "key": "JPN.TOT.GY.M",
+                "transform": "none",
+            },
+        ],
         "unemployment": "LRUNTTTTJPM156S",
-        "gdp": {
-            "source": "oecd",
-            "id": "OECD QNA JPN.B1_GE.GYSA.Q",
-            "dataset": "QNA",
-            "key": "JPN.B1_GE.GYSA.Q",
-            "transform": "none",
-        },
+        "gdp": [
+            {
+                "source": "oecd",
+                "id": "OECD QNA JPN.B1_GE.GYSA.Q",
+                "dataset": "QNA",
+                "key": "JPN.B1_GE.GYSA.Q",
+                "transform": "none",
+            },
+        ],
     },
     "France": {
         "inflation": [
