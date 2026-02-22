@@ -59,6 +59,14 @@ ONS_CPI_UK_DATASET_ID = os.environ.get(
     "ONS_CPI_UK_DATASET_ID", _DEFAULT_ONS_CPI_UK_DATASET_ID
 )
 
+ESTAT_APP_ID = os.environ.get("ESTAT_APP_ID", "")
+# Default statsDataId: Japan national CPI, all items, 2020=100, monthly
+# (Statistics Bureau of Japan via e-Stat)
+_DEFAULT_ESTAT_CPI_STATS_DATA_ID = "0003427113"
+ESTAT_CPI_STATS_DATA_ID = os.environ.get(
+    "ESTAT_CPI_STATS_DATA_ID", _DEFAULT_ESTAT_CPI_STATS_DATA_ID
+)
+
 # ── Country definitions: display_name -> FRED series IDs per metric ──────────
 # For inflation, we prefer direct YoY series and keep fallbacks where needed.
 COUNTRIES = {
@@ -198,6 +206,13 @@ COUNTRIES = {
     },
     "Japan": {
         "inflation": [
+            {
+                "source": "estat",
+                "id": f"e-Stat CPI {ESTAT_CPI_STATS_DATA_ID}",
+                "stats_data_id": ESTAT_CPI_STATS_DATA_ID,
+                "transform": "yoy12",
+            },
+            # Fallback: OECD PRICES_CPI (already YoY %)
             {
                 "source": "oecd",
                 "id": "OECD PRICES_CPI JPN.TOT.GY.M",
@@ -755,6 +770,127 @@ def _fetch_oecd_series(
     return series
 
 
+def _fetch_estat_cpi(
+    *,
+    app_id: str,
+    stats_data_id: str,
+    observation_start: datetime,
+    timeout: int = 20,
+) -> pd.Series:
+    """
+    Fetch Japan CPI index from the e-Stat API (Statistics Bureau of Japan).
+
+    Calls getMetaInfo first to resolve the correct tab/cat01/area codes for
+    national all-items CPI index, then fetches the filtered time series.
+
+    API docs: https://api.e-stat.go.jp/api/
+    Returns a pd.Series of monthly CPI index values indexed by datetime.
+    Apply yoy12 transform downstream to get YoY %.
+
+    Args:
+        app_id: e-Stat application ID (appId).
+        stats_data_id: e-Stat statistics data ID (statsDataId).
+        observation_start: Fetch data from this date onward.
+    """
+    if not app_id:
+        raise RuntimeError("Missing ESTAT_APP_ID environment variable")
+
+    base_url = "https://api.e-stat.go.jp/rest/3.0/app/json"
+
+    # ── Step 1: fetch metadata to resolve classification codes ───────────────
+    meta_resp = requests.get(
+        f"{base_url}/getMetaInfo",
+        params={"appId": app_id, "statsDataId": stats_data_id},
+        timeout=timeout,
+    )
+    meta_resp.raise_for_status()
+    meta = meta_resp.json()
+
+    try:
+        class_objs = meta["GET_META_INFO"]["CLASS_INF"]["CLASS_OBJ"]
+    except (KeyError, TypeError) as e:
+        raise RuntimeError(f"e-Stat CPI: unexpected meta structure: {e}") from e
+
+    if isinstance(class_objs, dict):
+        class_objs = [class_objs]
+
+    def _find_code(dim_id: str, keywords: list) -> str | None:
+        for obj in class_objs:
+            if obj.get("@id") != dim_id:
+                continue
+            items = obj.get("CLASS", [])
+            if isinstance(items, dict):
+                items = [items]
+            for item in items:
+                if any(kw in item.get("@name", "") for kw in keywords):
+                    return item.get("@code")
+        return None
+
+    tab_code = _find_code("tab", ["指数"])       # index level (not MoM/YoY %)
+    cat01_code = _find_code("cat01", ["総合"])   # all items
+    area_code = _find_code("area", ["全国"])     # all Japan
+
+    if not tab_code or not cat01_code or not area_code:
+        raise RuntimeError(
+            f"e-Stat CPI: could not resolve classification codes "
+            f"(tab={tab_code}, cat01={cat01_code}, area={area_code})"
+        )
+
+    # ── Step 2: fetch the filtered time series ───────────────────────────────
+    # e-Stat monthly time format: "YYYYMM0000" (matches @time field in responses)
+    cd_time_from = observation_start.strftime("%Y%m") + "0000"
+
+    resp = requests.get(
+        f"{base_url}/getStatsData",
+        params={
+            "appId": app_id,
+            "statsDataId": stats_data_id,
+            "cdTab": tab_code,
+            "cdCat01": cat01_code,
+            "cdArea": area_code,
+            "cdTimeFrom": cd_time_from,
+            "limit": 1000,
+        },
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    try:
+        values_list = (
+            data["GET_STATS_DATA"]["STATISTICAL_DATA"]["DATA_INF"]["VALUE"]
+        )
+    except (KeyError, TypeError) as e:
+        raise RuntimeError(f"e-Stat CPI: unexpected response structure: {e}") from e
+
+    if not values_list:
+        raise RuntimeError("e-Stat CPI: no values returned")
+
+    dates = []
+    values = []
+    for item in values_list:
+        time_str = item.get("@time", "")  # e.g. "2023010000"
+        val_str = str(item.get("$", "")).strip()
+        if not time_str or not val_str or val_str in ("-", ""):
+            continue
+        try:
+            val = float(val_str)
+        except ValueError:
+            continue
+        # Parse "YYYYMM0000" → first day of month
+        dt = pd.to_datetime(time_str[:6], format="%Y%m", errors="coerce")
+        if pd.isna(dt):
+            continue
+        dates.append(dt)
+        values.append(val)
+
+    if not dates:
+        raise RuntimeError("e-Stat CPI: no data points could be parsed")
+
+    series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
+    return series[~series.index.duplicated(keep="last")]
+
+
 def _get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
@@ -892,6 +1028,14 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     series = _fetch_oecd_series(
                         dataset=ds,
                         key=key,
+                        observation_start=observation_start,
+                    )
+                    series = series[series.index >= observation_start]
+                elif source == "estat":
+                    _sdid = candidate.get("stats_data_id", ESTAT_CPI_STATS_DATA_ID)
+                    series = _fetch_estat_cpi(
+                        app_id=ESTAT_APP_ID,
+                        stats_data_id=_sdid,
                         observation_start=observation_start,
                     )
                     series = series[series.index >= observation_start]
