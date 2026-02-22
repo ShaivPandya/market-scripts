@@ -77,7 +77,10 @@ COUNTRIES = {
             {"id": "CPIAUCSL", "transform": "none", "params": {"units": "pc1"}},
         ],
         "unemployment": "UNRATE",
-        "gdp": "NAEXKP01USQ189S",
+        "gdp": [
+            # BEA: Real GDP, Percent Change (QoQ annualized SAAR) — standard US reporting.
+            {"id": "A191RL1Q225SBEA", "transform": "none"},
+        ],
     },
     "Canada": {
         "inflation": [
