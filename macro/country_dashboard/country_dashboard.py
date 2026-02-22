@@ -46,6 +46,19 @@ try:
 except ValueError:
     STATCAN_CPI_CANADA_VECTOR_ID = _DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID
 
+# Statistics Canada Table 36-10-0104-01: Real GDP at market prices,
+# expenditure-based, chained 2012 dollars, SA, quarterly.
+_DEFAULT_STATCAN_GDP_CANADA_VECTOR_ID = 62305752
+try:
+    STATCAN_GDP_CANADA_VECTOR_ID = int(
+        os.environ.get(
+            "STATCAN_GDP_CANADA_VECTOR_ID",
+            str(_DEFAULT_STATCAN_GDP_CANADA_VECTOR_ID),
+        )
+    )
+except ValueError:
+    STATCAN_GDP_CANADA_VECTOR_ID = _DEFAULT_STATCAN_GDP_CANADA_VECTOR_ID
+
 _DEFAULT_EUROSTAT_HICP_DATASET = "prc_hicp_midx"
 EUROSTAT_HICP_DATASET = os.environ.get("EUROSTAT_HICP_DATASET", _DEFAULT_EUROSTAT_HICP_DATASET)
 EUROSTAT_GDP_DATASET = os.environ.get("EUROSTAT_GDP_DATASET", "namq_10_gdp")
@@ -94,7 +107,18 @@ COUNTRIES = {
             },
         ],
         "unemployment": "LRUNTTTTCAM156S",
-        "gdp": "NAEXKP01CAQ189S",
+        "gdp": [
+            # Statistics Canada Table 36-10-0104-01: Real GDP at market prices,
+            # chained 2012 dollars, SA, quarterly. YoY computed via yoy4.
+            {
+                "source": "statcan_wds",
+                "id": f"STATCAN v{STATCAN_GDP_CANADA_VECTOR_ID}",
+                "vector_id": STATCAN_GDP_CANADA_VECTOR_ID,
+                "freq": "quarterly",
+                "transform": "yoy4",
+            },
+            {"id": "NAEXKP01CAQ189S", "transform": "yoy4"},
+        ],
     },
     "United Kingdom": {
         "inflation": [
@@ -1113,9 +1137,11 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     vector_id = candidate.get("vector_id")
                     if not vector_id:
                         raise ValueError("Missing vector_id for statcan_wds series")
+                    freq = candidate.get("freq", "monthly")
+                    periods_per_year = 4 if freq == "quarterly" else 12
                     series = _fetch_statcan_vector_latest_n(
                         vector_id=int(vector_id),
-                        latest_n=int((_FETCH_YEARS + 1) * 12),
+                        latest_n=int((_FETCH_YEARS + 2) * periods_per_year),
                     )
                     series = series[series.index >= observation_start]
                 elif source == "ons":
