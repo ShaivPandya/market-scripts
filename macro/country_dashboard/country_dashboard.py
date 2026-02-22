@@ -17,6 +17,7 @@ GUI:
 """
 
 import os
+import re
 import sys
 import warnings
 from datetime import datetime
@@ -211,14 +212,6 @@ COUNTRIES = {
                 "id": f"e-Stat CPI {ESTAT_CPI_STATS_DATA_ID}",
                 "stats_data_id": ESTAT_CPI_STATS_DATA_ID,
                 "transform": "yoy12",
-            },
-            # Fallback: OECD PRICES_CPI (already YoY %)
-            {
-                "source": "oecd",
-                "id": "OECD PRICES_CPI JPN.TOT.GY.M",
-                "dataset": "PRICES_CPI",
-                "key": "JPN.TOT.GY.M",
-                "transform": "none",
             },
         ],
         "unemployment": "LRUNTTTTJPM156S",
@@ -797,38 +790,69 @@ def _fetch_estat_cpi(
 
     base_url = "https://api.e-stat.go.jp/rest/3.0/app/json"
 
-    # ── Step 1: fetch metadata to resolve classification codes ───────────────
+    def _check_status(resp_json: dict, root_key: str) -> None:
+        try:
+            result = resp_json[root_key]["RESULT"]
+            status = str(result.get("STATUS", ""))
+            if status != "0":
+                raise RuntimeError(
+                    f"e-Stat API error (status={status}): {result.get('ERROR_MSG', 'unknown error')}"
+                )
+        except (KeyError, TypeError):
+            pass
+
+    # ── Step 1: single getStatsData call with metaGetFlg=Y, limit=1 ──────────
+    # This is the cheapest way to get CLASS_INF (which getMetaInfo doesn't expose
+    # for this dataset) without downloading the full data payload.
     meta_resp = requests.get(
-        f"{base_url}/getMetaInfo",
-        params={"appId": app_id, "statsDataId": stats_data_id},
+        f"{base_url}/getStatsData",
+        params={
+            "appId": app_id,
+            "statsDataId": stats_data_id,
+            "metaGetFlg": "Y",
+            "cntGetFlg": "N",
+            "limit": 1,
+        },
         timeout=timeout,
     )
     meta_resp.raise_for_status()
     meta = meta_resp.json()
+    _check_status(meta, "GET_STATS_DATA")
 
     try:
-        class_objs = meta["GET_META_INFO"]["CLASS_INF"]["CLASS_OBJ"]
+        class_objs = meta["GET_STATS_DATA"]["STATISTICAL_DATA"]["CLASS_INF"]["CLASS_OBJ"]
     except (KeyError, TypeError) as e:
-        raise RuntimeError(f"e-Stat CPI: unexpected meta structure: {e}") from e
+        raise RuntimeError(f"e-Stat CPI: unexpected meta structure: {e!r}") from e
 
     if isinstance(class_objs, dict):
         class_objs = [class_objs]
 
-    def _find_code(dim_id: str, keywords: list) -> str | None:
+    def _dim_items(dim_id: str) -> list[dict]:
         for obj in class_objs:
             if obj.get("@id") != dim_id:
                 continue
             items = obj.get("CLASS", [])
             if isinstance(items, dict):
                 items = [items]
-            for item in items:
-                if any(kw in item.get("@name", "") for kw in keywords):
-                    return item.get("@code")
+            return [i for i in items if isinstance(i, dict)]
+        return []
+
+    def _find_code(dim_id: str, keywords: list) -> str | None:
+        for item in _dim_items(dim_id):
+            if any(kw in item.get("@name", "") for kw in keywords):
+                return item.get("@code")
         return None
 
-    tab_code = _find_code("tab", ["指数"])       # index level (not MoM/YoY %)
-    cat01_code = _find_code("cat01", ["総合"])   # all items
-    area_code = _find_code("area", ["全国"])     # all Japan
+    tab_code = _find_code("tab", ["指数"])      # index level (not MoM/YoY %)
+    cat01_code = _find_code("cat01", ["総合"])  # all items
+    area_code = _find_code("area", ["全国"])    # all Japan
+
+    time_items = _dim_items("time")
+    time_code_to_name = {
+        str(item.get("@code")): str(item.get("@name", ""))
+        for item in time_items
+        if item.get("@code") is not None
+    }
 
     if not tab_code or not cat01_code or not area_code:
         raise RuntimeError(
@@ -836,11 +860,117 @@ def _fetch_estat_cpi(
             f"(tab={tab_code}, cat01={cat01_code}, area={area_code})"
         )
 
-    # ── Step 2: fetch the filtered time series ───────────────────────────────
-    # e-Stat monthly time format: "YYYYMM0000" (matches @time field in responses)
-    cd_time_from = observation_start.strftime("%Y%m") + "0000"
+    # ── Step 2: fetch the filtered time series ────────────────────────────────
+    observation_start_month = pd.Timestamp(observation_start).replace(day=1)
 
-    resp = requests.get(
+    def _parse_month_from_name(name: str) -> pd.Timestamp | None:
+        if not name:
+            return None
+        s = str(name).strip()
+
+        m = re.search(r"(?<!\\d)(\\d{4})\\s*[-/\\.]\\s*(\\d{1,2})(?!\\d)", s)
+        if not m:
+            m = re.search(r"(?<!\\d)(\\d{4}).{0,8}?(\\d{1,2})\\s*月", s)
+        if not m:
+            m = re.search(r"(?<!\\d)(\\d{4})\\s*M\\s*(\\d{1,2})(?!\\d)", s, flags=re.IGNORECASE)
+        if m:
+            year = int(m.group(1))
+            month = int(m.group(2))
+            if 1 <= month <= 12:
+                return pd.Timestamp(year=year, month=month, day=1)
+
+        months = {
+            "jan": 1,
+            "feb": 2,
+            "mar": 3,
+            "apr": 4,
+            "may": 5,
+            "jun": 6,
+            "jul": 7,
+            "aug": 8,
+            "sep": 9,
+            "oct": 10,
+            "nov": 11,
+            "dec": 12,
+        }
+        m2 = re.search(
+            r"(?<!\\d)(\\d{4})\\s*[-/\\.]?\\s*([A-Za-z]{3,9})(?![A-Za-z])",
+            s,
+        )
+        if m2:
+            year = int(m2.group(1))
+            key = m2.group(2)[:3].lower()
+            month = months.get(key)
+            if month:
+                return pd.Timestamp(year=year, month=month, day=1)
+
+        return None
+
+    def _parse_month_from_code(code: str) -> pd.Timestamp | None:
+        if not code:
+            return None
+        s = str(code).strip()
+        digits = re.sub(r"\\D", "", s)
+        if len(digits) < 6 or not digits[:4].isdigit():
+            return None
+
+        year = int(digits[:4])
+        month_candidates: list[int] = []
+
+        # Common: YYYYMM....
+        mm = digits[4:6]
+        if mm.isdigit():
+            m = int(mm)
+            if 1 <= m <= 12:
+                month_candidates.append(m)
+
+        # Observed in some e-Stat datasets: YYYY00MM.. (e.g. 2026000101)
+        if len(digits) >= 8 and digits[4:6] == "00":
+            mm2 = digits[6:8]
+            if mm2.isdigit():
+                m = int(mm2)
+                if 1 <= m <= 12:
+                    month_candidates.append(m)
+
+        # Also seen: YYYYMMMM.. where month is zero-padded to 4 digits (e.g. 20260001..)
+        if len(digits) >= 8:
+            mm4 = digits[4:8]
+            if mm4.isdigit():
+                m = int(mm4)
+                if 1 <= m <= 12:
+                    month_candidates.append(m)
+
+        if not month_candidates:
+            return None
+
+        return pd.Timestamp(year=year, month=month_candidates[0], day=1)
+
+    def _parse_estat_month(time_code: str) -> pd.Timestamp | None:
+        name = time_code_to_name.get(str(time_code), "")
+        dt = _parse_month_from_name(name)
+        if dt is not None:
+            return dt
+        return _parse_month_from_code(time_code)
+
+    cd_time_from: str | None = None
+    parsed_time_codes: list[tuple[pd.Timestamp, str]] = []
+    for item in time_items:
+        code = str(item.get("@code", "")).strip()
+        if not code:
+            continue
+        dt = _parse_estat_month(code)
+        if dt is None:
+            continue
+        parsed_time_codes.append((dt, code))
+
+    if parsed_time_codes:
+        parsed_time_codes.sort(key=lambda x: x[0])
+        for dt, code in parsed_time_codes:
+            if dt >= observation_start_month:
+                cd_time_from = code
+                break
+
+    data_resp = requests.get(
         f"{base_url}/getStatsData",
         params={
             "appId": app_id,
@@ -848,20 +978,24 @@ def _fetch_estat_cpi(
             "cdTab": tab_code,
             "cdCat01": cat01_code,
             "cdArea": area_code,
-            "cdTimeFrom": cd_time_from,
+            **({"cdTimeFrom": cd_time_from} if cd_time_from else {}),
+            "metaGetFlg": "N",
+            "cntGetFlg": "N",
             "limit": 1000,
         },
         timeout=timeout,
     )
-    resp.raise_for_status()
-    data = resp.json()
+    data_resp.raise_for_status()
+    data = data_resp.json()
+    _check_status(data, "GET_STATS_DATA")
 
     try:
-        values_list = (
-            data["GET_STATS_DATA"]["STATISTICAL_DATA"]["DATA_INF"]["VALUE"]
-        )
+        values_list = data["GET_STATS_DATA"]["STATISTICAL_DATA"]["DATA_INF"]["VALUE"]
     except (KeyError, TypeError) as e:
-        raise RuntimeError(f"e-Stat CPI: unexpected response structure: {e}") from e
+        raise RuntimeError(f"e-Stat CPI: unexpected data structure: {e!r}") from e
+
+    if isinstance(values_list, dict):
+        values_list = [values_list]
 
     if not values_list:
         raise RuntimeError("e-Stat CPI: no values returned")
@@ -869,7 +1003,7 @@ def _fetch_estat_cpi(
     dates = []
     values = []
     for item in values_list:
-        time_str = item.get("@time", "")  # e.g. "2023010000"
+        time_str = item.get("@time", "")
         val_str = str(item.get("$", "")).strip()
         if not time_str or not val_str or val_str in ("-", ""):
             continue
@@ -877,9 +1011,10 @@ def _fetch_estat_cpi(
             val = float(val_str)
         except ValueError:
             continue
-        # Parse "YYYYMM0000" → first day of month
-        dt = pd.to_datetime(time_str[:6], format="%Y%m", errors="coerce")
-        if pd.isna(dt):
+        dt = _parse_estat_month(time_str)
+        if dt is None:
+            continue
+        if dt < observation_start_month:
             continue
         dates.append(dt)
         values.append(val)

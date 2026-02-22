@@ -1,6 +1,7 @@
 ticker,asset,direction
 SLX,commodity,long
 DBB,commodity,long
+UGL,commodity,long
 MU,equity,long
 METSO.HE,equity,long
 LHX,equity,long
@@ -13,3 +14,4 @@ OKLO,equity,short
 JOBY,equity,short
 AUR,equity,short
 ABXX.NE,equity,short
+TE,equity,short
