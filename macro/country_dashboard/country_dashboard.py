@@ -917,7 +917,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     continue
 
                 countries[name] = series
-                series_used[name] = series_id
+                series_used[name] = source
                 latest_observation_dates[name] = series.index[-1].to_pydatetime()
                 break
             except Exception as e:

@@ -984,7 +984,13 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
                             )
 
                             obs_date = latest_observation_dates.get(country_name)
-                            source_id = series_used.get(country_name)
+                            _SOURCE_DISPLAY = {
+                                "fred": "FRED", "statcan_wds": "Statcan",
+                                "ons": "ONS", "eurostat": "Eurostat",
+                                "snb": "SNB", "oecd": "OECD",
+                            }
+                            raw_source = series_used.get(country_name)
+                            source_id = _SOURCE_DISPLAY.get(raw_source, raw_source.upper() if raw_source else None)
                             if obs_date is not None:
                                 obs_ts = pd.to_datetime(obs_date)
                                 age_days = (pd.Timestamp.now() - obs_ts).days
