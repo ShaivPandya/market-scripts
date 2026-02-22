@@ -52,7 +52,11 @@ CURRENCY_CONFIGS = {
         fred_spot_id="DEXCAUS",
         fred_spot_invert=False,
         cpi_base_ids=["CPIAUCSL"],
-        cpi_quote_ids=["CANCPIALLMINMEI", "CPALTT01CAM657N"],
+        cpi_quote_ids=[
+            {"source": "statcan", "vector_id": 41690973},
+            "CANCPIALLMINMEI",
+            "CPALTT01CAM657N",
+        ],
         rate_base_id="TB3MS",
         rate_quote_id="IR3TIB01CAM156N",
         imf_iso3_base="USA",

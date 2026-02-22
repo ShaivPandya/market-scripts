@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from .currency_config import CurrencyPairConfig
 from .data_fred import fetch_fred_series
 from .data_imf import fetch_imf_datamapper_indicator
+from .data_statcan import fetch_statcan_cpi
 from .data_bis import fetch_bis_ws_eer_m, BisError
 from .features import build_monthly_panel, compute_features, implied_spot_reference_points
 from .models import fit_horizon_ols, predict_latest, bootstrap_forecast_distribution
@@ -31,9 +32,23 @@ def _fetch_with_candidates(
     cache_dir: Path,
     refresh: bool,
 ) -> pd.Series:
-    """Try fetching from a list of FRED series IDs, return first success."""
+    """Try fetching from a list of candidates (FRED series IDs or source dicts), return first success."""
     last_err = None
-    for sid in candidates:
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            source = candidate.get("source", "fred")
+            if source == "statcan":
+                vector_id = candidate["vector_id"]
+                try:
+                    log.info(f"Downloading StatCan v{vector_id} -> {name}")
+                    return fetch_statcan_cpi(vector_id, start=start, cache_dir=cache_dir, refresh=refresh)
+                except Exception as e:
+                    log.warning(f"StatCan v{vector_id} failed: {e}")
+                    last_err = e
+                    continue
+            sid = candidate.get("id", "")
+        else:
+            sid = candidate
         try:
             log.info(f"Downloading FRED {sid} -> {name}")
             return fetch_fred_series(sid, start=start, cache_dir=cache_dir, refresh=refresh)
