@@ -9,6 +9,7 @@ from .currency_config import CurrencyPairConfig
 from .data_fred import fetch_fred_series
 from .data_imf import fetch_imf_datamapper_indicator
 from .data_statcan import fetch_statcan_cpi
+from .data_estat import fetch_estat_cpi, EStatError
 from .data_bis import fetch_bis_ws_eer_m, BisError
 from .features import build_monthly_panel, compute_features, implied_spot_reference_points
 from .models import fit_horizon_ols, predict_latest, bootstrap_forecast_distribution
@@ -44,6 +45,15 @@ def _fetch_with_candidates(
                     return fetch_statcan_cpi(vector_id, start=start, cache_dir=cache_dir, refresh=refresh)
                 except Exception as e:
                     log.warning(f"StatCan v{vector_id} failed: {e}")
+                    last_err = e
+                    continue
+            if source == "estat":
+                stats_data_id = candidate.get("stats_data_id", "0003427113")
+                try:
+                    log.info(f"Downloading e-Stat {stats_data_id} -> {name}")
+                    return fetch_estat_cpi(stats_data_id, start=start, cache_dir=cache_dir, refresh=refresh)
+                except Exception as e:
+                    log.warning(f"e-Stat {stats_data_id} failed: {e}")
                     last_err = e
                     continue
             sid = candidate.get("id", "")

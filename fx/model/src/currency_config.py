@@ -102,7 +102,11 @@ CURRENCY_CONFIGS = {
         fred_spot_id="DEXJPUS",
         fred_spot_invert=False,
         cpi_base_ids=["CPIAUCSL"],
-        cpi_quote_ids=["JPNCPIALLMINMEI", "CPALTT01JPM657N"],
+        cpi_quote_ids=[
+            {"source": "estat", "stats_data_id": "0003427113"},
+            "JPNCPIALLMINMEI",
+            "CPALTT01JPM657N",
+        ],
         rate_base_id="TB3MS",
         rate_quote_id="IR3TIB01JPM156N",
         imf_iso3_base="USA",
