@@ -301,7 +301,16 @@ COUNTRIES = {
             {"id": "CPALTT01CHM659N", "transform": "none"},
             {"id": "FPCPITOTLZGCHE", "transform": "none"},
         ],
-        "unemployment": "LRUNTTTTCHM156S",
+        "unemployment": [
+            {
+                "source": "snb",
+                "id": "SNB amarbma S1",
+                "cube": "amarbma",
+                "dim_sel": "D0(S1)",
+                "transform": "none",
+            },
+            {"id": "LRUNTTTTCHM156S", "transform": "none"},
+        ],
         "gdp": [
             {
                 "source": "snb",
@@ -316,8 +325,15 @@ COUNTRIES = {
     },
     "Australia": {
         "inflation": [
-            {"id": "CPALTT01AUQ659N", "transform": "none"},
-            {"id": "FPCPITOTLZGAUS", "transform": "none"},
+            {
+                "source": "abs",
+                "id": "ABS_CPI",
+                "dataflow": "CPI",
+                # Measure.Index.TSEst.Region.Freq
+                # 3=YoY%, 10001=All groups CPI, 10=Original, 50=Weighted avg 8 capital cities, M=Monthly
+                "key": "3.10001.10.50.M",
+                "transform": "none",
+            },
         ],
         "unemployment": "LRUNTTTTAUM156S",
         "gdp": "NAEXKP01AUQ189S",
@@ -790,6 +806,84 @@ def _fetch_oecd_series(
     return series
 
 
+def _fetch_abs_indicator(
+    *,
+    dataflow: str,
+    key: str,
+    observation_start: datetime,
+    timeout: int = 30,
+) -> pd.Series:
+    """
+    Fetch a time series from the ABS SDMX-XML API (Australian Bureau of Statistics).
+
+    API docs: https://data.api.abs.gov.au/
+    Args:
+        dataflow: ABS dataflow identifier (e.g. "CPI").
+        key: Dimension filter string (e.g. "3.10001.10.50.M").
+            For CPI: Measure.Index.TSEst.Region.Freq
+            Measure 3 = % change from corresponding period of previous year (YoY %)
+            Index 10001 = All groups CPI
+            TSEst 10 = Original
+            Region 50 = Weighted Average of Eight Capital Cities
+            Freq M = Monthly
+        observation_start: Fetch data from this date onward.
+
+    Returns a pd.Series indexed by datetime.
+    """
+    import xml.etree.ElementTree as ET
+
+    base_url = "https://data.api.abs.gov.au/rest/data"
+    url = f"{base_url}/{dataflow}/{key}"
+
+    if ".Q" in key:
+        q = (observation_start.month - 1) // 3 + 1
+        start_str = f"{observation_start.year}-Q{q}"
+    else:
+        start_str = observation_start.strftime("%Y-%m")
+
+    resp = requests.get(
+        url,
+        params={"startPeriod": start_str, "detail": "dataonly"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+
+    # ABS SDMX API returns XML; parse generic data message
+    ns = {
+        "g": "http://www.sdmx.org/resources/sdmxml/schemas/v2_1/data/generic",
+    }
+    root = ET.fromstring(resp.text)
+
+    records: Dict[pd.Timestamp, float] = {}
+    for obs in root.findall(".//g:Obs", ns):
+        dim = obs.find("g:ObsDimension", ns)
+        val_el = obs.find("g:ObsValue", ns)
+        if dim is None or val_el is None:
+            continue
+        period = dim.get("value", "")
+        val_str = val_el.get("value", "")
+        if not period or not val_str:
+            continue
+        try:
+            val = float(val_str)
+        except ValueError:
+            continue
+        if "Q" in period:
+            ts = pd.Period(period, freq="Q").to_timestamp(how="start")
+        else:
+            ts = pd.to_datetime(period, format="%Y-%m", errors="coerce")
+            if pd.isna(ts):
+                continue
+        records[ts] = val
+
+    if not records:
+        raise RuntimeError(f"ABS {dataflow}/{key}: no observations parsed from response")
+
+    series = pd.Series(records).sort_index().dropna()
+    series.index = pd.to_datetime(series.index)
+    return series
+
+
 def _fetch_estat_cpi(
     *,
     app_id: str,
@@ -1192,6 +1286,17 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     series = _fetch_oecd_series(
                         dataset=ds,
                         key=key,
+                        observation_start=observation_start,
+                    )
+                    series = series[series.index >= observation_start]
+                elif source == "abs":
+                    dataflow = candidate.get("dataflow")
+                    abs_key = candidate.get("key")
+                    if not dataflow or not abs_key:
+                        raise ValueError("Missing dataflow or key for ABS source")
+                    series = _fetch_abs_indicator(
+                        dataflow=dataflow,
+                        key=abs_key,
                         observation_start=observation_start,
                     )
                     series = series[series.index >= observation_start]
