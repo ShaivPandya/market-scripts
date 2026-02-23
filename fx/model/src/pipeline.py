@@ -260,4 +260,5 @@ def run_pipeline(
         "reference_points": ref,
         "latest_forecast": latest_forecast,
         "models": results_by_h,
+        "latest_date": str(asof_date.date()),
     }

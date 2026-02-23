@@ -2643,7 +2643,7 @@ elif st.session_state.current_page == "💱 FX Model":
                     start="1970-01-01",
                     outdir=outdir,
                     cache_dir=cache_dir,
-                    refresh=False,
+                    refresh=True,
                     use_bis=not fx_skip_bis,
                     bootstrap_draws=fx_bootstrap,
                     horizons=horizons,
@@ -2685,11 +2685,31 @@ elif st.session_state.current_page == "💱 FX Model":
                 if first_horizon:
                     spot_now = latest_forecast[first_horizon].get("spot_now", 0)
                     rer_z = latest_forecast[first_horizon].get("valuation_rer_z", 0)
+                    latest_date = results.get("latest_date", "?")
 
-                    col1, col2 = st.columns(2)
+                    # Fetch live spot from yfinance
+                    _YF_TICKERS = {"USDCAD": "USDCAD=X", "GBPUSD": "GBPUSD=X",
+                                   "AUDUSD": "AUDUSD=X", "USDJPY": "USDJPY=X"}
+                    live_spot = None
+                    yf_ticker = _YF_TICKERS.get(pair)
+                    if yf_ticker:
+                        try:
+                            import yfinance as yf
+                            hist = yf.download(yf_ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
+                            if not hist.empty:
+                                live_spot = float(hist["Close"].dropna().iloc[-1])
+                        except Exception:
+                            pass
+
+                    col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Current Spot", f"{spot_now:.4f}")
+                        if live_spot is not None:
+                            st.metric("Live Spot", f"{live_spot:.4f}")
+                        else:
+                            st.metric("Live Spot", "N/A")
                     with col2:
+                        st.metric(f"Model Spot ({latest_date})", f"{spot_now:.4f}")
+                    with col3:
                         z_color = "inverse" if abs(rer_z) > 1.5 else "normal"
                         valuation = "Overvalued" if rer_z > 1.5 else "Undervalued" if rer_z < -1.5 else "Fair"
                         st.metric("RER Z-Score", f"{rer_z:+.2f}", delta=valuation, delta_color=z_color)
@@ -2708,9 +2728,10 @@ elif st.session_state.current_page == "💱 FX Model":
                     q50 = levels.get("q50", 0)
                     q95 = levels.get("q95", 0)
 
-                    # Calculate expected return
-                    if spot_now > 0:
-                        exp_return = ((point / spot_now) - 1) * 100
+                    # Calculate expected return vs live spot (fall back to model spot)
+                    base = live_spot if (live_spot is not None and live_spot > 0) else spot_now
+                    if base > 0:
+                        exp_return = ((point / base) - 1) * 100
                     else:
                         exp_return = 0
 

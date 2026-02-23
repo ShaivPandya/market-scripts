@@ -330,9 +330,10 @@ COUNTRIES = {
                 "id": "ABS_CPI",
                 "dataflow": "CPI",
                 # Measure.Index.TSEst.Region.Freq
-                # 3=YoY%, 10001=All groups CPI, 10=Original, 50=Weighted avg 8 capital cities, M=Monthly
-                "key": "3.10001.10.50.M",
-                "transform": "none",
+                # 1=Index level, 10001=All groups CPI, 10=Original, 50=Weighted avg 8 capital cities, Q=Quarterly
+                # yoy4 applied downstream to get YoY%
+                "key": "1.10001.10.50.Q",
+                "transform": "yoy4",
             },
         ],
         "unemployment": "LRUNTTTTAUM156S",
@@ -819,13 +820,13 @@ def _fetch_abs_indicator(
     API docs: https://data.api.abs.gov.au/
     Args:
         dataflow: ABS dataflow identifier (e.g. "CPI").
-        key: Dimension filter string (e.g. "3.10001.10.50.M").
+        key: Dimension filter string (e.g. "1.10001.10.50.Q").
             For CPI: Measure.Index.TSEst.Region.Freq
-            Measure 3 = % change from corresponding period of previous year (YoY %)
+            Measure 1 = Index level (apply yoy4 transform downstream for YoY %)
             Index 10001 = All groups CPI
             TSEst 10 = Original
             Region 50 = Weighted Average of Eight Capital Cities
-            Freq M = Monthly
+            Freq Q = Quarterly
         observation_start: Fetch data from this date onward.
 
     Returns a pd.Series indexed by datetime.
