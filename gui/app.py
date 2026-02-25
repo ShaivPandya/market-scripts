@@ -114,7 +114,7 @@ if st.session_state.current_page == "💱 FX Model":
         from src.currency_config import list_pairs
         fx_available_pairs = list_pairs()
     except Exception:
-        fx_available_pairs = ["USDCAD", "GBPUSD", "AUDUSD", "USDJPY"]
+        fx_available_pairs = ["USDCAD", "GBPUSD", "AUDUSD", "USDJPY", "EURUSD"]
 
     fx_selected_pair = st.sidebar.selectbox("Currency Pair", options=fx_available_pairs)
     fx_bootstrap = st.sidebar.number_input("Bootstrap Draws", min_value=100, max_value=5000, value=1000, step=100)
@@ -2672,6 +2672,9 @@ elif st.session_state.current_page == "💱 FX Model":
             panel = results.get("panel")
             reference_points = results.get("reference_points")
             models = results.get("models", {})
+            ca_diff_available = results.get("ca_diff_available", True)
+            if not ca_diff_available:
+                st.warning("Current-account data unavailable; model ran without `ca_diff`.")
 
             # Tabs for different views
             tab1, tab2, tab3, tab4 = st.tabs(["Forecast", "Valuation", "Model Details", "Time Series"])
@@ -2688,8 +2691,13 @@ elif st.session_state.current_page == "💱 FX Model":
                     latest_date = results.get("latest_date", "?")
 
                     # Fetch live spot from yfinance
-                    _YF_TICKERS = {"USDCAD": "USDCAD=X", "GBPUSD": "GBPUSD=X",
-                                   "AUDUSD": "AUDUSD=X", "USDJPY": "USDJPY=X"}
+                    _YF_TICKERS = {
+                        "USDCAD": "USDCAD=X",
+                        "EURUSD": "EURUSD=X",
+                        "GBPUSD": "GBPUSD=X",
+                        "AUDUSD": "AUDUSD=X",
+                        "USDJPY": "USDJPY=X",
+                    }
                     live_spot = None
                     yf_ticker = _YF_TICKERS.get(pair)
                     if yf_ticker:

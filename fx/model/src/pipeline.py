@@ -11,6 +11,7 @@ from .data_imf import fetch_imf_datamapper_indicator
 from .data_statcan import fetch_statcan_cpi
 from .data_estat import fetch_estat_cpi, EStatError
 from .data_bis import fetch_bis_ws_eer_m, BisError
+from .data_eurostat import fetch_euro_area_current_account_pct_gdp
 from .features import build_monthly_panel, compute_features, implied_spot_reference_points
 from .models import fit_horizon_ols, predict_latest, bootstrap_forecast_distribution
 from .report import (
@@ -119,14 +120,52 @@ def run_pipeline(
     log.info(f"Downloading FRED {config.fred_vix_id} -> vix")
     fred["vix"] = fetch_fred_series(config.fred_vix_id, start=start, cache_dir=cache_dir, refresh=refresh)
 
-    # -------- Download IMF (current account % GDP) --------
-    log.info(f"Downloading IMF BCA_NGDPD for {config.imf_iso3_quote} and {config.imf_iso3_base}")
-    ca_quote = fetch_imf_datamapper_indicator("BCA_NGDPD", config.imf_iso3_quote, cache_dir=cache_dir, refresh=refresh)
-    ca_base = fetch_imf_datamapper_indicator("BCA_NGDPD", config.imf_iso3_base, cache_dir=cache_dir, refresh=refresh)
+    # -------- Download CA%GDP differential (quote - base) --------
+    # Primary source: IMF DataMapper (BCA_NGDPD).
+    # EUR base has an additional fallback: Eurostat (quarterly CA balance % GDP).
+    imf_ca_available = False
+    ca_diff_available = False
+    ca_quote = None
+    ca_base = None
 
-    # CA differential: quote - base (positive = quote has CA surplus vs base)
-    ca_diff = (ca_quote - ca_base).rename("ca_diff")
-    ca_diff_m = ca_diff.resample("ME").ffill()
+    if config.imf_iso3_quote:
+        try:
+            log.info(f"Downloading IMF BCA_NGDPD for {config.imf_iso3_quote}")
+            ca_quote = fetch_imf_datamapper_indicator(
+                "BCA_NGDPD", config.imf_iso3_quote, cache_dir=cache_dir, refresh=refresh
+            )
+        except Exception as e:
+            log.warning(f"IMF CA%GDP download failed for {config.imf_iso3_quote}: {e}")
+
+    if config.imf_iso3_base:
+        try:
+            log.info(f"Downloading IMF BCA_NGDPD for {config.imf_iso3_base}")
+            ca_base = fetch_imf_datamapper_indicator(
+                "BCA_NGDPD", config.imf_iso3_base, cache_dir=cache_dir, refresh=refresh
+            )
+        except Exception as e:
+            log.warning(f"IMF CA%GDP download failed for {config.imf_iso3_base}: {e}")
+            if config.imf_iso3_base.upper() == "EMU" or config.base_ccy.upper() == "EUR":
+                try:
+                    log.info("Attempting Eurostat fallback for Euro area CA%GDP")
+                    ca_base = fetch_euro_area_current_account_pct_gdp(
+                        start=start, cache_dir=cache_dir, refresh=refresh
+                    )
+                except Exception as e2:
+                    log.warning(f"Eurostat CA%GDP fallback failed: {e2}")
+
+    ca_diff_m = None
+    if ca_quote is not None and ca_base is not None:
+        ca_quote_m = ca_quote.resample("ME").ffill()
+        ca_base_m = ca_base.resample("ME").ffill()
+        ca_diff_m = (ca_quote_m - ca_base_m).rename("ca_diff")
+        ca_diff_available = True
+        imf_ca_available = (
+            isinstance(getattr(ca_quote, "name", None), str)
+            and isinstance(getattr(ca_base, "name", None), str)
+            and str(ca_quote.name).startswith("BCA_NGDPD_")
+            and str(ca_base.name).startswith("BCA_NGDPD_")
+        )
 
     # -------- Optional BIS --------
     bis_reer = None
@@ -140,7 +179,9 @@ def run_pipeline(
             log.warning(f"BIS download failed (continuing without BIS): {e}")
 
     # -------- Build monthly panel --------
-    series = {**fred, "ca_diff": ca_diff_m}
+    series = dict(fred)
+    if ca_diff_available and ca_diff_m is not None:
+        series["ca_diff"] = ca_diff_m
     if bis_reer is not None:
         series["bis_reer"] = bis_reer
 
@@ -152,6 +193,8 @@ def run_pipeline(
 
     # -------- Fit models + forecast --------
     feature_cols = ["rer_z", "carry", "oil_mom12", "mom12", "ca_diff", "carry_to_vol", "vix"]
+    if (not ca_diff_available) or ("ca_diff" not in df.columns):
+        feature_cols = [c for c in feature_cols if c != "ca_diff"]
     results_by_h = {}
     latest_forecast = {}
 
@@ -245,6 +288,8 @@ def run_pipeline(
         "latest_date": str(asof_date.date()),
         "horizons_months": horizons,
         "feature_cols": feature_cols,
+        "imf_ca_available": imf_ca_available,
+        "ca_diff_available": ca_diff_available,
         "latest_forecast": latest_forecast,
         "models": results_by_h,
         "notes": {
@@ -261,4 +306,6 @@ def run_pipeline(
         "latest_forecast": latest_forecast,
         "models": results_by_h,
         "latest_date": str(asof_date.date()),
+        "imf_ca_available": imf_ca_available,
+        "ca_diff_available": ca_diff_available,
     }

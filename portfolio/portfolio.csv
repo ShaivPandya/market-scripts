@@ -4,7 +4,6 @@ DBB,commodity,long
 UGL,commodity,long
 MU,equity,long
 METSO.HE,equity,long
-LHX,equity,long
 EEM,equity,long
 EWY,equity,long
 EWZ,equity,long
@@ -13,5 +12,4 @@ CRWD,equity,long
 OKLO,equity,short
 JOBY,equity,short
 AUR,equity,short
-ABXX.NE,equity,short
-SLX.AX,equity,short
+FLY,equity,short

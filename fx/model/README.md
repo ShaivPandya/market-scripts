@@ -7,6 +7,7 @@ A quantitative "fundamentals + market/plumbing" FX framework for G10 currency pa
 | Pair | Base | Quote | Spot Convention |
 |------|------|-------|-----------------|
 | USDCAD | USD | CAD | CAD per USD |
+| EURUSD | EUR | USD | USD per EUR |
 | GBPUSD | GBP | USD | USD per GBP |
 | AUDUSD | AUD | USD | USD per AUD |
 | USDJPY | USD | JPY | JPY per USD |
@@ -39,6 +40,9 @@ pip install -r requirements.txt
 ```bash
 # USDCAD (default)
 python fx_model.py
+
+# EURUSD
+python fx_model.py --pair EURUSD
 
 # GBPUSD
 python fx_model.py --pair GBPUSD

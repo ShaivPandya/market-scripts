@@ -79,6 +79,23 @@ CURRENCY_CONFIGS = {
         bis_key="M.R.B.GB",
         spot_label="USD per GBP",
     ),
+    "EURUSD": CurrencyPairConfig(
+        pair_name="EURUSD",
+        base_ccy="EUR",
+        quote_ccy="USD",
+        # USD per EUR
+        fred_spot_id="DEXUSEU",
+        fred_spot_invert=False,
+        # Prefer a level index; keep an OECD-style fallback.
+        cpi_base_ids=["CP0000EZ19M086NEST", "CPALTT01EZM657N"],
+        cpi_quote_ids=["CPIAUCSL"],
+        rate_base_id="IR3TIB01EZM156N",
+        rate_quote_id="TB3MS",
+        imf_iso3_base="EMU",
+        imf_iso3_quote="USA",
+        bis_key="",
+        spot_label="USD per EUR",
+    ),
     "AUDUSD": CurrencyPairConfig(
         pair_name="AUDUSD",
         base_ccy="AUD",
