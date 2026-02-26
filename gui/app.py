@@ -35,6 +35,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
+sys.path.insert(0, str(PROJECT_ROOT / "equities"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "country_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "short_screen"))
 
