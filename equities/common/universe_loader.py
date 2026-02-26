@@ -15,7 +15,12 @@ def clean_ticker(tk: str) -> str:
     """
     tk = tk.strip().upper()
     # Common international exchange suffixes that use dots
-    intl_suffixes = (".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC", ".SI", ".HK", ".T", ".NS", ".BO")
+    intl_suffixes = (
+        ".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC",
+        ".SI", ".HK", ".T", ".NS", ".BO",
+        ".KS", ".KQ",  # South Korea (KSE / KOSDAQ)
+        ".TW", ".TWO",  # Taiwan (TWSE / Taipei Exchange)
+    )
     if any(tk.endswith(suffix) for suffix in intl_suffixes):
         return tk
     return tk.replace(".", "-")

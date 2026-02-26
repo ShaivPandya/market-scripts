@@ -42,6 +42,7 @@ try:
         fetch_quality_batch,
         fetch_eps_momentum_batch,
         fetch_revenue_momentum_batch,
+        fetch_etf_lookthrough_fundamentals_batch,
     )
 except ImportError:
     from signal_fetchers import (
@@ -49,6 +50,7 @@ except ImportError:
         fetch_quality_batch,
         fetch_eps_momentum_batch,
         fetch_revenue_momentum_batch,
+        fetch_etf_lookthrough_fundamentals_batch,
     )
 
 # -----------------------------
@@ -402,6 +404,7 @@ def generate_composite_signals(
     weights_short: Optional[Dict[str, float]] = None,
     direction_map: Optional[Dict[str, str]] = None,
     years: int = DEFAULT_YEARS,
+    etf_lookthrough_top_n: int = 10,
     clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
@@ -415,6 +418,7 @@ def generate_composite_signals(
         weights_short: Dict of signal weights for shorts (default: None, uses same as longs)
         direction_map: Dict mapping ticker -> direction ("long" or "short")
         years: Years of price history to fetch
+        etf_lookthrough_top_n: If >0, compute ETF fundamentals by looking through to top N holdings
         clip_bounds: (lower, upper) bounds for signal clipping
 
     Returns:
@@ -488,10 +492,32 @@ def generate_composite_signals(
     if equities:
         print(f"\nComputing fundamental signals for {len(equities)} equities...")
 
+        # ETF look-through fundamentals (top holdings)
+        etf_quality_raw = pd.DataFrame()
+        etf_eps_raw = pd.DataFrame()
+        etf_rev_raw = pd.DataFrame()
+        etf_holdings_map: Dict[str, pd.Series] = {}
+
+        if etf_lookthrough_top_n and etf_lookthrough_top_n > 0:
+            print(f"  ETF look-through: top {etf_lookthrough_top_n} holdings...")
+            etf_quality_raw, etf_eps_raw, etf_rev_raw, etf_holdings_map = fetch_etf_lookthrough_fundamentals_batch(
+                equities,
+                top_n=etf_lookthrough_top_n,
+                market="SPY",
+                growth_years=years,
+            )
+
+            if etf_holdings_map:
+                print(f"  ETF look-through enabled for: {', '.join(sorted(etf_holdings_map.keys()))}")
+
+        etf_tickers = set(etf_holdings_map.keys())
+        stock_equities = [t for t in equities if t not in etf_tickers]
+
         # Quality
         print("  Fetching quality metrics...")
-        quality_raw = fetch_quality_batch(equities, market="SPY", growth_years=years)
-        if not quality_raw.empty:
+        quality_raw_stock = fetch_quality_batch(stock_equities, market="SPY", growth_years=years) if stock_equities else pd.DataFrame()
+        quality_raw = pd.concat([quality_raw_stock, etf_quality_raw], axis=0) if not etf_quality_raw.empty else quality_raw_stock
+        if quality_raw is not None and not quality_raw.empty:
             quality_scores = compute_quality_signal(quality_raw)
             for ticker in quality_scores.index:
                 if ticker in quality_signal.index:
@@ -499,8 +525,9 @@ def generate_composite_signals(
 
         # EPS Momentum
         print("  Fetching EPS momentum metrics...")
-        eps_raw = fetch_eps_momentum_batch(equities, growth_years=years)
-        if not eps_raw.empty:
+        eps_raw_stock = fetch_eps_momentum_batch(stock_equities, growth_years=years) if stock_equities else pd.DataFrame()
+        eps_raw = pd.concat([eps_raw_stock, etf_eps_raw], axis=0) if not etf_eps_raw.empty else eps_raw_stock
+        if eps_raw is not None and not eps_raw.empty:
             eps_scores = compute_eps_momentum_signal(eps_raw)
             for ticker in eps_scores.index:
                 if ticker in eps_mom_signal.index:
@@ -508,8 +535,9 @@ def generate_composite_signals(
 
         # Revenue Momentum
         print("  Fetching revenue momentum metrics...")
-        rev_raw = fetch_revenue_momentum_batch(equities, growth_years=years)
-        if not rev_raw.empty:
+        rev_raw_stock = fetch_revenue_momentum_batch(stock_equities, growth_years=years) if stock_equities else pd.DataFrame()
+        rev_raw = pd.concat([rev_raw_stock, etf_rev_raw], axis=0) if not etf_rev_raw.empty else rev_raw_stock
+        if rev_raw is not None and not rev_raw.empty:
             rev_scores = compute_revenue_momentum_signal(rev_raw)
             for ticker in rev_scores.index:
                 if ticker in rev_mom_signal.index:
