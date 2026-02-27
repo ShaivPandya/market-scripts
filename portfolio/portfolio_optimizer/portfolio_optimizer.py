@@ -191,7 +191,7 @@ BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
 LONG_MAX = 0.20        # max 25% for any single long position
 SHORT_MIN = -0.10      # max 25% (abs) for any single short position
-SEVERE_DD_MAX = 0.05        # max 5% for longs that fell 60%+ from 52-week high
+SEVERE_DD_MAX = 0.05        # max 5% absolute SHORT position size if 60%+ off 52-week high
 SEVERE_DD_THRESHOLD = 0.60  # drawdown from 52-week high that triggers the reduced cap
 
 # Duration (in years) for bond/Treasury futures instruments
@@ -330,7 +330,7 @@ def compute_severe_drawdown_flags(
     threshold: float = SEVERE_DD_THRESHOLD,
 ) -> Dict[str, bool]:
     """
-    For each equity ticker, returns True if the stock ever fell more than `threshold`
+    For each equity ticker, returns True if the stock ever fell at least `threshold`
     (default 60%) from its 52-week high at any point in the lookback window —
     even if it has since partially recovered.
     """
@@ -354,7 +354,7 @@ def compute_severe_drawdown_flags(
             continue
         min_after = prices_after.min()
         drawdown = (high_52w - min_after) / high_52w
-        result[t] = bool(drawdown > threshold)
+        result[t] = bool(drawdown >= threshold)
     return result
 
 
@@ -617,6 +617,12 @@ def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame, include_positi
             max_short_abs = abs(w[short_mask].min())
             checks.append(("Individual short (10%)", max_short_abs, abs(SHORT_MIN)))
 
+        if "severe_drawdown" in meta.columns:
+            severe_dd_short = short_mask & meta["severe_drawdown"]
+            if severe_dd_short.any():
+                max_severe_short_abs = abs(w[severe_dd_short].min())
+                checks.append(("Severe DD short (5% abs)", max_severe_short_abs, SEVERE_DD_MAX))
+
     # Find binding (closest to limit)
     binding = max(checks, key=lambda x: x[1] / x[2] if x[2] > 0 else 0)
     return f"{binding[0]}: {binding[1]:.2%} of {binding[2]:.0%} limit"
@@ -678,13 +684,13 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame, include_p
             if max_long_weight > eps:
                 k_list.append(LONG_MAX / max_long_weight)
 
-        # Severe drawdown longs cannot exceed SEVERE_DD_MAX (5%)
+        # Severe drawdown shorts cannot exceed SEVERE_DD_MAX in absolute weight (5%)
         if "severe_drawdown" in meta.columns:
-            severe_dd_long = long_mask & meta["severe_drawdown"]
-            if severe_dd_long.any():
-                max_severe = w[severe_dd_long].max()
-                if max_severe > eps:
-                    k_list.append(SEVERE_DD_MAX / max_severe)
+            severe_dd_short = short_mask & meta["severe_drawdown"]
+            if severe_dd_short.any():
+                min_severe_short = w[severe_dd_short].min()  # Most negative value
+                if min_severe_short < -eps:
+                    k_list.append((-SEVERE_DD_MAX) / min_severe_short)
 
         # Shorts cannot exceed SHORT_MIN (-10%)
         if short_mask.any():
@@ -757,9 +763,13 @@ def optimize_portfolio(
         equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
         severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
         meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
-        flagged = [t for t, v in severe_dd_flags.items() if v]
-        if flagged:
-            console.print(f"[yellow]Severe drawdown cap (5%) applied to: {flagged}[/yellow]")
+        flagged_shorts = [
+            t
+            for t, v in severe_dd_flags.items()
+            if v and meta.loc[t, "direction"].strip().lower() == "short"
+        ]
+        if flagged_shorts:
+            console.print(f"[yellow]Severe drawdown short cap (5% abs) applied to: {flagged_shorts}[/yellow]")
 
         if len(tickers) < 2:
             return {"error": "Need at least 2 instruments with returns to optimize."}
@@ -815,13 +825,13 @@ def optimize_portfolio(
         if long_mask.any():
             constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
             constraints.append(w[long_mask] <= LONG_MAX)
-            # Tighter cap for longs that fell 60%+ from their 52-week high
-            severe_dd_long_mask = meta["severe_drawdown"].values & long_mask
-            if severe_dd_long_mask.any():
-                constraints.append(w[severe_dd_long_mask] <= SEVERE_DD_MAX)
         if short_mask.any():
             constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
             constraints.append(w[short_mask] >= SHORT_MIN)
+            # Tighter cap for shorts that fell 60%+ from their 52-week high (abs cap)
+            severe_dd_short_mask = meta["severe_drawdown"].values & short_mask
+            if severe_dd_short_mask.any():
+                constraints.append(w[severe_dd_short_mask] >= -SEVERE_DD_MAX)
 
         # Total gross leverage
         constraints.append(cp.norm1(w) <= GROSS_MAX)
@@ -1111,9 +1121,13 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
     severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
     meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
-    flagged = [t for t, v in severe_dd_flags.items() if v]
-    if flagged:
-        console.print(f"[yellow]Severe drawdown cap (5%) applied to: {flagged}[/yellow]")
+    flagged_shorts = [
+        t
+        for t, v in severe_dd_flags.items()
+        if v and meta.loc[t, "direction"].strip().lower() == "short"
+    ]
+    if flagged_shorts:
+        console.print(f"[yellow]Severe drawdown short cap (5% abs) applied to: {flagged_shorts}[/yellow]")
 
     if len(tickers) < 2:
         raise ValueError("Need at least 2 instruments with returns to optimize.")
@@ -1178,13 +1192,13 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if long_mask.any():
         constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
         constraints.append(w[long_mask] <= LONG_MAX)  # cap longs at 20%
-        # Tighter cap for longs that fell 60%+ from their 52-week high
-        severe_dd_long_mask = meta["severe_drawdown"].values & long_mask
-        if severe_dd_long_mask.any():
-            constraints.append(w[severe_dd_long_mask] <= SEVERE_DD_MAX)
     if short_mask.any():
         constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
         constraints.append(w[short_mask] >= SHORT_MIN)  # floor shorts at -10%
+        # Tighter cap for shorts that fell 60%+ from their 52-week high (abs cap)
+        severe_dd_short_mask = meta["severe_drawdown"].values & short_mask
+        if severe_dd_short_mask.any():
+            constraints.append(w[severe_dd_short_mask] >= -SEVERE_DD_MAX)
 
     # Total gross leverage
     constraints.append(cp.norm1(w) <= GROSS_MAX)
