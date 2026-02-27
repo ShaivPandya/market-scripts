@@ -3092,9 +3092,11 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
                 sentiment = str(company.get("sentiment", "neutral")).lower()
                 sentiment_color = sentiment_colors.get(sentiment, "#616161")
 
-                quarter = company.get("quarter")
-                year = company.get("year")
-                quarter_str = f"Q{quarter} {year}" if quarter and year else "N/A"
+                td = company.get("transcript_date") or ""
+                try:
+                    quarter_str = datetime.strptime(td, "%Y-%m-%d").strftime("%b %-d, %Y")
+                except ValueError:
+                    quarter_str = "N/A"
                 stale = bool(company.get("is_stale")) or bool(company.get("missing_data"))
                 stale_badge = "STALE" if stale else "FRESH"
                 stale_color = "#EF6C00" if stale else "#2E7D32"

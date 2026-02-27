@@ -734,12 +734,14 @@ def run() -> None:
             print(f"  {headline}")
 
         for company in sec.get("companies", []):
-            q = company.get("quarter")
-            y = company.get("year")
-            qy = f"Q{q} {y}" if q and y else "N/A"
+            td = company.get("transcript_date") or ""
+            try:
+                date_label = datetime.strptime(td, "%Y-%m-%d").strftime("%b %-d, %Y")
+            except ValueError:
+                date_label = "N/A"
             stale = " (stale/missing)" if company.get("is_stale") or company.get("missing_data") else ""
             print(
-                f"  - {company['ticker']} [{qy}] {company['sentiment']}: "
+                f"  - {company['ticker']} [{date_label}] {company['sentiment']}: "
                 f"{company['summary_headline']}{stale}"
             )
 
