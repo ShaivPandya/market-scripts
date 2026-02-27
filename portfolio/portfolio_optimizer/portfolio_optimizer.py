@@ -191,6 +191,8 @@ BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
 LONG_MAX = 0.20        # max 25% for any single long position
 SHORT_MIN = -0.10      # max 25% (abs) for any single short position
+SEVERE_DD_MAX = 0.05        # max 5% for longs that fell 60%+ from 52-week high
+SEVERE_DD_THRESHOLD = 0.60  # drawdown from 52-week high that triggers the reduced cap
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -320,6 +322,40 @@ def to_usd_price(local_price: pd.Series, ccy: str, prices_all: pd.DataFrame) -> 
     if mode == "USDCCY":
         return local_price / fx
     raise RuntimeError("Unexpected FX mode")
+
+
+def compute_severe_drawdown_flags(
+    usd_prices: pd.DataFrame,
+    equity_tickers: list,
+    threshold: float = SEVERE_DD_THRESHOLD,
+) -> Dict[str, bool]:
+    """
+    For each equity ticker, returns True if the stock ever fell more than `threshold`
+    (default 60%) from its 52-week high at any point in the lookback window —
+    even if it has since partially recovered.
+    """
+    result: Dict[str, bool] = {}
+    for t in equity_tickers:
+        if t not in usd_prices.columns:
+            result[t] = False
+            continue
+        prices = usd_prices[t].dropna()
+        if len(prices) < 2:
+            result[t] = False
+            continue
+        high_52w = prices.max()
+        if high_52w <= 0:
+            result[t] = False
+            continue
+        high_date = prices.idxmax()
+        prices_after = prices[prices.index >= high_date]
+        if prices_after.empty:
+            result[t] = False
+            continue
+        min_after = prices_after.min()
+        drawdown = (high_52w - min_after) / high_52w
+        result[t] = bool(drawdown > threshold)
+    return result
 
 
 def ensure_psd(Sigma: np.ndarray, eps: float = 1e-10) -> np.ndarray:
@@ -642,6 +678,14 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame, include_p
             if max_long_weight > eps:
                 k_list.append(LONG_MAX / max_long_weight)
 
+        # Severe drawdown longs cannot exceed SEVERE_DD_MAX (5%)
+        if "severe_drawdown" in meta.columns:
+            severe_dd_long = long_mask & meta["severe_drawdown"]
+            if severe_dd_long.any():
+                max_severe = w[severe_dd_long].max()
+                if max_severe > eps:
+                    k_list.append(SEVERE_DD_MAX / max_severe)
+
         # Shorts cannot exceed SHORT_MIN (-10%)
         if short_mask.any():
             min_short_weight = w[short_mask].min()  # Most negative value
@@ -709,6 +753,14 @@ def optimize_portfolio(
         defense_vol = compute_defense_volatility(usd_prices, tickers)
         meta["realized_vol"] = defense_vol
 
+        # Flag equities that fell 60%+ from their 52-week high at any point
+        equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
+        severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
+        meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
+        flagged = [t for t, v in severe_dd_flags.items() if v]
+        if flagged:
+            console.print(f"[yellow]Severe drawdown cap (5%) applied to: {flagged}[/yellow]")
+
         if len(tickers) < 2:
             return {"error": "Need at least 2 instruments with returns to optimize."}
 
@@ -763,6 +815,10 @@ def optimize_portfolio(
         if long_mask.any():
             constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
             constraints.append(w[long_mask] <= LONG_MAX)
+            # Tighter cap for longs that fell 60%+ from their 52-week high
+            severe_dd_long_mask = meta["severe_drawdown"].values & long_mask
+            if severe_dd_long_mask.any():
+                constraints.append(w[severe_dd_long_mask] <= SEVERE_DD_MAX)
         if short_mask.any():
             constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
             constraints.append(w[short_mask] >= SHORT_MIN)
@@ -1051,6 +1107,14 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     defense_vol = compute_defense_volatility(usd_prices, tickers)
     meta["realized_vol"] = defense_vol
 
+    # Flag equities that fell 60%+ from their 52-week high at any point
+    equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
+    severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
+    meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
+    flagged = [t for t, v in severe_dd_flags.items() if v]
+    if flagged:
+        console.print(f"[yellow]Severe drawdown cap (5%) applied to: {flagged}[/yellow]")
+
     if len(tickers) < 2:
         raise ValueError("Need at least 2 instruments with returns to optimize.")
 
@@ -1114,6 +1178,10 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if long_mask.any():
         constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
         constraints.append(w[long_mask] <= LONG_MAX)  # cap longs at 20%
+        # Tighter cap for longs that fell 60%+ from their 52-week high
+        severe_dd_long_mask = meta["severe_drawdown"].values & long_mask
+        if severe_dd_long_mask.any():
+            constraints.append(w[severe_dd_long_mask] <= SEVERE_DD_MAX)
     if short_mask.any():
         constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
         constraints.append(w[short_mask] >= SHORT_MIN)  # floor shorts at -10%
