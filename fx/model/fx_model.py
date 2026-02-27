@@ -3,6 +3,7 @@
 
 Usage:
     python fx_model.py --pair USDCAD
+    python fx_model.py --pair EURUSD
     python fx_model.py --pair GBPUSD --no-bis
     python fx_model.py --pair USDJPY --bootstrap 1000
 """
@@ -95,6 +96,9 @@ def main():
         bootstrap_draws=args.bootstrap,
         horizons=horizons,
     )
+
+    if not results.get("ca_diff_available", True):
+        print("\nNote: Current-account data unavailable; model ran without `ca_diff`.\n")
 
     print(f"\nLatest forecast summary for {args.pair}:")
     print(json.dumps(results["latest_forecast"], indent=2))

@@ -17,6 +17,7 @@ GUI:
 """
 
 import os
+import re
 import sys
 import warnings
 from datetime import datetime
@@ -45,6 +46,19 @@ try:
 except ValueError:
     STATCAN_CPI_CANADA_VECTOR_ID = _DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID
 
+# Statistics Canada Table 36-10-0104-01: Real GDP at market prices,
+# expenditure-based, chained 2012 dollars, SA, quarterly.
+_DEFAULT_STATCAN_GDP_CANADA_VECTOR_ID = 62305752
+try:
+    STATCAN_GDP_CANADA_VECTOR_ID = int(
+        os.environ.get(
+            "STATCAN_GDP_CANADA_VECTOR_ID",
+            str(_DEFAULT_STATCAN_GDP_CANADA_VECTOR_ID),
+        )
+    )
+except ValueError:
+    STATCAN_GDP_CANADA_VECTOR_ID = _DEFAULT_STATCAN_GDP_CANADA_VECTOR_ID
+
 _DEFAULT_EUROSTAT_HICP_DATASET = "prc_hicp_midx"
 EUROSTAT_HICP_DATASET = os.environ.get("EUROSTAT_HICP_DATASET", _DEFAULT_EUROSTAT_HICP_DATASET)
 EUROSTAT_GDP_DATASET = os.environ.get("EUROSTAT_GDP_DATASET", "namq_10_gdp")
@@ -59,6 +73,14 @@ ONS_CPI_UK_DATASET_ID = os.environ.get(
     "ONS_CPI_UK_DATASET_ID", _DEFAULT_ONS_CPI_UK_DATASET_ID
 )
 
+ESTAT_APP_ID = os.environ.get("ESTAT_APP_ID", "")
+# Default statsDataId: Japan national CPI, all items, 2020=100, monthly
+# (Statistics Bureau of Japan via e-Stat)
+_DEFAULT_ESTAT_CPI_STATS_DATA_ID = "0003427113"
+ESTAT_CPI_STATS_DATA_ID = os.environ.get(
+    "ESTAT_CPI_STATS_DATA_ID", _DEFAULT_ESTAT_CPI_STATS_DATA_ID
+)
+
 # ── Country definitions: display_name -> FRED series IDs per metric ──────────
 # For inflation, we prefer direct YoY series and keep fallbacks where needed.
 COUNTRIES = {
@@ -68,7 +90,10 @@ COUNTRIES = {
             {"id": "CPIAUCSL", "transform": "none", "params": {"units": "pc1"}},
         ],
         "unemployment": "UNRATE",
-        "gdp": "NAEXKP01USQ189S",
+        "gdp": [
+            # BEA: Real GDP, Percent Change (QoQ annualized SAAR) — standard US reporting.
+            {"id": "A191RL1Q225SBEA", "transform": "none"},
+        ],
     },
     "Canada": {
         "inflation": [
@@ -82,7 +107,18 @@ COUNTRIES = {
             },
         ],
         "unemployment": "LRUNTTTTCAM156S",
-        "gdp": "NAEXKP01CAQ189S",
+        "gdp": [
+            # Statistics Canada Table 36-10-0104-01: Real GDP at market prices,
+            # chained 2012 dollars, SA, quarterly. YoY computed via yoy4.
+            {
+                "source": "statcan_wds",
+                "id": f"STATCAN v{STATCAN_GDP_CANADA_VECTOR_ID}",
+                "vector_id": STATCAN_GDP_CANADA_VECTOR_ID,
+                "freq": "quarterly",
+                "transform": "yoy4",
+            },
+            {"id": "NAEXKP01CAQ189S", "transform": "yoy4"},
+        ],
     },
     "United Kingdom": {
         "inflation": [
@@ -198,11 +234,23 @@ COUNTRIES = {
     },
     "Japan": {
         "inflation": [
-            {"id": "FPCPITOTLZGJPN", "transform": "none"},
-            {"id": "CPALTT01JPM659N", "transform": "none"},
+            {
+                "source": "estat",
+                "id": f"e-Stat CPI {ESTAT_CPI_STATS_DATA_ID}",
+                "stats_data_id": ESTAT_CPI_STATS_DATA_ID,
+                "transform": "yoy12",
+            },
         ],
         "unemployment": "LRUNTTTTJPM156S",
-        "gdp": "NAEXKP01JPQ189S",
+        "gdp": [
+            {
+                "source": "oecd",
+                "id": "OECD QNA JPN.B1_GE.GYSA.Q",
+                "dataset": "QNA",
+                "key": "JPN.B1_GE.GYSA.Q",
+                "transform": "none",
+            },
+        ],
     },
     "France": {
         "inflation": [
@@ -253,7 +301,16 @@ COUNTRIES = {
             {"id": "CPALTT01CHM659N", "transform": "none"},
             {"id": "FPCPITOTLZGCHE", "transform": "none"},
         ],
-        "unemployment": "LRUNTTTTCHM156S",
+        "unemployment": [
+            {
+                "source": "snb",
+                "id": "SNB amarbma S1",
+                "cube": "amarbma",
+                "dim_sel": "D0(S1)",
+                "transform": "none",
+            },
+            {"id": "LRUNTTTTCHM156S", "transform": "none"},
+        ],
         "gdp": [
             {
                 "source": "snb",
@@ -268,8 +325,16 @@ COUNTRIES = {
     },
     "Australia": {
         "inflation": [
-            {"id": "CPALTT01AUQ659N", "transform": "none"},
-            {"id": "FPCPITOTLZGAUS", "transform": "none"},
+            {
+                "source": "abs",
+                "id": "ABS_CPI",
+                "dataflow": "CPI",
+                # Measure.Index.TSEst.Region.Freq
+                # 1=Index level, 10001=All groups CPI, 10=Original, 50=Weighted avg 8 capital cities, Q=Quarterly
+                # yoy4 applied downstream to get YoY%
+                "key": "1.10001.10.50.Q",
+                "transform": "yoy4",
+            },
         ],
         "unemployment": "LRUNTTTTAUM156S",
         "gdp": "NAEXKP01AUQ189S",
@@ -680,6 +745,409 @@ def _fetch_snb_series(
     return series[~series.index.duplicated(keep="last")]
 
 
+def _fetch_oecd_series(
+    *,
+    dataset: str,
+    key: str,
+    observation_start: datetime,
+    timeout: int = 30,
+) -> pd.Series:
+    """
+    Fetch a time series from the OECD SDMX-JSON API.
+
+    Args:
+        dataset: OECD dataset name (e.g. "PRICES_CPI", "QNA").
+        key: Dimension filter string (e.g. "JPN.TOT.GY.M").
+        observation_start: Fetch data from this date onward.
+
+    Returns a pd.Series indexed by datetime with values already in the
+    units delivered by OECD (typically YoY % for GY/GYSA measures).
+    """
+    base_url = os.environ.get(
+        "OECD_API_BASE_URL", "https://stats.oecd.org/sdmx-json/data"
+    )
+    url = f"{base_url}/{dataset}/{key}/OECD"
+
+    if key.endswith(".Q"):
+        q = (observation_start.month - 1) // 3 + 1
+        start_str = f"{observation_start.year}-Q{q}"
+    else:
+        start_str = observation_start.strftime("%Y-%m")
+
+    resp = requests.get(url, params={"startTime": start_str}, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    structure = data["structure"]
+    dataset_obj = data["dataSets"][0]
+
+    time_dim = next(
+        d for d in structure["dimensions"]["observation"]
+        if d["id"] == "TIME_PERIOD"
+    )
+    time_values = [v["id"] for v in time_dim["values"]]
+
+    series_key = next(iter(dataset_obj["series"]))
+    observations = dataset_obj["series"][series_key]["observations"]
+
+    records: Dict[pd.Timestamp, float] = {}
+    for idx_str, obs in observations.items():
+        period = time_values[int(idx_str)]
+        value = obs[0]
+        if value is not None:
+            ts = (
+                pd.Period(period, freq="Q").to_timestamp(how="end")
+                if "Q" in period
+                else pd.Timestamp(period)
+            )
+            records[ts] = float(value)
+
+    series = pd.Series(records).sort_index().dropna()
+    series.index = pd.to_datetime(series.index)
+    return series
+
+
+def _fetch_abs_indicator(
+    *,
+    dataflow: str,
+    key: str,
+    observation_start: datetime,
+    timeout: int = 30,
+) -> pd.Series:
+    """
+    Fetch a time series from the ABS SDMX-XML API (Australian Bureau of Statistics).
+
+    API docs: https://data.api.abs.gov.au/
+    Args:
+        dataflow: ABS dataflow identifier (e.g. "CPI").
+        key: Dimension filter string (e.g. "1.10001.10.50.Q").
+            For CPI: Measure.Index.TSEst.Region.Freq
+            Measure 1 = Index level (apply yoy4 transform downstream for YoY %)
+            Index 10001 = All groups CPI
+            TSEst 10 = Original
+            Region 50 = Weighted Average of Eight Capital Cities
+            Freq Q = Quarterly
+        observation_start: Fetch data from this date onward.
+
+    Returns a pd.Series indexed by datetime.
+    """
+    import xml.etree.ElementTree as ET
+
+    base_url = "https://data.api.abs.gov.au/rest/data"
+    url = f"{base_url}/{dataflow}/{key}"
+
+    if ".Q" in key:
+        q = (observation_start.month - 1) // 3 + 1
+        start_str = f"{observation_start.year}-Q{q}"
+    else:
+        start_str = observation_start.strftime("%Y-%m")
+
+    resp = requests.get(
+        url,
+        params={"startPeriod": start_str, "detail": "dataonly"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+
+    # ABS SDMX API returns XML; parse generic data message
+    ns = {
+        "g": "http://www.sdmx.org/resources/sdmxml/schemas/v2_1/data/generic",
+    }
+    root = ET.fromstring(resp.text)
+
+    records: Dict[pd.Timestamp, float] = {}
+    for obs in root.findall(".//g:Obs", ns):
+        dim = obs.find("g:ObsDimension", ns)
+        val_el = obs.find("g:ObsValue", ns)
+        if dim is None or val_el is None:
+            continue
+        period = dim.get("value", "")
+        val_str = val_el.get("value", "")
+        if not period or not val_str:
+            continue
+        try:
+            val = float(val_str)
+        except ValueError:
+            continue
+        if "Q" in period:
+            ts = pd.Period(period, freq="Q").to_timestamp(how="start")
+        else:
+            ts = pd.to_datetime(period, format="%Y-%m", errors="coerce")
+            if pd.isna(ts):
+                continue
+        records[ts] = val
+
+    if not records:
+        raise RuntimeError(f"ABS {dataflow}/{key}: no observations parsed from response")
+
+    series = pd.Series(records).sort_index().dropna()
+    series.index = pd.to_datetime(series.index)
+    return series
+
+
+def _fetch_estat_cpi(
+    *,
+    app_id: str,
+    stats_data_id: str,
+    observation_start: datetime,
+    timeout: int = 20,
+) -> pd.Series:
+    """
+    Fetch Japan CPI index from the e-Stat API (Statistics Bureau of Japan).
+
+    Calls getMetaInfo first to resolve the correct tab/cat01/area codes for
+    national all-items CPI index, then fetches the filtered time series.
+
+    API docs: https://api.e-stat.go.jp/api/
+    Returns a pd.Series of monthly CPI index values indexed by datetime.
+    Apply yoy12 transform downstream to get YoY %.
+
+    Args:
+        app_id: e-Stat application ID (appId).
+        stats_data_id: e-Stat statistics data ID (statsDataId).
+        observation_start: Fetch data from this date onward.
+    """
+    if not app_id:
+        raise RuntimeError("Missing ESTAT_APP_ID environment variable")
+
+    base_url = "https://api.e-stat.go.jp/rest/3.0/app/json"
+
+    def _check_status(resp_json: dict, root_key: str) -> None:
+        try:
+            result = resp_json[root_key]["RESULT"]
+            status = str(result.get("STATUS", ""))
+            if status != "0":
+                raise RuntimeError(
+                    f"e-Stat API error (status={status}): {result.get('ERROR_MSG', 'unknown error')}"
+                )
+        except (KeyError, TypeError):
+            pass
+
+    # ── Step 1: single getStatsData call with metaGetFlg=Y, limit=1 ──────────
+    # This is the cheapest way to get CLASS_INF (which getMetaInfo doesn't expose
+    # for this dataset) without downloading the full data payload.
+    meta_resp = requests.get(
+        f"{base_url}/getStatsData",
+        params={
+            "appId": app_id,
+            "statsDataId": stats_data_id,
+            "metaGetFlg": "Y",
+            "cntGetFlg": "N",
+            "limit": 1,
+        },
+        timeout=timeout,
+    )
+    meta_resp.raise_for_status()
+    meta = meta_resp.json()
+    _check_status(meta, "GET_STATS_DATA")
+
+    try:
+        class_objs = meta["GET_STATS_DATA"]["STATISTICAL_DATA"]["CLASS_INF"]["CLASS_OBJ"]
+    except (KeyError, TypeError) as e:
+        raise RuntimeError(f"e-Stat CPI: unexpected meta structure: {e!r}") from e
+
+    if isinstance(class_objs, dict):
+        class_objs = [class_objs]
+
+    def _dim_items(dim_id: str) -> list[dict]:
+        for obj in class_objs:
+            if obj.get("@id") != dim_id:
+                continue
+            items = obj.get("CLASS", [])
+            if isinstance(items, dict):
+                items = [items]
+            return [i for i in items if isinstance(i, dict)]
+        return []
+
+    def _find_code(dim_id: str, keywords: list) -> str | None:
+        for item in _dim_items(dim_id):
+            if any(kw in item.get("@name", "") for kw in keywords):
+                return item.get("@code")
+        return None
+
+    tab_code = _find_code("tab", ["指数"])      # index level (not MoM/YoY %)
+    cat01_code = _find_code("cat01", ["総合"])  # all items
+    area_code = _find_code("area", ["全国"])    # all Japan
+
+    time_items = _dim_items("time")
+    time_code_to_name = {
+        str(item.get("@code")): str(item.get("@name", ""))
+        for item in time_items
+        if item.get("@code") is not None
+    }
+
+    if not tab_code or not cat01_code or not area_code:
+        raise RuntimeError(
+            f"e-Stat CPI: could not resolve classification codes "
+            f"(tab={tab_code}, cat01={cat01_code}, area={area_code})"
+        )
+
+    # ── Step 2: fetch the filtered time series ────────────────────────────────
+    observation_start_month = pd.Timestamp(observation_start).replace(day=1)
+
+    def _parse_month_from_name(name: str) -> pd.Timestamp | None:
+        if not name:
+            return None
+        s = str(name).strip()
+
+        m = re.search(r"(?<!\\d)(\\d{4})\\s*[-/\\.]\\s*(\\d{1,2})(?!\\d)", s)
+        if not m:
+            m = re.search(r"(?<!\\d)(\\d{4}).{0,8}?(\\d{1,2})\\s*月", s)
+        if not m:
+            m = re.search(r"(?<!\\d)(\\d{4})\\s*M\\s*(\\d{1,2})(?!\\d)", s, flags=re.IGNORECASE)
+        if m:
+            year = int(m.group(1))
+            month = int(m.group(2))
+            if 1 <= month <= 12:
+                return pd.Timestamp(year=year, month=month, day=1)
+
+        months = {
+            "jan": 1,
+            "feb": 2,
+            "mar": 3,
+            "apr": 4,
+            "may": 5,
+            "jun": 6,
+            "jul": 7,
+            "aug": 8,
+            "sep": 9,
+            "oct": 10,
+            "nov": 11,
+            "dec": 12,
+        }
+        m2 = re.search(
+            r"(?<!\\d)(\\d{4})\\s*[-/\\.]?\\s*([A-Za-z]{3,9})(?![A-Za-z])",
+            s,
+        )
+        if m2:
+            year = int(m2.group(1))
+            key = m2.group(2)[:3].lower()
+            month = months.get(key)
+            if month:
+                return pd.Timestamp(year=year, month=month, day=1)
+
+        return None
+
+    def _parse_month_from_code(code: str) -> pd.Timestamp | None:
+        if not code:
+            return None
+        s = str(code).strip()
+        digits = re.sub(r"\\D", "", s)
+        if len(digits) < 6 or not digits[:4].isdigit():
+            return None
+
+        year = int(digits[:4])
+        month_candidates: list[int] = []
+
+        # Common: YYYYMM....
+        mm = digits[4:6]
+        if mm.isdigit():
+            m = int(mm)
+            if 1 <= m <= 12:
+                month_candidates.append(m)
+
+        # Observed in some e-Stat datasets: YYYY00MM.. (e.g. 2026000101)
+        if len(digits) >= 8 and digits[4:6] == "00":
+            mm2 = digits[6:8]
+            if mm2.isdigit():
+                m = int(mm2)
+                if 1 <= m <= 12:
+                    month_candidates.append(m)
+
+        # Also seen: YYYYMMMM.. where month is zero-padded to 4 digits (e.g. 20260001..)
+        if len(digits) >= 8:
+            mm4 = digits[4:8]
+            if mm4.isdigit():
+                m = int(mm4)
+                if 1 <= m <= 12:
+                    month_candidates.append(m)
+
+        if not month_candidates:
+            return None
+
+        return pd.Timestamp(year=year, month=month_candidates[0], day=1)
+
+    def _parse_estat_month(time_code: str) -> pd.Timestamp | None:
+        name = time_code_to_name.get(str(time_code), "")
+        dt = _parse_month_from_name(name)
+        if dt is not None:
+            return dt
+        return _parse_month_from_code(time_code)
+
+    cd_time_from: str | None = None
+    parsed_time_codes: list[tuple[pd.Timestamp, str]] = []
+    for item in time_items:
+        code = str(item.get("@code", "")).strip()
+        if not code:
+            continue
+        dt = _parse_estat_month(code)
+        if dt is None:
+            continue
+        parsed_time_codes.append((dt, code))
+
+    if parsed_time_codes:
+        parsed_time_codes.sort(key=lambda x: x[0])
+        for dt, code in parsed_time_codes:
+            if dt >= observation_start_month:
+                cd_time_from = code
+                break
+
+    data_resp = requests.get(
+        f"{base_url}/getStatsData",
+        params={
+            "appId": app_id,
+            "statsDataId": stats_data_id,
+            "cdTab": tab_code,
+            "cdCat01": cat01_code,
+            "cdArea": area_code,
+            **({"cdTimeFrom": cd_time_from} if cd_time_from else {}),
+            "metaGetFlg": "N",
+            "cntGetFlg": "N",
+            "limit": 1000,
+        },
+        timeout=timeout,
+    )
+    data_resp.raise_for_status()
+    data = data_resp.json()
+    _check_status(data, "GET_STATS_DATA")
+
+    try:
+        values_list = data["GET_STATS_DATA"]["STATISTICAL_DATA"]["DATA_INF"]["VALUE"]
+    except (KeyError, TypeError) as e:
+        raise RuntimeError(f"e-Stat CPI: unexpected data structure: {e!r}") from e
+
+    if isinstance(values_list, dict):
+        values_list = [values_list]
+
+    if not values_list:
+        raise RuntimeError("e-Stat CPI: no values returned")
+
+    dates = []
+    values = []
+    for item in values_list:
+        time_str = item.get("@time", "")
+        val_str = str(item.get("$", "")).strip()
+        if not time_str or not val_str or val_str in ("-", ""):
+            continue
+        try:
+            val = float(val_str)
+        except ValueError:
+            continue
+        dt = _parse_estat_month(time_str)
+        if dt is None:
+            continue
+        if dt < observation_start_month:
+            continue
+        dates.append(dt)
+        values.append(val)
+
+    if not dates:
+        raise RuntimeError("e-Stat CPI: no data points could be parsed")
+
+    series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
+    return series[~series.index.duplicated(keep="last")]
+
+
 def _get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
@@ -764,9 +1232,11 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     vector_id = candidate.get("vector_id")
                     if not vector_id:
                         raise ValueError("Missing vector_id for statcan_wds series")
+                    freq = candidate.get("freq", "monthly")
+                    periods_per_year = 4 if freq == "quarterly" else 12
                     series = _fetch_statcan_vector_latest_n(
                         vector_id=int(vector_id),
-                        latest_n=int((_FETCH_YEARS + 1) * 12),
+                        latest_n=int((_FETCH_YEARS + 2) * periods_per_year),
                     )
                     series = series[series.index >= observation_start]
                 elif source == "ons":
@@ -809,6 +1279,36 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                         freq=freq,
                     )
                     series = series[series.index >= observation_start]
+                elif source == "oecd":
+                    ds = candidate.get("dataset")
+                    key = candidate.get("key")
+                    if not ds or not key:
+                        raise ValueError("Missing dataset or key for OECD source")
+                    series = _fetch_oecd_series(
+                        dataset=ds,
+                        key=key,
+                        observation_start=observation_start,
+                    )
+                    series = series[series.index >= observation_start]
+                elif source == "abs":
+                    dataflow = candidate.get("dataflow")
+                    abs_key = candidate.get("key")
+                    if not dataflow or not abs_key:
+                        raise ValueError("Missing dataflow or key for ABS source")
+                    series = _fetch_abs_indicator(
+                        dataflow=dataflow,
+                        key=abs_key,
+                        observation_start=observation_start,
+                    )
+                    series = series[series.index >= observation_start]
+                elif source == "estat":
+                    _sdid = candidate.get("stats_data_id", ESTAT_CPI_STATS_DATA_ID)
+                    series = _fetch_estat_cpi(
+                        app_id=ESTAT_APP_ID,
+                        stats_data_id=_sdid,
+                        observation_start=observation_start,
+                    )
+                    series = series[series.index >= observation_start]
                 else:
                     series = fred.get_series(
                         series_id,
@@ -831,7 +1331,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     continue
 
                 countries[name] = series
-                series_used[name] = series_id
+                series_used[name] = source
                 latest_observation_dates[name] = series.index[-1].to_pydatetime()
                 break
             except Exception as e:

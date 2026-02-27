@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -274,3 +274,191 @@ def fetch_revenue_momentum_batch(
     # Convert to DataFrame
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T
     return raw_df
+
+
+# -------------------------
+# ETF Look-through Utilities
+# -------------------------
+
+_INTL_SUFFIXES = (
+    ".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC",
+    ".SI", ".HK", ".T", ".NS", ".BO",
+    ".KS", ".KQ", ".TW", ".TWO", ".SA",
+)
+
+
+def clean_ticker(tk: str) -> str:
+    """
+    Normalize ticker to Yahoo Finance format.
+
+    Preserves dots for international exchange suffixes (e.g., METSO.HE).
+    Converts dots to dashes for US share classes (e.g., BRK.B -> BRK-B).
+    """
+    tk = str(tk).strip().upper()
+    if not tk or tk == "NAN":
+        return ""
+    if any(tk.endswith(suffix) for suffix in _INTL_SUFFIXES):
+        return tk
+    return tk.replace(".", "-")
+
+
+def _normalize_holding_weights(raw: pd.Series) -> pd.Series:
+    w = pd.to_numeric(raw, errors="coerce").astype("float64")
+    w = w.replace([np.inf, -np.inf], np.nan).dropna()
+    w = w[w > 0]
+    if w.empty:
+        return w
+    if float(w.max()) > 1.0:
+        w = w / 100.0
+    s = float(w.sum())
+    if s <= 0:
+        return pd.Series(dtype="float64")
+    return w / s
+
+
+def fetch_etf_top_holdings(etf_ticker: str, top_n: int = 10) -> pd.Series:
+    """
+    Fetch top holdings weights for an ETF/mutual fund using yfinance.
+
+    Returns:
+        pd.Series indexed by holding ticker, values are normalized weights that sum to 1.0.
+        Empty series if unavailable or not a fund.
+    """
+    try:
+        t = yf.Ticker(etf_ticker)
+        df = t.funds_data.top_holdings
+    except Exception:
+        return pd.Series(dtype="float64")
+
+    if df is None or df.empty:
+        return pd.Series(dtype="float64")
+
+    weight_col = None
+    for c in df.columns:
+        if str(c).strip().lower() in ("holding percent", "holding_percent", "holdingpercent"):
+            weight_col = c
+            break
+    if weight_col is None:
+        return pd.Series(dtype="float64")
+
+    raw_w = df[weight_col].copy()
+    raw_w.index = [clean_ticker(x) for x in df.index]
+    raw_w = raw_w[raw_w.index != ""]
+    raw_w = raw_w.groupby(level=0).sum()
+    raw_w = raw_w.sort_values(ascending=False)
+    raw_w = raw_w.head(int(top_n)) if top_n and top_n > 0 else raw_w
+    return _normalize_holding_weights(raw_w)
+
+
+def fetch_etf_top_holdings_batch(etf_tickers: List[str], top_n: int = 10) -> Dict[str, pd.Series]:
+    """
+    Fetch top holdings for multiple ETFs.
+
+    Only ETFs with non-empty holdings are returned in the dict.
+    """
+    out: Dict[str, pd.Series] = {}
+    for etf in etf_tickers:
+        w = fetch_etf_top_holdings(etf, top_n=top_n)
+        if not w.empty:
+            out[etf] = w
+    return out
+
+
+def _weighted_average_row(metrics: pd.DataFrame, weights: pd.Series) -> pd.Series:
+    """
+    Weighted average of each metrics column, skipping NaNs and re-normalizing weights per column.
+    """
+    if metrics is None or metrics.empty or weights is None or weights.empty:
+        return pd.Series(dtype="float64")
+
+    weights = weights.copy()
+    weights.index = [clean_ticker(x) for x in weights.index]
+    weights = weights[weights.index != ""]
+    weights = weights.groupby(level=0).sum()
+    weights = _normalize_holding_weights(weights)
+    if weights.empty:
+        return pd.Series(dtype="float64")
+
+    available = [t for t in weights.index if t in metrics.index]
+    if not available:
+        return pd.Series({c: np.nan for c in metrics.columns}, dtype="float64")
+
+    m = metrics.reindex(available)
+    w = weights.reindex(available)
+
+    out: Dict[str, float] = {}
+    for col in m.columns:
+        v = pd.to_numeric(m[col], errors="coerce").astype("float64")
+        mask = v.notna() & w.notna()
+        if not mask.any():
+            out[col] = np.nan
+            continue
+        w_col = w[mask]
+        s = float(w_col.sum())
+        if s <= 0:
+            out[col] = np.nan
+            continue
+        w_col = w_col / s
+        out[col] = float((v[mask] * w_col).sum())
+    return pd.Series(out, index=list(m.columns), dtype="float64")
+
+
+def compute_lookthrough_raw_metrics(
+    etf_to_holdings: Dict[str, pd.Series],
+    holdings_raw: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Aggregate per-holding raw metrics into ETF-level raw metrics via holding weights.
+
+    Args:
+        etf_to_holdings: Dict of ETF ticker -> weights series (index holding ticker, values sum to 1)
+        holdings_raw: DataFrame of raw metrics indexed by holding ticker
+
+    Returns:
+        DataFrame indexed by ETF ticker with same columns as holdings_raw.
+    """
+    if not etf_to_holdings or holdings_raw is None or holdings_raw.empty:
+        return pd.DataFrame()
+
+    rows: Dict[str, pd.Series] = {}
+    for etf, w in etf_to_holdings.items():
+        rows[etf] = _weighted_average_row(holdings_raw, w)
+
+    out = pd.DataFrame(rows).T
+    # Preserve column order when possible
+    out = out.reindex(columns=list(holdings_raw.columns))
+    return out
+
+
+def fetch_etf_lookthrough_fundamentals_batch(
+    etf_tickers: List[str],
+    top_n: int = 10,
+    market: str = "SPY",
+    growth_years: int = 5,
+    beta_years: float = 3.0,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, pd.Series]]:
+    """
+    Compute ETF look-through fundamentals using the top N holdings.
+
+    Returns:
+        (quality_raw, eps_raw, revenue_raw, etf_to_holdings)
+        - Each *_raw is indexed by ETF ticker.
+        - etf_to_holdings maps ETF ticker -> normalized holding weights.
+    """
+    etf_to_holdings = fetch_etf_top_holdings_batch(etf_tickers, top_n=top_n)
+    if not etf_to_holdings:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+
+    holding_universe = sorted({t for w in etf_to_holdings.values() for t in w.index})
+    if not holding_universe:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), etf_to_holdings
+
+    quality_holdings = fetch_quality_batch(holding_universe, market=market, growth_years=growth_years, beta_years=beta_years)
+    eps_holdings = fetch_eps_momentum_batch(holding_universe, growth_years=growth_years)
+    rev_holdings = fetch_revenue_momentum_batch(holding_universe, growth_years=growth_years)
+
+    quality_etf = compute_lookthrough_raw_metrics(etf_to_holdings, quality_holdings) if not quality_holdings.empty else pd.DataFrame()
+    eps_etf = compute_lookthrough_raw_metrics(etf_to_holdings, eps_holdings) if not eps_holdings.empty else pd.DataFrame()
+    rev_etf = compute_lookthrough_raw_metrics(etf_to_holdings, rev_holdings) if not rev_holdings.empty else pd.DataFrame()
+
+    return quality_etf, eps_etf, rev_etf, etf_to_holdings

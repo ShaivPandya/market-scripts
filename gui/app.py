@@ -35,6 +35,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "macro" / "central_banks"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "industry"))
 sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "technical_analysis"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
+sys.path.insert(0, str(PROJECT_ROOT / "equities"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "country_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "short_screen"))
 
@@ -114,7 +115,7 @@ if st.session_state.current_page == "💱 FX Model":
         from src.currency_config import list_pairs
         fx_available_pairs = list_pairs()
     except Exception:
-        fx_available_pairs = ["USDCAD", "GBPUSD", "AUDUSD", "USDJPY"]
+        fx_available_pairs = ["USDCAD", "GBPUSD", "AUDUSD", "USDJPY", "EURUSD"]
 
     fx_selected_pair = st.sidebar.selectbox("Currency Pair", options=fx_available_pairs)
     fx_bootstrap = st.sidebar.number_input("Bootstrap Draws", min_value=100, max_value=5000, value=1000, step=100)
@@ -984,7 +985,13 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
                             )
 
                             obs_date = latest_observation_dates.get(country_name)
-                            source_id = series_used.get(country_name)
+                            _SOURCE_DISPLAY = {
+                                "fred": "FRED", "statcan_wds": "Statcan",
+                                "ons": "ONS", "eurostat": "Eurostat",
+                                "snb": "SNB", "oecd": "OECD",
+                            }
+                            raw_source = series_used.get(country_name)
+                            source_id = _SOURCE_DISPLAY.get(raw_source, raw_source.upper() if raw_source else None)
                             if obs_date is not None:
                                 obs_ts = pd.to_datetime(obs_date)
                                 age_days = (pd.Timestamp.now() - obs_ts).days
@@ -2637,7 +2644,7 @@ elif st.session_state.current_page == "💱 FX Model":
                     start="1970-01-01",
                     outdir=outdir,
                     cache_dir=cache_dir,
-                    refresh=False,
+                    refresh=True,
                     use_bis=not fx_skip_bis,
                     bootstrap_draws=fx_bootstrap,
                     horizons=horizons,
@@ -2666,6 +2673,9 @@ elif st.session_state.current_page == "💱 FX Model":
             panel = results.get("panel")
             reference_points = results.get("reference_points")
             models = results.get("models", {})
+            ca_diff_available = results.get("ca_diff_available", True)
+            if not ca_diff_available:
+                st.warning("Current-account data unavailable; model ran without `ca_diff`.")
 
             # Tabs for different views
             tab1, tab2, tab3, tab4 = st.tabs(["Forecast", "Valuation", "Model Details", "Time Series"])
@@ -2679,11 +2689,36 @@ elif st.session_state.current_page == "💱 FX Model":
                 if first_horizon:
                     spot_now = latest_forecast[first_horizon].get("spot_now", 0)
                     rer_z = latest_forecast[first_horizon].get("valuation_rer_z", 0)
+                    latest_date = results.get("latest_date", "?")
 
-                    col1, col2 = st.columns(2)
+                    # Fetch live spot from yfinance
+                    _YF_TICKERS = {
+                        "USDCAD": "USDCAD=X",
+                        "EURUSD": "EURUSD=X",
+                        "GBPUSD": "GBPUSD=X",
+                        "AUDUSD": "AUDUSD=X",
+                        "USDJPY": "USDJPY=X",
+                    }
+                    live_spot = None
+                    yf_ticker = _YF_TICKERS.get(pair)
+                    if yf_ticker:
+                        try:
+                            import yfinance as yf
+                            hist = yf.download(yf_ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
+                            if not hist.empty:
+                                live_spot = float(hist["Close"].dropna().iloc[-1])
+                        except Exception:
+                            pass
+
+                    col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Current Spot", f"{spot_now:.4f}")
+                        if live_spot is not None:
+                            st.metric("Live Spot", f"{live_spot:.4f}")
+                        else:
+                            st.metric("Live Spot", "N/A")
                     with col2:
+                        st.metric(f"Model Spot ({latest_date})", f"{spot_now:.4f}")
+                    with col3:
                         z_color = "inverse" if abs(rer_z) > 1.5 else "normal"
                         valuation = "Overvalued" if rer_z > 1.5 else "Undervalued" if rer_z < -1.5 else "Fair"
                         st.metric("RER Z-Score", f"{rer_z:+.2f}", delta=valuation, delta_color=z_color)
@@ -2702,9 +2737,10 @@ elif st.session_state.current_page == "💱 FX Model":
                     q50 = levels.get("q50", 0)
                     q95 = levels.get("q95", 0)
 
-                    # Calculate expected return
-                    if spot_now > 0:
-                        exp_return = ((point / spot_now) - 1) * 100
+                    # Calculate expected return vs live spot (fall back to model spot)
+                    base = live_spot if (live_spot is not None and live_spot > 0) else spot_now
+                    if base > 0:
+                        exp_return = ((point / base) - 1) * 100
                     else:
                         exp_return = 0
 
@@ -3056,9 +3092,11 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
                 sentiment = str(company.get("sentiment", "neutral")).lower()
                 sentiment_color = sentiment_colors.get(sentiment, "#616161")
 
-                quarter = company.get("quarter")
-                year = company.get("year")
-                quarter_str = f"Q{quarter} {year}" if quarter and year else "N/A"
+                td = company.get("transcript_date") or ""
+                try:
+                    quarter_str = datetime.strptime(td, "%Y-%m-%d").strftime("%b %-d, %Y")
+                except ValueError:
+                    quarter_str = "N/A"
                 stale = bool(company.get("is_stale")) or bool(company.get("missing_data"))
                 stale_badge = "STALE" if stale else "FRESH"
                 stale_color = "#EF6C00" if stale else "#2E7D32"

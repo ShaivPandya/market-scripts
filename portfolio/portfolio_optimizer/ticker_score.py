@@ -34,15 +34,17 @@ try:
 except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import load_universe, list_universes, get_sp500_universe
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+from equities.common import load_universe, list_universes, get_sp500_universe
 
 from signal_fetchers import (
     fetch_price_momentum_batch,
     fetch_quality_batch,
     fetch_eps_momentum_batch,
     fetch_revenue_momentum_batch,
+    fetch_etf_top_holdings_batch,
+    compute_lookthrough_raw_metrics,
 )
 
 # -----------------------------
@@ -470,6 +472,33 @@ def main() -> int:
 
     print("\nFetching revenue momentum metrics...")
     rev_raw = fetch_revenue_momentum_batch(universe, growth_years=args.years)
+
+    # ETF look-through fundamentals (top holdings) for target tickers that lack direct fundamentals.
+    etf_candidates = [
+        t for t in target_tickers
+        if (quality_raw is None or t not in quality_raw.index)
+        or (eps_raw is None or t not in eps_raw.index)
+        or (rev_raw is None or t not in rev_raw.index)
+    ]
+    if etf_candidates:
+        etf_holdings_map = fetch_etf_top_holdings_batch(etf_candidates, top_n=10)
+        if etf_holdings_map:
+            print(f"\nETF look-through fundamentals (top 10 holdings): {', '.join(sorted(etf_holdings_map.keys()))}")
+
+            if quality_raw is not None and not quality_raw.empty:
+                etf_quality_raw = compute_lookthrough_raw_metrics(etf_holdings_map, quality_raw)
+                quality_raw = quality_raw.drop(index=etf_quality_raw.index, errors="ignore")
+                quality_raw = pd.concat([quality_raw, etf_quality_raw], axis=0)
+
+            if eps_raw is not None and not eps_raw.empty:
+                etf_eps_raw = compute_lookthrough_raw_metrics(etf_holdings_map, eps_raw)
+                eps_raw = eps_raw.drop(index=etf_eps_raw.index, errors="ignore")
+                eps_raw = pd.concat([eps_raw, etf_eps_raw], axis=0)
+
+            if rev_raw is not None and not rev_raw.empty:
+                etf_rev_raw = compute_lookthrough_raw_metrics(etf_holdings_map, rev_raw)
+                rev_raw = rev_raw.drop(index=etf_rev_raw.index, errors="ignore")
+                rev_raw = pd.concat([rev_raw, etf_rev_raw], axis=0)
 
     print("\nComputing price momentum...")
     price_raw = fetch_price_momentum_batch(universe, ticker_benchmarks, prices)
