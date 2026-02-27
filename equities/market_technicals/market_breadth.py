@@ -34,9 +34,10 @@ import requests
 import yfinance as yf
 
 # Download configuration
-CHUNK_SIZE = 50  # Tickers per batch
-MAX_RETRIES = 2  # Retry attempts for failed tickers
-RETRY_DELAY = 1.0  # Seconds between retries
+CHUNK_SIZE = 25  # Tickers per batch
+MAX_RETRIES = 3  # Retry attempts for failed tickers
+RETRY_DELAY = 2.0  # Base seconds between retries (exponential backoff)
+BATCH_DELAY = 1.0  # Seconds between successful batches
 
 try:
     from rich.console import Console
@@ -116,6 +117,7 @@ def download_with_retry(
     period: str = "1y",
     chunk_size: int = CHUNK_SIZE,
     max_retries: int = MAX_RETRIES,
+    batch_delay: float = BATCH_DELAY,
 ) -> tuple[pd.DataFrame, List[str]]:
     """
     Download price data in chunks with retry logic for reliability.
@@ -140,8 +142,6 @@ def download_with_retry(
                     period=period,
                     interval="1d",
                     auto_adjust=True,
-                    group_by="column",
-                    threads=True,
                     progress=False,
                 )
 
@@ -158,12 +158,16 @@ def download_with_retry(
                     if missing:
                         failed_tickers.extend(missing)
 
+                    if idx < total_chunks:
+                        time.sleep(batch_delay)
                     break
                 elif attempt < max_retries:
-                    time.sleep(RETRY_DELAY)
+                    time.sleep(RETRY_DELAY * (2 ** attempt))
+                else:
+                    failed_tickers.extend(chunk)
             except Exception as e:
                 if attempt < max_retries:
-                    time.sleep(RETRY_DELAY)
+                    time.sleep(RETRY_DELAY * (2 ** attempt))
                 else:
                     print(f"    Batch {idx} failed after {max_retries + 1} attempts: {e}")
                     failed_tickers.extend(chunk)
