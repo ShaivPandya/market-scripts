@@ -3101,6 +3101,19 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
                 stale_badge = "STALE" if stale else "FRESH"
                 stale_color = "#EF6C00" if stale else "#2E7D32"
 
+                rxn = company.get("price_reaction_2d")
+                if rxn is not None:
+                    rxn_color = "#2E7D32" if rxn >= 0 else "#C62828"
+                    rxn_badge = (
+                        f'<span style="background:{rxn_color}; color:white; padding:3px 10px;'
+                        f' border-radius:4px; font-size:11px; font-weight:600;">2D {rxn:+.1f}%</span>'
+                    )
+                else:
+                    rxn_badge = (
+                        '<span style="background:#757575; color:white; padding:3px 10px;'
+                        ' border-radius:4px; font-size:11px; font-weight:600;">2D N/A</span>'
+                    )
+
                 headline = _html.escape(str(company.get("summary_headline", "")))
                 demand = _html.escape(str(company.get("demand_trends", "")))
                 pricing = _html.escape(str(company.get("pricing_commentary", "")))
@@ -3138,6 +3151,7 @@ elif st.session_state.current_page == "🏭 Industry Monitor":
                                       font-size:11px; font-weight:600;">{sentiment.upper()}</span>
                                 <span style="background:{stale_color}; color:white; padding:3px 10px; border-radius:4px;
                                       font-size:11px; font-weight:600;">{stale_badge}</span>
+                                {rxn_badge}
                                 <span style="font-size:16px; font-weight:600;">{ticker} - {name}</span>
                                 <span style="font-size:13px; opacity:0.6;">({sub_sector})</span>
                             </div>
