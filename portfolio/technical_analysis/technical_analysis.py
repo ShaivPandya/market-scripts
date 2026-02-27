@@ -131,6 +131,15 @@ LOOKBACK_OPTIONS = {
 }
 
 
+def _fetch_name(ticker: str) -> str:
+    """Return the long name for *ticker*, falling back to the ticker symbol."""
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get("longName") or info.get("shortName") or ticker.upper()
+    except Exception:
+        return ticker.upper()
+
+
 def get_data(ticker: str, lookback: str = "2Y") -> dict:
     """Fetch and compute all technical analysis data for *ticker*."""
     try:
@@ -138,6 +147,7 @@ def get_data(ticker: str, lookback: str = "2Y") -> dict:
         price_df = _moving_averages(close)
         roc_df = _rate_of_change(close)
         summary = _build_summary(price_df, roc_df)
+        name = _fetch_name(ticker)
 
         # Trim display to selected lookback
         offset = LOOKBACK_OPTIONS.get(lookback, pd.DateOffset(years=2))
@@ -147,6 +157,7 @@ def get_data(ticker: str, lookback: str = "2Y") -> dict:
 
         return {
             "ticker": ticker.upper(),
+            "name": name,
             "price_data": price_df,
             "roc_data": roc_df,
             "summary": summary,
@@ -176,6 +187,7 @@ def _cli(ticker: str) -> None:
     roc_df = result["roc_data"]
     summary = result["summary"]
     ticker = result["ticker"]
+    name = result.get("name", ticker)
 
     # -- Charts --
     fig, (ax1, ax2) = plt.subplots(
@@ -199,7 +211,7 @@ def _cli(ticker: str) -> None:
         if not valid.empty:
             ax1.plot(valid.index, valid.values, label=col, linewidth=1, color=color, alpha=0.85)
 
-    ax1.set_title(f"{ticker} – Technical Analysis", fontsize=14, fontweight="bold", color="white")
+    ax1.set_title(f"{ticker} – {name} – Technical Analysis", fontsize=14, fontweight="bold", color="white")
     ax1.legend(fontsize=8, loc="upper left")
     ax1.set_ylabel("Price")
     ax1.grid(True, alpha=0.3)

@@ -3407,8 +3407,10 @@ elif st.session_state.current_page == "📐 Chart":
             price_df = ta_result["price_data"]
             roc_df = ta_result["roc_data"]
             summary = ta_result["summary"]
+            ta_name = ta_result.get("name", active_ticker)
 
-            st.subheader(f"{active_ticker} – Price & Moving Averages")
+            st.subheader(f"{active_ticker} – {ta_name}")
+            st.caption("Price & Moving Averages")
 
             # --- Price chart with MAs ---
             # Melt price_df for Altair multi-line chart
