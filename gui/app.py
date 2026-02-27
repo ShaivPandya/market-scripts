@@ -1831,6 +1831,16 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
     st.header("Portfolio Optimizer")
     st.caption("Beta-neutral portfolio construction with volatility targeting")
 
+    with st.expander("Methodology Notes", expanded=False):
+        st.markdown("""
+**Short Position Limits — Fallen Stocks**
+Stocks that have declined more than 60% from their 52-week high are considered distressed and subject to elevated short-squeeze risk.
+Short positions in such stocks are capped at **5% of NAV**.
+
+**ETF Fundamentals**
+ETF fundamental signals (valuation, quality, etc.) are evaluated based on the **top 10 holdings** of the ETF rather than the ETF itself.
+        """)
+
     # Initialize session state for optimization results
     if "optimization_result" not in st.session_state:
         st.session_state.optimization_result = None
