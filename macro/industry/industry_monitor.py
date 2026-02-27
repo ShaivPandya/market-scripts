@@ -26,46 +26,46 @@ SECTORS = {
     "Housing": {
         "type": "leading",
         "companies": [
-            ("DHI", "D.R. Horton", "Homebuilder"),
-            ("LEN", "Lennar", "Homebuilder"),
-            ("NVR", "NVR", "Homebuilder"),
-            ("PHM", "PulteGroup", "Homebuilder"),
-            ("BLDR", "Builders FirstSource", "Building Materials"),
-            ("TOL", "Toll Brothers", "Homebuilder"),
+            ("DHI",  "D.R. Horton",         "Homebuilder",        "BMO"),
+            ("LEN",  "Lennar",              "Homebuilder",        "AMC"),
+            ("NVR",  "NVR",                 "Homebuilder",        "BMO"),
+            ("PHM",  "PulteGroup",          "Homebuilder",        "BMO"),
+            ("BLDR", "Builders FirstSource","Building Materials", "BMO"),
+            ("TOL",  "Toll Brothers",       "Homebuilder",        "AMC"),
         ],
     },
     "Trucking": {
         "type": "leading",
         "companies": [
-            ("ODFL", "Old Dominion Freight Line", "LTL"),
-            ("XPO", "XPO", "LTL"),
-            ("SAIA", "Saia", "LTL"),
-            ("ARCB", "ArcBest", "LTL"),
-            ("KNX", "Knight-Swift", "Truckload"),
-            ("SNDR", "Schneider", "Truckload"),
-            ("WERN", "Werner Enterprises", "Truckload"),
-            ("MRTN", "Marten Transport", "Truckload"),
+            ("ODFL", "Old Dominion Freight Line", "LTL",       "AMC"),
+            ("XPO",  "XPO",                       "LTL",       "BMO"),
+            ("SAIA", "Saia",                       "LTL",       "AMC"),
+            ("ARCB", "ArcBest",                    "LTL",       "BMO"),
+            ("KNX",  "Knight-Swift",               "Truckload", "BMO"),
+            ("SNDR", "Schneider",                  "Truckload", "BMO"),
+            ("WERN", "Werner Enterprises",         "Truckload", "BMO"),
+            ("MRTN", "Marten Transport",           "Truckload", "BMO"),
         ],
     },
     "Banks": {
         "type": "coincident",
         "companies": [
-            ("JPM", "JPMorgan Chase", "Money Center"),
-            ("AXP", "American Express", "Card Issuer"),
-            ("C", "Citigroup", "Money Center"),
-            ("COF", "Capital One", "Card Issuer"),
-            ("BAC", "Bank of America", "Money Center"),
+            ("JPM", "JPMorgan Chase",   "Money Center", "BMO"),
+            ("AXP", "American Express", "Card Issuer",  "AMC"),
+            ("C",   "Citigroup",        "Money Center", "BMO"),
+            ("COF", "Capital One",      "Card Issuer",  "AMC"),
+            ("BAC", "Bank of America",  "Money Center", "BMO"),
         ],
     },
     "Retail": {
         "type": "coincident",
         "companies": [
-            ("HD", "Home Depot", "Home Improvement"),
-            ("LOW", "Lowe's", "Home Improvement"),
-            ("DLTR", "Dollar Tree", "Discount"),
-            ("DG", "Dollar General", "Discount"),
-            ("WMT", "Walmart", "Big Box"),
-            ("TGT", "Target", "Big Box"),
+            ("HD",   "Home Depot",    "Home Improvement", "BMO"),
+            ("LOW",  "Lowe's",        "Home Improvement", "BMO"),
+            ("DLTR", "Dollar Tree",   "Discount",         "BMO"),
+            ("DG",   "Dollar General","Discount",         "BMO"),
+            ("WMT",  "Walmart",       "Big Box",          "BMO"),
+            ("TGT",  "Target",        "Big Box",          "BMO"),
         ],
     },
 }
@@ -231,6 +231,12 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_transcripts_ticker ON transcripts(ticker)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_transcripts_sector ON transcripts(sector)")
     conn.commit()
+    # Migration: add price_reaction_2d column if it doesn't exist yet
+    try:
+        conn.execute("ALTER TABLE transcripts ADD COLUMN price_reaction_2d REAL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
 
 def _get_row_by_id(conn: sqlite3.Connection, row_id: str) -> Optional[sqlite3.Row]:
@@ -321,6 +327,103 @@ def _set_summary(conn: sqlite3.Connection, row_id: str, summary: dict) -> None:
         (json.dumps(summary, ensure_ascii=False), _now_iso(), row_id),
     )
     conn.commit()
+
+
+# ---------- Price reaction ----------
+def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = "BMO") -> Optional[float]:
+    """Return 2-trading-day post-earnings price change (%).
+
+    BMO (before market open): reaction starts on transcript_date itself.
+        entry = close of last trading day *before* transcript_date (D-1)
+        exit  = close 2 trading days later (D+1)
+    AMC (after market close): reaction starts the morning *after* transcript_date.
+        entry = close of transcript_date (D)
+        exit  = close 2 trading days later (D+2)
+    Returns None if data is unavailable or exit date is in the future.
+    """
+    import yfinance as yf
+    from datetime import timedelta
+
+    try:
+        dt = datetime.strptime(transcript_date, "%Y-%m-%d")
+        start = (dt - timedelta(days=10)).strftime("%Y-%m-%d")
+        end = (dt + timedelta(days=10)).strftime("%Y-%m-%d")
+
+        data = yf.download(
+            ticker, start=start, end=end,
+            auto_adjust=True, progress=False, threads=False
+        )
+        if data.empty:
+            return None
+
+        close = data["Close"].dropna()
+        if hasattr(close.columns, "__len__"):
+            # Multi-ticker download — squeeze to Series
+            close = close.squeeze()
+        dates = [d.date() for d in close.index]
+
+        if report_time == "BMO":
+            # Entry: last trading day strictly before transcript_date
+            entry_idx = max(
+                (i for i, d in enumerate(dates) if d < dt.date()),
+                default=None,
+            )
+        else:
+            # AMC — Entry: last trading day on or before transcript_date
+            entry_idx = max(
+                (i for i, d in enumerate(dates) if d <= dt.date()),
+                default=None,
+            )
+
+        if entry_idx is None or entry_idx + 2 >= len(dates):
+            return None
+
+        entry_price = float(close.iloc[entry_idx])
+        exit_price = float(close.iloc[entry_idx + 2])
+        if entry_price == 0:
+            return None
+        return (exit_price - entry_price) / entry_price * 100
+    except Exception as ex:
+        print(f"[WARN] Price reaction fetch failed for {ticker}: {ex}")
+        return None
+
+
+def _set_price_reaction(conn: sqlite3.Connection, row_id: str, value: Optional[float]) -> None:
+    conn.execute(
+        "UPDATE transcripts SET price_reaction_2d=? WHERE id=?",
+        (value, row_id),
+    )
+    conn.commit()
+
+
+# Build a ticker → report_time lookup from SECTORS config
+_TICKER_REPORT_TIME: dict[str, str] = {
+    ticker: report_time
+    for cfg in SECTORS.values()
+    for ticker, _, _, report_time in cfg["companies"]
+}
+
+
+def _fetch_missing_price_reactions(conn: sqlite3.Connection) -> None:
+    """Fetch and store price reactions for rows that have a summary but no reaction yet."""
+    rows = conn.execute(
+        "SELECT id, ticker, transcript_date FROM transcripts "
+        "WHERE summary_json IS NOT NULL AND price_reaction_2d IS NULL"
+    ).fetchall()
+
+    if not rows:
+        return
+
+    print(f"[INFO] Fetching price reactions for {len(rows)} transcript(s)...")
+    for row in rows:
+        row_id = row["id"]
+        ticker = row["ticker"]
+        transcript_date = row["transcript_date"] or ""
+        if not transcript_date:
+            continue
+        report_time = _TICKER_REPORT_TIME.get(ticker, "BMO")
+        value = _fetch_price_reaction(ticker, transcript_date, report_time)
+        _set_price_reaction(conn, row_id, value)
 
 
 # ---------- Summarization ----------
@@ -507,6 +610,7 @@ def _company_from_row(
             "pricing_commentary": "",
             "guidance_outlook": "",
             "macro_quotes": [],
+            "price_reaction_2d": None,
             "is_stale": True,
             "missing_data": True,
         }
@@ -545,6 +649,11 @@ def _company_from_row(
         "pricing_commentary": summary["pricing_commentary"],
         "guidance_outlook": summary["guidance_outlook"],
         "macro_quotes": summary["macro_quotes"],
+        "price_reaction_2d": (
+            float(row["price_reaction_2d"])
+            if row["price_reaction_2d"] is not None
+            else None
+        ),
         "is_stale": bool(row["is_stale"]),
         "missing_data": False,
     }
@@ -557,7 +666,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
 
     for sector, cfg in SECTORS.items():
         sector_type = cfg["type"]
-        for ticker, company_name, sub_sector in cfg["companies"]:
+        for ticker, company_name, sub_sector, report_time in cfg["companies"]:
             pdf_path = _get_pdf_path(sector, ticker)
 
             if not os.path.isfile(pdf_path):
@@ -655,7 +764,7 @@ def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
         sector_type = cfg["type"]
         companies_out = []
 
-        for ticker, company_name, sub_sector in cfg["companies"]:
+        for ticker, company_name, sub_sector, _report_time in cfg["companies"]:
             row = _get_latest_row_for_ticker(conn, ticker)
             item = _company_from_row(
                 row,
@@ -704,6 +813,7 @@ def get_data(db_path: str = None, refresh: bool = False) -> dict:
         init_db(conn)
         if refresh:
             _fetch_and_store(conn)
+        _fetch_missing_price_reactions(conn)
         by_sector, sectors, counts = _query_data(conn)
         return {
             "by_sector": by_sector,
