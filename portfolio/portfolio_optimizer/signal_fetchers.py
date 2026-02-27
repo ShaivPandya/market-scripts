@@ -208,7 +208,7 @@ def fetch_quality_batch(
 
 def fetch_eps_momentum_batch(
     tickers: List[str],
-    growth_years: int = 5,
+    growth_years: int = 3,
 ) -> pd.DataFrame:
     """
     Fetch EPS momentum metrics for multiple tickers in batch.
@@ -243,7 +243,7 @@ def fetch_eps_momentum_batch(
 
 def fetch_revenue_momentum_batch(
     tickers: List[str],
-    growth_years: int = 5,
+    growth_years: int = 3,
 ) -> pd.DataFrame:
     """
     Fetch revenue momentum metrics for multiple tickers in batch.
@@ -454,8 +454,8 @@ def fetch_etf_lookthrough_fundamentals_batch(
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), etf_to_holdings
 
     quality_holdings = fetch_quality_batch(holding_universe, market=market, growth_years=growth_years, beta_years=beta_years)
-    eps_holdings = fetch_eps_momentum_batch(holding_universe, growth_years=growth_years)
-    rev_holdings = fetch_revenue_momentum_batch(holding_universe, growth_years=growth_years)
+    eps_holdings = fetch_eps_momentum_batch(holding_universe, growth_years=3)
+    rev_holdings = fetch_revenue_momentum_batch(holding_universe, growth_years=3)
 
     quality_etf = compute_lookthrough_raw_metrics(etf_to_holdings, quality_holdings) if not quality_holdings.empty else pd.DataFrame()
     eps_etf = compute_lookthrough_raw_metrics(etf_to_holdings, eps_holdings) if not eps_holdings.empty else pd.DataFrame()

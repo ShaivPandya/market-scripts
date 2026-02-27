@@ -146,12 +146,29 @@ if st.session_state.current_page == "🏅 Quality Screen":
     quality_input_mode = st.sidebar.radio("Input Mode", ["Universe", "Custom Tickers"], horizontal=True)
 
     # Build universe options
+    _SECTOR_UNIVERSE_OPTIONS = [
+        "XLB — Materials",
+        "XLC — Communication Services",
+        "XLE — Energy",
+        "XLF — Financials",
+        "XLI — Industrials",
+        "XLK — Technology",
+        "XLP — Consumer Staples",
+        "XLRE — Real Estate",
+        "XLU — Utilities",
+        "XLV — Health Care",
+        "XLY — Consumer Discretionary",
+    ]
     try:
         from common import list_universes as _list_universes
         _available = _list_universes()
     except Exception:
         _available = []
-    _universe_options = ["S&P 500"] + sorted(_available)
+    _universe_options = (
+        ["S&P 500", "Russell 2000", "S&P 400"]
+        + _SECTOR_UNIVERSE_OPTIONS
+        + sorted(_available)
+    )
 
     if quality_input_mode == "Universe":
         quality_universe = st.sidebar.selectbox("Universe", options=_universe_options, index=0)
@@ -3558,23 +3575,35 @@ elif st.session_state.current_page == "🏅 Quality Screen":
     if "quality_result" not in st.session_state:
         st.session_state.quality_result = None
 
+    # Map sidebar display labels → internal keys for quality_screen.load_screen_universe()
+    _QUALITY_UNIVERSE_KEY_MAP = {
+        "S&P 500": "sp500",
+        "Russell 2000": "russell2000",
+        "S&P 400": "sp400",
+        "XLB — Materials": "xlb",
+        "XLC — Communication Services": "xlc",
+        "XLE — Energy": "xle",
+        "XLF — Financials": "xlf",
+        "XLI — Industrials": "xli",
+        "XLK — Technology": "xlk",
+        "XLP — Consumer Staples": "xlp",
+        "XLRE — Real Estate": "xlre",
+        "XLU — Utilities": "xlu",
+        "XLV — Health Care": "xlv",
+        "XLY — Consumer Discretionary": "xly",
+    }
+
     if quality_run_clicked:
         # Determine input tickers
         if quality_input_mode == "Universe":
-            if quality_universe == "S&P 500":
-                try:
-                    from common import get_sp500_universe
-                    _input_tickers = get_sp500_universe()
-                except Exception as e:
-                    st.error(f"Failed to load S&P 500: {e}")
-                    _input_tickers = []
-            else:
-                try:
-                    from common import load_universe
-                    _input_tickers = load_universe(quality_universe)
-                except Exception as e:
-                    st.error(f"Failed to load universe '{quality_universe}': {e}")
-                    _input_tickers = []
+            _uni_key = _QUALITY_UNIVERSE_KEY_MAP.get(quality_universe, quality_universe)
+            try:
+                from quality_screen import load_screen_universe
+                with st.spinner(f"Loading {quality_universe}..."):
+                    _input_tickers, _ = load_screen_universe(_uni_key)
+            except Exception as e:
+                st.error(f"Failed to load universe '{quality_universe}': {e}")
+                _input_tickers = []
         else:
             _input_tickers = [
                 t.strip().upper()

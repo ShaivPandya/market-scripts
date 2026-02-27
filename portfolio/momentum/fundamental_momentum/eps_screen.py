@@ -15,7 +15,7 @@ and displays the top 10 and bottom 10 performers.
    - q4 = 4 quarters earlier (same quarter last year)
    - Returns NaN if EPS_q4 is 0 or missing
 
-2) Annual EPS CAGR (Compound Annual Growth Rate over ~5 fiscal years):
+2) Annual EPS CAGR (Compound Annual Growth Rate over ~3 fiscal years):
       eps_cagr = (EPS_t / EPS_{t-n}) ** (1/n) - 1
 
    where:
@@ -264,7 +264,7 @@ def compute_eps_from_stmt(stmt_col: pd.Series, fallback_shares: Optional[float] 
     return safe_div(net_income, shares)
 
 
-def fetch_eps_metrics(ticker: str, growth_years: int = 5) -> EPSMetrics:
+def fetch_eps_metrics(ticker: str, growth_years: int = 3) -> EPSMetrics:
     """Fetch quarterly YoY EPS change and annual EPS CAGR for a ticker."""
     t = yf.Ticker(ticker)
 
@@ -354,12 +354,12 @@ def fmt_num(x: float) -> str:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Compute EPS momentum (quarterly YoY EPS change + ~5y EPS CAGR) and percentile for a universe, showing top 10 and bottom 10."
+        description="Compute EPS momentum (quarterly YoY EPS change + ~3y EPS CAGR) and percentile for a universe, showing top 10 and bottom 10."
     )
     ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
     ap.add_argument("--list-universes", action="store_true",
                     help="List available universe files and exit")
-    ap.add_argument("--growth_years", type=int, default=5, help="Target EPS CAGR window in years")
+    ap.add_argument("--growth_years", type=int, default=3, help="Target EPS CAGR window in years")
     ap.add_argument("--max_universe", type=int, default=0, help="If >0, limit universe size")
     ap.add_argument("--out_csv", default="", help="Optional path to save full universe output as CSV")
     args = ap.parse_args()

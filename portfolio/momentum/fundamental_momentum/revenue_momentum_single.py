@@ -9,7 +9,7 @@ Metrics:
    where q0 is the most recent reported quarter and q4 is 4 quarters earlier.
    If Revenue_q4 is 0 or missing, the result is NaN.
 
-2) Revenue growth (CAGR) over the prior ~5 fiscal years:
+2) Revenue growth (CAGR) over the prior ~3 fiscal years:
       revenue_cagr = (Revenue_t / Revenue_{t-n}) ** (1/n) - 1
    where n is min(requested_years, available_years).
 
@@ -190,7 +190,7 @@ def get_revenue_from_stmt(stmt_col: pd.Series) -> float:
     return get_item(stmt_col, REVENUE_KEYS)
 
 
-def fetch_revenue_metrics(ticker: str, growth_years: int = 5) -> RevenueMetrics:
+def fetch_revenue_metrics(ticker: str, growth_years: int = 3) -> RevenueMetrics:
     """Fetch quarterly YoY revenue change, annual revenue CAGR, and revenue growth acceleration for a ticker."""
     t = yf.Ticker(ticker)
 
@@ -316,14 +316,14 @@ def fmt_revenue(x: float) -> str:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Compute revenue momentum (quarterly YoY revenue change + ~5y revenue CAGR) and percentile in a universe."
+        description="Compute revenue momentum (quarterly YoY revenue change + ~3y revenue CAGR) and percentile in a universe."
     )
     ap.add_argument("tickers", nargs="*", help="Ticker(s) to score (e.g., AAPL or MCO SPGI EFX)")
     ap.add_argument("--tickers_file", default="", help="Path to file with tickers (one per line, txt/csv)")
     ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
     ap.add_argument("--list-universes", action="store_true",
                     help="List available universe files and exit")
-    ap.add_argument("--growth_years", type=int, default=5, help="Target revenue CAGR window in years")
+    ap.add_argument("--growth_years", type=int, default=3, help="Target revenue CAGR window in years")
     ap.add_argument("--max_universe", type=int, default=0, help="If >0, limit universe size")
     ap.add_argument("--out_csv", default="", help="Optional path to save full universe output as CSV")
     args = ap.parse_args()

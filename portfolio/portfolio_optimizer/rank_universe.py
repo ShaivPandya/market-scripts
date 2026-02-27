@@ -499,10 +499,10 @@ def main() -> int:
     quality_raw = fetch_quality_batch(universe, market="SPY", growth_years=args.years)
 
     print("\nFetching EPS momentum metrics...")
-    eps_raw = fetch_eps_momentum_batch(universe, growth_years=args.years)
+    eps_raw = fetch_eps_momentum_batch(universe, growth_years=3)
 
     print("\nFetching revenue momentum metrics...")
-    rev_raw = fetch_revenue_momentum_batch(universe, growth_years=args.years)
+    rev_raw = fetch_revenue_momentum_batch(universe, growth_years=3)
 
     # ETF look-through fundamentals (top holdings) for tickers that look like funds (no direct fundamentals).
     if not (quality_raw.empty and eps_raw.empty and rev_raw.empty):
