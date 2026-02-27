@@ -111,7 +111,7 @@ The script will automatically fetch required FX rates from yfinance.
 DATA SOURCES
 ═══════════════════════════════════════════════════════════════════════════════
 - Portfolio metadata: equities/universes/portfolio.csv
-- Price data: yfinance (live download, last LOOKBACK_DAYS=365 days)
+- Price data: yfinance (live download, last LOOKBACK_DAYS=730 days)
 - FX rates: yfinance (e.g., EURUSD=X, USDJPY=X)
 - Betas: yfinance API first, then computed via regression if unavailable
 
@@ -172,7 +172,7 @@ console = Console()
 # Configuration
 # -----------------------------
 PORTFOLIO_CSV = Path(__file__).parent.parent / "portfolio.csv"
-LOOKBACK_DAYS = 365  # days of price history to fetch from yfinance
+LOOKBACK_DAYS = 730  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
 MARKET_TICKER_LONG = "SPY"            # SPY used for beta regression on long positions
@@ -191,8 +191,8 @@ BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
 LONG_MAX = 0.20        # max 25% for any single long position
 SHORT_MIN = -0.10      # max 25% (abs) for any single short position
-SEVERE_DD_MAX = 0.05        # max 5% absolute SHORT position size if 60%+ off 52-week high
-SEVERE_DD_THRESHOLD = 0.60  # drawdown from 52-week high that triggers the reduced cap
+SEVERE_DD_MAX = 0.05        # max 5% absolute SHORT position size if 60%+ off 104-week high
+SEVERE_DD_THRESHOLD = 0.60  # drawdown from 104-week high that triggers the reduced cap
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -331,7 +331,7 @@ def compute_severe_drawdown_flags(
 ) -> Dict[str, bool]:
     """
     For each equity ticker, returns True if the stock ever fell at least `threshold`
-    (default 60%) from its 52-week high at any point in the lookback window —
+    (default 60%) from its 104-week high at any point in the lookback window —
     even if it has since partially recovered.
     """
     result: Dict[str, bool] = {}
@@ -343,8 +343,8 @@ def compute_severe_drawdown_flags(
         if len(prices) < 2:
             result[t] = False
             continue
-        high_52w = prices.max()
-        if high_52w <= 0:
+        high_104w = prices.max()
+        if high_104w <= 0:
             result[t] = False
             continue
         high_date = prices.idxmax()
@@ -353,7 +353,7 @@ def compute_severe_drawdown_flags(
             result[t] = False
             continue
         min_after = prices_after.min()
-        drawdown = (high_52w - min_after) / high_52w
+        drawdown = (high_104w - min_after) / high_104w
         result[t] = bool(drawdown >= threshold)
     return result
 
@@ -759,7 +759,7 @@ def optimize_portfolio(
         defense_vol = compute_defense_volatility(usd_prices, tickers)
         meta["realized_vol"] = defense_vol
 
-        # Flag equities that fell 60%+ from their 52-week high at any point
+        # Flag equities that fell 60%+ from their 104-week high at any point
         equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
         severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
         meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
@@ -828,7 +828,7 @@ def optimize_portfolio(
         if short_mask.any():
             constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
             constraints.append(w[short_mask] >= SHORT_MIN)
-            # Tighter cap for shorts that fell 60%+ from their 52-week high (abs cap)
+            # Tighter cap for shorts that fell 60%+ from their 104-week high (abs cap)
             severe_dd_short_mask = meta["severe_drawdown"].values & short_mask
             if severe_dd_short_mask.any():
                 constraints.append(w[severe_dd_short_mask] >= -SEVERE_DD_MAX)
@@ -1117,7 +1117,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     defense_vol = compute_defense_volatility(usd_prices, tickers)
     meta["realized_vol"] = defense_vol
 
-    # Flag equities that fell 60%+ from their 52-week high at any point
+    # Flag equities that fell 60%+ from their 104-week high at any point
     equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
     severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
     meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
@@ -1195,7 +1195,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if short_mask.any():
         constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
         constraints.append(w[short_mask] >= SHORT_MIN)  # floor shorts at -10%
-        # Tighter cap for shorts that fell 60%+ from their 52-week high (abs cap)
+        # Tighter cap for shorts that fell 60%+ from their 104-week high (abs cap)
         severe_dd_short_mask = meta["severe_drawdown"].values & short_mask
         if severe_dd_short_mask.any():
             constraints.append(w[severe_dd_short_mask] >= -SEVERE_DD_MAX)

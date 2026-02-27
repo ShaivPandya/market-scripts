@@ -1833,9 +1833,30 @@ elif st.session_state.current_page == "📈 Portfolio Optimizer":
 
     with st.expander("Methodology Notes", expanded=False):
         st.markdown("""
+**Objective**
+Maximizes a signal-weighted return (long positions seek positive signals, shorts seek negative) subject to a volatility target of **1.5% daily**, with a hard cap at **2.0% daily**.
+
+**Beta Neutrality**
+The optimizer hedges market exposure by adding offsetting positions in **SPY** (for long book beta) and **IWM** (for short book beta), targeting near-zero net beta to both indices.
+
+**Volatility Estimation**
+Per-instrument volatility uses a defense blend: the maximum of a 20-day and 60-day EWMA, floored at a 252-day minimum. This prevents underestimating risk during calm regimes.
+
 **Short Position Limits — Fallen Stocks**
-Stocks that have declined more than 60% from their 52-week high are considered distressed and subject to elevated short-squeeze risk.
-Short positions in such stocks are capped at **5% of NAV**.
+Stocks that have declined more than **60% from their 104-week high** are considered distressed and subject to elevated short-squeeze risk. Short positions in such stocks are capped at **5% of NAV**.
+
+**Position & Exposure Limits**
+
+| Constraint | Limit |
+|---|---|
+| Single long max | +20% NAV |
+| Single short max | −10% NAV |
+| Total gross leverage | 4.0× NAV |
+| FX gross | 2.0× NAV |
+| Commodity gross | 1.0× NAV |
+| Bond 10yr-equivalent | 3.0× NAV |
+| Equity net long | +100% NAV |
+| Equity net short | −50% NAV |
 
 **ETF Fundamentals**
 ETF fundamental signals (valuation, quality, etc.) are evaluated based on the **top 10 holdings** of the ETF rather than the ETF itself.
