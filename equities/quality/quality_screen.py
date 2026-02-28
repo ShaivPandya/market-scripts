@@ -30,11 +30,17 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
+
+# Download configuration
+CHUNK_SIZE = 25   # Tickers per batch
+BATCH_DELAY = 1.0 # Seconds between batches
+MAX_WORKERS = 8   # Threads per batch
 
 try:
     import yfinance as yf
@@ -179,32 +185,40 @@ Universe options:
     if len(universe) < 10:
         print(f"[WARN] Very small universe ({len(universe)} tickers).")
 
-    # Fetch raw metrics for each ticker
+    # Fetch raw metrics for each ticker in batches
     print("\nFetching data for each ticker...")
     raws: Dict[str, RawMetrics] = {}
     failed = []
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {
-            pool.submit(
-                fetch_raw_metrics,
-                ticker,
-                market=args.market,
-                growth_years=args.growth_years,
-                beta_years=args.beta_years,
-            ): ticker
-            for ticker in universe
-        }
-        for i, future in enumerate(as_completed(futures), 1):
-            ticker = futures[future]
-            try:
-                raws[ticker] = future.result()
-            except Exception as e:
-                failed.append(ticker)
-                print(f"[WARN] {ticker}: failed ({e})", file=sys.stderr)
+    chunks = [universe[i : i + CHUNK_SIZE] for i in range(0, len(universe), CHUNK_SIZE)]
+    total_chunks = len(chunks)
+    processed = 0
 
-            if i % 25 == 0 or i == len(universe):
-                print(f"  Processed {i}/{len(universe)}")
+    for batch_idx, chunk in enumerate(chunks, 1):
+        print(f"  Fetching batch {batch_idx}/{total_chunks} ({len(chunk)} tickers)...")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(
+                    fetch_raw_metrics,
+                    ticker,
+                    market=args.market,
+                    growth_years=args.growth_years,
+                    beta_years=args.beta_years,
+                ): ticker
+                for ticker in chunk
+            }
+            for future in as_completed(futures):
+                ticker = futures[future]
+                try:
+                    raws[ticker] = future.result()
+                except Exception as e:
+                    failed.append(ticker)
+                    print(f"[WARN] {ticker}: failed ({e})", file=sys.stderr)
+                processed += 1
+
+        print(f"  Processed {processed}/{len(universe)}")
+        if batch_idx < total_chunks:
+            time.sleep(BATCH_DELAY)
 
     if len(raws) < 10:
         raise SystemExit(f"Only {len(raws)} tickers succeeded. Need at least 10 for meaningful ranking.")
