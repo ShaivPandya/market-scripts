@@ -4,10 +4,10 @@ Revenue Momentum Score + Percentile
 Analyzes a specific ticker's revenue momentum relative to a universe
 
 Metrics:
-1) Revenue YoY (most recent quarter vs same quarter 1 year ago):
-      revenue_yoy_change = (Revenue_q0 - Revenue_q4) / Revenue_q4
-   where q0 is the most recent reported quarter and q4 is 4 quarters earlier.
-   If Revenue_q4 is 0 or missing, the result is NaN.
+1) Revenue YoY average (average of last 3 quarter-over-same-quarter-prior-year changes):
+      yoy_i = (Revenue_qi - Revenue_q{i+4}) / Revenue_q{i+4}  for i in [0, 1, 2]
+      revenue_yoy_change = mean(yoy_0, yoy_1, yoy_2)
+   Requires 7 quarters of data (q0..q6). Any missing pair is excluded from the average.
 
 2) Revenue growth (CAGR) over the prior ~3 fiscal years:
       revenue_cagr = (Revenue_t / Revenue_{t-n}) ** (1/n) - 1
@@ -53,6 +53,8 @@ except ImportError as e:
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common import load_universe, list_universes, get_sp500_universe, clean_ticker
+
+from edgar_fetcher import fetch_quarterly_revenue_edgar
 
 
 # -------------------------
@@ -167,8 +169,8 @@ REVENUE_KEYS = [
 class RevenueMetrics:
     revenue_q0: float = np.nan
     revenue_q4: float = np.nan
-    revenue_yoy_change: float = np.nan
-    revenue_yoy_diff: float = np.nan
+    revenue_yoy_change: float = np.nan   # Average YoY change across last 3 quarters
+    revenue_yoy_changes: Optional[List[float]] = None  # [q0vsq4, q1vsq5, q2vsq6]
 
     revenue_a0: float = np.nan
     revenue_aN: float = np.nan
@@ -181,6 +183,7 @@ class RevenueMetrics:
 
     q0_end: Optional[pd.Timestamp] = None
     q4_end: Optional[pd.Timestamp] = None
+    q6_end: Optional[pd.Timestamp] = None
     a0_end: Optional[pd.Timestamp] = None
     aN_end: Optional[pd.Timestamp] = None
 
@@ -196,50 +199,92 @@ def fetch_revenue_metrics(ticker: str, growth_years: int = 3) -> RevenueMetrics:
 
     out = RevenueMetrics()
 
-    q_inc = try_get_income_stmt(t, "quarterly")
-    if q_inc is not None and not q_inc.empty and q_inc.shape[1] >= 5:
-        out.q0_end = pd.to_datetime(q_inc.columns[0])
-        out.q4_end = pd.to_datetime(q_inc.columns[4])
+    # --- Quarterly metrics: try SEC EDGAR first, fall back to yfinance ---
+    edgar_rev = fetch_quarterly_revenue_edgar(ticker, n=8)
+    if edgar_rev and len(edgar_rev) >= 5:
+        # edgar_rev is sorted newest-first: list of (date, revenue_value)
+        rev_values = [v for _, v in edgar_rev]
 
-        q0 = col_at(q_inc, 0)
-        q4 = col_at(q_inc, 4)
+        out.q0_end = pd.Timestamp(edgar_rev[0][0])
+        out.revenue_q0 = rev_values[0]
 
-        if q0 is not None and q4 is not None:
-            out.revenue_q0 = get_revenue_from_stmt(q0)
-            out.revenue_q4 = get_revenue_from_stmt(q4)
-            out.revenue_yoy_diff = out.revenue_q0 - out.revenue_q4
-            out.revenue_yoy_change = safe_div(out.revenue_yoy_diff, out.revenue_q4)
+        if len(edgar_rev) >= 5:
+            out.q4_end = pd.Timestamp(edgar_rev[4][0])
+            out.revenue_q4 = rev_values[4]
 
-        # Compute revenue growth acceleration (second derivative) using 5 quarters
-        if q_inc.shape[1] >= 5:
-            revenue_values = []
-            for i in range(5):
-                q_col = col_at(q_inc, i)
-                if q_col is not None:
-                    revenue_values.append(get_revenue_from_stmt(q_col))
-                else:
-                    revenue_values.append(np.nan)
+        # YoY average across last 3 quarters (requires 7 quarters)
+        if len(edgar_rev) >= 7:
+            out.q6_end = pd.Timestamp(edgar_rev[6][0])
+            yoy_changes = []
+            for recent_idx, prior_idx in [(0, 4), (1, 5), (2, 6)]:
+                rev_recent = rev_values[recent_idx]
+                rev_prior = rev_values[prior_idx]
+                yoy_changes.append(safe_div(rev_recent - rev_prior, rev_prior))
+            out.revenue_yoy_changes = yoy_changes
+            valid = [v for v in yoy_changes if not np.isnan(v)]
+            out.revenue_yoy_change = float(np.mean(valid)) if valid else np.nan
 
-            # Compute 4 QoQ growth rates: (Q0-Q1), (Q1-Q2), (Q2-Q3), (Q3-Q4)
-            growth_rates = []
-            for i in range(4):
-                rev_recent = revenue_values[i]
-                rev_prior = revenue_values[i + 1]
-                growth = safe_div(rev_recent - rev_prior, rev_prior)
-                growth_rates.append(growth)
+        # Growth acceleration from 5 quarters of QoQ rates
+        growth_rates = []
+        for i in range(4):
+            growth_rates.append(safe_div(rev_values[i] - rev_values[i + 1], rev_values[i + 1]))
+        out.revenue_growth_rates = growth_rates
+        valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
+        if len(valid_growth) >= 2:
+            x = np.array([v[0] for v in valid_growth])
+            y = np.array([v[1] for v in valid_growth])
+            slope = np.polyfit(x, y, 1)[0]
+            out.revenue_growth_acceleration = -slope
 
-            out.revenue_growth_rates = growth_rates
+    else:
+        # Fallback: yfinance quarterly income statement
+        q_inc = try_get_income_stmt(t, "quarterly")
+        if q_inc is not None and not q_inc.empty and q_inc.shape[1] >= 5:
+            out.q0_end = pd.to_datetime(q_inc.columns[0])
+            out.q4_end = pd.to_datetime(q_inc.columns[4])
 
-            # Fit linear regression to growth rates over time to get acceleration
-            # x = [0, 1, 2, 3] where 0 is most recent, 3 is oldest
-            valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
-            if len(valid_growth) >= 2:
-                x = np.array([v[0] for v in valid_growth])
-                y = np.array([v[1] for v in valid_growth])
-                # Slope is negative when growth is accelerating (improving over time)
-                # since x=0 is most recent. Negate to make positive = accelerating.
-                slope = np.polyfit(x, y, 1)[0]
-                out.revenue_growth_acceleration = -slope
+            q0 = col_at(q_inc, 0)
+            q4 = col_at(q_inc, 4)
+
+            if q0 is not None and q4 is not None:
+                out.revenue_q0 = get_revenue_from_stmt(q0)
+                out.revenue_q4 = get_revenue_from_stmt(q4)
+
+            if q_inc.shape[1] >= 7:
+                out.q6_end = pd.to_datetime(q_inc.columns[6])
+                yoy_changes = []
+                for recent_idx, prior_idx in [(0, 4), (1, 5), (2, 6)]:
+                    col_recent = col_at(q_inc, recent_idx)
+                    col_prior = col_at(q_inc, prior_idx)
+                    if col_recent is not None and col_prior is not None:
+                        rev_recent = get_revenue_from_stmt(col_recent)
+                        rev_prior = get_revenue_from_stmt(col_prior)
+                        yoy_changes.append(safe_div(rev_recent - rev_prior, rev_prior))
+                    else:
+                        yoy_changes.append(np.nan)
+                out.revenue_yoy_changes = yoy_changes
+                valid = [v for v in yoy_changes if not np.isnan(v)]
+                out.revenue_yoy_change = float(np.mean(valid)) if valid else np.nan
+
+            if q_inc.shape[1] >= 5:
+                revenue_values = []
+                for i in range(5):
+                    q_col = col_at(q_inc, i)
+                    revenue_values.append(
+                        get_revenue_from_stmt(q_col) if q_col is not None else np.nan
+                    )
+                growth_rates = []
+                for i in range(4):
+                    growth_rates.append(
+                        safe_div(revenue_values[i] - revenue_values[i + 1], revenue_values[i + 1])
+                    )
+                out.revenue_growth_rates = growth_rates
+                valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
+                if len(valid_growth) >= 2:
+                    x = np.array([v[0] for v in valid_growth])
+                    y = np.array([v[1] for v in valid_growth])
+                    slope = np.polyfit(x, y, 1)[0]
+                    out.revenue_growth_acceleration = -slope
 
     a_inc = try_get_income_stmt(t, "annual")
     if a_inc is not None and not a_inc.empty and a_inc.shape[1] >= 2:
@@ -397,8 +442,11 @@ def main():
 
         print(f"  Revenue (latest quarter):      {fmt_revenue(tm.revenue_q0)}")
         print(f"  Revenue (same qtr 1y ago):     {fmt_revenue(tm.revenue_q4)}")
-        print(f"  Revenue YoY change (q/q-4):    {fmt_pct(tm.revenue_yoy_change)}")
-        print(f"  Revenue YoY difference:        {fmt_revenue(tm.revenue_yoy_diff)}")
+        print(f"  Revenue YoY avg (3Q):          {fmt_pct(tm.revenue_yoy_change)}")
+        if tm.revenue_yoy_changes is not None:
+            labels = ["Q0 vs Q4", "Q1 vs Q5", "Q2 vs Q6"]
+            for label, val in zip(labels, tm.revenue_yoy_changes):
+                print(f"    {label}:                  {fmt_pct(val)}")
         print(f"  Revenue CAGR ({tm.years_used}y):           {fmt_pct(tm.revenue_cagr)}")
         print(f"  Revenue growth acceleration:   {fmt_num(tm.revenue_growth_acceleration)}")
         if tm.revenue_growth_rates is not None:

@@ -4,10 +4,10 @@ EPS Momentum Score + Percentile
 Analyzes a specific ticker's EPS momentum relative to a universe
 
 Metrics:
-1) EPS YoY (most recent quarter vs same quarter 1 year ago):
-      eps_yoy_change = (EPS_q0 - EPS_q4) / abs(EPS_q4)
-   where q0 is the most recent reported quarter and q4 is 4 quarters earlier.
-   If EPS_q4 is 0 or missing, the result is NaN.
+1) EPS YoY average (average of last 3 quarter-over-same-quarter-prior-year changes):
+      yoy_i = (EPS_qi - EPS_q{i+4}) / abs(EPS_q{i+4})  for i in [0, 1, 2]
+      eps_yoy_change = mean(yoy_0, yoy_1, yoy_2)
+   Requires 7 quarters of data (q0..q6). Any missing pair is excluded from the average.
 
 2) Earnings growth (CAGR) over the prior ~3 fiscal years:
       eps_cagr = (EPS_t / EPS_{t-n}) ** (1/n) - 1
@@ -53,6 +53,8 @@ except ImportError as e:
 # Add equities/ to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from common import load_universe, list_universes, get_sp500_universe, clean_ticker
+
+from edgar_fetcher import fetch_quarterly_eps_edgar
 
 
 # -------------------------
@@ -186,8 +188,8 @@ NET_INCOME_KEYS = [
 class EPSMetrics:
     eps_q0: float = np.nan
     eps_q4: float = np.nan
-    eps_yoy_change: float = np.nan
-    eps_yoy_diff: float = np.nan
+    eps_yoy_change: float = np.nan   # Average YoY change across last 3 quarters
+    eps_yoy_changes: Optional[List[float]] = None  # [q0vsq4, q1vsq5, q2vsq6]
 
     eps_a0: float = np.nan
     eps_aN: float = np.nan
@@ -200,6 +202,7 @@ class EPSMetrics:
 
     q0_end: Optional[pd.Timestamp] = None
     q4_end: Optional[pd.Timestamp] = None
+    q6_end: Optional[pd.Timestamp] = None
     a0_end: Optional[pd.Timestamp] = None
     aN_end: Optional[pd.Timestamp] = None
 
@@ -243,50 +246,93 @@ def fetch_eps_metrics(ticker: str, growth_years: int = 3) -> EPSMetrics:
 
     out = EPSMetrics()
 
-    q_inc = try_get_income_stmt(t, "quarterly")
-    if q_inc is not None and not q_inc.empty and q_inc.shape[1] >= 5:
-        out.q0_end = pd.to_datetime(q_inc.columns[0])
-        out.q4_end = pd.to_datetime(q_inc.columns[4])
+    # --- Quarterly metrics: try SEC EDGAR first, fall back to yfinance ---
+    edgar_eps = fetch_quarterly_eps_edgar(ticker, n=8)
+    if edgar_eps and len(edgar_eps) >= 5:
+        # edgar_eps is sorted newest-first: list of (date, eps_value)
+        eps_values = [v for _, v in edgar_eps]
 
-        q0 = col_at(q_inc, 0)
-        q4 = col_at(q_inc, 4)
+        out.q0_end = pd.Timestamp(edgar_eps[0][0])
+        out.eps_q0 = eps_values[0]
 
-        if q0 is not None and q4 is not None:
-            out.eps_q0 = compute_eps_from_stmt(q0, fallback_shares=shares_out)
-            out.eps_q4 = compute_eps_from_stmt(q4, fallback_shares=shares_out)
-            out.eps_yoy_diff = out.eps_q0 - out.eps_q4
-            out.eps_yoy_change = safe_div(out.eps_yoy_diff, abs(out.eps_q4))
+        if len(edgar_eps) >= 5:
+            out.q4_end = pd.Timestamp(edgar_eps[4][0])
+            out.eps_q4 = eps_values[4]
 
-        # Compute EPS growth acceleration (second derivative) using 5 quarters
-        if q_inc.shape[1] >= 5:
-            eps_values = []
-            for i in range(5):
-                q_col = col_at(q_inc, i)
-                if q_col is not None:
-                    eps_values.append(compute_eps_from_stmt(q_col, fallback_shares=shares_out))
-                else:
-                    eps_values.append(np.nan)
+        # YoY average across last 3 quarters (requires 7 quarters)
+        if len(edgar_eps) >= 7:
+            out.q6_end = pd.Timestamp(edgar_eps[6][0])
+            yoy_changes = []
+            for recent_idx, prior_idx in [(0, 4), (1, 5), (2, 6)]:
+                eps_recent = eps_values[recent_idx]
+                eps_prior = eps_values[prior_idx]
+                yoy_changes.append(safe_div(eps_recent - eps_prior, abs(eps_prior)))
+            out.eps_yoy_changes = yoy_changes
+            valid = [v for v in yoy_changes if not np.isnan(v)]
+            out.eps_yoy_change = float(np.mean(valid)) if valid else np.nan
 
-            # Compute 4 QoQ growth rates: (Q0-Q1), (Q1-Q2), (Q2-Q3), (Q3-Q4)
-            growth_rates = []
-            for i in range(4):
-                eps_recent = eps_values[i]
-                eps_prior = eps_values[i + 1]
-                growth = safe_div(eps_recent - eps_prior, abs(eps_prior))
-                growth_rates.append(growth)
+        # Growth acceleration from 5 quarters of QoQ rates
+        growth_rates = []
+        for i in range(4):
+            growth_rates.append(safe_div(eps_values[i] - eps_values[i + 1], abs(eps_values[i + 1])))
+        out.eps_growth_rates = growth_rates
+        valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
+        if len(valid_growth) >= 2:
+            x = np.array([v[0] for v in valid_growth])
+            y = np.array([v[1] for v in valid_growth])
+            slope = np.polyfit(x, y, 1)[0]
+            out.eps_growth_acceleration = -slope
 
-            out.eps_growth_rates = growth_rates
+    else:
+        # Fallback: yfinance quarterly income statement
+        q_inc = try_get_income_stmt(t, "quarterly")
+        if q_inc is not None and not q_inc.empty and q_inc.shape[1] >= 5:
+            out.q0_end = pd.to_datetime(q_inc.columns[0])
+            out.q4_end = pd.to_datetime(q_inc.columns[4])
 
-            # Fit linear regression to growth rates over time to get acceleration
-            # x = [0, 1, 2, 3] where 0 is most recent, 3 is oldest
-            valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
-            if len(valid_growth) >= 2:
-                x = np.array([v[0] for v in valid_growth])
-                y = np.array([v[1] for v in valid_growth])
-                # Slope is negative when growth is accelerating (improving over time)
-                # since x=0 is most recent. Negate to make positive = accelerating.
-                slope = np.polyfit(x, y, 1)[0]
-                out.eps_growth_acceleration = -slope
+            q0 = col_at(q_inc, 0)
+            q4 = col_at(q_inc, 4)
+
+            if q0 is not None and q4 is not None:
+                out.eps_q0 = compute_eps_from_stmt(q0, fallback_shares=shares_out)
+                out.eps_q4 = compute_eps_from_stmt(q4, fallback_shares=shares_out)
+
+            if q_inc.shape[1] >= 7:
+                out.q6_end = pd.to_datetime(q_inc.columns[6])
+                yoy_changes = []
+                for recent_idx, prior_idx in [(0, 4), (1, 5), (2, 6)]:
+                    col_recent = col_at(q_inc, recent_idx)
+                    col_prior = col_at(q_inc, prior_idx)
+                    if col_recent is not None and col_prior is not None:
+                        eps_recent = compute_eps_from_stmt(col_recent, fallback_shares=shares_out)
+                        eps_prior = compute_eps_from_stmt(col_prior, fallback_shares=shares_out)
+                        yoy_changes.append(safe_div(eps_recent - eps_prior, abs(eps_prior)))
+                    else:
+                        yoy_changes.append(np.nan)
+                out.eps_yoy_changes = yoy_changes
+                valid = [v for v in yoy_changes if not np.isnan(v)]
+                out.eps_yoy_change = float(np.mean(valid)) if valid else np.nan
+
+            if q_inc.shape[1] >= 5:
+                eps_values = []
+                for i in range(5):
+                    q_col = col_at(q_inc, i)
+                    eps_values.append(
+                        compute_eps_from_stmt(q_col, fallback_shares=shares_out)
+                        if q_col is not None else np.nan
+                    )
+                growth_rates = []
+                for i in range(4):
+                    growth_rates.append(
+                        safe_div(eps_values[i] - eps_values[i + 1], abs(eps_values[i + 1]))
+                    )
+                out.eps_growth_rates = growth_rates
+                valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
+                if len(valid_growth) >= 2:
+                    x = np.array([v[0] for v in valid_growth])
+                    y = np.array([v[1] for v in valid_growth])
+                    slope = np.polyfit(x, y, 1)[0]
+                    out.eps_growth_acceleration = -slope
 
     a_inc = try_get_income_stmt(t, "annual")
     if a_inc is not None and not a_inc.empty and a_inc.shape[1] >= 2:
@@ -433,8 +479,11 @@ def main():
 
         print(f"  EPS (latest quarter):          {fmt_num(tm.eps_q0)}")
         print(f"  EPS (same qtr 1y ago):         {fmt_num(tm.eps_q4)}")
-        print(f"  EPS YoY change (q/q-4):        {fmt_pct(tm.eps_yoy_change)}")
-        print(f"  EPS YoY difference (q-q-4):    {fmt_num(tm.eps_yoy_diff)}")
+        print(f"  EPS YoY avg (3Q):              {fmt_pct(tm.eps_yoy_change)}")
+        if tm.eps_yoy_changes is not None:
+            labels = ["Q0 vs Q4", "Q1 vs Q5", "Q2 vs Q6"]
+            for label, val in zip(labels, tm.eps_yoy_changes):
+                print(f"    {label}:                  {fmt_pct(val)}")
         print(f"  EPS CAGR ({tm.years_used}y):               {fmt_pct(tm.eps_cagr)}")
         print(f"  EPS growth acceleration:       {fmt_num(tm.eps_growth_acceleration)}")
         if tm.eps_growth_rates is not None:
