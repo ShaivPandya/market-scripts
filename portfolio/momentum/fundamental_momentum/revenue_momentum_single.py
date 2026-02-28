@@ -4,10 +4,10 @@ Revenue Momentum Score + Percentile
 Analyzes a specific ticker's revenue momentum relative to a universe
 
 Metrics:
-1) Revenue YoY (most recent quarter vs same quarter 1 year ago):
-      revenue_yoy_change = (Revenue_q0 - Revenue_q4) / Revenue_q4
-   where q0 is the most recent reported quarter and q4 is 4 quarters earlier.
-   If Revenue_q4 is 0 or missing, the result is NaN.
+1) Revenue YoY average (average of last 3 quarter-over-same-quarter-prior-year changes):
+      yoy_i = (Revenue_qi - Revenue_q{i+4}) / Revenue_q{i+4}  for i in [0, 1, 2]
+      revenue_yoy_change = mean(yoy_0, yoy_1, yoy_2)
+   Requires 7 quarters of data (q0..q6). Any missing pair is excluded from the average.
 
 2) Revenue growth (CAGR) over the prior ~3 fiscal years:
       revenue_cagr = (Revenue_t / Revenue_{t-n}) ** (1/n) - 1
@@ -167,8 +167,8 @@ REVENUE_KEYS = [
 class RevenueMetrics:
     revenue_q0: float = np.nan
     revenue_q4: float = np.nan
-    revenue_yoy_change: float = np.nan
-    revenue_yoy_diff: float = np.nan
+    revenue_yoy_change: float = np.nan   # Average YoY change across last 3 quarters
+    revenue_yoy_changes: Optional[List[float]] = None  # [q0vsq4, q1vsq5, q2vsq6]
 
     revenue_a0: float = np.nan
     revenue_aN: float = np.nan
@@ -181,6 +181,7 @@ class RevenueMetrics:
 
     q0_end: Optional[pd.Timestamp] = None
     q4_end: Optional[pd.Timestamp] = None
+    q6_end: Optional[pd.Timestamp] = None
     a0_end: Optional[pd.Timestamp] = None
     aN_end: Optional[pd.Timestamp] = None
 
@@ -207,8 +208,24 @@ def fetch_revenue_metrics(ticker: str, growth_years: int = 3) -> RevenueMetrics:
         if q0 is not None and q4 is not None:
             out.revenue_q0 = get_revenue_from_stmt(q0)
             out.revenue_q4 = get_revenue_from_stmt(q4)
-            out.revenue_yoy_diff = out.revenue_q0 - out.revenue_q4
-            out.revenue_yoy_change = safe_div(out.revenue_yoy_diff, out.revenue_q4)
+
+        # Compute average YoY change across last 3 quarters (requires 7 quarters of data)
+        if q_inc.shape[1] >= 7:
+            out.q6_end = pd.to_datetime(q_inc.columns[6])
+            yoy_pairs = [(0, 4), (1, 5), (2, 6)]
+            yoy_changes = []
+            for recent_idx, prior_idx in yoy_pairs:
+                col_recent = col_at(q_inc, recent_idx)
+                col_prior = col_at(q_inc, prior_idx)
+                if col_recent is not None and col_prior is not None:
+                    rev_recent = get_revenue_from_stmt(col_recent)
+                    rev_prior = get_revenue_from_stmt(col_prior)
+                    yoy_changes.append(safe_div(rev_recent - rev_prior, rev_prior))
+                else:
+                    yoy_changes.append(np.nan)
+            out.revenue_yoy_changes = yoy_changes
+            valid = [v for v in yoy_changes if not np.isnan(v)]
+            out.revenue_yoy_change = float(np.mean(valid)) if valid else np.nan
 
         # Compute revenue growth acceleration (second derivative) using 5 quarters
         if q_inc.shape[1] >= 5:
@@ -397,8 +414,11 @@ def main():
 
         print(f"  Revenue (latest quarter):      {fmt_revenue(tm.revenue_q0)}")
         print(f"  Revenue (same qtr 1y ago):     {fmt_revenue(tm.revenue_q4)}")
-        print(f"  Revenue YoY change (q/q-4):    {fmt_pct(tm.revenue_yoy_change)}")
-        print(f"  Revenue YoY difference:        {fmt_revenue(tm.revenue_yoy_diff)}")
+        print(f"  Revenue YoY avg (3Q):          {fmt_pct(tm.revenue_yoy_change)}")
+        if tm.revenue_yoy_changes is not None:
+            labels = ["Q0 vs Q4", "Q1 vs Q5", "Q2 vs Q6"]
+            for label, val in zip(labels, tm.revenue_yoy_changes):
+                print(f"    {label}:                  {fmt_pct(val)}")
         print(f"  Revenue CAGR ({tm.years_used}y):           {fmt_pct(tm.revenue_cagr)}")
         print(f"  Revenue growth acceleration:   {fmt_num(tm.revenue_growth_acceleration)}")
         if tm.revenue_growth_rates is not None:

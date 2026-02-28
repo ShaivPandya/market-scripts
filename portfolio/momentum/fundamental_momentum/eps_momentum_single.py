@@ -4,10 +4,10 @@ EPS Momentum Score + Percentile
 Analyzes a specific ticker's EPS momentum relative to a universe
 
 Metrics:
-1) EPS YoY (most recent quarter vs same quarter 1 year ago):
-      eps_yoy_change = (EPS_q0 - EPS_q4) / abs(EPS_q4)
-   where q0 is the most recent reported quarter and q4 is 4 quarters earlier.
-   If EPS_q4 is 0 or missing, the result is NaN.
+1) EPS YoY average (average of last 3 quarter-over-same-quarter-prior-year changes):
+      yoy_i = (EPS_qi - EPS_q{i+4}) / abs(EPS_q{i+4})  for i in [0, 1, 2]
+      eps_yoy_change = mean(yoy_0, yoy_1, yoy_2)
+   Requires 7 quarters of data (q0..q6). Any missing pair is excluded from the average.
 
 2) Earnings growth (CAGR) over the prior ~3 fiscal years:
       eps_cagr = (EPS_t / EPS_{t-n}) ** (1/n) - 1
@@ -186,8 +186,8 @@ NET_INCOME_KEYS = [
 class EPSMetrics:
     eps_q0: float = np.nan
     eps_q4: float = np.nan
-    eps_yoy_change: float = np.nan
-    eps_yoy_diff: float = np.nan
+    eps_yoy_change: float = np.nan   # Average YoY change across last 3 quarters
+    eps_yoy_changes: Optional[List[float]] = None  # [q0vsq4, q1vsq5, q2vsq6]
 
     eps_a0: float = np.nan
     eps_aN: float = np.nan
@@ -200,6 +200,7 @@ class EPSMetrics:
 
     q0_end: Optional[pd.Timestamp] = None
     q4_end: Optional[pd.Timestamp] = None
+    q6_end: Optional[pd.Timestamp] = None
     a0_end: Optional[pd.Timestamp] = None
     aN_end: Optional[pd.Timestamp] = None
 
@@ -254,8 +255,24 @@ def fetch_eps_metrics(ticker: str, growth_years: int = 3) -> EPSMetrics:
         if q0 is not None and q4 is not None:
             out.eps_q0 = compute_eps_from_stmt(q0, fallback_shares=shares_out)
             out.eps_q4 = compute_eps_from_stmt(q4, fallback_shares=shares_out)
-            out.eps_yoy_diff = out.eps_q0 - out.eps_q4
-            out.eps_yoy_change = safe_div(out.eps_yoy_diff, abs(out.eps_q4))
+
+        # Compute average YoY change across last 3 quarters (requires 7 quarters of data)
+        if q_inc.shape[1] >= 7:
+            out.q6_end = pd.to_datetime(q_inc.columns[6])
+            yoy_pairs = [(0, 4), (1, 5), (2, 6)]
+            yoy_changes = []
+            for recent_idx, prior_idx in yoy_pairs:
+                col_recent = col_at(q_inc, recent_idx)
+                col_prior = col_at(q_inc, prior_idx)
+                if col_recent is not None and col_prior is not None:
+                    eps_recent = compute_eps_from_stmt(col_recent, fallback_shares=shares_out)
+                    eps_prior = compute_eps_from_stmt(col_prior, fallback_shares=shares_out)
+                    yoy_changes.append(safe_div(eps_recent - eps_prior, abs(eps_prior)))
+                else:
+                    yoy_changes.append(np.nan)
+            out.eps_yoy_changes = yoy_changes
+            valid = [v for v in yoy_changes if not np.isnan(v)]
+            out.eps_yoy_change = float(np.mean(valid)) if valid else np.nan
 
         # Compute EPS growth acceleration (second derivative) using 5 quarters
         if q_inc.shape[1] >= 5:
@@ -433,8 +450,11 @@ def main():
 
         print(f"  EPS (latest quarter):          {fmt_num(tm.eps_q0)}")
         print(f"  EPS (same qtr 1y ago):         {fmt_num(tm.eps_q4)}")
-        print(f"  EPS YoY change (q/q-4):        {fmt_pct(tm.eps_yoy_change)}")
-        print(f"  EPS YoY difference (q-q-4):    {fmt_num(tm.eps_yoy_diff)}")
+        print(f"  EPS YoY avg (3Q):              {fmt_pct(tm.eps_yoy_change)}")
+        if tm.eps_yoy_changes is not None:
+            labels = ["Q0 vs Q4", "Q1 vs Q5", "Q2 vs Q6"]
+            for label, val in zip(labels, tm.eps_yoy_changes):
+                print(f"    {label}:                  {fmt_pct(val)}")
         print(f"  EPS CAGR ({tm.years_used}y):               {fmt_pct(tm.eps_cagr)}")
         print(f"  EPS growth acceleration:       {fmt_num(tm.eps_growth_acceleration)}")
         if tm.eps_growth_rates is not None:
