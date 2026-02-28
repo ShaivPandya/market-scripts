@@ -39,6 +39,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "equities"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "country_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "short_screen"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "sector_metrics"))
+sys.path.insert(0, str(PROJECT_ROOT / "portfolio" / "momentum" / "fundamental_momentum"))
 
 import streamlit as st
 import pandas as pd
@@ -80,7 +81,7 @@ def nav_button(label: str) -> None:
 
 NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum"],
-    ["📐 Chart", "🏅 Quality Screen", "📉 Short Screen"],
+    ["📐 Chart", "🏅 Quality Screen", "📉 Short Screen", "📈 Fundamental Momentum"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "🏛️ Sector Metrics", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity", "🌍 Country Dashboard"],
@@ -213,6 +214,58 @@ if st.session_state.current_page == "📉 Short Screen":
         help="Keeps only stocks in the top quartile of net equity issuance among screened stocks (uses SEC EDGAR XBRL API; adds time)",
     )
     short_run_clicked = st.sidebar.button("Run Screen", type="primary", width="stretch")
+
+# Fundamental Momentum Screen sidebar controls
+fm_input_mode = "Universe"
+fm_universe = "sp500"
+fm_tickers_str = ""
+fm_benchmark = "S&P 500"
+fm_screen_type = "Both"
+fm_run_clicked = False
+
+if st.session_state.current_page == "📈 Fundamental Momentum":
+    st.sidebar.title("Fundamental Momentum")
+    fm_screen_type = st.sidebar.radio("Screen Type", ["EPS", "Revenue", "Both"], index=2, horizontal=True)
+    fm_input_mode = st.sidebar.radio("Input Mode", ["Universe", "Custom Tickers"], horizontal=True)
+
+    _FM_SECTOR_UNIVERSES = [
+        "XLB — Materials",
+        "XLC — Communication Services",
+        "XLE — Energy",
+        "XLF — Financials",
+        "XLI — Industrials",
+        "XLK — Technology",
+        "XLP — Consumer Staples",
+        "XLRE — Real Estate",
+        "XLU — Utilities",
+        "XLV — Health Care",
+        "XLY — Consumer Discretionary",
+    ]
+    try:
+        from common import list_universes as _list_universes_fm
+        _available_fm = _list_universes_fm()
+    except Exception:
+        _available_fm = []
+    _fm_universe_options = (
+        ["S&P 500", "Russell 2000", "S&P 400"]
+        + _FM_SECTOR_UNIVERSES
+        + sorted(_available_fm)
+    )
+
+    if fm_input_mode == "Universe":
+        fm_universe = st.sidebar.selectbox("Universe", options=_fm_universe_options, index=0, key="fm_universe_sel")
+    else:
+        fm_tickers_str = st.sidebar.text_input(
+            "Tickers",
+            placeholder="AAPL, MSFT, GOOG",
+            help="Comma-separated ticker symbols",
+            key="fm_tickers_input",
+        )
+
+    _fm_benchmark_options = ["S&P 500", "Same as Input"] + sorted(_available_fm)
+    fm_benchmark = st.sidebar.selectbox("Benchmark", options=_fm_benchmark_options, index=0, key="fm_benchmark_sel")
+
+    fm_run_clicked = st.sidebar.button("Run Screen", type="primary", width="stretch", key="fm_run_btn")
 
 def color_positive_negative(val):
     """Color positive values green, negative red."""
@@ -4030,6 +4083,251 @@ elif st.session_state.current_page == "📉 Short Screen":
 **Missing data:** Tickers with no usable P/B or loss data are excluded from Phase 1.
 Tickers where SEC EDGAR data is unavailable are excluded when the issuance filter is active.
             """)
+
+
+
+# =============================================================================
+# PAGE: Fundamental Momentum
+# =============================================================================
+elif st.session_state.current_page == "📈 Fundamental Momentum":
+    st.header("Fundamental Momentum Screen")
+    st.caption("EPS and revenue momentum scoring: YoY change, CAGR, and growth acceleration — z-scored vs benchmark")
+
+    if "fm_result" not in st.session_state:
+        st.session_state.fm_result = None
+
+    _FM_UNIVERSE_KEY_MAP = {
+        "S&P 500": "sp500",
+        "Russell 2000": "russell2000",
+        "S&P 400": "sp400",
+        "XLB — Materials": "xlb",
+        "XLC — Communication Services": "xlc",
+        "XLE — Energy": "xle",
+        "XLF — Financials": "xlf",
+        "XLI — Industrials": "xli",
+        "XLK — Technology": "xlk",
+        "XLP — Consumer Staples": "xlp",
+        "XLRE — Real Estate": "xlre",
+        "XLU — Utilities": "xlu",
+        "XLV — Health Care": "xlv",
+        "XLY — Consumer Discretionary": "xly",
+    }
+
+    if fm_run_clicked:
+        # Load input tickers
+        if fm_input_mode == "Universe":
+            _uni_key = _FM_UNIVERSE_KEY_MAP.get(fm_universe, fm_universe)
+            try:
+                from quality_screen import load_screen_universe
+                with st.spinner(f"Loading {fm_universe}..."):
+                    _fm_input_tickers, _ = load_screen_universe(_uni_key)
+            except Exception as e:
+                st.error(f"Failed to load universe '{fm_universe}': {e}")
+                _fm_input_tickers = []
+        else:
+            _fm_input_tickers = [
+                t.strip().upper()
+                for t in fm_tickers_str.replace(";", ",").split(",")
+                if t.strip()
+            ]
+
+        if not _fm_input_tickers:
+            st.warning("No tickers to score. Enter tickers or select a universe.")
+        else:
+            if fm_benchmark == "S&P 500":
+                _fm_bench = "sp500"
+            elif fm_benchmark == "Same as Input":
+                _fm_bench = "self"
+            else:
+                _fm_bench = fm_benchmark
+
+            progress_bar = st.progress(0, text="Fetching data...")
+
+            _fm_eps_result = None
+            _fm_rev_result = None
+
+            if fm_screen_type in ("EPS", "Both"):
+                def _fm_eps_progress(current, total):
+                    label = "EPS: " if fm_screen_type == "Both" else ""
+                    progress_bar.progress(
+                        current / total / (2 if fm_screen_type == "Both" else 1),
+                        text=f"{label}Processing {current}/{total} tickers...",
+                    )
+                try:
+                    from eps_screen import get_data as get_eps_data
+                    _fm_eps_result = get_eps_data(
+                        tickers=_fm_input_tickers,
+                        benchmark=_fm_bench,
+                        progress_callback=_fm_eps_progress,
+                    )
+                except Exception as e:
+                    import traceback
+                    _fm_eps_result = {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+            if fm_screen_type in ("Revenue", "Both"):
+                def _fm_rev_progress(current, total):
+                    offset = 0.5 if fm_screen_type == "Both" else 0
+                    label = "Revenue: " if fm_screen_type == "Both" else ""
+                    progress_bar.progress(
+                        offset + current / total / (2 if fm_screen_type == "Both" else 1),
+                        text=f"{label}Processing {current}/{total} tickers...",
+                    )
+                try:
+                    from revenue_screen import get_data as get_revenue_data
+                    _fm_rev_result = get_revenue_data(
+                        tickers=_fm_input_tickers,
+                        benchmark=_fm_bench,
+                        progress_callback=_fm_rev_progress,
+                    )
+                except Exception as e:
+                    import traceback
+                    _fm_rev_result = {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+            progress_bar.empty()
+            st.session_state.fm_result = {
+                "eps": _fm_eps_result,
+                "rev": _fm_rev_result,
+                "screen_type": fm_screen_type,
+            }
+
+    # Display results
+    fm_data = st.session_state.fm_result
+
+    if fm_data is None:
+        st.info("Configure settings in the sidebar and click **Run Screen** to score tickers.")
+    else:
+        def _render_eps_results(eps_result):
+            if "error" in eps_result:
+                st.error(f"EPS Error: {eps_result['error']}")
+                if eps_result.get("failed"):
+                    st.caption(f"Failed tickers: {', '.join(eps_result['failed'])}")
+                return
+
+            eps_results_df = eps_result["results_df"]
+            eps_raw_df = eps_result["raw_metrics_df"]
+            eps_failed = eps_result.get("failed", [])
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Tickers Scored", len(eps_results_df))
+            with col2:
+                st.metric("Benchmark", eps_result["benchmark_name"])
+            with col3:
+                st.metric("Universe Size", eps_result["universe_size"])
+            with col4:
+                st.metric("Data Success Rate", f"{eps_result['scored_count']}/{eps_result['universe_size']}")
+
+            if eps_failed:
+                st.warning(f"Failed tickers: {', '.join(eps_failed)}")
+
+            st.divider()
+
+            display = pd.DataFrame(index=eps_results_df.index)
+            display.insert(0, "Rank", range(1, len(display) + 1))
+            display.index.name = "Ticker"
+            display = display.reset_index()
+            display["EPS Mom Z"] = eps_results_df["eps_momentum_z"].values
+            if "eps_momentum_pct" in eps_results_df.columns:
+                display["Percentile"] = (eps_results_df["eps_momentum_pct"].values * 100).round(1)
+
+            for ticker in eps_results_df.index:
+                raw_row = eps_raw_df.loc[ticker] if ticker in eps_raw_df.index else None
+                display.loc[display["Ticker"] == ticker, "EPS YoY %"] = (
+                    f"{raw_row['eps_yoy_change'] * 100:.2f}%" if raw_row is not None and not pd.isna(raw_row["eps_yoy_change"]) else "NA"
+                )
+                display.loc[display["Ticker"] == ticker, "EPS CAGR %"] = (
+                    f"{raw_row['eps_cagr'] * 100:.2f}%" if raw_row is not None and not pd.isna(raw_row["eps_cagr"]) else "NA"
+                )
+                display.loc[display["Ticker"] == ticker, "Growth Accel"] = (
+                    f"{raw_row['eps_growth_acceleration']:.3f}" if raw_row is not None and not pd.isna(raw_row["eps_growth_acceleration"]) else "NA"
+                )
+
+            display["EPS Mom Z"] = display["EPS Mom Z"].apply(lambda x: f"{x:+.3f}")
+            if "Percentile" in display.columns:
+                display["Percentile"] = display["Percentile"].apply(lambda x: f"{x:.1f}%")
+
+            styled = display.style.applymap(color_positive_negative, subset=["EPS Mom Z"])
+            st.dataframe(styled, width="stretch", hide_index=True)
+
+        def _render_rev_results(rev_result):
+            if "error" in rev_result:
+                st.error(f"Revenue Error: {rev_result['error']}")
+                if rev_result.get("failed"):
+                    st.caption(f"Failed tickers: {', '.join(rev_result['failed'])}")
+                return
+
+            rev_results_df = rev_result["results_df"]
+            rev_raw_df = rev_result["raw_metrics_df"]
+            rev_failed = rev_result.get("failed", [])
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Tickers Scored", len(rev_results_df))
+            with col2:
+                st.metric("Benchmark", rev_result["benchmark_name"])
+            with col3:
+                st.metric("Universe Size", rev_result["universe_size"])
+            with col4:
+                st.metric("Data Success Rate", f"{rev_result['scored_count']}/{rev_result['universe_size']}")
+
+            if rev_failed:
+                st.warning(f"Failed tickers: {', '.join(rev_failed)}")
+
+            st.divider()
+
+            display = pd.DataFrame(index=rev_results_df.index)
+            display.insert(0, "Rank", range(1, len(display) + 1))
+            display.index.name = "Ticker"
+            display = display.reset_index()
+            display["Rev Mom"] = rev_results_df["revenue_momentum"].values
+            if "revenue_momentum_pct" in rev_results_df.columns:
+                display["Percentile"] = (rev_results_df["revenue_momentum_pct"].values * 100).round(1)
+
+            for ticker in rev_results_df.index:
+                raw_row = rev_raw_df.loc[ticker] if ticker in rev_raw_df.index else None
+                display.loc[display["Ticker"] == ticker, "Rev YoY %"] = (
+                    f"{raw_row['revenue_yoy_change'] * 100:.1f}%" if raw_row is not None and not pd.isna(raw_row["revenue_yoy_change"]) else "NA"
+                )
+                display.loc[display["Ticker"] == ticker, "Rev CAGR %"] = (
+                    f"{raw_row['revenue_cagr'] * 100:.1f}%" if raw_row is not None and not pd.isna(raw_row["revenue_cagr"]) else "NA"
+                )
+                display.loc[display["Ticker"] == ticker, "Growth Accel"] = (
+                    f"{raw_row['revenue_growth_acceleration']:.3f}" if raw_row is not None and not pd.isna(raw_row["revenue_growth_acceleration"]) else "NA"
+                )
+
+            display["Rev Mom"] = display["Rev Mom"].apply(lambda x: f"{x:+.3f}")
+            if "Percentile" in display.columns:
+                display["Percentile"] = display["Percentile"].apply(lambda x: f"{x:.1f}%")
+
+            styled = display.style.applymap(color_positive_negative, subset=["Rev Mom"])
+            st.dataframe(styled, width="stretch", hide_index=True)
+
+        screen_type = fm_data.get("screen_type", "Both")
+
+        if screen_type == "Both":
+            tab_eps, tab_rev = st.tabs(["EPS Momentum", "Revenue Momentum"])
+            with tab_eps:
+                if fm_data["eps"]:
+                    _render_eps_results(fm_data["eps"])
+                else:
+                    st.info("EPS data not available.")
+            with tab_rev:
+                if fm_data["rev"]:
+                    _render_rev_results(fm_data["rev"])
+                else:
+                    st.info("Revenue data not available.")
+        elif screen_type == "EPS":
+            st.subheader("EPS Momentum")
+            if fm_data["eps"]:
+                _render_eps_results(fm_data["eps"])
+            else:
+                st.info("EPS data not available.")
+        else:
+            st.subheader("Revenue Momentum")
+            if fm_data["rev"]:
+                _render_rev_results(fm_data["rev"])
+            else:
+                st.info("Revenue data not available.")
 
 
 # =============================================================================
