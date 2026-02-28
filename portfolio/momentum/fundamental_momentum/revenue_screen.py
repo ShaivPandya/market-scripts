@@ -15,7 +15,7 @@ and displays the top 10 and bottom 10 performers.
    - q4 = 4 quarters earlier (same quarter last year)
    - Returns NaN if Revenue_q4 is 0 or missing
 
-2) Annual Revenue CAGR (Compound Annual Growth Rate over ~5 fiscal years):
+2) Annual Revenue CAGR (Compound Annual Growth Rate over ~3 fiscal years):
       revenue_cagr = (Revenue_t / Revenue_{t-n}) ** (1/n) - 1
 
    where:
@@ -224,7 +224,7 @@ def get_revenue_from_stmt(stmt_col: pd.Series) -> float:
     return get_item(stmt_col, REVENUE_KEYS)
 
 
-def fetch_revenue_metrics(ticker: str, growth_years: int = 5) -> RevenueMetrics:
+def fetch_revenue_metrics(ticker: str, growth_years: int = 3) -> RevenueMetrics:
     """Fetch quarterly YoY revenue change and annual revenue CAGR for a ticker."""
     t = yf.Ticker(ticker)
 
@@ -307,12 +307,12 @@ def fmt_num(x: float) -> str:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Compute revenue momentum (quarterly YoY revenue change + ~5y revenue CAGR) and percentile for a universe, showing top 10 and bottom 10."
+        description="Compute revenue momentum (quarterly YoY revenue change + ~3y revenue CAGR) and percentile for a universe, showing top 10 and bottom 10."
     )
     ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
     ap.add_argument("--list-universes", action="store_true",
                     help="List available universe files and exit")
-    ap.add_argument("--growth_years", type=int, default=5, help="Target revenue CAGR window in years")
+    ap.add_argument("--growth_years", type=int, default=3, help="Target revenue CAGR window in years")
     ap.add_argument("--max_universe", type=int, default=0, help="If >0, limit universe size")
     ap.add_argument("--out_csv", default="", help="Optional path to save full universe output as CSV")
     args = ap.parse_args()

@@ -59,11 +59,14 @@ SECTOR_ETFS: Dict[str, str] = {
 }
 
 
+BENCHMARK_ETF = "SPY"
+
 @dataclass(frozen=True)
 class Lookbacks:
     one_month: int = 1
     three_month: int = 3
     six_month: int = 6
+    twelve_month: int = 12
 
 
 def _fix_yahoo_ticker(sym: str) -> str:
@@ -240,16 +243,22 @@ def compute_sector_weights(
     return weights
 
 
-def compute_pct_above_200dma(sector_etfs: Dict[str, str], period: str = "2y") -> pd.Series:
+def fetch_etf_prices(sector_etfs: Dict[str, str], benchmark: str = BENCHMARK_ETF, period: str = "2y") -> pd.DataFrame:
+    """Download all sector ETF prices plus benchmark in one pass."""
+    tickers = list(sector_etfs.values()) + [benchmark]
+    return download_prices(tickers, period=period, batch_size=50, auto_adjust=True)
+
+
+def compute_pct_above_200dma(sector_etfs: Dict[str, str], etf_prices: pd.DataFrame) -> pd.Series:
     """
     For each sector ETF: (last_close - SMA200) / SMA200 * 100
     """
-    tickers = list(sector_etfs.values())
-    prices = download_prices(tickers, period=period, batch_size=50, auto_adjust=True)
-
     out = {}
     for sector, etf in sector_etfs.items():
-        s = prices[etf].dropna()
+        if etf not in etf_prices.columns:
+            out[sector] = np.nan
+            continue
+        s = etf_prices[etf].dropna()
         if len(s) < 220:
             out[sector] = np.nan
             continue
@@ -259,6 +268,50 @@ def compute_pct_above_200dma(sector_etfs: Dict[str, str], period: str = "2y") ->
         out[sector] = (last - ma) / ma * 100.0 if ma and not math.isnan(ma) else np.nan
 
     return pd.Series(out).sort_index()
+
+
+def compute_relative_performance(
+    sector_etfs: Dict[str, str],
+    etf_prices: pd.DataFrame,
+    benchmark: str = BENCHMARK_ETF,
+    lookback_months: List[int] = [1, 3, 6, 12],
+) -> pd.DataFrame:
+    """
+    Relative performance of each sector ETF vs the benchmark over each lookback period.
+
+    rel_perf(sector, N months) = sector_return(N months) - benchmark_return(N months)
+
+    Returns a DataFrame indexed by sector with columns RelPerf_1M_pp, RelPerf_3M_pp, etc.
+    All values are in percentage points.
+    """
+    idx = etf_prices.index
+    today = idx.max()
+    prices_ffill = etf_prices.ffill()
+
+    rows: Dict[str, Dict[str, float]] = {}
+    for sector, etf in sector_etfs.items():
+        row: Dict[str, float] = {}
+        for m in lookback_months:
+            col = f"RelPerf_{m}M_pp"
+            d_past = nearest_on_or_before(idx, today - pd.DateOffset(months=m))
+            try:
+                etf_now   = float(prices_ffill.loc[today,  etf])
+                etf_then  = float(prices_ffill.loc[d_past, etf])
+                bench_now  = float(prices_ffill.loc[today,  benchmark])
+                bench_then = float(prices_ffill.loc[d_past, benchmark])
+                if any(math.isnan(v) for v in [etf_now, etf_then, bench_now, bench_then]):
+                    row[col] = np.nan
+                elif etf_then == 0 or bench_then == 0:
+                    row[col] = np.nan
+                else:
+                    etf_ret   = (etf_now  - etf_then)  / etf_then  * 100.0
+                    bench_ret = (bench_now - bench_then) / bench_then * 100.0
+                    row[col]  = etf_ret - bench_ret
+            except (KeyError, ValueError):
+                row[col] = np.nan
+        rows[sector] = row
+
+    return pd.DataFrame(rows).T.sort_index()
 
 
 def main():
@@ -312,9 +365,19 @@ def main():
     weights["Chg_3M_pp"] = (weights["Weight_Now"] - weights[f"Weight_{d_3m.date()}"]) * 100.0
     weights["Chg_6M_pp"] = (weights["Weight_Now"] - weights[f"Weight_{d_6m.date()}"]) * 100.0
 
+    # Download sector ETF prices (+ SPY benchmark) once, share across computations
+    etf_prices = fetch_etf_prices(SECTOR_ETFS, benchmark=BENCHMARK_ETF, period=args.period)
+
     # Percent above 200DMA (sector ETFs)
-    pct_above_200 = compute_pct_above_200dma(SECTOR_ETFS, period=args.period)
+    pct_above_200 = compute_pct_above_200dma(SECTOR_ETFS, etf_prices)
     weights["Pct_Above_200DMA"] = pct_above_200.reindex(all_sectors)
+
+    # Relative performance vs S&P 500 (SPY) over 1, 3, 6, 12 months
+    rel_perf = compute_relative_performance(
+        SECTOR_ETFS, etf_prices, benchmark=BENCHMARK_ETF, lookback_months=[1, 3, 6, 12]
+    )
+    for col in rel_perf.columns:
+        weights[col] = rel_perf[col].reindex(all_sectors)
 
     # Pretty formatting columns (keep numeric raw too)
     weights_sorted = weights.loc[list(SECTOR_ETFS.keys())].copy()
@@ -328,8 +391,8 @@ def main():
     md.to_csv(path_marketdata, float_format="%.6f")
 
     # Print summary
-    pd.set_option("display.width", 140)
-    pd.set_option("display.max_columns", 20)
+    pd.set_option("display.width", 200)
+    pd.set_option("display.max_columns", 30)
     display = weights_sorted.copy()
     # Display weights as % and changes as pp
     for c in display.columns:
@@ -347,10 +410,87 @@ def main():
         "Pct_Above_200DMA",
     ]].round(3))
 
+    print("\nRelative performance vs S&P 500 / SPY (percentage points; positive = outperformed):")
+    print(display[["RelPerf_1M_pp", "RelPerf_3M_pp", "RelPerf_6M_pp", "RelPerf_12M_pp"]].round(2))
+
     print(f"\nWrote:\n- {path_weights}\n- {path_marketdata}")
     print("\nInterpretation notes:")
     print("- Sector weights are based on constituents’ current sharesOutstanding (or inferred) times historical prices.")
     print("- Pct_Above_200DMA is computed from sector ETF prices (SPDR Select Sector ETFs).")
+    print(f"- Relative performance uses SPDR sector ETFs vs {BENCHMARK_ETF} as the S&P 500 benchmark.")
+
+
+def get_data(period: str = "2y", batch_size: int = 100, max_workers: int = 12) -> dict:
+    """
+    Return sector metrics as a dict for the Streamlit GUI.
+
+    Keys:
+      weights_df  — DataFrame indexed by sector; weight columns already in %,
+                    change columns in pp, relperf columns in pp, 200DMA column in %
+      d_1m / d_3m / d_6m — date strings for the lookback snapshots
+      timestamp   — datetime when data was fetched
+    """
+    constituents = get_sp500_constituents()
+    tickers = sorted(constituents["Ticker"].unique().tolist())
+
+    prices = download_prices(tickers, period=period, batch_size=batch_size, auto_adjust=True)
+    last_prices = prices.ffill().iloc[-1].dropna()
+
+    md = fetch_marketcap_and_shares(
+        tickers=list(last_prices.index),
+        last_prices=last_prices,
+        max_workers=max_workers,
+    )
+    shares = md["SharesOutstanding"].dropna()
+
+    idx = prices.index
+    asof_now = idx.max()
+    d_1m = month_ago_dates(idx, 1)
+    d_3m = month_ago_dates(idx, 3)
+    d_6m = month_ago_dates(idx, 6)
+
+    w_now = compute_sector_weights(constituents, prices, shares, asof_now)
+    w_1m  = compute_sector_weights(constituents, prices, shares, d_1m)
+    w_3m  = compute_sector_weights(constituents, prices, shares, d_3m)
+    w_6m  = compute_sector_weights(constituents, prices, shares, d_6m)
+
+    all_sectors = sorted(
+        set(SECTOR_ETFS.keys()) | set(w_now.index) | set(w_1m.index) | set(w_3m.index) | set(w_6m.index)
+    )
+
+    weights = pd.DataFrame({
+        "Weight_Now": w_now.reindex(all_sectors),
+        "Weight_1M":  w_1m.reindex(all_sectors),
+        "Weight_3M":  w_3m.reindex(all_sectors),
+        "Weight_6M":  w_6m.reindex(all_sectors),
+    })
+
+    weights["Chg_1M_pp"] = (weights["Weight_Now"] - weights["Weight_1M"]) * 100.0
+    weights["Chg_3M_pp"] = (weights["Weight_Now"] - weights["Weight_3M"]) * 100.0
+    weights["Chg_6M_pp"] = (weights["Weight_Now"] - weights["Weight_6M"]) * 100.0
+
+    etf_prices = fetch_etf_prices(SECTOR_ETFS, benchmark=BENCHMARK_ETF, period=period)
+    pct_above_200 = compute_pct_above_200dma(SECTOR_ETFS, etf_prices)
+    weights["Pct_Above_200DMA"] = pct_above_200.reindex(all_sectors)
+
+    rel_perf = compute_relative_performance(
+        SECTOR_ETFS, etf_prices, benchmark=BENCHMARK_ETF, lookback_months=[1, 3, 6, 12]
+    )
+    for col in rel_perf.columns:
+        weights[col] = rel_perf[col].reindex(all_sectors)
+
+    weights_sorted = weights.loc[list(SECTOR_ETFS.keys())].copy()
+    # Convert raw weight fractions → percentages for display
+    for c in ["Weight_Now", "Weight_1M", "Weight_3M", "Weight_6M"]:
+        weights_sorted[c] = weights_sorted[c] * 100.0
+
+    return {
+        "weights_df": weights_sorted,
+        "d_1m": str(d_1m.date()),
+        "d_3m": str(d_3m.date()),
+        "d_6m": str(d_6m.date()),
+        "timestamp": dt.datetime.now(),
+    }
 
 
 if __name__ == "__main__":
