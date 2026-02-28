@@ -38,6 +38,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities"))
 sys.path.insert(0, str(PROJECT_ROOT / "macro" / "country_dashboard"))
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "short_screen"))
+sys.path.insert(0, str(PROJECT_ROOT / "equities" / "sector_metrics"))
 
 import streamlit as st
 import pandas as pd
@@ -81,7 +82,7 @@ NAV_SECTIONS = [
     ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum"],
     ["📐 Chart", "🏅 Quality Screen", "📉 Short Screen"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
-    ["📈 Market Technicals", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
+    ["📈 Market Technicals", "🏛️ Sector Metrics", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
     ["📊 Economic Growth", "💧 Liquidity", "🌍 Country Dashboard"],
     ["🏦 Central Bank Monitor", "🏭 Industry Monitor"],
 ]
@@ -4029,3 +4030,108 @@ elif st.session_state.current_page == "📉 Short Screen":
 **Missing data:** Tickers with no usable P/B or loss data are excluded from Phase 1.
 Tickers where SEC EDGAR data is unavailable are excluded when the issuance filter is active.
             """)
+
+
+# =============================================================================
+# PAGE: Sector Metrics
+# =============================================================================
+elif st.session_state.current_page == "🏛️ Sector Metrics":
+    st.header("S&P 500 Sector Metrics")
+    st.caption("Sector weights, weight shifts, relative performance vs SPY, and % above 200-DMA")
+
+    if st.button("Refresh Data", key="refresh_sector_metrics"):
+        st.cache_data.clear()
+
+    @st.cache_data(ttl=3600)
+    def fetch_sector_metrics():
+        try:
+            from sector_metrics import get_data
+            return get_data()
+        except Exception as e:
+            import traceback
+            return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+    with st.spinner("Fetching sector data from Yahoo Finance (this may take a minute)..."):
+        sm_data = fetch_sector_metrics()
+
+    if "error" in sm_data:
+        st.error(f"Error: {sm_data['error']}")
+    else:
+        timestamp = sm_data.get("timestamp")
+        if timestamp:
+            st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        d_1m = sm_data.get("d_1m", "1M ago")
+        d_3m = sm_data.get("d_3m", "3M ago")
+        d_6m = sm_data.get("d_6m", "6M ago")
+
+        weights_df = sm_data.get("weights_df")
+
+        if weights_df is None or weights_df.empty:
+            st.warning("No sector data available.")
+        else:
+            tab1, tab2 = st.tabs(["Weights & Shifts", "Relative Performance vs SPY"])
+
+            # ── Tab 1: Sector weights and changes ──────────────────────────────
+            with tab1:
+                st.subheader("Sector Weights & Shifts")
+                st.caption("Weight columns are % of total S&P 500 market cap (approx). Change columns are percentage-point shifts.")
+
+                weight_cols = ["Weight_Now", "Weight_1M", "Weight_3M", "Weight_6M",
+                               "Chg_1M_pp", "Chg_3M_pp", "Chg_6M_pp", "Pct_Above_200DMA"]
+                weight_cols = [c for c in weight_cols if c in weights_df.columns]
+
+                w_display = weights_df[weight_cols].copy().reset_index()
+                w_display = w_display.rename(columns={
+                    "index":           "Sector",
+                    "Weight_Now":      "Weight Now (%)",
+                    "Weight_1M":       f"Weight {d_1m} (%)",
+                    "Weight_3M":       f"Weight {d_3m} (%)",
+                    "Weight_6M":       f"Weight {d_6m} (%)",
+                    "Chg_1M_pp":       "Chg 1M (pp)",
+                    "Chg_3M_pp":       "Chg 3M (pp)",
+                    "Chg_6M_pp":       "Chg 6M (pp)",
+                    "Pct_Above_200DMA": "% Above 200DMA",
+                })
+
+                chg_cols = [c for c in ["Chg 1M (pp)", "Chg 3M (pp)", "Chg 6M (pp)", "% Above 200DMA"]
+                            if c in w_display.columns]
+                weight_fmt_cols = [c for c in w_display.columns if "Weight" in c or "Above" in c]
+                format_map = {c: "{:.2f}" for c in weight_fmt_cols}
+                format_map.update({c: "{:+.2f}" for c in chg_cols})
+
+                styled_w = (
+                    w_display.style
+                    .format(format_map)
+                    .applymap(color_positive_negative, subset=chg_cols)
+                )
+                st.dataframe(styled_w, width="stretch", hide_index=True)
+
+            # ── Tab 2: Relative performance vs SPY ─────────────────────────────
+            with tab2:
+                st.subheader("Relative Performance vs S&P 500 (SPY)")
+                st.caption("Positive = sector outperformed SPY over the period. Values in percentage points.")
+
+                rel_cols = ["RelPerf_1M_pp", "RelPerf_3M_pp", "RelPerf_6M_pp", "RelPerf_12M_pp",
+                            "Pct_Above_200DMA"]
+                rel_cols = [c for c in rel_cols if c in weights_df.columns]
+
+                r_display = weights_df[rel_cols].copy().reset_index()
+                r_display = r_display.rename(columns={
+                    "index":             "Sector",
+                    "RelPerf_1M_pp":     "vs SPY 1M (pp)",
+                    "RelPerf_3M_pp":     "vs SPY 3M (pp)",
+                    "RelPerf_6M_pp":     "vs SPY 6M (pp)",
+                    "RelPerf_12M_pp":    "vs SPY 12M (pp)",
+                    "Pct_Above_200DMA":  "% Above 200DMA",
+                })
+
+                perf_cols = [c for c in r_display.columns if "vs SPY" in c or "Above" in c]
+                format_map_r = {c: "{:+.2f}" for c in perf_cols}
+
+                styled_r = (
+                    r_display.style
+                    .format(format_map_r)
+                    .applymap(color_positive_negative, subset=perf_cols)
+                )
+                st.dataframe(styled_r, width="stretch", hide_index=True)
