@@ -50,11 +50,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
 
     async function checkPasswordSession() {
+      if (!sessionStorage.getItem('auth_session')) {
+        // No tab-scoped flag — force logout to clear any stale cookie, then require login
+        try { await authApi.logout() } catch { /* ignore */ }
+        if (!cancelled) { setIsAuthenticated(false); setIsLoading(false) }
+        return
+      }
       try {
         await authApi.me()
         if (!cancelled) setIsAuthenticated(true)
       } catch {
-        if (!cancelled) setIsAuthenticated(false)
+        if (!cancelled) { sessionStorage.removeItem('auth_session'); setIsAuthenticated(false) }
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -106,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
     await authApi.login(password)
+    sessionStorage.setItem('auth_session', '1')
     setIsAuthenticated(true)
   }, [mode])
 
@@ -116,6 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
     await authApi.logout()
+    sessionStorage.removeItem('auth_session')
     setIsAuthenticated(false)
   }, [mode])
 
