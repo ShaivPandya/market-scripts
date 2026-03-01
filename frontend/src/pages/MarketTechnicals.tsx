@@ -69,7 +69,7 @@ function Top50BreadthTab() {
   return (
     <div>
       <h2 className="text-lg font-semibold mb-4">Top 50 S&P 500 Performers — Breadth</h2>
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         {[
           { key: "pct_below_50dma", label: "% Below 50-DMA", tickersKey: "tickers_below_50dma" },
           { key: "pct_3plus_dist", label: "% with 3+ Distribution Days", tickersKey: "tickers_3plus_dist" },
@@ -174,7 +174,7 @@ function VIXTab() {
 
       {latest && (
         <>
-          <div className="grid grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <MetricCard title="3M / 1M Ratio" value={Number(latest["Ratio"]).toFixed(2)} />
             <MetricCard title="VIX" value={Number(latest["VIX"]).toFixed(2)} />
             <MetricCard title={`3M VIX (${latest["UsedTicker"]})`} value={Number(latest["VIX3M"]).toFixed(2)} />
@@ -229,7 +229,7 @@ export function MarketTechnicals() {
         <RefreshButton />
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200 mb-6">
+      <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
         {TABS.map(t => (
           <button
             key={t}
