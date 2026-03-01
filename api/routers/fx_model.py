@@ -15,6 +15,104 @@ class FXModelRequest(BaseModel):
     horizons: str = "12,24"
 
 
+def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) -> dict:
+    latest_forecast = data.get("latest_forecast", {}) or {}
+    models = data.get("models", {}) or {}
+
+    forecast_rows = []
+    ci_series = []
+    driver_breakdown = []
+
+    for horizon_key, forecast in latest_forecast.items():
+        if not isinstance(forecast, dict):
+            continue
+
+        try:
+            horizon = int(horizon_key)
+        except (TypeError, ValueError):
+            continue
+
+        spot_now = forecast.get("spot_now")
+        point_level = forecast.get("point_level")
+        dist = forecast.get("level_q05_q50_q95", {}) or {}
+        model = models.get(horizon) or models.get(str(horizon)) or {}
+        driver_explanation = forecast.get("driver_explanation") or model.get("driver_explanation") or {}
+
+        expected_move_pct = None
+        if isinstance(spot_now, (int, float)) and isinstance(point_level, (int, float)) and spot_now != 0:
+            expected_move_pct = ((point_level / spot_now) - 1.0) * 100.0
+
+        row = {
+            "horizon_months": horizon,
+            "spot_now": spot_now,
+            "point_level": point_level,
+            "expected_move_pct": expected_move_pct,
+            "q05": dist.get("q05"),
+            "q50": dist.get("q50"),
+            "q95": dist.get("q95"),
+            "valuation_rer_z": forecast.get("valuation_rer_z"),
+            "r2": model.get("r2"),
+            "nobs": model.get("nobs"),
+        }
+        forecast_rows.append(row)
+        ci_series.append(
+            {
+                "horizon": horizon,
+                "p05": dist.get("q05"),
+                "p50": dist.get("q50"),
+                "p95": dist.get("q95"),
+                "value": point_level,
+            }
+        )
+
+        raw_drivers = driver_explanation.get("drivers", [])
+        drivers = []
+        if isinstance(raw_drivers, list):
+            for d in raw_drivers:
+                if not isinstance(d, dict):
+                    continue
+                drivers.append(
+                    {
+                        "name": d.get("name"),
+                        "label": d.get("label"),
+                        "coefficient": d.get("coefficient"),
+                        "value": d.get("value"),
+                        "contribution": d.get("contribution"),
+                        "description": d.get("description"),
+                    }
+                )
+
+        drivers.sort(
+            key=lambda d: abs(d.get("contribution", 0))
+            if isinstance(d.get("contribution"), (int, float))
+            else 0,
+            reverse=True,
+        )
+        driver_breakdown.append(
+            {
+                "horizon_months": horizon,
+                "conclusion": driver_explanation.get("conclusion"),
+                "drivers": drivers,
+            }
+        )
+
+    forecast_rows.sort(key=lambda r: r["horizon_months"])
+    ci_series.sort(key=lambda r: r["horizon"])
+    driver_breakdown.sort(key=lambda r: r["horizon_months"])
+
+    return {
+        "pair": pair,
+        "latest_date": data.get("latest_date"),
+        "bootstrap_draws": bootstrap,
+        "skip_bis": skip_bis,
+        "imf_ca_available": data.get("imf_ca_available"),
+        "ca_diff_available": data.get("ca_diff_available"),
+        "forecast": forecast_rows,
+        "ci_series": ci_series,
+        "driver_breakdown": driver_breakdown,
+    }
+
+
 @router.post("/fx-model")
 def run_fx_model(req: FXModelRequest):
     try:
@@ -41,7 +139,13 @@ def run_fx_model(req: FXModelRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return serialize_value(data)
+    compact = _to_compact_response(
+        data=data,
+        pair=req.pair,
+        bootstrap=req.bootstrap,
+        skip_bis=req.skip_bis,
+    )
+    return serialize_value(compact)
 
 
 @router.get("/fx-model/pairs")
