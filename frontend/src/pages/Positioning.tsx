@@ -10,6 +10,11 @@ import { colorPositiveNegative, colorZscore, colorForcedFlow } from "@/lib/color
 
 const DEFAULT_INSTRUMENTS = ["SP500", "NASDAQ", "RUSSELL", "US10Y", "EUR"]
 
+const formatForcedFlow = (v: unknown): string => {
+  if (typeof v !== "string" || !v) return "—"
+  return v.replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase())
+}
+
 type View = "summary" | "single"
 
 const summaryCols: ColumnDef[] = [
@@ -19,7 +24,7 @@ const summaryCols: ColumnDef[] = [
   { key: "lf_net_pct_oi", header: "Net % Open Int", colorFn: colorPositiveNegative, format: v => v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(1)}%` : "N/A" },
   { key: "lf_z", header: "Position Z", colorFn: colorZscore, format: v => v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}` : "N/A" },
   { key: "lf_deleveraging_z", header: "Delev Z", colorFn: colorZscore, format: v => v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}` : "N/A" },
-  { key: "lf_forced", header: "Forced Flow", colorFn: colorForcedFlow },
+  { key: "lf_forced", header: "Forced Flow", colorFn: colorForcedFlow, format: formatForcedFlow },
 ]
 
 export function Positioning() {
@@ -140,7 +145,7 @@ function SingleMarketView({ rows }: { rows: Record<string, unknown>[] }) {
     { key: "lf_net_pct_oi", header: "Net % OI", colorFn: colorPositiveNegative, format: v => v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(1)}%` : "N/A" },
     { key: "lf_z", header: "Pos Z", colorFn: colorZscore, format: v => v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}` : "N/A" },
     { key: "lf_deleveraging_z", header: "Delev Z", colorFn: colorZscore, format: v => v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}` : "N/A" },
-    { key: "lf_forced", header: "Forced Flow", colorFn: colorForcedFlow },
+    { key: "lf_forced", header: "Forced Flow", colorFn: colorForcedFlow, format: formatForcedFlow },
   ]
 
   return (
@@ -152,7 +157,7 @@ function SingleMarketView({ rows }: { rows: Record<string, unknown>[] }) {
         <MetricCard title="Net % Open Interest" value={latest["lf_net_pct_oi"] != null ? `${Number(latest["lf_net_pct_oi"]) >= 0 ? "+" : ""}${Number(latest["lf_net_pct_oi"]).toFixed(1)}%` : "N/A"} />
         <MetricCard title="Z-Score" value={latest["lf_z"] != null ? `${Number(latest["lf_z"]) >= 0 ? "+" : ""}${Number(latest["lf_z"]).toFixed(2)}` : "N/A"} />
         <MetricCard title="Deleveraging Z" value={latest["lf_deleveraging_z"] != null ? `${Number(latest["lf_deleveraging_z"]) >= 0 ? "+" : ""}${Number(latest["lf_deleveraging_z"]).toFixed(2)}` : "N/A"} />
-        <MetricCard title="Forced Flow" value={String(latest["lf_forced"] ?? "N/A")} />
+        <MetricCard title="Forced Flow" value={formatForcedFlow(latest["lf_forced"])} />
       </div>
 
       <div className="space-y-4 mb-6">
