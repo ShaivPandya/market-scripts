@@ -67,7 +67,7 @@ def run_quality_screen(req: QualityRequest):
 
         benchmark_label = req.benchmark
         if benchmark_label == "Same as Input":
-            benchmark = req.universe if req.input_mode == "Universe" else "custom"
+            benchmark = "self"
         else:
             benchmark = _BENCHMARK_MAP.get(benchmark_label, benchmark_label)
 
