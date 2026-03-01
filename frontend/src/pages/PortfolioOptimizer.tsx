@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
-import { runPortfolioOptimizer } from "@/lib/api"
+import { runPortfolioOptimizerAsync } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -22,7 +22,7 @@ export function PortfolioOptimizer() {
   const [bookSize, setBookSize] = useState(100_000)
   const [targetLeverage, setTargetLeverage] = useState(2.0)
 
-  const mutation = useMutation({ mutationFn: runPortfolioOptimizer })
+  const mutation = useMutation({ mutationFn: runPortfolioOptimizerAsync })
 
   function handleRun() {
     mutation.mutate({ book: bookSize, target_leverage: targetLeverage })
@@ -66,7 +66,7 @@ export function PortfolioOptimizer() {
 
         <button onClick={handleRun} disabled={mutation.isPending}
           className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-          {mutation.isPending ? "Optimizing (~20s)..." : "Optimize Portfolio"}
+          {mutation.isPending ? "Optimizing (can take 1-3 min)..." : "Optimize Portfolio"}
         </button>
       </div>
 
