@@ -148,16 +148,7 @@ COUNTRIES = {
             {"id": "LRUNTTTTGBM156S"},
         ],
         "gdp": [
-            # ONS: GDP q-on-q4 growth rate, CVM SA — already YoY %.
-            {
-                "source": "ons",
-                "id": "ONS IHYR/UKEA",
-                "series_id": "IHYR",
-                "dataset_id": "UKEA",
-                "url_path": "/economy/grossdomesticproductgdp",
-                "transform": "none",
-            },
-            # FRED fallback
+            # FRED/OECD: Real GDP, UK, quarterly, index (2015=100) SA — compute YoY.
             {"id": "NAEXKP01GBQ189S", "transform": "yoy4"},
         ],
     },
