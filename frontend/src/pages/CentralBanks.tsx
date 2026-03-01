@@ -2,13 +2,22 @@ import { useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchCentralBanks } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { cn } from "@/lib/utils"
 
-const SIGNAL_COLORS: Record<string, string> = {
-  hawkish: "bg-red-100 text-red-700",
-  dovish: "bg-green-100 text-green-700",
-  neutral: "bg-gray-100 text-gray-600",
-  tightening: "bg-red-100 text-red-700",
-  easing: "bg-green-100 text-green-700",
+const SIGNAL_DOT_COLORS: Record<string, string> = {
+  hawkish: "#FF4245",
+  tightening: "#FF4245",
+  dovish: "#30D158",
+  easing: "#30D158",
+  neutral: "#8E8E93",
+}
+
+const SIGNAL_TEXT_COLORS: Record<string, string> = {
+  hawkish: "text-red-600",
+  tightening: "text-red-600",
+  dovish: "text-green-600",
+  easing: "text-green-600",
+  neutral: "text-gray-500",
 }
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -29,10 +38,23 @@ function getSourceColor(source: string) {
 }
 
 function SignalBadge({ label, value }: { label: string; value: string }) {
-  const classes = SIGNAL_COLORS[String(value).toLowerCase()] ?? "bg-gray-100 text-gray-600"
+  const key = String(value).toLowerCase()
+  const dotColor = SIGNAL_DOT_COLORS[key] ?? "#8E8E93"
+  const textClass = SIGNAL_TEXT_COLORS[key] ?? "text-gray-500"
   return (
-    <span className={`text-xs px-2 py-0.5 rounded font-medium ${classes}`}>
-      {label}: {value}
+    <span
+      title={`${label}: ${value}`}
+      className={cn(
+        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
+        "bg-gray-50 border border-gray-100",
+        textClass
+      )}
+    >
+      <span
+        className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ backgroundColor: dotColor }}
+      />
+      {value}
     </span>
   )
 }
@@ -74,15 +96,43 @@ export function CentralBanks() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Central Bank Monitor</h1>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setRefresh(r => !r)}
-            className="px-3 py-1.5 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50"
-          >
-            Refresh
-          </button>
+      {/* Page header */}
+      <div className="mb-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Central Bank Monitor</h1>
+            {data && !isLoading && (
+              <p className="text-sm text-gray-400 mt-0.5">
+                {data.counts?.total ?? items.length} items across {sources.length} central banks
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {data && !isLoading && (
+              <div className="inline-flex items-center rounded-full bg-gray-100 p-0.5">
+                {(["grouped", "chronological"] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setViewMode(mode)}
+                    className={cn(
+                      "px-3.5 py-1.5 text-sm rounded-full transition-all duration-150",
+                      viewMode === mode
+                        ? "bg-white text-gray-900 font-medium shadow-sm"
+                        : "text-gray-500 hover:text-gray-700"
+                    )}
+                  >
+                    {mode === "grouped" ? "By bank" : "Latest"}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setRefresh(r => !r)}
+              className="text-sm text-gray-400 hover:text-gray-700 transition-colors px-2 py-1.5 rounded-lg hover:bg-gray-100"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
       </div>
 
@@ -91,45 +141,22 @@ export function CentralBanks() {
 
       {data && !isLoading && (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <div className="flex gap-4 text-sm text-gray-500">
-              <span>Total: <strong>{data.counts?.total ?? items.length}</strong></span>
-              {sources.map(s => (
-                <span key={s}>{s}: <strong>{bySource[s].length}</strong></span>
-              ))}
-            </div>
-            <div className="inline-flex rounded-lg border border-gray-300 bg-white p-0.5">
-              <button
-                onClick={() => setViewMode("grouped")}
-                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  viewMode === "grouped"
-                    ? "bg-blue-600 text-white"
-                    : "text-gray-600 hover:bg-gray-100"
-                }`}
-              >
-                By central bank
-              </button>
-              <button
-                onClick={() => setViewMode("chronological")}
-                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  viewMode === "chronological"
-                    ? "bg-blue-600 text-white"
-                    : "text-gray-600 hover:bg-gray-100"
-                }`}
-              >
-                Latest
-              </button>
-            </div>
-          </div>
-
           {viewMode === "grouped" ? (
             sources.map(source => (
               <section key={source} className="mb-8">
-                <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                  <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: getSourceColor(source) }} />
-                  {source}
-                </h2>
-                <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span
+                    className="inline-block w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: getSourceColor(source) }}
+                  />
+                  <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">
+                    {source}
+                  </h2>
+                  <span className="text-xs text-gray-300 ml-1">
+                    {bySource[source].length}
+                  </span>
+                </div>
+                <div className="space-y-3">
                   {bySource[source].map((item, i) => (
                     <CBItemCard key={item.url || `${source}-${item.title}-${item.published_at}-${i}`} item={item} />
                   ))}
@@ -138,8 +165,15 @@ export function CentralBanks() {
             ))
           ) : (
             <section>
-              <h2 className="text-lg font-semibold mb-3">Latest Updates</h2>
-              <div className="space-y-4">
+              <div className="flex items-center gap-2 mb-3">
+                <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">
+                  Latest
+                </h2>
+                <span className="text-xs text-gray-300">
+                  {chronologicalItems.length}
+                </span>
+              </div>
+              <div className="space-y-3">
                 {chronologicalItems.map((item, i) => (
                   <CBItemCard key={item.url || `${item.source}-${item.title}-${item.published_at}-${i}`} item={item} showSource />
                 ))}
@@ -158,60 +192,105 @@ function CBItemCard({ item, showSource = false }: { item: CBItem; showSource?: b
   const sourceColor = getSourceColor(item.source)
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-4 mb-2">
-        <div>
-          <span className="text-xs font-medium text-gray-400 uppercase">{item.kind}</span>
-          {item.url ? (
-            <a href={item.url} target="_blank" rel="noreferrer" className="block text-sm font-semibold text-blue-600 hover:underline">
-              {item.title}
-            </a>
-          ) : (
-            <p className="text-sm font-semibold text-gray-800">{item.title}</p>
-          )}
-          {showSource && item.source && (
-            <span
-              className="inline-flex mt-1 px-2 py-0.5 rounded text-xs font-medium"
-              style={{ backgroundColor: sourceColor, color: "#fff" }}
-            >
-              {item.source}
+    <div className="relative flex rounded-xl border border-gray-200/80 bg-white overflow-hidden">
+      {/* Left accent bar */}
+      <div className="w-[3px] shrink-0" style={{ backgroundColor: sourceColor }} />
+
+      {/* Card body */}
+      <div className="flex-1 px-4 py-3.5">
+        {/* Eyebrow row: kind + source + date */}
+        <div className="flex items-start justify-between gap-4 mb-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] tracking-widest uppercase text-gray-400 font-semibold">
+              {item.kind}
+            </span>
+            {showSource && item.source && (
+              <span
+                className="text-[10px] tracking-widest uppercase font-semibold"
+                style={{ color: sourceColor }}
+              >
+                {item.source}
+              </span>
+            )}
+          </div>
+          {item.published_at && (
+            <span className="text-[11px] text-gray-400 whitespace-nowrap tabular-nums shrink-0">
+              {new Date(item.published_at).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
             </span>
           )}
         </div>
-        {item.published_at && (
-          <span className="text-xs text-gray-400 whitespace-nowrap">
-            {new Date(item.published_at).toLocaleDateString()}
-          </span>
+
+        {/* Title */}
+        {item.url ? (
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            className="block text-sm font-semibold text-gray-900 hover:underline decoration-gray-300 underline-offset-2 mb-2 leading-snug"
+          >
+            {item.title}
+          </a>
+        ) : (
+          <p className="text-sm font-semibold text-gray-900 mb-2 leading-snug">{item.title}</p>
+        )}
+
+        {/* Signal badges */}
+        {Object.keys(signals).length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2.5">
+            {Object.entries(signals).map(([k, v]) =>
+              v ? <SignalBadge key={k} label={k.replace(/_/g, " ")} value={String(v)} /> : null
+            )}
+          </div>
+        )}
+
+        {/* Summary bullets */}
+        {(item.summary_bullets ?? []).length > 0 && (
+          <div className="space-y-1.5 mb-2.5">
+            {item.summary_bullets.map((b, i) => (
+              <div key={i} className="flex items-start gap-2 text-sm text-gray-600 leading-snug">
+                <span className="text-gray-300 select-none mt-px">·</span>
+                <span>{b}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Expand toggle */}
+        {item.content_preview && (
+          <div>
+            <button
+              onClick={() => setExpanded(e => !e)}
+              className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors mt-0.5"
+            >
+              <span>{expanded ? "Show less" : "Show preview"}</span>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+                className={cn("transition-transform duration-200", expanded ? "rotate-180" : "rotate-0")}
+              >
+                <path
+                  d="M2.5 4.5L6 8L9.5 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            {expanded && (
+              <p className="text-xs text-gray-500 mt-2.5 leading-relaxed whitespace-pre-wrap border-t border-gray-100 pt-2.5">
+                {item.content_preview}
+              </p>
+            )}
+          </div>
         )}
       </div>
-
-      {Object.keys(signals).length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-3">
-          {Object.entries(signals).map(([k, v]) =>
-            v ? <SignalBadge key={k} label={k.replace(/_/g, " ")} value={String(v)} /> : null
-          )}
-        </div>
-      )}
-
-      {(item.summary_bullets ?? []).length > 0 && (
-        <ul className="text-sm text-gray-700 list-disc list-inside space-y-1 mb-2">
-          {item.summary_bullets.map((b, i) => <li key={i}>{b}</li>)}
-        </ul>
-      )}
-
-      {item.content_preview && (
-        <div>
-          <button
-            onClick={() => setExpanded(e => !e)}
-            className="text-xs text-blue-500 hover:underline"
-          >
-            {expanded ? "Show less" : "Show more"}
-          </button>
-          {expanded && (
-            <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{item.content_preview}</p>
-          )}
-        </div>
-      )}
     </div>
   )
 }

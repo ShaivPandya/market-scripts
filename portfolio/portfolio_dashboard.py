@@ -9,9 +9,6 @@ or prints summary tables in the terminal.
 
 Terminal:
   python portfolio/portfolio_dashboard.py
-
-GUI:
-  Accessed via sidebar in gui/app.py
 """
 
 import warnings
@@ -113,8 +110,24 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     }
 
 
-def get_data(timeframe: str = "Daily") -> dict:
+def fetch_all_timeframes_data() -> dict:
+    """Fetch portfolio data for all supported timeframes."""
+    results = {}
+    for tf_name in TIMEFRAMES:
+        data = fetch_portfolio_data(timeframe=tf_name)
+        if "error" in data and data["error"]:
+            return data
+        results[tf_name] = data
+    return {
+        "timeframes": results,
+        "timestamp": datetime.now(),
+    }
+
+
+def get_data(timeframe: str = "Daily", all_timeframes: bool = False) -> dict:
     """GUI-facing entry point."""
+    if all_timeframes:
+        return fetch_all_timeframes_data()
     return fetch_portfolio_data(timeframe=timeframe)
 
 

@@ -1,29 +1,37 @@
 import { useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchPortfolio } from "@/lib/api"
+import { fetchPortfolioAllTimeframes } from "@/lib/api"
 import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 
 const TIMEFRAMES = ["This Week", "Daily", "Weekly", "Monthly"] as const
 type Timeframe = typeof TIMEFRAMES[number]
+type TimeframePayload = {
+  positions?: Record<string, DataPoint[]>
+  position_order?: string[]
+}
+type PortfolioAllTimeframesResponse = {
+  timeframes?: Partial<Record<Timeframe, TimeframePayload>>
+}
 
 export function PortfolioDashboard() {
   const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
 
-  const { data, isLoading, error } = useApiQuery(
-    ["portfolio", timeframe],
-    () => fetchPortfolio(timeframe),
+  const { data, isLoading, error } = useApiQuery<PortfolioAllTimeframesResponse>(
+    ["portfolio", "all_timeframes"],
+    fetchPortfolioAllTimeframes,
   )
 
-  const positions: Record<string, DataPoint[]> = data?.positions ?? {}
-  const order: string[] = data?.position_order ?? Object.keys(positions)
+  const timeframeData = data?.timeframes?.[timeframe]
+  const positions: Record<string, DataPoint[]> = timeframeData?.positions ?? {}
+  const order: string[] = timeframeData?.position_order ?? Object.keys(positions)
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Portfolio Dashboard</h1>
-        <RefreshButton queryKeys={[["portfolio", timeframe]]} />
+        <RefreshButton queryKeys={[["portfolio", "all_timeframes"]]} />
       </div>
 
       <div className="flex gap-2 mb-6">
@@ -43,9 +51,11 @@ export function PortfolioDashboard() {
       </div>
 
       {isLoading && <LoadingSpinner message="Fetching portfolio data..." />}
-      {!isLoading && (error || !data) && <ErrorMessage message={String(error) || "Failed to load"} />}
+      {!isLoading && (error || !data || !timeframeData) && (
+        <ErrorMessage message={String(error) || "Failed to load"} />
+      )}
 
-      {data && !isLoading && (
+      {timeframeData && !isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {order.map(ticker => {
             const series = positions[ticker]
