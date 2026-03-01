@@ -117,6 +117,13 @@ export const fetchVixTermStructure = () =>
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)
 
+export const analyzeMarketTechnicals = (body: {
+  market_breadth: Record<string, unknown>
+  top50_breadth: Record<string, unknown>
+  vix_term_structure: Record<string, unknown>
+  price_volume_signals: Record<string, unknown>
+}) => client.post("/market-technicals/analyze", body).then(r => r.data)
+
 export const analyzeEconomicGrowth = (body: {
   commodities: Record<string, Record<string, number | null>>
   equities: Record<string, Record<string, number | null>>
