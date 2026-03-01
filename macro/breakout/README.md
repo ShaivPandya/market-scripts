@@ -2,6 +2,13 @@
 
 This module scans the FX/commodity universe for a strict congestion regime and prior-bar breakout signals.
 
+## Where this is used
+
+- Standalone CLI: `python3 macro/breakout/breakout.py`
+- FastAPI: `GET /api/breakout` (see `api/routers/breakout.py`)
+- Streamlit GUI: `gui/app.py` (page: “🔔 Breakout”)
+- React UI: “Breakout” page in `frontend/`
+
 ## Universe
 
 ### FX (spot via Yahoo Finance `=X` tickers)
@@ -94,5 +101,9 @@ CLI output shows:
 Install:
 
 ```bash
-pip install yfinance pandas numpy
+# From the repo root:
+pip install -r requirements.txt
+
+# Or minimal:
+# pip install yfinance pandas numpy
 ```

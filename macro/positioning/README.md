@@ -5,9 +5,19 @@ compute net positioning for participant groups, and derive simple “forced flow
 
 This script is at `macro/positioning/positioning.py`.
 
+## Where this is used
+
+- Standalone CLI: `python3 macro/positioning/positioning.py ...`
+- FastAPI:
+  - `GET /api/positioning/summary`
+  - `GET /api/positioning/timeseries`
+  - `GET /api/positioning/instruments`
+- Streamlit GUI: `gui/app.py` (page: “📌 Positioning”)
+- React UI: “Positioning” page in `frontend/`
+
 ## Requirements
 
-- Python 3.8+
+- Python 3.11+
 - Dependencies from the repo root: `pip install -r requirements.txt`
 - Network access (the script pulls data from the CFTC PRE API)
 

@@ -4,6 +4,13 @@
 
 The Economic Growth Dashboard is a Python-based tool that tracks key economic indicators across multiple time periods (1-month, 3-month, 6-month, and 1-year). It fetches live data from Yahoo Finance and displays performance metrics color-coded relative to benchmarks, helping investors identify economic trends and relative strength across asset classes.
 
+## Where this is used
+
+- Standalone CLI: `python3 macro/economic_growth/economic_growth.py`
+- Streamlit GUI: `gui/app.py` (page: “📊 Economic Growth”)
+- FastAPI: `GET /api/economic-growth` (see `api/routers/economic_growth.py`)
+- React UI: “Economic Growth” page in `frontend/`
+
 ## How It Works
 
 ### Data Collection
@@ -86,14 +93,17 @@ Historically used by macro investors as a proxy for global economic optimism.
 ## Usage
 
 ```bash
-# Install dependencies
+# Install dependencies (repo-wide; from the repo root)
+pip install -r requirements.txt
+
+# Or install just the minimal deps for this module
 pip install yfinance rich pandas openpyxl
 
 # Run with default CRB file (crb.xlsx)
-python economic_growth.py
+python3 macro/economic_growth/economic_growth.py
 
 # Run with custom CRB file path
-python economic_growth.py --crb-file path/to/your/crb.xlsx
+python3 macro/economic_growth/economic_growth.py --crb-file path/to/your/crb.xlsx
 ```
 
 ## Interpreting the Dashboard

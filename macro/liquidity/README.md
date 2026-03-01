@@ -2,6 +2,13 @@
 
 A macro liquidity monitoring tool that fetches data from FRED, computes a composite liquidity score, classifies market regimes, and displays results in a rich terminal dashboard.
 
+## Where this is used
+
+- Standalone CLI: `python3 macro/liquidity/liquidity.py`
+- FastAPI: `GET /api/liquidity` (see `api/routers/liquidity.py`)
+- Streamlit GUI: `gui/app.py` (page: “💧 Liquidity”)
+- React UI: “Liquidity” page in `frontend/`
+
 ## Overview
 
 This script tracks global liquidity conditions by combining multiple macro indicators into a single composite score. The score emphasizes trend-based measures (4-week changes in net liquidity, reserves, and global central bank assets) while incorporating credit spreads and financial conditions.
@@ -20,7 +27,11 @@ This script tracks global liquidity conditions by combining multiple macro indic
 ### Requirements
 
 ```bash
-pip install pandas fredapi rich
+# From the repo root:
+pip install -r requirements.txt
+
+# Or minimal:
+# pip install pandas fredapi rich
 ```
 
 ### Optional (for charts)
@@ -39,18 +50,25 @@ Set your API key as an environment variable:
 export FRED_API_KEY=your_api_key_here
 ```
 
+This repo also supports `.env` files:
+
+```bash
+cp .env.example .env
+# edit .env and set FRED_API_KEY=...
+```
+
 ## Usage
 
 ### Basic dashboard
 
 ```bash
-python macro/liquidity/liquidity.py
+python3 macro/liquidity/liquidity.py
 ```
 
 ### With charts
 
 ```bash
-python macro/liquidity/liquidity.py --plot
+python3 macro/liquidity/liquidity.py --plot
 ```
 
 ## How It Works

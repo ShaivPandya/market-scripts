@@ -2,6 +2,8 @@
 
 This directory contains the CSV files with historical government bond yield data for UK, Germany, and Japan.
 
+These files are read by `government_bonds/government_bond_yields.py`.
+
 ## Required Files
 
 Place the following CSV files in this directory:
@@ -36,10 +38,12 @@ Date,Open,High,Low,Close
 
 ## Data Sources
 
-These files come from MarketWatch download
+These files typically come from a MarketWatch “Download Data” export.
 
 ## Notes
 
 - The script requires at least 1 year of historical data for accurate change calculations
 - Missing files will be reported as errors when running the script
 - The most recent date in each file will be used as the current yield
+
+If you want to use different filenames, update `BOND_DATA_FILES` in `government_bonds/government_bond_yields.py`.
