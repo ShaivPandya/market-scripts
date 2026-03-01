@@ -2370,7 +2370,7 @@ elif st.session_state.current_page == "📉 FX Dashboard":
     # Timeframe toggle
     fx_timeframe = st.radio(
         "Timeframe",
-        ["Daily", "Weekly", "Monthly"],
+        ["This Week", "Daily", "Weekly", "Monthly"],
         horizontal=True,
         key="fx_dashboard_timeframe",
     )
@@ -2424,11 +2424,16 @@ elif st.session_state.current_page == "📉 FX Dashboard":
                             chart_df = pd.DataFrame(
                                 {"date": series.index, pair_name: series.values},
                             )
+                            if fx_timeframe == "This Week":
+                                chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                            else:
+                                x_enc = alt.X("date:T", title=None)
                             chart = (
                                 alt.Chart(chart_df)
                                 .mark_line()
                                 .encode(
-                                    x=alt.X("date:T", title=None),
+                                    x=x_enc,
                                     y=alt.Y(f"{pair_name}:Q", scale=alt.Scale(zero=False), title=None),
                                 )
                                 .properties(height=200)
@@ -2452,7 +2457,7 @@ elif st.session_state.current_page == "🛢️ Commodity Dashboard":
     # Timeframe toggle
     commodities_timeframe = st.radio(
         "Timeframe",
-        ["Daily", "Weekly", "Monthly"],
+        ["This Week", "Daily", "Weekly", "Monthly"],
         horizontal=True,
         key="commodities_dashboard_timeframe",
     )
@@ -2511,11 +2516,16 @@ elif st.session_state.current_page == "🛢️ Commodity Dashboard":
                             chart_df = pd.DataFrame(
                                 {"date": series.index, commodity_name: series.values},
                             )
+                            if commodities_timeframe == "This Week":
+                                chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                            else:
+                                x_enc = alt.X("date:T", title=None)
                             chart = (
                                 alt.Chart(chart_df)
                                 .mark_line()
                                 .encode(
-                                    x=alt.X("date:T", title=None),
+                                    x=x_enc,
                                     y=alt.Y(f"{commodity_name}:Q", scale=alt.Scale(zero=False), title=None),
                                 )
                                 .properties(height=200)
@@ -2539,7 +2549,7 @@ elif st.session_state.current_page == "📊 Index Dashboard":
     # Timeframe toggle
     index_timeframe = st.radio(
         "Timeframe",
-        ["Daily", "Weekly", "Monthly"],
+        ["This Week", "Daily", "Weekly", "Monthly"],
         horizontal=True,
         key="index_dashboard_timeframe",
     )
@@ -2596,11 +2606,16 @@ elif st.session_state.current_page == "📊 Index Dashboard":
                             chart_df = pd.DataFrame(
                                 {"date": series.index, index_name: series.values},
                             )
+                            if index_timeframe == "This Week":
+                                chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                            else:
+                                x_enc = alt.X("date:T", title=None)
                             chart = (
                                 alt.Chart(chart_df)
                                 .mark_line()
                                 .encode(
-                                    x=alt.X("date:T", title=None),
+                                    x=x_enc,
                                     y=alt.Y(f"{index_name}:Q", scale=alt.Scale(zero=False), title=None),
                                 )
                                 .properties(height=200)
@@ -2624,7 +2639,7 @@ elif st.session_state.current_page == "💼 Portfolio Dashboard":
     # Timeframe toggle
     portfolio_timeframe = st.radio(
         "Timeframe",
-        ["Daily", "Weekly", "Monthly"],
+        ["This Week", "Daily", "Weekly", "Monthly"],
         horizontal=True,
         key="portfolio_dashboard_timeframe",
     )
@@ -2690,11 +2705,16 @@ elif st.session_state.current_page == "💼 Portfolio Dashboard":
                             chart_df = pd.DataFrame(
                                 {"date": series.index, ticker: series.values},
                             )
+                            if portfolio_timeframe == "This Week":
+                                chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                            else:
+                                x_enc = alt.X("date:T", title=None)
                             chart = (
                                 alt.Chart(chart_df)
                                 .mark_line()
                                 .encode(
-                                    x=alt.X("date:T", title=None),
+                                    x=x_enc,
                                     y=alt.Y(f"{ticker}:Q", scale=alt.Scale(zero=False), title=None),
                                 )
                                 .properties(height=200)
