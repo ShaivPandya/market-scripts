@@ -103,6 +103,8 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
     return {
         "pair": pair,
         "latest_date": data.get("latest_date"),
+        "feature_asof_date": data.get("feature_asof_date"),
+        "feature_lag_months": data.get("feature_lag_months"),
         "bootstrap_draws": bootstrap,
         "skip_bis": skip_bis,
         "imf_ca_available": data.get("imf_ca_available"),

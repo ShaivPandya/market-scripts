@@ -242,7 +242,7 @@ def build_driver_explanation(
         f"Forecast: {point_level:.4f} (current: {spot_now:.4f}, expected move: {pct:+.1f}%)",
         f"Model R²: {r2:.3f} | Observations: {nobs}",
         "",
-        "Top drivers (coefficient × current value = contribution to log return):",
+        "Top drivers (coefficient × feature value = contribution to log return):",
     ]
     for i, d in enumerate(drivers, 1):
         lines.append(

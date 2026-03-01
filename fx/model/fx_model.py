@@ -103,6 +103,12 @@ def main():
     print(f"\nLatest forecast summary for {args.pair}:")
     print(json.dumps(results["latest_forecast"], indent=2))
 
+    latest_date = results.get("latest_date")
+    feature_asof_date = results.get("feature_asof_date")
+    feature_lag_months = results.get("feature_lag_months")
+    if latest_date and feature_asof_date and feature_lag_months is not None:
+        print(f"\nSpot as of: {latest_date} | Features as of: {feature_asof_date} (lag: {feature_lag_months}m)")
+
     # Print driver explanations
     print("\n" + "=" * 80)
     print("FORECAST DRIVER ANALYSIS")
