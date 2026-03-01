@@ -46,22 +46,22 @@ export function Momentum() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Momentum</h1>
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Momentum</h1>
         <RefreshButton queryKeys={[["momentum"]]} />
       </div>
 
       {isLoading && <LoadingSpinner message="Fetching momentum data..." />}
       {!isLoading && (error || !data) && <ErrorMessage message={String(error) || "Failed to load"} />}
-      {data && !isLoading && rows.length === 0 && <p className="text-gray-400">No data returned.</p>}
+      {data && !isLoading && rows.length === 0 && <p className="text-sm text-gray-400">No data returned.</p>}
       {data && !isLoading && longs.length > 0 && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold mb-3">Longs</h2>
+          <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Longs</p>
           <DataTable columns={columns} rows={longs} />
         </div>
       )}
       {data && !isLoading && shorts.length > 0 && (
         <div>
-          <h2 className="text-lg font-semibold mb-3">Shorts</h2>
+          <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Shorts</p>
           <DataTable columns={columns} rows={shorts} />
         </div>
       )}
