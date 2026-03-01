@@ -94,6 +94,9 @@ export const fetchPositioningTimeseries = (params: Record<string, string>) =>
 export const fetchPositioningInstruments = () =>
   client.get("/positioning/instruments").then(r => r.data)
 
+export const analyzePositioning = (body: { rows: Record<string, unknown>[] }) =>
+  client.post("/positioning/analyze", body).then(r => r.data)
+
 export const fetchFxModelPairs = () =>
   client.get("/fx-model/pairs").then(r => r.data)
 
