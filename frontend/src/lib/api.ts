@@ -59,6 +59,14 @@ export const fetchVixTermStructure = () =>
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)
 
+export const analyzeEconomicGrowth = (body: {
+  commodities: Record<string, Record<string, number | null>>
+  equities: Record<string, Record<string, number | null>>
+  currencies: Record<string, Record<string, number | null>>
+  equity_periods: string[]
+  currency_periods: string[]
+}) => client.post("/economic-growth/analyze", body).then(r => r.data)
+
 export const fetchLiquidity = (skip_ecb: boolean) =>
   client.get(`/liquidity?skip_ecb=${skip_ecb}`).then(r => r.data)
 

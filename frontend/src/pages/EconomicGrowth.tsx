@@ -1,5 +1,8 @@
+import { useState } from "react"
+import { useMutation } from "@tanstack/react-query"
+import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchEconomicGrowth } from "@/lib/api"
+import { fetchEconomicGrowth, analyzeEconomicGrowth } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -10,6 +13,9 @@ export function EconomicGrowth() {
     ["economic-growth"],
     fetchEconomicGrowth,
   )
+
+  const [isOpen, setIsOpen] = useState(false)
+  const mutation = useMutation({ mutationFn: analyzeEconomicGrowth })
 
   if (isLoading) return <LoadingSpinner message="Fetching economic growth data..." />
   if (error || !data) return <ErrorMessage message={String(error) || "Failed to load"} />
@@ -46,6 +52,8 @@ export function EconomicGrowth() {
 
   const nameCol = (key: string): ColumnDef => ({ key, header: key, width: "160px" })
 
+  const showPanel = mutation.data || mutation.isPending || mutation.isError
+
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
@@ -57,8 +65,66 @@ export function EconomicGrowth() {
             </p>
           )}
         </div>
-        <RefreshButton queryKeys={[["economic-growth"]]} />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              mutation.mutate({
+                commodities: data.commodities ?? {},
+                equities: data.equities ?? {},
+                currencies: data.currencies ?? {},
+                equity_periods: periods,
+                currency_periods: currencyPeriods,
+              })
+              setIsOpen(true)
+            }}
+            disabled={mutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles size={14} />
+            AI Overview
+          </button>
+          <RefreshButton queryKeys={[["economic-growth"]]} />
+        </div>
       </div>
+
+      {showPanel && (
+        <div className="mb-6 rounded-lg border border-indigo-200 bg-white overflow-hidden">
+          <button
+            onClick={() => setIsOpen(o => !o)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-indigo-600" />
+              <span className="text-sm font-semibold text-indigo-800">AI Overview</span>
+            </div>
+            <ChevronDown
+              size={16}
+              className={`text-indigo-600 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+
+          {isOpen && (
+            <div className="px-4 py-4">
+              {mutation.isPending && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  Analyzing market data...
+                </div>
+              )}
+              {mutation.isError && (
+                <p className="text-sm text-red-600">
+                  {String(mutation.error) || "Analysis failed. Please try again."}
+                </p>
+              )}
+              {mutation.data && (
+                <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+                  {mutation.data.analysis}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <section className="mb-8">
         <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Commodities</h2>
