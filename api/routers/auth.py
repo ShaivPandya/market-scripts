@@ -109,14 +109,12 @@ def login(body: LoginRequest, response: Response):
             detail="Incorrect password",
         )
     token = _create_token()
-    ttl_hours = _get_jwt_ttl_hours()
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
         samesite="strict",
-        secure=False,  # set to True in production (HTTPS)
-        max_age=ttl_hours * 3600,
+        secure=True,
         path="/",
     )
     return {"detail": "ok"}
