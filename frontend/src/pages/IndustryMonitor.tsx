@@ -2,7 +2,6 @@ import { useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchIndustryMonitor } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { RefreshButton } from "@/components/shared/RefreshButton"
 import { colorEconomicSignal, colorSentiment } from "@/lib/colors"
 
 const SIGNAL_CLASSES: Record<string, string> = {
@@ -71,7 +70,6 @@ export function IndustryMonitor() {
           >
             Refresh Data
           </button>
-          <RefreshButton queryKeys={[["industry-monitor", refresh]]} />
         </div>
       </div>
       <p className="text-xs text-gray-400 mb-4">

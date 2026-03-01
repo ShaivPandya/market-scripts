@@ -1,5 +1,6 @@
-import { NavLink } from "react-router-dom"
+import { NavLink, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { useAuth } from "@/contexts/AuthContext"
 
 interface NavSection {
   pages: { label: string; path: string }[]
@@ -53,9 +54,20 @@ const NAV_SECTIONS: NavSection[] = [
 ]
 
 export function Sidebar() {
+  const { logout } = useAuth()
+  const navigate = useNavigate()
+
+  async function handleLogout() {
+    try {
+      await logout()
+    } finally {
+      navigate("/login", { replace: true })
+    }
+  }
+
   return (
-    <nav className="w-56 shrink-0 border-r border-gray-200 bg-gray-50 h-screen overflow-y-auto sticky top-0">
-      <div className="px-3 py-4">
+    <nav className="w-56 shrink-0 border-r border-gray-200 bg-gray-50 h-screen sticky top-0 flex flex-col">
+      <div className="px-3 py-4 flex-1 overflow-y-auto">
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
           Navigation
         </p>
@@ -82,6 +94,15 @@ export function Sidebar() {
             )}
           </div>
         ))}
+      </div>
+
+      <div className="px-3 py-3 border-t border-gray-200">
+        <button
+          onClick={handleLogout}
+          className="w-full text-left px-2 py-1.5 rounded text-sm text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition-colors"
+        >
+          Sign out
+        </button>
       </div>
     </nav>
   )

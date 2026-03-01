@@ -1,8 +1,11 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { AuthProvider } from "@/contexts/AuthContext"
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { Layout } from "@/components/layout/Layout"
 
 // Pages
+import { LoginPage } from "@/pages/LoginPage"
 import { PortfolioDashboard } from "@/pages/PortfolioDashboard"
 import { PortfolioOptimizer } from "@/pages/PortfolioOptimizer"
 import { Momentum } from "@/pages/Momentum"
@@ -36,31 +39,39 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route index element={<Navigate to="/portfolio" replace />} />
-            <Route path="/portfolio" element={<PortfolioDashboard />} />
-            <Route path="/optimizer" element={<PortfolioOptimizer />} />
-            <Route path="/momentum" element={<Momentum />} />
-            <Route path="/chart" element={<ChartPage />} />
-            <Route path="/quality" element={<QualityScreen />} />
-            <Route path="/short-screen" element={<ShortScreen />} />
-            <Route path="/fundamental-momentum" element={<FundamentalMomentum />} />
-            <Route path="/index-dashboard" element={<IndexDashboard />} />
-            <Route path="/fx-dashboard" element={<FXDashboard />} />
-            <Route path="/commodities" element={<CommodityDashboard />} />
-            <Route path="/market-technicals" element={<MarketTechnicals />} />
-            <Route path="/sector-metrics" element={<SectorMetrics />} />
-            <Route path="/positioning" element={<Positioning />} />
-            <Route path="/breakout" element={<Breakout />} />
-            <Route path="/fx-model" element={<FXModel />} />
-            <Route path="/economic-growth" element={<EconomicGrowth />} />
-            <Route path="/liquidity" element={<Liquidity />} />
-            <Route path="/country-dashboard" element={<CountryDashboard />} />
-            <Route path="/central-banks" element={<CentralBanks />} />
-            <Route path="/industry-monitor" element={<IndustryMonitor />} />
-          </Route>
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            {/* Public */}
+            <Route path="/login" element={<LoginPage />} />
+
+            {/* Protected — all existing routes */}
+            <Route element={<ProtectedRoute />}>
+              <Route element={<Layout />}>
+                <Route index element={<Navigate to="/portfolio" replace />} />
+                <Route path="/portfolio" element={<PortfolioDashboard />} />
+                <Route path="/optimizer" element={<PortfolioOptimizer />} />
+                <Route path="/momentum" element={<Momentum />} />
+                <Route path="/chart" element={<ChartPage />} />
+                <Route path="/quality" element={<QualityScreen />} />
+                <Route path="/short-screen" element={<ShortScreen />} />
+                <Route path="/fundamental-momentum" element={<FundamentalMomentum />} />
+                <Route path="/index-dashboard" element={<IndexDashboard />} />
+                <Route path="/fx-dashboard" element={<FXDashboard />} />
+                <Route path="/commodities" element={<CommodityDashboard />} />
+                <Route path="/market-technicals" element={<MarketTechnicals />} />
+                <Route path="/sector-metrics" element={<SectorMetrics />} />
+                <Route path="/positioning" element={<Positioning />} />
+                <Route path="/breakout" element={<Breakout />} />
+                <Route path="/fx-model" element={<FXModel />} />
+                <Route path="/economic-growth" element={<EconomicGrowth />} />
+                <Route path="/liquidity" element={<Liquidity />} />
+                <Route path="/country-dashboard" element={<CountryDashboard />} />
+                <Route path="/central-banks" element={<CentralBanks />} />
+                <Route path="/industry-monitor" element={<IndustryMonitor />} />
+              </Route>
+            </Route>
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )
