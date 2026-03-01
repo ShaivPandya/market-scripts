@@ -1,6 +1,7 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from api.cache import long_cache, get_cached, set_cached
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -56,6 +57,10 @@ def _resolve_universe_tickers(universe_label: str) -> list[str]:
 
 @router.post("/quality-screen")
 def run_quality_screen(req: QualityRequest):
+    key = f"quality:{req.input_mode}:{req.universe}:{req.tickers}:{req.benchmark}"
+    cached = get_cached(long_cache, key)
+    if cached is not None:
+        return cached
     try:
         if req.input_mode == "Custom Tickers":
             tickers = [t.strip().upper() for t in req.tickers.split(",") if t.strip()]
@@ -76,10 +81,16 @@ def run_quality_screen(req: QualityRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail={"message": str(e)})
 
     if data.get("error"):
-        raise HTTPException(status_code=500, detail=data["error"])
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": data["error"],
+                "failed": data.get("failed") or [],
+            },
+        )
 
     import pandas as pd
     result = {}
@@ -88,4 +99,5 @@ def run_quality_screen(req: QualityRequest):
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
+    set_cached(long_cache, key, result)
     return result

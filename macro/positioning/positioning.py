@@ -31,6 +31,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
@@ -150,12 +151,43 @@ def _http_get_json(
 
 
 def get_dataset_metadata(domain: str, dataset_id: str, app_token: Optional[str]) -> Dict[str, Any]:
-    # Socrata metadata endpoint
+    # Socrata metadata endpoint (cache in-process; schema changes are rare).
     url = f"https://{domain}/api/views/{dataset_id}.json"
     headers = {}
     if app_token:
         headers["X-App-Token"] = app_token
-    return _http_get_json(url, headers=headers)
+
+    cache_key = (domain, dataset_id)
+    with _META_CACHE_LOCK:
+        cached = _META_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    meta = _http_get_json(url, headers=headers)
+    with _META_CACHE_LOCK:
+        _META_CACHE[cache_key] = meta
+    return meta
+
+
+_META_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+_FIELDS_CACHE: Dict[Tuple[str, str], "Fields"] = {}
+_META_CACHE_LOCK = threading.Lock()
+
+
+def get_dataset_fields(domain: str, dataset_id: str, app_token: Optional[str]) -> Fields:
+    """
+    Return detected Fields for a dataset (cached in-process).
+    """
+    cache_key = (domain, dataset_id)
+    with _META_CACHE_LOCK:
+        cached = _FIELDS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    meta = get_dataset_metadata(domain, dataset_id, app_token)
+    fields = detect_fields(meta)
+    with _META_CACHE_LOCK:
+        _FIELDS_CACHE[cache_key] = fields
+    return fields
 
 
 def _normalize(s: str) -> str:
@@ -446,8 +478,7 @@ def fetch_market_timeseries(
     """
     Fetch rows for a single exact market_and_exchange_names, optionally bounded by start/end (YYYY-MM-DD).
     """
-    meta = get_dataset_metadata(domain, dataset_id, app_token)
-    fields = detect_fields(meta)
+    fields = get_dataset_fields(domain, dataset_id, app_token)
     group_keys = parse_groups(groups)
 
     # Build SoQL
@@ -568,6 +599,200 @@ def fetch_market_timeseries(
     return df
 
 
+def _add_group_metrics_by_market(
+    df: pd.DataFrame,
+    *,
+    market_col: str,
+    long_col: str,
+    short_col: str,
+    open_interest_col: Optional[str],
+    prefix: str,
+    z_window: int,
+    force_threshold: float,
+) -> None:
+    net_col = f"{prefix}_net"
+    net_pct_col = f"{prefix}_net_pct_oi"
+
+    df[net_col] = df[long_col] - df[short_col]
+
+    if open_interest_col and open_interest_col in df.columns:
+        df[net_pct_col] = (df[net_col] / df[open_interest_col]) * 100.0
+    else:
+        df[net_pct_col] = pd.NA
+
+    base_series = df[net_pct_col]
+    if base_series.isna().all():
+        base_col = net_col
+    else:
+        base_col = net_pct_col
+
+    window = z_window if z_window > 0 else None
+    df[f"{prefix}_z"] = df.groupby(market_col)[base_col].transform(lambda s: _zscore(s, window=window))
+
+    df[f"{prefix}_d_net"] = df.groupby(market_col)[net_col].diff()
+    if df[net_pct_col].isna().all():
+        df[f"{prefix}_d_net_pct_oi"] = pd.NA
+        d_base_col = f"{prefix}_d_net"
+    else:
+        df[f"{prefix}_d_net_pct_oi"] = df.groupby(market_col)[net_pct_col].diff()
+        d_base_col = f"{prefix}_d_net_pct_oi"
+
+    df[f"{prefix}_d_z"] = df.groupby(market_col)[d_base_col].transform(lambda s: _zscore(s, window=window))
+
+    df[f"{prefix}_deleveraging"] = (-np.sign(df[net_col])) * df[f"{prefix}_d_net"]
+    df[f"{prefix}_deleveraging_z"] = df.groupby(market_col)[f"{prefix}_deleveraging"].transform(
+        lambda s: _zscore(s, window=window)
+    )
+
+    forced = pd.Series(pd.NA, index=df.index, dtype="object")
+    forced_long = ((df[net_col] > 0) & (df[f"{prefix}_deleveraging_z"] >= force_threshold)).fillna(False)
+    forced_short = ((df[net_col] < 0) & (df[f"{prefix}_deleveraging_z"] >= force_threshold)).fillna(False)
+    forced.loc[forced_long] = "long_liquidation"
+    forced.loc[forced_short] = "short_covering"
+    df[f"{prefix}_forced"] = forced
+
+
+def fetch_markets_timeseries(
+    domain: str,
+    dataset_id: str,
+    app_token: Optional[str],
+    markets_exact: List[str],
+    start: Optional[str],
+    end: Optional[str],
+    groups: Optional[str] = None,
+    z_window: int = 0,
+    force_threshold: float = 2.0,
+) -> pd.DataFrame:
+    """
+    Fetch rows for multiple exact market_and_exchange_names values in a single SODA query.
+    """
+    if not markets_exact:
+        raise RuntimeError("No markets provided.")
+
+    fields = get_dataset_fields(domain, dataset_id, app_token)
+    group_keys = parse_groups(groups)
+
+    # Build SoQL (use IN for the market filter).
+    quoted = []
+    for m in markets_exact:
+        market_escaped = str(m).replace("'", "''")
+        quoted.append("'" + market_escaped + "'")
+    where_parts = [f"{fields.market_name} IN ({', '.join(quoted)})"]
+
+    if start:
+        where_parts.append(f"{fields.report_date} >= '{start}T00:00:00.000'")
+    if end:
+        where_parts.append(f"{fields.report_date} <= '{end}T23:59:59.999'")
+
+    select_fields = [fields.report_date, fields.market_name, fields.lf_long, fields.lf_short]
+    if fields.open_interest:
+        select_fields.append(fields.open_interest)
+
+    group_cols: Dict[str, Tuple[Optional[str], Optional[str]]] = {
+        "dealer": (fields.dealer_long, fields.dealer_short),
+        "asset_mgr": (fields.asset_mgr_long, fields.asset_mgr_short),
+        "other_rept": (fields.other_rept_long, fields.other_rept_short),
+        "nonrept": (fields.nonrept_long, fields.nonrept_short),
+    }
+    for g in group_keys:
+        if g == "lev_money":
+            continue
+        long_col, short_col = group_cols.get(g, (None, None))
+        if not long_col or not short_col:
+            print(f"Warning: Could not detect fields for group '{g}' in this dataset; skipping.", file=sys.stderr)
+            continue
+        select_fields.extend([long_col, short_col])
+
+    soql = {
+        "$select": ", ".join(select_fields),
+        "$where": " AND ".join(where_parts),
+        "$order": f"{fields.market_name}, {fields.report_date}",
+    }
+
+    rows = list(soda_iter_rows(domain, dataset_id, app_token, soql_params=soql, page_size=50000))
+    if not rows:
+        raise RuntimeError("No rows returned for the requested markets/date range.")
+
+    df = pd.DataFrame(rows)
+
+    # Parse and coerce numeric fields
+    df[fields.report_date] = pd.to_datetime(df[fields.report_date], errors="coerce").dt.date
+    numeric_cols: List[str] = [fields.lf_long, fields.lf_short]
+    if fields.open_interest:
+        numeric_cols.append(fields.open_interest)
+    for g in group_keys:
+        if g == "lev_money":
+            continue
+        long_col, short_col = group_cols.get(g, (None, None))
+        if long_col and short_col:
+            numeric_cols.extend([long_col, short_col])
+    for c in numeric_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Ensure stable ordering for diffs/z-scores
+    df = df.sort_values([fields.market_name, fields.report_date]).reset_index(drop=True)
+
+    # Derived metrics (leveraged funds always included)
+    _add_group_metrics_by_market(
+        df,
+        market_col=fields.market_name,
+        long_col=fields.lf_long,
+        short_col=fields.lf_short,
+        open_interest_col=fields.open_interest,
+        prefix="lf",
+        z_window=z_window,
+        force_threshold=force_threshold,
+    )
+
+    for g in group_keys:
+        if g == "lev_money":
+            continue
+        long_col, short_col = group_cols.get(g, (None, None))
+        if not long_col or not short_col:
+            continue
+        prefix = GROUP_PREFIX[g]
+        _add_group_metrics_by_market(
+            df,
+            market_col=fields.market_name,
+            long_col=long_col,
+            short_col=short_col,
+            open_interest_col=fields.open_interest,
+            prefix=prefix,
+            z_window=z_window,
+            force_threshold=force_threshold,
+        )
+
+    # Standardize column names for output readability
+    rename_map = {
+        fields.report_date: "report_date",
+        fields.market_name: "market_and_exchange_names",
+        fields.lf_long: "leveraged_funds_long",
+        fields.lf_short: "leveraged_funds_short",
+    }
+    if fields.open_interest:
+        rename_map[fields.open_interest] = "open_interest"
+    if fields.dealer_long:
+        rename_map[fields.dealer_long] = "dealer_long"
+    if fields.dealer_short:
+        rename_map[fields.dealer_short] = "dealer_short"
+    if fields.asset_mgr_long:
+        rename_map[fields.asset_mgr_long] = "asset_mgr_long"
+    if fields.asset_mgr_short:
+        rename_map[fields.asset_mgr_short] = "asset_mgr_short"
+    if fields.other_rept_long:
+        rename_map[fields.other_rept_long] = "other_rept_long"
+    if fields.other_rept_short:
+        rename_map[fields.other_rept_short] = "other_rept_short"
+    if fields.nonrept_long:
+        rename_map[fields.nonrept_long] = "nonrept_long"
+    if fields.nonrept_short:
+        rename_map[fields.nonrept_short] = "nonrept_short"
+
+    df = df.rename(columns=rename_map)
+    return df
+
+
 def fetch_multiple_instruments(
     domain: str,
     dataset_id: str,
@@ -582,26 +807,42 @@ def fetch_multiple_instruments(
     """
     Fetch latest positioning for multiple instruments and return summary data.
     """
-    results = []
+    # Pre-warm schema detection once per dataset for this request.
+    _ = get_dataset_fields(domain, dataset_id, app_token)
+
+    instrument_list: List[str] = []
     for alias in instruments:
-        market_name = INSTRUMENTS.get(alias)
-        if not market_name:
+        if alias in INSTRUMENTS:
+            instrument_list.append(alias)
+        else:
             print(f"Warning: Unknown instrument '{alias}', skipping.", file=sys.stderr)
-            continue
+
+    if not instrument_list:
+        return []
+
+    group_keys = parse_groups(groups)
+
+    # Pull all markets in one query, then take the latest row per market.
+    alias_to_market = {alias: INSTRUMENTS[alias] for alias in instrument_list}
+    market_list = list(alias_to_market.values())
+    df_all = fetch_markets_timeseries(
+        domain=domain,
+        dataset_id=dataset_id,
+        app_token=app_token,
+        markets_exact=market_list,
+        start=start,
+        end=end,
+        groups=groups,
+        z_window=z_window,
+        force_threshold=force_threshold,
+    )
+
+    results: List[Dict[str, Any]] = []
+    for alias, market_name in alias_to_market.items():
         try:
-            df = fetch_market_timeseries(
-                domain=domain,
-                dataset_id=dataset_id,
-                app_token=app_token,
-                market_exact=market_name,
-                start=start,
-                end=end,
-                groups=groups,
-                z_window=z_window,
-                force_threshold=force_threshold,
-            )
+            df = df_all[df_all["market_and_exchange_names"] == market_name]
             latest = df.dropna(subset=["report_date"]).iloc[-1]
-            row = {
+            row: Dict[str, Any] = {
                 "instrument": alias,
                 "report_date": latest["report_date"],
                 "lf_net": latest["lf_net"],
@@ -611,8 +852,6 @@ def fetch_multiple_instruments(
                 "lf_forced": latest.get("lf_forced"),
             }
 
-            # Optionally include additional groups in the summary output.
-            group_keys = parse_groups(groups)
             for g in group_keys:
                 if g == "lev_money":
                     continue
@@ -624,7 +863,8 @@ def fetch_multiple_instruments(
 
             results.append(row)
         except Exception as e:
-            print(f"Warning: Failed to fetch {alias}: {e}", file=sys.stderr)
+            print(f"Warning: Failed to summarize {alias}: {e}", file=sys.stderr)
+
     return results
 
 

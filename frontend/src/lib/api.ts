@@ -2,7 +2,63 @@ import axios from "axios"
 
 import { getAuthMode } from "@/lib/authMode"
 
-const client = axios.create({ baseURL: "/api", withCredentials: true })
+const client = axios.create({
+  baseURL: "/api",
+  withCredentials: true,
+  // Avoid "spinning forever" when the backend (or an upstream like Cloudflare) hangs.
+  timeout: 60_000,
+})
+
+function _truncate(s: string, maxLen: number) {
+  if (s.length <= maxLen) return s
+  return s.slice(0, maxLen - 1) + "…"
+}
+
+function _extractDetail(data: unknown): unknown {
+  if (data == null) return undefined
+  if (typeof data === "string") return data
+  if (typeof data !== "object") return undefined
+  const rec = data as Record<string, unknown>
+  if ("detail" in rec) return rec.detail
+  if ("message" in rec) return rec.message
+  if ("error" in rec) return rec.error
+  return undefined
+}
+
+function formatApiError(err: unknown): string | null {
+  if (!axios.isAxiosError(err)) return null
+
+  const isTimeout =
+    err.code === "ECONNABORTED" ||
+    (typeof err.message === "string" && err.message.toLowerCase().includes("timeout"))
+
+  const status = err.response?.status
+  const data = err.response?.data
+  const detail = _extractDetail(data)
+
+  const prefix = status ? `${status}: ` : isTimeout ? "Timeout: " : ""
+
+  if (typeof detail === "string" && detail.trim()) return prefix + _truncate(detail.trim(), 500)
+
+  if (detail && typeof detail === "object") {
+    const d = detail as Record<string, unknown>
+    const msg = typeof d.message === "string" ? d.message.trim() : ""
+    const failed = Array.isArray(d.failed) ? d.failed.filter(x => typeof x === "string") as string[] : []
+    if (msg) {
+      const extra = failed.length ? ` (failed: ${_truncate(failed.join(", "), 220)})` : ""
+      return prefix + _truncate(msg + extra, 500)
+    }
+    try {
+      return prefix + _truncate(JSON.stringify(detail), 500)
+    } catch {
+      // fall through
+    }
+  }
+
+  if (typeof data === "string" && data.trim()) return prefix + _truncate(data.trim(), 500)
+  if (err.message && err.message.trim()) return prefix + _truncate(err.message.trim(), 500)
+  return status ? `${status}: Request failed` : "Request failed"
+}
 
 client.interceptors.response.use(
   res => res,
@@ -14,6 +70,8 @@ client.interceptors.response.use(
     ) {
       window.location.href = "/login"
     }
+    const msg = formatApiError(err)
+    if (msg) err.message = msg
     return Promise.reject(err)
   },
 )
