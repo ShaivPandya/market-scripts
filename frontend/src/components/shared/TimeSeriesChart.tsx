@@ -25,6 +25,8 @@ interface TimeSeriesChartProps {
   yFormatter?: (v: number) => string
   /** Format tooltip values */
   tooltipFormatter?: (v: number) => string
+  /** Timeframe string — drives x-axis tick deduplication and formatting */
+  timeframe?: string
 }
 
 function shortDate(isoDate: string): string {
@@ -36,6 +38,54 @@ function shortDate(isoDate: string): string {
   }
 }
 
+function shortMonth(isoDate: string): string {
+  try {
+    return new Date(isoDate).toLocaleDateString("en-US", { month: "short" })
+  } catch {
+    return isoDate
+  }
+}
+
+function shortYear(isoDate: string): string {
+  try {
+    return String(new Date(isoDate).getFullYear())
+  } catch {
+    return isoDate
+  }
+}
+
+function getThisWeekTicks(data: DataPoint[]): string[] {
+  const seen = new Set<string>()
+  const ticks: string[] = []
+  for (const pt of data) {
+    const day = pt.date.substring(0, 10)
+    if (!seen.has(day)) {
+      seen.add(day)
+      ticks.push(pt.date)
+    }
+  }
+  return ticks
+}
+
+export function calcReturn(data: DataPoint[]): number | null {
+  const vals = data.filter(p => p.value != null).map(p => p.value as number)
+  if (vals.length < 2) return null
+  return (vals[vals.length - 1] - vals[0]) / vals[0] * 100
+}
+
+function getYearTicks(data: DataPoint[]): string[] {
+  const seen = new Set<string>()
+  const ticks: string[] = []
+  for (const pt of data) {
+    const year = pt.date.substring(0, 4)
+    if (!seen.has(year)) {
+      seen.add(year)
+      ticks.push(pt.date)
+    }
+  }
+  return ticks
+}
+
 export function TimeSeriesChart({
   data,
   height = 200,
@@ -44,6 +94,7 @@ export function TimeSeriesChart({
   zeroLine = false,
   yFormatter,
   tooltipFormatter,
+  timeframe,
 }: TimeSeriesChartProps) {
   if (!data || data.length === 0) {
     return (
@@ -64,10 +115,11 @@ export function TimeSeriesChart({
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis
             dataKey="date"
-            tickFormatter={shortDate}
+            tickFormatter={timeframe === "Monthly" ? shortYear : timeframe === "Weekly" ? shortMonth : shortDate}
+            ticks={timeframe === "This Week" ? getThisWeekTicks(data) : timeframe === "Monthly" ? getYearTicks(data) : undefined}
             tick={{ fontSize: 10 }}
             tickLine={false}
-            interval="preserveStartEnd"
+            interval={timeframe === "This Week" || timeframe === "Monthly" ? 0 : "preserveStartEnd"}
           />
           <YAxis
             domain={zeroLine ? [(dataMin: number) => Math.min(0, dataMin), "auto"] : ["auto", "auto"]}

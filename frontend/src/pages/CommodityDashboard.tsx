@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchCommodities } from "@/lib/api"
-import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesChart"
+import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 
@@ -39,10 +39,18 @@ export function CommodityDashboard() {
           {order.map(name => {
             const series = commodities[name]
             if (!series || series.length === 0) return null
+            const ret = calcReturn(series)
             return (
               <div key={name} className="rounded-lg border bg-white p-4 shadow-sm">
-                <p className="text-sm font-semibold text-gray-700 mb-2">{name}</p>
-                <TimeSeriesChart data={series} height={160} />
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-gray-700">{name}</p>
+                  {ret != null && (
+                    <span className={`text-xs font-medium ${ret >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      {ret >= 0 ? "+" : ""}{ret.toFixed(2)}%
+                    </span>
+                  )}
+                </div>
+                <TimeSeriesChart data={series} height={160} timeframe={timeframe} />
               </div>
             )
           })}
