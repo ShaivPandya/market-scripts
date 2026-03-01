@@ -171,7 +171,7 @@ export const runChart = (body: { ticker: string; lookback: string }) =>
   client.post("/chart", body).then(r => r.data)
 
 export const runPortfolioOptimizer = (body: { book: number; target_leverage: number }) =>
-  client.post("/portfolio-optimizer", body).then(r => r.data)
+  client.post("/portfolio-optimizer", body, { timeout: 180_000 }).then(r => r.data)
 
 export const runQualityScreen = (body: {
   universe: string

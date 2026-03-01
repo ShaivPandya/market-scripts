@@ -66,7 +66,7 @@ export function PortfolioOptimizer() {
 
         <button onClick={handleRun} disabled={mutation.isPending}
           className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-          {mutation.isPending ? "Optimizing (~20s)..." : "Optimize Portfolio"}
+          {mutation.isPending ? "Optimizing (can take 1-3 min)..." : "Optimize Portfolio"}
         </button>
       </div>
 

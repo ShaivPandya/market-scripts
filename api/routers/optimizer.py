@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from api.cache import short_cache, get_cached, set_cached
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -10,8 +11,17 @@ class OptimizerRequest(BaseModel):
     target_leverage: float = 2.0
 
 
+def _cache_key(req: OptimizerRequest) -> str:
+    return f"portfolio_optimizer:book={int(req.book)}:lev={float(req.target_leverage):.4f}"
+
+
 @router.post("/portfolio-optimizer")
 def run_optimizer(req: OptimizerRequest):
+    key = _cache_key(req)
+    cached = get_cached(short_cache, key)
+    if cached is not None:
+        return cached
+
     try:
         from portfolio_optimizer.portfolio_optimizer import get_data
         data = get_data(book=req.book, target_leverage=req.target_leverage)
@@ -38,4 +48,5 @@ def run_optimizer(req: OptimizerRequest):
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
+    set_cached(short_cache, key, result)
     return result

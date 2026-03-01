@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -40,6 +41,7 @@ from revenue_momentum_single import fetch_revenue_metrics, RevenueMetrics
 # -------------------------
 
 MIN_DATA_POINTS = 83  # 63 + 20 days minimum for momentum calculation
+MAX_BATCH_WORKERS = 6
 
 
 def safe_div(a: float, b: float) -> float:
@@ -187,19 +189,30 @@ def fetch_quality_batch(
         DataFrame with tickers as index and 15 columns for quality metrics
     """
     raws: Dict[str, RawMetrics] = {}
+    failed_tickers: List[str] = []
 
-    for i, ticker in enumerate(tickers, 1):
-        try:
-            rm = fetch_quality_raw_metrics(ticker, market, growth_years, beta_years)
-            raws[ticker] = rm
-        except Exception as e:
-            print(f"[WARN] {ticker}: Quality fetch failed ({e})", file=sys.stderr)
-
-        if i % 5 == 0:
-            print(f"  Quality: processed {i}/{len(tickers)}")
+    if tickers:
+        max_workers = min(MAX_BATCH_WORKERS, len(tickers))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(fetch_quality_raw_metrics, ticker, market, growth_years, beta_years): ticker
+                for ticker in tickers
+            }
+            for i, future in enumerate(as_completed(futures), 1):
+                ticker = futures[future]
+                try:
+                    raws[ticker] = future.result()
+                except Exception as e:
+                    failed_tickers.append(ticker)
+                    print(f"[WARN] {ticker}: Quality fetch failed ({e})", file=sys.stderr)
+                if i % 5 == 0 or i == len(tickers):
+                    print(f"  Quality: processed {i}/{len(tickers)}")
 
     if not raws:
         return pd.DataFrame()
+
+    if failed_tickers:
+        print(f"[WARN] Quality failed for: {', '.join(sorted(failed_tickers))}", file=sys.stderr)
 
     # Convert to DataFrame
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T
@@ -222,19 +235,27 @@ def fetch_eps_momentum_batch(
             eps_yoy_change, eps_cagr, eps_growth_acceleration
     """
     raws: Dict[str, EPSMetrics] = {}
+    failed_tickers: List[str] = []
 
-    for i, ticker in enumerate(tickers, 1):
-        try:
-            rm = fetch_eps_metrics(ticker, growth_years)
-            raws[ticker] = rm
-        except Exception as e:
-            print(f"[WARN] {ticker}: EPS fetch failed ({e})", file=sys.stderr)
-
-        if i % 5 == 0:
-            print(f"  EPS: processed {i}/{len(tickers)}")
+    if tickers:
+        max_workers = min(MAX_BATCH_WORKERS, len(tickers))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(fetch_eps_metrics, ticker, growth_years): ticker for ticker in tickers}
+            for i, future in enumerate(as_completed(futures), 1):
+                ticker = futures[future]
+                try:
+                    raws[ticker] = future.result()
+                except Exception as e:
+                    failed_tickers.append(ticker)
+                    print(f"[WARN] {ticker}: EPS fetch failed ({e})", file=sys.stderr)
+                if i % 5 == 0 or i == len(tickers):
+                    print(f"  EPS: processed {i}/{len(tickers)}")
 
     if not raws:
         return pd.DataFrame()
+
+    if failed_tickers:
+        print(f"[WARN] EPS failed for: {', '.join(sorted(failed_tickers))}", file=sys.stderr)
 
     # Convert to DataFrame
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T
@@ -257,19 +278,27 @@ def fetch_revenue_momentum_batch(
             revenue_yoy_change, revenue_cagr, revenue_growth_acceleration
     """
     raws: Dict[str, RevenueMetrics] = {}
+    failed_tickers: List[str] = []
 
-    for i, ticker in enumerate(tickers, 1):
-        try:
-            rm = fetch_revenue_metrics(ticker, growth_years)
-            raws[ticker] = rm
-        except Exception as e:
-            print(f"[WARN] {ticker}: Revenue fetch failed ({e})", file=sys.stderr)
-
-        if i % 5 == 0:
-            print(f"  Revenue: processed {i}/{len(tickers)}")
+    if tickers:
+        max_workers = min(MAX_BATCH_WORKERS, len(tickers))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(fetch_revenue_metrics, ticker, growth_years): ticker for ticker in tickers}
+            for i, future in enumerate(as_completed(futures), 1):
+                ticker = futures[future]
+                try:
+                    raws[ticker] = future.result()
+                except Exception as e:
+                    failed_tickers.append(ticker)
+                    print(f"[WARN] {ticker}: Revenue fetch failed ({e})", file=sys.stderr)
+                if i % 5 == 0 or i == len(tickers):
+                    print(f"  Revenue: processed {i}/{len(tickers)}")
 
     if not raws:
         return pd.DataFrame()
+
+    if failed_tickers:
+        print(f"[WARN] Revenue failed for: {', '.join(sorted(failed_tickers))}", file=sys.stderr)
 
     # Convert to DataFrame
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T

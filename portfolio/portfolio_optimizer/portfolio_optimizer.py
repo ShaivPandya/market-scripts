@@ -782,10 +782,8 @@ def optimize_portfolio(
         Sigma = ensure_psd(Sigma, eps=1e-10)
         L = np.linalg.cholesky(Sigma)
 
-        # Compute betas
-        yf_betas_spy = fetch_yfinance_betas(tickers)
-        computed_betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers)
-        betas_spy = yf_betas_spy.combine_first(computed_betas_spy).fillna(0.0)
+        # Compute betas from realized return history to avoid slow per-ticker metadata calls.
+        betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers).fillna(0.0)
         betas_iwm = compute_betas(rets, MARKET_TICKER_SHORT).reindex(tickers).fillna(0.0)
 
         # Generate composite signals
@@ -1154,10 +1152,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # SPY betas for long positions, IWM betas for short positions
     console.print("[cyan]Computing betas vs SPY (longs) and IWM (shorts)...[/cyan]")
 
-    # SPY betas: try yfinance first, then compute missing ones manually
-    yf_betas_spy = fetch_yfinance_betas(tickers)
-    computed_betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers)
-    betas_spy = yf_betas_spy.combine_first(computed_betas_spy).fillna(0.0)
+    # Compute betas from realized return history to avoid slow per-ticker metadata calls.
+    betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers).fillna(0.0)
 
     # IWM betas: compute manually (yfinance doesn't provide beta vs Russell 2000)
     betas_iwm = compute_betas(rets, MARKET_TICKER_SHORT).reindex(tickers).fillna(0.0)
