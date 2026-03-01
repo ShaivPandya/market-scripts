@@ -54,12 +54,11 @@ const NAV_SECTIONS: NavSection[] = [
 ]
 
 export function Sidebar() {
-  const { logout } = useAuth()
+  const { logout, mode } = useAuth()
   const navigate = useNavigate()
-  const isCloudflareAuth = (import.meta.env.VITE_AUTH_MODE ?? "").toLowerCase() === "cloudflare"
 
   async function handleLogout() {
-    if (isCloudflareAuth) {
+    if (mode === "cloudflare") {
       await logout()
       return
     }
