@@ -29,6 +29,9 @@ export const authApi = {
 export const fetchPortfolio = (timeframe: string) =>
   client.get(`/portfolio?timeframe=${encodeURIComponent(timeframe)}`).then(r => r.data)
 
+export const fetchPortfolioAllTimeframes = () =>
+  client.get("/portfolio?all_timeframes=true").then(r => r.data)
+
 export const fetchMomentum = () =>
   client.get("/momentum").then(r => r.data)
 
