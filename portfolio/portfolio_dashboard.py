@@ -9,9 +9,6 @@ or prints summary tables in the terminal.
 
 Terminal:
   python portfolio/portfolio_dashboard.py
-
-GUI:
-  Accessed via sidebar in gui/app.py
 """
 
 import warnings
