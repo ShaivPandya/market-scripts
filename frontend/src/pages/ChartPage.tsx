@@ -1,12 +1,31 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { runChart } from "@/lib/api"
-import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesChart"
+import { TimeSeriesChart, type SeriesDef } from "@/components/shared/TimeSeriesChart"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { colorPositiveNegative } from "@/lib/colors"
 
 const LOOKBACKS = ["3M", "1Y", "2Y", "5Y"] as const
+
+const MA_COLUMNS = ["100D SMA", "150D SMA", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"]
+const ROC_COLUMNS = ["1M ROC", "3M ROC", "12M ROC"]
+
+const PRICE_SERIES: SeriesDef[] = [
+  { key: "Close",    color: "#1f77b4", strokeWidth: 2,   opacity: 1    },
+  { key: "100D SMA", color: "#ff7f0e", strokeWidth: 1,   opacity: 0.75 },
+  { key: "150D SMA", color: "#2ca02c", strokeWidth: 1,   opacity: 0.75 },
+  { key: "200D SMA", color: "#d62728", strokeWidth: 1,   opacity: 0.75 },
+  { key: "40W SMA",  color: "#9467bd", strokeWidth: 1,   opacity: 0.75 },
+  { key: "200W SMA", color: "#8c564b", strokeWidth: 1,   opacity: 0.75 },
+  { key: "10M SMA",  color: "#e377c2", strokeWidth: 1,   opacity: 0.75 },
+  { key: "20M SMA",  color: "#7f7f7f", strokeWidth: 1,   opacity: 0.75 },
+]
+
+const ROC_SERIES: SeriesDef[] = [
+  { key: "1M ROC",  color: "#1f77b4" },
+  { key: "3M ROC",  color: "#ff7f0e" },
+  { key: "12M ROC", color: "#2ca02c" },
+]
 
 export function ChartPage() {
   const [ticker, setTicker] = useState("SPY")
@@ -14,31 +33,55 @@ export function ChartPage() {
 
   const mutation = useMutation({ mutationFn: runChart })
 
+  const hasSubmitted = useRef(false)
+  const tickerRef = useRef(ticker)
+  useEffect(() => { tickerRef.current = ticker }, [ticker])
+
+  useEffect(() => {
+    if (hasSubmitted.current) {
+      mutation.mutate({ ticker: tickerRef.current.trim().toUpperCase(), lookback })
+    }
+  }, [lookback]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    hasSubmitted.current = true
     mutation.mutate({ ticker: ticker.trim().toUpperCase(), lookback })
   }
 
   const data = mutation.data
 
-  // Expect price_data as [{Date, Close, ...}] or [{date, value}]
-  const priceData: DataPoint[] = (data?.price_data ?? []).map((r: Record<string, unknown>) => ({
-    date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
-    value: Number(r["Close"] ?? r["value"] ?? 0),
-  })).filter((d: DataPoint) => d.date && d.value != null && !isNaN(d.value as number))
+  const priceMultiData: Record<string, unknown>[] = (data?.price_data ?? []).map((r: Record<string, unknown>) => {
+    const pt: Record<string, unknown> = {
+      date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+      Close: r["Close"] != null ? Number(r["Close"]) : null,
+    }
+    for (const col of MA_COLUMNS) {
+      const v = r[col]
+      pt[col] = v != null && v !== "" ? Number(v) : null
+    }
+    return pt
+  }).filter((d: Record<string, unknown>) => d.date)
 
-  const rocData: DataPoint[] = (data?.roc_data ?? []).map((r: Record<string, unknown>) => ({
-    date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
-    value: Number(r["ROC"] ?? r["roc"] ?? r["value"] ?? 0),
-  })).filter((d: DataPoint) => d.date && d.value != null && !isNaN(d.value as number))
+  const rocMultiData: Record<string, unknown>[] = (data?.roc_data ?? []).map((r: Record<string, unknown>) => {
+    const pt: Record<string, unknown> = {
+      date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+    }
+    for (const col of ROC_COLUMNS) {
+      const v = r[col]
+      pt[col] = v != null && v !== "" ? Number(v) : null
+    }
+    return pt
+  }).filter((d: Record<string, unknown>) => d.date)
 
   const summaryRows: Record<string, unknown>[] = Array.isArray(data?.summary) ? data.summary : []
   const summaryCols: ColumnDef[] = summaryRows.length > 0
     ? Object.keys(summaryRows[0]).map(k => ({
         key: k,
         header: k,
-        colorFn: k.toLowerCase().includes("return") || k.toLowerCase().includes("pct")
-          ? colorPositiveNegative : undefined,
+        colorFn: k.toLowerCase().includes("bias")
+          ? (v: unknown) => (String(v).toLowerCase() === "bullish" ? "green" : "red")
+          : undefined,
       }))
     : []
 
@@ -86,16 +129,16 @@ export function ChartPage() {
 
       {data && !mutation.isPending && (
         <div className="space-y-6">
-          {priceData.length > 0 && (
+          {priceMultiData.length > 0 && (
             <div>
               <h2 className="text-base font-semibold mb-2">{ticker} — Price</h2>
-              <TimeSeriesChart data={priceData} height={280} />
+              <TimeSeriesChart multiData={priceMultiData} series={PRICE_SERIES} height={280} />
             </div>
           )}
-          {rocData.length > 0 && (
+          {rocMultiData.length > 0 && (
             <div>
               <h2 className="text-base font-semibold mb-2">Rate of Change</h2>
-              <TimeSeriesChart data={rocData} height={180} zeroLine />
+              <TimeSeriesChart multiData={rocMultiData} series={ROC_SERIES} height={220} zeroLine />
             </div>
           )}
           {summaryRows.length > 0 && (

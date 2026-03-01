@@ -7,6 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  Legend,
 } from "recharts"
 
 export interface DataPoint {
@@ -14,8 +15,16 @@ export interface DataPoint {
   value: number | null
 }
 
+export interface SeriesDef {
+  key: string
+  color?: string
+  strokeWidth?: number
+  /** Maps to strokeOpacity on the Line element */
+  opacity?: number
+}
+
 interface TimeSeriesChartProps {
-  data: DataPoint[]
+  data?: DataPoint[]
   height?: number
   color?: string
   label?: string
@@ -27,6 +36,10 @@ interface TimeSeriesChartProps {
   tooltipFormatter?: (v: number) => string
   /** Timeframe string — drives x-axis tick deduplication and formatting */
   timeframe?: string
+  /** For multi-series charts: rows with 'date' + one key per series */
+  multiData?: Record<string, unknown>[]
+  /** Series definitions for multi-series mode */
+  series?: SeriesDef[]
 }
 
 function shortDate(isoDate: string): string {
@@ -87,7 +100,7 @@ function getYearTicks(data: DataPoint[]): string[] {
 }
 
 export function TimeSeriesChart({
-  data,
+  data = [],
   height = 200,
   color = "#1f77b4",
   label,
@@ -95,8 +108,13 @@ export function TimeSeriesChart({
   yFormatter,
   tooltipFormatter,
   timeframe,
+  multiData,
+  series,
 }: TimeSeriesChartProps) {
-  if (!data || data.length === 0) {
+  const isMulti = multiData != null && series != null
+  const chartData = isMulti ? multiData : data
+
+  if (!chartData || chartData.length === 0) {
     return (
       <div
         style={{ height }}
@@ -111,7 +129,7 @@ export function TimeSeriesChart({
     <div>
       {label && <p className="text-xs text-gray-500 mb-1 font-medium">{label}</p>}
       <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+        <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis
             dataKey="date"
@@ -137,14 +155,31 @@ export function TimeSeriesChart({
             }}
           />
           {zeroLine && <ReferenceLine y={0} stroke="#ccc" strokeDasharray="4 2" />}
-          <Line
-            type="monotone"
-            dataKey="value"
-            stroke={color}
-            dot={false}
-            strokeWidth={1.8}
-            connectNulls={false}
-          />
+          {isMulti
+            ? series!.map((s) => (
+                <Line
+                  key={s.key}
+                  type="monotone"
+                  dataKey={s.key}
+                  stroke={s.color ?? color}
+                  dot={false}
+                  strokeWidth={s.strokeWidth ?? 1.5}
+                  strokeOpacity={s.opacity ?? 1}
+                  connectNulls={false}
+                />
+              ))
+            : (
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke={color}
+                  dot={false}
+                  strokeWidth={1.8}
+                  connectNulls={false}
+                />
+              )
+          }
+          {isMulti && <Legend wrapperStyle={{ fontSize: 11 }} />}
         </LineChart>
       </ResponsiveContainer>
     </div>
