@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useMemo } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { runChart } from "@/lib/api"
 import { TimeSeriesChart, type SeriesDef } from "@/components/shared/TimeSeriesChart"
@@ -27,52 +27,68 @@ const ROC_SERIES: SeriesDef[] = [
   { key: "12M ROC", color: "#2ca02c" },
 ]
 
+function lookbackCutoff(lookback: string): Date {
+  const now = new Date()
+  switch (lookback) {
+    case "3M": return new Date(now.getFullYear(), now.getMonth() - 3, now.getDate())
+    case "1Y": return new Date(now.getFullYear() - 1, now.getMonth(), now.getDate())
+    case "2Y": return new Date(now.getFullYear() - 2, now.getMonth(), now.getDate())
+    default:   return new Date(0)
+  }
+}
+
 export function ChartPage() {
   const [ticker, setTicker] = useState("SPY")
   const [lookback, setLookback] = useState<string>("2Y")
 
   const mutation = useMutation({ mutationFn: runChart })
 
-  const hasSubmitted = useRef(false)
-  const tickerRef = useRef(ticker)
-  useEffect(() => { tickerRef.current = ticker }, [ticker])
-
-  useEffect(() => {
-    if (hasSubmitted.current) {
-      mutation.mutate({ ticker: tickerRef.current.trim().toUpperCase(), lookback })
-    }
-  }, [lookback]) // eslint-disable-line react-hooks/exhaustive-deps
-
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    hasSubmitted.current = true
-    mutation.mutate({ ticker: ticker.trim().toUpperCase(), lookback })
+    // Always fetch the full 5Y dataset; timeframe filtering is done client-side
+    mutation.mutate({ ticker: ticker.trim().toUpperCase(), lookback: "5Y" })
   }
 
   const data = mutation.data
 
-  const priceMultiData: Record<string, unknown>[] = (data?.price_data ?? []).map((r: Record<string, unknown>) => {
-    const pt: Record<string, unknown> = {
-      date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
-      Close: r["Close"] != null ? Number(r["Close"]) : null,
-    }
-    for (const col of MA_COLUMNS) {
-      const v = r[col]
-      pt[col] = v != null && v !== "" ? Number(v) : null
-    }
-    return pt
-  }).filter((d: Record<string, unknown>) => d.date)
+  // Parse the full 5Y datasets once when data arrives
+  const allPriceData = useMemo<Record<string, unknown>[]>(() => (
+    (data?.price_data ?? []).map((r: Record<string, unknown>) => {
+      const pt: Record<string, unknown> = {
+        date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+        Close: r["Close"] != null ? Number(r["Close"]) : null,
+      }
+      for (const col of MA_COLUMNS) {
+        const v = r[col]
+        pt[col] = v != null && v !== "" ? Number(v) : null
+      }
+      return pt
+    }).filter((d: Record<string, unknown>) => d.date)
+  ), [data])
 
-  const rocMultiData: Record<string, unknown>[] = (data?.roc_data ?? []).map((r: Record<string, unknown>) => {
-    const pt: Record<string, unknown> = {
-      date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
-    }
-    for (const col of ROC_COLUMNS) {
-      const v = r[col]
-      pt[col] = v != null && v !== "" ? Number(v) : null
-    }
-    return pt
-  }).filter((d: Record<string, unknown>) => d.date)
+  const allRocData = useMemo<Record<string, unknown>[]>(() => (
+    (data?.roc_data ?? []).map((r: Record<string, unknown>) => {
+      const pt: Record<string, unknown> = {
+        date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+      }
+      for (const col of ROC_COLUMNS) {
+        const v = r[col]
+        pt[col] = v != null && v !== "" ? Number(v) : null
+      }
+      return pt
+    }).filter((d: Record<string, unknown>) => d.date)
+  ), [data])
+
+  // Slice to the selected lookback client-side — instant, no re-fetch
+  const cutoff = lookbackCutoff(lookback)
+  const priceMultiData = useMemo(
+    () => allPriceData.filter(d => new Date(String(d.date)) >= cutoff),
+    [allPriceData, lookback] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const rocMultiData = useMemo(
+    () => allRocData.filter(d => new Date(String(d.date)) >= cutoff),
+    [allRocData, lookback] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   const summaryRows: Record<string, unknown>[] = Array.isArray(data?.summary) ? data.summary : []
   const summaryCols: ColumnDef[] = summaryRows.length > 0
