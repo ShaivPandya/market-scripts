@@ -1,36 +1,98 @@
-import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { runPortfolioOptimizerAsync } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { colorPositiveNegative } from "@/lib/colors"
 
+type OptimizerResponse = Record<string, unknown>
+
+const OPTIMIZER_STATE_KEY = ["portfolio-optimizer", "state"] as const
+
+const numberFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+})
+
+function isPercentColumn(key: string) {
+  const normalized = key.toLowerCase()
+  return normalized.includes("weight") || normalized.includes("pct") || normalized.includes("percent")
+}
+
+function isCurrencyColumn(key: string) {
+  const normalized = key.toLowerCase()
+  return (
+    normalized.includes("usd") ||
+    normalized.includes("dollar") ||
+    normalized.includes("notional") ||
+    normalized.includes("amount") ||
+    normalized.includes("value") ||
+    normalized.includes("book")
+  )
+}
+
+function formatPercent(value: number) {
+  const pct = Math.abs(value) <= 1 ? value * 100 : value
+  return `${pct >= 0 ? "+" : ""}${numberFormatter.format(pct)}%`
+}
+
+function toRows(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((row): row is Record<string, unknown> => row != null && typeof row === "object")
+}
+
 function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
   if (rows.length === 0) return []
   return Object.keys(rows[0]).map(k => ({
     key: k,
     header: k,
-    colorFn: k.toLowerCase().includes("weight") || k.toLowerCase().includes("pct")
+    colorFn: isPercentColumn(k)
       ? colorPositiveNegative : undefined,
-    format: (v: unknown) =>
-      typeof v === "number" ? `${v >= 0 ? "+" : ""}${v.toFixed(2)}` : String(v ?? "N/A"),
+    format: (v: unknown) => {
+      if (typeof v !== "number") return String(v ?? "N/A")
+      if (isPercentColumn(k)) return formatPercent(v)
+      if (isCurrencyColumn(k)) return currencyFormatter.format(v)
+      return `${v >= 0 ? "+" : ""}${numberFormatter.format(v)}`
+    },
   }))
 }
 
 export function PortfolioOptimizer() {
-  const [bookSize, setBookSize] = useState(100_000)
-  const [targetLeverage, setTargetLeverage] = useState(2.0)
+  const queryClient = useQueryClient()
+  const cachedState = queryClient.getQueryData<{
+    bookSize: number
+    targetLeverage: number
+    result: OptimizerResponse | null
+  }>(OPTIMIZER_STATE_KEY)
 
-  const mutation = useMutation({ mutationFn: runPortfolioOptimizerAsync })
+  const [bookSize, setBookSize] = useState(cachedState?.bookSize ?? 100_000)
+  const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
+  const [cachedResult, setCachedResult] = useState<OptimizerResponse | null>(cachedState?.result ?? null)
+
+  const mutation = useMutation({
+    mutationFn: runPortfolioOptimizerAsync,
+    onSuccess: result => setCachedResult((result as OptimizerResponse) ?? null),
+  })
+
+  useEffect(() => {
+    queryClient.setQueryData(OPTIMIZER_STATE_KEY, { bookSize, targetLeverage, result: cachedResult })
+  }, [bookSize, targetLeverage, cachedResult, queryClient])
 
   function handleRun() {
     mutation.mutate({ book: bookSize, target_leverage: targetLeverage })
   }
 
-  const data = mutation.data
-  const weightsRows: Record<string, unknown>[] = data?.weights_df ?? []
-  const hedgesRows: Record<string, unknown>[] = data?.hedges_df ?? []
+  const data = (mutation.data as OptimizerResponse | undefined) ?? cachedResult
+  const weightsRows = toRows(data?.weights_df)
+  const hedgesRows = toRows(data?.hedges_df)
 
   return (
     <div>
@@ -40,7 +102,7 @@ export function PortfolioOptimizer() {
       <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6 space-y-4 max-w-md">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Book Size ($): <strong>{bookSize.toLocaleString()}</strong>
+            Book Size ($): <strong>{currencyFormatter.format(bookSize)}</strong>
           </label>
           <input type="range" min={10_000} max={10_000_000} step={10_000}
             value={bookSize} onChange={e => setBookSize(Number(e.target.value))}
