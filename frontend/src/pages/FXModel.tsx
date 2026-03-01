@@ -79,6 +79,11 @@ export function FXModel() {
       </div>
       <p className="text-sm text-gray-500 mb-4">
         Multi-factor FX forecasting using FRED, IMF, BIS data
+        {data?.latest_date && data?.feature_asof_date && (
+          <span className="block mt-1 text-xs text-gray-400">
+            Spot as of {String(data.latest_date)}; features as of {String(data.feature_asof_date)} (lag {String(data.feature_lag_months ?? 1)}m)
+          </span>
+        )}
       </p>
 
       <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6 space-y-4 max-w-md">
@@ -222,7 +227,7 @@ export function FXModel() {
                       )}
 
                       <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
-                        Contribution = Coefficient x Current Value (impact on log return forecast)
+                        Contribution = Coefficient x Feature Value (lagged; see as-of dates above)
                       </div>
                       {conclusion && (
                         <div className="px-4 py-3 border-t border-gray-100 bg-blue-50 text-sm text-blue-900">

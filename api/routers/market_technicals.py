@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from fastapi import APIRouter, HTTPException
 from api.cache import short_cache, get_cached, set_cached
 from api.serializers import serialize_response
@@ -61,7 +63,8 @@ def get_vix_term_structure():
         return cached
     try:
         from vix_term_structure import get_data
-        data = get_data(tail=252, signals_count=20)
+        start = (date.today() - timedelta(days=400)).isoformat()
+        data = get_data(tail=252, signals_count=20, start=start)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     result = serialize_response(data)

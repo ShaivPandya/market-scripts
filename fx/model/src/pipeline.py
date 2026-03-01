@@ -13,7 +13,7 @@ from .data_estat import fetch_estat_cpi, EStatError
 from .data_bis import fetch_bis_ws_eer_m, BisError
 from .data_eurostat import fetch_euro_area_current_account_pct_gdp
 from .features import build_monthly_panel, compute_features, implied_spot_reference_points
-from .models import fit_horizon_ols, predict_latest, bootstrap_forecast_distribution
+from .models import fit_horizon_ols, predict_from_row, bootstrap_forecast_distribution
 from .report import (
     save_csv,
     save_json,
@@ -198,23 +198,35 @@ def run_pipeline(
     results_by_h = {}
     latest_forecast = {}
 
+    FEATURE_LAG_MONTHS = 1
+
     df_clean = df.replace([np.inf, -np.inf], np.nan)
-    asof_df = df_clean.dropna(subset=["spot"] + feature_cols)
+
+    # Align inference with training: fit_horizon_ols uses X = features.shift(1),
+    # so for a forecast "as of" spot date t we must use feature snapshot t-1.
+    X_pred = df_clean[feature_cols].shift(FEATURE_LAG_MONTHS)
+    pred_panel = pd.concat([df_clean["spot"], X_pred], axis=1)
+
+    asof_df = pred_panel.dropna(subset=["spot"] + feature_cols)
     if asof_df.empty:
         raise ValueError(
-            f"No rows have a complete feature set for forecasting {pair}. "
-            f"Check inputs for missing/invalid values in: {feature_cols}"
+            f"No rows have a complete lagged feature set for forecasting {pair}. "
+            f"Check inputs for missing/invalid values in (lag={FEATURE_LAG_MONTHS}m): {feature_cols}"
         )
     asof_date = asof_df.index.max()
     spot_now = float(asof_df.loc[asof_date, "spot"])
     x_row = asof_df.loc[[asof_date], feature_cols]
-    rer_z_now = float(asof_df.loc[asof_date, "rer_z"])
+    rer_z_now = float(x_row["rer_z"].iloc[0])
+
+    idx = df_clean.index
+    asof_loc = int(idx.get_indexer([asof_date])[0])
+    feature_asof_date = idx[asof_loc - FEATURE_LAG_MONTHS] if asof_loc >= FEATURE_LAG_MONTHS else pd.NaT
 
     for h in horizons:
         log.info(f"Fitting OLS for {pair} horizon {h} months")
         res, _ = fit_horizon_ols(df_clean, horizon=h, feature_cols=feature_cols, target_col="logS")
 
-        point = predict_latest(df_clean, res, feature_cols)
+        point = predict_from_row(res, x_row)
         draws = bootstrap_forecast_distribution(res, x_row, draws=bootstrap_draws, seed=42)
         dist = summarize_distribution(draws)
 
@@ -286,6 +298,8 @@ def run_pipeline(
     out_json = {
         "pair": pair,
         "latest_date": str(asof_date.date()),
+        "feature_asof_date": (None if pd.isna(feature_asof_date) else str(pd.Timestamp(feature_asof_date).date())),
+        "feature_lag_months": int(FEATURE_LAG_MONTHS),
         "horizons_months": horizons,
         "feature_cols": feature_cols,
         "imf_ca_available": imf_ca_available,
@@ -296,6 +310,7 @@ def run_pipeline(
             "rer_definition": f"rer = log({pair}) + log(CPI_{config.base_ccy}) - log(CPI_{config.quote_ccy})",
             "reference_points": "implied spot if rer reverted to rolling median/p25/p75",
             "bootstrap_draws": bootstrap_draws,
+            "feature_lag_months": int(FEATURE_LAG_MONTHS),
         },
     }
     save_json(out_json, outdir / "forecast_latest.json")
@@ -306,6 +321,8 @@ def run_pipeline(
         "latest_forecast": latest_forecast,
         "models": results_by_h,
         "latest_date": str(asof_date.date()),
+        "feature_asof_date": (None if pd.isna(feature_asof_date) else str(pd.Timestamp(feature_asof_date).date())),
+        "feature_lag_months": int(FEATURE_LAG_MONTHS),
         "imf_ca_available": imf_ca_available,
         "ca_diff_available": ca_diff_available,
     }

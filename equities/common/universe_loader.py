@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -14,6 +15,8 @@ UNIVERSES_DIR = Path(__file__).parent.parent / "universes"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ETF_HOLDINGS_CACHE_DIR = _REPO_ROOT / "data_cache" / "etf_holdings"
 _ETF_HOLDINGS_CACHE_TTL_SECS = 24 * 60 * 60  # 24 hours
+_SP500_CACHE_PATH = _REPO_ROOT / "data_cache" / "universes" / "sp500.txt"
+_SP500_CACHE_TTL_SECS = 24 * 60 * 60  # 24 hours
 
 # SPDR Select Sector ETFs (State Street / SSGA)
 _SPDR_SECTOR_ETFS = {
@@ -120,6 +123,21 @@ def get_sp500_universe() -> List[str]:
     """Fetch S&P 500 tickers from Wikipedia."""
     import urllib.request
 
+    try:
+        if _SP500_CACHE_PATH.exists():
+            age = time.time() - _SP500_CACHE_PATH.stat().st_mtime
+            if age <= _SP500_CACHE_TTL_SECS:
+                tickers = [
+                    clean_ticker(line)
+                    for line in _SP500_CACHE_PATH.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+                tickers = [t for t in tickers if t]
+                if tickers:
+                    return sorted(set(tickers))
+    except Exception:
+        pass
+
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     headers = {"User-Agent": "Mozilla/5.0"}
     req = urllib.request.Request(url, headers=headers)
@@ -127,7 +145,15 @@ def get_sp500_universe() -> List[str]:
         html = resp.read()
 
     tables = pd.read_html(html)
-    return sorted({clean_ticker(x) for x in tables[0]["Symbol"].astype(str)})
+    tickers = sorted({clean_ticker(x) for x in tables[0]["Symbol"].astype(str)})
+
+    try:
+        _SP500_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SP500_CACHE_PATH.write_text("\n".join(tickers) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+    return tickers
 
 
 def _read_cached_etf_holdings(etf_ticker: str) -> Optional[List[str]]:
@@ -191,7 +217,56 @@ def _extract_tickers_from_table(df: pd.DataFrame) -> List[str]:
     raw = df.iloc[:, 0].astype(str).tolist()
     tickers = [clean_ticker(x) for x in raw]
     tickers = [t for t in tickers if t]
+    # If the first column looks like names (has lots of spaces), try to find a better candidate column.
+    if tickers and sum(1 for x in raw[:200] if isinstance(x, str) and " " in x.strip()) / max(1, len(raw[:200])) > 0.2:
+        best = _best_ticker_column(df)
+        if best is not None:
+            cand = df[best].astype(str).tolist()
+            tickers = [clean_ticker(x) for x in cand]
+            tickers = [t for t in tickers if t]
     return list(dict.fromkeys(tickers))
+
+
+_TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,15}$")
+
+
+def _ticker_score(values: List[str]) -> float:
+    if not values:
+        return 0.0
+    sample = values[:250]
+    ok = 0
+    total = 0
+    for v in sample:
+        s = str(v).strip().upper()
+        if not s:
+            continue
+        total += 1
+        # Reject obvious non-tickers quickly
+        if " " in s or s in {"SYMBOL", "TICKER", "NAME"} or s.endswith(":"):
+            continue
+        s = clean_ticker(s)
+        if _TICKER_RE.match(s):
+            ok += 1
+    if total == 0:
+        return 0.0
+    return ok / total
+
+
+def _best_ticker_column(df: pd.DataFrame) -> Optional[str]:
+    best_col = None
+    best_score = 0.0
+    for col in df.columns[:25]:
+        try:
+            values = df[col].astype(str).tolist()
+        except Exception:
+            continue
+        score = _ticker_score(values)
+        if score > best_score:
+            best_score = score
+            best_col = str(col)
+    if best_col is None or best_score < 0.5:
+        return None
+    return best_col
 
 
 def fetch_etf_holdings_ssga(etf_ticker: str) -> List[str]:

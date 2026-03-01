@@ -2816,6 +2816,8 @@ elif st.session_state.current_page == "💱 FX Model":
                     spot_now = latest_forecast[first_horizon].get("spot_now", 0)
                     rer_z = latest_forecast[first_horizon].get("valuation_rer_z", 0)
                     latest_date = results.get("latest_date", "?")
+                    feature_asof_date = results.get("feature_asof_date")
+                    feature_lag_months = results.get("feature_lag_months")
 
                     # Fetch live spot from yfinance
                     _YF_TICKERS = {
@@ -2848,6 +2850,11 @@ elif st.session_state.current_page == "💱 FX Model":
                         z_color = "inverse" if abs(rer_z) > 1.5 else "normal"
                         valuation = "Overvalued" if rer_z > 1.5 else "Undervalued" if rer_z < -1.5 else "Fair"
                         st.metric("RER Z-Score", f"{rer_z:+.2f}", delta=valuation, delta_color=z_color)
+
+                    if feature_asof_date and feature_lag_months is not None:
+                        st.caption(
+                            f"Spot as of {latest_date}; features as of {feature_asof_date} (lag {feature_lag_months}m)"
+                        )
 
                 st.divider()
 
@@ -2938,7 +2945,7 @@ elif st.session_state.current_page == "💱 FX Model":
                             </table>
                             ''', unsafe_allow_html=True)
 
-                            st.caption("Contribution = Coefficient x Current Value (impact on log return forecast)")
+                            st.caption("Contribution = Coefficient x Feature Value (impact on log return forecast)")
 
                         if conclusion:
                             st.info(conclusion)
@@ -3007,7 +3014,7 @@ elif st.session_state.current_page == "💱 FX Model":
                         params = model_data.get("params", {})
                         driver_expl = model_data.get("driver_explanation")
                         if params:
-                            st.write("**Regression Coefficients & Current Contributions**")
+                            st.write("**Regression Coefficients & Feature Contributions**")
 
                             # Build lookup from driver explanation
                             contrib_lookup = {}
@@ -3021,7 +3028,7 @@ elif st.session_state.current_page == "💱 FX Model":
                                     coef_rows.append({
                                         "Feature": "Intercept",
                                         "Coefficient": f"{value:+.4f}",
-                                        "Current Value": "—",
+                                        "Feature Value": "—",
                                         "Contribution": "—",
                                     })
                                 elif name in contrib_lookup:
@@ -3029,19 +3036,19 @@ elif st.session_state.current_page == "💱 FX Model":
                                     coef_rows.append({
                                         "Feature": d["label"],
                                         "Coefficient": f"{value:+.4f}",
-                                        "Current Value": f"{d['value']:+.4f}",
+                                        "Feature Value": f"{d['value']:+.4f}",
                                         "Contribution": f"{d['contribution']:+.5f}",
                                     })
                                 else:
                                     coef_rows.append({
                                         "Feature": name,
                                         "Coefficient": f"{value:+.4f}",
-                                        "Current Value": "—",
+                                        "Feature Value": "—",
                                         "Contribution": "—",
                                     })
                             coef_df = pd.DataFrame(coef_rows)
                             st.dataframe(coef_df, width="stretch", hide_index=True)
-                            st.caption("Contribution = Coefficient x Current Value")
+                            st.caption("Contribution = Coefficient x Feature Value")
 
                         # Distribution stats
                         dist_log = model_data.get("dist_log_return", {})

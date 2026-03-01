@@ -40,6 +40,20 @@ def fit_horizon_ols(df: pd.DataFrame, horizon: int, feature_cols: list, target_c
     res = sm.OLS(y_train, X_train).fit(cov_type="HAC", cov_kwds={"maxlags": max(3, horizon // 6)})
     return res, est
 
+def predict_from_row(res, x_row: pd.DataFrame) -> float:
+    """Predict using a single-row feature DataFrame.
+
+    Note: any feature shifting/lags should be applied by the caller before
+    passing `x_row`.
+    """
+    if int(x_row.shape[0]) != 1:
+        raise ModelDataError(f"x_row must contain exactly one row, got {int(x_row.shape[0])}.")
+    x_row = x_row.replace([np.inf, -np.inf], np.nan)
+    if x_row.isna().any().any():
+        raise ModelDataError("x_row contains missing values; cannot predict.")
+    Xp = sm.add_constant(x_row, has_constant="add")
+    return float(res.predict(Xp).iloc[0])
+
 def predict_latest(df: pd.DataFrame, res, feature_cols: list) -> float:
     d = df.replace([np.inf, -np.inf], np.nan)
     x_all = d[feature_cols].dropna()

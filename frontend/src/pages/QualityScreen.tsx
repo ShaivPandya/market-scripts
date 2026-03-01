@@ -108,6 +108,11 @@ export function QualityScreen() {
             <span>Scored: <strong>{mutation.data.scored_count ?? rows.length}</strong></span>
             <span>Benchmark: <strong>{mutation.data.benchmark_name ?? benchmark}</strong></span>
           </div>
+          {Array.isArray(mutation.data.failed) && mutation.data.failed.length > 0 && (
+            <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <strong>Some tickers failed:</strong> {mutation.data.failed.join(", ")}
+            </div>
+          )}
           {rows.length > 0 ? (
             <DataTable columns={columns} rows={rows} />
           ) : (
