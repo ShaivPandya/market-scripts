@@ -114,7 +114,7 @@ def login(body: LoginRequest, response: Response):
         value=token,
         httponly=True,
         samesite="strict",
-        secure=True,
+        secure=bool(os.environ.get("RENDER")),  # True on Render (HTTPS), False locally (HTTP)
         path="/",
     )
     return {"detail": "ok"}
