@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:all": "concurrently -n api,ui -c blue,green \"cd .. && uvicorn api.main:app --reload --port 8000\" \"vite\"",

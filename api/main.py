@@ -6,6 +6,7 @@ Run from project root:
 """
 
 import sys
+import os
 from pathlib import Path
 
 # Replicate sys.path setup from gui/app.py lines 19-42
@@ -43,8 +44,9 @@ for _p in reversed(_PATHS):
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Import routers AFTER sys.path is configured
 from api.routers import auth as auth_router
@@ -77,6 +79,23 @@ app = FastAPI(
     description="REST API wrapping the market analysis data modules",
     version="1.0.0",
 )
+
+_API_PROXY_SECRET = (os.environ.get("API_PROXY_SECRET") or "").strip() or None
+
+
+@app.middleware("http")
+async def _require_proxy_secret(request: Request, call_next):
+    """
+    When API_PROXY_SECRET is set (production), require every /api/* request except
+    /api/health to include X-Api-Proxy-Secret (injected by the Cloudflare Pages proxy).
+    """
+    if _API_PROXY_SECRET and request.url.path.startswith("/api/"):
+        if request.url.path != "/api/health":
+            provided = request.headers.get("x-api-proxy-secret")
+            if provided != _API_PROXY_SECRET:
+                return JSONResponse({"detail": "Forbidden"}, status_code=403)
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
