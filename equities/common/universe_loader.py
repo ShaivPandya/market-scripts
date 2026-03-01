@@ -309,10 +309,19 @@ def fetch_etf_holdings_ssga(etf_ticker: str) -> List[str]:
             else:
                 # Excel exports sometimes contain a cover sheet + a holdings sheet;
                 # read the first sheet that yields a plausible ticker column.
+                # SSGA files have metadata rows before the real header row, so
+                # we scan for the row containing "ticker" and use it as the header.
                 tickers = []
                 xls = pd.ExcelFile(io.BytesIO(content))
                 for sheet in xls.sheet_names[:5]:
-                    df = xls.parse(sheet)
+                    df_raw = xls.parse(sheet, header=None)
+                    header_row = None
+                    for idx, row in df_raw.iterrows():
+                        vals = [str(v).strip().lower() for v in row.values if pd.notna(v)]
+                        if "ticker" in vals:
+                            header_row = idx
+                            break
+                    df = xls.parse(sheet, header=header_row) if header_row is not None else xls.parse(sheet)
                     tickers = _extract_tickers_from_table(df)
                     if len(tickers) >= 20:
                         break

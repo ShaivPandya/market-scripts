@@ -1,10 +1,13 @@
 import { useState } from "react"
+import { useMutation } from "@tanstack/react-query"
+import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchMarketBreadth,
   fetchTop50Breadth,
   fetchPriceVolumeSignals,
   fetchVixTermStructure,
+  analyzeMarketTechnicals,
 } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
@@ -223,13 +226,80 @@ function VIXTab() {
 
 export function MarketTechnicals() {
   const [tab, setTab] = useState<Tab>("VIX Term Structure")
+  const [isOpen, setIsOpen] = useState(false)
+
+  // Fetch all data at page level for AI Overview (React Query deduplicates with tab-level queries)
+  const breadth = useApiQuery(["market-breadth"], fetchMarketBreadth)
+  const top50 = useApiQuery(["top50-breadth"], fetchTop50Breadth)
+  const vix = useApiQuery(["vix-term-structure"], fetchVixTermStructure)
+  const pv = useApiQuery(["price-volume-signals"], fetchPriceVolumeSignals)
+
+  const mutation = useMutation({ mutationFn: analyzeMarketTechnicals })
+  const showPanel = mutation.data || mutation.isPending || mutation.isError
 
   return (
     <div>
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Market Technicals</h1>
-        <RefreshButton />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              mutation.mutate({
+                market_breadth: breadth.data ?? {},
+                top50_breadth: top50.data ?? {},
+                vix_term_structure: vix.data ?? {},
+                price_volume_signals: pv.data ?? {},
+              })
+              setIsOpen(true)
+            }}
+            disabled={mutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles size={14} />
+            AI Overview
+          </button>
+          <RefreshButton />
+        </div>
       </div>
+
+      {showPanel && (
+        <div className="mb-6 rounded-lg border border-indigo-200 bg-white overflow-hidden">
+          <button
+            onClick={() => setIsOpen(o => !o)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-indigo-600" />
+              <span className="text-sm font-semibold text-indigo-800">AI Overview</span>
+            </div>
+            <ChevronDown
+              size={16}
+              className={`text-indigo-600 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+
+          {isOpen && (
+            <div className="px-4 py-4">
+              {mutation.isPending && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  Analyzing market technicals...
+                </div>
+              )}
+              {mutation.isError && (
+                <p className="text-sm text-red-600">
+                  {String(mutation.error) || "Analysis failed. Please try again."}
+                </p>
+              )}
+              {mutation.data && (
+                <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+                  {mutation.data.analysis}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-0 border-b border-gray-200 mb-6 overflow-x-auto">
         {TABS.map(t => (
