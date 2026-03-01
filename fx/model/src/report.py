@@ -3,6 +3,11 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import matplotlib
+
+# FastAPI runs sync handlers in a threadpool; enforce a non-GUI backend to
+# avoid macOS crashes from GUI backend initialization in worker threads.
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 

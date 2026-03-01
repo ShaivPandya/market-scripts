@@ -2,7 +2,7 @@
 """
 Index Dashboard
 
-Fetches closing-price time series for 5 major equity indices from Yahoo Finance.
+Fetches closing-price time series for 6 major equity indices from Yahoo Finance.
 Displays line-chart-ready series with Daily/Weekly/Monthly toggles (GUI),
 or prints summary tables in the terminal.
 
@@ -24,6 +24,7 @@ INDICES = {
     "NASDAQ": "^IXIC",
     "Russell 2000": "^RUT",
     "STOXX 600": "^STOXX",
+    "DAX": "^GDAXI",
     "Nikkei 225": "^N225",
 }
 

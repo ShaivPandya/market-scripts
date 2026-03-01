@@ -2426,7 +2426,8 @@ elif st.session_state.current_page == "📉 FX Dashboard":
                             )
                             if fx_timeframe == "This Week":
                                 chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
-                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                                _day_ticks = chart_df.groupby(pd.to_datetime(chart_df["date"]).dt.date)["date_label"].first().tolist()
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(values=_day_ticks, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]", labelAngle=0))
                             else:
                                 x_enc = alt.X("date:T", title=None)
                             chart = (
@@ -2518,7 +2519,8 @@ elif st.session_state.current_page == "🛢️ Commodity Dashboard":
                             )
                             if commodities_timeframe == "This Week":
                                 chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
-                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                                _day_ticks = chart_df.groupby(pd.to_datetime(chart_df["date"]).dt.date)["date_label"].first().tolist()
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(values=_day_ticks, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]", labelAngle=0))
                             else:
                                 x_enc = alt.X("date:T", title=None)
                             chart = (
@@ -2608,7 +2610,8 @@ elif st.session_state.current_page == "📊 Index Dashboard":
                             )
                             if index_timeframe == "This Week":
                                 chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
-                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                                _day_ticks = chart_df.groupby(pd.to_datetime(chart_df["date"]).dt.date)["date_label"].first().tolist()
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(values=_day_ticks, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]", labelAngle=0))
                             else:
                                 x_enc = alt.X("date:T", title=None)
                             chart = (
@@ -2707,7 +2710,8 @@ elif st.session_state.current_page == "💼 Portfolio Dashboard":
                             )
                             if portfolio_timeframe == "This Week":
                                 chart_df["date_label"] = pd.to_datetime(chart_df["date"]).dt.strftime("%-d %b %H:%M")
-                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(labelOverlap="greedy", labelAngle=-45, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]"))
+                                _day_ticks = chart_df.groupby(pd.to_datetime(chart_df["date"]).dt.date)["date_label"].first().tolist()
+                                x_enc = alt.X("date_label:O", title=None, sort=None, axis=alt.Axis(values=_day_ticks, labelExpr="split(datum.label, ' ')[0] + ' ' + split(datum.label, ' ')[1]", labelAngle=0))
                             else:
                                 x_enc = alt.X("date:T", title=None)
                             chart = (
