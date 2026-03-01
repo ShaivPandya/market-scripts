@@ -48,19 +48,20 @@ export function EconomicGrowth() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Economic Growth Dashboard</h1>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Economic Growth Dashboard</h1>
+          {data.timestamp && (
+            <p className="text-sm text-gray-400 mt-0.5">
+              As of {new Date(data.timestamp).toLocaleString()}
+            </p>
+          )}
+        </div>
         <RefreshButton queryKeys={[["economic-growth"]]} />
       </div>
 
-      {data.timestamp && (
-        <p className="text-xs text-gray-400 mb-4">
-          Data as of: {new Date(data.timestamp).toLocaleString()}
-        </p>
-      )}
-
       <section className="mb-8">
-        <h2 className="text-lg font-semibold mb-3">Commodities</h2>
+        <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Commodities</h2>
         <DataTable
           columns={[nameCol("Name"), ...periodCols(periods, colorPositiveNegative)]}
           rows={commodityRows}
@@ -68,18 +69,18 @@ export function EconomicGrowth() {
       </section>
 
       <section className="mb-8">
-        <h2 className="text-lg font-semibold mb-3">Equities (vs Benchmark)</h2>
+        <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Equities vs Benchmark</h2>
         <DataTable
           columns={[nameCol("Name"), ...periodCols(periods, colorReturnVsBenchmark)]}
           rows={equityRows}
         />
-        <p className="text-xs text-gray-400 mt-1">
-          (+) = outperforming benchmark, (-) = underperforming benchmark
+        <p className="text-xs text-gray-400 mt-1.5">
+          (+) outperforming benchmark · (−) underperforming benchmark
         </p>
       </section>
 
       <section className="mb-8">
-        <h2 className="text-lg font-semibold mb-3">Currencies</h2>
+        <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Currencies</h2>
         <DataTable
           columns={[nameCol("Pair"), ...periodCols(currencyPeriods, colorPositiveNegative)]}
           rows={currencyRows}
