@@ -1,81 +1,148 @@
-import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { runPortfolioOptimizerAsync } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { SliderInput, ActionButton, ControlPanel } from "@/components/shared/FormControls"
 import { colorPositiveNegative } from "@/lib/colors"
+
+type OptimizerResponse = Record<string, unknown>
+
+const OPTIMIZER_STATE_KEY = ["portfolio-optimizer", "state"] as const
+
+const numberFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+})
+
+function isPercentColumn(key: string) {
+  const normalized = key.toLowerCase()
+  return normalized.includes("weight") || normalized.includes("pct") || normalized.includes("percent")
+}
+
+function isCurrencyColumn(key: string) {
+  const normalized = key.toLowerCase()
+  return (
+    normalized.includes("usd") ||
+    normalized.includes("dollar") ||
+    normalized.includes("notional") ||
+    normalized.includes("amount") ||
+    normalized.includes("value") ||
+    normalized.includes("book")
+  )
+}
+
+function formatPercent(value: number) {
+  const pct = Math.abs(value) <= 1 ? value * 100 : value
+  return `${pct >= 0 ? "+" : ""}${numberFormatter.format(pct)}%`
+}
+
+function toRows(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((row): row is Record<string, unknown> => row != null && typeof row === "object")
+}
 
 function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
   if (rows.length === 0) return []
   return Object.keys(rows[0]).map(k => ({
     key: k,
     header: k,
-    colorFn: k.toLowerCase().includes("weight") || k.toLowerCase().includes("pct")
+    colorFn: isPercentColumn(k)
       ? colorPositiveNegative : undefined,
-    format: (v: unknown) =>
-      typeof v === "number" ? `${v >= 0 ? "+" : ""}${v.toFixed(2)}` : String(v ?? "N/A"),
+    format: (v: unknown) => {
+      if (typeof v !== "number") return String(v ?? "N/A")
+      if (isPercentColumn(k)) return formatPercent(v)
+      if (isCurrencyColumn(k)) return currencyFormatter.format(v)
+      return `${v >= 0 ? "+" : ""}${numberFormatter.format(v)}`
+    },
   }))
 }
 
 export function PortfolioOptimizer() {
-  const [bookSize, setBookSize] = useState(100_000)
-  const [targetLeverage, setTargetLeverage] = useState(2.0)
+  const queryClient = useQueryClient()
+  const cachedState = queryClient.getQueryData<{
+    bookSize: number
+    targetLeverage: number
+    result: OptimizerResponse | null
+  }>(OPTIMIZER_STATE_KEY)
 
-  const mutation = useMutation({ mutationFn: runPortfolioOptimizerAsync })
+  const [bookSize, setBookSize] = useState(cachedState?.bookSize ?? 100_000)
+  const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
+  const [cachedResult, setCachedResult] = useState<OptimizerResponse | null>(cachedState?.result ?? null)
+
+  const mutation = useMutation({
+    mutationFn: runPortfolioOptimizerAsync,
+    onSuccess: result => setCachedResult((result as OptimizerResponse) ?? null),
+  })
+
+  useEffect(() => {
+    queryClient.setQueryData(OPTIMIZER_STATE_KEY, { bookSize, targetLeverage, result: cachedResult })
+  }, [bookSize, targetLeverage, cachedResult, queryClient])
 
   function handleRun() {
     mutation.mutate({ book: bookSize, target_leverage: targetLeverage })
   }
 
-  const data = mutation.data
-  const weightsRows: Record<string, unknown>[] = data?.weights_df ?? []
-  const hedgesRows: Record<string, unknown>[] = data?.hedges_df ?? []
+  const data = (mutation.data as OptimizerResponse | undefined) ?? cachedResult
+  const weightsRows = toRows(data?.weights_df)
+  const hedgesRows = toRows(data?.hedges_df)
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-2">Portfolio Optimizer</h1>
-      <p className="text-sm text-gray-500 mb-6">Beta-neutral portfolio construction with volatility targeting</p>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Portfolio Optimizer</h1>
+        <p className="text-sm text-gray-400 mt-0.5">Beta-neutral portfolio construction with volatility targeting</p>
+      </div>
 
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6 space-y-4 max-w-md">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Book Size ($): <strong>{bookSize.toLocaleString()}</strong>
-          </label>
-          <input type="range" min={10_000} max={10_000_000} step={10_000}
-            value={bookSize} onChange={e => setBookSize(Number(e.target.value))}
-            className="w-full" />
-          <div className="flex justify-between text-xs text-gray-400"><span>$10k</span><span>$10M</span></div>
-        </div>
+      <ControlPanel>
+        <SliderInput
+          label="Book Size"
+          value={bookSize}
+          onChange={setBookSize}
+          min={10_000}
+          max={10_000_000}
+          step={10_000}
+          formatValue={v => currencyFormatter.format(v)}
+          minLabel="$10k"
+          maxLabel="$10M"
+        />
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Target Gross Leverage: <strong>{targetLeverage.toFixed(1)}x</strong>
-          </label>
-          <input type="range" min={0.5} max={4.0} step={0.1}
-            value={targetLeverage} onChange={e => setTargetLeverage(Number(e.target.value))}
-            className="w-full" />
-          <div className="flex justify-between text-xs text-gray-400"><span>0.5x</span><span>4.0x</span></div>
-        </div>
+        <SliderInput
+          label="Target Gross Leverage"
+          value={targetLeverage}
+          onChange={setTargetLeverage}
+          min={0.5}
+          max={4.0}
+          step={0.1}
+          formatValue={v => `${v.toFixed(1)}x`}
+          minLabel="0.5x"
+          maxLabel="4.0x"
+        />
 
-        <div className="text-xs text-gray-400 space-y-0.5">
+        <div className="rounded-lg bg-gray-50 px-3.5 py-3 text-xs text-gray-400 space-y-0.5">
           <p className="font-medium text-gray-500">Constraints</p>
           <p>Total gross: 4.0x · FX: 2.0x · Commodities: 1.0x · Bonds: 3.0x</p>
           <p>Long max: +20% · Short max: −10% · Equity net: −50% to +100%</p>
         </div>
 
-        <button onClick={handleRun} disabled={mutation.isPending}
-          className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-          {mutation.isPending ? "Optimizing (can take 1-3 min)..." : "Optimize Portfolio"}
-        </button>
-      </div>
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Optimizing (can take 1-3 min)...">
+          Optimize Portfolio
+        </ActionButton>
+      </ControlPanel>
 
       {mutation.isPending && <LoadingSpinner message="Running optimization..." />}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
 
       {data && !mutation.isPending && (
         <div className="space-y-6">
-          {/* Summary metrics */}
           {(data.daily_vol != null || data.gross_leverage != null) && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {data.daily_vol != null && <MetricCard title="Daily Volatility" value={`${(Number(data.daily_vol) * 100).toFixed(2)}%`} />}

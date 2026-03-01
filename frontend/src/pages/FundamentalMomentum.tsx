@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query"
 import { runFundamentalMomentum } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { SegmentedControl, SelectInput, TextInput, ActionButton, ControlPanel } from "@/components/shared/FormControls"
 import { colorPositiveNegative, colorZscore } from "@/lib/colors"
 
 const UNIVERSE_OPTIONS = [
@@ -48,52 +49,61 @@ export function FundamentalMomentum() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Fundamental Momentum</h1>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Fundamental Momentum</h1>
+      </div>
 
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6 space-y-4 max-w-lg">
+      <ControlPanel maxWidth="max-w-lg">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Screen Type</label>
-          <div className="flex gap-3">
-            {(["EPS", "Revenue", "Both"] as const).map(t => (
-              <label key={t} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <input type="radio" checked={screenType === t} onChange={() => setScreenType(t)} />
-                {t}
-              </label>
-            ))}
-          </div>
+          <label className="block text-sm text-gray-600 mb-1.5">Screen Type</label>
+          <SegmentedControl
+            options={[
+              { value: "EPS" as const, label: "EPS" },
+              { value: "Revenue" as const, label: "Revenue" },
+              { value: "Both" as const, label: "Both" },
+            ]}
+            value={screenType}
+            onChange={setScreenType}
+          />
         </div>
 
-        <div className="flex gap-3">
-          {(["Universe", "Custom Tickers"] as const).map(m => (
-            <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <input type="radio" checked={inputMode === m} onChange={() => setInputMode(m)} />
-              {m}
-            </label>
-          ))}
-        </div>
+        <SegmentedControl
+          options={[
+            { value: "Universe" as const, label: "Universe" },
+            { value: "Custom Tickers" as const, label: "Custom Tickers" },
+          ]}
+          value={inputMode}
+          onChange={setInputMode}
+        />
 
         {inputMode === "Universe" ? (
-          <select value={universe} onChange={e => setUniverse(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm w-full">
-            {UNIVERSE_OPTIONS.map(o => <option key={o}>{o}</option>)}
-          </select>
+          <SelectInput
+            value={universe}
+            onChange={setUniverse}
+            options={UNIVERSE_OPTIONS.map(o => ({ value: o, label: o }))}
+          />
         ) : (
-          <input type="text" placeholder="AAPL, MSFT, GOOG" value={tickers}
-            onChange={e => setTickers(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm w-full" />
+          <TextInput
+            value={tickers}
+            onChange={setTickers}
+            placeholder="AAPL, MSFT, GOOG"
+          />
         )}
 
-        <select value={benchmark} onChange={e => setBenchmark(e.target.value)}
-          className="border rounded px-2 py-1.5 text-sm w-full">
-          <option>S&amp;P 500</option>
-          <option>Same as Input</option>
-        </select>
+        <SelectInput
+          label="Benchmark"
+          value={benchmark}
+          onChange={setBenchmark}
+          options={[
+            { value: "S&P 500", label: "S&P 500" },
+            { value: "Same as Input", label: "Same as Input" },
+          ]}
+        />
 
-        <button onClick={handleRun} disabled={mutation.isPending}
-          className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-          {mutation.isPending ? "Screening..." : "Run Screen"}
-        </button>
-      </div>
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Screening...">
+          Run Screen
+        </ActionButton>
+      </ControlPanel>
 
       {mutation.isPending && <LoadingSpinner message="Running fundamental momentum screen..." />}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}

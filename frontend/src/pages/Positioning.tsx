@@ -8,6 +8,7 @@ import { TimeSeriesChart } from "@/components/shared/TimeSeriesChart"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
+import { SelectInput } from "@/components/shared/FormControls"
 import { colorPositiveNegative, colorZscore, colorForcedFlow } from "@/lib/colors"
 
 const DEFAULT_INSTRUMENTS = ["SP500", "NASDAQ", "RUSSELL", "US10Y", "EUR"]
@@ -174,17 +175,14 @@ export function Positioning() {
       {view === "single" && (
         <div>
           <div className="flex gap-3 items-center mb-6">
-            <label className="text-sm text-gray-500">Instrument:</label>
-            <select
+            <SelectInput
+              label="Instrument"
               value={selectedAlias}
-              onChange={e => setSelectedAlias(e.target.value)}
-              className="border rounded px-2 py-1 text-sm"
-            >
-              {allInstruments.sort().map(a => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
-            {marketName && <span className="text-xs text-gray-400">{marketName}</span>}
+              onChange={setSelectedAlias}
+              options={allInstruments.sort().map(a => ({ value: a, label: a }))}
+              className="w-48"
+            />
+            {marketName && <span className="text-xs text-gray-400 self-end pb-2">{marketName}</span>}
           </div>
 
           {tsLoading && <LoadingSpinner message="Fetching time series..." />}
