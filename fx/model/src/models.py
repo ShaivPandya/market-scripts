@@ -66,11 +66,19 @@ def predict_latest(df: pd.DataFrame, res, feature_cols: list) -> float:
 def bootstrap_forecast_distribution(res, x_row: pd.DataFrame, draws: int = 2000, seed: int = 0) -> np.ndarray:
     rng = np.random.default_rng(seed)
     b = res.params.values
+    if int(x_row.shape[0]) != 1:
+        raise ModelDataError(f"x_row must contain exactly one row, got {int(x_row.shape[0])}.")
     x_row = x_row.replace([np.inf, -np.inf], np.nan)
     if x_row.isna().any().any():
         raise ModelDataError("x_row contains missing values; cannot bootstrap forecast distribution.")
     Xp = sm.add_constant(x_row, has_constant="add").values
-    base = float(Xp @ b)
+    # NumPy 2.x disallows float() on 1-D arrays; extract the scalar explicitly.
+    linear_pred = np.asarray(Xp @ b)
+    if linear_pred.size != 1:
+        raise ModelDataError(
+            f"Expected a single linear prediction value, got shape={tuple(linear_pred.shape)}."
+        )
+    base = float(linear_pred.reshape(-1)[0])
     resid = np.asarray(res.resid)
     if resid.size < 10:
         return np.full(draws, base)
