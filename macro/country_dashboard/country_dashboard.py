@@ -177,16 +177,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTEZM156S"},
         ],
         "gdp": [
-            {
-                "source": "eurostat",
-                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
-                "dataset": EUROSTAT_GDP_DATASET,
-                "geo": "EA20",
-                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
-                "freq": "quarterly",
-                "transform": "none",
-            },
-            {"id": "NAEXKP01EZQ189S", "transform": "yoy4"},
+            # FRED/Eurostat: Real GDP, EU27 (2020 composition), chain-linked volumes, SA — compute YoY.
+            {"id": "CLVMNACSCAB1GQEU272020", "transform": "yoy4"},
         ],
     },
     "Germany": {

@@ -62,7 +62,7 @@ export function Liquidity() {
         </div>
       </div>
 
-      {isLoading && <LoadingSpinner message="Fetching liquidity data from FRED..." />}
+      {isLoading && <LoadingSpinner message="Fetching liquidity data..." />}
       {!isLoading && (error || !data) && <ErrorMessage message={String(error) || "Failed to load"} />}
 
       {data && !isLoading && (
