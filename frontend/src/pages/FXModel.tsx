@@ -40,6 +40,7 @@ export function FXModel() {
   }
 
   const data = mutation.data
+  const errorMessage = mutation.error instanceof Error ? mutation.error.message : String(mutation.error)
 
   function toFiniteNumberOrNull(v: unknown): number | null {
     const n = Number(v)
@@ -128,7 +129,7 @@ export function FXModel() {
       </ControlPanel>
 
       {mutation.isPending && <LoadingSpinner message="Running FX model (may take up to 60s)..." />}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {mutation.isError && <ErrorMessage message={errorMessage} />}
 
       {data && !mutation.isPending && (
         <div className="space-y-6">

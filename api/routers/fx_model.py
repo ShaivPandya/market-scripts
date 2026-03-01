@@ -115,10 +115,28 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
     }
 
 
+def _missing_dependency_error(e: ModuleNotFoundError) -> HTTPException:
+    missing = e.name or "unknown"
+    return HTTPException(
+        status_code=500,
+        detail=(
+            f"Missing backend dependency '{missing}'. "
+            "Install dependencies with `pip install -r requirements.txt` and restart the API server."
+        ),
+    )
+
+
 @router.post("/fx-model")
 def run_fx_model(req: FXModelRequest):
     try:
         horizons = [int(x.strip()) for x in req.horizons.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid horizons. Use comma-separated integers, e.g. `12,24`.")
+
+    if not horizons:
+        raise HTTPException(status_code=422, detail="At least one horizon is required, e.g. `12,24`.")
+
+    try:
         cache_dir = PROJECT_ROOT / "fx" / "model" / "data_cache"
         outdir = PROJECT_ROOT / "fx" / "model" / "outputs" / req.pair.lower()
 
@@ -138,6 +156,8 @@ def run_fx_model(req: FXModelRequest):
             bootstrap_draws=req.bootstrap,
             horizons=horizons,
         )
+    except ModuleNotFoundError as e:
+        raise _missing_dependency_error(e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -155,5 +175,7 @@ def list_pairs():
     try:
         from src.currency_config import list_pairs as _list_pairs
         return {"pairs": _list_pairs()}
+    except ModuleNotFoundError as e:
+        raise _missing_dependency_error(e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
