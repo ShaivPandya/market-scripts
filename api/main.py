@@ -133,6 +133,13 @@ app.include_router(sector_metrics.router,       prefix="/api", dependencies=_aut
 app.include_router(industry.router,             prefix="/api", dependencies=_auth_dep)
 
 
+@app.delete("/api/cache", dependencies=_auth_dep)
+def clear_cache():
+    from api.cache import invalidate_all
+    invalidate_all()
+    return {"status": "cleared"}
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}

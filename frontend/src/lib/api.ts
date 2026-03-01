@@ -135,3 +135,5 @@ export const runFxModel = (body: {
   skip_bis: boolean
   horizons: string
 }) => client.post("/fx-model", body).then(r => r.data)
+
+export const clearCache = () => client.delete("/cache").then(r => r.data)
