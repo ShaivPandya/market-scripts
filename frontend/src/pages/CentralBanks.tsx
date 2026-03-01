@@ -12,6 +12,23 @@ const SIGNAL_COLORS: Record<string, string> = {
   easing: "bg-green-100 text-green-700",
 }
 
+const SOURCE_COLORS: Record<string, string> = {
+  FED: "#30D158",
+  ECB: "#0091FF",
+  BOJ: "#FF4245",
+  BOE: "#6D7CFF",
+  BOC: "#FF9230",
+  SNB: "#00DAC3",
+  NORGES: "#3CD3FE",
+  RBA: "#FFD600",
+  RBNZ: "#DB34F2",
+  RIKSBANK: "#FF375F",
+}
+
+function getSourceColor(source: string) {
+  return SOURCE_COLORS[source] ?? "#64748B"
+}
+
 function SignalBadge({ label, value }: { label: string; value: string }) {
   const classes = SIGNAL_COLORS[String(value).toLowerCase()] ?? "bg-gray-100 text-gray-600"
   return (
@@ -32,8 +49,14 @@ interface CBItem {
   content_preview: string
 }
 
+function publishedTimestamp(value: string) {
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
 export function CentralBanks() {
   const [refresh, setRefresh] = useState(false)
+  const [viewMode, setViewMode] = useState<"grouped" | "chronological">("grouped")
   const { data, isLoading, error } = useApiQuery(
     ["central-banks", refresh],
     () => fetchCentralBanks(refresh),
@@ -44,6 +67,11 @@ export function CentralBanks() {
   const bySource: Record<string, CBItem[]> = data?.by_source ?? {}
 
   const sources = Object.keys(bySource)
+  const chronologicalItems = [...items].sort((a, b) => {
+    const left = publishedTimestamp(a.published_at)
+    const right = publishedTimestamp(b.published_at)
+    return right - left
+  })
 
   return (
     <div>
@@ -65,35 +93,71 @@ export function CentralBanks() {
 
       {data && !isLoading && (
         <>
-          <div className="flex gap-4 mb-4 text-sm text-gray-500">
-            <span>Total: <strong>{data.counts?.total ?? items.length}</strong></span>
-            {sources.map(s => (
-              <span key={s}>{s}: <strong>{bySource[s].length}</strong></span>
-            ))}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex gap-4 text-sm text-gray-500">
+              <span>Total: <strong>{data.counts?.total ?? items.length}</strong></span>
+              {sources.map(s => (
+                <span key={s}>{s}: <strong>{bySource[s].length}</strong></span>
+              ))}
+            </div>
+            <div className="inline-flex rounded-lg border border-gray-300 bg-white p-0.5">
+              <button
+                onClick={() => setViewMode("grouped")}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  viewMode === "grouped"
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-600 hover:bg-gray-100"
+                }`}
+              >
+                By central bank
+              </button>
+              <button
+                onClick={() => setViewMode("chronological")}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  viewMode === "chronological"
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-600 hover:bg-gray-100"
+                }`}
+              >
+                Chronological
+              </button>
+            </div>
           </div>
 
-          {sources.map(source => (
-            <section key={source} className="mb-8">
-              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <span className="inline-block w-3 h-3 rounded-full bg-blue-500" />
-                {source}
-              </h2>
+          {viewMode === "grouped" ? (
+            sources.map(source => (
+              <section key={source} className="mb-8">
+                <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: getSourceColor(source) }} />
+                  {source}
+                </h2>
+                <div className="space-y-4">
+                  {bySource[source].map((item, i) => (
+                    <CBItemCard key={item.url || `${source}-${item.title}-${item.published_at}-${i}`} item={item} />
+                  ))}
+                </div>
+              </section>
+            ))
+          ) : (
+            <section>
+              <h2 className="text-lg font-semibold mb-3">Latest Updates</h2>
               <div className="space-y-4">
-                {bySource[source].map((item, i) => (
-                  <CBItemCard key={i} item={item} />
+                {chronologicalItems.map((item, i) => (
+                  <CBItemCard key={item.url || `${item.source}-${item.title}-${item.published_at}-${i}`} item={item} showSource />
                 ))}
               </div>
             </section>
-          ))}
+          )}
         </>
       )}
     </div>
   )
 }
 
-function CBItemCard({ item }: { item: CBItem }) {
+function CBItemCard({ item, showSource = false }: { item: CBItem; showSource?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const signals = item.signals ?? {}
+  const sourceColor = getSourceColor(item.source)
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -106,6 +170,14 @@ function CBItemCard({ item }: { item: CBItem }) {
             </a>
           ) : (
             <p className="text-sm font-semibold text-gray-800">{item.title}</p>
+          )}
+          {showSource && item.source && (
+            <span
+              className="inline-flex mt-1 px-2 py-0.5 rounded text-xs font-medium"
+              style={{ backgroundColor: sourceColor, color: "#fff" }}
+            >
+              {item.source}
+            </span>
           )}
         </div>
         {item.published_at && (
