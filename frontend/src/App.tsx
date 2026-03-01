@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { AuthProvider } from "@/contexts/AuthContext"
+import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { Layout } from "@/components/layout/Layout"
 
@@ -35,47 +35,62 @@ const queryClient = new QueryClient({
   },
 })
 
-const IS_CLOUDFLARE_AUTH = (import.meta.env.VITE_AUTH_MODE ?? "").toLowerCase() === "cloudflare"
+function LoginRoute() {
+  const { isAuthenticated, isLoading } = useAuth()
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-gray-400">
+        Loading...
+      </div>
+    )
+  }
+
+  return isAuthenticated ? <Navigate to="/portfolio" replace /> : <LoginPage />
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Public */}
+      <Route path="/login" element={<LoginRoute />} />
+
+      {/* Protected — all existing routes */}
+      <Route element={<ProtectedRoute />}>
+        <Route element={<Layout />}>
+          <Route index element={<Navigate to="/portfolio" replace />} />
+          <Route path="/portfolio" element={<PortfolioDashboard />} />
+          <Route path="/optimizer" element={<PortfolioOptimizer />} />
+          <Route path="/momentum" element={<Momentum />} />
+          <Route path="/chart" element={<ChartPage />} />
+          <Route path="/quality" element={<QualityScreen />} />
+          <Route path="/short-screen" element={<ShortScreen />} />
+          <Route path="/fundamental-momentum" element={<FundamentalMomentum />} />
+          <Route path="/index-dashboard" element={<IndexDashboard />} />
+          <Route path="/fx-dashboard" element={<FXDashboard />} />
+          <Route path="/commodities" element={<CommodityDashboard />} />
+          <Route path="/market-technicals" element={<MarketTechnicals />} />
+          <Route path="/sector-metrics" element={<SectorMetrics />} />
+          <Route path="/positioning" element={<Positioning />} />
+          <Route path="/breakout" element={<Breakout />} />
+          <Route path="/fx-model" element={<FXModel />} />
+          <Route path="/economic-growth" element={<EconomicGrowth />} />
+          <Route path="/liquidity" element={<Liquidity />} />
+          <Route path="/country-dashboard" element={<CountryDashboard />} />
+          <Route path="/central-banks" element={<CentralBanks />} />
+          <Route path="/industry-monitor" element={<IndustryMonitor />} />
+        </Route>
+      </Route>
+    </Routes>
+  )
+}
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            {/* Public */}
-            <Route
-              path="/login"
-              element={IS_CLOUDFLARE_AUTH ? <Navigate to="/portfolio" replace /> : <LoginPage />}
-            />
-
-            {/* Protected — all existing routes */}
-            <Route element={<ProtectedRoute />}>
-              <Route element={<Layout />}>
-                <Route index element={<Navigate to="/portfolio" replace />} />
-                <Route path="/portfolio" element={<PortfolioDashboard />} />
-                <Route path="/optimizer" element={<PortfolioOptimizer />} />
-                <Route path="/momentum" element={<Momentum />} />
-                <Route path="/chart" element={<ChartPage />} />
-                <Route path="/quality" element={<QualityScreen />} />
-                <Route path="/short-screen" element={<ShortScreen />} />
-                <Route path="/fundamental-momentum" element={<FundamentalMomentum />} />
-                <Route path="/index-dashboard" element={<IndexDashboard />} />
-                <Route path="/fx-dashboard" element={<FXDashboard />} />
-                <Route path="/commodities" element={<CommodityDashboard />} />
-                <Route path="/market-technicals" element={<MarketTechnicals />} />
-                <Route path="/sector-metrics" element={<SectorMetrics />} />
-                <Route path="/positioning" element={<Positioning />} />
-                <Route path="/breakout" element={<Breakout />} />
-                <Route path="/fx-model" element={<FXModel />} />
-                <Route path="/economic-growth" element={<EconomicGrowth />} />
-                <Route path="/liquidity" element={<Liquidity />} />
-                <Route path="/country-dashboard" element={<CountryDashboard />} />
-                <Route path="/central-banks" element={<CentralBanks />} />
-                <Route path="/industry-monitor" element={<IndustryMonitor />} />
-              </Route>
-            </Route>
-          </Routes>
+          <AppRoutes />
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

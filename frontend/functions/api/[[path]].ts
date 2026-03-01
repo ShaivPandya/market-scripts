@@ -44,6 +44,20 @@ export async function onRequest(context: { request: Request; env: Env }) {
   }
 
   const outHeaders = new Headers(upstream.headers)
+
+  // Preserve Set-Cookie headers (multiple cookies need special handling in Workers).
+  const setCookies = (
+    upstream.headers as unknown as {
+      getSetCookie?: () => string[]
+    }
+  ).getSetCookie?.()
+  if (setCookies?.length) {
+    outHeaders.delete("set-cookie")
+    for (const cookie of setCookies) {
+      outHeaders.append("set-cookie", cookie)
+    }
+  }
+
   outHeaders.set("Cache-Control", "no-store")
 
   return new Response(upstream.body, {
