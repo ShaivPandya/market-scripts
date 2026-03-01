@@ -25,14 +25,14 @@ const NAV_SECTIONS: NavSection[] = [
   {
     pages: [
       { label: "📊 Index Dashboard", path: "/index-dashboard" },
-      { label: "📉 FX Dashboard", path: "/fx-dashboard" },
+      { label: "💵 FX Dashboard", path: "/fx-dashboard" },
       { label: "🛢️ Commodity Dashboard", path: "/commodities" },
     ],
   },
   {
     pages: [
-      { label: "📈 Market Technicals", path: "/market-technicals" },
-      { label: "🏛️ Sector Metrics", path: "/sector-metrics" },
+      { label: "🧭 Market Technicals", path: "/market-technicals" },
+      { label: "🧩 Sector Metrics", path: "/sector-metrics" },
       { label: "📌 Positioning", path: "/positioning" },
       { label: "🔔 Breakout", path: "/breakout" },
       { label: "💱 FX Model", path: "/fx-model" },
