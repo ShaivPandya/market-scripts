@@ -43,13 +43,13 @@ BATCH_DELAY = 1.0 # Seconds between batches
 MAX_WORKERS = 8   # Threads per batch
 
 try:
-    import yfinance as yf
+    import yfinance as yf  # used indirectly by quality_single
 except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import load_universe, list_universes, get_sp500_universe
+from common import load_universe, list_universes, get_sp500_universe, get_universe_tickers
 
 from quality_single import fetch_raw_metrics, compute_scores, RawMetrics
 
@@ -84,27 +84,6 @@ def _clean_ticker(tk: str) -> str:
     return tk.replace(".", "-")
 
 
-def fetch_all_etf_holdings(etf_ticker: str) -> List[str]:
-    """
-    Fetch all available holdings of an ETF from yfinance.
-
-    Returns a list of normalized ticker symbols (empty list on failure).
-    """
-    try:
-        t = yf.Ticker(etf_ticker)
-        df = t.funds_data.top_holdings
-    except Exception as e:
-        print(f"[WARN] Could not fetch holdings for {etf_ticker}: {e}", file=sys.stderr)
-        return []
-
-    if df is None or df.empty:
-        print(f"[WARN] No holdings data returned for {etf_ticker}", file=sys.stderr)
-        return []
-
-    tickers = [_clean_ticker(x) for x in df.index]
-    return [t for t in tickers if t]
-
-
 def load_screen_universe(name: str) -> tuple[List[str], str]:
     """
     Resolve the user-supplied universe name to a ticker list and display label.
@@ -131,7 +110,7 @@ def load_screen_universe(name: str) -> tuple[List[str], str]:
     if key in SECTOR_ETFS:
         etf_ticker, sector_name = SECTOR_ETFS[key]
         print(f"Fetching all holdings for {etf_ticker} ({sector_name})...")
-        tickers = fetch_all_etf_holdings(etf_ticker)
+        tickers = get_universe_tickers(etf_ticker)
         if not tickers:
             raise SystemExit(f"Failed to fetch holdings for {etf_ticker}. Cannot proceed.")
         return tickers, f"{sector_name} ({etf_ticker})"

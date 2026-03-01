@@ -30,9 +30,20 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from common import load_universe, list_universes, get_sp500_universe, clean_ticker
+# Ensure repo modules (equities/common) are importable when running as a script.
+_ROOT = Path(__file__).resolve().parents[3]
+for _p in (_ROOT / "equities", _ROOT):
+    _p_str = str(_p)
+    if _p_str not in sys.path:
+        sys.path.insert(0, _p_str)
+
+from common import (
+    load_universe,
+    list_universes,
+    get_sp500_universe,
+    get_universe_tickers,
+    clean_ticker,
+)
 
 from revenue_momentum_single import fetch_revenue_metrics, compute_universe_scores, RevenueMetrics
 
@@ -52,12 +63,11 @@ def _build_universe(
     if benchmark is None or benchmark.lower() == "self":
         return list(dict.fromkeys(input_tickers)), input_tickers, "Self"
 
-    if benchmark.lower() == "sp500":
-        bench_tickers = get_sp500_universe()
-        bench_name = "S&P 500"
-    else:
-        bench_tickers = load_universe(benchmark)
-        bench_name = benchmark
+    bench_tickers = get_universe_tickers(benchmark)
+    if not bench_tickers:
+        raise ValueError(f"Benchmark universe '{benchmark}' resolved to 0 tickers")
+
+    bench_name = "S&P 500" if benchmark.lower() == "sp500" else benchmark
 
     combined = list(dict.fromkeys(input_tickers + bench_tickers))
     return combined, input_tickers, bench_name
@@ -204,12 +214,11 @@ def main():
 
     # Determine input tickers
     if args.universe:
-        if args.universe.lower() == "sp500":
-            tickers = get_sp500_universe()
-            print(f"Loaded S&P 500 universe ({len(tickers)} tickers)")
-        else:
-            tickers = load_universe(args.universe)
-            print(f"Loaded {len(tickers)} tickers from {args.universe}")
+        tickers = get_universe_tickers(args.universe)
+        if not tickers:
+            ap.error(f"Universe '{args.universe}' resolved to 0 tickers.")
+        label = "S&P 500" if args.universe.lower() == "sp500" else args.universe
+        print(f"Loaded {label} universe ({len(tickers)} tickers)")
     elif args.tickers:
         tickers = [t.upper().strip() for t in args.tickers]
         print(f"Scoring {len(tickers)} ticker(s): {', '.join(tickers)}")

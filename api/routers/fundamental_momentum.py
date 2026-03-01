@@ -62,7 +62,12 @@ def run_fundamental_momentum(req: FMRequest):
         if not tickers:
             raise HTTPException(status_code=400, detail="No tickers resolved.")
 
-        benchmark = "sp500" if req.benchmark == "S&P 500" else req.benchmark
+        if req.benchmark == "S&P 500":
+            benchmark = "sp500"
+        elif req.benchmark == "Same as Input":
+            benchmark = "self"
+        else:
+            benchmark = req.benchmark
 
         result = {"screen_type": req.screen_type}
 
