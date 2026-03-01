@@ -31,6 +31,7 @@ INDEX_ORDER = list(INDICES.keys())
 
 # -- Timeframe configs: name -> yfinance (period, interval) ------------------
 TIMEFRAMES = {
+    "This Week": {"period": "5d", "interval": "15m"},
     "Daily": {"period": "90d", "interval": "1d"},
     "Weekly": {"period": "2y", "interval": "1wk"},
     "Monthly": {"period": "5y", "interval": "1mo"},
