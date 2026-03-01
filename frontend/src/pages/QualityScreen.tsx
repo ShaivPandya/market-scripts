@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query"
 import { runQualityScreen } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { SegmentedControl, SelectInput, TextInput, ActionButton, ControlPanel } from "@/components/shared/FormControls"
 import { colorPositiveNegative, colorZscore } from "@/lib/colors"
 
 const UNIVERSE_OPTIONS = [
@@ -41,61 +42,47 @@ export function QualityScreen() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Quality Screen</h1>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Quality Screen</h1>
+      </div>
 
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6 space-y-4 max-w-lg">
-        <div className="flex gap-3">
-          {(["Universe", "Custom Tickers"] as const).map(m => (
-            <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <input type="radio" checked={inputMode === m} onChange={() => setInputMode(m)} />
-              {m}
-            </label>
-          ))}
-        </div>
+      <ControlPanel maxWidth="max-w-lg">
+        <SegmentedControl
+          options={[
+            { value: "Universe" as const, label: "Universe" },
+            { value: "Custom Tickers" as const, label: "Custom Tickers" },
+          ]}
+          value={inputMode}
+          onChange={setInputMode}
+        />
 
         {inputMode === "Universe" ? (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Universe</label>
-            <select
-              value={universe}
-              onChange={e => setUniverse(e.target.value)}
-              className="border rounded px-2 py-1.5 text-sm w-full"
-            >
-              {UNIVERSE_OPTIONS.map(o => <option key={o}>{o}</option>)}
-            </select>
-          </div>
+          <SelectInput
+            label="Universe"
+            value={universe}
+            onChange={setUniverse}
+            options={UNIVERSE_OPTIONS.map(o => ({ value: o, label: o }))}
+          />
         ) : (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Tickers</label>
-            <input
-              type="text"
-              placeholder="AAPL, MSFT, GOOG"
-              value={tickers}
-              onChange={e => setTickers(e.target.value)}
-              className="border rounded px-2 py-1.5 text-sm w-full"
-            />
-          </div>
+          <TextInput
+            label="Tickers"
+            value={tickers}
+            onChange={setTickers}
+            placeholder="AAPL, MSFT, GOOG"
+          />
         )}
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Benchmark</label>
-          <select
-            value={benchmark}
-            onChange={e => setBenchmark(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm w-full"
-          >
-            {BENCHMARK_OPTIONS.map(o => <option key={o}>{o}</option>)}
-          </select>
-        </div>
+        <SelectInput
+          label="Benchmark"
+          value={benchmark}
+          onChange={setBenchmark}
+          options={BENCHMARK_OPTIONS.map(o => ({ value: o, label: o }))}
+        />
 
-        <button
-          onClick={handleRun}
-          disabled={mutation.isPending}
-          className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {mutation.isPending ? "Screening (~30s)..." : "Run Screen"}
-        </button>
-      </div>
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Screening (~30s)...">
+          Run Screen
+        </ActionButton>
+      </ControlPanel>
 
       {mutation.isPending && <LoadingSpinner message="Running quality screen..." />}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}

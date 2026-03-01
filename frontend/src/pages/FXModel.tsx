@@ -6,6 +6,7 @@ import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { SelectInput, SliderInput, Toggle, TextInput, ActionButton, ControlPanel } from "@/components/shared/FormControls"
 import { colorPositiveNegative } from "@/lib/colors"
 
 const DEFAULT_PAIRS = ["USDCAD", "GBPUSD", "AUDUSD", "USDJPY", "EURUSD"]
@@ -73,54 +74,58 @@ export function FXModel() {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-6">
-        <h1 className="text-2xl font-bold">FX Model</h1>
-        <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-yellow-100 text-yellow-800 border border-yellow-300">Beta</span>
+      <div className="mb-6">
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">FX Model</h1>
+          <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-yellow-100 text-yellow-800 border border-yellow-300">Beta</span>
+        </div>
+        <p className="text-sm text-gray-400 mt-0.5">
+          Multi-factor FX forecasting using FRED, IMF, BIS data
+          {data?.latest_date && data?.feature_asof_date && (
+            <span className="block mt-1 text-xs text-gray-400">
+              Spot as of {String(data.latest_date)}; features as of {String(data.feature_asof_date)} (lag {String(data.feature_lag_months ?? 1)}m)
+            </span>
+          )}
+        </p>
       </div>
-      <p className="text-sm text-gray-500 mb-4">
-        Multi-factor FX forecasting using FRED, IMF, BIS data
-        {data?.latest_date && data?.feature_asof_date && (
-          <span className="block mt-1 text-xs text-gray-400">
-            Spot as of {String(data.latest_date)}; features as of {String(data.feature_asof_date)} (lag {String(data.feature_lag_months ?? 1)}m)
-          </span>
-        )}
-      </p>
 
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6 space-y-4 max-w-md">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Currency Pair</label>
-          <select value={pair} onChange={e => setPair(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm w-full">
-            {availablePairs.map(p => <option key={p}>{p}</option>)}
-          </select>
-        </div>
+      <ControlPanel>
+        <SelectInput
+          label="Currency Pair"
+          value={pair}
+          onChange={setPair}
+          options={availablePairs.map(p => ({ value: p, label: p }))}
+        />
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Bootstrap Draws: <strong>{bootstrap}</strong>
-          </label>
-          <input type="range" min={100} max={5000} step={100}
-            value={bootstrap} onChange={e => setBootstrap(Number(e.target.value))}
-            className="w-full" />
-          <div className="flex justify-between text-xs text-gray-400"><span>100</span><span>5000</span></div>
-        </div>
+        <SliderInput
+          label="Bootstrap Draws"
+          value={bootstrap}
+          onChange={setBootstrap}
+          min={100}
+          max={5000}
+          step={100}
+          formatValue={v => v.toLocaleString()}
+          minLabel="100"
+          maxLabel="5,000"
+        />
 
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={skipBis} onChange={e => setSkipBis(e.target.checked)} />
-          Skip BIS data
-        </label>
+        <Toggle
+          label="Skip BIS data"
+          checked={skipBis}
+          onChange={setSkipBis}
+        />
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Horizons (months)</label>
-          <input type="text" value={horizons} onChange={e => setHorizons(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm w-full" placeholder="12,24" />
-        </div>
+        <TextInput
+          label="Horizons (months)"
+          value={horizons}
+          onChange={setHorizons}
+          placeholder="12,24"
+        />
 
-        <button onClick={handleRun} disabled={mutation.isPending}
-          className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-          {mutation.isPending ? "Running Model (~60s)..." : "Run Model"}
-        </button>
-      </div>
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Running Model (~60s)...">
+          Run Model
+        </ActionButton>
+      </ControlPanel>
 
       {mutation.isPending && <LoadingSpinner message="Running FX model (may take up to 60s)..." />}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}

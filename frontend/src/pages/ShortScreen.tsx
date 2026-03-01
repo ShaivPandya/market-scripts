@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query"
 import { runShortScreen } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { SliderInput, SegmentedControl, Toggle, ActionButton, ControlPanel } from "@/components/shared/FormControls"
 
 const columns: ColumnDef[] = [
   { key: "Ticker", header: "Ticker" },
@@ -30,49 +31,47 @@ export function ShortScreen() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Short Screen</h1>
-      <p className="text-sm text-gray-500 mb-4">Russell 2000 short candidates — high P/B + operating losses</p>
-
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 mb-6 space-y-4 max-w-md">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            P/B Threshold: <strong>{pbThreshold.toFixed(1)}</strong>
-          </label>
-          <input
-            type="range" min={3.0} max={5.0} step={0.1}
-            value={pbThreshold}
-            onChange={e => setPbThreshold(Number(e.target.value))}
-            className="w-full"
-          />
-          <div className="flex justify-between text-xs text-gray-400"><span>3.0</span><span>5.0</span></div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Loss Type</label>
-          <div className="flex gap-3">
-            {(["Gross Loss", "Operating Loss"] as const).map(lt => (
-              <label key={lt} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <input type="radio" checked={lossType === lt} onChange={() => setLossType(lt)} />
-                {lt}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={checkIssuance} onChange={e => setCheckIssuance(e.target.checked)} />
-          High Net Equity Issuance (top quartile)
-          <span className="text-xs text-gray-400">(adds time — uses SEC EDGAR)</span>
-        </label>
-
-        <button
-          onClick={handleRun}
-          disabled={mutation.isPending}
-          className="w-full py-2 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {mutation.isPending ? "Screening..." : "Run Screen"}
-        </button>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Short Screen</h1>
+        <p className="text-sm text-gray-400 mt-0.5">Russell 2000 short candidates — high P/B + operating losses</p>
       </div>
+
+      <ControlPanel>
+        <SliderInput
+          label="P/B Threshold"
+          value={pbThreshold}
+          onChange={setPbThreshold}
+          min={3.0}
+          max={5.0}
+          step={0.1}
+          formatValue={v => v.toFixed(1)}
+          minLabel="3.0"
+          maxLabel="5.0"
+        />
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1.5">Loss Type</label>
+          <SegmentedControl
+            options={[
+              { value: "Gross Loss" as const, label: "Gross Loss" },
+              { value: "Operating Loss" as const, label: "Operating Loss" },
+            ]}
+            value={lossType}
+            onChange={setLossType}
+          />
+        </div>
+
+        <Toggle
+          label="High Net Equity Issuance (top quartile)"
+          checked={checkIssuance}
+          onChange={setCheckIssuance}
+          description="Adds time — uses SEC EDGAR"
+        />
+
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Screening...">
+          Run Screen
+        </ActionButton>
+      </ControlPanel>
 
       {mutation.isPending && <LoadingSpinner message="Screening Russell 2000 (this may take several minutes)..." />}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}

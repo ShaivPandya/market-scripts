@@ -4,6 +4,7 @@ import { runChart } from "@/lib/api"
 import { TimeSeriesChart, type SeriesDef } from "@/components/shared/TimeSeriesChart"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { SegmentedControl, TextInput, ActionButton } from "@/components/shared/FormControls"
 
 const LOOKBACKS = ["3M", "1Y", "2Y", "5Y"] as const
 
@@ -103,41 +104,29 @@ export function ChartPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Chart</h1>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Chart</h1>
+      </div>
 
       <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-4 mb-6">
+        <TextInput
+          label="Ticker"
+          value={ticker}
+          onChange={v => setTicker(v.toUpperCase())}
+          placeholder="SPY"
+          className="w-28"
+        />
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Ticker</label>
-          <input
-            type="text"
-            value={ticker}
-            onChange={e => setTicker(e.target.value)}
-            placeholder="SPY"
-            className="border rounded px-3 py-1.5 text-sm w-28 uppercase"
+          <label className="block text-sm text-gray-600 mb-1.5">Lookback</label>
+          <SegmentedControl
+            options={LOOKBACKS.map(l => ({ value: l, label: l }))}
+            value={lookback}
+            onChange={setLookback}
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Lookback</label>
-          <div className="flex gap-1">
-            {LOOKBACKS.map(l => (
-              <button
-                key={l}
-                type="button"
-                onClick={() => setLookback(l)}
-                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${lookback === l ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-        </div>
-        <button
-          type="submit"
-          disabled={mutation.isPending}
-          className="px-4 py-1.5 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {mutation.isPending ? "Analyzing..." : "Analyze"}
-        </button>
+        <ActionButton type="submit" loading={mutation.isPending} loadingText="Analyzing..." className="w-auto px-6">
+          Analyze
+        </ActionButton>
       </form>
 
       {mutation.isPending && <LoadingSpinner message="Fetching chart data..." />}

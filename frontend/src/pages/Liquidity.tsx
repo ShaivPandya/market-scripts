@@ -5,6 +5,7 @@ import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
+import { Toggle } from "@/components/shared/FormControls"
 import { colorZscore, colorPolarityChange } from "@/lib/colors"
 
 export function Liquidity() {
@@ -49,15 +50,7 @@ export function Liquidity() {
       <div className="flex items-start justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Liquidity Dashboard</h1>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-gray-500 select-none cursor-pointer">
-            <input
-              type="checkbox"
-              checked={skipEcb}
-              onChange={e => setSkipEcb(e.target.checked)}
-              className="rounded"
-            />
-            Skip ECB data
-          </label>
+          <Toggle label="Skip ECB data" checked={skipEcb} onChange={setSkipEcb} />
           <RefreshButton queryKeys={[["liquidity", skipEcb]]} />
         </div>
       </div>
