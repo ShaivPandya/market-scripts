@@ -1,6 +1,8 @@
 import { useState } from "react"
+import { useMutation } from "@tanstack/react-query"
+import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchPositioningSummary, fetchPositioningTimeseries, fetchPositioningInstruments } from "@/lib/api"
+import { fetchPositioningSummary, fetchPositioningTimeseries, fetchPositioningInstruments, analyzePositioning } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { TimeSeriesChart } from "@/components/shared/TimeSeriesChart"
 import { MetricCard } from "@/components/shared/MetricCard"
@@ -31,6 +33,8 @@ export function Positioning() {
   const [view, setView] = useState<View>("summary")
   const [selectedInstruments, setSelectedInstruments] = useState<string[]>(DEFAULT_INSTRUMENTS)
   const [selectedAlias, setSelectedAlias] = useState<string>("SP500")
+  const [isOpen, setIsOpen] = useState(false)
+  const mutation = useMutation({ mutationFn: analyzePositioning })
 
   // Instrument list
   const { data: instrData } = useApiQuery(["positioning-instruments"], fetchPositioningInstruments)
@@ -54,6 +58,7 @@ export function Positioning() {
   )
 
   const summaryRows: Record<string, unknown>[] = Array.isArray(summaryData) ? summaryData : []
+  const showPanel = mutation.data || mutation.isPending || mutation.isError
 
   return (
     <div>
@@ -65,6 +70,19 @@ export function Positioning() {
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          {view === "summary" && (
+            <button
+              onClick={() => {
+                mutation.mutate({ rows: summaryRows })
+                setIsOpen(true)
+              }}
+              disabled={mutation.isPending || summaryRows.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Sparkles size={14} />
+              AI Overview
+            </button>
+          )}
           <div className="inline-flex items-center rounded-full bg-gray-100 p-0.5">
             {(["summary", "single"] as View[]).map(v => (
               <button
@@ -86,6 +104,45 @@ export function Positioning() {
 
       {view === "summary" && (
         <div>
+          {showPanel && (
+            <div className="mb-5 rounded-lg border border-indigo-200 bg-white overflow-hidden">
+              <button
+                onClick={() => setIsOpen(o => !o)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles size={14} className="text-indigo-600" />
+                  <span className="text-sm font-semibold text-indigo-800">AI Overview</span>
+                </div>
+                <ChevronDown
+                  size={16}
+                  className={`text-indigo-600 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {isOpen && (
+                <div className="px-4 py-4">
+                  {mutation.isPending && (
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                      Analyzing positioning data...
+                    </div>
+                  )}
+                  {mutation.isError && (
+                    <p className="text-sm text-red-600">
+                      {String(mutation.error) || "Analysis failed. Please try again."}
+                    </p>
+                  )}
+                  {mutation.data && (
+                    <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+                      {mutation.data.analysis}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-1.5 mb-4">
             {allInstruments.map(alias => (
               <button

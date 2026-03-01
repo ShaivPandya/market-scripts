@@ -38,7 +38,7 @@ function MarketBreadthTab() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-4">S&P 500 Market Breadth</h2>
+      <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-4">S&P 500 Market Breadth</p>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {metrics.map(m => {
           const pct: number = data[m.pctKey] ?? 0
@@ -64,24 +64,26 @@ function Top50BreadthTab() {
   const { data, isLoading, error } = useApiQuery(["top50-breadth"], fetchTop50Breadth)
   if (isLoading) return <LoadingSpinner />
   if (error || !data) return <ErrorMessage message={String(error)} />
-  if (data.universe_size === 0) return <p className="text-gray-400">No tickers with sufficient data.</p>
+  if (data.universe_size === 0) return <p className="text-gray-400 text-sm">No tickers with sufficient data.</p>
 
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-4">Top 50 S&P 500 Performers — Breadth</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+      <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-4">
+        Top 50 S&P 500 Performers — Breadth
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         {[
           { key: "pct_below_50dma", label: "% Below 50-DMA", tickersKey: "tickers_below_50dma" },
           { key: "pct_3plus_dist", label: "% with 3+ Distribution Days", tickersKey: "tickers_3plus_dist" },
           { key: "pct_broke_20low", label: "% Broke 20-Day Low", tickersKey: "tickers_broke_20low" },
         ].map(m => (
-          <div key={m.key} className="rounded-lg border bg-white p-4 shadow-sm">
-            <p className="text-sm text-gray-500 font-medium">{m.label}</p>
-            <p className="text-2xl font-bold mt-1">
+          <div key={m.key} className="rounded-xl border border-gray-200/80 bg-white p-4">
+            <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">{m.label}</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1.5">
               {data[m.key] != null ? `${(data[m.key] as number).toFixed(1)}%` : "N/A"}
             </p>
             {(data[m.tickersKey] as string[])?.length > 0 && (
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
                 {(data[m.tickersKey] as string[]).join(", ")}
               </p>
             )}
@@ -132,11 +134,11 @@ function PriceVolumeTab() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-3">Latest Signals</h2>
+      <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Latest Signals</p>
       <DataTable columns={latestCols} rows={latestRows} />
       {hitsRows.length > 0 && (
         <>
-          <h2 className="text-lg font-semibold mt-6 mb-3">Recent Signal History</h2>
+          <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mt-6 mb-3">Recent Signal History</p>
           <DataTable columns={hitsCols} rows={hitsRows} />
         </>
       )}
@@ -167,7 +169,7 @@ function VIXTab() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-1">VIX Term Structure (3M / 1M)</h2>
+      <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-1">VIX Term Structure (3M / 1M)</p>
       <p className="text-xs text-gray-400 mb-4">
         High ratio (≥ 1.25): later volatility concerns. Low ratio (&lt; 1.0): near-term fear.
       </p>
@@ -181,13 +183,13 @@ function VIXTab() {
             <MetricCard title="Date" value={String(latest["Date"])} />
           </div>
           {latest["Signal"] === "Fear" && (
-            <div className="mb-4 rounded bg-yellow-50 border border-yellow-200 px-4 py-2 text-sm text-yellow-800">
-              Signal: Fear (near-term volatility elevated)
+            <div className="mb-4 rounded-xl border border-yellow-100 bg-yellow-50/60 px-4 py-3 text-sm text-yellow-700">
+              Signal: Fear — near-term volatility elevated
             </div>
           )}
           {latest["Signal"] === "Complacency" && (
-            <div className="mb-4 rounded bg-blue-50 border border-blue-200 px-4 py-2 text-sm text-blue-800">
-              Signal: Complacency (longer-term volatility elevated)
+            <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-600">
+              Signal: Complacency — longer-term volatility elevated
             </div>
           )}
         </>
@@ -195,21 +197,21 @@ function VIXTab() {
 
       {chartData.length > 0 && (
         <div className="mb-6">
-          <h3 className="text-sm font-medium mb-2">Ratio Over Time (last 12 months)</h3>
+          <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-2">Ratio over time (last 12 months)</p>
           <TimeSeriesChart data={chartData} height={200} zeroLine={false} />
         </div>
       )}
 
       {recent.length > 0 && (
         <>
-          <h3 className="text-sm font-medium mb-2">Recent Ratios</h3>
+          <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-2">Recent ratios</p>
           <DataTable columns={tableCols} rows={recent.slice(-10)} />
         </>
       )}
 
       {hits.length > 0 && (
         <>
-          <h3 className="text-sm font-medium mt-4 mb-2">Recent Signal Hits</h3>
+          <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mt-4 mb-2">Recent signal hits</p>
           <DataTable columns={tableCols} rows={hits} />
         </>
       )}
@@ -224,20 +226,20 @@ export function MarketTechnicals() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Market Technicals</h1>
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Market Technicals</h1>
         <RefreshButton />
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
+      <div className="flex gap-0 border-b border-gray-200 mb-6 overflow-x-auto">
         {TABS.map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium rounded-t transition-colors ${
+            className={`px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
               tab === t
-                ? "border border-b-white border-gray-200 bg-white text-blue-600 -mb-px"
-                : "text-gray-500 hover:text-gray-700"
+                ? "text-gray-900 font-semibold border-b-2 border-gray-900 -mb-px"
+                : "text-gray-400 hover:text-gray-600"
             }`}
           >
             {t}
