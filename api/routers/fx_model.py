@@ -26,12 +26,16 @@ def run_fx_model(req: FXModelRequest):
         from src.pipeline import run_pipeline
 
         config = get_config(req.pair)
+        outdir.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
         data = run_pipeline(
             config=config,
-            cache_dir=str(cache_dir),
-            outdir=str(outdir),
+            start="1990-01-01",
+            cache_dir=cache_dir,
+            outdir=outdir,
+            refresh=False,
+            use_bis=not req.skip_bis,
             bootstrap_draws=req.bootstrap,
-            skip_bis=req.skip_bis,
             horizons=horizons,
         )
     except Exception as e:

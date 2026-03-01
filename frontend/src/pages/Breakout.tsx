@@ -45,6 +45,28 @@ function boolFlag(v: unknown): string {
   return String(v ?? "")
 }
 
+function formatXAxisDate(isoDate: string): string {
+  const d = new Date(isoDate)
+  if (Number.isNaN(d.getTime())) return isoDate
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+}
+
+function formatTooltipDate(v: unknown): string {
+  const raw = String(v ?? "")
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return raw
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+function buildXAxisTicks(data: { date: string }[], targetTicks = 10): string[] {
+  if (data.length <= targetTicks) return data.map(d => d.date)
+  const step = Math.ceil(data.length / targetTicks)
+  const ticks = data.filter((_, i) => i % step === 0).map(d => d.date)
+  const last = data[data.length - 1]?.date
+  if (last && ticks[ticks.length - 1] !== last) ticks.push(last)
+  return ticks
+}
+
 export function Breakout() {
   const { data, isLoading, error } = useApiQuery(["breakout"], fetchBreakout)
   const [selectedTicker, setSelectedTicker] = useState<string>("")
@@ -109,6 +131,7 @@ export function Breakout() {
     long_scatter: r["long_breakout"] ? r["close"] as number : undefined,
     short_scatter: r["short_breakout"] ? r["close"] as number : undefined,
   }))
+  const xAxisTicks = buildXAxisTicks(chartData, 10)
 
   return (
     <div>
@@ -156,9 +179,17 @@ export function Breakout() {
         <ResponsiveContainer width="100%" height={350}>
           <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} interval="preserveStartEnd" />
-            <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={60} />
-            <Tooltip />
+            <XAxis
+              dataKey="date"
+              ticks={xAxisTicks}
+              interval={0}
+              minTickGap={20}
+              tickFormatter={formatXAxisDate}
+              tick={{ fontSize: 10 }}
+              tickLine={false}
+            />
+            <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={60} domain={['auto', 'auto']} />
+            <Tooltip labelFormatter={(label: unknown) => formatTooltipDate(label)} />
             <Legend />
             <Area dataKey="congestion_fill_high" fill="#ffc107" stroke="none" fillOpacity={0.2} name="Congestion" legendType="rect" />
             <Area dataKey="congestion_fill_low" fill="#ffc107" stroke="none" fillOpacity={0} />
