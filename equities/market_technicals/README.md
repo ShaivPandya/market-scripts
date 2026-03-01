@@ -2,11 +2,21 @@
 
 Analyzes market breadth and price/volume signals for U.S. equities.
 
+## Where this is used
+
+- Standalone CLI: `python3 equities/market_technicals/market_technicals.py`
+- FastAPI:
+  - `GET /api/market-breadth`
+  - `GET /api/top50-breadth`
+  - `GET /api/price-volume-signals`
+  - `GET /api/vix-term-structure`
+- Streamlit GUI: `gui/app.py` (page: “📈 Market Technicals”)
+- React UI: “Market Technicals” page in `frontend/`
+
 ## Quick Start
 
 ```bash
-cd equities/market_technicals
-python3 market_technicals.py
+python3 equities/market_technicals/market_technicals.py
 ```
 
 This runs all four analyses in sequence.
@@ -14,7 +24,11 @@ This runs all four analyses in sequence.
 ## Dependencies
 
 ```bash
-pip install pandas yfinance requests lxml numpy
+# From the repo root:
+pip install -r requirements.txt
+
+# Or minimal:
+# pip install pandas yfinance requests lxml numpy
 ```
 
 ## What It Does

@@ -62,7 +62,7 @@ export function Liquidity() {
         </div>
       </div>
 
-      {isLoading && <LoadingSpinner message="Fetching liquidity data from FRED..." />}
+      {isLoading && <LoadingSpinner message="Fetching liquidity data..." />}
       {!isLoading && (error || !data) && <ErrorMessage message={String(error) || "Failed to load"} />}
 
       {data && !isLoading && (
@@ -71,7 +71,7 @@ export function Liquidity() {
             <p className="text-yellow-600">Insufficient data to compute liquidity score.</p>
           ) : (
             <>
-              <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                 <MetricCard
                   title="Composite Score"
                   value={`${Number(data.composite_score) >= 0 ? "+" : ""}${Number(data.composite_score).toFixed(2)}`}
@@ -86,7 +86,7 @@ export function Liquidity() {
               </div>
 
               <h2 className="text-lg font-semibold mb-3">Regional Liquidity Scores</h2>
-              <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
                 {Object.entries(data.regional_scores ?? {}).map(([key, region]) => {
                   const r = region as { score: number; regime: string; color: string }
                   return (

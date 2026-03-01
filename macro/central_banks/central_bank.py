@@ -51,12 +51,13 @@ FEEDS = {
     ],
     "RBA": [
         "https://www.rba.gov.au/rss/rss-cb-media-releases.xml",
+        "https://www.rba.gov.au/rss/rss-cb-smp.xml",
     ],
     "RBNZ": [
         "https://www.rbnz.govt.nz/feeds/news",
     ],
     "RIKSBANK": [
-        "https://www.riksbank.se/sv/rss/pressmeddelanden/",
+        "https://www.riksbank.se/en-gb/rss/press-releases/",
     ],
 }
 
@@ -90,7 +91,7 @@ CLASSIFIERS = [
     ("NORGES", "Monetary Policy Report", re.compile(r"\bMonetary Policy Report\b", re.I)),
     # Reserve Bank of Australia
     ("RBA", "Monetary Policy Decision", re.compile(r"\bMonetary Policy Decision\b", re.I)),
-    ("RBA", "Statement on Monetary Policy", re.compile(r"\bStatement on Monetary Policy\b", re.I)),
+    ("RBA", "Statement on Monetary Policy", re.compile(r"\bStatements? on Monetary Policy\b", re.I)),
     ("RBA", "Board Minutes", re.compile(r"\bMinutes of the (Monetary Policy )?Board\b", re.I)),
     # Reserve Bank of New Zealand
     ("RBNZ", "Official Cash Rate", re.compile(r"\b(OCR|Official Cash Rate)\b", re.I)),

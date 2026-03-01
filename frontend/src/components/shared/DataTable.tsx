@@ -26,7 +26,7 @@ export function DataTable({ columns, rows, maxHeight = "600px" }: DataTableProps
   }
 
   return (
-    <div style={{ maxHeight, overflowY: "auto" }} className="rounded border border-gray-200">
+    <div style={{ maxHeight, overflowY: "auto" }} className="rounded border border-gray-200 overflow-x-auto">
       <table className="w-full text-sm border-collapse">
         <thead className="sticky top-0 bg-gray-50 z-10">
           <tr>

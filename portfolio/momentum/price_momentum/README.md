@@ -2,46 +2,64 @@
 
 A Python script for analyzing stock momentum using Rate of Change (ROC) indicators with absolute and relative price movements.
 
+## Where this is used
+
+- Standalone CLI: `python3 portfolio/momentum/price_momentum/momentum.py ...`
+- FastAPI: `GET /api/momentum` (see `api/routers/momentum.py`)
+- Streamlit GUI: `gui/app.py` (page: “🚀 Momentum”)
+- React UI: “Momentum” page in `frontend/`
+
 ## Overview
 
-This script computes three key momentum metrics:
+This script computes four key momentum metrics:
 
 1. **20-day average of 63-day ROC (%)** - Measures absolute price momentum over a ~3-month period
-2. **42-day ROC (%) of relative price to benchmark** - Compares stock performance vs. benchmark over ~2 months
-3. **10-day average of relative ROC (%)** - Short-term average of relative performance
+2. **20-day average of 63-day ROC (%) (Volume)** - Measures volume momentum over a ~3-month period
+3. **42-day ROC (%) of relative price to benchmark** - Compares stock performance vs. benchmark over ~2 months
+4. **10-day average of relative ROC (%)** - Short-term average of relative performance
 
 The script uses color-coded output to highlight strong (green) vs. weak (red) momentum signals.
 
 ## Installation
 
 ```bash
-pip install yfinance pandas
+# From the repo root:
+pip install -r requirements.txt
+
+# Or minimal:
+# pip install yfinance pandas
 ```
 
 ## Usage
 
+### Default (reads `portfolio/portfolio.csv`)
+
+```bash
+python3 portfolio/momentum/price_momentum/momentum.py
+```
+
 ### Single Ticker Analysis
 
 ```bash
-python3 momentum.py AAPL --benchmark SPY
+python3 portfolio/momentum/price_momentum/momentum.py AAPL --benchmark SPY
 ```
 
 ### Multiple Tickers from File
 
 ```bash
-python3 momentum.py --tickers-file tickers.txt --benchmark SPY
+python3 portfolio/momentum/price_momentum/momentum.py --tickers-file tickers.txt --benchmark SPY
 ```
 
 ### Using Built-in Universe
 
 ```bash
-python3 momentum.py --tickers-file us_mega_cap --benchmark QQQ --years 10
+python3 portfolio/momentum/price_momentum/momentum.py --tickers-file us_mega_cap --benchmark QQQ --years 10
 ```
 
 ### List Available Universes
 
 ```bash
-python3 momentum.py --list-universes
+python3 portfolio/momentum/price_momentum/momentum.py --list-universes
 ```
 
 ## Command Line Arguments
@@ -62,6 +80,7 @@ As of: 2026-01-17
 
 Ticker: AAPL    Close: 150.2500
   20-day avg of 63-day ROC (%):        2.345678
+  20-day avg of 63-day ROC (Volume):   1.234567
   42-day ROC of relative price (%):   1.234567
   10-day avg of relative ROC (%):     0.987654
 ```
@@ -90,7 +109,7 @@ The script requires at least 83 trading days of overlapping data between the tic
 
 ## Dependencies
 
-- Python 3.7+
+- Python 3.11+
 - yfinance
 - pandas
 

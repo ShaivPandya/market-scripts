@@ -73,7 +73,10 @@ export function FXModel() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">FX Model</h1>
+      <div className="flex items-center gap-2 mb-6">
+        <h1 className="text-2xl font-bold">FX Model</h1>
+        <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-yellow-100 text-yellow-800 border border-yellow-300">Beta</span>
+      </div>
       <p className="text-sm text-gray-500 mb-4">
         Multi-factor FX forecasting using FRED, IMF, BIS data
       </p>

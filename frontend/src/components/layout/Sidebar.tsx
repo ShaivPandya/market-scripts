@@ -25,14 +25,14 @@ const NAV_SECTIONS: NavSection[] = [
   {
     pages: [
       { label: "📊 Index Dashboard", path: "/index-dashboard" },
-      { label: "📉 FX Dashboard", path: "/fx-dashboard" },
+      { label: "💵 FX Dashboard", path: "/fx-dashboard" },
       { label: "🛢️ Commodity Dashboard", path: "/commodities" },
     ],
   },
   {
     pages: [
-      { label: "📈 Market Technicals", path: "/market-technicals" },
-      { label: "🏛️ Sector Metrics", path: "/sector-metrics" },
+      { label: "🧭 Market Technicals", path: "/market-technicals" },
+      { label: "🧩 Sector Metrics", path: "/sector-metrics" },
       { label: "📌 Positioning", path: "/positioning" },
       { label: "🔔 Breakout", path: "/breakout" },
       { label: "💱 FX Model", path: "/fx-model" },
@@ -53,7 +53,12 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ]
 
-export function Sidebar() {
+interface SidebarProps {
+  isOpen: boolean
+  onClose: () => void
+}
+
+export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { logout, mode } = useAuth()
   const navigate = useNavigate()
 
@@ -70,7 +75,15 @@ export function Sidebar() {
   }
 
   return (
-    <nav className="w-56 shrink-0 border-r border-gray-200 bg-gray-50 h-screen sticky top-0 flex flex-col">
+    <nav
+      className={[
+        "md:w-56 md:shrink-0 md:static md:translate-x-0 md:h-screen md:sticky md:top-0",
+        "fixed top-0 left-0 h-full w-64 z-30",
+        "transition-transform duration-300",
+        isOpen ? "translate-x-0" : "-translate-x-full",
+        "border-r border-gray-200 bg-gray-50 flex flex-col",
+      ].join(" ")}
+    >
       <div className="px-3 py-4 flex-1 overflow-y-auto">
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
           Navigation
@@ -81,6 +94,7 @@ export function Sidebar() {
               <NavLink
                 key={page.path}
                 to={page.path}
+                onClick={onClose}
                 className={({ isActive }) =>
                   cn(
                     "block w-full text-left px-2 py-1.5 rounded text-sm mb-0.5 transition-colors truncate",

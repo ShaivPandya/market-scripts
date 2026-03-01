@@ -1,6 +1,8 @@
-# Government Bond Yields Tracker
+# Government Bond Yields Tracker (`government_bonds/`)
 
 This script fetches and displays government bond yields for major countries, including historical changes over various time periods.
+
+For the overall repo architecture (API + UI), see the repo root `README.md`.
 
 ## Features
 
@@ -16,6 +18,7 @@ This script fetches and displays government bond yields for major countries, inc
 1. Install the required dependencies:
 
 ```bash
+# From the repo root:
 pip install -r requirements.txt
 ```
 
@@ -30,6 +33,13 @@ pip install -r requirements.txt
 export FRED_API_KEY='your_api_key_here'
 ```
 
+This repo also supports `.env` files (recommended for local dev):
+
+```bash
+cp .env.example .env
+# edit .env and set FRED_API_KEY=...
+```
+
 Or add it to your `~/.bashrc` or `~/.zshrc` for persistence:
 
 ```bash
@@ -42,13 +52,13 @@ source ~/.zshrc
 ### Display bond yields in terminal:
 
 ```bash
-python3 government_bond_yields.py
+python3 government_bonds/government_bond_yields.py
 ```
 
 ### Export data to CSV:
 
 ```bash
-python3 government_bond_yields.py --export
+python3 government_bonds/government_bond_yields.py --export
 ```
 
 This will create a `government_bond_yields.csv` file with all the data.
@@ -83,6 +93,8 @@ The CSV files should have the following columns:
 - `High` (with % symbol)
 - `Low` (with % symbol)
 - `Close` (with % symbol)
+
+See `government_bonds/data/README.md` for the expected filenames and an example.
 
 ## Notes
 
