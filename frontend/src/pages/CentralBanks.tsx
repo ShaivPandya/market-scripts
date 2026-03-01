@@ -92,10 +92,14 @@ export function CentralBanks() {
       {data && !isLoading && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <div className="flex gap-4 text-sm text-gray-500">
-              <span>Total: <strong>{data.counts?.total ?? items.length}</strong></span>
+            <div className="flex w-full flex-wrap items-center gap-2 text-sm text-gray-500 md:w-auto md:gap-4">
+              <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5">
+                Total: <strong className="ml-1">{data.counts?.total ?? items.length}</strong>
+              </span>
               {sources.map(s => (
-                <span key={s}>{s}: <strong>{bySource[s].length}</strong></span>
+                <span key={s} className="inline-flex rounded-full bg-gray-100 px-2 py-0.5">
+                  {s}: <strong className="ml-1">{bySource[s].length}</strong>
+                </span>
               ))}
             </div>
             <div className="inline-flex rounded-lg border border-gray-300 bg-white p-0.5">
