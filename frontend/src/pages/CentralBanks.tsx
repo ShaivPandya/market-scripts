@@ -2,7 +2,6 @@ import { useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchCentralBanks } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { RefreshButton } from "@/components/shared/RefreshButton"
 
 const SIGNAL_COLORS: Record<string, string> = {
   hawkish: "bg-red-100 text-red-700",
@@ -56,7 +55,7 @@ function publishedTimestamp(value: string) {
 
 export function CentralBanks() {
   const [refresh, setRefresh] = useState(false)
-  const [viewMode, setViewMode] = useState<"grouped" | "chronological">("grouped")
+  const [viewMode, setViewMode] = useState<"grouped" | "chronological">("chronological")
   const { data, isLoading, error } = useApiQuery(
     ["central-banks", refresh],
     () => fetchCentralBanks(refresh),
@@ -84,7 +83,6 @@ export function CentralBanks() {
           >
             Refresh
           </button>
-          <RefreshButton queryKeys={[["central-banks", refresh]]} />
         </div>
       </div>
 
@@ -119,7 +117,7 @@ export function CentralBanks() {
                     : "text-gray-600 hover:bg-gray-100"
                 }`}
               >
-                Chronological
+                Latest
               </button>
             </div>
           </div>

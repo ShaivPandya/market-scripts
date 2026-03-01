@@ -40,10 +40,15 @@ for _p in reversed(_PATHS):
     if _p_str not in sys.path:
         sys.path.insert(0, _p_str)
 
-from fastapi import FastAPI
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import routers AFTER sys.path is configured
+from api.routers import auth as auth_router
+from api.routers.auth import require_auth
 from api.routers import (
     portfolio,
     optimizer,
@@ -79,30 +84,34 @@ app.add_middleware(
         "http://localhost:5173",  # Vite dev server
         "http://localhost:3000",
     ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(portfolio.router, prefix="/api")
-app.include_router(optimizer.router, prefix="/api")
-app.include_router(momentum.router, prefix="/api")
-app.include_router(chart.router, prefix="/api")
-app.include_router(quality.router, prefix="/api")
-app.include_router(short_screen.router, prefix="/api")
-app.include_router(fundamental_momentum.router, prefix="/api")
-app.include_router(index_dashboard.router, prefix="/api")
-app.include_router(fx_dashboard.router, prefix="/api")
-app.include_router(commodities.router, prefix="/api")
-app.include_router(market_technicals.router, prefix="/api")
-app.include_router(economic_growth.router, prefix="/api")
-app.include_router(liquidity.router, prefix="/api")
-app.include_router(country_dashboard.router, prefix="/api")
-app.include_router(positioning.router, prefix="/api")
-app.include_router(breakout.router, prefix="/api")
-app.include_router(fx_model.router, prefix="/api")
-app.include_router(central_banks.router, prefix="/api")
-app.include_router(sector_metrics.router, prefix="/api")
-app.include_router(industry.router, prefix="/api")
+_auth_dep = [Depends(require_auth)]
+
+app.include_router(auth_router.router, prefix="/api")  # public — no auth dep
+app.include_router(portfolio.router,            prefix="/api", dependencies=_auth_dep)
+app.include_router(optimizer.router,            prefix="/api", dependencies=_auth_dep)
+app.include_router(momentum.router,             prefix="/api", dependencies=_auth_dep)
+app.include_router(chart.router,                prefix="/api", dependencies=_auth_dep)
+app.include_router(quality.router,              prefix="/api", dependencies=_auth_dep)
+app.include_router(short_screen.router,         prefix="/api", dependencies=_auth_dep)
+app.include_router(fundamental_momentum.router, prefix="/api", dependencies=_auth_dep)
+app.include_router(index_dashboard.router,      prefix="/api", dependencies=_auth_dep)
+app.include_router(fx_dashboard.router,         prefix="/api", dependencies=_auth_dep)
+app.include_router(commodities.router,          prefix="/api", dependencies=_auth_dep)
+app.include_router(market_technicals.router,    prefix="/api", dependencies=_auth_dep)
+app.include_router(economic_growth.router,      prefix="/api", dependencies=_auth_dep)
+app.include_router(liquidity.router,            prefix="/api", dependencies=_auth_dep)
+app.include_router(country_dashboard.router,    prefix="/api", dependencies=_auth_dep)
+app.include_router(positioning.router,          prefix="/api", dependencies=_auth_dep)
+app.include_router(breakout.router,             prefix="/api", dependencies=_auth_dep)
+app.include_router(fx_model.router,             prefix="/api", dependencies=_auth_dep)
+app.include_router(central_banks.router,        prefix="/api", dependencies=_auth_dep)
+app.include_router(sector_metrics.router,       prefix="/api", dependencies=_auth_dep)
+app.include_router(industry.router,             prefix="/api", dependencies=_auth_dep)
 
 
 @app.get("/api/health")
