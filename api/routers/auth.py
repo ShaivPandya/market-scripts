@@ -19,10 +19,34 @@ from jose import JWTError, jwt
 from pydantic import BaseModel
 
 # ── Config (read from .env via load_dotenv() in main.py) ─────────────────────
-_PASSWORD_HASH = os.environ["AUTH_PASSWORD_HASH"].encode()
-_JWT_SECRET    = os.environ["JWT_SECRET"]
-_JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
-_JWT_TTL_HOURS = int(os.environ.get("JWT_TTL_HOURS", "12"))
+_AUTH_MODE = (os.environ.get("AUTH_MODE") or "").strip().lower() or "password"
+
+
+def _is_cloudflare_mode() -> bool:
+    # Cloudflare Access gates the app; the API still remains protected by the proxy-secret middleware.
+    return _AUTH_MODE == "cloudflare"
+
+
+def _get_password_hash() -> bytes:
+    value = os.environ.get("AUTH_PASSWORD_HASH")
+    if not value:
+        raise RuntimeError("AUTH_PASSWORD_HASH is not set")
+    return value.encode()
+
+
+def _get_jwt_secret() -> str:
+    value = os.environ.get("JWT_SECRET")
+    if not value:
+        raise RuntimeError("JWT_SECRET is not set")
+    return value
+
+
+def _get_jwt_algorithm() -> str:
+    return os.environ.get("JWT_ALGORITHM", "HS256")
+
+
+def _get_jwt_ttl_hours() -> int:
+    return int(os.environ.get("JWT_TTL_HOURS", "12"))
 
 router = APIRouter(tags=["auth"])
 
@@ -30,11 +54,12 @@ router = APIRouter(tags=["auth"])
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _create_token() -> str:
-    expire = datetime.now(timezone.utc) + timedelta(hours=_JWT_TTL_HOURS)
+    ttl_hours = _get_jwt_ttl_hours()
+    expire = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
     return jwt.encode(
         {"sub": "admin", "exp": expire},
-        _JWT_SECRET,
-        algorithm=_JWT_ALGORITHM,
+        _get_jwt_secret(),
+        algorithm=_get_jwt_algorithm(),
     )
 
 
@@ -47,13 +72,19 @@ def require_auth(access_token: str | None = Cookie(default=None)) -> str:
     Usage in main.py:
         app.include_router(some_router, prefix="/api", dependencies=[Depends(require_auth)])
     """
+    if _is_cloudflare_mode():
+        return "admin"
     if access_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
     try:
-        payload = jwt.decode(access_token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+        payload = jwt.decode(
+            access_token,
+            _get_jwt_secret(),
+            algorithms=[_get_jwt_algorithm()],
+        )
         return payload["sub"]
     except JWTError:
         raise HTTPException(
@@ -72,19 +103,20 @@ class LoginRequest(BaseModel):
 
 @router.post("/auth/login")
 def login(body: LoginRequest, response: Response):
-    if not bcrypt.checkpw(body.password.encode(), _PASSWORD_HASH):
+    if not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect password",
         )
     token = _create_token()
+    ttl_hours = _get_jwt_ttl_hours()
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
         samesite="strict",
         secure=False,  # set to True in production (HTTPS)
-        max_age=_JWT_TTL_HOURS * 3600,
+        max_age=ttl_hours * 3600,
         path="/",
     )
     return {"detail": "ok"}

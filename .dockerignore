@@ -1,0 +1,23 @@
+.git
+.DS_Store
+
+# Secrets
+.env
+.env.*
+
+# Python caches
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Local data / outputs
+data_cache/
+**/data_cache/
+outputs/
+**/outputs/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+

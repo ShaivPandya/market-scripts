@@ -1,11 +1,18 @@
 import axios from "axios"
 
+const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE ?? "password").toLowerCase()
+const IS_CLOUDFLARE_AUTH = AUTH_MODE === "cloudflare"
+
 const client = axios.create({ baseURL: "/api", withCredentials: true })
 
 client.interceptors.response.use(
   res => res,
   err => {
-    if (err.response?.status === 401 && !window.location.pathname.startsWith("/login")) {
+    if (
+      !IS_CLOUDFLARE_AUTH &&
+      err.response?.status === 401 &&
+      !window.location.pathname.startsWith("/login")
+    ) {
       window.location.href = "/login"
     }
     return Promise.reject(err)

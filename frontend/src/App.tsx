@@ -35,6 +35,8 @@ const queryClient = new QueryClient({
   },
 })
 
+const IS_CLOUDFLARE_AUTH = (import.meta.env.VITE_AUTH_MODE ?? "").toLowerCase() === "cloudflare"
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -42,7 +44,10 @@ export default function App() {
         <AuthProvider>
           <Routes>
             {/* Public */}
-            <Route path="/login" element={<LoginPage />} />
+            <Route
+              path="/login"
+              element={IS_CLOUDFLARE_AUTH ? <Navigate to="/portfolio" replace /> : <LoginPage />}
+            />
 
             {/* Protected — all existing routes */}
             <Route element={<ProtectedRoute />}>
