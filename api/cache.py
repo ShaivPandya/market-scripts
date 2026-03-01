@@ -16,8 +16,8 @@ import time
 from cachetools import TTLCache
 from pathlib import Path
 
-short_cache: TTLCache = TTLCache(maxsize=256, ttl=300)
-long_cache: TTLCache = TTLCache(maxsize=128, ttl=3600)
+short_cache: TTLCache = TTLCache(maxsize=32, ttl=300)
+long_cache: TTLCache = TTLCache(maxsize=16, ttl=3600)
 _lock = threading.Lock()
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -68,10 +68,10 @@ def get_cached(cache: TTLCache, key: str):
         v = cache.get(key)
         if v is not None:
             return v
-        v = _disk_get(cache, key)
-        if v is not None:
-            cache[key] = v
-        return v
+        # Disk cache is a read-through fallback only — do NOT reload into
+        # the in-memory TTLCache.  Re-populating the in-memory cache after
+        # TTL eviction defeats eviction and causes unbounded memory growth.
+        return _disk_get(cache, key)
 
 
 def set_cached(cache: TTLCache, key: str, value) -> None:

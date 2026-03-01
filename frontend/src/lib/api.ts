@@ -3,7 +3,7 @@ import axios from "axios"
 import { getAuthMode } from "@/lib/authMode"
 
 const client = axios.create({
-  baseURL: "/api",
+  baseURL: (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/+$/, ""),
   withCredentials: true,
   // Avoid "spinning forever" when the backend (or an upstream like Cloudflare) hangs.
   timeout: 60_000,
@@ -172,6 +172,43 @@ export const runChart = (body: { ticker: string; lookback: string }) =>
 
 export const runPortfolioOptimizer = (body: { book: number; target_leverage: number }) =>
   client.post("/portfolio-optimizer", body, { timeout: 180_000 }).then(r => r.data)
+
+type OptimizerJobStatus = "queued" | "running" | "done" | "error"
+type OptimizerJobResponse =
+  | { job_id: string; status: "queued" | "running" }
+  | { job_id: string; status: "error"; error?: string }
+  | { job_id: string; status: "done"; result?: unknown }
+
+export const startPortfolioOptimizerJob = (body: { book: number; target_leverage: number }) =>
+  client.post("/portfolio-optimizer/async", body, { timeout: 30_000 }).then(r => r.data as OptimizerJobResponse)
+
+export const fetchPortfolioOptimizerJob = (job_id: string) =>
+  client.get(`/portfolio-optimizer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OptimizerJobResponse)
+
+export async function runPortfolioOptimizerAsync(body: { book: number; target_leverage: number }) {
+  const started = await startPortfolioOptimizerJob(body)
+  if (started.status === "done" && "result" in started && started.result != null) return started.result as any
+  if (started.status === "error") throw new Error(started.error || "Optimizer failed")
+
+  const job_id = started.job_id
+  const deadline = Date.now() + 180_000
+
+  // Poll until completion; each request is short to avoid edge proxy timeouts.
+  for (;;) {
+    if (Date.now() > deadline) throw new Error("Timeout: Optimizer is taking too long. Try again.")
+
+    await new Promise(r => setTimeout(r, 2000))
+    const job = await fetchPortfolioOptimizerJob(job_id)
+
+    if (job.status === "done") {
+      if ("result" in job && job.result != null) return job.result as any
+      // cached:* jobs return done without result in the poll endpoint
+      // (the initial response already carried the payload).
+      return (started as any).result
+    }
+    if (job.status === "error") throw new Error(job.error || "Optimizer failed")
+  }
+}
 
 export const runQualityScreen = (body: {
   universe: string

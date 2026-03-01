@@ -56,10 +56,8 @@ def serialize_dataframe(df: pd.DataFrame) -> list[dict]:
     If the DataFrame has a named index (e.g. Ticker, Sector), reset_index()
     should be called *before* passing here so the index becomes a column.
     """
-    records = []
-    for _, row in df.iterrows():
-        records.append({col: serialize_value(row[col]) for col in df.columns})
-    return records
+    records = df.to_dict(orient="records")
+    return [{str(k): serialize_value(v) for k, v in row.items()} for row in records]
 
 
 def serialize_series(s: pd.Series) -> list[dict]:
