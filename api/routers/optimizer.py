@@ -14,10 +14,11 @@ from typing import Any, Literal, TypedDict
 class OptimizerRequest(BaseModel):
     book: int = 100_000
     target_leverage: float = 2.0
+    beta_neutral: bool = True
 
 
 def _cache_key(req: OptimizerRequest) -> str:
-    return f"portfolio_optimizer:book={int(req.book)}:lev={float(req.target_leverage):.4f}"
+    return f"portfolio_optimizer:book={int(req.book)}:lev={float(req.target_leverage):.4f}:bn={req.beta_neutral}"
 
 class _Job(TypedDict, total=False):
     status: Literal["queued", "running", "done", "error"]
@@ -36,7 +37,7 @@ _JOB_TTL_S = 60 * 30  # best-effort cleanup window; results are also cached sepa
 def _compute_optimizer_result(req: OptimizerRequest) -> dict[str, Any]:
     try:
         from portfolio_optimizer.portfolio_optimizer import get_data
-        data = get_data(book=req.book, target_leverage=req.target_leverage)
+        data = get_data(book=req.book, target_leverage=req.target_leverage, beta_neutral=req.beta_neutral)
     except Exception as e:
         raise RuntimeError(str(e)) from e
 
@@ -148,7 +149,7 @@ def start_optimizer(req: OptimizerRequest):
             "created_at": now,
             "updated_at": now,
             "cache_key": key,
-            "params": {"book": req.book, "target_leverage": req.target_leverage},
+            "params": {"book": req.book, "target_leverage": req.target_leverage, "beta_neutral": req.beta_neutral},
         }
 
     _spawn_optimizer_job(job_id, req, key)

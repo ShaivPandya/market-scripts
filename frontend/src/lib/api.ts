@@ -173,7 +173,7 @@ export const fetchFxModelPairs = () =>
 export const runChart = (body: { ticker: string; lookback: string }) =>
   client.post("/chart", body).then(r => r.data)
 
-export const runPortfolioOptimizer = (body: { book: number; target_leverage: number }) =>
+export const runPortfolioOptimizer = (body: { book: number; target_leverage: number; beta_neutral: boolean }) =>
   client.post("/portfolio-optimizer", body, { timeout: 180_000 }).then(r => r.data)
 
 type OptimizerJobStatus = "queued" | "running" | "done" | "error"
@@ -182,13 +182,13 @@ type OptimizerJobResponse =
   | { job_id: string; status: "error"; error?: string }
   | { job_id: string; status: "done"; result?: unknown }
 
-export const startPortfolioOptimizerJob = (body: { book: number; target_leverage: number }) =>
+export const startPortfolioOptimizerJob = (body: { book: number; target_leverage: number; beta_neutral: boolean }) =>
   client.post("/portfolio-optimizer/async", body, { timeout: 30_000 }).then(r => r.data as OptimizerJobResponse)
 
 export const fetchPortfolioOptimizerJob = (job_id: string) =>
   client.get(`/portfolio-optimizer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OptimizerJobResponse)
 
-export async function runPortfolioOptimizerAsync(body: { book: number; target_leverage: number }) {
+export async function runPortfolioOptimizerAsync(body: { book: number; target_leverage: number; beta_neutral: boolean }) {
   const started = await startPortfolioOptimizerJob(body)
   if (started.status === "done" && "result" in started && started.result != null) return started.result as any
   if (started.status === "error") throw new Error(started.error || "Optimizer failed")

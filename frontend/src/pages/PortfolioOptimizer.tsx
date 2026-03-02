@@ -157,6 +157,13 @@ export function PortfolioOptimizer() {
           maxLabel="4.0x"
         />
 
+        <Toggle
+          label="Net Neutral"
+          checked={betaNeutral}
+          onChange={setBetaNeutral}
+          description="Scale down equity longs/shorts so net equity exposure = 0%"
+        />
+
         <div className="rounded-lg bg-gray-50 px-3.5 py-3 text-xs text-gray-400 space-y-0.5">
           <p className="font-medium text-gray-500">Constraints</p>
           <p>Total gross: 4.0x · FX: 2.0x · Commodities: 1.0x · Bonds: 3.0x</p>
