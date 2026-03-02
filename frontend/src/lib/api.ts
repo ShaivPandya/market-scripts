@@ -223,7 +223,22 @@ export const runQualityScreen = (body: {
   tickers: string
   benchmark: string
   input_mode: string
-}) => client.post("/quality-screen", body).then(r => r.data)
+}) => {
+  const controller = new AbortController()
+  const timeoutMs = 90_000
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  return client
+    .post("/quality-screen", body, { signal: controller.signal, timeout: timeoutMs })
+    .then(r => r.data)
+    .catch(err => {
+      if (axios.isAxiosError(err) && err.code === "ERR_CANCELED") {
+        throw new Error("Timeout: Quality screen exceeded 90s. Try a smaller universe or custom tickers.")
+      }
+      throw err
+    })
+    .finally(() => clearTimeout(timer))
+}
 
 export const runShortScreen = (body: {
   pb_threshold: number
@@ -237,7 +252,22 @@ export const runFundamentalMomentum = (body: {
   tickers: string
   benchmark: string
   input_mode: string
-}) => client.post("/fundamental-momentum", body).then(r => r.data)
+}) => {
+  const controller = new AbortController()
+  const timeoutMs = 90_000
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  return client
+    .post("/fundamental-momentum", body, { signal: controller.signal, timeout: timeoutMs })
+    .then(r => r.data)
+    .catch(err => {
+      if (axios.isAxiosError(err) && err.code === "ERR_CANCELED") {
+        throw new Error("Timeout: Fundamental momentum exceeded 90s. Try a smaller universe or custom tickers.")
+      }
+      throw err
+    })
+    .finally(() => clearTimeout(timer))
+}
 
 export const runFinancials = (body: { ticker: string }) =>
   client.post("/financials", body).then(r => r.data)

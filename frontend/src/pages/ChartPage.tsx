@@ -46,21 +46,25 @@ function lookbackCutoff(lookback: string): Date {
 }
 
 export function ChartPage() {
-  const [ticker, setTicker] = useState("SPY")
+  const [ticker, setTicker] = useState("")
   const [lookback, setLookback] = useState<string>("2Y")
 
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
-  const { data, isPending, isError, error } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ["chart", submittedTicker],
     queryFn: () => runChart({ ticker: submittedTicker!, lookback: "5Y" }),
-    enabled: submittedTicker !== null,
+    enabled: Boolean(submittedTicker),
     staleTime: Infinity,
   })
 
+  const isLoading = isFetching
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSubmittedTicker(ticker.trim().toUpperCase())
+    const normalizedTicker = ticker.trim().toUpperCase()
+    if (!normalizedTicker) return
+    setSubmittedTicker(normalizedTicker)
   }
 
   // Parse the full 5Y datasets once when data arrives
@@ -95,11 +99,11 @@ export function ChartPage() {
   const cutoff = lookbackCutoff(lookback)
   const priceMultiData = useMemo(
     () => allPriceData.filter(d => new Date(String(d.date)) >= cutoff),
-    [allPriceData, lookback] // eslint-disable-line react-hooks/exhaustive-deps
+    [allPriceData, cutoff]
   )
   const rocMultiData = useMemo(
     () => allRocData.filter(d => new Date(String(d.date)) >= cutoff),
-    [allRocData, lookback] // eslint-disable-line react-hooks/exhaustive-deps
+    [allRocData, cutoff]
   )
 
   const summaryRows: Record<string, unknown>[] = Array.isArray(data?.summary) ? data.summary : []
@@ -146,15 +150,15 @@ export function ChartPage() {
             onChange={setLookback}
           />
         </div>
-        <ActionButton type="submit" loading={isPending} loadingText="Analyzing..." className="w-auto px-6">
+        <ActionButton type="submit" loading={isLoading} loadingText="Analyzing..." className="w-auto px-6">
           Analyze
         </ActionButton>
       </form>
 
-      {isPending && <LoadingSpinner message="Fetching chart data..." />}
+      {isLoading && <LoadingSpinner message="Fetching chart data..." />}
       {isError && <ErrorMessage message={String(error)} />}
 
-      {data && !isPending && (
+      {data && !isLoading && (
         <div className="space-y-6">
           {priceMultiData.length > 0 && (
             <div>
@@ -184,7 +188,7 @@ export function ChartPage() {
         </div>
       )}
 
-      {!data && !isPending && !isError && (
+      {!data && !isLoading && !isError && (
         <p className="text-gray-400 text-sm">Enter a ticker and click Analyze to view the chart.</p>
       )}
     </div>
