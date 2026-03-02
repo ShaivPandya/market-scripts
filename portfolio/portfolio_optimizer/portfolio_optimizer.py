@@ -947,6 +947,7 @@ def optimize_portfolio(
             benchmark_override=MARKET_TICKER_LONG,
             direction_map=direction_map,
             weights_short=DEFAULT_WEIGHTS_SHORT,
+            use_edgar=False,
         )
         signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
         signal_composite = signal_composite.reindex(tickers).fillna(0.0)
@@ -1350,6 +1351,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         benchmark_override=MARKET_TICKER_LONG,
         direction_map=direction_map,
         weights_short=DEFAULT_WEIGHTS_SHORT,
+        use_edgar=False,
     )
     # Extract composite signal for weighting
     signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)

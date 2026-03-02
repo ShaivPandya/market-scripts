@@ -236,7 +236,7 @@ def compute_eps_from_stmt(stmt_col: pd.Series, fallback_shares: Optional[float] 
     return safe_div(net_income, shares)
 
 
-def fetch_eps_metrics(ticker: str, growth_years: int = 3) -> EPSMetrics:
+def fetch_eps_metrics(ticker: str, growth_years: int = 3, use_edgar: bool = True) -> EPSMetrics:
     """Fetch quarterly YoY EPS change, annual EPS CAGR, and EPS growth acceleration for a ticker."""
     t = yf.Ticker(ticker)
 
@@ -249,8 +249,8 @@ def fetch_eps_metrics(ticker: str, growth_years: int = 3) -> EPSMetrics:
 
     out = EPSMetrics()
 
-    # --- Quarterly metrics: try SEC EDGAR first, fall back to yfinance ---
-    edgar_eps = fetch_quarterly_eps_edgar(ticker, n=8)
+    # --- Quarterly metrics: try SEC EDGAR first (if enabled), fall back to yfinance ---
+    edgar_eps = fetch_quarterly_eps_edgar(ticker, n=8) if use_edgar else None
     if edgar_eps and len(edgar_eps) >= 5:
         # edgar_eps is sorted newest-first: list of (date, eps_value)
         eps_values = [v for _, v in edgar_eps]

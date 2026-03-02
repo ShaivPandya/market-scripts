@@ -225,6 +225,7 @@ def fetch_quality_batch(
 def fetch_eps_momentum_batch(
     tickers: List[str],
     growth_years: int = 3,
+    use_edgar: bool = True,
 ) -> pd.DataFrame:
     """
     Fetch EPS momentum metrics for multiple tickers in batch.
@@ -232,6 +233,7 @@ def fetch_eps_momentum_batch(
     Args:
         tickers: List of ticker symbols
         growth_years: Target EPS CAGR window in years
+        use_edgar: If True, try SEC EDGAR first then fall back to yfinance. If False, use yfinance only.
 
     Returns:
         DataFrame with tickers as index and columns:
@@ -243,7 +245,7 @@ def fetch_eps_momentum_batch(
     if tickers:
         max_workers = min(MAX_BATCH_WORKERS, len(tickers))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(fetch_eps_metrics, ticker, growth_years): ticker for ticker in tickers}
+            futures = {pool.submit(fetch_eps_metrics, ticker, growth_years, use_edgar=use_edgar): ticker for ticker in tickers}
             for i, future in enumerate(as_completed(futures), 1):
                 ticker = futures[future]
                 try:
@@ -268,6 +270,7 @@ def fetch_eps_momentum_batch(
 def fetch_revenue_momentum_batch(
     tickers: List[str],
     growth_years: int = 3,
+    use_edgar: bool = True,
 ) -> pd.DataFrame:
     """
     Fetch revenue momentum metrics for multiple tickers in batch.
@@ -275,6 +278,7 @@ def fetch_revenue_momentum_batch(
     Args:
         tickers: List of ticker symbols
         growth_years: Target revenue CAGR window in years
+        use_edgar: If True, try SEC EDGAR first then fall back to yfinance. If False, use yfinance only.
 
     Returns:
         DataFrame with tickers as index and columns:
@@ -286,7 +290,7 @@ def fetch_revenue_momentum_batch(
     if tickers:
         max_workers = min(MAX_BATCH_WORKERS, len(tickers))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(fetch_revenue_metrics, ticker, growth_years): ticker for ticker in tickers}
+            futures = {pool.submit(fetch_revenue_metrics, ticker, growth_years, use_edgar=use_edgar): ticker for ticker in tickers}
             for i, future in enumerate(as_completed(futures), 1):
                 ticker = futures[future]
                 try:
@@ -468,6 +472,7 @@ def fetch_etf_lookthrough_fundamentals_batch(
     market: str = "SPY",
     growth_years: int = 5,
     beta_years: float = 3.0,
+    use_edgar: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, pd.Series]]:
     """
     Compute ETF look-through fundamentals using the top N holdings.
@@ -486,8 +491,8 @@ def fetch_etf_lookthrough_fundamentals_batch(
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), etf_to_holdings
 
     quality_holdings = fetch_quality_batch(holding_universe, market=market, growth_years=growth_years, beta_years=beta_years)
-    eps_holdings = fetch_eps_momentum_batch(holding_universe, growth_years=3)
-    rev_holdings = fetch_revenue_momentum_batch(holding_universe, growth_years=3)
+    eps_holdings = fetch_eps_momentum_batch(holding_universe, growth_years=3, use_edgar=use_edgar)
+    rev_holdings = fetch_revenue_momentum_batch(holding_universe, growth_years=3, use_edgar=use_edgar)
 
     quality_etf = compute_lookthrough_raw_metrics(etf_to_holdings, quality_holdings) if not quality_holdings.empty else pd.DataFrame()
     eps_etf = compute_lookthrough_raw_metrics(etf_to_holdings, eps_holdings) if not eps_holdings.empty else pd.DataFrame()

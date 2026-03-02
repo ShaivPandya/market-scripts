@@ -196,14 +196,14 @@ def get_revenue_from_stmt(stmt_col: pd.Series) -> float:
     return get_item(stmt_col, REVENUE_KEYS)
 
 
-def fetch_revenue_metrics(ticker: str, growth_years: int = 3) -> RevenueMetrics:
+def fetch_revenue_metrics(ticker: str, growth_years: int = 3, use_edgar: bool = True) -> RevenueMetrics:
     """Fetch quarterly YoY revenue change, annual revenue CAGR, and revenue growth acceleration for a ticker."""
     t = yf.Ticker(ticker)
 
     out = RevenueMetrics()
 
-    # --- Quarterly metrics: try SEC EDGAR first, fall back to yfinance ---
-    edgar_rev = fetch_quarterly_revenue_edgar(ticker, n=8)
+    # --- Quarterly metrics: try SEC EDGAR first (if enabled), fall back to yfinance ---
+    edgar_rev = fetch_quarterly_revenue_edgar(ticker, n=8) if use_edgar else None
     if edgar_rev and len(edgar_rev) >= 5:
         # edgar_rev is sorted newest-first: list of (date, revenue_value)
         rev_values = [v for _, v in edgar_rev]

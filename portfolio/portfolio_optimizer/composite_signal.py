@@ -409,6 +409,7 @@ def generate_composite_signals(
     years: int = DEFAULT_YEARS,
     etf_lookthrough_top_n: int = 10,
     clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
+    use_edgar: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
     Generate multi-factor composite signals for portfolio.
@@ -423,6 +424,7 @@ def generate_composite_signals(
         years: Years of price history to fetch
         etf_lookthrough_top_n: If >0, compute ETF fundamentals by looking through to top N holdings
         clip_bounds: (lower, upper) bounds for signal clipping
+        use_edgar: If True, try SEC EDGAR first for EPS/revenue data. If False, use yfinance only.
 
     Returns:
         Tuple of:
@@ -507,6 +509,7 @@ def generate_composite_signals(
                 equities,
                 top_n=etf_lookthrough_top_n,
                 market="SPY",
+                use_edgar=use_edgar,
                 growth_years=years,
             )
 
@@ -528,7 +531,7 @@ def generate_composite_signals(
 
         # EPS Momentum
         print("  Fetching EPS momentum metrics...")
-        eps_raw_stock = fetch_eps_momentum_batch(stock_equities, growth_years=3) if stock_equities else pd.DataFrame()
+        eps_raw_stock = fetch_eps_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar) if stock_equities else pd.DataFrame()
         eps_raw = pd.concat([eps_raw_stock, etf_eps_raw], axis=0) if not etf_eps_raw.empty else eps_raw_stock
         if eps_raw is not None and not eps_raw.empty:
             eps_scores = compute_eps_momentum_signal(eps_raw)
@@ -538,7 +541,7 @@ def generate_composite_signals(
 
         # Revenue Momentum
         print("  Fetching revenue momentum metrics...")
-        rev_raw_stock = fetch_revenue_momentum_batch(stock_equities, growth_years=3) if stock_equities else pd.DataFrame()
+        rev_raw_stock = fetch_revenue_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar) if stock_equities else pd.DataFrame()
         rev_raw = pd.concat([rev_raw_stock, etf_rev_raw], axis=0) if not etf_rev_raw.empty else rev_raw_stock
         if rev_raw is not None and not rev_raw.empty:
             rev_scores = compute_revenue_momentum_signal(rev_raw)
