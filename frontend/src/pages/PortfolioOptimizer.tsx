@@ -4,12 +4,14 @@ import { runPortfolioOptimizerAsync } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { SliderInput, ActionButton, ControlPanel } from "@/components/shared/FormControls"
+import { SliderInput, ActionButton, ControlPanel, TextInput, Toggle } from "@/components/shared/FormControls"
 import { colorPositiveNegative } from "@/lib/colors"
 
 type OptimizerResponse = Record<string, unknown>
 
 const OPTIMIZER_STATE_KEY = ["portfolio-optimizer", "state"] as const
+const MIN_BOOK_SIZE = 10_000
+const MAX_BOOK_SIZE = 10_000_000
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
@@ -71,11 +73,14 @@ export function PortfolioOptimizer() {
   const cachedState = queryClient.getQueryData<{
     bookSize: number
     targetLeverage: number
+    betaNeutral: boolean
     result: OptimizerResponse | null
   }>(OPTIMIZER_STATE_KEY)
 
   const [bookSize, setBookSize] = useState(cachedState?.bookSize ?? 100_000)
+  const [bookSizeInput, setBookSizeInput] = useState(String(cachedState?.bookSize ?? 100_000))
   const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
+  const [betaNeutral, setBetaNeutral] = useState(cachedState?.betaNeutral ?? true)
   const [cachedResult, setCachedResult] = useState<OptimizerResponse | null>(cachedState?.result ?? null)
 
   const mutation = useMutation({
@@ -84,11 +89,23 @@ export function PortfolioOptimizer() {
   })
 
   useEffect(() => {
-    queryClient.setQueryData(OPTIMIZER_STATE_KEY, { bookSize, targetLeverage, result: cachedResult })
-  }, [bookSize, targetLeverage, cachedResult, queryClient])
+    queryClient.setQueryData(OPTIMIZER_STATE_KEY, { bookSize, targetLeverage, betaNeutral, result: cachedResult })
+  }, [bookSize, targetLeverage, betaNeutral, cachedResult, queryClient])
+
+  useEffect(() => {
+    setBookSizeInput(String(bookSize))
+  }, [bookSize])
+
+  function clampBookSize(value: number) {
+    return Math.min(MAX_BOOK_SIZE, Math.max(MIN_BOOK_SIZE, Math.round(value)))
+  }
 
   function handleRun() {
-    mutation.mutate({ book: bookSize, target_leverage: targetLeverage })
+    const parsed = Number(bookSizeInput)
+    const effectiveBook = Number.isFinite(parsed) ? clampBookSize(parsed) : bookSize
+    setBookSize(effectiveBook)
+    setBookSizeInput(String(effectiveBook))
+    mutation.mutate({ book: effectiveBook, target_leverage: targetLeverage, beta_neutral: betaNeutral })
   }
 
   const data = (mutation.data as OptimizerResponse | undefined) ?? cachedResult
@@ -106,14 +123,27 @@ export function PortfolioOptimizer() {
         <SliderInput
           label="Book Size"
           value={bookSize}
-          onChange={setBookSize}
-          min={10_000}
-          max={10_000_000}
+          onChange={v => setBookSize(clampBookSize(v))}
+          min={MIN_BOOK_SIZE}
+          max={MAX_BOOK_SIZE}
           step={10_000}
           formatValue={v => currencyFormatter.format(v)}
           minLabel="$10k"
           maxLabel="$10M"
         />
+
+        <TextInput
+          label="Book Size (Manual)"
+          type="number"
+          value={bookSizeInput}
+          onChange={setBookSizeInput}
+          placeholder="100000"
+          className="max-w-xs"
+        />
+        <p className="text-xs text-gray-400 -mt-3">
+          Enter any value from {currencyFormatter.format(MIN_BOOK_SIZE)} to {currencyFormatter.format(MAX_BOOK_SIZE)}.
+          Value is applied when you click Optimize Portfolio.
+        </p>
 
         <SliderInput
           label="Target Gross Leverage"
