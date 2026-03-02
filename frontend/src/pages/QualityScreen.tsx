@@ -43,7 +43,7 @@ export function QualityScreen() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Quality Screen</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Quality Screen</h1>
       </div>
 
       <ControlPanel maxWidth="max-w-lg">

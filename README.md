@@ -169,6 +169,7 @@ All routes below are under the `/api` prefix (see `api/main.py`).
   - `GET /economic-growth` → `macro/economic_growth/economic_growth.py`
   - `GET /liquidity` → `macro/liquidity/liquidity.py`
   - `GET /country-dashboard` → `macro/country_dashboard/country_dashboard.py`
+  - `GET /yield-curve` → `government_bonds/yield_curve.py`
   - `GET /central-banks` → `macro/central_banks/central_bank.py`
   - `GET /industry-monitor` → `macro/industry/industry_monitor.py`
 

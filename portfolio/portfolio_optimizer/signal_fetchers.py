@@ -12,6 +12,7 @@ All functions return DataFrames with tickers as index and metrics as columns.
 """
 
 from __future__ import annotations
+import logging
 
 import sys
 from pathlib import Path
@@ -20,6 +21,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yfinance as yf
@@ -165,7 +168,7 @@ def fetch_price_momentum_batch(
         raw_metrics[ticker] = metrics
 
     if failed_tickers:
-        print(f"[WARN] Price momentum failed for: {', '.join(failed_tickers)}", file=sys.stderr)
+        LOGGER.warning(f"[WARN] Price momentum failed for: {', '.join(failed_tickers)}")
 
     return pd.DataFrame(raw_metrics).T if raw_metrics else pd.DataFrame()
 
@@ -204,7 +207,7 @@ def fetch_quality_batch(
                     raws[ticker] = future.result()
                 except Exception as e:
                     failed_tickers.append(ticker)
-                    print(f"[WARN] {ticker}: Quality fetch failed ({e})", file=sys.stderr)
+                    LOGGER.warning(f"[WARN] {ticker}: Quality fetch failed ({e})")
                 if i % 5 == 0 or i == len(tickers):
                     print(f"  Quality: processed {i}/{len(tickers)}")
 
@@ -212,7 +215,7 @@ def fetch_quality_batch(
         return pd.DataFrame()
 
     if failed_tickers:
-        print(f"[WARN] Quality failed for: {', '.join(sorted(failed_tickers))}", file=sys.stderr)
+        LOGGER.warning(f"[WARN] Quality failed for: {', '.join(sorted(failed_tickers))}")
 
     # Convert to DataFrame
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T
@@ -247,7 +250,7 @@ def fetch_eps_momentum_batch(
                     raws[ticker] = future.result()
                 except Exception as e:
                     failed_tickers.append(ticker)
-                    print(f"[WARN] {ticker}: EPS fetch failed ({e})", file=sys.stderr)
+                    LOGGER.warning(f"[WARN] {ticker}: EPS fetch failed ({e})")
                 if i % 5 == 0 or i == len(tickers):
                     print(f"  EPS: processed {i}/{len(tickers)}")
 
@@ -255,7 +258,7 @@ def fetch_eps_momentum_batch(
         return pd.DataFrame()
 
     if failed_tickers:
-        print(f"[WARN] EPS failed for: {', '.join(sorted(failed_tickers))}", file=sys.stderr)
+        LOGGER.warning(f"[WARN] EPS failed for: {', '.join(sorted(failed_tickers))}")
 
     # Convert to DataFrame
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T
@@ -290,7 +293,7 @@ def fetch_revenue_momentum_batch(
                     raws[ticker] = future.result()
                 except Exception as e:
                     failed_tickers.append(ticker)
-                    print(f"[WARN] {ticker}: Revenue fetch failed ({e})", file=sys.stderr)
+                    LOGGER.warning(f"[WARN] {ticker}: Revenue fetch failed ({e})")
                 if i % 5 == 0 or i == len(tickers):
                     print(f"  Revenue: processed {i}/{len(tickers)}")
 
@@ -298,7 +301,7 @@ def fetch_revenue_momentum_batch(
         return pd.DataFrame()
 
     if failed_tickers:
-        print(f"[WARN] Revenue failed for: {', '.join(sorted(failed_tickers))}", file=sys.stderr)
+        LOGGER.warning(f"[WARN] Revenue failed for: {', '.join(sorted(failed_tickers))}")
 
     # Convert to DataFrame
     raw_df = pd.DataFrame({k: vars(v) for k, v in raws.items()}).T

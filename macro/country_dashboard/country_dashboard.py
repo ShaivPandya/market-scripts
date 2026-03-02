@@ -15,6 +15,7 @@ Terminal:
 GUI:
   Accessed via sidebar in gui/app.py
 """
+import logging
 
 import os
 import re
@@ -23,6 +24,8 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
+
+LOGGER = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from load_env import load_env
@@ -1418,4 +1421,6 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()

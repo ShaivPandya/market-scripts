@@ -4,6 +4,7 @@ Optional (OpenAI): pip install openai
 """
 
 from __future__ import annotations
+import logging
 
 import os
 import re
@@ -20,6 +21,8 @@ import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from readability import Document
+
+LOGGER = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
 
@@ -220,7 +223,7 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
         try:
             return summarize_with_openai(text, meta)
         except Exception as ex:
-            print(f"[WARN] OpenAI summarization failed: {ex}")
+            LOGGER.warning(f"[WARN] OpenAI summarization failed: {ex}")
     # naive fallback summary if no LLM
     first = " ".join(text.split()[:60])
     return {
@@ -345,11 +348,11 @@ def _fetch_and_store(conn: sqlite3.Connection, sources: Optional[list[str]] = No
                         set_content(conn, item.guid, text)
                         to_summarize.append((item.guid, text, meta))
                 except Exception as ex:
-                    print(f"[WARN] {item.source} fetch failed: {item.url} -> {ex}")
+                    LOGGER.warning(f"[WARN] {item.source} fetch failed: {item.url} -> {ex}")
 
     # Phase 2: Summarize via LLM in parallel
     if not to_summarize:
-        print(f"[INFO] Central bank data fetch complete — {fetched} item(s) checked, no new summaries needed.")
+        LOGGER.info(f"[INFO] Central bank data fetch complete — {fetched} item(s) checked, no new summaries needed.")
         return
 
     def _do_summarize(item: tuple[str, str, dict]) -> tuple[str, dict]:
@@ -364,9 +367,9 @@ def _fetch_and_store(conn: sqlite3.Connection, sources: Optional[list[str]] = No
                 set_summary(conn, guid, summary)
             except Exception as ex:
                 failed = futures[future]
-                print(f"[WARN] Summarization failed for {failed[2]['source']} {failed[2]['kind']}: {ex}")
+                LOGGER.warning(f"[WARN] Summarization failed for {failed[2]['source']} {failed[2]['kind']}: {ex}")
 
-    print(f"[INFO] Central bank data fetch and summarization complete — {fetched} item(s) fetched, {len(to_summarize)} new summary(ies) generated.")
+    LOGGER.info(f"[INFO] Central bank data fetch and summarization complete — {fetched} item(s) fetched, {len(to_summarize)} new summary(ies) generated.")
 
 def _query_items(conn: sqlite3.Connection, sources: Optional[list[str]] = None) -> list[dict]:
     """Query stored items and return as list of dicts."""
@@ -447,7 +450,7 @@ def get_data(db_path: str = None, refresh: bool = False, sources: Optional[list[
 def run():
     data = get_data()
     if "error" in data:
-        print(f"ERROR: {data['error']}")
+        LOGGER.error(f"ERROR: {data['error']}")
         return
 
     for item in data["items"]:
@@ -459,4 +462,6 @@ def run():
         print(f"   {item['url']}")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     run()

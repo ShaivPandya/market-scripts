@@ -4,6 +4,7 @@ import { fetchPortfolioAllTimeframes } from "@/lib/api"
 import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
+import { SegmentedControl } from "@/components/shared/FormControls"
 
 const TIMEFRAMES = ["This Week", "Daily", "Weekly", "Monthly"] as const
 type Timeframe = typeof TIMEFRAMES[number]
@@ -29,25 +30,17 @@ export function PortfolioDashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Portfolio Dashboard</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Dashboard</h1>
         <RefreshButton queryKeys={[["portfolio", "all_timeframes"]]} />
       </div>
 
-      <div className="flex gap-2 mb-6">
-        {TIMEFRAMES.map(tf => (
-          <button
-            key={tf}
-            onClick={() => setTimeframe(tf)}
-            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              timeframe === tf
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            {tf}
-          </button>
-        ))}
+      <div className="mb-6">
+        <SegmentedControl
+          options={TIMEFRAMES.map(tf => ({ value: tf, label: tf }))}
+          value={timeframe}
+          onChange={setTimeframe}
+        />
       </div>
 
       {isLoading && <LoadingSpinner message="Fetching portfolio data..." />}
@@ -62,7 +55,7 @@ export function PortfolioDashboard() {
             if (!series || series.length === 0) return null
             const ret = calcReturn(series)
             return (
-              <div key={ticker} className="rounded-lg border bg-white p-4 shadow-sm">
+              <div key={ticker} className="rounded-xl border bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-sm font-semibold text-gray-700">{ticker}</p>
                   {ret != null && (

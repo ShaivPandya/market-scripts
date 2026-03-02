@@ -211,9 +211,9 @@ export function ActionButton({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "w-full py-2.5 rounded-xl text-sm font-semibold transition-all duration-150",
-        "bg-gray-900 text-white shadow-sm",
-        "hover:bg-gray-800 active:scale-[0.98]",
+        "w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-150",
+        "bg-blue-500 text-white shadow-sm",
+        "hover:bg-blue-600 active:scale-[0.98]",
         "disabled:opacity-50 disabled:pointer-events-none",
         className,
       )}

@@ -144,6 +144,7 @@ MAX SCALED PORTFOLIO:
 
 ═══════════════════════════════════════════════════════════════════════════════
 """
+import logging
 
 import argparse
 import numpy as np
@@ -160,6 +161,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     from .composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
@@ -704,9 +707,44 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame, include_p
 # -----------------------------
 # API for GUI
 # -----------------------------
+def apply_net_neutral(w: pd.Series, meta: pd.DataFrame) -> pd.Series:
+    """
+    Adjust weights so that equity net exposure is zero.
+
+    If the portfolio is net long, longs are scaled down proportionally so that
+    the sum of long equity weights equals the absolute sum of short equity weights.
+    If net short, shorts are scaled toward zero similarly.
+    Non-equity positions are left unchanged.
+    """
+    w_out = w.copy()
+    eq_mask = meta["asset"].str.lower().eq("equity")
+    direction = meta["direction"].str.lower()
+    long_eq = eq_mask & direction.eq("long")
+    short_eq = eq_mask & direction.eq("short")
+
+    long_sum = w_out[long_eq].sum() if long_eq.any() else 0.0
+    short_sum = w_out[short_eq].sum() if short_eq.any() else 0.0  # negative
+    net = long_sum + short_sum
+
+    if abs(net) < 1e-10:
+        return w_out  # already neutral
+
+    if net > 0 and long_sum > 1e-10:
+        # Scale down longs so long_sum * scale + short_sum = 0
+        scale = -short_sum / long_sum
+        w_out[long_eq] = w_out[long_eq] * scale
+    elif net < 0 and short_sum < -1e-10:
+        # Scale down shorts (toward zero) so long_sum + short_sum * scale = 0
+        scale = -long_sum / short_sum
+        w_out[short_eq] = w_out[short_eq] * scale
+
+    return w_out
+
+
 def optimize_portfolio(
     book: Optional[float] = None,
     target_leverage: Optional[float] = None,
+    beta_neutral: bool = True,
 ) -> dict:
     """
     Run portfolio optimization and return structured results for GUI consumption.
@@ -714,6 +752,7 @@ def optimize_portfolio(
     Args:
         book: Book size in dollars (optional, for dollar weight calculation)
         target_leverage: Target gross leverage ratio (0.5-4.0). If None, uses volatility targeting.
+        beta_neutral: If True (default), scale down equity longs/shorts so net equity exposure = 0%.
 
     Returns:
         Dictionary with optimization results including weights, exposures, constraints, etc.
@@ -897,6 +936,11 @@ def optimize_portfolio(
                     k = k_floor
 
         w_final = w_star * k
+
+        # Apply net-neutral adjustment if requested
+        if beta_neutral:
+            w_final = apply_net_neutral(w_final, meta)
+
         vol_final = port_vol(w_final.values)
 
         # Benchmark volatility
@@ -1016,6 +1060,7 @@ def optimize_portfolio(
             "timestamp": datetime.now(),
             "book_size": book,
             "target_leverage": target_leverage,
+            "beta_neutral": beta_neutral,
 
             # Solution metrics
             "vol_daily": vol_final,
@@ -1061,18 +1106,19 @@ def optimize_portfolio(
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
-def get_data(book: Optional[float] = None, target_leverage: Optional[float] = None) -> dict:
+def get_data(book: Optional[float] = None, target_leverage: Optional[float] = None, beta_neutral: bool = True) -> dict:
     """
     Fetch portfolio optimization results for GUI consumption.
 
     Args:
         book: Book size in dollars (optional)
         target_leverage: Target gross leverage ratio (0.5-4.0). If None, uses volatility targeting.
+        beta_neutral: If True (default), adjust weights so equity net exposure = 0%.
 
     Returns:
         Dictionary with optimization results or error.
     """
-    return optimize_portfolio(book=book, target_leverage=target_leverage)
+    return optimize_portfolio(book=book, target_leverage=target_leverage, beta_neutral=beta_neutral)
 
 
 # -----------------------------
@@ -1531,6 +1577,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     parser = argparse.ArgumentParser(description="Portfolio optimizer with beta-neutral and volatility targeting.")
     parser.add_argument("--book", type=float, default=None, help="Book size in dollars to compute dollar weights")
     parser.add_argument("--debug-weights", action="store_true", help="Print raw/optimized/final weights for diagnostics")

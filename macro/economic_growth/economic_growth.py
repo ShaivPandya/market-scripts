@@ -10,6 +10,7 @@ Requirements:
 Usage:
     python economic_growth.py [--crb-file path/to/crb.xlsx]
 """
+import logging
 
 import argparse
 from datetime import datetime, timedelta
@@ -23,6 +24,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.progress import Progress, SpinnerColumn, TextColumn
+
+LOGGER = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
@@ -276,9 +279,9 @@ def format_return(value, benchmark=None, is_benchmark=False):
     """Format return value with color coding."""
     if value is None:
         return Text("N/A", style="dim")
-    
+
     text = f"{value:+.1f}%"
-    
+
     if benchmark is None or is_benchmark:
         if value >= 0:
             return Text(text, style="green")
@@ -302,16 +305,16 @@ def create_commodities_table(results, periods):
         border_style="blue"
     )
     table.add_column("Name", style="bold white", min_width=22)
-    
+
     for period in periods.keys():
         table.add_column(period, justify="right", min_width=8)
-    
+
     for name, returns in results.items():
         row = [name]
         for period in periods.keys():
             row.append(format_return(returns.get(period)))
         table.add_row(*row)
-    
+
     return table
 
 def create_equities_table(results, periods):
@@ -326,30 +329,30 @@ def create_equities_table(results, periods):
         border_style="blue"
     )
     table.add_column("Name", style="bold white", min_width=20)
-    
+
     for period in periods.keys():
         table.add_column(period, justify="right", min_width=8)
-    
+
     sp500_returns = results.get("S&P 500", {})
     stoxx600_returns = results.get("STOXX 600", {})
-    
+
     for name, returns in results.items():
         row = [name]
         is_benchmark = (name == "S&P 500" or name == "STOXX 600")
-        
+
         # Europe Banks compared to STOXX 600, others to S&P 500
         if name == "Europe Banks":
             benchmark_returns = stoxx600_returns
         else:
             benchmark_returns = sp500_returns
-        
+
         for period in periods.keys():
             value = returns.get(period)
             benchmark = benchmark_returns.get(period)
             row.append(format_return(value, benchmark, is_benchmark=is_benchmark))
-        
+
         table.add_row(*row)
-    
+
     return table
 
 def create_currencies_table(results, periods):
@@ -362,16 +365,16 @@ def create_currencies_table(results, periods):
         border_style="blue"
     )
     table.add_column("Pair", style="bold white", min_width=12)
-    
+
     for period in periods.keys():
         table.add_column(period, justify="right", min_width=8)
-    
+
     for name, returns in results.items():
         row = [name]
         for period in periods.keys():
             row.append(format_return(returns.get(period)))
         table.add_row(*row)
-    
+
     return table
 
 # ============================================================================
@@ -421,15 +424,15 @@ def main():
     )
     args = parser.parse_args()
     crb_path = Path(args.crb_file).expanduser()
-    
+
     console.print()
     print_header()
     console.print()
-    
+
     # Try to read CRB data from file
     crb_returns = None
     crb_file_used = False
-    
+
     if crb_path.exists():
         console.print(f"[bold yellow]Reading CRB data from {crb_path}...[/bold yellow]")
         crb_df = read_crb_from_xls(crb_path)
@@ -441,24 +444,24 @@ def main():
             console.print("[yellow]Could not read CRB file, will show N/A[/yellow]")
     else:
         console.print(f"[yellow]CRB file not found: {crb_path}[/yellow]")
-    
+
     console.print()
     console.print("[bold yellow]Fetching market data...[/bold yellow]\n")
-    
+
     commodities_results = fetch_all_returns(COMMODITIES, EQUITY_PERIODS, "Commodities", crb_returns)
     equities_results = fetch_all_returns(EQUITIES, EQUITY_PERIODS, "Equities")
     currency_results = fetch_all_returns(CURRENCIES, CURRENCY_PERIODS, "Currencies")
-    
+
     # Display tables
     console.print("\n")
     console.print(create_commodities_table(commodities_results, EQUITY_PERIODS))
-    
+
     console.print("\n")
     console.print(create_equities_table(equities_results, EQUITY_PERIODS))
-    
+
     console.print("\n")
     console.print(create_currencies_table(currency_results, CURRENCY_PERIODS))
-    
+
     print_legend()
     print_data_sources(crb_file_used)
     console.print()
@@ -509,4 +512,6 @@ def get_data(crb_file: str = None) -> dict:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()

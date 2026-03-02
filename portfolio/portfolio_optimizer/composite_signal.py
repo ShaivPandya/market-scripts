@@ -21,6 +21,7 @@ Usage:
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import sys
@@ -30,6 +31,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yfinance as yf
@@ -177,7 +180,7 @@ def select_benchmark_ticker(ticker: str, asset_type: Optional[str] = None) -> st
     try:
         market_cap, sector, is_etf = fetch_ticker_metadata(ticker)
     except Exception as e:
-        print(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.", file=sys.stderr)
+        LOGGER.warning(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.")
         return "SPY"
 
     if is_etf:
@@ -463,7 +466,7 @@ def generate_composite_signals(
     try:
         prices = fetch_prices(all_tickers, years=years)
     except Exception as e:
-        print(f"[ERROR] Failed to fetch prices: {e}", file=sys.stderr)
+        LOGGER.error(f"[ERROR] Failed to fetch prices: {e}")
         empty_df = pd.DataFrame({
             'quality_signal': pd.Series(np.nan, index=tickers),
             'eps_mom_signal': pd.Series(np.nan, index=tickers),
@@ -476,7 +479,7 @@ def generate_composite_signals(
     # Verify all benchmarks exist
     missing_benchmarks = [b for b in unique_benchmarks if b not in prices.columns]
     if missing_benchmarks:
-        print(f"[ERROR] Missing benchmark(s): {missing_benchmarks}", file=sys.stderr)
+        LOGGER.error(f"[ERROR] Missing benchmark(s): {missing_benchmarks}")
 
     # 1. Compute price momentum for ALL tickers
     print("\nComputing price momentum...")
@@ -677,7 +680,7 @@ def main() -> int:
     # Validate weights sum to 1.0 (warn if not)
     weight_sum = sum(weights.values())
     if abs(weight_sum - 1.0) > 0.01:
-        print(f"[WARN] Weights sum to {weight_sum:.3f}, normalizing to 1.0")
+        LOGGER.warning(f"[WARN] Weights sum to {weight_sum:.3f}, normalizing to 1.0")
         weights = {k: v / weight_sum for k, v in weights.items()}
 
     # Handle --ticker argument (overrides portfolio CSV)
@@ -690,7 +693,7 @@ def main() -> int:
         # Load portfolio
         portfolio_path = Path(args.portfolio)
         if not portfolio_path.exists():
-            print(f"[ERROR] Portfolio file not found: {portfolio_path}", file=sys.stderr)
+            LOGGER.error(f"[ERROR] Portfolio file not found: {portfolio_path}")
             return 1
 
         meta = pd.read_csv(portfolio_path)
@@ -705,7 +708,7 @@ def main() -> int:
         direction_map = dict(zip(meta["ticker"], meta["direction"]))
 
         if not active_tickers:
-            print("[ERROR] No active tickers in portfolio", file=sys.stderr)
+            LOGGER.error("[ERROR] No active tickers in portfolio")
             return 1
 
     print(f"Portfolio: {len(active_tickers)} active tickers")
@@ -753,4 +756,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     raise SystemExit(main())

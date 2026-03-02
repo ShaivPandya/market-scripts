@@ -77,7 +77,7 @@ export function FXModel() {
     <div>
       <div className="mb-6">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">FX Model</h1>
+          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">FX Model</h1>
           <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-yellow-100 text-yellow-800 border border-yellow-300">Beta</span>
         </div>
         <p className="text-sm text-gray-400 mt-0.5">
@@ -177,7 +177,7 @@ export function FXModel() {
                   )
 
                   return (
-                    <div key={`${horizon ?? idx}-${idx}`} className="rounded-lg border border-gray-200 bg-white">
+                    <div key={`${horizon ?? idx}-${idx}`} className="rounded-xl border border-gray-200 bg-white">
                       <div className="px-4 py-3 border-b border-gray-200">
                         <h3 className="text-sm font-semibold text-gray-900">
                           {horizon != null ? `${horizon}-Month Forecast Drivers` : "Forecast Drivers"}

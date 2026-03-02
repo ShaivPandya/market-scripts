@@ -10,6 +10,7 @@ Rate limiting: all EDGAR requests are serialised through a global lock with a
 """
 
 from __future__ import annotations
+import logging
 
 import threading
 import time
@@ -17,6 +18,8 @@ from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 import requests
+
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level state (process lifetime)
@@ -27,6 +30,9 @@ _cik_map_lock = threading.Lock()
 
 _edgar_facts_cache: Dict[str, Optional[dict]] = {}   # cik_str -> companyfacts JSON or None
 _edgar_facts_lock = threading.Lock()
+
+_edgar_submissions_cache: Dict[str, Optional[dict]] = {}   # cik_str -> submissions JSON or None
+_edgar_submissions_lock = threading.Lock()
 
 # Serialise all HTTP requests through one lock so concurrent threads cannot
 # collectively exceed the SEC's 10 req/s rate limit.
@@ -97,6 +103,30 @@ def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
     return result
 
 
+def _fetch_edgar_submissions(cik_str: str) -> Optional[dict]:
+    """
+    Fetch SEC submissions JSON for one CIK.
+    Results are cached for the process lifetime.
+    """
+    with _edgar_submissions_lock:
+        if cik_str in _edgar_submissions_cache:
+            return _edgar_submissions_cache[cik_str]
+
+    url = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
+    resp = _rate_limited_get(url)
+    result: Optional[dict] = None
+    if resp is not None and resp.status_code == 200:
+        try:
+            result = resp.json()
+        except Exception:
+            pass
+
+    with _edgar_submissions_lock:
+        _edgar_submissions_cache[cik_str] = result
+
+    return result
+
+
 def _quarterly_entries_from_concept(
     us_gaap: dict, concept: str, unit: str
 ) -> List[dict]:
@@ -129,6 +159,82 @@ def _quarterly_entries_from_concept(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def get_cik_for_ticker(ticker: str) -> Optional[str]:
+    """Return zero-padded 10-digit CIK for a ticker, or None if unavailable."""
+    _load_cik_map()
+    return _cik_map.get(ticker.upper().strip())
+
+
+def fetch_companyfacts_by_cik(cik_str: str) -> Optional[dict]:
+    """Fetch SEC companyfacts payload for a 10-digit CIK string."""
+    cik = str(cik_str).strip()
+    if not cik:
+        return None
+    return _fetch_edgar_facts(cik.zfill(10))
+
+
+def fetch_companyfacts_by_ticker(ticker: str) -> Optional[dict]:
+    """Fetch SEC companyfacts payload for a ticker symbol."""
+    cik_str = get_cik_for_ticker(ticker)
+    if not cik_str:
+        return None
+    return _fetch_edgar_facts(cik_str)
+
+
+def fetch_submissions_by_cik(cik_str: str) -> Optional[dict]:
+    """Fetch SEC submissions payload for a 10-digit CIK string."""
+    cik = str(cik_str).strip()
+    if not cik:
+        return None
+    return _fetch_edgar_submissions(cik.zfill(10))
+
+
+def fetch_submissions_by_ticker(ticker: str) -> Optional[dict]:
+    """Fetch SEC submissions payload for a ticker symbol."""
+    cik_str = get_cik_for_ticker(ticker)
+    if not cik_str:
+        return None
+    return _fetch_edgar_submissions(cik_str)
+
+
+def build_filing_url(
+    cik_str: str,
+    accession: str,
+    submissions: Optional[dict] = None,
+) -> str:
+    """
+    Build a SEC filing URL for an accession.
+
+    Uses submissions metadata to build a direct primary-document URL when
+    available; falls back to a browse-edgar URL filtered by accession.
+    """
+    cik_digits = str(cik_str).strip().zfill(10)
+    cik_int = str(int(cik_digits))
+    accn = str(accession or "").strip()
+    if not accn:
+        return f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik_int}&owner=exclude&count=40"
+
+    primary_doc = ""
+    src = submissions or {}
+    recent = src.get("filings", {}).get("recent", {}) if isinstance(src, dict) else {}
+    accns = recent.get("accessionNumber", [])
+    docs = recent.get("primaryDocument", [])
+    if isinstance(accns, list) and isinstance(docs, list):
+        for i, a in enumerate(accns):
+            if str(a) == accn and i < len(docs):
+                primary_doc = str(docs[i] or "").strip()
+                break
+
+    accn_nodash = accn.replace("-", "")
+    if primary_doc:
+        return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accn_nodash}/{primary_doc}"
+
+    return (
+        "https://www.sec.gov/cgi-bin/browse-edgar"
+        f"?action=getcompany&CIK={cik_int}&accno={accn}&owner=exclude&count=40"
+    )
+
 
 def extract_quarterly_eps(
     facts: dict, n: int = 8

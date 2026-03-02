@@ -46,7 +46,7 @@ export function Momentum() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Momentum</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Momentum</h1>
         <RefreshButton queryKeys={[["momentum"]]} />
       </div>
 

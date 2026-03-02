@@ -28,6 +28,13 @@ const ROC_SERIES: SeriesDef[] = [
   { key: "12M ROC", color: "#2ca02c" },
 ]
 
+const PRICE_FORMATTER = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
 function lookbackCutoff(lookback: string): Date {
   const now = new Date()
   switch (lookback) {
@@ -102,10 +109,21 @@ export function ChartPage() {
       }))
     : []
 
+  const displayTicker = String(data?.ticker ?? ticker).toUpperCase()
+  const displayName = typeof data?.name === "string" && data.name.trim() ? data.name.trim() : displayTicker
+
+  const currentPrice = useMemo<number | null>(() => {
+    for (let i = allPriceData.length - 1; i >= 0; i -= 1) {
+      const close = allPriceData[i]?.Close
+      if (typeof close === "number" && Number.isFinite(close)) return close
+    }
+    return null
+  }, [allPriceData])
+
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Chart</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Chart</h1>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-4 mb-6">
@@ -136,7 +154,14 @@ export function ChartPage() {
         <div className="space-y-6">
           {priceMultiData.length > 0 && (
             <div>
-              <h2 className="text-base font-semibold mb-2">{ticker} — Price</h2>
+              <div className="mb-2">
+                <h2 className="text-base font-semibold">
+                  {displayTicker} - {displayName}
+                </h2>
+                <p className="text-sm text-gray-600">
+                  Current Price: {currentPrice != null ? PRICE_FORMATTER.format(currentPrice) : "N/A"}
+                </p>
+              </div>
               <TimeSeriesChart multiData={priceMultiData} series={PRICE_SERIES} height={280} />
             </div>
           )}

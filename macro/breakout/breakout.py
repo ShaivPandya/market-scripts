@@ -25,6 +25,7 @@ Breakout rules (no stops/exits):
 """
 
 from __future__ import annotations
+import logging
 
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Tuple
@@ -32,6 +33,8 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -410,7 +413,7 @@ def main() -> None:
     result = get_data()
 
     if "error" in result:
-        print(f"Error: {result['error']}")
+        LOGGER.error(f"Error: {result['error']}")
         return
 
     latest = result.get("latest", [])
@@ -430,4 +433,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()

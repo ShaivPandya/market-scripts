@@ -61,12 +61,12 @@ export function IndustryMonitor() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Industry Monitor</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Industry Monitor</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setRefresh(r => !r)}
-            className="px-3 py-1.5 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
           >
             Refresh Data
           </button>
@@ -97,7 +97,7 @@ function SectorCard({ name, data }: { name: string; data: Sector }) {
   const signalClass = SIGNAL_CLASSES[signal] ?? "bg-gray-100 text-gray-600"
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-100">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
