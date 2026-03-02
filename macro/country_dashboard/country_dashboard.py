@@ -23,7 +23,7 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 LOGGER = logging.getLogger(__name__)
 
@@ -248,6 +248,9 @@ COUNTRIES = {
                 "key": "JPN.B1_GE.GYSA.Q",
                 "transform": "none",
             },
+            {"id": "JPNGDPRQPSMEI", "transform": "none", "max_age_days": 240},
+            {"id": "NAEXKP01JPQ661S", "transform": "yoy4", "max_age_days": 240},
+            {"id": "NAEXKP01JPQ652S", "transform": "yoy4", "max_age_days": 240},
         ],
     },
     "France": {
@@ -781,29 +784,125 @@ def _fetch_oecd_series(
     resp.raise_for_status()
     data = resp.json()
 
-    structure = data["structure"]
-    dataset_obj = data["dataSets"][0]
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"OECD {dataset}/{key}: unexpected response type {type(data).__name__}"
+        )
 
-    time_dim = next(
-        d for d in structure["dimensions"]["observation"]
-        if d["id"] == "TIME_PERIOD"
+    # OECD has returned multiple SDMX-JSON variants over time.
+    root_candidates: List[Dict[str, Any]] = [data]
+    nested_data = data.get("data")
+    if isinstance(nested_data, dict):
+        root_candidates.append(nested_data)
+
+    error_message = (
+        data.get("error_message")
+        or data.get("error")
+        or data.get("message")
     )
-    time_values = [v["id"] for v in time_dim["values"]]
+    if error_message:
+        raise RuntimeError(f"OECD {dataset}/{key}: {error_message}")
 
-    series_key = next(iter(dataset_obj["series"]))
-    observations = dataset_obj["series"][series_key]["observations"]
+    dataset_obj: Dict[str, Any] = {}
+    for root in root_candidates:
+        data_sets = root.get("dataSets")
+        if isinstance(data_sets, list) and data_sets and isinstance(data_sets[0], dict):
+            dataset_obj = data_sets[0]
+            break
+    if not dataset_obj:
+        raise RuntimeError(
+            f"OECD {dataset}/{key}: missing dataSets in response keys={list(data.keys())}"
+        )
+
+    time_values: List[str] = []
+    for root in root_candidates:
+        structure = root.get("structure")
+        if isinstance(structure, dict):
+            dims = structure.get("dimensions")
+            if isinstance(dims, dict):
+                obs_dims = dims.get("observation")
+                if isinstance(obs_dims, list):
+                    for dim in obs_dims:
+                        if isinstance(dim, dict) and dim.get("id") == "TIME_PERIOD":
+                            values = dim.get("values")
+                            if isinstance(values, list):
+                                parsed = [
+                                    str(v["id"])
+                                    for v in values
+                                    if isinstance(v, dict) and v.get("id") is not None
+                                ]
+                                if parsed:
+                                    time_values = parsed
+                                    break
+                    if time_values:
+                        break
+
+    series_map = dataset_obj.get("series")
+    observations: Dict[str, Any] = {}
+    if isinstance(series_map, dict):
+        for series_obj in series_map.values():
+            if isinstance(series_obj, dict):
+                obs = series_obj.get("observations")
+                if isinstance(obs, dict) and obs:
+                    observations = obs
+                    break
+    if not observations:
+        dataset_obs = dataset_obj.get("observations")
+        if isinstance(dataset_obs, dict):
+            observations = dataset_obs
+    if not observations:
+        raise RuntimeError(f"OECD {dataset}/{key}: missing observations")
+
+    def _parse_period(period: str) -> pd.Timestamp | None:
+        text = str(period).strip()
+        m = re.fullmatch(r"(\d{4})-Q([1-4])", text)
+        if not m:
+            m = re.fullmatch(r"(\d{4})Q([1-4])", text)
+        if m:
+            year, q = int(m.group(1)), int(m.group(2))
+            return pd.Period(year=year, quarter=q, freq="Q").to_timestamp(how="end")
+        ts = pd.to_datetime(text, errors="coerce")
+        if pd.isna(ts):
+            return None
+        return pd.Timestamp(ts)
 
     records: Dict[pd.Timestamp, float] = {}
-    for idx_str, obs in observations.items():
-        period = time_values[int(idx_str)]
-        value = obs[0]
-        if value is not None:
-            ts = (
-                pd.Period(period, freq="Q").to_timestamp(how="end")
-                if "Q" in period
-                else pd.Timestamp(period)
-            )
+    for obs_key, obs in observations.items():
+        obs_key_text = str(obs_key)
+        period = None
+        if time_values:
+            idx_token = obs_key_text.split(":")[-1]
+            try:
+                period = time_values[int(idx_token)]
+            except (ValueError, IndexError):
+                period = None
+        if period is None and re.fullmatch(r"\d{4}(-Q[1-4]|Q[1-4]|-\d{2}(-\d{2})?)", obs_key_text):
+            period = obs_key_text
+
+        value = None
+        if isinstance(obs, (list, tuple)):
+            value = obs[0] if obs else None
+        elif isinstance(obs, dict):
+            value = obs.get("OBS_VALUE")
+            if value is None:
+                value = obs.get("value")
+            if value is None:
+                value = obs.get("0")
+        else:
+            value = obs
+
+        if period is None or value is None:
+            continue
+        ts = _parse_period(period)
+        if ts is None:
+            continue
+        try:
             records[ts] = float(value)
+        except (TypeError, ValueError):
+            continue
+
+    if not records:
+        raise RuntimeError(f"OECD {dataset}/{key}: unable to parse observations")
 
     series = pd.Series(records).sort_index().dropna()
     series.index = pd.to_datetime(series.index)
