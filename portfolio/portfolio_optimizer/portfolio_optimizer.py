@@ -144,6 +144,7 @@ MAX SCALED PORTFOLIO:
 
 ═══════════════════════════════════════════════════════════════════════════════
 """
+import logging
 
 import argparse
 import numpy as np
@@ -160,6 +161,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     from .composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
@@ -1574,6 +1577,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     parser = argparse.ArgumentParser(description="Portfolio optimizer with beta-neutral and volatility targeting.")
     parser.add_argument("--book", type=float, default=None, help="Book size in dollars to compute dollar weights")
     parser.add_argument("--debug-weights", action="store_true", help="Print raw/optimized/final weights for diagnostics")

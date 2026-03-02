@@ -19,6 +19,7 @@ Usage:
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import sys
@@ -28,6 +29,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yfinance as yf
@@ -460,7 +463,7 @@ def main() -> int:
     try:
         prices = fetch_prices(all_price_tickers, years=args.years)
     except Exception as e:
-        print(f"[ERROR] Failed to fetch prices: {e}", file=sys.stderr)
+        LOGGER.error(f"[ERROR] Failed to fetch prices: {e}")
         return 1
 
     # Fetch all metrics
@@ -558,4 +561,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     raise SystemExit(main())

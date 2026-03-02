@@ -37,10 +37,13 @@ OUTPUT:
     - Three-panel chart showing price, momentum, and change in momentum
     - Console table listing all crossover dates with price and direction
 """
+import logging
 import argparse, sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yfinance as yf
@@ -130,4 +133,6 @@ def main():
     plt.tight_layout(); plt.show()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()

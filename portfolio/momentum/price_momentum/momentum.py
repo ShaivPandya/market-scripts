@@ -21,6 +21,7 @@ Requirements:
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import sys
@@ -29,6 +30,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -217,7 +220,7 @@ def select_benchmark_ticker(ticker: str) -> str:
     try:
         market_cap, sector, is_etf = fetch_ticker_metadata(ticker)
     except Exception as e:
-        print(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.", file=sys.stderr)
+        LOGGER.warning(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.")
         return "SPY"
 
     if is_etf:
@@ -252,7 +255,7 @@ def analyze_ticker(
         try:
             ticker_prices, ticker_volume = fetch_prices_yfinance(ticker, years=years)
         except Exception as e:
-            print(f"Error fetching {ticker}: {e}", file=sys.stderr)
+            LOGGER.error(f"Error fetching {ticker}: {e}")
             return None
 
     # Align on common dates
@@ -261,10 +264,7 @@ def analyze_ticker(
     # Need enough data: 63 + 20 = 83 days minimum
     min_points = 63 + 20
     if len(combined) < min_points:
-        print(
-            f"Not enough data for {ticker}: need at least {min_points} trading days, got {len(combined)}.",
-            file=sys.stderr,
-        )
+        LOGGER.warning(f"Not enough data for {ticker}: need at least {min_points} trading days, got {len(combined)}.")
         return None
 
     prices = combined["ticker"]
@@ -403,7 +403,7 @@ def main() -> int:
 
     # Determine tickers to process
     if args.ticker and args.tickers_file:
-        print("Error: specify either a single ticker or --tickers-file, not both", file=sys.stderr)
+        LOGGER.error("Error: specify either a single ticker or --tickers-file, not both")
         return 1
     elif args.ticker:
         tickers = [args.ticker.strip().upper()]
@@ -413,20 +413,20 @@ def main() -> int:
         # Default to reading from portfolio.csv
         portfolio_path = PORTFOLIO_CSV
         if not portfolio_path.exists():
-            print(f"Error: portfolio.csv not found at {portfolio_path}", file=sys.stderr)
+            LOGGER.error(f"Error: portfolio.csv not found at {portfolio_path}")
             return 1
         try:
             portfolio_df = pd.read_csv(portfolio_path)
             if "ticker" not in portfolio_df.columns:
-                print("Error: portfolio.csv must have a 'ticker' column", file=sys.stderr)
+                LOGGER.error("Error: portfolio.csv must have a 'ticker' column")
                 return 1
             tickers = [t.strip().upper() for t in portfolio_df["ticker"].dropna()]
             if not tickers:
-                print("Error: no tickers found in portfolio.csv", file=sys.stderr)
+                LOGGER.error("Error: no tickers found in portfolio.csv")
                 return 1
             print(f"Using {len(tickers)} tickers from portfolio.csv")
         except Exception as e:
-            print(f"Error reading portfolio.csv: {e}", file=sys.stderr)
+            LOGGER.error(f"Error reading portfolio.csv: {e}")
             return 1
 
     benchmark_override = args.benchmark.strip().upper() if args.benchmark else None
@@ -452,13 +452,13 @@ def main() -> int:
     for ticker in tickers:
         ticker_prices = prices_map.get(ticker)
         if ticker_prices is None:
-            print(f"No data for {ticker}", file=sys.stderr)
+            LOGGER.warning(f"No data for {ticker}")
             continue
 
         benchmark_ticker = ticker_to_benchmark[ticker]
         benchmark_prices = prices_map.get(benchmark_ticker)
         if benchmark_prices is None:
-            print(f"No data for benchmark {benchmark_ticker}", file=sys.stderr)
+            LOGGER.warning(f"No data for benchmark {benchmark_ticker}")
             continue
 
         result = analyze_ticker(ticker, benchmark_prices, args.years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker))
@@ -467,7 +467,7 @@ def main() -> int:
             results.append(result)
 
     if not results:
-        print("No valid results.", file=sys.stderr)
+        LOGGER.error("No valid results.")
         return 1
 
     # Print results
@@ -492,4 +492,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     raise SystemExit(main())

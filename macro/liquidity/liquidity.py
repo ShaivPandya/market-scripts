@@ -10,10 +10,13 @@ Run:
   python macro/liquidity/liquidity.py
   python macro/liquidity/liquidity.py --plot
 """
+import logging
 import argparse
 import os
 import sys
 from pathlib import Path
+
+LOGGER = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -119,7 +122,7 @@ MOMENTUM_WINDOW_WEEKS = 4
 def get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
-        print("Missing FRED_API_KEY environment variable.", file=sys.stderr)
+        LOGGER.error("Missing FRED_API_KEY environment variable.")
         sys.exit(1)
     return Fred(api_key=api_key)
 
@@ -138,7 +141,7 @@ def fetch_fred_series(fred):
             errors.append(f"{name} ({sid}) error: {exc}")
     if errors:
         for err in errors:
-            print(f"Data fetch error: {err}", file=sys.stderr)
+            LOGGER.error(f"Data fetch error: {err}")
         sys.exit(1)
     df = pd.concat(data, axis=1)
     df.index = pd.to_datetime(df.index)
@@ -160,13 +163,13 @@ def fetch_ecb_series():
     Returns a DataFrame with daily data, or None if unavailable.
     """
     if not SDMX_AVAILABLE:
-        print("sdmx1 library not installed. Skipping ECB data.", file=sys.stderr)
+        LOGGER.warning("sdmx1 library not installed. Skipping ECB data.")
         return None
 
     try:
         ecb_client = sdmx.Client("ECB")
     except Exception as exc:
-        print(f"Could not connect to ECB SDMX API: {exc}", file=sys.stderr)
+        LOGGER.warning(f"Could not connect to ECB SDMX API: {exc}")
         return None
 
     data = {}
@@ -216,7 +219,7 @@ def fetch_ecb_series():
 
     if errors:
         for err in errors:
-            print(f"ECB data fetch warning: {err}", file=sys.stderr)
+            LOGGER.warning(f"ECB data fetch warning: {err}")
 
     if not data:
         return None
@@ -554,12 +557,12 @@ def build_changes_table(changes, latest_date):
 
 def render_dashboard(df, composite, regional_scores, z_scores, contributions):
     if Console is None:
-        print("rich is not installed. Install with: pip install rich", file=sys.stderr)
+        LOGGER.warning("rich is not installed. Install with: pip install rich")
         sys.exit(1)
 
     composite_clean = composite.dropna()
     if composite_clean.empty:
-        print("Not enough data to compute composite score.", file=sys.stderr)
+        LOGGER.warning("Not enough data to compute composite score.")
         sys.exit(1)
 
     latest_date = composite_clean.index[-1]
@@ -609,12 +612,12 @@ def plot_charts(df, composite):
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        print("matplotlib is not installed. Install with: pip install matplotlib", file=sys.stderr)
+        LOGGER.warning("matplotlib is not installed. Install with: pip install matplotlib")
         sys.exit(1)
 
     composite_clean = composite.dropna()
     if composite_clean.empty:
-        print("Not enough data to plot composite score.", file=sys.stderr)
+        LOGGER.warning("Not enough data to plot composite score.")
         sys.exit(1)
 
     fig, axes = plt.subplots(4, 1, figsize=(12, 12), sharex=True)
@@ -802,4 +805,6 @@ def get_snapshot(skip_ecb: bool = False) -> dict:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()

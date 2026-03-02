@@ -9,12 +9,15 @@ GUI usage (called from gui/app.py):
     from technical_analysis import get_data
     result = get_data("AAPL")
 """
+import logging
 
 import sys
 from datetime import datetime
 
 import pandas as pd
 import yfinance as yf
+
+LOGGER = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +183,7 @@ def _cli(ticker: str) -> None:
 
     result = get_data(ticker)
     if "error" in result:
-        print(f"Error: {result['error']}")
+        LOGGER.error(f"Error: {result['error']}")
         sys.exit(1)
 
     price_df = result["price_data"]
@@ -270,6 +273,8 @@ def _cli(ticker: str) -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     if len(sys.argv) < 2:
         print("Usage: python technical_analysis.py <TICKER>")
         sys.exit(1)

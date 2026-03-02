@@ -7,6 +7,7 @@ Industry earnings monitor:
 """
 
 from __future__ import annotations
+import logging
 
 import hashlib
 import json
@@ -18,6 +19,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
+
+LOGGER = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
 
@@ -384,7 +387,7 @@ def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = 
             return None
         return (exit_price - entry_price) / entry_price * 100
     except Exception as ex:
-        print(f"[WARN] Price reaction fetch failed for {ticker}: {ex}")
+        LOGGER.warning(f"[WARN] Price reaction fetch failed for {ticker}: {ex}")
         return None
 
 
@@ -414,7 +417,7 @@ def _fetch_missing_price_reactions(conn: sqlite3.Connection) -> None:
     if not rows:
         return
 
-    print(f"[INFO] Fetching price reactions for {len(rows)} transcript(s)...")
+    LOGGER.info(f"[INFO] Fetching price reactions for {len(rows)} transcript(s)...")
     for row in rows:
         row_id = row["id"]
         ticker = row["ticker"]
@@ -530,7 +533,7 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
         try:
             return summarize_with_openai(text, meta)
         except Exception as ex:
-            print(f"[WARN] OpenAI summarization failed for {meta['ticker']}: {ex}")
+            LOGGER.warning(f"[WARN] OpenAI summarization failed for {meta['ticker']}: {ex}")
     return _fallback_summary(text, meta)
 
 
@@ -670,19 +673,19 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
             pdf_path = _get_pdf_path(sector, ticker)
 
             if not os.path.isfile(pdf_path):
-                print(f"[WARN] PDF file not found for {ticker}: {pdf_path}")
+                LOGGER.warning(f"[WARN] PDF file not found for {ticker}: {pdf_path}")
                 _set_fresh_row(conn, ticker, None)
                 continue
 
             try:
                 transcript_text = _extract_text_from_pdf(pdf_path)
             except Exception as ex:
-                print(f"[WARN] Failed to extract text from PDF for {ticker}: {ex}")
+                LOGGER.warning(f"[WARN] Failed to extract text from PDF for {ticker}: {ex}")
                 _set_fresh_row(conn, ticker, None)
                 continue
 
             if not transcript_text.strip():
-                print(f"[WARN] No text extracted from PDF for {ticker}")
+                LOGGER.warning(f"[WARN] No text extracted from PDF for {ticker}")
                 _set_fresh_row(conn, ticker, None)
                 continue
 
@@ -691,7 +694,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
                     transcript_text, pdf_path
                 )
             except Exception as ex:
-                print(f"[WARN] Failed to parse period from PDF for {ticker}: {ex}")
+                LOGGER.warning(f"[WARN] Failed to parse period from PDF for {ticker}: {ex}")
                 _set_fresh_row(conn, ticker, None)
                 continue
 
@@ -737,7 +740,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
 
     # Phase 2: Summarize via LLM in parallel
     if not to_summarize:
-        print("[INFO] Industry data fetch complete — all transcripts up to date, no new summaries needed.")
+        LOGGER.info("[INFO] Industry data fetch complete — all transcripts up to date, no new summaries needed.")
         return
 
     def _do_summarize(item: tuple[str, str, dict]) -> tuple[str, dict]:
@@ -750,7 +753,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
             row_id, summary = future.result()
             _set_summary(conn, row_id, summary)
 
-    print(f"[INFO] Industry data fetch and summarization complete — {len(to_summarize)} transcript(s) summarized.")
+    LOGGER.info(f"[INFO] Industry data fetch and summarization complete — {len(to_summarize)} transcript(s) summarized.")
 
 
 def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
@@ -831,7 +834,7 @@ def get_data(db_path: str = None, refresh: bool = False) -> dict:
 def run() -> None:
     data = get_data()
     if "error" in data:
-        print(f"ERROR: {data['error']}")
+        LOGGER.error(f"ERROR: {data['error']}")
         return
 
     for sector in SECTORS.keys():
@@ -857,4 +860,6 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     run()

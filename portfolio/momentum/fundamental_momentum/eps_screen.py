@@ -21,6 +21,7 @@ Usage:
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import sys
@@ -29,6 +30,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 # Ensure repo modules (equities/common) are importable when running as a script.
 _ROOT = Path(__file__).resolve().parents[3]
@@ -242,9 +245,9 @@ def main():
     )
 
     if "error" in result:
-        print(f"\nError: {result['error']}", file=sys.stderr)
+        LOGGER.error(f"\nError: {result['error']}")
         if result.get("failed"):
-            print(f"Failed tickers: {', '.join(result['failed'])}", file=sys.stderr)
+            LOGGER.error(f"Failed tickers: {', '.join(result['failed'])}")
         sys.exit(1)
 
     results_df = result["results_df"]
@@ -295,4 +298,6 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()

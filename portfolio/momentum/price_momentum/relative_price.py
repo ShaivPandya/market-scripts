@@ -20,12 +20,15 @@ Use --roc-period 42 --avg-period 10
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import sys
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 
 def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
@@ -77,17 +80,14 @@ def main() -> int:
         ticker_prices = fetch_prices_yfinance(ticker, years=args.years)
         benchmark_prices = fetch_prices_yfinance(benchmark, years=args.years)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        LOGGER.error(f"Error: {e}")
         return 1
 
     # Align the two series on common dates
     combined = pd.DataFrame({"ticker": ticker_prices, "benchmark": benchmark_prices}).dropna()
 
     if len(combined) < args.roc_period + args.avg_period:
-        print(
-            f"Not enough data: need at least {args.roc_period + args.avg_period} trading days, got {len(combined)}.",
-            file=sys.stderr,
-        )
+        LOGGER.warning(f"Not enough data: need at least {args.roc_period + args.avg_period} trading days, got {len(combined)}.")
         return 2
 
     # Calculate relative price
@@ -141,4 +141,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     raise SystemExit(main())

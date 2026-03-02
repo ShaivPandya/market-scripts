@@ -35,6 +35,7 @@ python3 revenue_momentum_single.py AAPL --universe sp500 --growth_years 3
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import sys
@@ -44,6 +45,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yfinance as yf
@@ -410,7 +413,7 @@ def main():
         try:
             raws[tk] = fetch_revenue_metrics(tk, growth_years=args.growth_years)
         except Exception as e:
-            print(f"[WARN] {tk}: failed ({e})", file=sys.stderr)
+            LOGGER.warning(f"[WARN] {tk}: failed ({e})")
 
         if i % 25 == 0:
             print(f"  processed {i}/{len(universe)}")
@@ -418,7 +421,7 @@ def main():
     # Check that at least one target was fetched
     failed_targets = [t for t in targets if t not in raws]
     if failed_targets:
-        print(f"[WARN] Failed to fetch data for: {', '.join(failed_targets)}", file=sys.stderr)
+        LOGGER.warning(f"[WARN] Failed to fetch data for: {', '.join(failed_targets)}")
     valid_targets = [t for t in targets if t in raws]
     if not valid_targets:
         raise SystemExit("Failed to fetch data for any target tickers")
@@ -489,4 +492,6 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()

@@ -25,6 +25,7 @@ Notes:
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import os
@@ -37,6 +38,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import requests
 import numpy as np
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 
 DEFAULT_DOMAIN = "publicreportinghub.cftc.gov"
@@ -507,7 +510,7 @@ def fetch_market_timeseries(
             continue
         long_col, short_col = group_cols.get(g, (None, None))
         if not long_col or not short_col:
-            print(f"Warning: Could not detect fields for group '{g}' in this dataset; skipping.", file=sys.stderr)
+            LOGGER.warning(f"Warning: Could not detect fields for group '{g}' in this dataset; skipping.")
             continue
         select_fields.extend([long_col, short_col])
 
@@ -699,7 +702,7 @@ def fetch_markets_timeseries(
             continue
         long_col, short_col = group_cols.get(g, (None, None))
         if not long_col or not short_col:
-            print(f"Warning: Could not detect fields for group '{g}' in this dataset; skipping.", file=sys.stderr)
+            LOGGER.warning(f"Warning: Could not detect fields for group '{g}' in this dataset; skipping.")
             continue
         select_fields.extend([long_col, short_col])
 
@@ -815,7 +818,7 @@ def fetch_multiple_instruments(
         if alias in INSTRUMENTS:
             instrument_list.append(alias)
         else:
-            print(f"Warning: Unknown instrument '{alias}', skipping.", file=sys.stderr)
+            LOGGER.warning(f"Warning: Unknown instrument '{alias}', skipping.")
 
     if not instrument_list:
         return []
@@ -863,7 +866,7 @@ def fetch_multiple_instruments(
 
             results.append(row)
         except Exception as e:
-            print(f"Warning: Failed to summarize {alias}: {e}", file=sys.stderr)
+            LOGGER.warning(f"Warning: Failed to summarize {alias}: {e}")
 
     return results
 
@@ -974,8 +977,8 @@ def main() -> int:
             # Validate
             invalid = [i for i in instrument_list if i not in INSTRUMENTS]
             if invalid:
-                print(f"Error: Unknown instruments: {invalid}", file=sys.stderr)
-                print(f"Use --list-instruments to see available aliases.", file=sys.stderr)
+                LOGGER.error(f"Error: Unknown instruments: {invalid}")
+                LOGGER.warning(f"Use --list-instruments to see available aliases.")
                 return 2
 
         print(f"Fetching positioning for {len(instrument_list)} instruments...")
@@ -995,7 +998,7 @@ def main() -> int:
 
     # Handle --market (single market mode)
     if not args.market:
-        print("Error: provide --market, --all, or --instruments", file=sys.stderr)
+        LOGGER.error("Error: provide --market, --all, or --instruments")
         return 2
 
     df = fetch_market_timeseries(
@@ -1025,4 +1028,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     raise SystemExit(main())

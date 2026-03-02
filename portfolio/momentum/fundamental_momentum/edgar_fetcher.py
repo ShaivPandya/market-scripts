@@ -10,6 +10,7 @@ Rate limiting: all EDGAR requests are serialised through a global lock with a
 """
 
 from __future__ import annotations
+import logging
 
 import threading
 import time
@@ -17,6 +18,8 @@ from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 import requests
+
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level state (process lifetime)

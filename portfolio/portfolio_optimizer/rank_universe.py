@@ -11,6 +11,7 @@ Usage:
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import sys
@@ -21,6 +22,8 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import yfinance as yf
@@ -136,7 +139,7 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
                 failed_tickers.extend(batch)
 
         except Exception as e:
-            print(f"  Warning: Batch {batch_num} failed with error: {e}")
+            LOGGER.warning(f"  Warning: Batch {batch_num} failed with error: {e}")
             failed_tickers.extend(batch)
 
         # Delay between batches to avoid rate limiting (except for last batch)
@@ -153,7 +156,7 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
     combined = combined.loc[:, ~combined.columns.duplicated()]
 
     if failed_tickers:
-        print(f"  Warning: Failed to download data for {len(failed_tickers)} tickers")
+        LOGGER.warning(f"  Warning: Failed to download data for {len(failed_tickers)} tickers")
 
     return combined.dropna(how="all")
 
@@ -491,7 +494,7 @@ def main() -> int:
     try:
         prices = fetch_prices(all_price_tickers, years=args.years)
     except Exception as e:
-        print(f"[ERROR] Failed to fetch prices: {e}", file=sys.stderr)
+        LOGGER.error(f"[ERROR] Failed to fetch prices: {e}")
         return 1
 
     # Fetch all metrics
@@ -577,4 +580,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     raise SystemExit(main())

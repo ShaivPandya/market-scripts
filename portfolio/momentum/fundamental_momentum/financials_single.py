@@ -7,6 +7,7 @@ metrics and latest-filing segment/region revenue breakdown.
 """
 
 from __future__ import annotations
+import logging
 
 import re
 from datetime import date
@@ -18,6 +19,8 @@ from edgar_fetcher import (
     fetch_submissions_by_cik,
     get_cik_for_ticker,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 ALLOWED_ANNUAL_FORMS = {"10-K", "10-K/A"}
 ALLOWED_QUARTERLY_FORMS = {"10-Q", "10-Q/A", "10-K", "10-K/A"}
@@ -602,6 +605,8 @@ def get_data(ticker: str) -> dict:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     import argparse
     import json
 

@@ -10,6 +10,7 @@ or prints summary tables in the terminal.
 Terminal:
   python portfolio/portfolio_dashboard.py
 """
+import logging
 
 import warnings
 from datetime import datetime
@@ -17,6 +18,8 @@ from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+
+LOGGER = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore")
 
@@ -225,4 +228,6 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+    LOGGER.info('Starting script execution: %s', __file__)
     main()
