@@ -63,14 +63,14 @@ export function Positioning() {
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">CFTC Positioning</h1>
           <p className="text-sm text-gray-400 mt-0.5">
             COT participant positioning + forced-flow proxies via the CFTC PRE/Socrata API
           </p>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center md:w-auto md:justify-end">
           {view === "summary" && (
             <button
               onClick={() => {
@@ -78,18 +78,18 @@ export function Positioning() {
                 setIsOpen(true)
               }}
               disabled={mutation.isPending || summaryRows.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             >
               <Sparkles size={14} />
               AI Overview
             </button>
           )}
-          <div className="inline-flex items-center rounded-full bg-gray-100 p-0.5">
+          <div className="inline-flex w-full items-center rounded-full bg-gray-100 p-0.5 sm:w-auto">
             {(["summary", "single"] as View[]).map(v => (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                className={`px-3.5 py-1.5 text-sm rounded-full transition-all duration-150 ${
+                className={`flex-1 rounded-full px-3.5 py-1.5 text-center text-sm transition-all duration-150 sm:flex-none ${
                   view === v
                     ? "bg-white text-gray-900 font-medium shadow-sm"
                     : "text-gray-500 hover:text-gray-700"
@@ -99,7 +99,9 @@ export function Positioning() {
               </button>
             ))}
           </div>
-          <RefreshButton />
+          <div className="w-full sm:w-auto [&>button]:w-full sm:[&>button]:w-auto">
+            <RefreshButton />
+          </div>
         </div>
       </div>
 
@@ -174,15 +176,15 @@ export function Positioning() {
 
       {view === "single" && (
         <div>
-          <div className="flex gap-3 items-center mb-6">
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end">
             <SelectInput
               label="Instrument"
               value={selectedAlias}
               onChange={setSelectedAlias}
               options={allInstruments.sort().map(a => ({ value: a, label: a }))}
-              className="w-48"
+              className="w-full sm:w-56"
             />
-            {marketName && <span className="text-xs text-gray-400 self-end pb-2">{marketName}</span>}
+            {marketName && <span className="text-xs text-gray-400 sm:pb-2">{marketName}</span>}
           </div>
 
           {tsLoading && <LoadingSpinner message="Fetching time series..." />}
@@ -217,7 +219,7 @@ function SingleMarketView({ rows }: { rows: Record<string, unknown>[] }) {
   return (
     <div>
       <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-3">Latest Reading</h2>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
+      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <MetricCard title="Report Date" value={String(latest["report_date"] ?? "N/A")} />
         <MetricCard title="Net Position" value={latest["lf_net"] != null ? Number(latest["lf_net"]).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "N/A"} />
         <MetricCard title="Net % Open Interest" value={latest["lf_net_pct_oi"] != null ? `${Number(latest["lf_net_pct_oi"]) >= 0 ? "+" : ""}${Number(latest["lf_net_pct_oi"]).toFixed(1)}%` : "N/A"} />
