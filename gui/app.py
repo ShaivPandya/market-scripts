@@ -993,6 +993,7 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
         errors = country_dash_data.get("errors", {})
         series_used = country_dash_data.get("series_used", {})
         latest_observation_dates = country_dash_data.get("latest_observation_dates", {})
+        max_age_days = country_dash_data.get("max_age_days", {})
         timestamp = country_dash_data.get("timestamp")
         if timestamp:
             st.caption(f"Data as of: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1065,8 +1066,21 @@ elif st.session_state.current_page == "🌍 Country Dashboard":
                             source_id = _SOURCE_DISPLAY.get(raw_source, raw_source.upper() if raw_source else None)
                             if obs_date is not None:
                                 obs_ts = pd.to_datetime(obs_date)
+                                if len(series.index) >= 2:
+                                    deltas = pd.Series(pd.to_datetime(series.index)).diff().dropna().dt.days
+                                    if not deltas.empty:
+                                        median_days = float(deltas.median())
+                                        if median_days >= 80:
+                                            obs_ts = obs_ts + pd.offsets.QuarterEnd(0)
+                                        elif median_days >= 27:
+                                            obs_ts = obs_ts + pd.offsets.MonthEnd(0)
                                 age_days = (pd.Timestamp.now() - obs_ts).days
-                                stale_label = f" (stale: {age_days}d)" if age_days > 180 else ""
+                                stale_threshold = int(max_age_days.get(country_metric.lower(), 180))
+                                stale_label = (
+                                    f" (stale: {age_days}d)"
+                                    if age_days > stale_threshold
+                                    else ""
+                                )
                                 source_label = f" · {source_id}" if source_id else ""
                                 st.caption(
                                     f"Latest obs: {obs_ts.strftime('%Y-%m-%d')}{stale_label}{source_label}"

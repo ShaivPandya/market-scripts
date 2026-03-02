@@ -23,7 +23,7 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 LOGGER = logging.getLogger(__name__)
 
@@ -120,7 +120,6 @@ COUNTRIES = {
                 "freq": "quarterly",
                 "transform": "yoy4",
             },
-            {"id": "NAEXKP01CAQ189S", "transform": "yoy4"},
         ],
     },
     "United Kingdom": {
@@ -151,8 +150,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTGBM156S"},
         ],
         "gdp": [
-            # FRED/OECD: Real GDP, UK, quarterly, index (2015=100) SA — compute YoY.
-            {"id": "NAEXKP01GBQ189S", "transform": "yoy4"},
+            # UK: Gross Domestic Product, SA; compute YoY growth.
+            {"id": "UKNGDP", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "EU": {
@@ -206,16 +205,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTDEM156S"},
         ],
         "gdp": [
-            {
-                "source": "eurostat",
-                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
-                "dataset": EUROSTAT_GDP_DATASET,
-                "geo": "DE",
-                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
-                "freq": "quarterly",
-                "transform": "none",
-            },
-            {"id": "NAEXKP01DEQ189S", "transform": "yoy4"},
+            # Real Gross Domestic Product, Germany, SA; compute YoY growth.
+            {"id": "CLVMNACSCAB1GQDE", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "Japan": {
@@ -229,13 +220,8 @@ COUNTRIES = {
         ],
         "unemployment": "LRUNTTTTJPM156S",
         "gdp": [
-            {
-                "source": "oecd",
-                "id": "OECD QNA JPN.B1_GE.GYSA.Q",
-                "dataset": "QNA",
-                "key": "JPN.B1_GE.GYSA.Q",
-                "transform": "none",
-            },
+            # Real GDP, Japan, SA; compute YoY growth.
+            {"id": "JPNNGDP", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "France": {
@@ -263,16 +249,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTFRM156S"},
         ],
         "gdp": [
-            {
-                "source": "eurostat",
-                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
-                "dataset": EUROSTAT_GDP_DATASET,
-                "geo": "FR",
-                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
-                "freq": "quarterly",
-                "transform": "none",
-            },
-            {"id": "NAEXKP01FRQ189S", "transform": "yoy4"},
+            # Real Gross Domestic Product, France, SA; compute YoY growth.
+            {"id": "CLVMNACSCAB1GQFR", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "Switzerland": {
@@ -298,15 +276,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTCHM156S", "transform": "none"},
         ],
         "gdp": [
-            {
-                "source": "snb",
-                "id": "SNB gdprpq WMF BBIP",
-                "cube": "gdprpq",
-                "dim_sel": "D0(WMF),D1(BBIP)",
-                "freq": "quarterly",
-                "transform": "yoy4",
-            },
-            {"id": "NAEXKP01CHQ189S", "transform": "yoy4"},
+            # Real Gross Domestic Product, Switzerland, SA; compute YoY growth.
+            {"id": "CLVMNACSAB1GQCH", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "Australia": {
@@ -323,7 +294,10 @@ COUNTRIES = {
             },
         ],
         "unemployment": "LRUNTTTTAUM156S",
-        "gdp": "NAEXKP01AUQ189S",
+        "gdp": [
+            # Real Gross Domestic Product, Australia, SA; compute YoY growth.
+            {"id": "NGDPRSAXDCAUQ", "transform": "yoy4", "freq": "quarterly"},
+        ],
     },
 }
 
@@ -333,6 +307,11 @@ METRICS = ["Inflation", "Unemployment", "GDP"]
 
 _FETCH_YEARS = 6
 _DISPLAY_YEARS = 5
+_DEFAULT_MAX_AGE_DAYS = {
+    "inflation": 150,
+    "unemployment": 150,
+    "gdp": 240,
+}
 
 
 # ── Data fetching ────────────────────────────────────────────────────────────
@@ -764,29 +743,125 @@ def _fetch_oecd_series(
     resp.raise_for_status()
     data = resp.json()
 
-    structure = data["structure"]
-    dataset_obj = data["dataSets"][0]
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"OECD {dataset}/{key}: unexpected response type {type(data).__name__}"
+        )
 
-    time_dim = next(
-        d for d in structure["dimensions"]["observation"]
-        if d["id"] == "TIME_PERIOD"
+    # OECD has returned multiple SDMX-JSON variants over time.
+    root_candidates: List[Dict[str, Any]] = [data]
+    nested_data = data.get("data")
+    if isinstance(nested_data, dict):
+        root_candidates.append(nested_data)
+
+    error_message = (
+        data.get("error_message")
+        or data.get("error")
+        or data.get("message")
     )
-    time_values = [v["id"] for v in time_dim["values"]]
+    if error_message:
+        raise RuntimeError(f"OECD {dataset}/{key}: {error_message}")
 
-    series_key = next(iter(dataset_obj["series"]))
-    observations = dataset_obj["series"][series_key]["observations"]
+    dataset_obj: Dict[str, Any] = {}
+    for root in root_candidates:
+        data_sets = root.get("dataSets")
+        if isinstance(data_sets, list) and data_sets and isinstance(data_sets[0], dict):
+            dataset_obj = data_sets[0]
+            break
+    if not dataset_obj:
+        raise RuntimeError(
+            f"OECD {dataset}/{key}: missing dataSets in response keys={list(data.keys())}"
+        )
+
+    time_values: List[str] = []
+    for root in root_candidates:
+        structure = root.get("structure")
+        if isinstance(structure, dict):
+            dims = structure.get("dimensions")
+            if isinstance(dims, dict):
+                obs_dims = dims.get("observation")
+                if isinstance(obs_dims, list):
+                    for dim in obs_dims:
+                        if isinstance(dim, dict) and dim.get("id") == "TIME_PERIOD":
+                            values = dim.get("values")
+                            if isinstance(values, list):
+                                parsed = [
+                                    str(v["id"])
+                                    for v in values
+                                    if isinstance(v, dict) and v.get("id") is not None
+                                ]
+                                if parsed:
+                                    time_values = parsed
+                                    break
+                    if time_values:
+                        break
+
+    series_map = dataset_obj.get("series")
+    observations: Dict[str, Any] = {}
+    if isinstance(series_map, dict):
+        for series_obj in series_map.values():
+            if isinstance(series_obj, dict):
+                obs = series_obj.get("observations")
+                if isinstance(obs, dict) and obs:
+                    observations = obs
+                    break
+    if not observations:
+        dataset_obs = dataset_obj.get("observations")
+        if isinstance(dataset_obs, dict):
+            observations = dataset_obs
+    if not observations:
+        raise RuntimeError(f"OECD {dataset}/{key}: missing observations")
+
+    def _parse_period(period: str) -> pd.Timestamp | None:
+        text = str(period).strip()
+        m = re.fullmatch(r"(\d{4})-Q([1-4])", text)
+        if not m:
+            m = re.fullmatch(r"(\d{4})Q([1-4])", text)
+        if m:
+            year, q = int(m.group(1)), int(m.group(2))
+            return pd.Period(year=year, quarter=q, freq="Q").to_timestamp(how="end")
+        ts = pd.to_datetime(text, errors="coerce")
+        if pd.isna(ts):
+            return None
+        return pd.Timestamp(ts)
 
     records: Dict[pd.Timestamp, float] = {}
-    for idx_str, obs in observations.items():
-        period = time_values[int(idx_str)]
-        value = obs[0]
-        if value is not None:
-            ts = (
-                pd.Period(period, freq="Q").to_timestamp(how="end")
-                if "Q" in period
-                else pd.Timestamp(period)
-            )
+    for obs_key, obs in observations.items():
+        obs_key_text = str(obs_key)
+        period = None
+        if time_values:
+            idx_token = obs_key_text.split(":")[-1]
+            try:
+                period = time_values[int(idx_token)]
+            except (ValueError, IndexError):
+                period = None
+        if period is None and re.fullmatch(r"\d{4}(-Q[1-4]|Q[1-4]|-\d{2}(-\d{2})?)", obs_key_text):
+            period = obs_key_text
+
+        value = None
+        if isinstance(obs, (list, tuple)):
+            value = obs[0] if obs else None
+        elif isinstance(obs, dict):
+            value = obs.get("OBS_VALUE")
+            if value is None:
+                value = obs.get("value")
+            if value is None:
+                value = obs.get("0")
+        else:
+            value = obs
+
+        if period is None or value is None:
+            continue
+        ts = _parse_period(period)
+        if ts is None:
+            continue
+        try:
             records[ts] = float(value)
+        except (TypeError, ValueError):
+            continue
+
+    if not records:
+        raise RuntimeError(f"OECD {dataset}/{key}: unable to parse observations")
 
     series = pd.Series(records).sort_index().dropna()
     series.index = pd.to_datetime(series.index)
@@ -1151,6 +1226,20 @@ def _apply_transform(series: pd.Series, transform: str) -> pd.Series:
     raise ValueError(f"Unknown transform: {transform}")
 
 
+def _infer_series_frequency(series: pd.Series) -> str | None:
+    if len(series.index) < 2:
+        return None
+    deltas = pd.Series(pd.to_datetime(series.index)).diff().dropna().dt.days
+    if deltas.empty:
+        return None
+    median_days = float(deltas.median())
+    if median_days >= 80:
+        return "quarterly"
+    if median_days >= 27:
+        return "monthly"
+    return None
+
+
 def _metric_candidates(metric_key: str, config: dict) -> List[Dict[str, object]]:
     metric_config = config[metric_key]
 
@@ -1316,9 +1405,28 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     )
                     continue
 
+                latest_ts = pd.Timestamp(series.index[-1])
+                freq_hint = candidate.get("freq") or _infer_series_frequency(series)
+                effective_latest_ts = latest_ts
+                if freq_hint == "quarterly":
+                    effective_latest_ts = latest_ts + pd.offsets.QuarterEnd(0)
+                elif freq_hint == "monthly":
+                    effective_latest_ts = latest_ts + pd.offsets.MonthEnd(0)
+
+                max_age_days = candidate.get("max_age_days")
+                if max_age_days is None:
+                    max_age_days = _DEFAULT_MAX_AGE_DAYS.get(metric_key)
+                if max_age_days:
+                    age_days = (now.date() - effective_latest_ts.date()).days
+                    if age_days > int(max_age_days):
+                        country_errors.append(
+                            f"{series_id}: stale ({age_days}d old > {int(max_age_days)}d)"
+                        )
+                        continue
+
                 countries[name] = series
                 series_used[name] = source
-                latest_observation_dates[name] = series.index[-1].to_pydatetime()
+                latest_observation_dates[name] = effective_latest_ts.to_pydatetime()
                 break
             except Exception as e:
                 country_errors.append(f"{series_id}: {type(e).__name__}: {e}")
@@ -1330,6 +1438,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
         "errors": errors,
         "series_used": series_used,
         "latest_observation_dates": latest_observation_dates,
+        "max_age_days": _DEFAULT_MAX_AGE_DAYS.copy(),
         "metric": metric,
         "timestamp": datetime.now(),
     }
