@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
@@ -227,15 +227,38 @@ function VIXTab() {
 export function MarketTechnicals() {
   const [tab, setTab] = useState<Tab>("VIX Term Structure")
   const [isOpen, setIsOpen] = useState(false)
-
-  // Fetch all data at page level for AI Overview (React Query deduplicates with tab-level queries)
-  const breadth = useApiQuery(["market-breadth"], fetchMarketBreadth)
-  const top50 = useApiQuery(["top50-breadth"], fetchTop50Breadth)
-  const vix = useApiQuery(["vix-term-structure"], fetchVixTermStructure)
-  const pv = useApiQuery(["price-volume-signals"], fetchPriceVolumeSignals)
+  const [prepError, setPrepError] = useState<string | null>(null)
+  const [isPreparingOverview, setIsPreparingOverview] = useState(false)
+  const queryClient = useQueryClient()
 
   const mutation = useMutation({ mutationFn: analyzeMarketTechnicals })
-  const showPanel = mutation.data || mutation.isPending || mutation.isError
+  const showPanel = Boolean(mutation.data || mutation.isPending || mutation.isError || isPreparingOverview || prepError)
+
+  async function handleAnalyzeClick() {
+    setIsOpen(true)
+    setPrepError(null)
+    setIsPreparingOverview(true)
+
+    try {
+      const [marketBreadth, top50Breadth, vixTermStructure, priceVolumeSignals] = await Promise.all([
+        queryClient.fetchQuery({ queryKey: ["market-breadth"], queryFn: fetchMarketBreadth, staleTime: 5 * 60 * 1000 }),
+        queryClient.fetchQuery({ queryKey: ["top50-breadth"], queryFn: fetchTop50Breadth, staleTime: 5 * 60 * 1000 }),
+        queryClient.fetchQuery({ queryKey: ["vix-term-structure"], queryFn: fetchVixTermStructure, staleTime: 5 * 60 * 1000 }),
+        queryClient.fetchQuery({ queryKey: ["price-volume-signals"], queryFn: fetchPriceVolumeSignals, staleTime: 5 * 60 * 1000 }),
+      ])
+
+      mutation.mutate({
+        market_breadth: marketBreadth ?? {},
+        top50_breadth: top50Breadth ?? {},
+        vix_term_structure: vixTermStructure ?? {},
+        price_volume_signals: priceVolumeSignals ?? {},
+      })
+    } catch (err) {
+      setPrepError(String(err))
+    } finally {
+      setIsPreparingOverview(false)
+    }
+  }
 
   return (
     <div>
@@ -243,16 +266,8 @@ export function MarketTechnicals() {
         <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Market Technicals</h1>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              mutation.mutate({
-                market_breadth: breadth.data ?? {},
-                top50_breadth: top50.data ?? {},
-                vix_term_structure: vix.data ?? {},
-                price_volume_signals: pv.data ?? {},
-              })
-              setIsOpen(true)
-            }}
-            disabled={mutation.isPending}
+            onClick={handleAnalyzeClick}
+            disabled={mutation.isPending || isPreparingOverview}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Sparkles size={14} />
@@ -280,12 +295,13 @@ export function MarketTechnicals() {
 
           {isOpen && (
             <div className="px-4 py-4">
-              {mutation.isPending && (
+              {(isPreparingOverview || mutation.isPending) && (
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                  Analyzing market technicals...
+                  {isPreparingOverview ? "Loading technical datasets..." : "Analyzing market technicals..."}
                 </div>
               )}
+              {prepError && <p className="text-sm text-red-600">{prepError}</p>}
               {mutation.isError && (
                 <p className="text-sm text-red-600">
                   {String(mutation.error) || "Analysis failed. Please try again."}
