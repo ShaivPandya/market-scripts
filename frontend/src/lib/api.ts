@@ -147,6 +147,11 @@ export const fetchCentralBanks = (refresh = false) =>
 export const fetchSectorMetrics = () =>
   client.get("/sector-metrics").then(r => r.data)
 
+export const analyzeSectorMetrics = (body: {
+  rows: Record<string, unknown>[]
+  timestamp?: string | null
+}) => client.post("/sector-metrics/analyze", body).then(r => r.data)
+
 export const fetchIndustryMonitor = (refresh = false) =>
   client.get(`/industry-monitor?refresh=${refresh}`).then(r => r.data)
 

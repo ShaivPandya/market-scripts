@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { runChart } from "@/lib/api"
 import { TimeSeriesChart, type SeriesDef } from "@/components/shared/TimeSeriesChart"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
@@ -49,15 +49,19 @@ export function ChartPage() {
   const [ticker, setTicker] = useState("SPY")
   const [lookback, setLookback] = useState<string>("2Y")
 
-  const mutation = useMutation({ mutationFn: runChart })
+  const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
+
+  const { data, isPending, isError, error } = useQuery({
+    queryKey: ["chart", submittedTicker],
+    queryFn: () => runChart({ ticker: submittedTicker!, lookback: "5Y" }),
+    enabled: submittedTicker !== null,
+    staleTime: Infinity,
+  })
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    // Always fetch the full 5Y dataset; timeframe filtering is done client-side
-    mutation.mutate({ ticker: ticker.trim().toUpperCase(), lookback: "5Y" })
+    setSubmittedTicker(ticker.trim().toUpperCase())
   }
-
-  const data = mutation.data
 
   // Parse the full 5Y datasets once when data arrives
   const allPriceData = useMemo<Record<string, unknown>[]>(() => (
@@ -142,15 +146,15 @@ export function ChartPage() {
             onChange={setLookback}
           />
         </div>
-        <ActionButton type="submit" loading={mutation.isPending} loadingText="Analyzing..." className="w-auto px-6">
+        <ActionButton type="submit" loading={isPending} loadingText="Analyzing..." className="w-auto px-6">
           Analyze
         </ActionButton>
       </form>
 
-      {mutation.isPending && <LoadingSpinner message="Fetching chart data..." />}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {isPending && <LoadingSpinner message="Fetching chart data..." />}
+      {isError && <ErrorMessage message={String(error)} />}
 
-      {data && !mutation.isPending && (
+      {data && !isPending && (
         <div className="space-y-6">
           {priceMultiData.length > 0 && (
             <div>
@@ -180,7 +184,7 @@ export function ChartPage() {
         </div>
       )}
 
-      {!data && !mutation.isPending && !mutation.isError && (
+      {!data && !isPending && !isError && (
         <p className="text-gray-400 text-sm">Enter a ticker and click Analyze to view the chart.</p>
       )}
     </div>
