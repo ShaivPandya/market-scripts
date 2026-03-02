@@ -208,6 +208,10 @@ const COLUMN_LABELS: Record<string, string> = {
   signal: "Signal",
   signal_composite: "Signal Composite",
   signal_effective: "Signal Effective",
+  quality_signal: "Quality",
+  eps_mom_signal: "EPS Momentum",
+  rev_mom_signal: "Revenue Momentum",
+  price_mom_signal: "Price Momentum",
   beta_spy: "Beta SPY",
   beta_iwm: "Beta IWM",
   realized_vol: "Vol",
@@ -279,7 +283,7 @@ export function PortfolioOptimizer() {
   const [betaNeutral, setBetaNeutral] = useState(cachedState?.betaNeutral ?? true)
   const [tab, setTab] = useState<OptimizerTab>("Weights")
   const [weightsViewMode, setWeightsViewMode] = useState<WeightsViewMode>("basic")
-  const [showMethodologyNotes, setShowMethodologyNotes] = useState(true)
+  const [showMethodologyNotes, setShowMethodologyNotes] = useState(false)
   const [cachedResult, setCachedResult] = useState<OptimizerResponse | null>(cachedState?.result ?? null)
 
   const mutation = useMutation({

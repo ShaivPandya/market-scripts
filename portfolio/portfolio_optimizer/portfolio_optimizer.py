@@ -1025,6 +1025,14 @@ def optimize_portfolio(
         signal_composite = signal_composite.reindex(tickers).fillna(0.0)
         signal_effective = signal_composite.copy()
 
+        # Extract individual signal subcomponents for reporting
+        signal_subcomponents = {}
+        for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
+            if not signals_df.empty and col in signals_df.columns:
+                signal_subcomponents[col] = signals_df[col].reindex(tickers)
+            else:
+                signal_subcomponents[col] = pd.Series(np.nan, index=tickers)
+
         distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
         distressed_tickers = distressed_active[distressed_active].index.tolist()
         if distressed_tickers:
@@ -1228,6 +1236,10 @@ def optimize_portfolio(
             "signal": signal_effective.values,
             "signal_composite": signal_composite.values,
             "signal_effective": signal_effective.values,
+            "quality_signal": signal_subcomponents["quality_signal"].values,
+            "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
+            "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
+            "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
             "signal_conviction": meta["signal_conviction"].values,
             "signal_conviction_pass": meta["signal_conviction_pass"].values,
             "beta_spy": betas_spy.values,
