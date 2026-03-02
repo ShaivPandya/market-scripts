@@ -22,17 +22,31 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+})
+
+const priceFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
 
 function isPercentColumn(key: string) {
   const normalized = key.toLowerCase()
+  if (isCurrencyColumn(normalized)) return false
   return normalized.includes("weight") || normalized.includes("pct") || normalized.includes("percent")
+}
+
+function isIntegerColumn(key: string) {
+  const normalized = key.toLowerCase()
+  return normalized === "shares" || normalized === "index"
 }
 
 function isCurrencyColumn(key: string) {
   const normalized = key.toLowerCase()
   return (
+    normalized === "price" ||
     normalized.includes("usd") ||
     normalized.includes("dollar") ||
     normalized.includes("notional") ||
@@ -52,17 +66,35 @@ function toRows(value: unknown): Record<string, unknown>[] {
   return value.filter((row): row is Record<string, unknown> => row != null && typeof row === "object")
 }
 
+const COLUMN_LABELS: Record<string, string> = {
+  index: "#",
+  ticker: "Ticker",
+  asset: "Asset",
+  direction: "Direction",
+  signal: "Signal",
+  beta_spy: "Beta SPY",
+  beta_iwm: "Beta IWM",
+  realized_vol: "Vol",
+  weight: "Weight",
+  dollar_weight: "Dollar",
+  price: "Price",
+  shares: "Shares",
+  type: "Type",
+}
+
 function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
   if (rows.length === 0) return []
-  return Object.keys(rows[0]).map(k => ({
+  return Object.keys(rows[0]).filter(k => k !== "index").map(k => ({
     key: k,
-    header: k,
+    header: COLUMN_LABELS[k] ?? k,
     colorFn: isPercentColumn(k)
       ? colorPositiveNegative : undefined,
     format: (v: unknown) => {
       if (typeof v !== "number") return String(v ?? "N/A")
       if (isPercentColumn(k)) return formatPercent(v)
+      if (k === "price") return priceFormatter.format(v)
       if (isCurrencyColumn(k)) return currencyFormatter.format(v)
+      if (isIntegerColumn(k)) return Math.round(v).toLocaleString("en-US")
       return `${v >= 0 ? "+" : ""}${numberFormatter.format(v)}`
     },
   }))
@@ -181,11 +213,12 @@ export function PortfolioOptimizer() {
       {data && !mutation.isPending && (
         <div className="space-y-6">
           {(data.daily_vol != null || data.gross_leverage != null) && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               {data.daily_vol != null && <MetricCard title="Daily Volatility" value={`${(Number(data.daily_vol) * 100).toFixed(2)}%`} />}
               {data.gross_leverage != null && <MetricCard title="Gross Leverage" value={`${Number(data.gross_leverage).toFixed(2)}x`} />}
               {data.equity_net != null && <MetricCard title="Equity Net" value={`${(Number(data.equity_net) * 100).toFixed(1)}%`} />}
-              {data.net_beta_spy != null && <MetricCard title="Net Beta (SPY)" value={Number(data.net_beta_spy).toFixed(3)} />}
+              {data.net_beta_spy != null && <MetricCard title="Net Beta SPY (pre-hedge)" value={Number(data.net_beta_spy).toFixed(3)} />}
+              {data.net_beta_iwm != null && <MetricCard title="Net Beta IWM (pre-hedge)" value={Number(data.net_beta_iwm).toFixed(3)} />}
             </div>
           )}
 
