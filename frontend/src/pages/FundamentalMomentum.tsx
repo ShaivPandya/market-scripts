@@ -50,7 +50,7 @@ export function FundamentalMomentum() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Fundamental Momentum</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Fundamental Momentum</h1>
       </div>
 
       <ControlPanel maxWidth="max-w-lg">

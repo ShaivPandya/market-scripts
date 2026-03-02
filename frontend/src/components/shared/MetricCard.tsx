@@ -25,7 +25,7 @@ export function MetricCard({
   }
 
   return (
-    <div className={cn("rounded-lg border bg-white p-4 shadow-sm", className)}>
+    <div className={cn("rounded-xl border bg-white p-4 shadow-sm", className)}>
       <p className="text-sm text-gray-500 font-medium truncate">{title}</p>
       <p className="text-2xl font-bold mt-1 text-gray-900">{value}</p>
       {subtitle && (
@@ -34,7 +34,7 @@ export function MetricCard({
       {signal && signalLabel && (
         <div
           className={cn(
-            "mt-2 text-xs px-2 py-1 rounded border font-medium inline-block",
+            "mt-2 text-xs px-2 py-1 rounded-md border font-medium inline-block",
             signalColors[signal],
           )}
         >

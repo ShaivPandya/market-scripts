@@ -14,6 +14,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { TimeSeriesChart } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
+import { SegmentedControl } from "@/components/shared/FormControls"
 import { colorPositiveNegative, colorSignalFlag, colorVixSignal } from "@/lib/colors"
 
 type Tab = "VIX Term Structure" | "Market Breadth" | "Top 50 Breadth" | "Price/Volume Signals"
@@ -262,13 +263,13 @@ export function MarketTechnicals() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Market Technicals</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Market Technicals</h1>
         <div className="flex items-center gap-2">
           <button
             onClick={handleAnalyzeClick}
             disabled={mutation.isPending || isPreparingOverview}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Sparkles size={14} />
             AI Overview
@@ -278,18 +279,18 @@ export function MarketTechnicals() {
       </div>
 
       {showPanel && (
-        <div className="mb-6 rounded-lg border border-indigo-200 bg-white overflow-hidden">
+        <div className="mb-6 rounded-xl border border-blue-200 bg-white overflow-hidden">
           <button
             onClick={() => setIsOpen(o => !o)}
-            className="w-full flex items-center justify-between px-4 py-3 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+            className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors"
           >
             <div className="flex items-center gap-2">
-              <Sparkles size={14} className="text-indigo-600" />
-              <span className="text-sm font-semibold text-indigo-800">AI Overview</span>
+              <Sparkles size={14} className="text-blue-500" />
+              <span className="text-sm font-semibold text-blue-700">AI Overview</span>
             </div>
             <ChevronDown
               size={16}
-              className={`text-indigo-600 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+              className={`text-blue-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
             />
           </button>
 
@@ -297,7 +298,7 @@ export function MarketTechnicals() {
             <div className="px-4 py-4">
               {(isPreparingOverview || mutation.isPending) && (
                 <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
                   {isPreparingOverview ? "Loading technical datasets..." : "Analyzing market technicals..."}
                 </div>
               )}
@@ -317,20 +318,12 @@ export function MarketTechnicals() {
         </div>
       )}
 
-      <div className="flex gap-0 border-b border-gray-200 mb-6 overflow-x-auto">
-        {TABS.map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
-              tab === t
-                ? "text-gray-900 font-semibold border-b-2 border-gray-900 -mb-px"
-                : "text-gray-400 hover:text-gray-600"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+      <div className="mb-6">
+        <SegmentedControl
+          options={TABS.map(t => ({ value: t, label: t }))}
+          value={tab}
+          onChange={setTab}
+        />
       </div>
 
       {tab === "VIX Term Structure" && <VIXTab />}

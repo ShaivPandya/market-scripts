@@ -99,10 +99,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 onClick={onClose}
                 className={({ isActive }) =>
                   cn(
-                    "block w-full text-left px-2 py-1.5 rounded text-sm mb-0.5 transition-colors truncate",
+                    "block w-full text-left px-2 py-1.5 rounded-lg text-sm mb-0.5 transition-colors truncate",
                     isActive
-                      ? "bg-blue-600 text-white font-medium"
-                      : "text-gray-700 hover:bg-gray-200",
+                      ? "bg-blue-50 text-blue-600 font-medium"
+                      : "text-gray-700 hover:bg-gray-100",
                   )
                 }
               >
@@ -119,7 +119,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <div className="px-3 py-3 border-t border-gray-200">
         <button
           onClick={handleLogout}
-          className="w-full text-left px-2 py-1.5 rounded text-sm text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition-colors"
+          className="w-full text-left px-2 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
         >
           Sign out
         </button>

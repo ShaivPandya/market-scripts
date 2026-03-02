@@ -4,7 +4,7 @@ import { runPortfolioOptimizerAsync } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { SliderInput, ActionButton, TextInput, Toggle } from "@/components/shared/FormControls"
+import { SliderInput, ActionButton, TextInput, Toggle, SegmentedControl } from "@/components/shared/FormControls"
 import { colorPositiveNegative } from "@/lib/colors"
 
 type OptimizerTab = "Weights" | "Exposures" | "Constraints" | "Max Scaled"
@@ -250,7 +250,7 @@ export function PortfolioOptimizer() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Portfolio Optimizer</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Optimizer</h1>
         <p className="text-sm text-gray-400 mt-0.5">Beta-neutral portfolio construction with volatility targeting</p>
       </div>
 
@@ -326,20 +326,12 @@ export function PortfolioOptimizer() {
             </div>
           )}
 
-          <div className="flex gap-0 border-b border-gray-200 overflow-x-auto">
-            {OPTIMIZER_TABS.map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
-                  tab === t
-                    ? "text-gray-900 font-semibold border-b-2 border-gray-900 -mb-px"
-                    : "text-gray-400 hover:text-gray-600"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
+          <div className="mb-2">
+            <SegmentedControl
+              options={OPTIMIZER_TABS.map(t => ({ value: t, label: t }))}
+              value={tab}
+              onChange={setTab}
+            />
           </div>
 
           {tab === "Weights" && (
@@ -367,7 +359,7 @@ export function PortfolioOptimizer() {
           {tab === "Exposures" && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+                <div className="rounded-xl border border-gray-200 p-4 space-y-3">
                   <h2 className="text-base font-semibold">Gross Exposures</h2>
                   {EXPOSURE_CLASSES.map(assetClass => {
                     const gross = firstNumber(exposures[`${assetClass}_gross`], 0) ?? 0
@@ -399,7 +391,7 @@ export function PortfolioOptimizer() {
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+                <div className="rounded-xl border border-gray-200 p-4 space-y-3">
                   <h2 className="text-base font-semibold">Net Exposures</h2>
                   <div className="grid grid-cols-2 gap-3">
                     {EXPOSURE_CLASSES.map(assetClass => {
@@ -433,7 +425,7 @@ export function PortfolioOptimizer() {
                   const status = tone === "near" ? "Near Limit" : tone === "moderate" ? "Moderate" : "Healthy"
 
                   return (
-                    <div key={name} className="rounded-lg border border-gray-200 p-4">
+                    <div key={name} className="rounded-xl border border-gray-200 p-4">
                       <div className="flex items-center justify-between mb-3 gap-3">
                         <h2 className="text-sm font-semibold text-gray-800">{name}</h2>
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATUS_CLASSES[tone]}`}>{status}</span>

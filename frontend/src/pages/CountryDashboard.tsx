@@ -5,6 +5,7 @@ import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesC
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
+import { SegmentedControl } from "@/components/shared/FormControls"
 
 const METRICS = ["Inflation", "Unemployment", "GDP"] as const
 type Metric = typeof METRICS[number]
@@ -30,18 +31,17 @@ export function CountryDashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Country Dashboard</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Country Dashboard</h1>
         <RefreshButton queryKeys={[["country-dashboard", metric]]} />
       </div>
 
-      <div className="flex gap-2 mb-4">
-        {METRICS.map(m => (
-          <button key={m} onClick={() => setMetric(m)}
-            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${metric === m ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}>
-            {m}
-          </button>
-        ))}
+      <div className="mb-6">
+        <SegmentedControl
+          options={METRICS.map(m => ({ value: m, label: m }))}
+          value={metric}
+          onChange={setMetric}
+        />
       </div>
 
       {isLoading && <LoadingSpinner message={`Fetching ${metric} data...`} />}
@@ -59,7 +59,7 @@ export function CountryDashboard() {
 
               if (!series || series.length === 0) {
                 return (
-                  <div key={country} className="rounded-lg border bg-white p-4 shadow-sm">
+                  <div key={country} className="rounded-xl border bg-white p-4 shadow-sm">
                     <MetricCard title={country} value="N/A" />
                     {errors[0] && <p className="text-xs text-gray-400 mt-1 truncate" title={errors[0]}>{errors[0].slice(0, 100)}</p>}
                   </div>
@@ -72,7 +72,7 @@ export function CountryDashboard() {
               const ageDays = obsDate ? Math.floor((Date.now() - new Date(obsDate).getTime()) / 86400000) : null
 
               return (
-                <div key={country} className="rounded-lg border bg-white p-4 shadow-sm">
+                <div key={country} className="rounded-xl border bg-white p-4 shadow-sm">
                   <div className="flex justify-between items-start mb-1">
                     <p className="text-sm font-semibold text-gray-700">{country}</p>
                     {source && <span className="text-xs text-gray-400">{source}</span>}

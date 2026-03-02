@@ -100,7 +100,7 @@ export function CentralBanks() {
       <div className="mb-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Central Bank Monitor</h1>
+            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Central Bank Monitor</h1>
             {data && !isLoading && (
               <p className="text-sm text-gray-400 mt-0.5">
                 {data.counts?.total ?? items.length} items across {sources.length} central banks
@@ -128,7 +128,7 @@ export function CentralBanks() {
             )}
             <button
               onClick={() => setRefresh(r => !r)}
-              className="text-sm text-gray-400 hover:text-gray-700 transition-colors px-2 py-1.5 rounded-lg hover:bg-gray-100"
+              className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
             >
               Refresh
             </button>

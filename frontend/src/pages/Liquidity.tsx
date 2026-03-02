@@ -48,7 +48,7 @@ export function Liquidity() {
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Liquidity Dashboard</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Liquidity Dashboard</h1>
         <div className="flex items-center gap-3">
           <Toggle label="Skip ECB data" checked={skipEcb} onChange={setSkipEcb} />
           <RefreshButton queryKeys={[["liquidity", skipEcb]]} />

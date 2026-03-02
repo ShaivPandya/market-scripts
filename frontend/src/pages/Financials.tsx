@@ -58,7 +58,7 @@ function HistoryTable({
   valueFormatter: (v: unknown) => string
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
       <div className="px-4 py-2.5 border-b border-gray-200 bg-gray-50">
         <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
       </div>
@@ -163,7 +163,7 @@ export function Financials() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Financials</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Financials</h1>
       </div>
 
       <form onSubmit={handleRun} className="flex flex-wrap items-end gap-4 mb-6">

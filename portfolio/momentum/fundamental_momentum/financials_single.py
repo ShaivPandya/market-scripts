@@ -37,6 +37,11 @@ REVENUE_CONCEPTS = (
 EPS_CONCEPTS = ("EarningsPerShareDiluted", "EarningsPerShareBasic")
 EPS_UNITS = ("USD/shares", "USD-per-shares")
 
+ANNUAL_DISPLAY_LIMIT = 5
+QUARTERLY_DISPLAY_LIMIT = 20
+ANNUAL_YOY_STEP = 1
+QUARTERLY_YOY_STEP = 4
+
 
 def _as_float(v: object) -> Optional[float]:
     try:
@@ -260,25 +265,27 @@ def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]
         _quarterly_fact_entries,
     )
 
-    annual_rows = _rows_from_entries(
+    annual_rows_full = _rows_from_entries(
         annual_entries,
         frequency="annual",
-        limit=5,
+        # Pull one extra year so oldest displayed row still has YoY.
+        limit=ANNUAL_DISPLAY_LIMIT + ANNUAL_YOY_STEP,
         cik_str=cik_str,
         submissions=submissions,
-        yoy_step=1,
+        yoy_step=ANNUAL_YOY_STEP,
         yoy_abs_denom=False,
     )
-    quarterly_rows = _rows_from_entries(
+    quarterly_rows_full = _rows_from_entries(
         quarterly_entries,
         frequency="quarterly",
-        limit=20,
+        # Pull four extra quarters so oldest displayed row still has YoY.
+        limit=QUARTERLY_DISPLAY_LIMIT + QUARTERLY_YOY_STEP,
         cik_str=cik_str,
         submissions=submissions,
-        yoy_step=4,
+        yoy_step=QUARTERLY_YOY_STEP,
         yoy_abs_denom=False,
     )
-    return annual_rows, quarterly_rows
+    return annual_rows_full[:ANNUAL_DISPLAY_LIMIT], quarterly_rows_full[:QUARTERLY_DISPLAY_LIMIT]
 
 
 def _derived_eps_entries(us_gaap: dict, frequency: str) -> List[dict]:
@@ -365,25 +372,25 @@ def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]) ->
     if not quarterly_entries:
         quarterly_entries = _derived_eps_entries(us_gaap, "quarterly")
 
-    annual_rows = _rows_from_entries(
+    annual_rows_full = _rows_from_entries(
         annual_entries,
         frequency="annual",
-        limit=5,
+        limit=ANNUAL_DISPLAY_LIMIT + ANNUAL_YOY_STEP,
         cik_str=cik_str,
         submissions=submissions,
-        yoy_step=1,
+        yoy_step=ANNUAL_YOY_STEP,
         yoy_abs_denom=True,
     )
-    quarterly_rows = _rows_from_entries(
+    quarterly_rows_full = _rows_from_entries(
         quarterly_entries,
         frequency="quarterly",
-        limit=20,
+        limit=QUARTERLY_DISPLAY_LIMIT + QUARTERLY_YOY_STEP,
         cik_str=cik_str,
         submissions=submissions,
-        yoy_step=4,
+        yoy_step=QUARTERLY_YOY_STEP,
         yoy_abs_denom=True,
     )
-    return annual_rows, quarterly_rows
+    return annual_rows_full[:ANNUAL_DISPLAY_LIMIT], quarterly_rows_full[:QUARTERLY_DISPLAY_LIMIT]
 
 
 def _calc_cagr(rows: List[dict], years: int = 3) -> Optional[float]:

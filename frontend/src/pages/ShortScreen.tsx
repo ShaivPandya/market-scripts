@@ -32,7 +32,7 @@ export function ShortScreen() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Short Screen</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Short Screen</h1>
         <p className="text-sm text-gray-400 mt-0.5">Russell 2000 short candidates — high P/B + operating losses</p>
       </div>
 

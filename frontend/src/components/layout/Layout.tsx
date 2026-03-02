@@ -18,7 +18,7 @@ export function Layout() {
 
       <main className="flex-1 overflow-auto p-3 md:p-6 bg-white min-w-0">
         <button
-          className="mb-3 p-2 rounded border border-gray-200 bg-gray-50 md:hidden"
+          className="mb-3 p-2 rounded-lg border border-gray-200 bg-gray-50 md:hidden"
           onClick={() => setSidebarOpen(true)}
           aria-label="Open navigation"
         >

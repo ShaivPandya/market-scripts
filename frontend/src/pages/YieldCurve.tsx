@@ -158,7 +158,7 @@ export function YieldCurve() {
     <div>
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Yield Curve</h1>
+          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Yield Curve</h1>
           <p className="text-sm text-gray-400 mt-0.5">
             Current curve vs {lookbackLabel} for US, UK, Germany, and Japan
           </p>
