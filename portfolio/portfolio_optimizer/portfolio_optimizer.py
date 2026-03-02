@@ -99,6 +99,8 @@ Columns:
     ticker      - Ticker symbol (e.g., AAPL, SPY, METSO.HE)
     asset       - Asset class: equity, fx, commodity, bond
     direction   - "long" or "short" (leave blank for inactive/hedges)
+    distressed  - Optional boolean-ish flag (true/false/1/0). For equity longs,
+                  requires 52-week drawdown + stabilization before activating.
 
 For non-USD instruments, add to CURRENCY_OF_TICKER dict (line 96):
     CURRENCY_OF_TICKER = {

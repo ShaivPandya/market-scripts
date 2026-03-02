@@ -7,8 +7,8 @@ METSO.HE,equity,long,false
 EEM,equity,long,false
 EWY,equity,long,false
 EWZ,equity,long,false
-LSEG.L,equity,long,false
-CRWD,equity,long,false
+LSEG.L,equity,long,true
+CRWD,equity,long,true
 OKLO,equity,short,false
 JOBY,equity,short,false
 AUR,equity,short,false

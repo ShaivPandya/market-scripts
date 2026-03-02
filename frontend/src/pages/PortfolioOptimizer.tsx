@@ -95,12 +95,18 @@ const priceFormatter = new Intl.NumberFormat("en-US", {
 function isPercentColumn(key: string) {
   const normalized = key.toLowerCase()
   if (isCurrencyColumn(normalized)) return false
-  return normalized.includes("weight") || normalized.includes("pct") || normalized.includes("percent")
+  return (
+    normalized.includes("weight") ||
+    normalized.includes("pct") ||
+    normalized.includes("percent") ||
+    normalized.includes("drawdown") ||
+    normalized.startsWith("dd")
+  )
 }
 
 function isIntegerColumn(key: string) {
   const normalized = key.toLowerCase()
-  return normalized === "shares" || normalized === "index"
+  return normalized === "shares" || normalized === "index" || normalized === "days_since_new_low"
 }
 
 function isCurrencyColumn(key: string) {
@@ -159,7 +165,14 @@ const COLUMN_LABELS: Record<string, string> = {
   ticker: "Ticker",
   asset: "Asset",
   direction: "Direction",
+  direction_intended: "Direction Intended",
+  distressed: "Distressed",
+  drawdown_52w: "Drawdown 52W",
+  stabilized_10d: "Stabilized 10D",
+  days_since_new_low: "Days Since New Low",
   signal: "Signal",
+  signal_composite: "Signal Composite",
+  signal_effective: "Signal Effective",
   beta_spy: "Beta SPY",
   beta_iwm: "Beta IWM",
   realized_vol: "Vol",
