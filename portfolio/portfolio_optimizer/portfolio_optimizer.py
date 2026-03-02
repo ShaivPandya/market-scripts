@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Total-portfolio beta-neutral + full-portfolio volatility targeting (USD base),
+Total-portfolio beta-neutral + constraint-based sizing (USD base),
 with currency conversion for non-USD instruments.
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -14,12 +14,11 @@ WHAT THIS SCRIPT DOES
 6) Generates composite momentum signals for each instrument (optional signal tilting).
 7) Solves a convex optimization program with constraints:
    - Beta-neutral positioning (separate hedges for longs via SPY, shorts via IWM)
-   - Daily volatility target band (min/target/max)
    - Gross leverage limits (overall + per asset class)
    - Equity net exposure bounds
    - Bond duration-adjusted exposure limits
    - Individual position size constraints
-8) Scales the solution toward the target volatility (within all constraints).
+8) Scales the solution to constraint limits (or target leverage if specified).
 9) Outputs:
    - Optimized weights (% of NAV)
    - Dollar weights (if --book specified)
@@ -46,14 +45,6 @@ CONFIGURING EXPOSURE LIMITS
 ═══════════════════════════════════════════════════════════════════════════════
 All exposure limits are configured in the "Configuration" section (lines 54-89).
 Edit these constants directly in the code:
-
-VOLATILITY TARGETING (daily volatility):
-    VOL_MIN = 0.0120           # Minimum acceptable daily vol (1.2%)
-    VOL_TARGET = 0.0150        # Target daily vol (1.5%)
-    VOL_MAX = 0.0200           # Maximum allowed daily vol (2.0%)
-
-    The optimizer will try to hit VOL_TARGET while respecting VOL_MAX as a hard cap.
-    If constraints prevent reaching VOL_MIN, a warning is shown.
 
 GROSS LEVERAGE LIMITS (as multiples of NAV):
     GROSS_MAX = 4.0            # Max total gross notional (400% of NAV)
@@ -182,9 +173,6 @@ LOOKBACK_DAYS = 730  # days of price history to fetch from yfinance
 BASE_CCY = "USD"
 MARKET_TICKER_LONG = "SPY"            # SPY used for beta regression on long positions
 MARKET_TICKER_SHORT = "IWM"           # Russell 2000 ETF for beta regression on short positions
-VOL_MIN = 0.0120                      # daily
-VOL_TARGET = 0.0150                   # daily
-VOL_MAX = 0.0200                      # daily
 
 # Constraints
 GROSS_MAX = 4.0
@@ -1033,9 +1021,6 @@ def optimize_portfolio(
             duration_coeffs = np.array([DURATION_OF_TICKER.get(t, 10.0) / 10.0 for t in bond_tickers])
             constraints.append(cp.sum(cp.multiply(duration_coeffs, cp.abs(w[bond_mask]))) <= BOND_10YR_EQUIV_MAX)
 
-        # Vol cap
-        constraints.append(cp.norm(L @ w, 2) <= VOL_MAX)
-
         # Objective
         objective = cp.Minimize(cp.sum_squares(w - w_raw_vec) + GAMMA_RISK * cp.sum_squares(L @ w))
 
@@ -1056,20 +1041,14 @@ def optimize_portfolio(
         if vol0 <= 0:
             return {"error": "Optimized portfolio has ~0 volatility; check inputs."}
 
-        # Scaling logic - use target_leverage if provided, otherwise use vol targeting
+        # Scaling logic - scale to constraint limits, optionally capped by target leverage
+        k_linear = max_scale_to_respect_linear_caps(w_star, meta)
         if target_leverage is not None:
-            # User specified a target gross leverage
             current_gross = np.abs(w_star).sum()
             k_user = target_leverage / current_gross if current_gross > 0 else 1.0
-            k_volcap = VOL_MAX / vol0
-            k_linear = max_scale_to_respect_linear_caps(w_star, meta)
-            k = min(k_user, k_volcap, k_linear)
+            k = min(k_user, k_linear)
         else:
-            # Original behavior: scale toward vol target
-            k_target = VOL_TARGET / vol0
-            k_volcap = VOL_MAX / vol0
-            k_linear = max_scale_to_respect_linear_caps(w_star, meta)
-            k = min(k_target, k_volcap, k_linear)
+            k = k_linear
 
         active_mask = long_mask | short_mask
         if MIN_ABS_WEIGHT > 0 and active_mask.any():
@@ -1102,8 +1081,10 @@ def optimize_portfolio(
         hedge_spy_weight = -net_beta_spy
         hedge_iwm_weight = -net_beta_iwm
 
-        # Build exposures dict
+        # Build exposures dict (add hedge gross and adjust total to include hedges)
         exp = exposures_by_class(w_final, meta)
+        exp["hedge_gross"] = abs(hedge_spy_weight) + abs(hedge_iwm_weight)
+        exp["total_gross"] = exp["total_gross"] + exp["hedge_gross"]
 
         # Build constraints utilization dict
         constraints_util = {
@@ -1219,11 +1200,9 @@ def optimize_portfolio(
 
             # Solution metrics
             "vol_daily": vol_final,
-            "vol_target": VOL_TARGET,
-            "vol_band": [VOL_MIN, VOL_MAX],
             "vol_spy": vol_spy,
             "vol_iwm": vol_iwm,
-            "gross_leverage": exp["total_gross"],
+            "gross_leverage": exp["total_gross"] + abs(hedge_spy_weight) + abs(hedge_iwm_weight),
             "gross_max": GROSS_MAX,
 
             # Beta hedging
@@ -1441,9 +1420,6 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Note: Beta hedging is done post-optimization via explicit SPY/IWM positions
     # (not via constraints on the portfolio weights)
 
-    # Total-portfolio vol cap (SOC form): ||L w||_2 <= VOL_MAX
-    constraints.append(cp.norm(L @ w, 2) <= VOL_MAX)
-
     # Objective: stay close to raw + mild risk regularization
     objective = cp.Minimize(cp.sum_squares(w - w_raw_vec) + GAMMA_RISK * cp.sum_squares(L @ w))
 
@@ -1455,7 +1431,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     w_star = pd.Series(w.value, index=tickers)
 
-    # Post-solve scaling toward VOL_TARGET, respecting linear caps
+    # Post-solve scaling to constraint limits
     def port_vol(w_vec: np.ndarray) -> float:
         x = L @ w_vec
         return float(np.sqrt(np.maximum(0.0, x.T @ x)))
@@ -1464,12 +1440,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if vol0 <= 0:
         raise RuntimeError("Optimized portfolio has ~0 volatility; check inputs.")
 
-    # Scaling cannot exceed vol cap, linear caps, or equity net bounds.
-    # Also avoid scaling down below the minimum absolute weight for active positions.
-    k_target = VOL_TARGET / vol0
-    k_volcap = VOL_MAX / vol0
+    # Scale to constraint limits. Avoid scaling below minimum absolute weight for active positions.
     k_linear = max_scale_to_respect_linear_caps(w_star, meta)
-    k = min(k_target, k_volcap, k_linear)
+    k = k_linear
 
     active_mask = long_mask | short_mask
     if MIN_ABS_WEIGHT > 0 and active_mask.any():
@@ -1529,22 +1502,17 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
             )
         console.print(dbg_table)
 
-    # If vol_final < VOL_MIN, the band may be infeasible under constraints with this universe/shape.
-    feasible_band = vol_final >= VOL_MIN - 1e-6
-
     # Report
     console.print()
     status_color = "green" if prob.status == "optimal" else "yellow"
-    feasible_text = "[green]YES[/green]" if feasible_band else "[red]NO[/red] (hit constraints before reaching VOL_MIN)"
 
     solution_text = (
         f"[bold]Status:[/bold]        [{status_color}]{prob.status}[/{status_color}]\n"
-        f"[bold]Vol (daily):[/bold]   {vol_final:.6f}  [dim](target {VOL_TARGET:.6f}, band [{VOL_MIN:.6f}, {VOL_MAX:.6f}])[/dim]\n"
+        f"[bold]Vol (daily):[/bold]   {vol_final:.6f}\n"
         f"[bold]SPY vol:[/bold]       {vol_spy:.6f}  [dim](for reference)[/dim]\n"
         f"[bold]IWM vol:[/bold]       {vol_iwm:.6f}  [dim](for reference)[/dim]\n"
         f"[bold]Net β to SPY:[/bold]  {net_beta_spy:+.4f}  [dim](long {beta_long_spy:+.4f}, short {beta_short_spy:+.4f}) → Hedge: {hedge_spy_weight:+.4f} {MARKET_TICKER_LONG}[/dim]\n"
-        f"[bold]Net β to IWM:[/bold]  {net_beta_iwm:+.4f}  [dim](long {beta_long_iwm:+.4f}, short {beta_short_iwm:+.4f}) → Hedge: {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}[/dim]\n"
-        f"[bold]Band feasible:[/bold] {feasible_text}"
+        f"[bold]Net β to IWM:[/bold]  {net_beta_iwm:+.4f}  [dim](long {beta_long_iwm:+.4f}, short {beta_short_iwm:+.4f}) → Hedge: {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}[/dim]"
     )
     console.print(Panel(solution_text, title="[bold blue]Solution[/bold blue]", border_style="blue"))
 
