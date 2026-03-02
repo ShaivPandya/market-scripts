@@ -73,8 +73,7 @@ INDIVIDUAL POSITION LIMITS:
 
     These prevent over-concentration and ensure meaningful positions.
 
-OBJECTIVE TUNING (advanced):
-    GAMMA_RISK = 1e-4          # Risk penalty (higher = more risk-averse)
+SIGNAL TILT TUNING (advanced):
     VOL_POWER_LONG = 0.7       # Inverse-vol weight exponent for longs (<1 = less concentration)
     VOL_POWER_SHORT = 1.4      # Inverse-vol weight exponent for shorts (>1 = more concentration)
 
@@ -209,8 +208,7 @@ DURATION_OF_TICKER: Dict[str, float] = {
     "ZB": 17.0,  # 30-year Treasury bond futures
 }
 
-# Objective tuning
-GAMMA_RISK = 1e-4     # small; increases preference for lower risk while staying close to w_raw
+# Signal/volatility tilt tuning
 VOL_POWER_LONG = 0.7  # power for inverse-vol weighting for longs: 1/σ^p (p < 1 reduces concentration in low-vol names)
 VOL_POWER_SHORT = 1.4 # power for inverse-vol weighting for shorts: 1/σ^p
 
@@ -1183,8 +1181,8 @@ def optimize_portfolio(
             duration_coeffs = np.array([DURATION_OF_TICKER.get(t, 10.0) / 10.0 for t in bond_tickers])
             constraints.append(cp.sum(cp.multiply(duration_coeffs, cp.abs(w[bond_mask]))) <= BOND_10YR_EQUIV_MAX)
 
-        # Objective
-        objective = cp.Minimize(cp.sum_squares(w - w_raw_vec) + GAMMA_RISK * cp.sum_squares(L @ w))
+        # Pure-signal objective: match constraint-feasible weights to signal-driven raw weights.
+        objective = cp.Minimize(cp.sum_squares(w - w_raw_vec))
 
         prob = cp.Problem(objective, constraints)
         prob.solve(verbose=False)
@@ -1598,8 +1596,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Note: Beta hedging is done post-optimization via explicit SPY/IWM positions
     # (not via constraints on the portfolio weights)
 
-    # Objective: stay close to raw + mild risk regularization
-    objective = cp.Minimize(cp.sum_squares(w - w_raw_vec) + GAMMA_RISK * cp.sum_squares(L @ w))
+    # Pure-signal objective: match constraint-feasible weights to signal-driven raw weights.
+    objective = cp.Minimize(cp.sum_squares(w - w_raw_vec))
 
     prob = cp.Problem(objective, constraints)
     prob.solve(verbose=False)  # let cvxpy choose the best available solver
