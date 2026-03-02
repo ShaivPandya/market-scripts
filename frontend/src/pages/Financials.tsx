@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 
 import { runFinancials } from "@/lib/api"
 import { MetricCard } from "@/components/shared/MetricCard"
@@ -127,14 +127,21 @@ export function Financials() {
   const [ticker, setTicker] = useState("AAPL")
   const [view, setView] = useState<ViewMode>("annual")
 
-  const mutation = useMutation({ mutationFn: runFinancials })
+  const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
+
+  const { data: rawData, isPending, isError, error } = useQuery({
+    queryKey: ["financials", submittedTicker],
+    queryFn: () => runFinancials({ ticker: submittedTicker! }),
+    enabled: submittedTicker !== null,
+    staleTime: Infinity,
+  })
 
   function handleRun(e?: React.FormEvent) {
     if (e) e.preventDefault()
-    mutation.mutate({ ticker: ticker.trim().toUpperCase() })
+    setSubmittedTicker(ticker.trim().toUpperCase())
   }
 
-  const data = mutation.data as Record<string, unknown> | undefined
+  const data = rawData as Record<string, unknown> | undefined
   const metrics = (data?.metrics ?? {}) as Record<string, unknown>
 
   const annual = (data?.annual ?? {}) as Record<string, unknown>
@@ -174,15 +181,15 @@ export function Financials() {
           placeholder="AAPL"
           className="w-40"
         />
-        <ActionButton type="submit" loading={mutation.isPending} loadingText="Loading..." className="w-auto px-6">
+        <ActionButton type="submit" loading={isPending} loadingText="Loading..." className="w-auto px-6">
           Analyze
         </ActionButton>
       </form>
 
-      {mutation.isPending && <LoadingSpinner message="Fetching SEC EDGAR financials..." />}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {isPending && <LoadingSpinner message="Fetching SEC EDGAR financials..." />}
+      {isError && <ErrorMessage message={String(error)} />}
 
-      {data && !mutation.isPending && (
+      {data && !isPending && (
         <div className="space-y-6">
           <div>
             <p className="text-sm text-gray-500">
@@ -253,7 +260,7 @@ export function Financials() {
         </div>
       )}
 
-      {!data && !mutation.isPending && !mutation.isError && (
+      {!data && !isPending && !isError && (
         <p className="text-gray-400 text-sm">Enter a ticker and click Analyze.</p>
       )}
     </div>

@@ -14,7 +14,21 @@ const UNIVERSE_OPTIONS = [
   "XLV — Health Care", "XLY — Consumer Discretionary",
 ]
 
-const BENCHMARK_OPTIONS = ["S&P 500", "Same as Input"]
+const BENCHMARK_OPTIONS = [
+  "S&P 500", "Same as Input",
+  "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
+  "XLF — Financials", "XLI — Industrials", "XLK — Technology",
+  "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
+  "XLV — Health Care", "XLY — Consumer Discretionary",
+]
+
+function formatHeader(key: string): string {
+  const map: Record<string, string> = {
+    index: "Ticker", eps: "EPS", rev: "Revenue", yoy: "YoY",
+    cagr: "CAGR", pct: "%", z: "Z", roe: "ROE", roa: "ROA", fcf: "FCF",
+  }
+  return key.split("_").map(w => map[w.toLowerCase()] ?? (w.charAt(0).toUpperCase() + w.slice(1))).join(" ")
+}
 
 export function QualityScreen() {
   const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
@@ -32,7 +46,7 @@ export function QualityScreen() {
   const columns: ColumnDef[] = rows.length > 0
     ? Object.keys(rows[0]).map(k => ({
         key: k,
-        header: k,
+        header: formatHeader(k),
         colorFn: k.toLowerCase().includes("z") || k.toLowerCase().includes("score")
           ? colorZscore
           : k.toLowerCase().includes("pct") ? colorPositiveNegative : undefined,

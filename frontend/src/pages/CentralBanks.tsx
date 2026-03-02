@@ -130,7 +130,7 @@ export function CentralBanks() {
               onClick={() => setRefresh(r => !r)}
               className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
             >
-              Refresh
+              Refresh Data
             </button>
           </div>
         </div>

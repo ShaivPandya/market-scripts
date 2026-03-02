@@ -99,6 +99,8 @@ Columns:
     ticker      - Ticker symbol (e.g., AAPL, SPY, METSO.HE)
     asset       - Asset class: equity, fx, commodity, bond
     direction   - "long" or "short" (leave blank for inactive/hedges)
+    distressed  - Optional boolean-ish flag (true/false/1/0). For equity longs,
+                  requires 52-week drawdown + stabilization before activating.
 
 For non-USD instruments, add to CURRENCY_OF_TICKER dict (line 96):
     CURRENCY_OF_TICKER = {
@@ -196,6 +198,11 @@ LONG_MAX = 0.20        # max 25% for any single long position
 SHORT_MIN = -0.10      # max 25% (abs) for any single short position
 SEVERE_DD_MAX = 0.05        # max 5% absolute SHORT position size if 60%+ off 104-week high
 SEVERE_DD_THRESHOLD = 0.60  # drawdown from 104-week high that triggers the reduced cap
+DISTRESSED_DD_THRESHOLD = 0.25
+DISTRESSED_STABILIZATION_DAYS = 10
+DISTRESSED_LOOKBACK_TD = 252
+DISTRESSED_SIGNAL_DD_SCALE = 0.20
+DISTRESSED_SIGNAL_CLIP = 3.0
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -325,6 +332,122 @@ def to_usd_price(local_price: pd.Series, ccy: str, prices_all: pd.DataFrame) -> 
     if mode == "USDCCY":
         return local_price / fx
     raise RuntimeError("Unexpected FX mode")
+
+
+def parse_bool_column(series: pd.Series) -> pd.Series:
+    """Parse a CSV boolean-ish column into a strict boolean series."""
+    true_values = {"1", "true", "t", "yes", "y"}
+    parsed = (
+        series.fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin(true_values)
+    )
+    return parsed.astype(bool)
+
+
+def compute_distressed_metrics(local_prices: pd.DataFrame, tickers: list) -> pd.DataFrame:
+    """
+    Compute drawdown/stabilization metrics for distressed long gating.
+
+    - Drawdown is computed from 52-week high using local adjusted close prices.
+    - Stabilization means no strictly lower low for DISTRESSED_STABILIZATION_DAYS
+      trading sessions since the most recent 52-week high.
+    """
+    metrics = pd.DataFrame(
+        {
+            "drawdown_52w": pd.Series(np.nan, index=tickers, dtype="float64"),
+            "stabilized_10d": pd.Series(False, index=tickers, dtype="bool"),
+            "days_since_new_low": pd.Series(np.nan, index=tickers, dtype="float64"),
+            "distressed_eligible": pd.Series(False, index=tickers, dtype="bool"),
+        }
+    )
+
+    for ticker in tickers:
+        if ticker not in local_prices.columns:
+            continue
+
+        series = local_prices[ticker].dropna().tail(DISTRESSED_LOOKBACK_TD)
+        if len(series) < DISTRESSED_LOOKBACK_TD:
+            continue
+
+        high_52w = float(series.max())
+        if not np.isfinite(high_52w) or high_52w <= 0:
+            continue
+
+        high_dates = series[series == high_52w].index
+        if len(high_dates) == 0:
+            continue
+        high_date = high_dates[-1]
+
+        post_high = series[series.index >= high_date]
+        if post_high.empty:
+            continue
+
+        running_min = post_high.cummin()
+        new_low_event = post_high < running_min.shift(1)
+
+        if new_low_event.any():
+            last_new_low_position = int(np.flatnonzero(new_low_event.values)[-1])
+            days_since_new_low = len(post_high) - 1 - last_new_low_position
+        else:
+            days_since_new_low = len(post_high) - 1
+
+        stabilized = (
+            len(post_high) >= (DISTRESSED_STABILIZATION_DAYS + 1)
+            and days_since_new_low >= DISTRESSED_STABILIZATION_DAYS
+        )
+
+        current_price = float(series.iloc[-1])
+        drawdown_52w = (high_52w - current_price) / high_52w
+        distressed_eligible = drawdown_52w >= DISTRESSED_DD_THRESHOLD and stabilized
+
+        metrics.at[ticker, "drawdown_52w"] = drawdown_52w
+        metrics.at[ticker, "stabilized_10d"] = bool(stabilized)
+        metrics.at[ticker, "days_since_new_low"] = int(days_since_new_low)
+        metrics.at[ticker, "distressed_eligible"] = bool(distressed_eligible)
+
+    return metrics
+
+
+def apply_distressed_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply distressed gating:
+    - For distressed equity longs, require drawdown threshold + stabilization.
+    - If not eligible, set effective direction to inactive ("").
+    """
+    out = meta.copy()
+
+    if "distressed" in out.columns:
+        out["distressed"] = parse_bool_column(out["distressed"])
+    else:
+        out["distressed"] = False
+
+    out["direction_intended"] = out["direction"].fillna("").astype(str).str.strip().str.lower()
+    out["direction"] = out["direction_intended"]
+
+    out["drawdown_52w"] = np.nan
+    out["stabilized_10d"] = False
+    out["days_since_new_low"] = np.nan
+    out["distressed_eligible"] = False
+
+    candidate_mask = (
+        out["distressed"]
+        & out["asset"].str.lower().eq("equity")
+        & out["direction_intended"].eq("long")
+    )
+    candidate_tickers = out.index[candidate_mask].tolist()
+    if candidate_tickers:
+        metrics = compute_distressed_metrics(local_prices=local_prices, tickers=candidate_tickers)
+        out.loc[candidate_tickers, "drawdown_52w"] = metrics["drawdown_52w"]
+        out.loc[candidate_tickers, "stabilized_10d"] = metrics["stabilized_10d"].astype(bool)
+        out.loc[candidate_tickers, "days_since_new_low"] = metrics["days_since_new_low"]
+        out.loc[candidate_tickers, "distressed_eligible"] = metrics["distressed_eligible"].astype(bool)
+
+    gated_off_mask = candidate_mask & ~out["distressed_eligible"]
+    out.loc[gated_off_mask, "direction"] = ""
+    return out
 
 
 def compute_severe_drawdown_flags(
@@ -793,6 +916,7 @@ def optimize_portfolio(
         rets = usd_prices.pct_change(fill_method=None).dropna(how="all")
         tickers = [t for t in tickers if t in rets.columns]
         meta = meta.loc[tickers]
+        meta = apply_distressed_gating(meta, prices_all)
 
         # Compute defense volatility
         defense_vol = compute_defense_volatility(usd_prices, tickers)
@@ -836,10 +960,22 @@ def optimize_portfolio(
             direction_map=direction_map,
             weights_short=DEFAULT_WEIGHTS_SHORT,
         )
-        signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+        signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+        signal_composite = signal_composite.reindex(tickers).fillna(0.0)
+        signal_effective = signal_composite.copy()
+
+        distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
+        distressed_tickers = distressed_active[distressed_active].index.tolist()
+        if distressed_tickers:
+            distressed_drawdowns = meta.loc[distressed_tickers, "drawdown_52w"].astype(float)
+            distress_signal = ((distressed_drawdowns - DISTRESSED_DD_THRESHOLD) / DISTRESSED_SIGNAL_DD_SCALE).clip(
+                lower=0.0,
+                upper=DISTRESSED_SIGNAL_CLIP,
+            )
+            signal_effective.loc[distressed_tickers] = distress_signal
 
         # Raw weights
-        w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0,
+        w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0,
                                    vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
         w_raw_vec = w_raw.values
 
@@ -1005,7 +1141,14 @@ def optimize_portfolio(
             "ticker": tickers,
             "asset": meta["asset"].values,
             "direction": meta["direction"].values,
-            "signal": signals.reindex(tickers).fillna(0.0).values,
+            "direction_intended": meta["direction_intended"].values,
+            "distressed": meta["distressed"].values,
+            "drawdown_52w": meta["drawdown_52w"].values,
+            "stabilized_10d": meta["stabilized_10d"].values,
+            "days_since_new_low": meta["days_since_new_low"].values,
+            "signal": signal_effective.values,
+            "signal_composite": signal_composite.values,
+            "signal_effective": signal_effective.values,
             "beta_spy": betas_spy.values,
             "beta_iwm": betas_iwm.values,
             "realized_vol": meta["realized_vol"].values,
@@ -1163,6 +1306,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Ensure consistent ordering (keep only portfolio tickers, but rets still has MARKET_TICKER for beta)
     tickers = [t for t in tickers if t in rets.columns]
     meta = meta.loc[tickers]
+    meta = apply_distressed_gating(meta, prices_all)
 
     # Compute defense volatility (max of 20d, 60d rolling vol) from USD prices
     console.print("[cyan]Computing defense volatility (EWMA blend + floor)...[/cyan]")
@@ -1217,10 +1361,22 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         weights_short=DEFAULT_WEIGHTS_SHORT,
     )
     # Extract composite signal for weighting
-    signals = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+    signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+    signal_composite = signal_composite.reindex(tickers).fillna(0.0)
+    signal_effective = signal_composite.copy()
+
+    distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
+    distressed_tickers = distressed_active[distressed_active].index.tolist()
+    if distressed_tickers:
+        distressed_drawdowns = meta.loc[distressed_tickers, "drawdown_52w"].astype(float)
+        distress_signal = ((distressed_drawdowns - DISTRESSED_DD_THRESHOLD) / DISTRESSED_SIGNAL_DD_SCALE).clip(
+            lower=0.0,
+            upper=DISTRESSED_SIGNAL_CLIP,
+        )
+        signal_effective.loc[distressed_tickers] = distress_signal
 
     # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
-    w_raw = build_raw_weights(meta, signals=signals, G_L=1.0, G_S=1.0, vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
+    w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0, vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
     w_raw_vec = w_raw.values
 
     # Masks
@@ -1394,7 +1550,14 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     out = pd.DataFrame({
         "asset": meta["asset"],
         "direction": meta["direction"],
-        "signal": signals.reindex(tickers).fillna(0.0),
+        "direction_intended": meta["direction_intended"],
+        "distressed": meta["distressed"],
+        "drawdown_52w": meta["drawdown_52w"],
+        "stabilized_10d": meta["stabilized_10d"],
+        "days_since_new_low": meta["days_since_new_low"],
+        "signal": signal_effective,
+        "signal_composite": signal_composite,
+        "signal_effective": signal_effective,
         "beta_to_SPY": betas_spy,
         "beta_to_IWM": betas_iwm,
         "realized_volatility": meta["realized_vol"],
@@ -1412,7 +1575,13 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     weights_table.add_column("Ticker", style="bold white")
     weights_table.add_column("Asset", style="white")
     weights_table.add_column("Direction", style="white")
-    weights_table.add_column("Signal", justify="right", style="white")
+    weights_table.add_column("Intended", style="white")
+    weights_table.add_column("Dist", justify="center", style="white")
+    weights_table.add_column("DD 52W", justify="right", style="white")
+    weights_table.add_column("Stab10d", justify="center", style="white")
+    weights_table.add_column("Days No Low", justify="right", style="white")
+    weights_table.add_column("Sig Cmp", justify="right", style="white")
+    weights_table.add_column("Sig Eff", justify="right", style="white")
     weights_table.add_column("β SPY", justify="right", style="white")
     weights_table.add_column("β IWM", justify="right", style="white")
     weights_table.add_column("Vol", justify="right", style="white")
@@ -1426,12 +1595,22 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         weight_val = row["weight"]
         weight_color = "green" if weight_val > 0 else "red" if weight_val < 0 else "white"
         weight_str = f"[{weight_color}]{weight_val:+.4f}[/{weight_color}]"
+        drawdown_val = row["drawdown_52w"]
+        drawdown_str = f"{drawdown_val:.1%}" if pd.notna(drawdown_val) else "—"
+        days_no_low = row["days_since_new_low"]
+        days_no_low_str = str(int(days_no_low)) if pd.notna(days_no_low) else "—"
 
         row_data = [
             str(ticker),
             row["asset"],
             row["direction"],
-            f"{row['signal']:+.2f}",
+            row["direction_intended"],
+            "Y" if bool(row["distressed"]) else "N",
+            drawdown_str,
+            "Y" if bool(row["stabilized_10d"]) else "N",
+            days_no_low_str,
+            f"{row['signal_composite']:+.2f}",
+            f"{row['signal_effective']:+.2f}",
             f"{row['beta_to_SPY']:.2f}",
             f"{row['beta_to_IWM']:.2f}",
             f"{row['realized_volatility']:.4f}",
@@ -1447,7 +1626,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         weights_table.add_row(*row_data)
 
     # Add separator and hedge positions
-    sep_cols = ["───"] * (8 if book is None else 11)
+    sep_cols = ["───"] * (14 if book is None else 17)
     weights_table.add_row(*sep_cols)
 
     # SPY hedge (short to hedge long beta)
@@ -1456,6 +1635,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         f"[bold]{MARKET_TICKER_LONG}[/bold]",
         "hedge",
         "short" if hedge_spy_weight < 0 else "long",
+        "—",
+        "—",
+        "—",
+        "—",
+        "—",
+        "—",
         "—",
         "1.00",
         "—",
@@ -1477,6 +1662,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         f"[bold]{MARKET_TICKER_SHORT}[/bold]",
         "hedge",
         "long" if hedge_iwm_weight > 0 else "short",
+        "—",
+        "—",
+        "—",
+        "—",
+        "—",
+        "—",
         "—",
         "—",
         "1.00",

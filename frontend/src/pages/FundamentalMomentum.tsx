@@ -14,11 +14,19 @@ const UNIVERSE_OPTIONS = [
   "XLV — Health Care", "XLY — Consumer Discretionary",
 ]
 
+function formatHeader(key: string): string {
+  const map: Record<string, string> = {
+    index: "Ticker", eps: "EPS", rev: "Revenue", yoy: "YoY",
+    cagr: "CAGR", pct: "%", z: "Z", roe: "ROE", roa: "ROA", fcf: "FCF",
+  }
+  return key.split("_").map(w => map[w.toLowerCase()] ?? (w.charAt(0).toUpperCase() + w.slice(1))).join(" ")
+}
+
 function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
   if (rows.length === 0) return []
   return Object.keys(rows[0]).map(k => ({
     key: k,
-    header: k,
+    header: formatHeader(k),
     colorFn: k.toLowerCase().includes("z") || k.toLowerCase().includes("score")
       ? colorZscore
       : k.toLowerCase().includes("pct") || k.toLowerCase().includes("yoy") || k.toLowerCase().includes("cagr")
@@ -95,9 +103,12 @@ export function FundamentalMomentum() {
           value={benchmark}
           onChange={setBenchmark}
           options={[
-            { value: "S&P 500", label: "S&P 500" },
-            { value: "Same as Input", label: "Same as Input" },
-          ]}
+            "S&P 500", "Same as Input",
+            "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
+            "XLF — Financials", "XLI — Industrials", "XLK — Technology",
+            "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
+            "XLV — Health Care", "XLY — Consumer Discretionary",
+          ].map(o => ({ value: o, label: o }))}
         />
 
         <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Screening...">
