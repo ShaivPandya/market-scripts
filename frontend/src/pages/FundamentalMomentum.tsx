@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { runFundamentalMomentum } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
@@ -8,6 +8,14 @@ import { colorPositiveNegative, colorZscore } from "@/lib/colors"
 
 const UNIVERSE_OPTIONS = [
   "S&P 500", "Russell 2000", "S&P 400",
+  "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
+  "XLF — Financials", "XLI — Industrials", "XLK — Technology",
+  "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
+  "XLV — Health Care", "XLY — Consumer Discretionary",
+]
+
+const BENCHMARK_OPTIONS = [
+  "Same as Input", "S&P 500",
   "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
   "XLF — Financials", "XLI — Industrials", "XLK — Technology",
   "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
@@ -44,12 +52,37 @@ export function FundamentalMomentum() {
   const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
   const [universe, setUniverse] = useState("S&P 500")
   const [tickers, setTickers] = useState("")
-  const [benchmark, setBenchmark] = useState("S&P 500")
+  const [benchmark, setBenchmark] = useState("Same as Input")
+  const [isRunning, setIsRunning] = useState(false)
 
   const mutation = useMutation({ mutationFn: runFundamentalMomentum })
 
-  function handleRun() {
-    mutation.mutate({ screen_type: screenType, universe, tickers, benchmark, input_mode: inputMode })
+  useEffect(() => {
+    mutation.reset()
+    // reset once on mount so stale mutation cache does not show auto-loading on navigation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function handleRun() {
+    if (isRunning) return
+    const resolvedBenchmark = benchmark === "Same as Input" && inputMode === "Universe"
+      ? universe
+      : benchmark
+
+    setIsRunning(true)
+    try {
+      await mutation.mutateAsync({
+        screen_type: screenType,
+        universe,
+        tickers,
+        benchmark: resolvedBenchmark,
+        input_mode: inputMode,
+      })
+    } catch {
+      // mutation state already captures and renders the error
+    } finally {
+      setIsRunning(false)
+    }
   }
 
   const epsRows: Record<string, unknown>[] = mutation.data?.eps?.results_df ?? []
@@ -102,21 +135,15 @@ export function FundamentalMomentum() {
           label="Benchmark"
           value={benchmark}
           onChange={setBenchmark}
-          options={[
-            "S&P 500", "Same as Input",
-            "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
-            "XLF — Financials", "XLI — Industrials", "XLK — Technology",
-            "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
-            "XLV — Health Care", "XLY — Consumer Discretionary",
-          ].map(o => ({ value: o, label: o }))}
+          options={BENCHMARK_OPTIONS.map(o => ({ value: o, label: o }))}
         />
 
-        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Screening...">
+        <ActionButton onClick={handleRun} loading={isRunning} loadingText="Screening...">
           Run Screen
         </ActionButton>
       </ControlPanel>
 
-      {mutation.isPending && <LoadingSpinner message="Running fundamental momentum screen..." />}
+      {isRunning && <LoadingSpinner message="Running fundamental momentum screen..." />}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (

@@ -124,21 +124,25 @@ const breakdownCols: ColumnDef[] = [
 ]
 
 export function Financials() {
-  const [ticker, setTicker] = useState("AAPL")
+  const [ticker, setTicker] = useState("")
   const [view, setView] = useState<ViewMode>("annual")
 
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
-  const { data: rawData, isPending, isError, error } = useQuery({
+  const { data: rawData, isFetching, isError, error } = useQuery({
     queryKey: ["financials", submittedTicker],
     queryFn: () => runFinancials({ ticker: submittedTicker! }),
-    enabled: submittedTicker !== null,
+    enabled: Boolean(submittedTicker),
     staleTime: Infinity,
   })
 
+  const isLoading = isFetching
+
   function handleRun(e?: React.FormEvent) {
     if (e) e.preventDefault()
-    setSubmittedTicker(ticker.trim().toUpperCase())
+    const normalizedTicker = ticker.trim().toUpperCase()
+    if (!normalizedTicker) return
+    setSubmittedTicker(normalizedTicker)
   }
 
   const data = rawData as Record<string, unknown> | undefined
@@ -181,15 +185,15 @@ export function Financials() {
           placeholder="AAPL"
           className="w-40"
         />
-        <ActionButton type="submit" loading={isPending} loadingText="Loading..." className="w-auto px-6">
+        <ActionButton type="submit" loading={isLoading} loadingText="Loading..." className="w-auto px-6">
           Analyze
         </ActionButton>
       </form>
 
-      {isPending && <LoadingSpinner message="Fetching SEC EDGAR financials..." />}
+      {isLoading && <LoadingSpinner message="Fetching SEC EDGAR financials..." />}
       {isError && <ErrorMessage message={String(error)} />}
 
-      {data && !isPending && (
+      {data && !isLoading && (
         <div className="space-y-6">
           <div>
             <p className="text-sm text-gray-500">
@@ -260,7 +264,7 @@ export function Financials() {
         </div>
       )}
 
-      {!data && !isPending && !isError && (
+      {!data && !isLoading && !isError && (
         <p className="text-gray-400 text-sm">Enter a ticker and click Analyze.</p>
       )}
     </div>
