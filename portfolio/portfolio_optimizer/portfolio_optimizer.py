@@ -76,11 +76,10 @@ BOND DURATION LIMITS:
     Add your bond futures there: {"ZN": 6.5, "ZT": 2.0, ...}
 
 INDIVIDUAL POSITION LIMITS:
-    MIN_ABS_WEIGHT = 0.01      # Minimum position size (1% of NAV)
     LONG_MAX = 0.20            # Max single long position (20% of NAV)
     SHORT_MIN = -0.10          # Max single short position (-10% of NAV)
 
-    These prevent over-concentration and ensure meaningful positions.
+    These prevent over-concentration while allowing zero/near-zero weights.
 
 OBJECTIVE TUNING (advanced):
     GAMMA_RISK = 1e-4          # Risk penalty (higher = more risk-averse)
@@ -193,9 +192,8 @@ FX_GROSS_MAX = 2.0
 CMDTY_GROSS_MAX = 1.0
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 # Beta hedging is done post-optimization via explicit SPY/IWM hedge positions
-MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
-LONG_MAX = 0.20        # max 25% for any single long position
-SHORT_MIN = -0.10      # max 25% (abs) for any single short position
+LONG_MAX = 0.20        # max 20% for any single long position
+SHORT_MIN = -0.10      # max 10% (abs) for any single short position
 SEVERE_DD_MAX = 0.05        # max 5% absolute SHORT position size if 60%+ off 104-week high
 SEVERE_DD_THRESHOLD = 0.60  # drawdown from 104-week high that triggers the reduced cap
 DISTRESSED_DD_THRESHOLD = 0.25
@@ -203,6 +201,7 @@ DISTRESSED_STABILIZATION_DAYS = 10
 DISTRESSED_LOOKBACK_TD = 252
 DISTRESSED_SIGNAL_DD_SCALE = 0.20
 DISTRESSED_SIGNAL_CLIP = 3.0
+SIGNAL_CONVICTION_THRESHOLD = 0.75
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: Dict[str, float] = {
@@ -450,6 +449,42 @@ def apply_distressed_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> p
     return out
 
 
+def apply_signal_conviction_gating(
+    meta: pd.DataFrame,
+    signal_effective: pd.Series,
+    threshold: float = SIGNAL_CONVICTION_THRESHOLD,
+) -> Tuple[pd.DataFrame, list]:
+    """
+    Deactivate low-conviction names using direction-aware signal orientation:
+    - Longs require +signal >= threshold
+    - Shorts require -signal >= threshold
+    """
+    out = meta.copy()
+    out["signal_conviction"] = np.nan
+    out["signal_conviction_pass"] = False
+
+    direction = out["direction"].fillna("").astype(str).str.strip().str.lower()
+    long_mask = direction.eq("long")
+    short_mask = direction.eq("short")
+    active_mask = long_mask | short_mask
+
+    sig = signal_effective.reindex(out.index).fillna(0.0).astype(float)
+    conviction = pd.Series(np.nan, index=out.index, dtype="float64")
+    conviction.loc[long_mask] = sig.loc[long_mask]
+    conviction.loc[short_mask] = -sig.loc[short_mask]
+
+    pass_mask = conviction >= float(threshold)
+    pass_mask = pass_mask.fillna(False) & active_mask
+
+    out.loc[active_mask, "signal_conviction"] = conviction.loc[active_mask]
+    out.loc[active_mask, "signal_conviction_pass"] = pass_mask.loc[active_mask]
+
+    gated_off_mask = active_mask & ~pass_mask
+    gated_off_tickers = out.index[gated_off_mask].tolist()
+    out.loc[gated_off_mask, "direction"] = ""
+    return out, gated_off_tickers
+
+
 def compute_severe_drawdown_flags(
     usd_prices: pd.DataFrame,
     equity_tickers: list,
@@ -595,87 +630,92 @@ def build_raw_weights(
     signal_scale_equity_long: float = 1.5,
     signal_scale_equity_short: float = 1.0,
     signal_scale_other: float = 0.9,
-    vol_power_long: float = 0.7,
-    vol_power_short: float = 1.4,
 ) -> pd.Series:
     """
-    Inverse-vol raw weights, optionally tilted by momentum signals.
+    Signal-first raw weights for long/short buckets.
 
     Args:
-        meta: Portfolio metadata with 'direction', 'asset', and 'realized_vol' columns
+        meta: Portfolio metadata with 'direction' and 'asset' columns
         signals: Optional z-scored momentum signals per ticker (higher = more conviction)
         G_L: Long gross target (default: 1.0)
         G_S: Short gross target (default: 1.0)
-        signal_scale_equity_long: Scaling factor for signal tilt on equity longs (default: 1.5)
-        signal_scale_equity_short: Scaling factor for signal tilt on equity shorts (default: 1.0)
-        signal_scale_other: Scaling factor for signal tilt on non-equities (default: 0.9)
-        vol_power_long: Power for inverse-vol weighting 1/σ^p for longs (default: 0.7; use <1 to reduce low-vol concentration)
-        vol_power_short: Power for inverse-vol weighting 1/σ^p for shorts (default: 1.4)
+        signal_scale_equity_long: Signal softmax temperature for equity longs
+        signal_scale_equity_short: Signal softmax temperature for equity shorts
+        signal_scale_other: Signal softmax temperature for non-equities
 
-    Signal interpretation (signals are direction-agnostic: higher = stronger/better stock):
-        - Positive signal on LONG = increase weight (strong stock, go longer)
-        - Negative signal on SHORT = increase short conviction (weak stock, short more)
-        - Signal multiplier: exp(signal_scale * signal), with signal inverted for shorts
-        - Different signal scales used for equities vs other assets
+    Behavior:
+        - Higher signal => higher absolute weight within each direction bucket
+        - If signals are unavailable, each bucket defaults to equal-weight
     """
     w_raw = pd.Series(0.0, index=meta.index)
     longs = meta[meta["direction"].str.lower().eq("long")]
     shorts = meta[meta["direction"].str.lower().eq("short")]
 
+    def signal_bucket_weights(
+        bucket: pd.DataFrame,
+        equity_scale: float,
+    ) -> pd.Series:
+        if bucket.empty:
+            return pd.Series(dtype=float)
+        if signals is None:
+            return pd.Series(1.0 / len(bucket), index=bucket.index)
+
+        sig = signals.reindex(bucket.index).fillna(0.0).astype(float)
+        is_equity = bucket["asset"].str.lower().eq("equity")
+        scale = pd.Series(
+            np.where(is_equity, equity_scale, signal_scale_other),
+            index=bucket.index,
+            dtype=float,
+        )
+        logits = (scale * sig).astype(float)
+        logits = logits - float(logits.max())
+        scores = np.exp(logits)
+        score_sum = float(scores.sum())
+        if not np.isfinite(score_sum) or score_sum <= 0:
+            return pd.Series(1.0 / len(bucket), index=bucket.index)
+        return scores / score_sum
+
     if len(longs) > 0:
-        invv = 1.0 / (longs["realized_vol"].replace(0, np.nan) ** vol_power_long)
-        invv = invv.fillna(0.0)
-        if invv.sum() > 0:
-            base_w = invv / invv.sum()
-
-            # Apply signal tilt if provided (use different scales for equities vs other assets)
-            if signals is not None:
-                sig = signals.reindex(longs.index).fillna(0.0)
-                # Determine signal scale based on asset type
-                is_equity = longs["asset"].str.lower().eq("equity")
-                signal_scale = pd.Series(
-                    np.where(is_equity, signal_scale_equity_long, signal_scale_other),
-                    index=longs.index
-                )
-                signal_mult = np.exp(signal_scale * sig)
-                base_w = base_w * signal_mult
-                base_w = base_w / base_w.sum()  # Re-normalize
-
+        base_w = signal_bucket_weights(longs, signal_scale_equity_long)
+        if not base_w.empty:
             w_raw.loc[longs.index] = G_L * base_w
 
     if len(shorts) > 0:
-        invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power_short)
-        invv = invv.fillna(0.0)
-        if invv.sum() > 0:
-            base_w = invv / invv.sum()
-
-            # Apply signal tilt if provided (use different scales for equities vs other assets)
-            if signals is not None:
-                # Invert signal for shorts: negative signal (weak stock) -> more short conviction
-                sig = -signals.reindex(shorts.index).fillna(0.0)
-                # Determine signal scale based on asset type
-                is_equity = shorts["asset"].str.lower().eq("equity")
-                signal_scale = pd.Series(
-                    np.where(is_equity, signal_scale_equity_short, signal_scale_other),
-                    index=shorts.index
-                )
-                signal_mult = np.exp(signal_scale * sig)
-                base_w = base_w * signal_mult
-                base_w = base_w / base_w.sum()  # Re-normalize
-
+        base_w = signal_bucket_weights(shorts, signal_scale_equity_short)
+        if not base_w.empty:
             w_raw.loc[shorts.index] = -G_S * base_w
 
     return w_raw
 
 
-def exposures_by_class(w: pd.Series, meta: pd.DataFrame) -> Dict[str, float]:
+def compute_hedge_weights(
+    w: pd.Series,
+    betas_spy: pd.Series,
+    betas_iwm: pd.Series,
+) -> Tuple[float, float]:
+    """Compute SPY/IWM hedge weights from current portfolio beta exposure."""
+    beta_spy_aligned = betas_spy.reindex(w.index).fillna(0.0)
+    beta_iwm_aligned = betas_iwm.reindex(w.index).fillna(0.0)
+    net_beta_spy = float(beta_spy_aligned.values @ w.values) if len(w) else 0.0
+    net_beta_iwm = float(beta_iwm_aligned.values @ w.values) if len(w) else 0.0
+    return -net_beta_spy, -net_beta_iwm
+
+
+def exposures_by_class(
+    w: pd.Series,
+    meta: pd.DataFrame,
+    hedge_spy_weight: float = 0.0,
+    hedge_iwm_weight: float = 0.0,
+) -> Dict[str, float]:
     out = {}
     for cls in ["equity", "fx", "commodity", "bond"]:
         mask = meta["asset"].str.lower().eq(cls)
         if mask.any():
             out[f"{cls}_gross"] = float(np.abs(w[mask]).sum())
             out[f"{cls}_net"] = float(w[mask].sum())
-    out["total_gross"] = float(np.abs(w).sum())
+    hedge_gross = float(abs(hedge_spy_weight) + abs(hedge_iwm_weight))
+    out["hedge_gross"] = hedge_gross
+    out["total_gross"] = float(np.abs(w).sum()) + hedge_gross
     out["total_net"] = float(w.sum())
     return out
 
@@ -693,7 +733,13 @@ def compute_10yr_equivalent(w: pd.Series, meta: pd.DataFrame) -> float:
     return total_10yr_equiv
 
 
-def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame, include_position_limits: bool = True) -> str:
+def identify_binding_constraint(
+    w: pd.Series,
+    meta: pd.DataFrame,
+    include_position_limits: bool = True,
+    hedge_spy_weight: float = 0.0,
+    hedge_iwm_weight: float = 0.0,
+) -> str:
     """Identify which constraint limits further scaling.
 
     Args:
@@ -701,11 +747,14 @@ def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame, include_positi
         meta: Portfolio metadata
         include_position_limits: If True, check individual position limits (20% long, 10% short).
                                  If False, only check asset class and gross exposure limits.
+        hedge_spy_weight: SPY hedge weight used for gross leverage accounting
+        hedge_iwm_weight: IWM hedge weight used for gross leverage accounting
     """
     checks = []
 
-    # Total gross
-    checks.append(("Total gross (400%)", abs(w).sum(), GROSS_MAX))
+    # Total gross (including beta hedges)
+    total_gross = abs(w).sum() + abs(hedge_spy_weight) + abs(hedge_iwm_weight)
+    checks.append(("Total gross incl hedges (400%)", total_gross, GROSS_MAX))
 
     # Equity net
     eq_mask = meta["asset"].str.lower().eq("equity")
@@ -754,7 +803,13 @@ def identify_binding_constraint(w: pd.Series, meta: pd.DataFrame, include_positi
     return f"{binding[0]}: {binding[1]:.2%} of {binding[2]:.0%} limit"
 
 
-def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame, include_position_limits: bool = True) -> float:
+def max_scale_to_respect_linear_caps(
+    w: pd.Series,
+    meta: pd.DataFrame,
+    include_position_limits: bool = True,
+    betas_spy: Optional[pd.Series] = None,
+    betas_iwm: Optional[pd.Series] = None,
+) -> float:
     """
     Scaling w by k preserves beta neutrality and correlations.
     Returns the max k such that linear caps remain satisfied (gross/net by class).
@@ -764,11 +819,16 @@ def max_scale_to_respect_linear_caps(w: pd.Series, meta: pd.DataFrame, include_p
         meta: Portfolio metadata
         include_position_limits: If True, enforce individual position limits (20% long, 10% short).
                                  If False, only enforce asset class and gross exposure limits.
+        betas_spy: Optional SPY betas for hedge-aware gross leverage.
+        betas_iwm: Optional IWM betas for hedge-aware gross leverage.
     """
     eps = 1e-12
     k_list = []
 
     total_gross = np.abs(w).sum()
+    if betas_spy is not None and betas_iwm is not None:
+        hedge_spy_weight, hedge_iwm_weight = compute_hedge_weights(w, betas_spy, betas_iwm)
+        total_gross += abs(hedge_spy_weight) + abs(hedge_iwm_weight)
     k_list.append(GROSS_MAX / max(total_gross, eps))
 
     # Asset-class gross caps
@@ -874,7 +934,8 @@ def optimize_portfolio(
 
     Args:
         book: Book size in dollars (optional, for dollar weight calculation)
-        target_leverage: Target gross leverage ratio (0.5-4.0). If None, uses volatility targeting.
+        target_leverage: Target gross leverage ratio (0.5-4.0) including SPY/IWM hedge notionals.
+                         If None, no additional scaling is applied beyond hard exposure caps.
         beta_neutral: If True (default), scale down equity longs/shorts so net equity exposure = 0%.
 
     Returns:
@@ -964,6 +1025,14 @@ def optimize_portfolio(
         signal_composite = signal_composite.reindex(tickers).fillna(0.0)
         signal_effective = signal_composite.copy()
 
+        # Extract individual signal subcomponents for reporting
+        signal_subcomponents = {}
+        for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
+            if not signals_df.empty and col in signals_df.columns:
+                signal_subcomponents[col] = signals_df[col].reindex(tickers)
+            else:
+                signal_subcomponents[col] = pd.Series(np.nan, index=tickers)
+
         distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
         distressed_tickers = distressed_active[distressed_active].index.tolist()
         if distressed_tickers:
@@ -974,9 +1043,30 @@ def optimize_portfolio(
             )
             signal_effective.loc[distressed_tickers] = distress_signal
 
+        # Deactivate names with insufficient direction-aware conviction.
+        meta, low_conviction_tickers = apply_signal_conviction_gating(
+            meta,
+            signal_effective=signal_effective,
+            threshold=SIGNAL_CONVICTION_THRESHOLD,
+        )
+        if low_conviction_tickers:
+            console.print(
+                f"[yellow]Signal conviction gating ({SIGNAL_CONVICTION_THRESHOLD:.2f}) deactivated "
+                f"{len(low_conviction_tickers)} tickers.[/yellow]"
+            )
+
+        active_after_gating = meta["direction"].str.strip().str.lower().isin(["long", "short"]).sum()
+        if active_after_gating == 0:
+            return {
+                "error": (
+                    "No active long/short positions after signal conviction gating "
+                    f"(threshold={SIGNAL_CONVICTION_THRESHOLD:.2f})."
+                ),
+                "status": "infeasible",
+            }
+
         # Raw weights
-        w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0,
-                                   vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
+        w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0).reindex(tickers).fillna(0.0)
         w_raw_vec = w_raw.values
 
         # Masks
@@ -996,10 +1086,10 @@ def optimize_portfolio(
         long_mask = direction.eq("long").values
         short_mask = direction.eq("short").values
         if long_mask.any():
-            constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
+            constraints.append(w[long_mask] >= 0.0)
             constraints.append(w[long_mask] <= LONG_MAX)
         if short_mask.any():
-            constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
+            constraints.append(w[short_mask] <= 0.0)
             constraints.append(w[short_mask] >= SHORT_MIN)
             # Tighter cap for shorts that fell 60%+ from their 104-week high (abs cap)
             severe_dd_short_mask = meta["severe_drawdown"].values & short_mask
@@ -1025,11 +1115,8 @@ def optimize_portfolio(
             duration_coeffs = np.array([DURATION_OF_TICKER.get(t, 10.0) / 10.0 for t in bond_tickers])
             constraints.append(cp.sum(cp.multiply(duration_coeffs, cp.abs(w[bond_mask]))) <= BOND_10YR_EQUIV_MAX)
 
-        # Vol cap
-        constraints.append(cp.norm(L @ w, 2) <= VOL_MAX)
-
-        # Objective
-        objective = cp.Minimize(cp.sum_squares(w - w_raw_vec) + GAMMA_RISK * cp.sum_squares(L @ w))
+        # Objective: stay close to signal-derived raw weights
+        objective = cp.Minimize(cp.sum_squares(w - w_raw_vec))
 
         prob = cp.Problem(objective, constraints)
         prob.solve(verbose=False)
@@ -1039,43 +1126,39 @@ def optimize_portfolio(
 
         w_star = pd.Series(w.value, index=tickers)
 
+        # Optional net-neutral adjustment defines the final portfolio shape
+        w_shape = apply_net_neutral(w_star, meta) if beta_neutral else w_star.copy()
+
         # Post-solve scaling
         def port_vol(w_vec: np.ndarray) -> float:
             x = L @ w_vec
             return float(np.sqrt(np.maximum(0.0, x.T @ x)))
 
-        vol0 = port_vol(w_star.values)
+        vol0 = port_vol(w_shape.values)
         if vol0 <= 0:
             return {"error": "Optimized portfolio has ~0 volatility; check inputs."}
 
-        # Scaling logic - use target_leverage if provided, otherwise use vol targeting
+        # Scaling logic - leverage based, with total gross including SPY/IWM hedge notionals
+        current_hedge_spy_shape, current_hedge_iwm_shape = compute_hedge_weights(w_shape, betas_spy, betas_iwm)
+        gross_with_hedges_shape = (
+            float(np.abs(w_shape).sum())
+            + abs(current_hedge_spy_shape)
+            + abs(current_hedge_iwm_shape)
+        )
+        k_linear = max_scale_to_respect_linear_caps(
+            w_shape,
+            meta,
+            betas_spy=betas_spy,
+            betas_iwm=betas_iwm,
+        )
         if target_leverage is not None:
-            # User specified a target gross leverage
-            current_gross = np.abs(w_star).sum()
-            k_user = target_leverage / current_gross if current_gross > 0 else 1.0
-            k_volcap = VOL_MAX / vol0
-            k_linear = max_scale_to_respect_linear_caps(w_star, meta)
-            k = min(k_user, k_volcap, k_linear)
+            k_user = target_leverage / gross_with_hedges_shape if gross_with_hedges_shape > 0 else 1.0
+            k = min(k_user, k_linear)
         else:
-            # Original behavior: scale toward vol target
-            k_target = VOL_TARGET / vol0
-            k_volcap = VOL_MAX / vol0
-            k_linear = max_scale_to_respect_linear_caps(w_star, meta)
-            k = min(k_target, k_volcap, k_linear)
+            # If no explicit leverage target is given, keep current scale unless constraints require downscaling.
+            k = min(1.0, k_linear)
 
-        active_mask = long_mask | short_mask
-        if MIN_ABS_WEIGHT > 0 and active_mask.any():
-            min_abs_active = float(np.min(np.abs(w_star.values[active_mask])))
-            if min_abs_active > 0:
-                k_floor = MIN_ABS_WEIGHT / min_abs_active
-                if k < k_floor:
-                    k = k_floor
-
-        w_final = w_star * k
-
-        # Apply net-neutral adjustment if requested
-        if beta_neutral:
-            w_final = apply_net_neutral(w_final, meta)
+        w_final = w_shape * k
 
         vol_final = port_vol(w_final.values)
 
@@ -1091,11 +1174,15 @@ def optimize_portfolio(
         beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
         net_beta_spy = beta_long_spy + beta_short_spy
         net_beta_iwm = beta_long_iwm + beta_short_iwm
-        hedge_spy_weight = -net_beta_spy
-        hedge_iwm_weight = -net_beta_iwm
+        hedge_spy_weight, hedge_iwm_weight = compute_hedge_weights(w_final, betas_spy, betas_iwm)
 
         # Build exposures dict
-        exp = exposures_by_class(w_final, meta)
+        exp = exposures_by_class(
+            w_final,
+            meta,
+            hedge_spy_weight=hedge_spy_weight,
+            hedge_iwm_weight=hedge_iwm_weight,
+        )
 
         # Build constraints utilization dict
         constraints_util = {
@@ -1149,6 +1236,12 @@ def optimize_portfolio(
             "signal": signal_effective.values,
             "signal_composite": signal_composite.values,
             "signal_effective": signal_effective.values,
+            "quality_signal": signal_subcomponents["quality_signal"].values,
+            "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
+            "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
+            "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
+            "signal_conviction": meta["signal_conviction"].values,
+            "signal_conviction_pass": meta["signal_conviction_pass"].values,
             "beta_spy": betas_spy.values,
             "beta_iwm": betas_iwm.values,
             "realized_vol": meta["realized_vol"].values,
@@ -1179,11 +1272,30 @@ def optimize_portfolio(
         hedges_df = pd.DataFrame(hedges_data)
 
         # Max scaled version
-        k_max = max_scale_to_respect_linear_caps(w_final, meta, include_position_limits=False)
+        k_max = max_scale_to_respect_linear_caps(
+            w_final,
+            meta,
+            include_position_limits=False,
+            betas_spy=betas_spy,
+            betas_iwm=betas_iwm,
+        )
         w_max_scaled = w_final * k_max
         vol_max_scaled = port_vol(w_max_scaled.values)
-        binding = identify_binding_constraint(w_max_scaled, meta, include_position_limits=False)
-        exp_max = exposures_by_class(w_max_scaled, meta)
+        hedge_spy_weight_max = hedge_spy_weight * k_max
+        hedge_iwm_weight_max = hedge_iwm_weight * k_max
+        binding = identify_binding_constraint(
+            w_max_scaled,
+            meta,
+            include_position_limits=False,
+            hedge_spy_weight=hedge_spy_weight_max,
+            hedge_iwm_weight=hedge_iwm_weight_max,
+        )
+        exp_max = exposures_by_class(
+            w_max_scaled,
+            meta,
+            hedge_spy_weight=hedge_spy_weight_max,
+            hedge_iwm_weight=hedge_iwm_weight_max,
+        )
 
         max_scaled_weights_df = pd.DataFrame({
             "ticker": tickers,
@@ -1239,6 +1351,8 @@ def optimize_portfolio(
                 "scale_factor": k_max,
                 "binding_constraint": binding,
                 "vol_daily": vol_max_scaled,
+                "hedge_spy_weight": hedge_spy_weight_max,
+                "hedge_iwm_weight": hedge_iwm_weight_max,
                 "weights_df": max_scaled_weights_df,
                 "exposures": exp_max,
             },
@@ -1255,7 +1369,8 @@ def get_data(book: Optional[float] = None, target_leverage: Optional[float] = No
 
     Args:
         book: Book size in dollars (optional)
-        target_leverage: Target gross leverage ratio (0.5-4.0). If None, uses volatility targeting.
+        target_leverage: Target gross leverage ratio (0.5-4.0) including SPY/IWM hedge notionals.
+                         If None, no additional scaling is applied beyond hard exposure caps.
         beta_neutral: If True (default), adjust weights so equity net exposure = 0%.
 
     Returns:
@@ -1375,8 +1490,26 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         )
         signal_effective.loc[distressed_tickers] = distress_signal
 
-    # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
-    w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0, vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
+    meta, low_conviction_tickers = apply_signal_conviction_gating(
+        meta,
+        signal_effective=signal_effective,
+        threshold=SIGNAL_CONVICTION_THRESHOLD,
+    )
+    if low_conviction_tickers:
+        console.print(
+            f"[yellow]Signal conviction gating ({SIGNAL_CONVICTION_THRESHOLD:.2f}) deactivated "
+            f"{len(low_conviction_tickers)} tickers: {low_conviction_tickers}[/yellow]"
+        )
+
+    active_after_gating = meta["direction"].str.strip().str.lower().isin(["long", "short"]).sum()
+    if active_after_gating == 0:
+        raise ValueError(
+            "No active long/short positions after signal conviction gating "
+            f"(threshold={SIGNAL_CONVICTION_THRESHOLD:.2f})."
+        )
+
+    # Raw weights shape (signal-first by long/short buckets)
+    w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0).reindex(tickers).fillna(0.0)
     w_raw_vec = w_raw.values
 
     # Masks
@@ -1391,15 +1524,15 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     constraints = []
 
-    # Enforce direction: longs >= MIN_ABS_WEIGHT, shorts <= -MIN_ABS_WEIGHT
+    # Enforce direction sign only (no minimum position size)
     direction = meta["direction"].str.lower()
     long_mask = direction.eq("long").values
     short_mask = direction.eq("short").values
     if long_mask.any():
-        constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
+        constraints.append(w[long_mask] >= 0.0)
         constraints.append(w[long_mask] <= LONG_MAX)  # cap longs at 20%
     if short_mask.any():
-        constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
+        constraints.append(w[short_mask] <= 0.0)
         constraints.append(w[short_mask] >= SHORT_MIN)  # floor shorts at -10%
         # Tighter cap for shorts that fell 60%+ from their 104-week high (abs cap)
         severe_dd_short_mask = meta["severe_drawdown"].values & short_mask
@@ -1429,11 +1562,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Note: Beta hedging is done post-optimization via explicit SPY/IWM positions
     # (not via constraints on the portfolio weights)
 
-    # Total-portfolio vol cap (SOC form): ||L w||_2 <= VOL_MAX
-    constraints.append(cp.norm(L @ w, 2) <= VOL_MAX)
-
-    # Objective: stay close to raw + mild risk regularization
-    objective = cp.Minimize(cp.sum_squares(w - w_raw_vec) + GAMMA_RISK * cp.sum_squares(L @ w))
+    # Objective: stay close to signal-derived raw weights
+    objective = cp.Minimize(cp.sum_squares(w - w_raw_vec))
 
     prob = cp.Problem(objective, constraints)
     prob.solve(verbose=False)  # let cvxpy choose the best available solver
@@ -1443,7 +1573,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     w_star = pd.Series(w.value, index=tickers)
 
-    # Post-solve scaling toward VOL_TARGET, respecting linear caps
+    # Post-solve leverage scaling, respecting linear caps.
     def port_vol(w_vec: np.ndarray) -> float:
         x = L @ w_vec
         return float(np.sqrt(np.maximum(0.0, x.T @ x)))
@@ -1452,20 +1582,14 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if vol0 <= 0:
         raise RuntimeError("Optimized portfolio has ~0 volatility; check inputs.")
 
-    # Scaling cannot exceed vol cap, linear caps, or equity net bounds.
-    # Also avoid scaling down below the minimum absolute weight for active positions.
-    k_target = VOL_TARGET / vol0
-    k_volcap = VOL_MAX / vol0
-    k_linear = max_scale_to_respect_linear_caps(w_star, meta)
-    k = min(k_target, k_volcap, k_linear)
-
-    active_mask = long_mask | short_mask
-    if MIN_ABS_WEIGHT > 0 and active_mask.any():
-        min_abs_active = float(np.min(np.abs(w_star.values[active_mask])))
-        if min_abs_active > 0:
-            k_floor = MIN_ABS_WEIGHT / min_abs_active
-            if k < k_floor:
-                k = k_floor
+    # Scaling cannot exceed linear caps. Total gross includes SPY/IWM hedge notionals.
+    k_linear = max_scale_to_respect_linear_caps(
+        w_star,
+        meta,
+        betas_spy=betas_spy,
+        betas_iwm=betas_iwm,
+    )
+    k = min(1.0, k_linear)
 
     w_final = w_star * k
     vol_final = port_vol(w_final.values)
@@ -1482,8 +1606,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
     net_beta_spy = beta_long_spy + beta_short_spy
     net_beta_iwm = beta_long_iwm + beta_short_iwm
-    hedge_spy_weight = -net_beta_spy
-    hedge_iwm_weight = -net_beta_iwm
+    hedge_spy_weight, hedge_iwm_weight = compute_hedge_weights(w_final, betas_spy, betas_iwm)
 
     if debug_weights:
         console.print()
@@ -1536,7 +1659,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     )
     console.print(Panel(solution_text, title="[bold blue]Solution[/bold blue]", border_style="blue"))
 
-    exp = exposures_by_class(w_final, meta)
+    exp = exposures_by_class(
+        w_final,
+        meta,
+        hedge_spy_weight=hedge_spy_weight,
+        hedge_iwm_weight=hedge_iwm_weight,
+    )
     exp_table = Table(title="[bold]Exposures[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan")
     exp_table.add_column("Type", style="white")
     exp_table.add_column("Value", justify="right", style="white")
@@ -1558,6 +1686,8 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         "signal": signal_effective,
         "signal_composite": signal_composite,
         "signal_effective": signal_effective,
+        "signal_conviction": meta["signal_conviction"],
+        "signal_conviction_pass": meta["signal_conviction_pass"],
         "beta_to_SPY": betas_spy,
         "beta_to_IWM": betas_iwm,
         "realized_volatility": meta["realized_vol"],
@@ -1689,12 +1819,27 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # print("\nWrote: optimized_weights.csv")
 
     # === Max Scaled Version ===
-    # For max scaled, ignore individual position limits - only respect asset class and gross limits
-    k_max = max_scale_to_respect_linear_caps(w_final, meta, include_position_limits=False)
+    # For max scaled, ignore individual position limits - only respect asset class and gross limits.
+    # Total gross includes beta hedge notionals.
+    k_max = max_scale_to_respect_linear_caps(
+        w_final,
+        meta,
+        include_position_limits=False,
+        betas_spy=betas_spy,
+        betas_iwm=betas_iwm,
+    )
     w_max_scaled = w_final * k_max
     vol_max_scaled = port_vol(w_max_scaled.values)
 
-    binding = identify_binding_constraint(w_max_scaled, meta, include_position_limits=False)
+    hedge_spy_weight_max = hedge_spy_weight * k_max
+    hedge_iwm_weight_max = hedge_iwm_weight * k_max
+    binding = identify_binding_constraint(
+        w_max_scaled,
+        meta,
+        include_position_limits=False,
+        hedge_spy_weight=hedge_spy_weight_max,
+        hedge_iwm_weight=hedge_iwm_weight_max,
+    )
 
     console.print()
     max_scaled_text = (
@@ -1704,7 +1849,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     )
     console.print(Panel(max_scaled_text, title="[bold magenta]Max Scaled Portfolio[/bold magenta]", border_style="magenta"))
 
-    exp_max = exposures_by_class(w_max_scaled, meta)
+    exp_max = exposures_by_class(
+        w_max_scaled,
+        meta,
+        hedge_spy_weight=hedge_spy_weight_max,
+        hedge_iwm_weight=hedge_iwm_weight_max,
+    )
     exp_max_table = Table(title="[bold]Max Scaled Exposures[/bold]", box=box.ROUNDED, show_header=True, header_style="bold magenta")
     exp_max_table.add_column("Type", style="white")
     exp_max_table.add_column("Value", justify="right", style="white")
@@ -1770,7 +1920,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
     LOGGER.info('Starting script execution: %s', __file__)
-    parser = argparse.ArgumentParser(description="Portfolio optimizer with beta-neutral and volatility targeting.")
+    parser = argparse.ArgumentParser(description="Signal-weighted portfolio optimizer with beta hedging.")
     parser.add_argument("--book", type=float, default=None, help="Book size in dollars to compute dollar weights")
     parser.add_argument("--debug-weights", action="store_true", help="Print raw/optimized/final weights for diagnostics")
     args = parser.parse_args()
