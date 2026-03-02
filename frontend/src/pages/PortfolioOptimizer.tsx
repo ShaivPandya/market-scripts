@@ -50,6 +50,10 @@ interface OptimizerResponse {
   equity_net?: number
   net_beta_spy?: number
   net_beta_iwm?: number
+  signal_anchor_mode?: string
+  signal_anchor_universe_size?: number
+  signal_anchor_fallback_used?: boolean
+  long_weighting_mode?: string
   exposures?: OptimizerExposures
   constraints?: Record<string, OptimizerConstraint>
   weights_df?: Record<string, unknown>[]
@@ -335,6 +339,10 @@ export function PortfolioOptimizer() {
   const equityNet = firstNumber(exposures.equity_net, data?.equity_net)
   const netBetaSpy = firstNumber(data?.net_beta_spy)
   const netBetaIwm = firstNumber(data?.net_beta_iwm)
+  const signalAnchorMode = typeof data?.signal_anchor_mode === "string" ? data.signal_anchor_mode : null
+  const signalAnchorUniverseSize = firstNumber(data?.signal_anchor_universe_size)
+  const signalAnchorFallbackUsed = toBoolean(data?.signal_anchor_fallback_used)
+  const longWeightingMode = typeof data?.long_weighting_mode === "string" ? data.long_weighting_mode : null
 
   const showHeaderMetrics = [volDaily, grossLeverage, equityNet, netBetaSpy, netBetaIwm].some(v => v != null)
 
@@ -474,12 +482,18 @@ export function PortfolioOptimizer() {
                       <p className="text-xs font-medium text-gray-700">Signal Definitions</p>
                       <ul className="list-disc pl-5 text-xs text-gray-600 space-y-1">
                         <li>
-                          <span className="font-medium">Weighting Rule:</span> absolute position size is signal-ranked within
-                          long and short buckets (higher signal = higher weight).
+                          <span className="font-medium">Weighting Rule (Long Equities):</span> each long equity is mapped
+                          independently to <code className="font-mono text-[11px]">[0%, 20%]</code> from its signal, without
+                          cross-sectional re-normalization.
                         </li>
                         <li>
                           <span className="font-medium">Signal Composite:</span> clipped multi-factor z-score combining quality,
                           price momentum, revenue momentum, and EPS momentum with direction-specific long/short weights.
+                        </li>
+                        <li>
+                          <span className="font-medium">Long Equity Signal Universe:</span> long-equity factor scores are
+                          normalized against a broad anchor universe built from deduped top-10 holdings across all 11 SPDR
+                          sector ETFs.
                         </li>
                         <li>
                           <span className="font-medium">Signal Effective:</span> starts as composite and is overridden for
@@ -488,9 +502,26 @@ export function PortfolioOptimizer() {
                           <code className="font-mono text-[11px]">[0, 3]</code>.
                         </li>
                         <li>
+                          <span className="font-medium">Shorts / Non-Equity:</span> shorts and non-equity assets use the legacy
+                          relative sizing framework.
+                        </li>
+                        <li>
+                          <span className="font-medium">Fallback:</span> if anchor-universe construction fails, the optimizer
+                          falls back to the baseline portfolio-only signal method.
+                        </li>
+                        <li>
                           <span className="font-medium">Signal:</span> alias of{" "}
                           <span className="font-medium">Signal Effective</span> in the current optimizer output.
                         </li>
+                        {(signalAnchorMode || signalAnchorUniverseSize != null || signalAnchorFallbackUsed != null || longWeightingMode) && (
+                          <li>
+                            <span className="font-medium">Run Metadata:</span>{" "}
+                            {signalAnchorMode ? `anchor=${signalAnchorMode}` : "anchor=unknown"}
+                            {signalAnchorUniverseSize != null ? `, universe=${Math.round(signalAnchorUniverseSize)} names` : ""}
+                            {signalAnchorFallbackUsed != null ? `, fallback=${signalAnchorFallbackUsed ? "yes" : "no"}` : ""}
+                            {longWeightingMode ? `, long_weighting=${longWeightingMode}` : ""}
+                          </li>
+                        )}
                       </ul>
                     </div>
                   </div>

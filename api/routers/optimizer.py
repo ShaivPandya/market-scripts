@@ -18,7 +18,11 @@ class OptimizerRequest(BaseModel):
 
 
 def _cache_key(req: OptimizerRequest) -> str:
-    return f"portfolio_optimizer:book={int(req.book)}:lev={float(req.target_leverage):.4f}:bn={req.beta_neutral}"
+    strategy_version = "v2_anchor_abs_long"
+    return (
+        f"portfolio_optimizer:{strategy_version}:"
+        f"book={int(req.book)}:lev={float(req.target_leverage):.4f}:bn={req.beta_neutral}"
+    )
 
 class _Job(TypedDict, total=False):
     status: Literal["queued", "running", "done", "error"]

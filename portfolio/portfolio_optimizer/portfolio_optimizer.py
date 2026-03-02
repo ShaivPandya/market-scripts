@@ -67,11 +67,11 @@ BOND DURATION LIMITS:
     Add your bond futures there: {"ZN": 6.5, "ZT": 2.0, ...}
 
 INDIVIDUAL POSITION LIMITS:
-    MIN_ABS_WEIGHT = 0.01      # Minimum position size (1% of NAV)
+    MIN_ABS_WEIGHT = 0.01      # Minimum active short size (1% of NAV)
     LONG_MAX = 0.20            # Max single long position (20% of NAV)
     SHORT_MIN = -0.10          # Max single short position (-10% of NAV)
 
-    These prevent over-concentration and ensure meaningful positions.
+    These prevent over-concentration and ensure meaningful short positions.
 
 SIGNAL TILT TUNING (advanced):
     VOL_POWER_LONG = 0.7       # Inverse-vol weight exponent for longs (<1 = less concentration)
@@ -157,9 +157,17 @@ from rich import box
 LOGGER = logging.getLogger(__name__)
 
 try:
-    from .composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
+    from .composite_signal import (
+        generate_composite_signals,
+        generate_anchor_normalized_long_equity_signals,
+        DEFAULT_WEIGHTS_SHORT,
+    )
 except ImportError:
-    from composite_signal import generate_composite_signals, DEFAULT_WEIGHTS_SHORT
+    from composite_signal import (
+        generate_composite_signals,
+        generate_anchor_normalized_long_equity_signals,
+        DEFAULT_WEIGHTS_SHORT,
+    )
 
 console = Console()
 
@@ -189,7 +197,7 @@ FX_GROSS_MAX = 2.0
 CMDTY_GROSS_MAX = 1.0
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 # Beta hedging is done post-optimization via explicit SPY/IWM hedge positions
-MIN_ABS_WEIGHT = 0.01  # enforce minimum absolute weight for active longs/shorts
+MIN_ABS_WEIGHT = 0.01  # minimum absolute size enforced for active shorts
 LONG_MAX = 0.20        # max 25% for any single long position
 SHORT_MIN = -0.10      # max 25% (abs) for any single short position
 SEVERE_DD_MAX = 0.05        # max 5% absolute SHORT position size if 60%+ off 104-week high
@@ -211,6 +219,9 @@ DURATION_OF_TICKER: Dict[str, float] = {
 # Signal/volatility tilt tuning
 VOL_POWER_LONG = 0.7  # power for inverse-vol weighting for longs: 1/σ^p (p < 1 reduces concentration in low-vol names)
 VOL_POWER_SHORT = 1.4 # power for inverse-vol weighting for shorts: 1/σ^p
+LONG_SIGNAL_CAP = 3.0
+LONG_WEIGHTING_MODE = "all_longs_absolute_signal_0_to_20"
+SIGNAL_ANCHOR_MODE = "spdr_sector_top10_anchor"
 
 
 # -----------------------------
@@ -745,7 +756,7 @@ def build_raw_weights(
     vol_power_short: float = 1.4,
 ) -> pd.Series:
     """
-    Inverse-vol raw weights, optionally tilted by momentum signals.
+    Build raw target weights from signals and volatility.
 
     Args:
         meta: Portfolio metadata with 'direction', 'asset', and 'realized_vol' columns
@@ -758,37 +769,41 @@ def build_raw_weights(
         vol_power_long: Power for inverse-vol weighting 1/σ^p for longs (default: 0.7; use <1 to reduce low-vol concentration)
         vol_power_short: Power for inverse-vol weighting 1/σ^p for shorts (default: 1.4)
 
-    Signal interpretation (signals are direction-agnostic: higher = stronger/better stock):
-        - Positive signal on LONG = increase weight (strong stock, go longer)
-        - Negative signal on SHORT = increase short conviction (weak stock, short more)
-        - Signal multiplier: exp(signal_scale * signal), with signal inverted for shorts
-        - Different signal scales used for equities vs other assets
+    Behavior:
+        - All longs (equity and non-equity) use absolute signal mapping
+          (no within-bucket normalization):
+          weight = LONG_MAX * clip(signal, 0, LONG_SIGNAL_CAP) / LONG_SIGNAL_CAP
+        - Shorts keep legacy inverse-vol + inverted-signal tilt within shorts bucket
     """
     w_raw = pd.Series(0.0, index=meta.index)
     longs = meta[meta["direction"].str.lower().eq("long")]
     shorts = meta[meta["direction"].str.lower().eq("short")]
 
-    if len(longs) > 0:
-        invv = 1.0 / (longs["realized_vol"].replace(0, np.nan) ** vol_power_long)
-        invv = invv.fillna(0.0)
-        if invv.sum() > 0:
-            base_w = invv / invv.sum()
+    # 1) Equity longs: absolute signal-to-weight mapping in [0, LONG_MAX].
+    long_eq = longs[longs["asset"].str.lower().eq("equity")]
+    if len(long_eq) > 0:
+        sig = signals.reindex(long_eq.index).fillna(0.0) if signals is not None else pd.Series(0.0, index=long_eq.index)
+        sig_pos = sig.clip(lower=0.0, upper=LONG_SIGNAL_CAP)
+        long_abs = LONG_MAX * (sig_pos / LONG_SIGNAL_CAP)
+        w_raw.loc[long_eq.index] = long_abs.astype(float)
 
-            # Apply signal tilt if provided (use different scales for equities vs other assets)
-            if signals is not None:
-                sig = signals.reindex(longs.index).fillna(0.0)
-                # Determine signal scale based on asset type
-                is_equity = longs["asset"].str.lower().eq("equity")
-                signal_scale = pd.Series(
-                    np.where(is_equity, signal_scale_equity_long, signal_scale_other),
-                    index=longs.index
-                )
-                signal_mult = np.exp(signal_scale * sig)
-                base_w = base_w * signal_mult
-                base_w = base_w / base_w.sum()  # Re-normalize
+    # 2) Non-equity longs: absolute signal-to-weight mapping in [0, LONG_MAX].
+    long_other = longs[~longs["asset"].str.lower().eq("equity")]
+    if len(long_other) > 0:
+        if signals is not None:
+            sig = signals.reindex(long_other.index).fillna(0.0)
+            sig_pos = sig.clip(lower=0.0, upper=LONG_SIGNAL_CAP)
+            long_abs = LONG_MAX * (sig_pos / LONG_SIGNAL_CAP)
+            w_raw.loc[long_other.index] = long_abs.astype(float)
+        else:
+            # Fallback if signals are unavailable: distribute up to LONG_MAX by inverse vol.
+            invv = 1.0 / (long_other["realized_vol"].replace(0, np.nan) ** vol_power_long)
+            invv = invv.fillna(0.0)
+            if invv.sum() > 0:
+                base_w = invv / invv.sum()
+                w_raw.loc[long_other.index] = LONG_MAX * base_w
 
-            w_raw.loc[longs.index] = G_L * base_w
-
+    # 3) Shorts: keep legacy relative inverse-vol sizing.
     if len(shorts) > 0:
         invv = 1.0 / (shorts["realized_vol"].replace(0, np.nan) ** vol_power_short)
         invv = invv.fillna(0.0)
@@ -1010,6 +1025,88 @@ def apply_net_neutral(w: pd.Series, meta: pd.DataFrame) -> pd.Series:
     return w_out
 
 
+def overlay_anchor_long_equity_signals(
+    tickers: list,
+    meta: pd.DataFrame,
+    signal_composite: pd.Series,
+    signal_subcomponents: Dict[str, pd.Series],
+    years: int = 5,
+    use_edgar: bool = False,
+) -> Tuple[pd.Series, Dict[str, pd.Series], Dict[str, object]]:
+    """
+    Overlay long-equity composite/factor signals from the anchor universe model.
+
+    Baseline signals are kept for all names by default and replaced only where
+    anchor-normalized long-equity signals are available.
+    """
+    metadata: Dict[str, object] = {
+        "signal_anchor_mode": SIGNAL_ANCHOR_MODE,
+        "signal_anchor_universe_size": 0,
+        "signal_anchor_fallback_used": True,
+    }
+    signal_composite_out = signal_composite.copy()
+    sub_out = {k: v.copy() for k, v in signal_subcomponents.items()}
+
+    direction = meta["direction"].str.lower()
+    is_long = direction.eq("long")
+    is_equity = meta["asset"].str.lower().eq("equity")
+    long_equities = [t for t in tickers if bool(is_long.get(t, False) and is_equity.get(t, False))]
+    if not long_equities:
+        metadata["reason"] = "no_long_equities"
+        return signal_composite_out, sub_out, metadata
+
+    try:
+        anchor_df, anchor_meta = generate_anchor_normalized_long_equity_signals(
+            long_equity_tickers=long_equities,
+            years=years,
+            use_edgar=use_edgar,
+            benchmark=MARKET_TICKER_LONG,
+        )
+    except Exception as e:
+        metadata["reason"] = f"anchor_overlay_exception:{e}"
+        return signal_composite_out, sub_out, metadata
+
+    metadata.update(
+        {
+            "signal_anchor_mode": str(anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE)),
+            "signal_anchor_universe_size": int(anchor_meta.get("signal_anchor_universe_size", 0)),
+            "signal_anchor_fallback_used": bool(anchor_meta.get("signal_anchor_fallback_used", True)),
+        }
+    )
+    if "reason" in anchor_meta:
+        metadata["reason"] = anchor_meta["reason"]
+    if "signal_anchor_scoring_universe_size" in anchor_meta:
+        metadata["signal_anchor_scoring_universe_size"] = anchor_meta["signal_anchor_scoring_universe_size"]
+
+    if anchor_df is None or anchor_df.empty or "composite_signal" not in anchor_df.columns:
+        return signal_composite_out, sub_out, metadata
+
+    composite_anchor = pd.to_numeric(anchor_df["composite_signal"], errors="coerce").dropna()
+    if composite_anchor.empty:
+        metadata["signal_anchor_fallback_used"] = True
+        metadata["reason"] = "no_anchor_composite_values"
+        return signal_composite_out, sub_out, metadata
+
+    signal_composite_out.loc[composite_anchor.index] = composite_anchor.values
+
+    column_map = {
+        "quality_signal": "quality_signal",
+        "eps_mom_signal": "eps_mom_signal",
+        "rev_mom_signal": "rev_mom_signal",
+        "price_mom_signal": "price_mom_signal",
+    }
+    for out_col, anchor_col in column_map.items():
+        if out_col not in sub_out or anchor_col not in anchor_df.columns:
+            continue
+        anchor_series = pd.to_numeric(anchor_df[anchor_col], errors="coerce").dropna()
+        if anchor_series.empty:
+            continue
+        sub_out[out_col].loc[anchor_series.index] = anchor_series.values
+
+    metadata["signal_anchor_fallback_used"] = False
+    return signal_composite_out, sub_out, metadata
+
+
 def optimize_portfolio(
     book: Optional[float] = None,
     target_leverage: Optional[float] = None,
@@ -1110,7 +1207,6 @@ def optimize_portfolio(
         )
         signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
         signal_composite = signal_composite.reindex(tickers).fillna(0.0)
-        signal_effective = signal_composite.copy()
 
         # Extract individual signal subcomponents for reporting
         signal_subcomponents = {}
@@ -1119,6 +1215,16 @@ def optimize_portfolio(
                 signal_subcomponents[col] = signals_df[col].reindex(tickers)
             else:
                 signal_subcomponents[col] = pd.Series(np.nan, index=tickers)
+
+        signal_composite, signal_subcomponents, signal_anchor_meta = overlay_anchor_long_equity_signals(
+            tickers=tickers,
+            meta=meta,
+            signal_composite=signal_composite,
+            signal_subcomponents=signal_subcomponents,
+            years=5,
+            use_edgar=False,
+        )
+        signal_effective = signal_composite.copy()
 
         distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
         distressed_tickers = distressed_active[distressed_active].index.tolist()
@@ -1152,7 +1258,7 @@ def optimize_portfolio(
         long_mask = direction.eq("long").values
         short_mask = direction.eq("short").values
         if long_mask.any():
-            constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
+            constraints.append(w[long_mask] >= 0.0)
             constraints.append(w[long_mask] <= LONG_MAX)
         if short_mask.any():
             constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
@@ -1210,11 +1316,10 @@ def optimize_portfolio(
         else:
             k = k_linear
 
-        active_mask = long_mask | short_mask
-        if MIN_ABS_WEIGHT > 0 and active_mask.any():
-            min_abs_active = float(np.min(np.abs(w_star.values[active_mask])))
-            if min_abs_active > 0:
-                k_floor = MIN_ABS_WEIGHT / min_abs_active
+        if MIN_ABS_WEIGHT > 0 and short_mask.any():
+            min_abs_short = float(np.min(np.abs(w_star.values[short_mask])))
+            if min_abs_short > 0:
+                k_floor = MIN_ABS_WEIGHT / min_abs_short
                 if k < k_floor:
                     k = k_floor
 
@@ -1393,6 +1498,10 @@ def optimize_portfolio(
             "beta_halflife_days": BETA_EWMA_HALFLIFE_DAYS,
             "beta_min_obs": BETA_MIN_OBS,
             "beta_shrink_to_one": BETA_SHRINK_TO_ONE,
+            "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
+            "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
+            "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
+            "long_weighting_mode": LONG_WEIGHTING_MODE,
 
             # Exposures
             "exposures": exp,
@@ -1530,6 +1639,22 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Extract composite signal for weighting
     signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
     signal_composite = signal_composite.reindex(tickers).fillna(0.0)
+
+    signal_subcomponents = {}
+    for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
+        if not signals_df.empty and col in signals_df.columns:
+            signal_subcomponents[col] = signals_df[col].reindex(tickers)
+        else:
+            signal_subcomponents[col] = pd.Series(np.nan, index=tickers)
+
+    signal_composite, signal_subcomponents, signal_anchor_meta = overlay_anchor_long_equity_signals(
+        tickers=tickers,
+        meta=meta,
+        signal_composite=signal_composite,
+        signal_subcomponents=signal_subcomponents,
+        years=5,
+        use_edgar=False,
+    )
     signal_effective = signal_composite.copy()
 
     distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
@@ -1558,12 +1683,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     constraints = []
 
-    # Enforce direction: longs >= MIN_ABS_WEIGHT, shorts <= -MIN_ABS_WEIGHT
+    # Enforce direction and position bounds
     direction = meta["direction"].str.lower()
     long_mask = direction.eq("long").values
     short_mask = direction.eq("short").values
     if long_mask.any():
-        constraints.append(w[long_mask] >= MIN_ABS_WEIGHT)
+        constraints.append(w[long_mask] >= 0.0)
         constraints.append(w[long_mask] <= LONG_MAX)  # cap longs at 20%
     if short_mask.any():
         constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
@@ -1616,15 +1741,14 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     if vol0 <= 0:
         raise RuntimeError("Optimized portfolio has ~0 volatility; check inputs.")
 
-    # Scale to constraint limits. Avoid scaling below minimum absolute weight for active positions.
+    # Scale to constraint limits. Maintain minimum absolute short size for active shorts.
     k_linear = max_scale_to_respect_linear_caps(w_star, meta)
     k = k_linear
 
-    active_mask = long_mask | short_mask
-    if MIN_ABS_WEIGHT > 0 and active_mask.any():
-        min_abs_active = float(np.min(np.abs(w_star.values[active_mask])))
-        if min_abs_active > 0:
-            k_floor = MIN_ABS_WEIGHT / min_abs_active
+    if MIN_ABS_WEIGHT > 0 and short_mask.any():
+        min_abs_short = float(np.min(np.abs(w_star.values[short_mask])))
+        if min_abs_short > 0:
+            k_floor = MIN_ABS_WEIGHT / min_abs_short
             if k < k_floor:
                 k = k_floor
 

@@ -316,6 +316,20 @@ def fetch_revenue_momentum_batch(
 # ETF Look-through Utilities
 # -------------------------
 
+SPDR_SECTOR_ETFS: List[str] = [
+    "XLB",
+    "XLC",
+    "XLE",
+    "XLF",
+    "XLI",
+    "XLK",
+    "XLP",
+    "XLRE",
+    "XLU",
+    "XLV",
+    "XLY",
+]
+
 _INTL_SUFFIXES = (
     ".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC",
     ".SI", ".HK", ".T", ".NS", ".BO",
@@ -398,6 +412,47 @@ def fetch_etf_top_holdings_batch(etf_tickers: List[str], top_n: int = 10) -> Dic
         if not w.empty:
             out[etf] = w
     return out
+
+
+def fetch_spdr_sector_anchor_universe(
+    top_n: int = 10,
+    min_unique: int = 60,
+) -> Tuple[List[str], Dict[str, object]]:
+    """
+    Build an equal-member anchor universe from SPDR sector ETF top holdings.
+
+    Returns:
+        - List of unique holding tickers (deduped, order preserved by ETF then weight rank)
+        - Metadata with per-ETF holding counts and availability flags
+    """
+    etf_holdings = fetch_etf_top_holdings_batch(SPDR_SECTOR_ETFS, top_n=top_n)
+    per_etf_counts: Dict[str, int] = {}
+    anchor_ordered: List[str] = []
+
+    for etf in SPDR_SECTOR_ETFS:
+        holdings = etf_holdings.get(etf)
+        count = int(len(holdings)) if holdings is not None else 0
+        per_etf_counts[etf] = count
+        if holdings is None or holdings.empty:
+            continue
+        for ticker in holdings.index:
+            if ticker not in anchor_ordered:
+                anchor_ordered.append(ticker)
+
+    unique_count = len(anchor_ordered)
+    is_available = unique_count >= int(min_unique)
+    metadata: Dict[str, object] = {
+        "etfs_requested": SPDR_SECTOR_ETFS.copy(),
+        "etfs_fetched": sorted(etf_holdings.keys()),
+        "top_n": int(top_n),
+        "per_etf_counts": per_etf_counts,
+        "anchor_universe_size": unique_count,
+        "anchor_min_required": int(min_unique),
+        "is_available": bool(is_available),
+    }
+    if not is_available:
+        return [], metadata
+    return anchor_ordered, metadata
 
 
 def _weighted_average_row(metrics: pd.DataFrame, weights: pd.Series) -> pd.Series:
