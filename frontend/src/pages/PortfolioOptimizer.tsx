@@ -280,7 +280,7 @@ export function PortfolioOptimizer() {
   const [bookSize, setBookSize] = useState(cachedState?.bookSize ?? 100_000)
   const [bookSizeInput, setBookSizeInput] = useState(String(cachedState?.bookSize ?? 100_000))
   const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
-  const [betaNeutral, setBetaNeutral] = useState(cachedState?.betaNeutral ?? true)
+  const [betaNeutral, setBetaNeutral] = useState(cachedState?.betaNeutral ?? false)
   const [tab, setTab] = useState<OptimizerTab>("Weights")
   const [weightsViewMode, setWeightsViewMode] = useState<WeightsViewMode>("basic")
   const [showMethodologyNotes, setShowMethodologyNotes] = useState(false)
@@ -498,20 +498,15 @@ export function PortfolioOptimizer() {
               </div>
 
               {weightsRows.length > 0 && (
-                <div>
-                  <h2 className="text-base font-semibold mb-2">Portfolio Weights</h2>
-                  <DataTable
-                    columns={buildCols(weightsDisplayRows, { hiddenKeys: weightsHiddenKeys })}
-                    rows={weightsDisplayRows}
-                  />
-                </div>
+                <DataTable
+                  label="Portfolio Weights"
+                  columns={buildCols(weightsDisplayRows, { hiddenKeys: weightsHiddenKeys })}
+                  rows={weightsDisplayRows}
+                />
               )}
 
               {hedgesRows.length > 0 && (
-                <div>
-                  <h2 className="text-base font-semibold mb-2">Hedge Positions</h2>
-                  <DataTable columns={buildCols(hedgesRows)} rows={hedgesRows} />
-                </div>
+                <DataTable label="Hedge Positions" columns={buildCols(hedgesRows)} rows={hedgesRows} />
               )}
 
               {weightsRows.length === 0 && hedgesRows.length === 0 && (
@@ -666,9 +661,8 @@ export function PortfolioOptimizer() {
                   </div>
 
                   <div>
-                    <h2 className="text-base font-semibold mb-2">Max Scaled Weights</h2>
                     {maxScaledRows.length > 0
-                      ? <DataTable columns={buildCols(maxScaledRows)} rows={maxScaledRows} />
+                      ? <DataTable label="Max Scaled Weights" columns={buildCols(maxScaledRows)} rows={maxScaledRows} />
                       : <p className="text-gray-400 text-sm">No max-scaled weights returned.</p>}
                   </div>
                 </>
