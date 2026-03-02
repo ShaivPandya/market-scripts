@@ -97,6 +97,7 @@ export function FundamentalMomentum() {
           options={[
             { value: "S&P 500", label: "S&P 500" },
             { value: "Same as Input", label: "Same as Input" },
+            { value: "Universes", label: "Universes" },
           ]}
         />
 
