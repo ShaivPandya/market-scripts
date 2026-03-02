@@ -9,6 +9,7 @@ import { colorPositiveNegative } from "@/lib/colors"
 
 type OptimizerTab = "Weights" | "Exposures" | "Constraints" | "Max Scaled"
 type ExposureAssetClass = "equity" | "fx" | "commodity" | "bond"
+type WeightsViewMode = "basic" | "advanced"
 
 interface OptimizerExposures {
   equity_gross?: number
@@ -56,7 +57,25 @@ interface OptimizerResponse {
   [key: string]: unknown
 }
 
+interface BuildColsOptions {
+  hiddenKeys?: string[]
+}
+
 const OPTIMIZER_STATE_KEY = ["portfolio-optimizer", "state"] as const
+const ALWAYS_HIDDEN_WEIGHTS_COLUMNS = ["direction_intended", "days_since_new_low"] as const
+const BASIC_WEIGHTS_COLUMNS = new Set([
+  "ticker",
+  "asset",
+  "direction",
+  "signal",
+  "beta_spy",
+  "beta_iwm",
+  "realized_vol",
+  "weight",
+  "price",
+  "dollar_weight",
+  "shares",
+])
 const MIN_BOOK_SIZE = 10_000
 const MAX_BOOK_SIZE = 10_000_000
 const OPTIMIZER_TABS: OptimizerTab[] = ["Weights", "Exposures", "Constraints", "Max Scaled"]
@@ -142,6 +161,21 @@ function toNumber(value: unknown): number | null {
   return null
 }
 
+function toBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") {
+    if (value === 1) return true
+    if (value === 0) return false
+    return null
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase()
+    if (["1", "true", "t", "yes", "y"].includes(normalized)) return true
+    if (["0", "false", "f", "no", "n"].includes(normalized)) return false
+  }
+  return null
+}
+
 function firstNumber(...values: unknown[]) {
   for (const value of values) {
     const num = toNumber(value)
@@ -168,7 +202,7 @@ const COLUMN_LABELS: Record<string, string> = {
   direction_intended: "Direction Intended",
   distressed: "Distressed",
   drawdown_52w: "Drawdown 52W",
-  stabilized_10d: "Stabilized 10D",
+  stabilized_10d: "Stabilized",
   days_since_new_low: "Days Since New Low",
   signal: "Signal",
   signal_composite: "Signal Composite",
@@ -183,9 +217,36 @@ const COLUMN_LABELS: Record<string, string> = {
   type: "Type",
 }
 
-function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
+function normalizeWeightsRows(rows: Record<string, unknown>[]) {
+  return rows.map(row => {
+    const normalized = { ...row }
+
+    const intendedDirection = String(row.direction_intended ?? "").trim()
+    const effectiveDirection = String(row.direction ?? "").trim()
+    normalized.direction = intendedDirection || effectiveDirection
+
+    const distressed = toBoolean(row.distressed) === true
+    const asset = String(row.asset ?? "").trim().toLowerCase()
+    const intended = intendedDirection.toLowerCase()
+    const isDistressedCandidate = distressed && asset === "equity" && intended === "long"
+
+    if (isDistressedCandidate) {
+      const drawdown = toNumber(row.drawdown_52w)
+      normalized.drawdown_52w = drawdown == null ? "" : -Math.abs(drawdown)
+    } else {
+      normalized.distressed = ""
+      normalized.stabilized_10d = ""
+      normalized.drawdown_52w = ""
+    }
+
+    return normalized
+  })
+}
+
+function buildCols(rows: Record<string, unknown>[], options?: BuildColsOptions): ColumnDef[] {
   if (rows.length === 0) return []
-  return Object.keys(rows[0]).filter(k => k !== "index").map(k => ({
+  const hidden = new Set(options?.hiddenKeys ?? [])
+  return Object.keys(rows[0]).filter(k => k !== "index" && !hidden.has(k)).map(k => ({
     key: k,
     header: COLUMN_LABELS[k] ?? k,
     colorFn: isPercentColumn(k)
@@ -216,6 +277,8 @@ export function PortfolioOptimizer() {
   const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
   const [betaNeutral, setBetaNeutral] = useState(cachedState?.betaNeutral ?? true)
   const [tab, setTab] = useState<OptimizerTab>("Weights")
+  const [weightsViewMode, setWeightsViewMode] = useState<WeightsViewMode>("basic")
+  const [showMethodologyNotes, setShowMethodologyNotes] = useState(true)
   const [cachedResult, setCachedResult] = useState<OptimizerResponse | null>(cachedState?.result ?? null)
 
   const mutation = useMutation({
@@ -245,6 +308,15 @@ export function PortfolioOptimizer() {
 
   const data = (mutation.data as OptimizerResponse | undefined) ?? cachedResult
   const weightsRows = toRows(data?.weights_df)
+  const weightsDisplayRows = normalizeWeightsRows(weightsRows)
+  const basicWeightsHiddenKeys = weightsDisplayRows.length === 0
+    ? []
+    : Object.keys(weightsDisplayRows[0]).filter(
+      k => !BASIC_WEIGHTS_COLUMNS.has(k) || ALWAYS_HIDDEN_WEIGHTS_COLUMNS.includes(k as typeof ALWAYS_HIDDEN_WEIGHTS_COLUMNS[number]),
+    )
+  const weightsHiddenKeys = weightsViewMode === "basic"
+    ? basicWeightsHiddenKeys
+    : [...ALWAYS_HIDDEN_WEIGHTS_COLUMNS]
   const hedgesRows = toRows(data?.hedges_df)
   const exposures = data?.exposures ?? {}
   const constraints = data?.constraints ?? {}
@@ -349,10 +421,79 @@ export function PortfolioOptimizer() {
 
           {tab === "Weights" && (
             <div className="space-y-6">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-gray-600">Table View</p>
+                <SegmentedControl
+                  options={[
+                    { value: "basic", label: "Basic" },
+                    { value: "advanced", label: "Advanced" },
+                  ]}
+                  value={weightsViewMode}
+                  onChange={setWeightsViewMode}
+                  size="sm"
+                />
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-4">
+                <button
+                  type="button"
+                  onClick={() => setShowMethodologyNotes(prev => !prev)}
+                  className="w-full text-left flex items-center justify-between"
+                >
+                  <h2 className="text-sm font-semibold text-gray-900">Methodology Notes</h2>
+                  <span className="text-xs text-gray-500">
+                    {showMethodologyNotes ? "Hide" : "Show"}
+                  </span>
+                </button>
+
+                {showMethodologyNotes && (
+                  <div className="mt-3 space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-gray-700">Stabilized (10D)</p>
+                      <ul className="list-disc pl-5 text-xs text-gray-600 space-y-1">
+                        <li>Uses a 252-trading-day lookback window.</li>
+                        <li>Finds the most recent 52-week high, then scans forward for new lower lows.</li>
+                        <li>
+                          <code className="font-mono text-[11px]">stabilized = true</code> when no new lower low occurs for at
+                          least 10 trading sessions.
+                        </li>
+                        <li>
+                          Distressed eligibility requires both{" "}
+                          <code className="font-mono text-[11px]">drawdown_52w &gt;= 25%</code> and{" "}
+                          <code className="font-mono text-[11px]">stabilized = true</code>.
+                        </li>
+                      </ul>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-gray-700">Signal Definitions</p>
+                      <ul className="list-disc pl-5 text-xs text-gray-600 space-y-1">
+                        <li>
+                          <span className="font-medium">Signal Composite:</span> clipped multi-factor z-score combining quality,
+                          price momentum, revenue momentum, and EPS momentum with direction-specific long/short weights.
+                        </li>
+                        <li>
+                          <span className="font-medium">Signal Effective:</span> starts as composite and is overridden for
+                          distressed-eligible names by{" "}
+                          <code className="font-mono text-[11px]">((drawdown_52w - 0.25) / 0.20)</code> clipped to{" "}
+                          <code className="font-mono text-[11px]">[0, 3]</code>.
+                        </li>
+                        <li>
+                          <span className="font-medium">Signal:</span> alias of{" "}
+                          <span className="font-medium">Signal Effective</span> in the current optimizer output.
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {weightsRows.length > 0 && (
                 <div>
                   <h2 className="text-base font-semibold mb-2">Portfolio Weights</h2>
-                  <DataTable columns={buildCols(weightsRows)} rows={weightsRows} />
+                  <DataTable
+                    columns={buildCols(weightsDisplayRows, { hiddenKeys: weightsHiddenKeys })}
+                    rows={weightsDisplayRows}
+                  />
                 </div>
               )}
 
