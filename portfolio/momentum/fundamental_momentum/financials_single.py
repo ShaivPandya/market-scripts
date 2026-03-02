@@ -11,7 +11,7 @@ import logging
 
 import re
 from datetime import date
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from edgar_fetcher import (
     build_filing_url,
@@ -100,6 +100,57 @@ def _sort_newest(entries: List[dict]) -> List[dict]:
         )
 
     return sorted(entries, key=_k, reverse=True)
+
+
+def _latest_end_date(entries: List[dict]) -> date:
+    latest = date.min
+    for e in entries:
+        d = _parse_iso_date(e.get("end"))
+        if d is not None and d > latest:
+            latest = d
+    return latest
+
+
+def _latest_filed_date(entries: List[dict]) -> str:
+    if not entries:
+        return ""
+    return max(str(e.get("filed") or "") for e in entries)
+
+
+def _pick_best_concept_entries(
+    us_gaap: dict,
+    concepts: Iterable[str],
+    unit: str,
+    extractor: Callable[[List[dict]], List[dict]],
+) -> List[dict]:
+    """
+    Choose the strongest concept series for a metric.
+    Priority:
+      1) most recent period end date
+      2) largest history length
+      3) latest filing date
+    """
+    best_entries: List[dict] = []
+    best_score: Optional[Tuple[date, int, str]] = None
+
+    for concept in concepts:
+        raw = _entries_for(us_gaap, concept, unit)
+        if not raw:
+            continue
+        candidate = extractor(raw)
+        if not candidate:
+            continue
+
+        score = (
+            _latest_end_date(candidate),
+            len(candidate),
+            _latest_filed_date(candidate),
+        )
+        if best_score is None or score > best_score:
+            best_score = score
+            best_entries = candidate
+
+    return best_entries
 
 
 def _annual_fact_entries(entries: List[dict]) -> List[dict]:
@@ -196,21 +247,18 @@ def _rows_from_entries(
 
 
 def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -> Tuple[List[dict], List[dict]]:
-    annual_entries: List[dict] = []
-    quarterly_entries: List[dict] = []
-
-    for concept in REVENUE_CONCEPTS:
-        raw = _entries_for(us_gaap, concept, "USD")
-        if not raw:
-            continue
-        a = _annual_fact_entries(raw)
-        q = _quarterly_fact_entries(raw)
-        if a and not annual_entries:
-            annual_entries = a
-        if q and not quarterly_entries:
-            quarterly_entries = q
-        if annual_entries and quarterly_entries:
-            break
+    annual_entries = _pick_best_concept_entries(
+        us_gaap,
+        REVENUE_CONCEPTS,
+        "USD",
+        _annual_fact_entries,
+    )
+    quarterly_entries = _pick_best_concept_entries(
+        us_gaap,
+        REVENUE_CONCEPTS,
+        "USD",
+        _quarterly_fact_entries,
+    )
 
     annual_rows = _rows_from_entries(
         annual_entries,
