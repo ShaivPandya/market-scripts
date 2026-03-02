@@ -120,7 +120,6 @@ COUNTRIES = {
                 "freq": "quarterly",
                 "transform": "yoy4",
             },
-            {"id": "NAEXKP01CAQ189S", "transform": "yoy4"},
         ],
     },
     "United Kingdom": {
@@ -151,20 +150,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTGBM156S"},
         ],
         "gdp": [
-            # OECD QNA: UK real GDP YoY growth (quarterly, SA).
-            {
-                "source": "oecd",
-                "id": "OECD QNA GBR.B1_GE.GYSA.Q",
-                "dataset": "QNA",
-                "key": "GBR.B1_GE.GYSA.Q",
-                "transform": "none",
-                "max_age_days": 240,
-            },
-            # FRED/OECD (MEI): quarterly YoY growth, SA.
-            {"id": "GBRGDPRQPSMEI", "transform": "none", "max_age_days": 240},
-            # Fallbacks: quarterly index/level series where YoY is computed locally.
-            {"id": "NAEXKP01GBQ661S", "transform": "yoy4", "max_age_days": 240},
-            {"id": "NAEXKP01GBQ652S", "transform": "yoy4", "max_age_days": 240},
+            # UK: Gross Domestic Product, level series (millions of pounds), SA.
+            {"id": "UKNGDP", "transform": "none", "freq": "quarterly"},
         ],
     },
     "EU": {
@@ -218,16 +205,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTDEM156S"},
         ],
         "gdp": [
-            {
-                "source": "eurostat",
-                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
-                "dataset": EUROSTAT_GDP_DATASET,
-                "geo": "DE",
-                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
-                "freq": "quarterly",
-                "transform": "none",
-            },
-            {"id": "NAEXKP01DEQ189S", "transform": "yoy4"},
+            # Real Gross Domestic Product, Germany, SA; compute YoY growth.
+            {"id": "CLVMNACSCAB1GQDE", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "Japan": {
@@ -241,16 +220,8 @@ COUNTRIES = {
         ],
         "unemployment": "LRUNTTTTJPM156S",
         "gdp": [
-            {
-                "source": "oecd",
-                "id": "OECD QNA JPN.B1_GE.GYSA.Q",
-                "dataset": "QNA",
-                "key": "JPN.B1_GE.GYSA.Q",
-                "transform": "none",
-            },
-            {"id": "JPNGDPRQPSMEI", "transform": "none", "max_age_days": 240},
-            {"id": "NAEXKP01JPQ661S", "transform": "yoy4", "max_age_days": 240},
-            {"id": "NAEXKP01JPQ652S", "transform": "yoy4", "max_age_days": 240},
+            # Real GDP, Japan, SA; compute YoY growth.
+            {"id": "JPNNGDP", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "France": {
@@ -278,16 +249,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTFRM156S"},
         ],
         "gdp": [
-            {
-                "source": "eurostat",
-                "id": f"Eurostat {EUROSTAT_GDP_DATASET}",
-                "dataset": EUROSTAT_GDP_DATASET,
-                "geo": "FR",
-                "query_params": {"unit": "PCH_Q4_Q4", "na_item": "B1GQ", "s_adj": "SCA"},
-                "freq": "quarterly",
-                "transform": "none",
-            },
-            {"id": "NAEXKP01FRQ189S", "transform": "yoy4"},
+            # Real Gross Domestic Product, France, SA; compute YoY growth.
+            {"id": "CLVMNACSCAB1GQFR", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "Switzerland": {
@@ -313,15 +276,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTCHM156S", "transform": "none"},
         ],
         "gdp": [
-            {
-                "source": "snb",
-                "id": "SNB gdprpq WMF BBIP",
-                "cube": "gdprpq",
-                "dim_sel": "D0(WMF),D1(BBIP)",
-                "freq": "quarterly",
-                "transform": "yoy4",
-            },
-            {"id": "NAEXKP01CHQ189S", "transform": "yoy4"},
+            # Real Gross Domestic Product, Switzerland, SA; compute YoY growth.
+            {"id": "CLVMNACSAB1GQCH", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "Australia": {
@@ -338,7 +294,10 @@ COUNTRIES = {
             },
         ],
         "unemployment": "LRUNTTTTAUM156S",
-        "gdp": "NAEXKP01AUQ189S",
+        "gdp": [
+            # Real Gross Domestic Product, Australia, SA; compute YoY growth.
+            {"id": "NGDPRSAXDCAUQ", "transform": "yoy4", "freq": "quarterly"},
+        ],
     },
 }
 
@@ -1267,6 +1226,20 @@ def _apply_transform(series: pd.Series, transform: str) -> pd.Series:
     raise ValueError(f"Unknown transform: {transform}")
 
 
+def _infer_series_frequency(series: pd.Series) -> str | None:
+    if len(series.index) < 2:
+        return None
+    deltas = pd.Series(pd.to_datetime(series.index)).diff().dropna().dt.days
+    if deltas.empty:
+        return None
+    median_days = float(deltas.median())
+    if median_days >= 80:
+        return "quarterly"
+    if median_days >= 27:
+        return "monthly"
+    return None
+
+
 def _metric_candidates(metric_key: str, config: dict) -> List[Dict[str, object]]:
     metric_config = config[metric_key]
 
@@ -1436,8 +1409,15 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                 if max_age_days is None:
                     max_age_days = _DEFAULT_MAX_AGE_DAYS.get(metric_key)
                 if max_age_days:
-                    latest_ts = pd.Timestamp(series.index[-1]).to_pydatetime()
-                    age_days = (now.date() - latest_ts.date()).days
+                    latest_ts = pd.Timestamp(series.index[-1])
+                    freq_hint = candidate.get("freq") or _infer_series_frequency(series)
+                    effective_latest_ts = latest_ts
+                    if freq_hint == "quarterly":
+                        effective_latest_ts = latest_ts + pd.offsets.QuarterEnd(0)
+                    elif freq_hint == "monthly":
+                        effective_latest_ts = latest_ts + pd.offsets.MonthEnd(0)
+
+                    age_days = (now.date() - effective_latest_ts.date()).days
                     if age_days > int(max_age_days):
                         country_errors.append(
                             f"{series_id}: stale ({age_days}d old > {int(max_age_days)}d)"
