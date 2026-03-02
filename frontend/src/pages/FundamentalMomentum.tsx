@@ -95,10 +95,12 @@ export function FundamentalMomentum() {
           value={benchmark}
           onChange={setBenchmark}
           options={[
-            { value: "S&P 500", label: "S&P 500" },
-            { value: "Same as Input", label: "Same as Input" },
-            { value: "Universes", label: "Universes" },
-          ]}
+            "S&P 500", "Same as Input",
+            "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
+            "XLF — Financials", "XLI — Industrials", "XLK — Technology",
+            "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
+            "XLV — Health Care", "XLY — Consumer Discretionary",
+          ].map(o => ({ value: o, label: o }))}
         />
 
         <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Screening...">

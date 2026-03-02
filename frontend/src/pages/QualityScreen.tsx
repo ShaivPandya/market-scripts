@@ -14,7 +14,13 @@ const UNIVERSE_OPTIONS = [
   "XLV — Health Care", "XLY — Consumer Discretionary",
 ]
 
-const BENCHMARK_OPTIONS = ["S&P 500", "Same as Input", "Universes"]
+const BENCHMARK_OPTIONS = [
+  "S&P 500", "Same as Input",
+  "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
+  "XLF — Financials", "XLI — Industrials", "XLK — Technology",
+  "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
+  "XLV — Health Care", "XLY — Consumer Discretionary",
+]
 
 export function QualityScreen() {
   const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
