@@ -20,6 +20,7 @@ interface OptimizerExposures {
   commodity_net?: number
   bond_gross?: number
   bond_net?: number
+  hedge_gross?: number
   total_gross?: number
   total_net?: number
   [key: string]: unknown
@@ -326,6 +327,7 @@ export function PortfolioOptimizer() {
 
   const volDaily = firstNumber(data?.vol_daily, data?.daily_vol)
   const grossLeverage = firstNumber(data?.gross_leverage)
+  const hedgeGross = firstNumber(exposures.hedge_gross, 0) ?? 0
   const equityNet = firstNumber(exposures.equity_net, data?.equity_net)
   const netBetaSpy = firstNumber(data?.net_beta_spy)
   const netBetaIwm = firstNumber(data?.net_beta_iwm)
@@ -336,7 +338,7 @@ export function PortfolioOptimizer() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Optimizer</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Beta-neutral portfolio construction with volatility targeting</p>
+        <p className="text-sm text-gray-400 mt-0.5">Signal-weighted portfolio construction with beta hedging</p>
       </div>
 
       <div className="rounded-xl border border-gray-200/80 bg-white p-5 mb-6">
@@ -404,7 +406,7 @@ export function PortfolioOptimizer() {
           {showHeaderMetrics && (
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               {volDaily != null && <MetricCard title="Daily Volatility" value={`${(volDaily * 100).toFixed(2)}%`} />}
-              {grossLeverage != null && <MetricCard title="Gross Leverage" value={`${grossLeverage.toFixed(2)}x`} />}
+              {grossLeverage != null && <MetricCard title="Gross Leverage (incl. hedges)" value={`${grossLeverage.toFixed(2)}x`} />}
               {equityNet != null && <MetricCard title="Equity Net" value={formatRatioPercent(equityNet, true, 1)} />}
               {netBetaSpy != null && <MetricCard title="Net Beta SPY (pre-hedge)" value={netBetaSpy.toFixed(3)} />}
               {netBetaIwm != null && <MetricCard title="Net Beta IWM (pre-hedge)" value={netBetaIwm.toFixed(3)} />}
@@ -467,6 +469,10 @@ export function PortfolioOptimizer() {
                     <div className="space-y-1">
                       <p className="text-xs font-medium text-gray-700">Signal Definitions</p>
                       <ul className="list-disc pl-5 text-xs text-gray-600 space-y-1">
+                        <li>
+                          <span className="font-medium">Weighting Rule:</span> absolute position size is signal-ranked within
+                          long and short buckets (higher signal = higher weight).
+                        </li>
                         <li>
                           <span className="font-medium">Signal Composite:</span> clipped multi-factor z-score combining quality,
                           price momentum, revenue momentum, and EPS momentum with direction-specific long/short weights.
@@ -538,10 +544,16 @@ export function PortfolioOptimizer() {
                     )
                   })}
                   <div className="pt-2">
-                    <MetricCard
-                      title="Total Gross"
-                      value={formatRatioPercent(firstNumber(exposures.total_gross, data.gross_leverage, 0) ?? 0, false, 1)}
-                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <MetricCard
+                        title="Hedge Gross"
+                        value={formatRatioPercent(hedgeGross, false, 1)}
+                      />
+                      <MetricCard
+                        title="Total Gross"
+                        value={formatRatioPercent(firstNumber(exposures.total_gross, data.gross_leverage, 0) ?? 0, false, 1)}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -629,6 +641,10 @@ export function PortfolioOptimizer() {
                       <MetricCard
                         title="Total Gross"
                         value={formatRatioPercent(firstNumber(maxScaledExposures.total_gross, 0) ?? 0, false, 1)}
+                      />
+                      <MetricCard
+                        title="Hedge Gross"
+                        value={formatRatioPercent(firstNumber(maxScaledExposures.hedge_gross, 0) ?? 0, false, 1)}
                       />
                       <MetricCard
                         title="Equity Net"
