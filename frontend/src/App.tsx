@@ -26,6 +26,7 @@ import { Liquidity } from "@/pages/Liquidity"
 import { CountryDashboard } from "@/pages/CountryDashboard"
 import { CentralBanks } from "@/pages/CentralBanks"
 import { IndustryMonitor } from "@/pages/IndustryMonitor"
+import { YieldCurve } from "@/pages/YieldCurve"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -79,6 +80,7 @@ function AppRoutes() {
           <Route path="/country-dashboard" element={<CountryDashboard />} />
           <Route path="/central-banks" element={<CentralBanks />} />
           <Route path="/industry-monitor" element={<IndustryMonitor />} />
+          <Route path="/yield-curve" element={<YieldCurve />} />
         </Route>
       </Route>
     </Routes>

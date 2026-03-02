@@ -150,6 +150,9 @@ export const fetchSectorMetrics = () =>
 export const fetchIndustryMonitor = (refresh = false) =>
   client.get(`/industry-monitor?refresh=${refresh}`).then(r => r.data)
 
+export const fetchYieldCurve = (lookback_days = 90) =>
+  client.get(`/yield-curve?lookback_days=${lookback_days}`).then(r => r.data)
+
 export const fetchPositioningSummary = (params: Record<string, string>) =>
   client.get("/positioning/summary", { params }).then(r => r.data)
 
