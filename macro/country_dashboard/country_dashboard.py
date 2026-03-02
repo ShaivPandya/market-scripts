@@ -150,8 +150,8 @@ COUNTRIES = {
             {"id": "LRUNTTTTGBM156S"},
         ],
         "gdp": [
-            # UK: Gross Domestic Product, level series (millions of pounds), SA.
-            {"id": "UKNGDP", "transform": "none", "freq": "quarterly"},
+            # UK: Gross Domestic Product, SA; compute YoY growth.
+            {"id": "UKNGDP", "transform": "yoy4", "freq": "quarterly"},
         ],
     },
     "EU": {
@@ -1405,18 +1405,18 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     )
                     continue
 
+                latest_ts = pd.Timestamp(series.index[-1])
+                freq_hint = candidate.get("freq") or _infer_series_frequency(series)
+                effective_latest_ts = latest_ts
+                if freq_hint == "quarterly":
+                    effective_latest_ts = latest_ts + pd.offsets.QuarterEnd(0)
+                elif freq_hint == "monthly":
+                    effective_latest_ts = latest_ts + pd.offsets.MonthEnd(0)
+
                 max_age_days = candidate.get("max_age_days")
                 if max_age_days is None:
                     max_age_days = _DEFAULT_MAX_AGE_DAYS.get(metric_key)
                 if max_age_days:
-                    latest_ts = pd.Timestamp(series.index[-1])
-                    freq_hint = candidate.get("freq") or _infer_series_frequency(series)
-                    effective_latest_ts = latest_ts
-                    if freq_hint == "quarterly":
-                        effective_latest_ts = latest_ts + pd.offsets.QuarterEnd(0)
-                    elif freq_hint == "monthly":
-                        effective_latest_ts = latest_ts + pd.offsets.MonthEnd(0)
-
                     age_days = (now.date() - effective_latest_ts.date()).days
                     if age_days > int(max_age_days):
                         country_errors.append(
@@ -1426,7 +1426,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
 
                 countries[name] = series
                 series_used[name] = source
-                latest_observation_dates[name] = series.index[-1].to_pydatetime()
+                latest_observation_dates[name] = effective_latest_ts.to_pydatetime()
                 break
             except Exception as e:
                 country_errors.append(f"{series_id}: {type(e).__name__}: {e}")
@@ -1438,6 +1438,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
         "errors": errors,
         "series_used": series_used,
         "latest_observation_dates": latest_observation_dates,
+        "max_age_days": _DEFAULT_MAX_AGE_DAYS.copy(),
         "metric": metric,
         "timestamp": datetime.now(),
     }
