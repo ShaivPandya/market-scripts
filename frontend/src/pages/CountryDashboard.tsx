@@ -20,7 +20,7 @@ export function CountryDashboard() {
   const { data, isLoading, error } = useApiQuery(
     ["country-dashboard", metric],
     () => fetchCountryDashboard(metric),
-    60 * 60 * 1000, // 1h stale time
+    5 * 60 * 1000, // 5m stale time
   )
 
   const METRIC_LABEL: Record<Metric, string> = {

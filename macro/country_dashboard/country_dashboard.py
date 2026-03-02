@@ -151,8 +151,20 @@ COUNTRIES = {
             {"id": "LRUNTTTTGBM156S"},
         ],
         "gdp": [
-            # FRED/OECD: Real GDP, UK, quarterly, index (2015=100) SA — compute YoY.
-            {"id": "NAEXKP01GBQ189S", "transform": "yoy4"},
+            # OECD QNA: UK real GDP YoY growth (quarterly, SA).
+            {
+                "source": "oecd",
+                "id": "OECD QNA GBR.B1_GE.GYSA.Q",
+                "dataset": "QNA",
+                "key": "GBR.B1_GE.GYSA.Q",
+                "transform": "none",
+                "max_age_days": 240,
+            },
+            # FRED/OECD (MEI): quarterly YoY growth, SA.
+            {"id": "GBRGDPRQPSMEI", "transform": "none", "max_age_days": 240},
+            # Fallbacks: quarterly index/level series where YoY is computed locally.
+            {"id": "NAEXKP01GBQ661S", "transform": "yoy4", "max_age_days": 240},
+            {"id": "NAEXKP01GBQ652S", "transform": "yoy4", "max_age_days": 240},
         ],
     },
     "EU": {
@@ -333,6 +345,11 @@ METRICS = ["Inflation", "Unemployment", "GDP"]
 
 _FETCH_YEARS = 6
 _DISPLAY_YEARS = 5
+_DEFAULT_MAX_AGE_DAYS = {
+    "inflation": 150,
+    "unemployment": 150,
+    "gdp": 240,
+}
 
 
 # ── Data fetching ────────────────────────────────────────────────────────────
@@ -1315,6 +1332,18 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                         f"{series_id}: no data in last {_DISPLAY_YEARS} years"
                     )
                     continue
+
+                max_age_days = candidate.get("max_age_days")
+                if max_age_days is None:
+                    max_age_days = _DEFAULT_MAX_AGE_DAYS.get(metric_key)
+                if max_age_days:
+                    latest_ts = pd.Timestamp(series.index[-1]).to_pydatetime()
+                    age_days = (now.date() - latest_ts.date()).days
+                    if age_days > int(max_age_days):
+                        country_errors.append(
+                            f"{series_id}: stale ({age_days}d old > {int(max_age_days)}d)"
+                        )
+                        continue
 
                 countries[name] = series
                 series_used[name] = source
