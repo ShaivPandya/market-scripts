@@ -23,7 +23,7 @@ const features = [
   {
     title: "Industry Monitor",
     description:
-      "Drill into sector-level fundamentals with earnings call transcripts, company-level financial snapshots, and AI-generated summaries across housing, energy, trucking, and more.",
+      "Drill into sector-level fundamentals with earnings call transcripts, company-level financial snapshots, and AI-generated summaries across housing, trucking, retail, and more.",
     image: industryImg,
   },
   {
