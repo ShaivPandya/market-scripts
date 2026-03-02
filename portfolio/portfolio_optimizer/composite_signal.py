@@ -3,10 +3,10 @@
 Multi-Factor Composite Signal Generator for Portfolio Optimization
 
 Generates standardized, clipped composite signals combining:
-- Quality (33%): Profitability, growth, safety metrics
-- Price Momentum (33%): Relative price momentum vs benchmark
+- Price Momentum (40%): Relative price momentum vs benchmark
+- Quality (30%): Profitability, growth, safety metrics
 - Revenue Momentum (20%): Revenue growth and acceleration
-- EPS Momentum (14%): Earnings growth and acceleration
+- EPS Momentum (10%): Earnings growth and acceleration
 
 Signals are z-scored across the portfolio and can be used by portfolio_optimizer.py
 to inform raw target weights.
@@ -64,10 +64,10 @@ DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)
 DEFAULT_WEIGHTS = {
-    'quality': 0.33,
-    'price_momentum': 0.33,
+    'quality': 0.30,
+    'price_momentum': 0.40,
     'revenue_momentum': 0.20,
-    'eps_momentum': 0.14,
+    'eps_momentum': 0.10,
 }
 DEFAULT_WEIGHTS_SHORT = {
     'quality': 0.30,
@@ -418,7 +418,7 @@ def generate_composite_signals(
         tickers: List of ticker symbols
         asset_map: Dict mapping ticker -> asset type (equity, commodity)
         benchmark_override: If specified, use this benchmark for all tickers
-        weights: Dict of signal weights for longs (default: quality=0.33, price=0.33, revenue=0.20, eps=0.14)
+        weights: Dict of signal weights for longs (default: quality=0.30, price=0.40, revenue=0.20, eps=0.10)
         weights_short: Dict of signal weights for shorts (default: None, uses same as longs)
         direction_map: Dict mapping ticker -> direction ("long" or "short")
         years: Years of price history to fetch

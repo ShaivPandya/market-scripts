@@ -174,6 +174,15 @@ BASE_CCY = "USD"
 MARKET_TICKER_LONG = "SPY"            # SPY used for beta regression on long positions
 MARKET_TICKER_SHORT = "IWM"           # Russell 2000 ETF for beta regression on short positions
 
+# Beta and hedge configuration
+BETA_METHOD = "ewma_cov_var"
+BETA_EWMA_HALFLIFE_DAYS = 63
+BETA_MIN_OBS = 60
+BETA_FALLBACK = 1.0
+BETA_SHRINK_TO_ONE = 0.20
+HEDGE_EQUITY_ONLY = True
+HEDGE_SOLVE_RIDGE = 1e-6
+
 # Constraints
 GROSS_MAX = 4.0
 EQ_NET_MIN, EQ_NET_MAX = -0.50, 1.00
@@ -506,36 +515,187 @@ def fetch_yfinance_betas(tickers: list) -> pd.Series:
 
 def compute_betas(rets: pd.DataFrame, market_col: str) -> pd.Series:
     """
-    Regression slope beta_i = Cov(r_i, r_m) / Var(r_m), vectorized.
-    Columns with fewer than 20 overlapping observations get beta = 0.
+    EWMA beta_i = EWMA_Cov(r_i, r_m) / EWMA_Var(r_m), with pairwise alignment.
+    Columns with fewer than BETA_MIN_OBS overlapping observations get fallback beta.
+    Final beta is shrunk toward 1.0 for stability.
     """
+    if market_col not in rets.columns:
+        raise ValueError(f"Market column '{market_col}' missing from returns.")
+
+    decay = np.exp(np.log(0.5) / float(BETA_EWMA_HALFLIFE_DAYS))
     rm = rets[market_col]
-    valid_market = rm.notna()
-    var_m = rm.var(ddof=1)
-    if var_m <= 0:
-        raise ValueError("Market return variance is non-positive; check market data.")
-
-    # Mask: both asset and market must be non-NaN on the same day
-    valid = rets.notna() & valid_market.values[:, np.newaxis]
-    obs_counts = valid.sum(axis=0)
-
-    # Compute covariances using pairwise-valid observations
-    # Demean using only pairwise-valid rows (equivalent to per-column alignment)
     rm_vals = rm.values
     rets_vals = rets.values
-    cov_vec = np.full(rets.shape[1], np.nan)
-    for i in range(rets.shape[1]):
-        mask = valid.iloc[:, i].values
-        if mask.sum() < 20:
-            cov_vec[i] = 0.0
-            continue
-        ri = rets_vals[mask, i]
-        rm_aligned = rm_vals[mask]
-        cov_vec[i] = np.cov(ri, rm_aligned, ddof=1)[0, 1]
 
-    betas = cov_vec / var_m
-    betas[obs_counts.values < 20] = 0.0
+    betas = np.full(rets.shape[1], float(BETA_FALLBACK), dtype=float)
+
+    for i in range(rets.shape[1]):
+        ri_vals = rets_vals[:, i]
+        mask = np.isfinite(ri_vals) & np.isfinite(rm_vals)
+        n_obs = int(mask.sum())
+        if n_obs < BETA_MIN_OBS:
+            continue
+
+        ri = ri_vals[mask]
+        rm_aligned = rm_vals[mask]
+
+        # Newest observation gets highest weight.
+        exponents = np.arange(n_obs - 1, -1, -1, dtype=float)
+        w = np.power(decay, exponents)
+        w_sum = float(w.sum())
+        if w_sum <= 0:
+            continue
+        w = w / w_sum
+
+        mu_i = float(np.sum(w * ri))
+        mu_m = float(np.sum(w * rm_aligned))
+        cov_im = float(np.sum(w * (ri - mu_i) * (rm_aligned - mu_m)))
+        var_m = float(np.sum(w * (rm_aligned - mu_m) ** 2))
+        if var_m <= 0:
+            continue
+
+        beta_raw = cov_im / var_m
+        betas[i] = (1.0 - BETA_SHRINK_TO_ONE) * beta_raw + BETA_SHRINK_TO_ONE * 1.0
+
     return pd.Series(betas, index=rets.columns)
+
+
+def compute_beta_frame(rets: pd.DataFrame, tickers: list) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Compute per-ticker EWMA betas to both SPY and IWM.
+    Returns:
+      - beta frame indexed by tickers with columns beta_spy, beta_iwm
+      - full beta series vs SPY (includes benchmarks)
+      - full beta series vs IWM (includes benchmarks)
+    """
+    betas_all_spy = compute_betas(rets, MARKET_TICKER_LONG)
+    betas_all_iwm = compute_betas(rets, MARKET_TICKER_SHORT)
+    beta_frame = pd.DataFrame(
+        {
+            "beta_spy": betas_all_spy.reindex(tickers).fillna(BETA_FALLBACK),
+            "beta_iwm": betas_all_iwm.reindex(tickers).fillna(BETA_FALLBACK),
+        },
+        index=tickers,
+    )
+    return beta_frame, betas_all_spy, betas_all_iwm
+
+
+def compute_equity_net_betas(
+    w: pd.Series,
+    betas_spy: pd.Series,
+    betas_iwm: pd.Series,
+    long_mask: np.ndarray,
+    short_mask: np.ndarray,
+    eq_mask: np.ndarray,
+) -> Dict[str, float]:
+    """
+    Compute pre-hedge net beta exposures to SPY and IWM.
+    """
+    exposure_mask = eq_mask if HEDGE_EQUITY_ONLY else np.ones_like(eq_mask, dtype=bool)
+    long_exposure_mask = long_mask & exposure_mask
+    short_exposure_mask = short_mask & exposure_mask
+
+    beta_long_spy = float(betas_spy.values[long_exposure_mask] @ w.values[long_exposure_mask]) if long_exposure_mask.any() else 0.0
+    beta_short_spy = float(betas_spy.values[short_exposure_mask] @ w.values[short_exposure_mask]) if short_exposure_mask.any() else 0.0
+    beta_long_iwm = float(betas_iwm.values[long_exposure_mask] @ w.values[long_exposure_mask]) if long_exposure_mask.any() else 0.0
+    beta_short_iwm = float(betas_iwm.values[short_exposure_mask] @ w.values[short_exposure_mask]) if short_exposure_mask.any() else 0.0
+    net_beta_spy = beta_long_spy + beta_short_spy
+    net_beta_iwm = beta_long_iwm + beta_short_iwm
+
+    return {
+        "beta_long_spy": beta_long_spy,
+        "beta_short_spy": beta_short_spy,
+        "beta_long_iwm": beta_long_iwm,
+        "beta_short_iwm": beta_short_iwm,
+        "net_beta_spy": net_beta_spy,
+        "net_beta_iwm": net_beta_iwm,
+    }
+
+
+def solve_joint_hedge_weights(
+    net_beta_spy: float,
+    net_beta_iwm: float,
+    betas_all_spy: pd.Series,
+    betas_all_iwm: pd.Series,
+) -> Tuple[float, float, float, float]:
+    """
+    Solve SPY/IWM hedge weights jointly so post-hedge beta to both benchmarks is near zero.
+    Uses ridge-stabilized least squares for numerical robustness.
+    Returns (hedge_spy_weight, hedge_iwm_weight, post_hedge_beta_spy, post_hedge_beta_iwm).
+    """
+    b_spy_spy = float(betas_all_spy.get(MARKET_TICKER_LONG, BETA_FALLBACK))
+    b_iwm_spy = float(betas_all_spy.get(MARKET_TICKER_SHORT, BETA_FALLBACK))
+    b_spy_iwm = float(betas_all_iwm.get(MARKET_TICKER_LONG, BETA_FALLBACK))
+    b_iwm_iwm = float(betas_all_iwm.get(MARKET_TICKER_SHORT, BETA_FALLBACK))
+
+    B = np.array(
+        [
+            [b_spy_spy, b_iwm_spy],
+            [b_spy_iwm, b_iwm_iwm],
+        ],
+        dtype=float,
+    )
+    target = np.array([-net_beta_spy, -net_beta_iwm], dtype=float)
+    ridge = HEDGE_SOLVE_RIDGE * np.eye(2)
+    hedge = np.linalg.solve(B.T @ B + ridge, B.T @ target)
+    post = np.array([net_beta_spy, net_beta_iwm], dtype=float) + B @ hedge
+
+    return float(hedge[0]), float(hedge[1]), float(post[0]), float(post[1])
+
+
+def apply_hedges_with_gross_cap(
+    w: pd.Series,
+    betas_spy: pd.Series,
+    betas_iwm: pd.Series,
+    betas_all_spy: pd.Series,
+    betas_all_iwm: pd.Series,
+    long_mask: np.ndarray,
+    short_mask: np.ndarray,
+    eq_mask: np.ndarray,
+) -> Tuple[pd.Series, Dict[str, float]]:
+    """
+    Solve beta hedges and enforce total gross cap including hedge legs.
+
+    The optimizer constrains gross for portfolio legs only. This helper applies
+    SPY/IWM hedges and, if needed, scales portfolio+hedges to keep total gross
+    (portfolio gross + hedge gross) within GROSS_MAX.
+    """
+
+    def _solve_for_weights(weights: pd.Series) -> Dict[str, float]:
+        beta_summary = compute_equity_net_betas(weights, betas_spy, betas_iwm, long_mask, short_mask, eq_mask)
+        hedge_spy_weight, hedge_iwm_weight, post_hedge_beta_spy, post_hedge_beta_iwm = solve_joint_hedge_weights(
+            beta_summary["net_beta_spy"],
+            beta_summary["net_beta_iwm"],
+            betas_all_spy,
+            betas_all_iwm,
+        )
+
+        pre_hedge_gross = float(np.abs(weights).sum())
+        hedge_gross = abs(hedge_spy_weight) + abs(hedge_iwm_weight)
+        gross_with_hedges = pre_hedge_gross + hedge_gross
+
+        out = dict(beta_summary)
+        out.update({
+            "hedge_spy_weight": hedge_spy_weight,
+            "hedge_iwm_weight": hedge_iwm_weight,
+            "post_hedge_beta_spy": post_hedge_beta_spy,
+            "post_hedge_beta_iwm": post_hedge_beta_iwm,
+            "pre_hedge_gross": pre_hedge_gross,
+            "hedge_gross": hedge_gross,
+            "gross_with_hedges": gross_with_hedges,
+        })
+        return out
+
+    summary = _solve_for_weights(w)
+    gross_scale_factor = 1.0
+
+    if summary["gross_with_hedges"] > GROSS_MAX + 1e-10:
+        gross_scale_factor = GROSS_MAX / summary["gross_with_hedges"]
+        w = w * gross_scale_factor
+        summary = _solve_for_weights(w)
+
+    summary["gross_scale_factor"] = gross_scale_factor
+    return w, summary
 
 
 def compute_defense_volatility(prices: pd.DataFrame, tickers: list) -> pd.Series:
@@ -933,9 +1093,10 @@ def optimize_portfolio(
         Sigma = ensure_psd(Sigma, eps=1e-10)
         L = np.linalg.cholesky(Sigma)
 
-        # Compute betas from realized return history to avoid slow per-ticker metadata calls.
-        betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers).fillna(0.0)
-        betas_iwm = compute_betas(rets, MARKET_TICKER_SHORT).reindex(tickers).fillna(0.0)
+        # Compute EWMA betas from realized return history.
+        beta_frame, betas_all_spy, betas_all_iwm = compute_beta_frame(rets, tickers)
+        betas_spy = beta_frame["beta_spy"]
+        betas_iwm = beta_frame["beta_iwm"]
 
         # Generate composite signals
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
@@ -1072,20 +1233,33 @@ def optimize_portfolio(
         vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
         vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
 
-        # Compute full portfolio net beta to SPY and IWM (longs + shorts both contribute to each)
-        beta_long_spy  = float(betas_spy.values[long_mask]  @ w_final.values[long_mask])  if long_mask.any()  else 0.0
-        beta_short_spy = float(betas_spy.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
-        beta_long_iwm  = float(betas_iwm.values[long_mask]  @ w_final.values[long_mask])  if long_mask.any()  else 0.0
-        beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
-        net_beta_spy = beta_long_spy + beta_short_spy
-        net_beta_iwm = beta_long_iwm + beta_short_iwm
-        hedge_spy_weight = -net_beta_spy
-        hedge_iwm_weight = -net_beta_iwm
+        # Solve SPY/IWM hedges and enforce total gross cap including hedges.
+        w_final, hedge_summary = apply_hedges_with_gross_cap(
+            w_final,
+            betas_spy,
+            betas_iwm,
+            betas_all_spy,
+            betas_all_iwm,
+            long_mask,
+            short_mask,
+            eq_mask,
+        )
+        beta_long_spy = hedge_summary["beta_long_spy"]
+        beta_short_spy = hedge_summary["beta_short_spy"]
+        beta_long_iwm = hedge_summary["beta_long_iwm"]
+        beta_short_iwm = hedge_summary["beta_short_iwm"]
+        net_beta_spy = hedge_summary["net_beta_spy"]
+        net_beta_iwm = hedge_summary["net_beta_iwm"]
+        hedge_spy_weight = hedge_summary["hedge_spy_weight"]
+        hedge_iwm_weight = hedge_summary["hedge_iwm_weight"]
+        post_hedge_beta_spy = hedge_summary["post_hedge_beta_spy"]
+        post_hedge_beta_iwm = hedge_summary["post_hedge_beta_iwm"]
+        vol_final = port_vol(w_final.values)
 
-        # Build exposures dict (add hedge gross and adjust total to include hedges)
+        # Build exposures dict with hedge-adjusted gross.
         exp = exposures_by_class(w_final, meta)
-        exp["hedge_gross"] = abs(hedge_spy_weight) + abs(hedge_iwm_weight)
-        exp["total_gross"] = exp["total_gross"] + exp["hedge_gross"]
+        exp["hedge_gross"] = hedge_summary["hedge_gross"]
+        exp["total_gross"] = hedge_summary["gross_with_hedges"]
 
         # Build constraints utilization dict
         constraints_util = {
@@ -1203,7 +1377,7 @@ def optimize_portfolio(
             "vol_daily": vol_final,
             "vol_spy": vol_spy,
             "vol_iwm": vol_iwm,
-            "gross_leverage": exp["total_gross"] + abs(hedge_spy_weight) + abs(hedge_iwm_weight),
+            "gross_leverage": exp["total_gross"],
             "gross_max": GROSS_MAX,
 
             # Beta hedging
@@ -1213,8 +1387,14 @@ def optimize_portfolio(
             "beta_short_iwm": beta_short_iwm,
             "net_beta_spy":   net_beta_spy,
             "net_beta_iwm":   net_beta_iwm,
+            "post_hedge_beta_spy": post_hedge_beta_spy,
+            "post_hedge_beta_iwm": post_hedge_beta_iwm,
             "hedge_spy_weight": hedge_spy_weight,
             "hedge_iwm_weight": hedge_iwm_weight,
+            "beta_method": BETA_METHOD,
+            "beta_halflife_days": BETA_EWMA_HALFLIFE_DAYS,
+            "beta_min_obs": BETA_MIN_OBS,
+            "beta_shrink_to_one": BETA_SHRINK_TO_ONE,
 
             # Exposures
             "exposures": exp,
@@ -1330,15 +1510,11 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Cholesky for SOC vol constraint
     L = np.linalg.cholesky(Sigma)
 
-    # Compute betas for ALL instruments vs both benchmarks
-    # SPY betas for long positions, IWM betas for short positions
-    console.print("[cyan]Computing betas vs SPY (longs) and IWM (shorts)...[/cyan]")
-
-    # Compute betas from realized return history to avoid slow per-ticker metadata calls.
-    betas_spy = compute_betas(rets, MARKET_TICKER_LONG).reindex(tickers).fillna(0.0)
-
-    # IWM betas: compute manually (yfinance doesn't provide beta vs Russell 2000)
-    betas_iwm = compute_betas(rets, MARKET_TICKER_SHORT).reindex(tickers).fillna(0.0)
+    # Compute EWMA betas for all instruments vs both benchmarks.
+    console.print("[cyan]Computing EWMA betas vs SPY and IWM...[/cyan]")
+    beta_frame, betas_all_spy, betas_all_iwm = compute_beta_frame(rets, tickers)
+    betas_spy = beta_frame["beta_spy"]
+    betas_iwm = beta_frame["beta_iwm"]
 
     # Generate composite signals for active tickers (those with direction)
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
@@ -1462,15 +1638,28 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     vol_spy = benchmark_vol.get(MARKET_TICKER_LONG, np.nan)
     vol_iwm = benchmark_vol.get(MARKET_TICKER_SHORT, np.nan)
 
-    # Compute full portfolio net beta to SPY and IWM (longs + shorts both contribute to each)
-    beta_long_spy  = float(betas_spy.values[long_mask]  @ w_final.values[long_mask])  if long_mask.any()  else 0.0
-    beta_short_spy = float(betas_spy.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
-    beta_long_iwm  = float(betas_iwm.values[long_mask]  @ w_final.values[long_mask])  if long_mask.any()  else 0.0
-    beta_short_iwm = float(betas_iwm.values[short_mask] @ w_final.values[short_mask]) if short_mask.any() else 0.0
-    net_beta_spy = beta_long_spy + beta_short_spy
-    net_beta_iwm = beta_long_iwm + beta_short_iwm
-    hedge_spy_weight = -net_beta_spy
-    hedge_iwm_weight = -net_beta_iwm
+    # Solve SPY/IWM hedges and enforce total gross cap including hedges.
+    w_final, hedge_summary = apply_hedges_with_gross_cap(
+        w_final,
+        betas_spy,
+        betas_iwm,
+        betas_all_spy,
+        betas_all_iwm,
+        long_mask,
+        short_mask,
+        eq_mask,
+    )
+    beta_long_spy = hedge_summary["beta_long_spy"]
+    beta_short_spy = hedge_summary["beta_short_spy"]
+    beta_long_iwm = hedge_summary["beta_long_iwm"]
+    beta_short_iwm = hedge_summary["beta_short_iwm"]
+    net_beta_spy = hedge_summary["net_beta_spy"]
+    net_beta_iwm = hedge_summary["net_beta_iwm"]
+    hedge_spy_weight = hedge_summary["hedge_spy_weight"]
+    hedge_iwm_weight = hedge_summary["hedge_iwm_weight"]
+    post_hedge_beta_spy = hedge_summary["post_hedge_beta_spy"]
+    post_hedge_beta_iwm = hedge_summary["post_hedge_beta_iwm"]
+    vol_final = port_vol(w_final.values)
 
     if debug_weights:
         console.print()
@@ -1513,12 +1702,18 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         f"[bold]Vol (daily):[/bold]   {vol_final:.6f}\n"
         f"[bold]SPY vol:[/bold]       {vol_spy:.6f}  [dim](for reference)[/dim]\n"
         f"[bold]IWM vol:[/bold]       {vol_iwm:.6f}  [dim](for reference)[/dim]\n"
-        f"[bold]Net β to SPY:[/bold]  {net_beta_spy:+.4f}  [dim](long {beta_long_spy:+.4f}, short {beta_short_spy:+.4f}) → Hedge: {hedge_spy_weight:+.4f} {MARKET_TICKER_LONG}[/dim]\n"
-        f"[bold]Net β to IWM:[/bold]  {net_beta_iwm:+.4f}  [dim](long {beta_long_iwm:+.4f}, short {beta_short_iwm:+.4f}) → Hedge: {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}[/dim]"
+        f"[bold]Pre-hedge β SPY:[/bold]  {net_beta_spy:+.4f}  [dim](long {beta_long_spy:+.4f}, short {beta_short_spy:+.4f})[/dim]\n"
+        f"[bold]Pre-hedge β IWM:[/bold]  {net_beta_iwm:+.4f}  [dim](long {beta_long_iwm:+.4f}, short {beta_short_iwm:+.4f})[/dim]\n"
+        f"[bold]Hedge SPY:[/bold]      {hedge_spy_weight:+.4f} {MARKET_TICKER_LONG}\n"
+        f"[bold]Hedge IWM:[/bold]      {hedge_iwm_weight:+.4f} {MARKET_TICKER_SHORT}\n"
+        f"[bold]Post-hedge β SPY:[/bold] {post_hedge_beta_spy:+.4f}\n"
+        f"[bold]Post-hedge β IWM:[/bold] {post_hedge_beta_iwm:+.4f}"
     )
     console.print(Panel(solution_text, title="[bold blue]Solution[/bold blue]", border_style="blue"))
 
     exp = exposures_by_class(w_final, meta)
+    exp["hedge_gross"] = hedge_summary["hedge_gross"]
+    exp["total_gross"] = hedge_summary["gross_with_hedges"]
     exp_table = Table(title="[bold]Exposures[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan")
     exp_table.add_column("Type", style="white")
     exp_table.add_column("Value", justify="right", style="white")
