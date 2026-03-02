@@ -13,6 +13,7 @@ import { ChartPage } from "@/pages/ChartPage"
 import { QualityScreen } from "@/pages/QualityScreen"
 import { ShortScreen } from "@/pages/ShortScreen"
 import { FundamentalMomentum } from "@/pages/FundamentalMomentum"
+import { Financials } from "@/pages/Financials"
 import { IndexDashboard } from "@/pages/IndexDashboard"
 import { FXDashboard } from "@/pages/FXDashboard"
 import { CommodityDashboard } from "@/pages/CommodityDashboard"
@@ -67,6 +68,7 @@ function AppRoutes() {
           <Route path="/quality" element={<QualityScreen />} />
           <Route path="/short-screen" element={<ShortScreen />} />
           <Route path="/fundamental-momentum" element={<FundamentalMomentum />} />
+          <Route path="/financials" element={<Financials />} />
           <Route path="/index-dashboard" element={<IndexDashboard />} />
           <Route path="/fx-dashboard" element={<FXDashboard />} />
           <Route path="/commodities" element={<CommodityDashboard />} />

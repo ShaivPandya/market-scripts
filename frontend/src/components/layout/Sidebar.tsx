@@ -20,6 +20,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "🏅 Quality Screen", path: "/quality" },
       { label: "📉 Short Screen", path: "/short-screen" },
       { label: "📈 Fundamental Momentum", path: "/fundamental-momentum" },
+      { label: "🧾 Financials", path: "/financials" },
     ],
   },
   {

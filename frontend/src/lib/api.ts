@@ -234,6 +234,9 @@ export const runFundamentalMomentum = (body: {
   input_mode: string
 }) => client.post("/fundamental-momentum", body).then(r => r.data)
 
+export const runFinancials = (body: { ticker: string }) =>
+  client.post("/financials", body).then(r => r.data)
+
 export const runFxModel = (body: {
   pair: string
   bootstrap: number
