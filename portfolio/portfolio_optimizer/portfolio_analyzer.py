@@ -256,7 +256,7 @@ def fetch_currencies(tickers: list) -> Dict[str, str]:
         futures = {pool.submit(_fetch_one, t): t for t in tickers}
         for future in as_completed(futures):
             ticker, ccy = future.result()
-            currencies[ticker] = str(ccy).upper() if ccy else BASE_CCY
+            currencies[ticker] = str(ccy) if ccy else BASE_CCY
     return currencies
 
 
@@ -268,7 +268,16 @@ def get_required_fx_tickers(ticker_currencies: Dict[str, str]) -> list:
     currencies_needed = set()
     for ccy in ticker_currencies.values():
         if ccy and ccy != BASE_CCY:
-            currencies_needed.add(ccy)
+            if ccy == "GBp":
+                currencies_needed.add("GBP")
+            elif ccy == "IEp":
+                currencies_needed.add("IEP")
+            elif ccy == "ZAc":
+                currencies_needed.add("ZAR")
+            elif ccy == "ILA":
+                currencies_needed.add("ILS")
+            else:
+                currencies_needed.add(ccy)
 
     fx_tickers = []
     for ccy in currencies_needed:
@@ -341,17 +350,32 @@ def to_usd_price(local_price: pd.Series, ccy: str, prices_all: pd.DataFrame) -> 
     if ccy == BASE_CCY:
         return local_price
 
-    fx, mode = fx_series_for_ccy(prices_all, ccy)
+    lookup_ccy = ccy
+    multiplier = 1.0
+    if ccy == "GBp":
+        lookup_ccy = "GBP"
+        multiplier = 0.01
+    elif ccy == "IEp":
+        lookup_ccy = "IEP"
+        multiplier = 0.01
+    elif ccy == "ZAc":
+        lookup_ccy = "ZAR"
+        multiplier = 0.01
+    elif ccy == "ILA":
+        lookup_ccy = "ILS"
+        multiplier = 0.01
+
+    fx, mode = fx_series_for_ccy(prices_all, lookup_ccy)
     if fx is None:
         raise ValueError(
-            f"Missing FX rate to convert {ccy} to USD. "
-            f"Add {ccy} to CURRENCY_OF_TICKER for the relevant ticker."
+            f"Missing FX rate to convert {lookup_ccy} ({ccy}) to USD. "
+            f"Check if {lookup_ccy} needs to be explicitly maintained."
         )
 
     if mode == "CCYUSD":
-        return local_price * fx
+        return local_price * fx * multiplier
     if mode == "USDCCY":
-        return local_price / fx
+        return (local_price / fx) * multiplier
     raise RuntimeError("Unexpected FX mode")
 
 
