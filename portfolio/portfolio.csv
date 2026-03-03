@@ -8,7 +8,6 @@ EWY,equity,long,false
 EWZ,equity,long,false
 LSEG.L,equity,long,true
 CRWD,equity,long,true
-AAL,equity,long,true
 OKLO,equity,short,false
 JOBY,equity,short,false
 AUR,equity,short,false

@@ -38,7 +38,6 @@ try:
         LONG_MAX,
         MARKET_TICKER_LONG,
         MARKET_TICKER_SHORT,
-        MIN_ABS_WEIGHT,
         PORTFOLIO_CSV,
         SEVERE_DD_MAX,
         SHORT_MIN,
@@ -77,7 +76,6 @@ except ImportError:
         LONG_MAX,
         MARKET_TICKER_LONG,
         MARKET_TICKER_SHORT,
-        MIN_ABS_WEIGHT,
         PORTFOLIO_CSV,
         SEVERE_DD_MAX,
         SHORT_MIN,
@@ -283,7 +281,7 @@ def size_portfolio(
             constraints.append(w[long_mask] >= 0.0)
             constraints.append(w[long_mask] <= LONG_MAX)
         if short_mask.any():
-            constraints.append(w[short_mask] <= -MIN_ABS_WEIGHT)
+            constraints.append(w[short_mask] <= 0.0)
             constraints.append(w[short_mask] >= SHORT_MIN)
             severe_dd_short_mask = meta["severe_drawdown"].values & short_mask
             if severe_dd_short_mask.any():
@@ -336,13 +334,6 @@ def size_portfolio(
         else:
             k = k_linear
 
-        if MIN_ABS_WEIGHT > 0 and short_mask.any():
-            min_abs_short = float(np.min(np.abs(w_star.values[short_mask])))
-            if min_abs_short > 0:
-                k_floor = MIN_ABS_WEIGHT / min_abs_short
-                if k < k_floor:
-                    k = k_floor
-
         w_final = w_star * k
         vol_final = port_vol(w_final.values)
 
@@ -362,6 +353,28 @@ def size_portfolio(
             short_mask,
             eq_mask,
         )
+
+        # Strict post-hedge leverage cap: ensure final gross (incl. hedges) <= target leverage.
+        if target_leverage is not None:
+            effective_target = float(max(0.0, min(target_leverage, GROSS_MAX)))
+            tol = 1e-8
+            max_iters = 3
+            for _ in range(max_iters):
+                gross_with_hedges = float(hedge_summary.get("gross_with_hedges", np.abs(w_final).sum()))
+                if gross_with_hedges <= effective_target + tol or gross_with_hedges <= 0:
+                    break
+                scale = effective_target / gross_with_hedges
+                w_final = w_final * scale
+                w_final, hedge_summary = apply_hedges_with_gross_cap(
+                    w_final,
+                    betas_spy,
+                    betas_iwm,
+                    betas_all_spy,
+                    betas_all_iwm,
+                    long_mask,
+                    short_mask,
+                    eq_mask,
+                )
         vol_final = port_vol(w_final.values)
 
         # Exposures

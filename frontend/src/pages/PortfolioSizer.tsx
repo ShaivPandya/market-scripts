@@ -49,6 +49,8 @@ interface SizerResponse {
   equity_net?: number
   net_beta_spy?: number
   net_beta_iwm?: number
+  post_hedge_beta_spy?: number
+  post_hedge_beta_iwm?: number
   exposures?: SizerExposures
   constraints?: Record<string, SizerConstraint>
   weights_df?: Record<string, unknown>[]
@@ -339,7 +341,17 @@ export function PortfolioSizer() {
   const equityNet = firstNumber(exposures.equity_net, data?.equity_net)
   const netBetaSpy = firstNumber(data?.net_beta_spy)
   const netBetaIwm = firstNumber(data?.net_beta_iwm)
-  const showHeaderMetrics = [volDaily, grossLeverage, equityNet, netBetaSpy, netBetaIwm].some(v => v != null)
+  const postHedgeBetaSpy = firstNumber(data?.post_hedge_beta_spy)
+  const postHedgeBetaIwm = firstNumber(data?.post_hedge_beta_iwm)
+  const showHeaderMetrics = [
+    volDaily,
+    grossLeverage,
+    equityNet,
+    netBetaSpy,
+    netBetaIwm,
+    postHedgeBetaSpy,
+    postHedgeBetaIwm,
+  ].some(v => v != null)
 
   return (
     <div>
@@ -452,12 +464,14 @@ export function PortfolioSizer() {
       {data && !mutation.isPending && (
         <div className="space-y-6">
           {showHeaderMetrics && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
               {volDaily != null && <MetricCard title="Daily Volatility" value={`${(volDaily * 100).toFixed(2)}%`} />}
               {grossLeverage != null && <MetricCard title="Gross Leverage (incl. hedges)" value={`${grossLeverage.toFixed(2)}x`} />}
               {equityNet != null && <MetricCard title="Equity Net" value={formatRatioPercent(equityNet, true, 1)} />}
               {netBetaSpy != null && <MetricCard title="Net Beta SPY (pre-hedge)" value={netBetaSpy.toFixed(3)} />}
               {netBetaIwm != null && <MetricCard title="Net Beta IWM (pre-hedge)" value={netBetaIwm.toFixed(3)} />}
+              {postHedgeBetaSpy != null && <MetricCard title="Net Beta SPY (post-hedge)" value={postHedgeBetaSpy.toFixed(3)} />}
+              {postHedgeBetaIwm != null && <MetricCard title="Net Beta IWM (post-hedge)" value={postHedgeBetaIwm.toFixed(3)} />}
             </div>
           )}
 
