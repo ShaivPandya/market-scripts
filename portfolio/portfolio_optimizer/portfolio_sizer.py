@@ -441,6 +441,20 @@ def size_portfolio(
         # Build hedges DataFrame
         hedge_spy_weight = hedge_summary["hedge_spy_weight"]
         hedge_iwm_weight = hedge_summary["hedge_iwm_weight"]
+        hedge_direction_issues = []
+        if hedge_spy_weight > 0:
+            hedge_direction_issues.append(
+                f"{MARKET_TICKER_LONG} hedge is long ({hedge_spy_weight:+.4f}); long exposure should typically be hedged with a short {MARKET_TICKER_LONG}."
+            )
+        if hedge_iwm_weight < 0:
+            hedge_direction_issues.append(
+                f"{MARKET_TICKER_SHORT} hedge is short ({hedge_iwm_weight:+.4f}); short exposure should typically be hedged with a long {MARKET_TICKER_SHORT}."
+            )
+        hedge_direction_warning = (
+            "Potential hedge direction mismatch: " + " ".join(hedge_direction_issues)
+            if hedge_direction_issues
+            else None
+        )
         spy_price = float(usd_prices[MARKET_TICKER_LONG].iloc[-1])
         iwm_price = float(usd_prices[MARKET_TICKER_SHORT].iloc[-1])
         hedges_data: Dict[str, Any] = {
@@ -506,6 +520,8 @@ def size_portfolio(
             "post_hedge_beta_iwm": hedge_summary["post_hedge_beta_iwm"],
             "hedge_spy_weight": hedge_spy_weight,
             "hedge_iwm_weight": hedge_iwm_weight,
+            "hedge_direction_warning": hedge_direction_warning,
+            "hedge_direction_issues": hedge_direction_issues,
             "beta_method": BETA_METHOD,
             "beta_halflife_days": BETA_EWMA_HALFLIFE_DAYS,
             "beta_min_obs": BETA_MIN_OBS,
