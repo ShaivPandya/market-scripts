@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext"
 
 import portfolioImg from "@/assets/portfolio.png"
 import centralBankImg from "@/assets/central-bank-monitor.png"
-import economicGrowthImg from "@/assets/economic-growth.png"
+import economicGrowthImg from "@/assets/economic-growth.jpg"
 import industryImg from "@/assets/industry.png"
 
 const features = [
