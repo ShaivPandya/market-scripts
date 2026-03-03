@@ -190,7 +190,7 @@ Be specific about the numbers. Write for a professional investor audience."""
     try:
         from openai import OpenAI
         client = OpenAI()
-        resp = client.responses.create(model="gpt-5-mini", input=prompt)
+        resp = client.responses.create(model="gpt-5", input=prompt)
         analysis = (resp.output_text or "").strip()
         if not analysis:
             raise ValueError("OpenAI returned empty response")
