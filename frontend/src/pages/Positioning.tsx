@@ -9,6 +9,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SelectInput } from "@/components/shared/FormControls"
+import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
 import { colorPositiveNegative, colorZscore, colorForcedFlow } from "@/lib/colors"
 
 const DEFAULT_INSTRUMENTS = ["SP500", "NASDAQ", "RUSSELL", "US10Y", "EUR"]
@@ -34,8 +35,14 @@ export function Positioning() {
   const [view, setView] = useState<View>("summary")
   const [selectedInstruments, setSelectedInstruments] = useState<string[]>(DEFAULT_INSTRUMENTS)
   const [selectedAlias, setSelectedAlias] = useState<string>("SP500")
-  const [isOpen, setIsOpen] = useState(false)
-  const mutation = useMutation({ mutationFn: analyzePositioning })
+  const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:positioning:summary")
+  const mutation = useMutation({
+    mutationFn: analyzePositioning,
+    onSuccess: data => {
+      const analysis = typeof data?.analysis === "string" ? data.analysis : null
+      if (analysis) setPersistedAnalysis(analysis)
+    },
+  })
 
   // Instrument list
   const { data: instrData } = useApiQuery(["positioning-instruments"], fetchPositioningInstruments)
@@ -59,7 +66,9 @@ export function Positioning() {
   )
 
   const summaryRows: Record<string, unknown>[] = Array.isArray(summaryData) ? summaryData : []
-  const showPanel = mutation.data || mutation.isPending || mutation.isError
+  const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
+  const analysisText = liveAnalysis ?? persistedAnalysis
+  const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)
 
   return (
     <div>
@@ -136,9 +145,9 @@ export function Positioning() {
                       {String(mutation.error) || "Analysis failed. Please try again."}
                     </p>
                   )}
-                  {mutation.data && (
+                  {analysisText && (
                     <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
-                      {mutation.data.analysis}
+                      {analysisText}
                     </p>
                   )}
                 </div>

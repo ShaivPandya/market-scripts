@@ -1,7 +1,7 @@
-import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
+import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
 import { fetchEconomicGrowth, analyzeEconomicGrowth } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -14,8 +14,14 @@ export function EconomicGrowth() {
     fetchEconomicGrowth,
   )
 
-  const [isOpen, setIsOpen] = useState(false)
-  const mutation = useMutation({ mutationFn: analyzeEconomicGrowth })
+  const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:economic-growth")
+  const mutation = useMutation({
+    mutationFn: analyzeEconomicGrowth,
+    onSuccess: data => {
+      const analysis = typeof data?.analysis === "string" ? data.analysis : null
+      if (analysis) setPersistedAnalysis(analysis)
+    },
+  })
 
   if (isLoading) return <LoadingSpinner message="Fetching economic growth data..." />
   if (error || !data) return <ErrorMessage message={String(error) || "Failed to load"} />
@@ -52,7 +58,9 @@ export function EconomicGrowth() {
 
   const nameCol = (key: string): ColumnDef => ({ key, header: key, width: "160px" })
 
-  const showPanel = mutation.data || mutation.isPending || mutation.isError
+  const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
+  const analysisText = liveAnalysis ?? persistedAnalysis
+  const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)
 
   return (
     <div>
@@ -116,9 +124,9 @@ export function EconomicGrowth() {
                   {String(mutation.error) || "Analysis failed. Please try again."}
                 </p>
               )}
-              {mutation.data && (
+              {analysisText && (
                 <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
-                  {mutation.data.analysis}
+                  {analysisText}
                 </p>
               )}
             </div>

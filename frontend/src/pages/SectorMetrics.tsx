@@ -1,7 +1,7 @@
-import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
+import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
 import { fetchSectorMetrics, analyzeSectorMetrics } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -25,8 +25,14 @@ const columns: ColumnDef[] = [
 ]
 
 export function SectorMetrics() {
-  const [isOpen, setIsOpen] = useState(false)
-  const mutation = useMutation({ mutationFn: analyzeSectorMetrics })
+  const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:sector-metrics")
+  const mutation = useMutation({
+    mutationFn: analyzeSectorMetrics,
+    onSuccess: data => {
+      const analysis = typeof data?.analysis === "string" ? data.analysis : null
+      if (analysis) setPersistedAnalysis(analysis)
+    },
+  })
 
   const { data, isLoading, error } = useApiQuery(
     ["sector-metrics"],
@@ -34,7 +40,9 @@ export function SectorMetrics() {
     60 * 60 * 1000,
   )
   const rows = (data?.weights_df ?? []) as Record<string, unknown>[]
-  const showPanel = mutation.data || mutation.isPending || mutation.isError
+  const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
+  const analysisText = liveAnalysis ?? persistedAnalysis
+  const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)
 
   return (
     <div>
@@ -88,9 +96,9 @@ export function SectorMetrics() {
                   {String(mutation.error) || "Analysis failed. Please try again."}
                 </p>
               )}
-              {mutation.data && (
+              {analysisText && (
                 <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
-                  {mutation.data.analysis}
+                  {analysisText}
                 </p>
               )}
             </div>
