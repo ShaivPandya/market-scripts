@@ -58,7 +58,11 @@ export async function onRequest(context: { request: Request; env: Env }) {
     }
   }
 
-  outHeaders.set("Cache-Control", "no-store")
+  if (method === "GET" && upstream.status >= 200 && upstream.status < 300) {
+    outHeaders.set("Cache-Control", "private, max-age=60, stale-while-revalidate=300")
+  } else {
+    outHeaders.set("Cache-Control", "no-store")
+  }
 
   return new Response(upstream.body, {
     status: upstream.status,

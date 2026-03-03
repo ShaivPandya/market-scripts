@@ -47,6 +47,7 @@ load_dotenv()
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 # Import routers AFTER sys.path is configured
 from api.routers import auth as auth_router
@@ -83,6 +84,8 @@ app = FastAPI(
     description="REST API wrapping the market analysis data modules",
     version="1.0.0",
 )
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 _API_PROXY_SECRET = (os.environ.get("API_PROXY_SECRET") or "").strip() or None
 
