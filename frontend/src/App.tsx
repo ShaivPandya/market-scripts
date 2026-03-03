@@ -35,6 +35,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
+      staleTime: 5 * 60 * 1000, // 5 min — matches backend TTL cache
     },
   },
 })
