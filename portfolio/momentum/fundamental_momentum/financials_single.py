@@ -870,6 +870,262 @@ def _filing_context_for_nlp(html: str) -> str:
     return joined[:18000]
 
 
+# ---------------------------------------------------------------------------
+# Heading keywords for classifying HTML revenue-breakdown tables
+# ---------------------------------------------------------------------------
+_SEGMENT_HEADING_KW = (
+    "products and services",
+    "by category",
+    "by product",
+    "product and service",
+    "business segment",
+    "operating segment",
+    "reportable segment",
+    "line of business",
+)
+_REGION_HEADING_KW = (
+    "geographic",
+    "by region",
+    "by country",
+    "by market",
+    "by area",
+)
+
+# If the heading contains "segment" but also one of these, it's region.
+_REGION_CONTEXT_KW = (
+    "geograph",
+    "americas",
+    "europe",
+    "greater china",
+    "japan",
+    "asia",
+    "country",
+    "region",
+    "market",
+    "domestic",
+    "international",
+    "united states",
+    "foreign",
+)
+
+
+def _classify_table(heading_text: str, table_text: str) -> Optional[str]:
+    """Classify a table as 'segment', 'region', or None based on heading and content."""
+    h = heading_text.lower()
+    t = table_text.lower()
+
+    # Check region first — Apple uses "Segment Operating Performance" for
+    # geographic data, so we need region-context keywords from both heading AND table body.
+    if any(k in h for k in _REGION_HEADING_KW):
+        return "region"
+
+    if any(k in h for k in _SEGMENT_HEADING_KW):
+        # Disambiguate by checking if the table contains obvious region labels
+        if any(k in t for k in _REGION_CONTEXT_KW):
+            return "region"
+        return "segment"
+
+    if "segment" in h:
+        if any(k in h for k in _REGION_CONTEXT_KW) or any(k in t for k in _REGION_CONTEXT_KW):
+            return "region"
+        return "segment"
+
+    return None
+
+
+def _detect_unit_scale(text: str) -> float:
+    """Detect 'in millions', 'in billions', etc. from surrounding text."""
+    t = text.lower()
+    if "in billion" in t:
+        return 1_000_000_000.0
+    if "in million" in t:
+        return 1_000_000.0
+    if "in thousand" in t:
+        return 1_000.0
+    return 1.0
+
+
+def _extract_number_from_cell(cell_text: str) -> Optional[float]:
+    """Extract a numeric value from a table cell like '$209,586' or '(1,234)'."""
+    s = cell_text.strip()
+    if not s or s in ("—", "–", "-", "—", "N/A", "n/a"):
+        return None
+
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1].strip()
+
+    s = s.replace("$", "").replace(",", "").replace(" ", "").replace("\xa0", "")
+    # Remove percentage signs
+    if s.endswith("%"):
+        return None  # skip percentage columns
+
+    if s.startswith("+"):
+        s = s[1:]
+    if s.startswith("-") or s.startswith("−"):
+        neg = True
+        s = s[1:]
+
+    # Strip footnote markers like (1)
+    s = re.sub(r"\(\d+\)$", "", s).strip()
+
+    try:
+        val = float(s)
+    except (ValueError, TypeError):
+        return None
+    return -val if neg else val
+
+
+def _extract_breakdown_from_html(
+    *,
+    cik_str: str,
+    accn: str,
+    form: str,
+    filed: str,
+    submissions: Optional[dict],
+    wanted_axes: Set[str],
+) -> Optional[dict]:
+    """
+    Fetch the filing HTML and parse revenue-breakdown tables directly.
+
+    Returns a dict with by_segment/by_region lists, or None on failure.
+    """
+    from edgar_fetcher import build_filing_url
+
+    filing_url = build_filing_url(cik_str, accn, submissions=submissions)
+    if not filing_url:
+        return None
+
+    try:
+        resp = requests.get(
+            filing_url,
+            headers={"User-Agent": "market-scripts research@example.com"},
+            timeout=25,
+        )
+        if resp.status_code != 200 or not resp.text:
+            return None
+    except Exception:
+        return None
+
+    try:
+        from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+    except Exception:
+        return None
+
+    head = resp.text.lstrip()[:5000].lower()
+    parser = "lxml" if not (head.startswith("<?xml") or "<xbrl" in head or "<ix:" in head) else "lxml-xml"
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(resp.text, parser)
+
+    # ── Detect unit scale from the document ──────────────────────────────
+    body_text = soup.get_text(" ", strip=True)[:30000]
+    default_scale = _detect_unit_scale(body_text)
+
+    # ── Collect all tables with their preceding text context ─────────────
+    tables = soup.find_all("table")
+    breakdowns: Dict[str, Dict[str, float]] = {}  # kind -> { label: value }
+
+    for table in tables:
+        # Build heading context: walk backwards from the table to find
+        # descriptive text (headings, bold spans, or regular paragraphs).
+        heading_parts: List[str] = []
+        node = table
+        for _ in range(15):  # look at up to 15 preceding siblings/parents
+            node = node.find_previous(["p", "div", "span", "b", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "td"])
+            if node is None:
+                break
+            txt = " ".join(node.get_text(" ", strip=True).split())
+            if txt:
+                heading_parts.append(txt)
+                # Stop if heading already long enough or we found a table break
+                if len(" ".join(heading_parts)) > 600:
+                    break
+                # If we found a strong classification, stop early
+                combined = " ".join(heading_parts).lower()
+                if any(k in combined for k in _SEGMENT_HEADING_KW + _REGION_HEADING_KW):
+                    break
+
+        heading_context = " ".join(reversed(heading_parts))
+        
+        # Get just the first few rows of the table for context checking
+        table_text = "\n".join([r.get_text(" ", strip=True) for r in table.find_all("tr")[:10]])
+        
+        kind = _classify_table(heading_context, table_text)
+        if kind is None or kind not in wanted_axes:
+            continue
+
+        # Skip if already found this axis
+        if kind in breakdowns and breakdowns[kind]:
+            continue
+
+        # ── Detect per-table scale ───────────────────────────────────────
+        table_scale = _detect_unit_scale(heading_context)
+        if table_scale == 1.0:
+            table_scale = default_scale
+
+        # ── Extract rows from the table ──────────────────────────────────
+        rows = table.find_all("tr")
+        if not rows:
+            continue
+
+        values: Dict[str, float] = {}
+        for row in rows:
+            cells = row.find_all(["td", "th"])
+            if len(cells) < 2:
+                continue
+
+            # First cell is the label
+            label_raw = cells[0].get_text(" ", strip=True)
+            label = re.sub(r"\(\d+\)\s*$", "", label_raw).strip()
+            label = re.sub(r"^\(\d+\)\s+", "", label).strip()
+            if not label:
+                continue
+            if _is_total_like_member(label):
+                continue
+            if label.lower() in ("", "change", "%", "change %"):
+                continue
+
+            # Find the first numeric value cell (the latest year column).
+            # Skip header-like rows where all cells parse as None.
+            val = None
+            for cell in cells[1:]:
+                parsed = _extract_number_from_cell(cell.get_text(" ", strip=True))
+                if parsed is not None:
+                    val = parsed
+                    break  # take the first (leftmost) numeric = latest period
+
+            if val is not None:
+                val *= table_scale
+                prev = values.get(label)
+                if prev is None or abs(val) > abs(prev):
+                    values[label] = val
+
+        if values:
+            breakdowns[kind] = values
+
+    if not breakdowns:
+        return None
+
+    by_segment_map = breakdowns.get("segment", {})
+    by_region_map = breakdowns.get("region", {})
+
+    total_val: Optional[float] = None
+    seg_sum = sum(abs(v) for v in by_segment_map.values()) if by_segment_map else 0.0
+    reg_sum = sum(abs(v) for v in by_region_map.values()) if by_region_map else 0.0
+    total_val = max(seg_sum, reg_sum) if max(seg_sum, reg_sum) > 0 else None
+
+    return {
+        "accn": accn,
+        "filed": filed,
+        "form": form,
+        "by_segment": _pct_rows(by_segment_map, total_val) if by_segment_map else [],
+        "by_region": _pct_rows(by_region_map, total_val) if by_region_map else [],
+    }
+
+
 def _extract_breakdown_via_nlp(
     *,
     cik_str: str,
@@ -1108,6 +1364,25 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
     if not xbrl_region:
         missing_axes.add("region")
 
+    html_candidate: Optional[dict] = None
+    if missing_axes:
+        html_candidate = _extract_breakdown_from_html(
+            cik_str=cik_str,
+            accn=str(latest_filing.get("accn") or ""),
+            form=str(latest_filing.get("form") or ""),
+            filed=str(latest_filing.get("filed") or ""),
+            submissions=submissions,
+            wanted_axes=missing_axes,
+        )
+
+    html_segment = (html_candidate or {}).get("by_segment") or []
+    html_region = (html_candidate or {}).get("by_region") or []
+
+    if html_segment:
+        missing_axes.discard("segment")
+    if html_region:
+        missing_axes.discard("region")
+
     ai_fallback_attempted = False
     nlp_candidate: Optional[dict] = None
     if missing_axes and os.environ.get("OPENAI_API_KEY"):
@@ -1129,6 +1404,9 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
     if xbrl_segment:
         by_segment = xbrl_segment
         segment_meta = _axis_meta("found", "xbrl")
+    elif html_segment:
+        by_segment = html_segment
+        segment_meta = _axis_meta("found", "html")
     elif ai_segment:
         by_segment = ai_segment
         segment_meta = _axis_meta("found", "ai")
@@ -1142,6 +1420,9 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
     if xbrl_region:
         by_region = xbrl_region
         region_meta = _axis_meta("found", "xbrl")
+    elif html_region:
+        by_region = html_region
+        region_meta = _axis_meta("found", "html")
     elif ai_region:
         by_region = ai_region
         region_meta = _axis_meta("found", "ai")
@@ -1152,7 +1433,12 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
         by_region = []
         region_meta = _axis_meta("unavailable", "none")
 
-    chosen = xbrl_choice or ({**latest_filing, **(nlp_candidate or {})} if nlp_candidate else latest_filing)
+    if nlp_candidate:
+        chosen = xbrl_choice or {**latest_filing, **nlp_candidate}
+    elif html_candidate:
+        chosen = xbrl_choice or {**latest_filing, **html_candidate}
+    else:
+        chosen = xbrl_choice or latest_filing
 
     accn = str(chosen.get("accn") or "")
     source_filing = {

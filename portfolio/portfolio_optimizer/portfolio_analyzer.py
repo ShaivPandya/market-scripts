@@ -92,11 +92,6 @@ Columns:
     distressed  - Optional boolean-ish flag (true/false/1/0). For equity longs,
                   requires 52-week drawdown + stabilization before activating.
 
-For non-USD instruments, add to CURRENCY_OF_TICKER dict (line 96):
-    CURRENCY_OF_TICKER = {
-        "METSO.HE": "EUR",  # Helsinki-listed stock in EUR
-    }
-
 The script will automatically fetch required FX rates from yfinance.
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -227,10 +222,8 @@ SIGNAL_ANCHOR_MODE = "spdr_sector_top10_anchor"
 # -----------------------------
 # Currency metadata for non-USD instruments
 # -----------------------------
-# For each non-USD instrument, specify the currency of its local price series.
-CURRENCY_OF_TICKER: Dict[str, str] = {
-    "METSO.HE": "EUR",  # Helsinki-listed, priced in EUR
-}
+# Replaced hardcoded CURRENCY_OF_TICKER with dynamic fetch
+
 
 # If you have FX instruments as tradables (asset == "fx"), specify their base/quote.
 # Only needed if you include FX tickers as instruments you trade.
@@ -244,16 +237,47 @@ FX_PAIR_INFO: Dict[str, Tuple[str, str]] = {
 # -----------------------------
 # Helpers
 # -----------------------------
-def get_required_fx_tickers(tickers: list) -> list:
+def fetch_currencies(tickers: list) -> Dict[str, str]:
     """
-    Determine which FX tickers to download based on CURRENCY_OF_TICKER.
+    Fetch currency values from yfinance Ticker.fast_info in parallel.
+    Returns a dict mapping ticker to its currency (e.g., 'USD', 'EUR').
+    """
+    def _fetch_one(t: str):
+        try:
+            return t, yf.Ticker(t).fast_info.currency
+        except Exception:
+            try:
+                return t, yf.Ticker(t).info.get('currency', BASE_CCY)
+            except Exception:
+                return t, BASE_CCY
+
+    currencies = {}
+    with ThreadPoolExecutor(max_workers=min(16, len(tickers))) as pool:
+        futures = {pool.submit(_fetch_one, t): t for t in tickers}
+        for future in as_completed(futures):
+            ticker, ccy = future.result()
+            currencies[ticker] = str(ccy) if ccy else BASE_CCY
+    return currencies
+
+
+def get_required_fx_tickers(ticker_currencies: Dict[str, str]) -> list:
+    """
+    Determine which FX tickers to download based on the provided ticker_currencies dict.
     Returns yfinance FX ticker symbols (e.g., EURUSD=X).
     """
     currencies_needed = set()
-    for t in tickers:
-        ccy = CURRENCY_OF_TICKER.get(t)
+    for ccy in ticker_currencies.values():
         if ccy and ccy != BASE_CCY:
-            currencies_needed.add(ccy)
+            if ccy == "GBp":
+                currencies_needed.add("GBP")
+            elif ccy == "IEp":
+                currencies_needed.add("IEP")
+            elif ccy == "ZAc":
+                currencies_needed.add("ZAR")
+            elif ccy == "ILA":
+                currencies_needed.add("ILS")
+            else:
+                currencies_needed.add(ccy)
 
     fx_tickers = []
     for ccy in currencies_needed:
@@ -326,17 +350,32 @@ def to_usd_price(local_price: pd.Series, ccy: str, prices_all: pd.DataFrame) -> 
     if ccy == BASE_CCY:
         return local_price
 
-    fx, mode = fx_series_for_ccy(prices_all, ccy)
+    lookup_ccy = ccy
+    multiplier = 1.0
+    if ccy == "GBp":
+        lookup_ccy = "GBP"
+        multiplier = 0.01
+    elif ccy == "IEp":
+        lookup_ccy = "IEP"
+        multiplier = 0.01
+    elif ccy == "ZAc":
+        lookup_ccy = "ZAR"
+        multiplier = 0.01
+    elif ccy == "ILA":
+        lookup_ccy = "ILS"
+        multiplier = 0.01
+
+    fx, mode = fx_series_for_ccy(prices_all, lookup_ccy)
     if fx is None:
         raise ValueError(
-            f"Missing FX rate to convert {ccy} to USD. "
-            f"Add {ccy} to CURRENCY_OF_TICKER for the relevant ticker."
+            f"Missing FX rate to convert {lookup_ccy} ({ccy}) to USD. "
+            f"Check if {lookup_ccy} needs to be explicitly maintained."
         )
 
     if mode == "CCYUSD":
-        return local_price * fx
+        return local_price * fx * multiplier
     if mode == "USDCCY":
-        return local_price / fx
+        return (local_price / fx) * multiplier
     raise RuntimeError("Unexpected FX mode")
 
 
@@ -1125,10 +1164,13 @@ def analyze_portfolio() -> dict:
         if not tickers:
             return {"error": "portfolio.csv has no tickers."}
 
-        # Download prices needed for signals and distressed gating.
-        fx_tickers = get_required_fx_tickers(tickers)
+        # Determine required currencies
         market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
         all_tickers_to_fetch = list(set(tickers + market_tickers))
+        ticker_currencies = fetch_currencies(all_tickers_to_fetch)
+
+        # Download prices needed for signals and distressed gating.
+        fx_tickers = get_required_fx_tickers(ticker_currencies)
         prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
         missing_cols = [t for t in tickers if t not in prices_all.columns]
@@ -1140,9 +1182,9 @@ def analyze_portfolio() -> dict:
                 return {"error": f"Failed to download {mt} for signal calibration."}
 
         usd_prices = pd.DataFrame(index=prices_all.index)
-        for t in list(set(tickers + market_tickers)):
+        for t in all_tickers_to_fetch:
             local_px = prices_all[t]
-            ccy = CURRENCY_OF_TICKER.get(t, BASE_CCY)
+            ccy = ticker_currencies.get(t, BASE_CCY)
             usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
 
         usd_prices = usd_prices.ffill()
@@ -1265,10 +1307,13 @@ def optimize_portfolio(
 
         tickers = meta.index.tolist()
 
-        # Determine required FX tickers and download all prices
-        fx_tickers = get_required_fx_tickers(tickers)
+        # Determine required currencies
         market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
         all_tickers_to_fetch = list(set(tickers + market_tickers))
+        ticker_currencies = fetch_currencies(all_tickers_to_fetch)
+
+        # Determine required FX tickers and download all prices
+        fx_tickers = get_required_fx_tickers(ticker_currencies)
         prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
         missing_cols = [t for t in tickers if t not in prices_all.columns]
@@ -1281,10 +1326,9 @@ def optimize_portfolio(
 
         # Convert all instrument prices to USD
         usd_prices = pd.DataFrame(index=prices_all.index)
-        tickers_plus_market = list(set(tickers + market_tickers))
-        for t in tickers_plus_market:
+        for t in all_tickers_to_fetch:
             local_px = prices_all[t]
-            ccy = CURRENCY_OF_TICKER.get(t, BASE_CCY)
+            ccy = ticker_currencies.get(t, BASE_CCY)
             usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
 
         # Compute USD returns
@@ -1688,11 +1732,15 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     tickers = meta.index.tolist()
 
-    # Determine required FX tickers and download all prices from yfinance
-    fx_tickers = get_required_fx_tickers(tickers)
     # Include both market tickers for beta regression
     market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
     all_tickers_to_fetch = list(set(tickers + market_tickers))
+
+    console.print(f"[cyan]Fetching currencies for {len(all_tickers_to_fetch)} tickers...[/cyan]")
+    ticker_currencies = fetch_currencies(all_tickers_to_fetch)
+
+    # Determine required FX tickers and download all prices from yfinance
+    fx_tickers = get_required_fx_tickers(ticker_currencies)
     console.print(f"[cyan]Downloading prices for {len(all_tickers_to_fetch)} tickers + {len(fx_tickers)} FX rates...[/cyan]")
     prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
@@ -1706,10 +1754,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     # Convert all instrument prices to USD prices (include market tickers for beta calc)
     usd_prices = pd.DataFrame(index=prices_all.index)
-    tickers_plus_market = list(set(tickers + market_tickers))
-    for t in tickers_plus_market:
+    for t in all_tickers_to_fetch:
         local_px = prices_all[t]
-        ccy = CURRENCY_OF_TICKER.get(t, BASE_CCY)  # default USD if not specified
+        ccy = ticker_currencies.get(t, BASE_CCY)  # default USD if not specified
         usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
 
     # Compute USD returns
