@@ -135,6 +135,16 @@ export const analyzeEconomicGrowth = (body: {
 export const fetchLiquidity = (skip_ecb: boolean) =>
   client.get(`/liquidity?skip_ecb=${skip_ecb}`).then(r => r.data)
 
+export const analyzeLiquidity = (body: {
+  composite_score?: number | null
+  regime?: string | null
+  latest_date?: string | null
+  regional_scores?: Record<string, unknown>
+  components?: Record<string, unknown>[]
+  changes?: Record<string, Record<string, unknown>>
+  skip_ecb?: boolean
+}) => client.post("/liquidity/analyze", body, { timeout: 180_000 }).then(r => r.data)
+
 export const fetchCountryDashboard = (metric: string) =>
   client.get(`/country-dashboard?metric=${encodeURIComponent(metric)}`).then(r => r.data)
 

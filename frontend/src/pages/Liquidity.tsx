@@ -1,6 +1,9 @@
 import { useState } from "react"
+import { useMutation } from "@tanstack/react-query"
+import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchLiquidity } from "@/lib/api"
+import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
+import { fetchLiquidity, analyzeLiquidity } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -10,10 +13,21 @@ import { colorZscore, colorPolarityChange } from "@/lib/colors"
 
 export function Liquidity() {
   const [skipEcb, setSkipEcb] = useState(false)
+  const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:liquidity")
+  const mutation = useMutation({
+    mutationFn: analyzeLiquidity,
+    onSuccess: data => {
+      const analysis = typeof data?.analysis === "string" ? data.analysis : null
+      if (analysis) setPersistedAnalysis(analysis)
+    },
+  })
   const { data, isLoading, error } = useApiQuery(
     ["liquidity", skipEcb],
     () => fetchLiquidity(skipEcb),
   )
+  const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
+  const analysisText = liveAnalysis ?? persistedAnalysis
+  const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)
 
   const REGION_LABELS: Record<string, string> = {
     us: "United States",
@@ -50,10 +64,69 @@ export function Liquidity() {
       <div className="flex items-start justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Liquidity Dashboard</h1>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              if (!data) return
+              mutation.mutate({
+                composite_score: data.composite_score ?? null,
+                regime: data.regime ?? null,
+                latest_date: data.latest_date ?? null,
+                regional_scores: data.regional_scores ?? {},
+                components: (data.components ?? []) as Record<string, unknown>[],
+                changes: (data.changes ?? {}) as Record<string, Record<string, unknown>>,
+                skip_ecb: skipEcb,
+              })
+              setIsOpen(true)
+            }}
+            disabled={mutation.isPending || !data}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles size={14} />
+            AI Overview
+          </button>
           <Toggle label="Skip ECB data" checked={skipEcb} onChange={setSkipEcb} />
           <RefreshButton queryKeys={[["liquidity", skipEcb]]} />
         </div>
       </div>
+
+      {showPanel && (
+        <div className="mb-6 rounded-xl border border-blue-200 bg-white overflow-hidden">
+          <button
+            onClick={() => setIsOpen(o => !o)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-blue-500" />
+              <span className="text-sm font-semibold text-blue-700">AI Overview</span>
+            </div>
+            <ChevronDown
+              size={16}
+              className={`text-blue-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+
+          {isOpen && (
+            <div className="px-4 py-4">
+              {mutation.isPending && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  Analyzing liquidity data...
+                </div>
+              )}
+              {mutation.isError && (
+                <p className="text-sm text-red-600">
+                  {String(mutation.error) || "Analysis failed. Please try again."}
+                </p>
+              )}
+              {analysisText && (
+                <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+                  {analysisText}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {isLoading && <LoadingSpinner message="Fetching liquidity data..." />}
       {!isLoading && (error || !data) && <ErrorMessage message={String(error) || "Failed to load"} />}
