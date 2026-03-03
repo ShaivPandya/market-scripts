@@ -29,7 +29,6 @@ try:
         BETA_SHRINK_TO_ONE,
         BOND_10YR_EQUIV_MAX,
         CMDTY_GROSS_MAX,
-        CURRENCY_OF_TICKER,
         DURATION_OF_TICKER,
         EQ_NET_MAX,
         EQ_NET_MIN,
@@ -51,6 +50,7 @@ try:
         download_prices,
         ensure_psd,
         exposures_by_class,
+        fetch_currencies,
         get_required_fx_tickers,
         identify_binding_constraint,
         max_scale_to_respect_linear_caps,
@@ -67,7 +67,6 @@ except ImportError:
         BETA_SHRINK_TO_ONE,
         BOND_10YR_EQUIV_MAX,
         CMDTY_GROSS_MAX,
-        CURRENCY_OF_TICKER,
         DURATION_OF_TICKER,
         EQ_NET_MAX,
         EQ_NET_MIN,
@@ -89,6 +88,7 @@ except ImportError:
         download_prices,
         ensure_psd,
         exposures_by_class,
+        fetch_currencies,
         get_required_fx_tickers,
         identify_binding_constraint,
         max_scale_to_respect_linear_caps,
@@ -203,10 +203,14 @@ def size_portfolio(
         if len(tickers) < 2:
             raise ValueError("Need at least 2 tickers to size a portfolio.")
 
-        # Download prices
-        fx_tickers = get_required_fx_tickers(tickers)
         market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
         all_tickers_to_fetch = list(set(tickers + market_tickers))
+
+        # Determine required currencies
+        ticker_currencies = fetch_currencies(all_tickers_to_fetch)
+
+        # Download prices
+        fx_tickers = get_required_fx_tickers(ticker_currencies)
         prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
         missing_cols = [t for t in tickers if t not in prices_all.columns]
@@ -219,10 +223,9 @@ def size_portfolio(
 
         # Convert to USD
         usd_prices = pd.DataFrame(index=prices_all.index)
-        tickers_plus_market = list(set(tickers + market_tickers))
-        for t in tickers_plus_market:
+        for t in all_tickers_to_fetch:
             local_px = prices_all[t]
-            ccy = CURRENCY_OF_TICKER.get(t, BASE_CCY)
+            ccy = ticker_currencies.get(t, BASE_CCY)
             usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
 
         # Returns
