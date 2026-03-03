@@ -269,7 +269,7 @@ Text:
 """.strip()
 
     resp = client.responses.create(
-        model="gpt-5-mini",
+        model="gpt-5-mini-mini",
         input=prompt,
     )
 

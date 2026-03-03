@@ -908,7 +908,7 @@ def _extract_breakdown_via_nlp(
         from openai import OpenAI
 
         client = OpenAI()
-        out = client.responses.create(model="gpt-5", input=prompt)
+        out = client.responses.create(model="gpt-5-mini", input=prompt)
         txt = (out.output_text or "").strip()
         if not txt:
             return None
