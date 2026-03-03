@@ -97,12 +97,6 @@ for i, pages in enumerate(NAV_SECTIONS):
 # Visual separator
 st.sidebar.divider()
 
-# Page-specific sidebar controls
-if st.session_state.current_page == "💧 Liquidity":
-    st.sidebar.title("Liquidity Options")
-    skip_ecb = st.sidebar.checkbox("Skip ECB data", value=False, help="Skip ECB SDMX fetch if it's slow")
-else:
-    skip_ecb = False  # Default for non-Liquidity pages
 
 # FX Model sidebar controls
 fx_selected_pair = None
@@ -791,18 +785,16 @@ elif st.session_state.current_page == "💧 Liquidity":
     if st.button("Refresh Data", key="refresh_liquidity"):
         st.cache_data.clear()
 
-    # Note: skip_ecb is now defined in sidebar section above
-
     @st.cache_data(ttl=300)
-    def fetch_liquidity(skip_ecb: bool):
+    def fetch_liquidity():
         try:
             from liquidity import get_snapshot
-            return get_snapshot(skip_ecb=skip_ecb)
+            return get_snapshot()
         except Exception as e:
             return {"error": str(e)}
 
     with st.spinner("Fetching liquidity data from FRED..."):
-        liquidity_data = fetch_liquidity(skip_ecb)
+        liquidity_data = fetch_liquidity()
 
     if "error" in liquidity_data:
         st.error(f"Error: {liquidity_data['error']}")

@@ -31,11 +31,23 @@ function formatPct(v: unknown): string {
   return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`
 }
 
+function formatPctWhole(v: unknown): string {
+  if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
+  return `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`
+}
+
 function formatRevenue(v: unknown): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
   if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(2)}B`
   if (Math.abs(v) >= 1e6) return `$${(v / 1e6).toFixed(2)}M`
   return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+}
+
+function formatRevenueWhole(v: unknown): string {
+  if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
+  if (Math.abs(v) >= 1e9) return `$${Math.round(v / 1e9).toLocaleString()}B`
+  if (Math.abs(v) >= 1e6) return `$${Math.round(v / 1e6).toLocaleString()}M`
+  return `$${Math.round(v).toLocaleString()}`
 }
 
 function formatEps(v: unknown): string {
@@ -162,13 +174,13 @@ export function Financials() {
 
   const segmentRows = segmentRowsRaw.map(r => ({
     label: r.label ?? "N/A",
-    value_str: formatRevenue(r.value),
-    pct_str: formatPct(r.pct_of_total),
+    value_str: formatRevenueWhole(r.value),
+    pct_str: formatPctWhole(r.pct_of_total),
   }))
   const regionRows = regionRowsRaw.map(r => ({
     label: r.label ?? "N/A",
-    value_str: formatRevenue(r.value),
-    pct_str: formatPct(r.pct_of_total),
+    value_str: formatRevenueWhole(r.value),
+    pct_str: formatPctWhole(r.pct_of_total),
   }))
 
   return (
@@ -252,12 +264,10 @@ export function Financials() {
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">By Segment</h3>
-                <DataTable columns={breakdownCols} rows={segmentRows} maxHeight="420px" />
+                <DataTable columns={breakdownCols} rows={segmentRows} maxHeight="420px" label="By Segment" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">By Region</h3>
-                <DataTable columns={breakdownCols} rows={regionRows} maxHeight="420px" />
+                <DataTable columns={breakdownCols} rows={regionRows} maxHeight="420px" label="By Region" />
               </div>
             </div>
           </div>

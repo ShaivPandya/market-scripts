@@ -87,7 +87,6 @@ const BASIC_COLUMNS = new Set([
   "ticker",
   "asset",
   "direction",
-  "conviction",
   "beta_spy",
   "beta_iwm",
   "realized_vol",

@@ -33,11 +33,28 @@ export function DataTable({ columns, rows, maxHeight = "600px", label }: DataTab
         return String(display).replace(/\t/g, " ")
       }).join("\t"),
     ).join("\n")
-    navigator.clipboard.writeText(`${header}\n${body}`).then(() => {
+    const text = label ? `${label}\n${header}\n${body}` : `${header}\n${body}`
+    navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {
+      // Fallback for environments where Clipboard API is blocked.
+      const ta = document.createElement("textarea")
+      ta.value = text
+      ta.style.position = "fixed"
+      ta.style.opacity = "0"
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      try {
+        document.execCommand("copy")
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } finally {
+        document.body.removeChild(ta)
+      }
     })
-  }, [displayColumns, rows])
+  }, [displayColumns, rows, label])
 
   if (rows.length === 0) {
     return <p className="text-sm text-gray-400 py-4">No data available.</p>
@@ -66,7 +83,7 @@ export function DataTable({ columns, rows, maxHeight = "600px", label }: DataTab
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        {label ? <h2 className="text-base font-semibold">{label}</h2> : <span />}
+        {label ? <h3 className="text-sm font-semibold text-gray-700">{label}</h3> : <span />}
         {copyButton}
       </div>
     <div style={{ maxHeight, overflowY: "auto" }} className="rounded-xl border border-gray-200 overflow-x-auto">

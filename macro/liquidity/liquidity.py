@@ -689,12 +689,9 @@ def main():
         plot_charts(df_weekly, composite)
 
 
-def get_snapshot(skip_ecb: bool = False) -> dict:
+def get_snapshot() -> dict:
     """
     Fetch liquidity snapshot data for GUI consumption.
-
-    Args:
-        skip_ecb: If True, skip ECB SDMX data fetch
 
     Returns dict with:
       - composite_score: float (latest composite score)
@@ -711,9 +708,7 @@ def get_snapshot(skip_ecb: bool = False) -> dict:
     df = fetch_fred_series(fred)
     df = apply_scales(df)
 
-    df_ecb = None
-    if not skip_ecb:
-        df_ecb = fetch_ecb_series()
+    df_ecb = fetch_ecb_series()
 
     week_ending = "W-WED"
     df_weekly = build_weekly_panel(df, week_ending=week_ending)
