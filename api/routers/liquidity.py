@@ -9,14 +9,14 @@ router = APIRouter()
 
 
 @router.get("/liquidity")
-def get_liquidity(skip_ecb: bool = False):
-    key = f"liquidity:{skip_ecb}"
+def get_liquidity():
+    key = "liquidity"
     cached = get_cached(short_cache, key)
     if cached is not None:
         return cached
     try:
         from liquidity import get_snapshot
-        data = get_snapshot(skip_ecb=skip_ecb)
+        data = get_snapshot()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -38,7 +38,6 @@ class LiquidityAnalyzeRequest(BaseModel):
     regional_scores: dict = Field(default_factory=dict)
     components: list[dict] = Field(default_factory=list)
     changes: dict = Field(default_factory=dict)
-    skip_ecb: bool = False
 
 
 def _fmt(v, fmt=".2f", suffix=""):
@@ -121,7 +120,6 @@ def analyze_liquidity(req: LiquidityAnalyzeRequest):
     prompt = f"""You are an experienced macro strategist. Analyze the following global liquidity dashboard snapshot and provide a concise but insightful interpretation for a professional investor audience.
 
 As of: {req.latest_date or "N/A"}
-ECB data excluded: {"yes" if req.skip_ecb else "no"}
 Composite liquidity score: {_fmt(req.composite_score, '+.2f')}
 Current regime: {str(req.regime or "unknown").upper()}
 

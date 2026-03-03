@@ -8,10 +8,15 @@ metrics and latest-filing segment/region revenue breakdown.
 
 from __future__ import annotations
 import logging
+import os
+import warnings
 
 import re
+from collections import defaultdict
 from datetime import date
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
+
+import requests
 
 from edgar_fetcher import (
     build_filing_url,
@@ -173,15 +178,218 @@ def _annual_fact_entries(entries: List[dict]) -> List[dict]:
     return _sort_newest(_keep_latest_by(filtered, _key))
 
 
+def _duration_days(e: dict) -> Optional[int]:
+    start = _parse_iso_date(e.get("start"))
+    end = _parse_iso_date(e.get("end"))
+    if start is None or end is None or end < start:
+        return None
+    return (end - start).days + 1
+
+
+def _infer_ytd_quarters(e: dict) -> Optional[int]:
+    dur = _duration_days(e)
+    if dur is not None:
+        if dur <= 130:
+            return 1
+        if dur <= 220:
+            return 2
+        if dur <= 320:
+            return 3
+        return 4
+
+    fp = str(e.get("fp") or "")
+    if fp == "Q1":
+        return 1
+    if fp == "Q2":
+        return 2
+    if fp == "Q3":
+        return 3
+    if fp in {"Q4", "FY"}:
+        return 4
+    return None
+
+
+def _as_int(v: object) -> Optional[int]:
+    try:
+        return int(str(v))
+    except Exception:
+        return None
+
+
+def _annual_calendar(entries: List[dict]) -> List[Tuple[date, int]]:
+    """
+    Build a clean fiscal-year anchor calendar: one trusted fiscal-year-end date per FY.
+
+    SEC companyfacts can include comparative prior-year columns in later 10-K filings,
+    where deduping by period-end and "latest filed" can attach misleading FY metadata.
+    Grouping by FY first avoids mapping old period-ends into a newer fiscal year.
+    """
+    grouped: Dict[int, List[dict]] = defaultdict(list)
+    fallback: List[Tuple[date, int]] = []
+
+    for e in entries:
+        if not _is_valid_fact_row(e):
+            continue
+        if str(e.get("fp") or "") != "FY":
+            continue
+        if str(e.get("form") or "") not in ALLOWED_ANNUAL_FORMS:
+            continue
+
+        end = _parse_iso_date(e.get("end"))
+        if end is None:
+            continue
+
+        fy = _as_int(e.get("fy"))
+        if fy is None:
+            fallback.append((end, end.year))
+            continue
+        grouped[fy].append(e)
+
+    out: List[Tuple[date, int]] = []
+    for fy, rows in grouped.items():
+        # Prefer the row with the latest period-end; tie-break by filed date.
+        best = max(rows, key=lambda r: (_parse_iso_date(r.get("end")) or date.min, str(r.get("filed") or "")))
+        end = _parse_iso_date(best.get("end"))
+        if end is not None:
+            out.append((end, fy))
+
+    if out:
+        return sorted(out, key=lambda x: x[0])
+    return sorted(fallback, key=lambda x: x[0])
+
+
+def _assign_fiscal_year(end: date, annual_calendar: List[Tuple[date, int]]) -> int:
+    if not annual_calendar:
+        return end.year
+
+    for annual_end, fy in annual_calendar:
+        gap = (annual_end - end).days
+        if end <= annual_end and gap <= 370:
+            return fy
+
+    first_end, first_fy = annual_calendar[0]
+    last_end, last_fy = annual_calendar[-1]
+
+    if end > last_end:
+        step = max(1, ((end - last_end).days // 320) + 1)
+        return last_fy + step
+
+    if end < first_end:
+        step = max(1, ((first_end - end).days // 320) + 1)
+        return first_fy - step
+
+    # end is between calendar entries but no annual_end is within 370 days.
+    # Find the nearest annual end and interpolate by year distance.
+    nearest_end, nearest_fy = min(annual_calendar, key=lambda ac: abs((ac[0] - end).days))
+    offset = round((end - nearest_end).days / 365.25)
+    return nearest_fy + offset
+
+
+def _pick_best_for_target(entries: List[dict], target_quarters: int, prefer_form: str) -> Optional[dict]:
+    if not entries:
+        return None
+
+    target_days = 91 * max(1, target_quarters)
+
+    def _score(e: dict) -> Tuple[int, str, int]:
+        form = str(e.get("form") or "")
+        filed = str(e.get("filed") or "")
+        dur = _duration_days(e)
+        diff = abs((dur if dur is not None else target_days) - target_days)
+
+        form_pref = 0
+        if prefer_form == "quarterly" and form.startswith("10-Q"):
+            form_pref = 1
+        elif prefer_form == "annual" and form.startswith("10-K"):
+            form_pref = 1
+        return (form_pref, filed, -diff)
+
+    return max(entries, key=_score)
+
+
 def _quarterly_fact_entries(entries: List[dict]) -> List[dict]:
     filtered = [
         e
         for e in entries
         if _is_valid_fact_row(e)
-        and str(e.get("fp") or "") in QUARTER_FPS
+        and str(e.get("fp") or "") in (QUARTER_FPS | {"FY"})
         and str(e.get("form") or "") in ALLOWED_QUARTERLY_FORMS
     ]
-    return _sort_newest(_keep_latest_by(filtered, lambda e: str(e.get("end") or "")))
+    if not filtered:
+        return []
+
+    by_end: Dict[str, List[dict]] = defaultdict(list)
+    for e in filtered:
+        end = str(e.get("end") or "")
+        if end:
+            by_end[end].append(e)
+
+    ordered_ends: List[Tuple[date, str]] = []
+    for end_str in by_end.keys():
+        d = _parse_iso_date(end_str)
+        if d is not None:
+            ordered_ends.append((d, end_str))
+    if not ordered_ends:
+        return []
+    ordered_ends.sort(key=lambda x: x[0])
+
+    annual_calendar = _annual_calendar(entries)
+    ends_by_fy: Dict[int, List[Tuple[date, str]]] = defaultdict(list)
+    for end_date, end_str in ordered_ends:
+        fy = _assign_fiscal_year(end_date, annual_calendar)
+        ends_by_fy[fy].append((end_date, end_str))
+
+    normalized: List[dict] = []
+    for fy, ends in ends_by_fy.items():
+        fy_ends = sorted(ends, key=lambda x: x[0])
+        if len(fy_ends) > 4:
+            fy_ends = fy_ends[-4:]
+
+        ytd_prev: Optional[float] = None
+        for q_idx, (_, end_str) in enumerate(fy_ends, start=1):
+            candidates = by_end[end_str]
+            prefer_form = "annual" if q_idx == 4 else "quarterly"
+
+            direct_candidates = [e for e in candidates if _infer_ytd_quarters(e) == 1]
+            direct_entry = _pick_best_for_target(direct_candidates, 1, prefer_form="quarterly")
+
+            ytd_candidates = [
+                e
+                for e in candidates
+                if _infer_ytd_quarters(e) == q_idx or (q_idx == 4 and str(e.get("fp") or "") == "FY")
+            ]
+            ytd_entry = _pick_best_for_target(ytd_candidates, q_idx, prefer_form=prefer_form)
+
+            value: Optional[float] = None
+            source: Optional[dict] = None
+
+            if direct_entry is not None:
+                value = _as_float(direct_entry.get("val"))
+                source = direct_entry
+
+            if value is None and ytd_entry is not None:
+                ytd_val = _as_float(ytd_entry.get("val"))
+                if ytd_val is not None:
+                    value = ytd_val if q_idx == 1 or ytd_prev is None else (ytd_val - ytd_prev)
+                    source = ytd_entry
+
+            if value is None or source is None:
+                continue
+
+            ytd_val_from_entry = _as_float(ytd_entry.get("val")) if ytd_entry is not None else None
+            if ytd_val_from_entry is not None:
+                ytd_prev = ytd_val_from_entry
+            else:
+                ytd_prev = value if ytd_prev is None else (ytd_prev + value)
+
+            row = dict(source)
+            row["val"] = value
+            row["fy"] = fy
+            row["fp"] = f"Q{q_idx}"
+            row["end"] = end_str
+            normalized.append(row)
+
+    return _sort_newest(_keep_latest_by(normalized, lambda e: str(e.get("end") or "")))
 
 
 def _period_label(e: dict, frequency: str) -> str:
@@ -286,23 +494,19 @@ def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]
 
 
 def _derived_eps_entries(us_gaap: dict, frequency: str) -> List[dict]:
-    if frequency == "annual":
-        fp_filter = {"FY"}
-        forms = ALLOWED_ANNUAL_FORMS
-        period_key = lambda e: f"END:{e.get('end') or ''}"
-    else:
-        fp_filter = QUARTER_FPS
-        forms = ALLOWED_QUARTERLY_FORMS
-        period_key = lambda e: f"END:{e.get('end') or ''}"
+    period_key = lambda e: f"END:{e.get('end') or ''}"
 
     ni_raw = _entries_for(us_gaap, "NetIncomeLoss", "USD")
-    ni = [
-        e
-        for e in ni_raw
-        if _is_valid_fact_row(e)
-        and str(e.get("fp") or "") in fp_filter
-        and str(e.get("form") or "") in forms
-    ]
+    if frequency == "annual":
+        ni = [
+            e
+            for e in ni_raw
+            if _is_valid_fact_row(e)
+            and str(e.get("fp") or "") == "FY"
+            and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
+        ]
+    else:
+        ni = _quarterly_fact_entries(ni_raw)
 
     shares = []
     for concept in (
@@ -310,13 +514,16 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> List[dict]:
         "WeightedAverageNumberOfSharesOutstandingBasic",
     ):
         sh_raw = _entries_for(us_gaap, concept, "shares")
-        sh = [
-            e
-            for e in sh_raw
-            if _is_valid_fact_row(e)
-            and str(e.get("fp") or "") in fp_filter
-            and str(e.get("form") or "") in forms
-        ]
+        if frequency == "annual":
+            sh = [
+                e
+                for e in sh_raw
+                if _is_valid_fact_row(e)
+                and str(e.get("fp") or "") == "FY"
+                and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
+            ]
+        else:
+            sh = _quarterly_fact_entries(sh_raw)
         if sh:
             shares = sh
             break
@@ -390,7 +597,7 @@ def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]) ->
     return annual_rows_full[:ANNUAL_DISPLAY_LIMIT], quarterly_rows_full[:QUARTERLY_DISPLAY_LIMIT]
 
 
-def _calc_cagr(rows: List[dict], years: int = 3) -> Optional[float]:
+def _calc_cagr(rows: List[dict], years: int = 3, *, abs_fallback: bool = False) -> Optional[float]:
     values = [_as_float(r.get("value")) for r in rows]
     clean = [v for v in values if v is not None]
     if len(clean) < 2:
@@ -400,9 +607,14 @@ def _calc_cagr(rows: List[dict], years: int = 3) -> Optional[float]:
         return None
     latest = clean[0]
     prior = clean[n]
-    if latest <= 0 or prior <= 0:
+    if latest > 0 and prior > 0:
+        return (latest / prior) ** (1.0 / n) - 1.0
+
+    # EPS can cross zero (loss to profit), where strict CAGR is undefined.
+    # Fallback to CAGR on absolute magnitude so the card remains informative.
+    if not abs_fallback or latest == 0 or prior == 0:
         return None
-    return (latest / prior) ** (1.0 / n) - 1.0
+    return (abs(latest) / abs(prior)) ** (1.0 / n) - 1.0
 
 
 def _calc_avg_3q_yoy(rows: List[dict], denom_abs: bool) -> Optional[float]:
@@ -450,9 +662,9 @@ def _iter_segment_pairs(segment_obj: object) -> List[Tuple[str, str]]:
 
 def _classify_dimension(dimension: str) -> Optional[str]:
     d = dimension.lower()
-    if any(k in d for k in ("geo", "geograph", "region", "country", "market", "area")):
+    if any(k in d for k in ("geo", "geograph", "region", "country", "market", "area", "location", "territor")):
         return "region"
-    if any(k in d for k in ("product", "service", "segment", "lineofbusiness", "business")):
+    if any(k in d for k in ("product", "service", "segment", "lineofbusiness", "business", "operatingsegment", "reportablesegment")):
         return "segment"
     return None
 
@@ -471,7 +683,79 @@ def _normalize_member_label(raw_member: str) -> str:
 
 def _is_total_like_member(member: str) -> bool:
     s = member.lower()
-    return "consolidated" in s or "total" == s
+    return (
+        s in {"total", "all"}
+        or s.startswith("total ")
+        or s in {"worldwide", "global"}
+        or s.startswith("worldwide ")
+        or s.startswith("global ")
+        or "all geograph" in s
+        or "all region" in s
+        or "all countr" in s
+        or "all market" in s
+        or "entire company" in s
+        or "whole company" in s
+        or "consolidated" in s
+        or "elimination" in s
+        or "all other" in s
+        or s.startswith("all ")
+        or " total " in s
+        or s.endswith(" total")
+        or s.endswith(" totals")
+    )
+
+
+def _classified_row_members(segment_obj: object) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
+    seen: set = set()
+    for dim, member in _iter_segment_pairs(segment_obj):
+        kind = _classify_dimension(dim)
+        if kind is None:
+            continue
+        label = _normalize_member_label(member)
+        if not label or _is_total_like_member(label):
+            continue
+        key = (kind, label)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _row_has_only_total_context(row: dict) -> bool:
+    seg = row.get("segment")
+    if not seg:
+        return True
+
+    for dim, member in _iter_segment_pairs(seg):
+        kind = _classify_dimension(dim)
+        if kind is None:
+            continue
+        label = _normalize_member_label(member)
+        if label and not _is_total_like_member(label):
+            return False
+    return True
+
+
+def _pick_best_period_rows(rows: List[dict]) -> List[dict]:
+    grouped: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
+    for row in rows:
+        key = (str(row.get("fp") or ""), str(row.get("start") or ""))
+        grouped[key].append(row)
+
+    def _score(group_rows: List[dict]) -> Tuple[int, int, int, str]:
+        informative = 0
+        total_like = 0
+        for row in group_rows:
+            if _classified_row_members(row.get("segment")):
+                informative += 1
+            if _row_has_only_total_context(row):
+                total_like += 1
+        latest_filed = max(str(r.get("filed") or "") for r in group_rows)
+        return informative, total_like, len(group_rows), latest_filed
+
+    return max(grouped.values(), key=_score)
 
 
 def _pct_rows(values_by_label: Dict[str, float], total: Optional[float]) -> List[dict]:
@@ -482,6 +766,200 @@ def _pct_rows(values_by_label: Dict[str, float], total: Optional[float]) -> List
             pct = value / float(total)
         rows.append({"label": label, "value": value, "pct_of_total": pct})
     return rows
+
+
+def _parse_money_like(v: object) -> Optional[float]:
+    if isinstance(v, (int, float)):
+        return _as_float(v)
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1].strip()
+    s = s.replace("$", "").replace(",", "").replace(" ", "")
+    if s.startswith("+"):
+        s = s[1:]
+    if s.startswith("-"):
+        neg = True
+        s = s[1:]
+    try:
+        out = float(s)
+    except Exception:
+        return None
+    return -out if neg else out
+
+
+def _rows_to_value_map(rows: object) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("label") or "").strip()
+        if not label or _is_total_like_member(label):
+            continue
+        val = _parse_money_like(row.get("value"))
+        if val is None:
+            continue
+        cur = out.get(label)
+        if cur is None or abs(val) > abs(cur):
+            out[label] = val
+    return out
+
+
+def _filing_context_for_nlp(html: str) -> str:
+    try:
+        from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+    except Exception:
+        return ""
+
+    head = html.lstrip()[:5000].lower()
+    parser = "lxml"
+    if head.startswith("<?xml") or "<xbrl" in head or "<ix:" in head:
+        parser = "xml"
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(html, parser)
+    blocks: List[str] = []
+    keywords = ("revenue", "segment", "geograph", "region", "united states", "foreign")
+
+    for table in soup.find_all("table"):
+        txt = " ".join(table.get_text(" ", strip=True).split())
+        if not txt:
+            continue
+        lower = txt.lower()
+        if "revenue" not in lower:
+            continue
+        if not any(k in lower for k in keywords[1:]):
+            continue
+        blocks.append(txt[:2500])
+        if len(blocks) >= 8:
+            break
+
+    if not blocks:
+        body = " ".join(soup.get_text(" ", strip=True).split())
+        if body:
+            lower = body.lower()
+            idx = lower.find("revenue")
+            if idx >= 0:
+                start = max(0, idx - 5000)
+                end = min(len(body), idx + 15000)
+                blocks.append(body[start:end])
+            else:
+                blocks.append(body[:12000])
+
+    joined = "\n\n".join(blocks).strip()
+    return joined[:18000]
+
+
+def _extract_breakdown_via_nlp(
+    *,
+    cik_str: str,
+    accn: str,
+    form: str,
+    filed: str,
+    submissions: Optional[dict],
+) -> Optional[dict]:
+    if not os.environ.get("OPENAI_API_KEY"):
+        return None
+
+    filing_url = build_filing_url(cik_str, accn, submissions=submissions)
+    if not filing_url:
+        return None
+
+    try:
+        resp = requests.get(
+            filing_url,
+            headers={"User-Agent": "market-scripts research@example.com"},
+            timeout=25,
+        )
+        if resp.status_code != 200 or not resp.text:
+            return None
+    except Exception:
+        return None
+
+    context = _filing_context_for_nlp(resp.text)
+    if not context:
+        return None
+
+    prompt = (
+        "Extract ONLY the latest-period revenue breakdown from this SEC filing excerpt.\n"
+        "Return strict JSON with this schema:\n"
+        "{\n"
+        '  "period_end": "YYYY-MM-DD or empty",\n'
+        '  "total_revenue": number or null,\n'
+        '  "unit_scale": "ones" | "thousands" | "millions" | "billions",\n'
+        '  "by_segment": [{"label": string, "value": number}],\n'
+        '  "by_region": [{"label": string, "value": number}]\n'
+        "}\n"
+        "Rules: include only revenue rows, exclude totals/eliminations, keep latest quarter in this filing.\n"
+        "No markdown, no explanation, JSON only.\n\n"
+        f"FORM: {form}\nFILED: {filed}\nACCN: {accn}\nURL: {filing_url}\n\n"
+        f"EXCERPT:\n{context}"
+    )
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI()
+        out = client.responses.create(model="gpt-5", input=prompt)
+        txt = (out.output_text or "").strip()
+        if not txt:
+            return None
+    except Exception:
+        return None
+
+    # Be resilient to minor wrapper text around JSON.
+    try:
+        import json
+
+        start = txt.find("{")
+        end = txt.rfind("}")
+        if start < 0 or end < 0 or end <= start:
+            return None
+        payload = json.loads(txt[start : end + 1])
+    except Exception:
+        return None
+
+    by_segment = _rows_to_value_map(payload.get("by_segment"))
+    by_region = _rows_to_value_map(payload.get("by_region"))
+    if not by_segment and not by_region:
+        return None
+
+    scale_map = {
+        "ones": 1.0,
+        "thousands": 1_000.0,
+        "millions": 1_000_000.0,
+        "billions": 1_000_000_000.0,
+    }
+    scale_key = str(payload.get("unit_scale") or "ones").strip().lower()
+    scale = scale_map.get(scale_key, 1.0)
+    if scale != 1.0:
+        by_segment = {k: v * scale for k, v in by_segment.items()}
+        by_region = {k: v * scale for k, v in by_region.items()}
+
+    total_val = _parse_money_like(payload.get("total_revenue"))
+    if total_val is not None:
+        total_val *= scale
+    else:
+        seg_sum = sum(abs(v) for v in by_segment.values())
+        reg_sum = sum(abs(v) for v in by_region.values())
+        total_val = seg_sum if seg_sum >= reg_sum and seg_sum > 0 else (reg_sum if reg_sum > 0 else None)
+
+    return {
+        "accn": accn,
+        "period_end": str(payload.get("period_end") or ""),
+        "filed": filed,
+        "form": form,
+        "by_segment": _pct_rows(by_segment, total_val),
+        "by_region": _pct_rows(by_region, total_val),
+    }
 
 
 def _extract_breakdown_for_filing(us_gaap: dict, accn: str) -> dict:
@@ -505,28 +983,30 @@ def _extract_breakdown_for_filing(us_gaap: dict, accn: str) -> dict:
         if not period_rows:
             continue
 
-        total_candidates = [e for e in period_rows if not e.get("segment")]
-        total_val = _as_float(total_candidates[0].get("val")) if total_candidates else None
+        period_rows = _pick_best_period_rows(period_rows)
+
+        total_candidates = [e for e in period_rows if _row_has_only_total_context(e)]
+        total_val: Optional[float] = None
+        if total_candidates:
+            total_row = max(
+                total_candidates,
+                key=lambda e: (abs(_as_float(e.get("val")) or 0.0), str(e.get("filed") or "")),
+            )
+            total_val = _as_float(total_row.get("val"))
 
         by_segment: Dict[str, float] = {}
         by_region: Dict[str, float] = {}
 
         for row in period_rows:
-            seg = row.get("segment")
-            if not seg:
+            classified = _classified_row_members(row.get("segment"))
+            if not classified:
                 continue
-
-            seg_pairs = _iter_segment_pairs(seg)
-            if len(seg_pairs) != 1:
+            if len(classified) != 1:
+                # Cross-dimensional intersections are ambiguous for a simple
+                # one-axis breakdown; skip to avoid double counting.
                 continue
-
-            dim, member = seg_pairs[0]
-            kind = _classify_dimension(dim)
-            if kind is None:
-                continue
-
-            label = _normalize_member_label(member)
-            if not label or _is_total_like_member(label):
+            kind, label = classified[0]
+            if not kind or not label:
                 continue
 
             val = _as_float(row.get("val"))
@@ -576,18 +1056,32 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
             "by_region": [],
         }
 
-    latest_filing = filings[0]
+    annual_filings = [f for f in filings if str(f.get("form") or "") in ALLOWED_ANNUAL_FORMS]
+    search_filings = annual_filings if annual_filings else filings
+    latest_filing = search_filings[0]
     chosen: Optional[dict] = None
-    for f in filings:
+    for f in search_filings:
         candidate = _extract_breakdown_for_filing(us_gaap, f["accn"])
         if candidate.get("by_segment") or candidate.get("by_region"):
             chosen = {**f, **candidate}
             break
 
     if chosen is None:
-        chosen = latest_filing
-        by_segment: List[dict] = []
-        by_region: List[dict] = []
+        nlp_candidate = _extract_breakdown_via_nlp(
+            cik_str=cik_str,
+            accn=str(latest_filing.get("accn") or ""),
+            form=str(latest_filing.get("form") or ""),
+            filed=str(latest_filing.get("filed") or ""),
+            submissions=submissions,
+        )
+        if nlp_candidate and (nlp_candidate.get("by_segment") or nlp_candidate.get("by_region")):
+            chosen = {**latest_filing, **nlp_candidate}
+            by_segment = chosen.get("by_segment") or []
+            by_region = chosen.get("by_region") or []
+        else:
+            chosen = latest_filing
+            by_segment = []
+            by_region = []
     else:
         by_segment = chosen.get("by_segment") or []
         by_region = chosen.get("by_region") or []
@@ -631,8 +1125,8 @@ def get_data(ticker: str) -> dict:
         raise ValueError(f"No Revenue or EPS history found in EDGAR companyfacts for ticker: {tk}")
 
     metrics = {
-        "revenue_cagr_3y": _calc_cagr(annual_revenue, years=3),
-        "eps_cagr_3y": _calc_cagr(annual_eps, years=3),
+        "revenue_cagr_3y": _calc_cagr(annual_revenue, years=3, abs_fallback=False),
+        "eps_cagr_3y": _calc_cagr(annual_eps, years=3, abs_fallback=True),
         "avg_yoy_eps_growth_3q": _calc_avg_3q_yoy(quarterly_eps, denom_abs=True),
         "avg_yoy_revenue_growth_3q": _calc_avg_3q_yoy(quarterly_revenue, denom_abs=False),
     }

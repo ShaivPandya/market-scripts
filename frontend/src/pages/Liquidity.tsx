@@ -1,4 +1,3 @@
-import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
@@ -8,11 +7,9 @@ import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
-import { Toggle } from "@/components/shared/FormControls"
 import { colorZscore, colorPolarityChange } from "@/lib/colors"
 
 export function Liquidity() {
-  const [skipEcb, setSkipEcb] = useState(false)
   const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:liquidity")
   const mutation = useMutation({
     mutationFn: analyzeLiquidity,
@@ -22,8 +19,8 @@ export function Liquidity() {
     },
   })
   const { data, isLoading, error } = useApiQuery(
-    ["liquidity", skipEcb],
-    () => fetchLiquidity(skipEcb),
+    ["liquidity"],
+    () => fetchLiquidity(),
   )
   const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
   const analysisText = liveAnalysis ?? persistedAnalysis
@@ -74,7 +71,6 @@ export function Liquidity() {
                 regional_scores: data.regional_scores ?? {},
                 components: (data.components ?? []) as Record<string, unknown>[],
                 changes: (data.changes ?? {}) as Record<string, Record<string, unknown>>,
-                skip_ecb: skipEcb,
               })
               setIsOpen(true)
             }}
@@ -84,8 +80,7 @@ export function Liquidity() {
             <Sparkles size={14} />
             AI Overview
           </button>
-          <Toggle label="Skip ECB data" checked={skipEcb} onChange={setSkipEcb} />
-          <RefreshButton queryKeys={[["liquidity", skipEcb]]} />
+          <RefreshButton queryKeys={[["liquidity"]]} />
         </div>
       </div>
 

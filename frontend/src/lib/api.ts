@@ -132,8 +132,8 @@ export const analyzeEconomicGrowth = (body: {
   currency_periods: string[]
 }) => client.post("/economic-growth/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
-export const fetchLiquidity = (skip_ecb: boolean) =>
-  client.get(`/liquidity?skip_ecb=${skip_ecb}`).then(r => r.data)
+export const fetchLiquidity = () =>
+  client.get("/liquidity").then(r => r.data)
 
 export const analyzeLiquidity = (body: {
   composite_score?: number | null
@@ -142,7 +142,6 @@ export const analyzeLiquidity = (body: {
   regional_scores?: Record<string, unknown>
   components?: Record<string, unknown>[]
   changes?: Record<string, Record<string, unknown>>
-  skip_ecb?: boolean
 }) => client.post("/liquidity/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
 export const fetchCountryDashboard = (metric: string) =>
