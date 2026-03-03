@@ -140,8 +140,8 @@ export function ChartPage() {
   const [lookback, setLookback] = useState<string>("2Y")
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
-  const [ratioSymbolA, setRatioSymbolA] = useState("HD")
-  const [ratioSymbolB, setRatioSymbolB] = useState("LOW")
+  const [ratioSymbolA, setRatioSymbolA] = useState("")
+  const [ratioSymbolB, setRatioSymbolB] = useState("")
   const [ratioWindow, setRatioWindow] = useState<RatioWindow>("5Y")
   const [submittedRatio, setSubmittedRatio] = useState<RatioPayload | null>(null)
 
@@ -417,14 +417,14 @@ export function ChartPage() {
                 label="Symbol A (Numerator)"
                 value={ratioSymbolA}
                 onChange={v => setRatioSymbolA(v.toUpperCase())}
-                placeholder="HD"
+                placeholder="^GSPC"
                 className="w-40"
               />
               <TextInput
                 label="Symbol B (Denominator)"
                 value={ratioSymbolB}
                 onChange={v => setRatioSymbolB(v.toUpperCase())}
-                placeholder="LOW"
+                placeholder="RSP"
                 className="w-40"
               />
               <div>
