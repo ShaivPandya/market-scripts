@@ -122,7 +122,7 @@ export const analyzeMarketTechnicals = (body: {
   top50_breadth: Record<string, unknown>
   vix_term_structure: Record<string, unknown>
   price_volume_signals: Record<string, unknown>
-}) => client.post("/market-technicals/analyze", body).then(r => r.data)
+}) => client.post("/market-technicals/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
 export const analyzeEconomicGrowth = (body: {
   commodities: Record<string, Record<string, number | null>>
@@ -130,7 +130,7 @@ export const analyzeEconomicGrowth = (body: {
   currencies: Record<string, Record<string, number | null>>
   equity_periods: string[]
   currency_periods: string[]
-}) => client.post("/economic-growth/analyze", body).then(r => r.data)
+}) => client.post("/economic-growth/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
 export const fetchLiquidity = (skip_ecb: boolean) =>
   client.get(`/liquidity?skip_ecb=${skip_ecb}`).then(r => r.data)
@@ -150,7 +150,7 @@ export const fetchSectorMetrics = () =>
 export const analyzeSectorMetrics = (body: {
   rows: Record<string, unknown>[]
   timestamp?: string | null
-}) => client.post("/sector-metrics/analyze", body).then(r => r.data)
+}) => client.post("/sector-metrics/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
 export const fetchIndustryMonitor = (refresh = false) =>
   client.get(`/industry-monitor?refresh=${refresh}`).then(r => r.data)
@@ -168,7 +168,7 @@ export const fetchPositioningInstruments = () =>
   client.get("/positioning/instruments").then(r => r.data)
 
 export const analyzePositioning = (body: { rows: Record<string, unknown>[] }) =>
-  client.post("/positioning/analyze", body).then(r => r.data)
+  client.post("/positioning/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
 export const fetchFxModelPairs = () =>
   client.get("/fx-model/pairs").then(r => r.data)
