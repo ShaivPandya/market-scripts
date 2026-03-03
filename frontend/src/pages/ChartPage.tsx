@@ -34,10 +34,11 @@ interface RatioRow {
 }
 
 const RATIO_PRESETS: RatioPreset[] = [
+  { label: "Silver / Gold", symbolA: "SI=F", symbolB: "GC=F" },
+  { label: "S&P 500 / S&P Equal Weight", symbolA: "^GSPC", symbolB: "RSP" },
   { label: "HD / LOW", symbolA: "HD", symbolB: "LOW" },
   { label: "V / MA", symbolA: "V", symbolB: "MA" },
-  { label: "IWM / IJR", symbolA: "IWM", symbolB: "IJR" },
-  { label: "Silver / Gold", symbolA: "SI=F", symbolB: "GC=F" },
+  { label: "Russell 2000 / S&P 600", symbolA: "^RUT", symbolB: "^SP600" },
 ]
 
 const MA_COLUMNS = ["100D SMA", "150D SMA", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"]

@@ -53,7 +53,7 @@ from api.routers import auth as auth_router
 from api.routers.auth import require_auth
 from api.routers import (
     portfolio,
-    optimizer,
+    analyzer,
     hedging,
     sizer,
     momentum,
@@ -116,7 +116,7 @@ _auth_dep = [Depends(require_auth)]
 
 app.include_router(auth_router.router, prefix="/api")  # public — no auth dep
 app.include_router(portfolio.router,            prefix="/api", dependencies=_auth_dep)
-app.include_router(optimizer.router,            prefix="/api", dependencies=_auth_dep)
+app.include_router(analyzer.router,             prefix="/api", dependencies=_auth_dep)
 app.include_router(hedging.router,              prefix="/api", dependencies=_auth_dep)
 app.include_router(sizer.router,               prefix="/api", dependencies=_auth_dep)
 app.include_router(momentum.router,             prefix="/api", dependencies=_auth_dep)

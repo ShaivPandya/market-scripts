@@ -8,7 +8,7 @@ Generates standardized, clipped composite signals combining:
 - Revenue Momentum (20%): Revenue growth and acceleration
 - EPS Momentum (10%): Earnings growth and acceleration
 
-Signals are z-scored across the portfolio and can be used by portfolio_optimizer.py
+Signals are z-scored across the portfolio and can be used by portfolio_analyzer.py
 to inform raw target weights.
 
 Usage:

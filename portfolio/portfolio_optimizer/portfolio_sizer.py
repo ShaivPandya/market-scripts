@@ -4,7 +4,7 @@ Conviction-based portfolio sizer.
 
 Takes user-supplied conviction levels (1–5) per ticker and sizes positions
 using the same CVXPY constraint framework and hedging pipeline as the
-portfolio optimizer, but replaces signal generation with direct conviction
+portfolio analyzer utilities, but replaces signal generation with direct conviction
 mapping.
 """
 
@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .portfolio_optimizer import (
+    from .portfolio_analyzer import (
         BASE_CCY,
         BETA_EWMA_HALFLIFE_DAYS,
         BETA_FALLBACK,
@@ -58,7 +58,7 @@ try:
         to_usd_price,
     )
 except ImportError:
-    from portfolio_optimizer import (
+    from portfolio_analyzer import (
         BASE_CCY,
         BETA_EWMA_HALFLIFE_DAYS,
         BETA_FALLBACK,

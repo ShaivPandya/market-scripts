@@ -27,7 +27,7 @@ Optional extras (needed for some web pages / endpoints):
 # FX Model (installs statsmodels + pandaSDMX)
 pip install -r fx/model/requirements.txt
 
-# Portfolio Optimizer (convex optimization)
+# Portfolio sizing modules (convex optimization)
 pip install cvxpy
 ```
 
@@ -138,7 +138,7 @@ Each module also often has a `__main__` / CLI path for terminal usage.
 - `gui/` — Streamlit dashboard (`gui/app.py`)
 - `macro/` — macro monitors (liquidity, country dashboard, positioning, breakouts, central banks, industry transcripts)
 - `equities/` — equity screens + dashboards (index dashboard, market technicals, quality, sector metrics, short screen, universes)
-- `portfolio/` — portfolio dashboard, optimizer, momentum modules, technical analysis chart module
+- `portfolio/` — portfolio dashboard, analyzer/sizer modules, momentum modules, technical analysis chart module
 - `fx/` — FX dashboard + multi-currency FX macro model (`fx/model/`)
 - `commodities/` — commodities dashboard
 - `government_bonds/` — standalone bond yield tracker (FRED + local CSVs)
@@ -152,7 +152,7 @@ All routes below are under the `/api` prefix (see `api/main.py`).
   - `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
 - Dashboards:
   - `GET /portfolio` → `portfolio/portfolio_dashboard.py`
-  - `POST /portfolio-optimizer` → `portfolio/portfolio_optimizer/portfolio_optimizer.py`
+  - `POST /portfolio-analyzer` (alias: `POST /portfolio-optimizer`) → `portfolio/portfolio_optimizer/portfolio_analyzer.py`
   - `POST /hedging-tool`, `POST /hedging-tool/async`, `GET /hedging-tool/async/{job_id}` → `portfolio/portfolio_optimizer/hedging_tool.py`
   - `GET /momentum` → `portfolio/momentum/price_momentum/momentum.py`
   - `POST /chart` → `portfolio/technical_analysis/technical_analysis.py`

@@ -7,7 +7,7 @@ import { Layout } from "@/components/layout/Layout"
 // Pages
 import { LoginPage } from "@/pages/LoginPage"
 import { PortfolioDashboard } from "@/pages/PortfolioDashboard"
-import { PortfolioOptimizer } from "@/pages/PortfolioOptimizer"
+import { PortfolioAnalyzer } from "@/pages/PortfolioAnalyzer"
 import { HedgingTool } from "@/pages/HedgingTool"
 import { PortfolioSizer } from "@/pages/PortfolioSizer"
 import { Momentum } from "@/pages/Momentum"
@@ -64,7 +64,8 @@ function AppRoutes() {
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/portfolio" replace />} />
           <Route path="/portfolio" element={<PortfolioDashboard />} />
-          <Route path="/optimizer" element={<PortfolioOptimizer />} />
+          <Route path="/analyzer" element={<PortfolioAnalyzer />} />
+          <Route path="/optimizer" element={<Navigate to="/analyzer" replace />} />
           <Route path="/hedging-tool" element={<HedgingTool />} />
           <Route path="/sizer" element={<PortfolioSizer />} />
           <Route path="/momentum" element={<Momentum />} />

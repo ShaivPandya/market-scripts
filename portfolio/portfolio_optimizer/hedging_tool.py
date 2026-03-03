@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .portfolio_optimizer import (
+    from .portfolio_analyzer import (
         BASE_CCY,
         BETA_EWMA_HALFLIFE_DAYS,
         BETA_FALLBACK,
@@ -30,7 +30,7 @@ try:
         to_usd_price,
     )
 except ImportError:
-    from portfolio_optimizer import (
+    from portfolio_analyzer import (
         BASE_CCY,
         BETA_EWMA_HALFLIFE_DAYS,
         BETA_FALLBACK,

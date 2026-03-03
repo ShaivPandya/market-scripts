@@ -80,7 +80,7 @@ def nav_button(label: str) -> None:
         st.rerun()
 
 NAV_SECTIONS = [
-    ["💼 Portfolio Dashboard", "📈 Portfolio Optimizer", "🚀 Momentum"],
+    ["💼 Portfolio Dashboard", "📈 Portfolio Analyzer", "🚀 Momentum"],
     ["📐 Chart", "🏅 Quality Screen", "📉 Short Screen", "📈 Fundamental Momentum"],
     ["📊 Index Dashboard", "📉 FX Dashboard", "🛢️ Commodity Dashboard"],
     ["📈 Market Technicals", "🏛️ Sector Metrics", "📌 Positioning", "🔔 Breakout", "💱 FX Model"],
@@ -1910,358 +1910,90 @@ elif st.session_state.current_page == "🔔 Breakout":
 
 
 # =============================================================================
-# PAGE: Portfolio Optimizer
+# PAGE: Portfolio Analyzer
 # =============================================================================
-elif st.session_state.current_page == "📈 Portfolio Optimizer":
-    st.header("Portfolio Optimizer")
-    st.caption("Beta-neutral portfolio construction with volatility targeting")
+elif st.session_state.current_page == "📈 Portfolio Analyzer":
+    st.header("Portfolio Analyzer")
+    st.caption("Signal and factor diagnostics to guide conviction inputs for Portfolio Sizer.")
 
-    with st.expander("Methodology Notes", expanded=False):
-        st.markdown("""
-**Objective**
-Maximizes a signal-weighted return (long positions seek positive signals, shorts seek negative) subject to a volatility target of **1.5% daily**, with a hard cap at **2.0% daily**.
+    if "portfolio_analysis_result" not in st.session_state:
+        st.session_state.portfolio_analysis_result = None
 
-**Beta Neutrality**
-The optimizer hedges market exposure by adding offsetting positions in **SPY** (for long book beta) and **IWM** (for short book beta), targeting near-zero net beta to both indices.
+    run_analyzer_clicked = st.sidebar.button("Run Portfolio Analyzer", type="primary", width="stretch")
 
-**Volatility Estimation**
-Per-instrument volatility uses a defense blend: the maximum of a 20-day and 60-day EWMA, floored at a 252-day minimum. This prevents underestimating risk during calm regimes.
-
-**Short Position Limits — Fallen Stocks**
-Stocks that have declined more than **60% from their 104-week high** are considered distressed and subject to elevated short-squeeze risk. Short positions in such stocks are capped at **5% of NAV**.
-
-**Position & Exposure Limits**
-
-| Constraint | Limit |
-|---|---|
-| Single long max | +20% NAV |
-| Single short max | −10% NAV |
-| Total gross leverage | 4.0× NAV |
-| FX gross | 2.0× NAV |
-| Commodity gross | 1.0× NAV |
-| Bond 10yr-equivalent | 3.0× NAV |
-| Equity net long | +100% NAV |
-| Equity net short | −50% NAV |
-
-**ETF Fundamentals**
-ETF fundamental signals (valuation, quality, etc.) are evaluated based on the **top 10 holdings** of the ETF rather than the ETF itself.
-        """)
-
-    # Initialize session state for optimization results
-    if "optimization_result" not in st.session_state:
-        st.session_state.optimization_result = None
-
-    # Sidebar controls for Portfolio Optimizer
-    st.sidebar.title("Optimization Settings")
-
-    book_size = st.sidebar.number_input(
-        "Book Size ($)",
-        min_value=1000,
-        max_value=100_000_000,
-        value=100_000,
-        step=10_000,
-        format="%d",
-        help="Total portfolio value in USD"
-    )
-
-    target_leverage = st.sidebar.slider(
-        "Target Gross Leverage",
-        min_value=0.5,
-        max_value=4.0,
-        value=2.0,
-        step=0.1,
-        help="Target gross exposure as multiple of NAV (max 4.0x per script limits)"
-    )
-
-    # Show constraint limits
-    with st.sidebar.expander("Constraint Limits"):
-        st.caption("**Gross Limits:**")
-        st.caption("- Total: 4.0x")
-        st.caption("- FX: 2.0x")
-        st.caption("- Commodities: 1.0x")
-        st.caption("- Bonds: 3.0x (10yr equiv)")
-        st.caption("")
-        st.caption("**Equity Net:**")
-        st.caption("- Min: -50%")
-        st.caption("- Max: +100%")
-        st.caption("")
-        st.caption("**Position Limits:**")
-        st.caption("- Long max: +20%")
-        st.caption("- Short max: -10%")
-
-    optimize_clicked = st.sidebar.button("Optimize Portfolio", type="primary", width="stretch")
-
-    if optimize_clicked:
-        with st.spinner("Downloading price data and running optimization..."):
+    if run_analyzer_clicked:
+        with st.spinner("Downloading market data and computing signal metrics..."):
             try:
-                from portfolio_optimizer.portfolio_optimizer import get_data as get_portfolio_data
-                result = get_portfolio_data(book=book_size, target_leverage=target_leverage)
-                st.session_state.optimization_result = result
+                from portfolio_optimizer.portfolio_analyzer import get_data as get_portfolio_data
+
+                result = get_portfolio_data()
+                st.session_state.portfolio_analysis_result = result
             except Exception as e:
                 import traceback
-                st.session_state.optimization_result = {"error": str(e), "traceback": traceback.format_exc()}
 
-    # Display results
-    data = st.session_state.optimization_result
+                st.session_state.portfolio_analysis_result = {"error": str(e), "traceback": traceback.format_exc()}
+
+    data = st.session_state.portfolio_analysis_result
 
     if data is None:
-        st.info("Configure settings in the sidebar and click 'Optimize Portfolio' to run the optimizer.")
+        st.info("Click 'Run Portfolio Analyzer' to load the signal metrics table.")
     elif "error" in data and data["error"]:
-        st.error(f"Optimization failed: {data['error']}")
+        st.error(f"Portfolio analyzer failed: {data['error']}")
         if "traceback" in data:
             with st.expander("Error details"):
                 st.code(data["traceback"])
     else:
-        # Status check
-        status = data.get("status", "unknown")
-        if status != "optimal":
-            st.warning(f"Optimization status: {status} - results may not be optimal")
+        weights_df = data.get("weights_df")
+        if weights_df is None or weights_df.empty:
+            st.info("No analyzer rows were returned.")
+        else:
+            display_df = weights_df.copy()
 
-        # Header metrics row
-        col1, col2, col3, col4 = st.columns(4)
+            if "distressed" in display_df.columns:
+                display_df["distressed"] = display_df["distressed"].map(lambda v: "Yes" if bool(v) else "No")
 
-        with col1:
-            vol_daily = data.get("vol_daily", 0)
-            st.metric(
-                "Daily Volatility",
-                f"{vol_daily*100:.2f}%",
-            )
+            if "stabilized_10d" in display_df.columns:
+                display_df["stabilized_10d"] = display_df["stabilized_10d"].map(lambda v: "Yes" if bool(v) else "No")
 
-        with col2:
-            gross_lev = data.get("gross_leverage", 0)
-            gross_max = data.get("gross_max", 4.0)
-            st.metric(
-                "Gross Leverage",
-                f"{gross_lev:.2f}x",
-                delta=f"Max: {gross_max:.1f}x"
-            )
-
-        with col3:
-            exp = data.get("exposures", {})
-            eq_net = exp.get("equity_net", 0)
-            color = "normal" if -0.5 <= eq_net <= 1.0 else "inverse"
-            st.metric("Equity Net", f"{eq_net*100:+.1f}%")
-
-        with col4:
-            if status == "optimal":
-                st.success(f"Status: OPTIMAL")
-            else:
-                st.warning(f"Status: {status.upper()}")
-
-        # Beta hedging info
-        col1, col2 = st.columns(2)
-        with col1:
-            net_beta_spy = data.get("net_beta_spy", 0)
-            hedge_spy = data.get("hedge_spy_weight", 0)
-            st.metric("Net Beta to SPY", f"{net_beta_spy:+.4f}", delta=f"Hedge: {hedge_spy:+.4f} SPY")
-        with col2:
-            net_beta_iwm = data.get("net_beta_iwm", 0)
-            hedge_iwm = data.get("hedge_iwm_weight", 0)
-            st.metric("Net Beta to IWM", f"{net_beta_iwm:+.4f}", delta=f"Hedge: {hedge_iwm:+.4f} IWM")
-
-        st.divider()
-
-        # Tabs for detailed results
-        tab1, tab2, tab3, tab4 = st.tabs(["Weights", "Exposures", "Constraints", "Max Scaled"])
-
-        # Weights Tab
-        with tab1:
-            st.subheader("Portfolio Weights")
-
-            weights_df = data.get("weights_df")
-            if weights_df is not None and not weights_df.empty:
-                display_df = weights_df.copy()
-
-                # Format weight column
-                display_df["Weight %"] = display_df["weight"].apply(lambda x: f"{x*100:+.2f}%")
-
-                # Format dollar weight if present
-                if "dollar_weight" in display_df.columns:
-                    display_df["Dollar"] = display_df["dollar_weight"].apply(lambda x: f"${x:+,.0f}")
-
-                # Format other columns
-                display_df["Signal"] = display_df["signal"].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "N/A")
-                display_df["Beta SPY"] = display_df["beta_spy"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-                display_df["Beta IWM"] = display_df["beta_iwm"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-                display_df["Vol"] = display_df["realized_vol"].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "N/A")
-
-                # Format price and shares if present
-                if "price" in display_df.columns:
-                    display_df["Price"] = display_df["price"].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "N/A")
-                if "shares" in display_df.columns:
-                    display_df["Shares"] = display_df["shares"].apply(lambda x: f"{x:+,}")
-
-                # Select columns to display
-                display_cols = ["ticker", "asset", "direction", "Signal", "Beta SPY", "Beta IWM", "Vol", "Weight %"]
-                if "Dollar" in display_df.columns:
-                    display_cols.append("Dollar")
-                if "Price" in display_df.columns:
-                    display_cols.append("Price")
-                if "Shares" in display_df.columns:
-                    display_cols.append("Shares")
-
-                color_cols = ["Weight %"] + (["Dollar"] if "Dollar" in display_df.columns else []) + (["Shares"] if "Shares" in display_df.columns else [])
-                styled_df = display_df[display_cols].style.applymap(
-                    color_positive_negative, subset=color_cols
+            if "drawdown_52w" in display_df.columns:
+                display_df["drawdown_52w"] = display_df["drawdown_52w"].map(
+                    lambda x: f"{x * 100:.1f}%" if pd.notna(x) else "N/A"
                 )
-                st.dataframe(styled_df, width="stretch", hide_index=True)
 
-            # Hedge positions
-            st.subheader("Hedge Positions")
-            hedges_df = data.get("hedges_df")
-            if hedges_df is not None and not hedges_df.empty:
-                hedge_display = hedges_df.copy()
-                hedge_display["Weight %"] = hedge_display["weight"].apply(lambda x: f"{x*100:+.2f}%")
-                if "dollar_weight" in hedge_display.columns:
-                    hedge_display["Dollar"] = hedge_display["dollar_weight"].apply(lambda x: f"${x:+,.0f}")
-                if "price" in hedge_display.columns:
-                    hedge_display["Price"] = hedge_display["price"].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "N/A")
-                if "shares" in hedge_display.columns:
-                    hedge_display["Shares"] = hedge_display["shares"].apply(lambda x: f"{x:+,}")
-
-                display_cols = ["ticker", "type", "direction", "Weight %"]
-                if "Dollar" in hedge_display.columns:
-                    display_cols.append("Dollar")
-                if "Price" in hedge_display.columns:
-                    display_cols.append("Price")
-                if "Shares" in hedge_display.columns:
-                    display_cols.append("Shares")
-
-                color_cols = ["Weight %"] + (["Dollar"] if "Dollar" in hedge_display.columns else []) + (["Shares"] if "Shares" in hedge_display.columns else [])
-                styled_hedges = hedge_display[display_cols].style.applymap(
-                    color_positive_negative, subset=color_cols
-                )
-                st.dataframe(styled_hedges, width="stretch", hide_index=True)
-
-        # Exposures Tab
-        with tab2:
-            st.subheader("Asset Class Exposures")
-
-            exp = data.get("exposures", {})
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.write("**Gross Exposures**")
-                for asset_class in ["equity", "fx", "commodity", "bond"]:
-                    gross_key = f"{asset_class}_gross"
-                    gross = exp.get(gross_key, 0)
-                    if gross > 0:
-                        # Determine max for progress bar
-                        max_val = {"equity": 4.0, "fx": 2.0, "commodity": 1.0, "bond": 3.0}.get(asset_class, 4.0)
-                        pct = min(1.0, gross / max_val)
-                        st.progress(pct, text=f"{asset_class.title()}: {gross*100:.1f}% (max {max_val*100:.0f}%)")
-                    else:
-                        st.progress(0.0, text=f"{asset_class.title()}: 0%")
-
-                st.write("")
-                st.metric("Total Gross", f"{exp.get('total_gross', 0)*100:.1f}%")
-
-            with col2:
-                st.write("**Net Exposures**")
-                for asset_class in ["equity", "fx", "commodity", "bond"]:
-                    net_key = f"{asset_class}_net"
-                    net = exp.get(net_key, 0)
-                    if net_key in exp:
-                        color = "#00c853" if net >= 0 else "#ff1744"
-                        st.metric(asset_class.title(), f"{net*100:+.1f}%")
-
-                st.write("")
-                st.metric("Total Net", f"{exp.get('total_net', 0)*100:+.1f}%")
-
-        # Constraints Tab
-        with tab3:
-            st.subheader("Constraint Utilization")
-
-            constraints = data.get("constraints", {})
-
-            for name, constraint in constraints.items():
-                utilization = constraint.get("utilization", 0)
-                current = constraint.get("current", 0)
-                limit = constraint.get("limit", 1)
-
-                # Color based on how close to limit
-                if utilization > 0.9:
-                    status = "Near Limit"
-                    color = "#ff1744"
-                elif utilization > 0.7:
-                    status = "Moderate"
-                    color = "#ffc107"
-                else:
-                    status = "Healthy"
-                    color = "#00c853"
-
-                # Progress bar with status
-                st.markdown(f"**{name}**")
-                col_a, col_b = st.columns([4, 1])
-                with col_a:
-                    st.progress(min(1.0, utilization), text=f"Current: {current*100:.1f}% / Limit: {limit*100:.0f}%")
-                with col_b:
-                    if utilization > 0.9:
-                        st.error(status)
-                    elif utilization > 0.7:
-                        st.warning(status)
-                    else:
-                        st.success(status)
-
-        # Max Scaled Tab
-        with tab4:
-            st.subheader("Max Scaled Portfolio")
-            st.caption("Portfolio scaled to maximum leverage while respecting all constraints")
-
-            max_scaled = data.get("max_scaled", {})
-
-            if max_scaled:
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Scale Factor", f"{max_scaled.get('scale_factor', 1):.4f}x")
-                with col2:
-                    st.metric("Daily Volatility", f"{max_scaled.get('vol_daily', 0)*100:.2f}%")
-                with col3:
-                    binding = max_scaled.get("binding_constraint", "Unknown")
-                    st.warning(f"Binding: {binding}")
-
-                # Max scaled exposures
-                st.write("**Max Scaled Exposures:**")
-                max_exp = max_scaled.get("exposures", {})
-                cols = st.columns(4)
-                with cols[0]:
-                    st.metric("Total Gross", f"{max_exp.get('total_gross', 0)*100:.1f}%")
-                with cols[1]:
-                    st.metric("Equity Net", f"{max_exp.get('equity_net', 0)*100:+.1f}%")
-                with cols[2]:
-                    st.metric("FX Gross", f"{max_exp.get('fx_gross', 0)*100:.1f}%")
-                with cols[3]:
-                    st.metric("Commodity Gross", f"{max_exp.get('commodity_gross', 0)*100:.1f}%")
-
-                # Max scaled weights
-                st.write("**Max Scaled Weights:**")
-                max_weights_df = max_scaled.get("weights_df")
-                if max_weights_df is not None and not max_weights_df.empty:
-                    max_display = max_weights_df.copy()
-                    max_display["Weight %"] = max_display["weight"].apply(lambda x: f"{x*100:+.2f}%")
-                    if "dollar_weight" in max_display.columns:
-                        max_display["Dollar"] = max_display["dollar_weight"].apply(lambda x: f"${x:+,.0f}")
-                    if "price" in max_display.columns:
-                        max_display["Price"] = max_display["price"].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "N/A")
-                    if "shares" in max_display.columns:
-                        max_display["Shares"] = max_display["shares"].apply(lambda x: f"{x:+,}")
-
-                    display_cols = ["ticker", "asset", "direction", "Weight %"]
-                    if "Dollar" in max_display.columns:
-                        display_cols.append("Dollar")
-                    if "Price" in max_display.columns:
-                        display_cols.append("Price")
-                    if "Shares" in max_display.columns:
-                        display_cols.append("Shares")
-
-                    color_cols = ["Weight %"] + (["Dollar"] if "Dollar" in max_display.columns else []) + (["Shares"] if "Shares" in max_display.columns else [])
-                    styled_max = max_display[display_cols].style.applymap(
-                        color_positive_negative, subset=color_cols
+            for signal_col in ["signal", "quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
+                if signal_col in display_df.columns:
+                    display_df[signal_col] = display_df[signal_col].map(
+                        lambda x: f"{x:+.2f}" if pd.notna(x) else "N/A"
                     )
-                    st.dataframe(styled_max, width="stretch", hide_index=True)
-            else:
-                st.info("No max scaled data available")
+
+            if "days_since_new_low" in display_df.columns:
+                display_df["days_since_new_low"] = display_df["days_since_new_low"].map(
+                    lambda x: int(x) if pd.notna(x) else "N/A"
+                )
+
+            ordered_cols = [
+                "ticker",
+                "asset",
+                "direction",
+                "distressed",
+                "drawdown_52w",
+                "stabilized_10d",
+                "days_since_new_low",
+                "signal",
+                "quality_signal",
+                "eps_mom_signal",
+                "rev_mom_signal",
+                "price_mom_signal",
+            ]
+            display_cols = [c for c in ordered_cols if c in display_df.columns]
+
+            styled_df = display_df[display_cols].style.applymap(
+                color_positive_negative,
+                subset=[c for c in ["signal", "quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"] if c in display_cols],
+            )
+
+            st.subheader("Signal Metrics")
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
 
 # =============================================================================
