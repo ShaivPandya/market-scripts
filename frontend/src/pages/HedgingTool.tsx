@@ -17,8 +17,8 @@ interface HedgingResult {
   post_hedge_beta_iwm?: number
   hedge_spy_weight?: number
   hedge_iwm_weight?: number
-  hedge_spy_dollar?: number
-  hedge_iwm_dollar?: number
+  gross_after_hedging?: number
+  volatility_after_hedging?: number
   gross_input?: number
   net_input?: number
   positions_df?: Record<string, unknown>[]
@@ -184,7 +184,7 @@ export function HedgingTool() {
         const prefilled = positions
           .map(p => ({
             ticker: String(p?.ticker ?? "").trim().toUpperCase(),
-            weight: String(typeof p?.weight === "number" ? p.weight : 0),
+            weight: "",
           }))
           .filter(p => p.ticker.length > 0)
           .map(p => makeRow(p.ticker, p.weight))
@@ -260,14 +260,10 @@ export function HedgingTool() {
     netBetaIwm: firstNumber(data?.net_beta_iwm),
     postHedgeBetaSpy: firstNumber(data?.post_hedge_beta_spy),
     postHedgeBetaIwm: firstNumber(data?.post_hedge_beta_iwm),
-    hedgeSpyWeight: firstNumber(data?.hedge_spy_weight),
-    hedgeIwmWeight: firstNumber(data?.hedge_iwm_weight),
-    hedgeSpyDollar: firstNumber(data?.hedge_spy_dollar),
-    hedgeIwmDollar: firstNumber(data?.hedge_iwm_dollar),
+    grossAfterHedging: firstNumber(data?.gross_after_hedging),
+    volatilityAfterHedging: firstNumber(data?.volatility_after_hedging),
     grossInput: firstNumber(data?.gross_input),
     netInput: firstNumber(data?.net_input),
-    inputCount: firstNumber(data?.input_count),
-    uniqueTickerCount: firstNumber(data?.unique_ticker_count),
   }), [data])
 
   return (
@@ -362,18 +358,14 @@ export function HedgingTool() {
       {data && !mutation.isPending && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {summary.inputCount != null && <MetricCard title="Input Rows" value={String(Math.round(summary.inputCount))} />}
-            {summary.uniqueTickerCount != null && <MetricCard title="Unique Tickers" value={String(Math.round(summary.uniqueTickerCount))} />}
             {summary.grossInput != null && <MetricCard title="Input Gross" value={formatRatioPercent(summary.grossInput, false, 1)} />}
             {summary.netInput != null && <MetricCard title="Input Net" value={formatRatioPercent(summary.netInput, true, 1)} />}
+            {summary.grossAfterHedging != null && <MetricCard title="Gross After Hedging" value={formatRatioPercent(summary.grossAfterHedging, false, 1)} />}
+            {summary.volatilityAfterHedging != null && <MetricCard title="Volatility (Daily)" value={`${(summary.volatilityAfterHedging * 100).toFixed(2)}%`} />}
             {summary.netBetaSpy != null && <MetricCard title="Net Beta SPY (Pre)" value={summary.netBetaSpy.toFixed(3)} />}
             {summary.netBetaIwm != null && <MetricCard title="Net Beta IWM (Pre)" value={summary.netBetaIwm.toFixed(3)} />}
             {summary.postHedgeBetaSpy != null && <MetricCard title="Net Beta SPY (Post)" value={summary.postHedgeBetaSpy.toFixed(3)} />}
             {summary.postHedgeBetaIwm != null && <MetricCard title="Net Beta IWM (Post)" value={summary.postHedgeBetaIwm.toFixed(3)} />}
-            {summary.hedgeSpyWeight != null && <MetricCard title="Hedge SPY Weight" value={formatRatioPercent(summary.hedgeSpyWeight, true, 2)} />}
-            {summary.hedgeIwmWeight != null && <MetricCard title="Hedge IWM Weight" value={formatRatioPercent(summary.hedgeIwmWeight, true, 2)} />}
-            {summary.hedgeSpyDollar != null && <MetricCard title="Hedge SPY Dollar" value={currencyFormatter.format(summary.hedgeSpyDollar)} />}
-            {summary.hedgeIwmDollar != null && <MetricCard title="Hedge IWM Dollar" value={currencyFormatter.format(summary.hedgeIwmDollar)} />}
           </div>
 
           {positionsRows.length > 0 && (

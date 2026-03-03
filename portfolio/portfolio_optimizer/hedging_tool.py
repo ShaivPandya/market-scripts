@@ -214,6 +214,18 @@ def compute_hedge(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_
         betas_all_iwm,
     )
 
+    # Post-hedge gross and daily volatility (simple-return covariance framework).
+    gross_after_hedging = float(np.abs(w_vals).sum() + abs(hedge_spy_weight) + abs(hedge_iwm_weight))
+    post_weights = np.concatenate([w_vals, np.array([hedge_spy_weight, hedge_iwm_weight], dtype=float)])
+    vol_cols = tickers + [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
+    rets_vol = rets.reindex(columns=vol_cols).dropna(how="any")
+    if rets_vol.empty:
+        volatility_after_hedging = float("nan")
+    else:
+        sigma = rets_vol.cov().values
+        variance = float(post_weights.T @ sigma @ post_weights)
+        volatility_after_hedging = float(np.sqrt(max(0.0, variance)))
+
     latest_prices = usd_prices[tickers].iloc[-1]
     spy_price = float(usd_prices[MARKET_TICKER_LONG].iloc[-1])
     iwm_price = float(usd_prices[MARKET_TICKER_SHORT].iloc[-1])
@@ -248,6 +260,8 @@ def compute_hedge(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_
         "hedge_iwm_weight": hedge_iwm_weight,
         "hedge_spy_dollar": hedge_spy_weight * float(book),
         "hedge_iwm_dollar": hedge_iwm_weight * float(book),
+        "gross_after_hedging": gross_after_hedging,
+        "volatility_after_hedging": volatility_after_hedging,
         "beta_method": BETA_METHOD,
         "beta_halflife_days": BETA_EWMA_HALFLIFE_DAYS,
         "beta_min_obs": BETA_MIN_OBS,
@@ -259,4 +273,3 @@ def compute_hedge(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_
 
 def get_data(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_BOOK) -> dict:
     return compute_hedge(positions=positions, book=book)
-
