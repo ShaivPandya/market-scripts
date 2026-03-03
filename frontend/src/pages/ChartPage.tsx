@@ -26,6 +26,12 @@ interface RatioPayload {
   end_date?: string
 }
 
+interface RatioRequestBase {
+  symbol_a: string
+  symbol_b: string
+  end_date: string
+}
+
 interface RatioRow {
   date: string
   priceA: number | null
@@ -143,7 +149,7 @@ export function ChartPage() {
   const [ratioSymbolA, setRatioSymbolA] = useState("")
   const [ratioSymbolB, setRatioSymbolB] = useState("")
   const [ratioWindow, setRatioWindow] = useState<RatioWindow>("5Y")
-  const [submittedRatio, setSubmittedRatio] = useState<RatioPayload | null>(null)
+  const [submittedRatioBase, setSubmittedRatioBase] = useState<RatioRequestBase | null>(null)
 
   const singleQuery = useQuery({
     queryKey: ["chart", "single", submittedTicker],
@@ -152,19 +158,39 @@ export function ChartPage() {
     staleTime: Infinity,
   })
 
-  const ratioQuery = useQuery({
-    queryKey: ["chart", "ratio", submittedRatio],
-    queryFn: () => runPriceRatioChart(submittedRatio!),
-    enabled: Boolean(submittedRatio),
+  const ratioQuery5Y = useQuery({
+    queryKey: ["chart", "ratio", submittedRatioBase, "5Y"],
+    queryFn: () => runPriceRatioChart(buildRatioPayload(
+      submittedRatioBase!.symbol_a,
+      submittedRatioBase!.symbol_b,
+      computeWindowStartDate("5Y"),
+      submittedRatioBase!.end_date,
+    )),
+    enabled: Boolean(submittedRatioBase),
     staleTime: Infinity,
   })
 
-  const isLoading = mode === "ratio" ? ratioQuery.isFetching : singleQuery.isFetching
-  const isError = mode === "ratio" ? ratioQuery.isError : singleQuery.isError
-  const error = mode === "ratio" ? ratioQuery.error : singleQuery.error
+  const ratioQuery10Y = useQuery({
+    queryKey: ["chart", "ratio", submittedRatioBase, "10Y"],
+    queryFn: () => runPriceRatioChart(buildRatioPayload(
+      submittedRatioBase!.symbol_a,
+      submittedRatioBase!.symbol_b,
+      computeWindowStartDate("10Y"),
+      submittedRatioBase!.end_date,
+    )),
+    enabled: Boolean(submittedRatioBase),
+    staleTime: Infinity,
+  })
+
+  const activeRatioQuery = ratioWindow === "10Y" ? ratioQuery10Y : ratioQuery5Y
+  const isLoading = mode === "ratio"
+    ? ratioQuery5Y.isFetching || ratioQuery10Y.isFetching
+    : singleQuery.isFetching
+  const isError = mode === "ratio" ? activeRatioQuery.isError : singleQuery.isError
+  const error = mode === "ratio" ? activeRatioQuery.error : singleQuery.error
 
   const singleData = (singleQuery.data ?? null) as Record<string, unknown> | null
-  const ratioData = (ratioQuery.data ?? null) as Record<string, unknown> | null
+  const ratioData = (activeRatioQuery.data ?? null) as Record<string, unknown> | null
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -181,10 +207,9 @@ export function ChartPage() {
     if (!symbolA || !symbolB) return
 
     const endDate = isoDateToday()
-    const startDate = computeWindowStartDate(ratioWindow)
     setRatioSymbolA(symbolA)
     setRatioSymbolB(symbolB)
-    setSubmittedRatio(buildRatioPayload(symbolA, symbolB, startDate, endDate))
+    setSubmittedRatioBase({ symbol_a: symbolA, symbol_b: symbolB, end_date: endDate })
   }
 
   function handleRatioPresetClick(preset: RatioPreset) {
@@ -192,8 +217,7 @@ export function ChartPage() {
     setRatioSymbolA(preset.symbolA)
     setRatioSymbolB(preset.symbolB)
     const endDate = isoDateToday()
-    const startDate = computeWindowStartDate(ratioWindow)
-    setSubmittedRatio(buildRatioPayload(preset.symbolA, preset.symbolB, startDate, endDate))
+    setSubmittedRatioBase({ symbol_a: preset.symbolA, symbol_b: preset.symbolB, end_date: endDate })
   }
 
   const allPriceData = useMemo<Record<string, unknown>[]>(() => {
@@ -300,14 +324,6 @@ export function ChartPage() {
       ? (currentRatio / historicalAvg) - 1
       : null
   )
-  const historicalPosition = (() => {
-    const statsPosition = String(ratioStats.historical_position ?? "").toLowerCase()
-    if (statsPosition === "above" || statsPosition === "below" || statsPosition === "at") return statsPosition
-    if (historicalAvg == null || currentRatio == null) return "n/a"
-    if (Math.abs(currentRatio - historicalAvg) < 1e-12) return "at"
-    return currentRatio > historicalAvg ? "above" : "below"
-  })()
-
   const ratioChartSeries: SeriesDef[] = useMemo(() => [
     { key: "Ratio", color: "#0f766e", strokeWidth: 2 },
     { key: "Historical Avg", color: "#f59e0b", strokeWidth: 1.5, opacity: 0.9, strokeDasharray: "6 4" },
@@ -357,15 +373,6 @@ export function ChartPage() {
 
   function handleRatioWindowChange(nextWindow: RatioWindow) {
     setRatioWindow(nextWindow)
-    if (!submittedRatio) return
-
-    const symbolA = ratioSymbolA.trim().toUpperCase()
-    const symbolB = ratioSymbolB.trim().toUpperCase()
-    if (!symbolA || !symbolB) return
-
-    const endDate = isoDateToday()
-    const startDate = computeWindowStartDate(nextWindow)
-    setSubmittedRatio(buildRatioPayload(symbolA, symbolB, startDate, endDate))
   }
 
   return (
@@ -518,20 +525,6 @@ export function ChartPage() {
             <MetricCard
               title="Vs Historical Avg"
               value={formatPercentFromDecimal(currentVsHistoricalPct)}
-              signal={
-                historicalPosition === "above"
-                  ? "success"
-                  : historicalPosition === "below"
-                    ? "warning"
-                    : "info"
-              }
-              signalLabel={
-                historicalPosition === "above"
-                  ? "Above Historical"
-                  : historicalPosition === "below"
-                    ? "Below Historical"
-                    : "At Historical"
-              }
             />
             <MetricCard title="Min Ratio" value={formatRatio(toNumber(ratioStats.min_ratio), 4)} />
             <MetricCard title="Max Ratio" value={formatRatio(toNumber(ratioStats.max_ratio), 4)} />
