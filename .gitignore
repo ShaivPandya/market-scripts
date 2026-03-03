@@ -1,4 +1,3 @@
-.claude
 *.DS_Store
 *__pycache__
 **/data_cache/
@@ -6,6 +5,4 @@
 
 # Environment variables
 .env
-
-# Portfolio
 
