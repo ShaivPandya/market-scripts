@@ -26,6 +26,14 @@ type BreakdownRow = {
   pct_of_total?: number | null
 }
 
+type AxisStatus = "found" | "not_disclosed" | "unavailable"
+type AxisSource = "xbrl" | "ai" | "none"
+
+type AxisExtractionMeta = {
+  status?: AxisStatus
+  source?: AxisSource
+}
+
 function formatPct(v: unknown): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "N/A"
   return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`
@@ -169,6 +177,11 @@ export function Financials() {
   const breakdown = (data?.breakdown ?? {}) as Record<string, unknown>
   const sourceFiling = (breakdown?.source_filing ?? null) as Record<string, unknown> | null
 
+  const extractionMetaRaw = (breakdown?.extraction_meta ?? null) as Record<string, unknown> | null
+  const hasExtractionMeta = Boolean(extractionMetaRaw && typeof extractionMetaRaw === "object")
+  const segmentMeta = (extractionMetaRaw?.segment ?? null) as AxisExtractionMeta | null
+  const regionMeta = (extractionMetaRaw?.region ?? null) as AxisExtractionMeta | null
+
   const segmentRowsRaw = (breakdown?.by_segment ?? []) as BreakdownRow[]
   const regionRowsRaw = (breakdown?.by_region ?? []) as BreakdownRow[]
 
@@ -182,6 +195,19 @@ export function Financials() {
     value_str: formatRevenueWhole(r.value),
     pct_str: formatPctWhole(r.pct_of_total),
   }))
+
+  const segmentReason =
+    segmentRows.length === 0 && hasExtractionMeta
+      ? segmentMeta?.status === "not_disclosed"
+        ? "Not disclosed in the filing."
+        : "Could not extract from filing."
+      : null
+  const regionReason =
+    regionRows.length === 0 && hasExtractionMeta
+      ? regionMeta?.status === "not_disclosed"
+        ? "Not disclosed in the filing."
+        : "Could not extract from filing."
+      : null
 
   return (
     <div>
@@ -265,9 +291,17 @@ export function Financials() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <div>
                 <DataTable columns={breakdownCols} rows={segmentRows} maxHeight="420px" label="By Segment" />
+                {segmentReason ? <p className="mt-2 text-xs text-gray-500">{segmentReason}</p> : null}
+                {segmentRows.length > 0 && segmentMeta?.source === "ai" ? (
+                  <p className="mt-2 text-xs text-gray-500">AI fallback used for this breakdown.</p>
+                ) : null}
               </div>
               <div>
                 <DataTable columns={breakdownCols} rows={regionRows} maxHeight="420px" label="By Region" />
+                {regionReason ? <p className="mt-2 text-xs text-gray-500">{regionReason}</p> : null}
+                {regionRows.length > 0 && regionMeta?.source === "ai" ? (
+                  <p className="mt-2 text-xs text-gray-500">AI fallback used for this breakdown.</p>
+                ) : null}
               </div>
             </div>
           </div>

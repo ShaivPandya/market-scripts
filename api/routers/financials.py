@@ -17,12 +17,13 @@ def run_financials(req: FinancialsRequest):
     if not ticker:
         raise HTTPException(status_code=400, detail="Ticker is required")
 
-    key = f"financials:v7:{ticker}"
+    key = f"financials:v8:{ticker}"
     cached = get_cached(long_cache, key)
     if cached is not None:
         return cached
 
     legacy_keys = [
+        f"financials:v7:{ticker}",
         f"financials:v6:{ticker}",
         f"financials:v5:{ticker}",
         f"financials:v4:{ticker}",

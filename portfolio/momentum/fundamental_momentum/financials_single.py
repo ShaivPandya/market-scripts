@@ -14,7 +14,7 @@ import warnings
 import re
 from collections import defaultdict
 from datetime import date
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import requests
 
@@ -812,6 +812,18 @@ def _rows_to_value_map(rows: object) -> Dict[str, float]:
     return out
 
 
+def _parse_optional_bool(v: object) -> Optional[bool]:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in {"true", "yes", "y", "1"}:
+            return True
+        if s in {"false", "no", "n", "0"}:
+            return False
+    return None
+
+
 def _filing_context_for_nlp(html: str) -> str:
     try:
         from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
@@ -865,6 +877,7 @@ def _extract_breakdown_via_nlp(
     form: str,
     filed: str,
     submissions: Optional[dict],
+    wanted_axes: Set[str],
 ) -> Optional[dict]:
     if not os.environ.get("OPENAI_API_KEY"):
         return None
@@ -888,17 +901,27 @@ def _extract_breakdown_via_nlp(
     if not context:
         return None
 
+    want_segment = "segment" in wanted_axes
+    want_region = "region" in wanted_axes
+    wanted_axes_str = ", ".join(sorted(wanted_axes)) if wanted_axes else "none"
+
     prompt = (
         "Extract ONLY the latest-period revenue breakdown from this SEC filing excerpt.\n"
+        f"Only populate requested axes: {wanted_axes_str}.\n"
         "Return strict JSON with this schema:\n"
         "{\n"
         '  "period_end": "YYYY-MM-DD or empty",\n'
         '  "total_revenue": number or null,\n'
         '  "unit_scale": "ones" | "thousands" | "millions" | "billions",\n'
+        '  "segment_disclosed": true | false | null,\n'
+        '  "region_disclosed": true | false | null,\n'
         '  "by_segment": [{"label": string, "value": number}],\n'
         '  "by_region": [{"label": string, "value": number}]\n'
         "}\n"
         "Rules: include only revenue rows, exclude totals/eliminations, keep latest quarter in this filing.\n"
+        "If an axis is not requested, return [] for that axis and null for its *_disclosed flag.\n"
+        "If an axis is requested but not disclosed, return [] and set *_disclosed to false.\n"
+        "If an axis is requested and disclosed, set *_disclosed to true.\n"
         "No markdown, no explanation, JSON only.\n\n"
         f"FORM: {form}\nFILED: {filed}\nACCN: {accn}\nURL: {filing_url}\n\n"
         f"EXCERPT:\n{context}"
@@ -927,10 +950,10 @@ def _extract_breakdown_via_nlp(
     except Exception:
         return None
 
-    by_segment = _rows_to_value_map(payload.get("by_segment"))
-    by_region = _rows_to_value_map(payload.get("by_region"))
-    if not by_segment and not by_region:
-        return None
+    by_segment = _rows_to_value_map(payload.get("by_segment")) if want_segment else {}
+    by_region = _rows_to_value_map(payload.get("by_region")) if want_region else {}
+    segment_disclosed = _parse_optional_bool(payload.get("segment_disclosed")) if want_segment else None
+    region_disclosed = _parse_optional_bool(payload.get("region_disclosed")) if want_region else None
 
     scale_map = {
         "ones": 1.0,
@@ -959,6 +982,8 @@ def _extract_breakdown_via_nlp(
         "form": form,
         "by_segment": _pct_rows(by_segment, total_val),
         "by_region": _pct_rows(by_region, total_val),
+        "segment_disclosed": segment_disclosed,
+        "region_disclosed": region_disclosed,
     }
 
 
@@ -1048,43 +1073,86 @@ def _candidate_revenue_filings(us_gaap: dict) -> List[dict]:
 
 
 def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -> dict:
+    def _axis_meta(status: str, source: str) -> dict:
+        return {"status": status, "source": source}
+
     filings = _candidate_revenue_filings(us_gaap)
     if not filings:
         return {
             "source_filing": None,
             "by_segment": [],
             "by_region": [],
+            "extraction_meta": {
+                "segment": _axis_meta("unavailable", "none"),
+                "region": _axis_meta("unavailable", "none"),
+                "ai_fallback_attempted": False,
+            },
         }
 
     annual_filings = [f for f in filings if str(f.get("form") or "") in ALLOWED_ANNUAL_FORMS]
     search_filings = annual_filings if annual_filings else filings
     latest_filing = search_filings[0]
-    chosen: Optional[dict] = None
+    xbrl_choice: Optional[dict] = None
     for f in search_filings:
         candidate = _extract_breakdown_for_filing(us_gaap, f["accn"])
         if candidate.get("by_segment") or candidate.get("by_region"):
-            chosen = {**f, **candidate}
+            xbrl_choice = {**f, **candidate}
             break
 
-    if chosen is None:
+    xbrl_segment = (xbrl_choice or {}).get("by_segment") or []
+    xbrl_region = (xbrl_choice or {}).get("by_region") or []
+
+    missing_axes: Set[str] = set()
+    if not xbrl_segment:
+        missing_axes.add("segment")
+    if not xbrl_region:
+        missing_axes.add("region")
+
+    ai_fallback_attempted = False
+    nlp_candidate: Optional[dict] = None
+    if missing_axes and os.environ.get("OPENAI_API_KEY"):
+        ai_fallback_attempted = True
         nlp_candidate = _extract_breakdown_via_nlp(
             cik_str=cik_str,
             accn=str(latest_filing.get("accn") or ""),
             form=str(latest_filing.get("form") or ""),
             filed=str(latest_filing.get("filed") or ""),
             submissions=submissions,
+            wanted_axes=missing_axes,
         )
-        if nlp_candidate and (nlp_candidate.get("by_segment") or nlp_candidate.get("by_region")):
-            chosen = {**latest_filing, **nlp_candidate}
-            by_segment = chosen.get("by_segment") or []
-            by_region = chosen.get("by_region") or []
-        else:
-            chosen = latest_filing
-            by_segment = []
-            by_region = []
+
+    ai_segment = (nlp_candidate or {}).get("by_segment") or []
+    ai_region = (nlp_candidate or {}).get("by_region") or []
+    segment_disclosed = _parse_optional_bool((nlp_candidate or {}).get("segment_disclosed"))
+    region_disclosed = _parse_optional_bool((nlp_candidate or {}).get("region_disclosed"))
+
+    if xbrl_segment:
+        by_segment = xbrl_segment
+        segment_meta = _axis_meta("found", "xbrl")
+    elif ai_segment:
+        by_segment = ai_segment
+        segment_meta = _axis_meta("found", "ai")
+    elif "segment" in missing_axes and segment_disclosed is False:
+        by_segment = []
+        segment_meta = _axis_meta("not_disclosed", "none")
     else:
-        by_segment = chosen.get("by_segment") or []
-        by_region = chosen.get("by_region") or []
+        by_segment = []
+        segment_meta = _axis_meta("unavailable", "none")
+
+    if xbrl_region:
+        by_region = xbrl_region
+        region_meta = _axis_meta("found", "xbrl")
+    elif ai_region:
+        by_region = ai_region
+        region_meta = _axis_meta("found", "ai")
+    elif "region" in missing_axes and region_disclosed is False:
+        by_region = []
+        region_meta = _axis_meta("not_disclosed", "none")
+    else:
+        by_region = []
+        region_meta = _axis_meta("unavailable", "none")
+
+    chosen = xbrl_choice or ({**latest_filing, **(nlp_candidate or {})} if nlp_candidate else latest_filing)
 
     accn = str(chosen.get("accn") or "")
     source_filing = {
@@ -1099,6 +1167,11 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
         "source_filing": source_filing,
         "by_segment": by_segment,
         "by_region": by_region,
+        "extraction_meta": {
+            "segment": segment_meta,
+            "region": region_meta,
+            "ai_fallback_attempted": ai_fallback_attempted,
+        },
     }
 
 
