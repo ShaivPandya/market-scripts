@@ -9,6 +9,7 @@ import { LoginPage } from "@/pages/LoginPage"
 import { PortfolioDashboard } from "@/pages/PortfolioDashboard"
 import { PortfolioOptimizer } from "@/pages/PortfolioOptimizer"
 import { HedgingTool } from "@/pages/HedgingTool"
+import { PortfolioSizer } from "@/pages/PortfolioSizer"
 import { Momentum } from "@/pages/Momentum"
 import { ChartPage } from "@/pages/ChartPage"
 import { QualityScreen } from "@/pages/QualityScreen"
@@ -65,6 +66,7 @@ function AppRoutes() {
           <Route path="/portfolio" element={<PortfolioDashboard />} />
           <Route path="/optimizer" element={<PortfolioOptimizer />} />
           <Route path="/hedging-tool" element={<HedgingTool />} />
+          <Route path="/sizer" element={<PortfolioSizer />} />
           <Route path="/momentum" element={<Momentum />} />
           <Route path="/chart" element={<ChartPage />} />
           <Route path="/quality" element={<QualityScreen />} />
