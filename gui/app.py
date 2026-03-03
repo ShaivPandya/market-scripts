@@ -2022,11 +2022,9 @@ ETF fundamental signals (valuation, quality, etc.) are evaluated based on the **
 
         with col1:
             vol_daily = data.get("vol_daily", 0)
-            vol_target = data.get("vol_target", 0.015)
             st.metric(
                 "Daily Volatility",
                 f"{vol_daily*100:.2f}%",
-                delta=f"Target: {vol_target*100:.2f}%"
             )
 
         with col2:

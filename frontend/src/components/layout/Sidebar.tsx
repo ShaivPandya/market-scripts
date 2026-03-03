@@ -11,6 +11,7 @@ const NAV_SECTIONS: NavSection[] = [
     pages: [
       { label: "💼 Portfolio Dashboard", path: "/portfolio" },
       { label: "📈 Portfolio Optimizer", path: "/optimizer" },
+      { label: "🛡️ Hedging Tool", path: "/hedging-tool" },
       { label: "🚀 Momentum", path: "/momentum" },
     ],
   },

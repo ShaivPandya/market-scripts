@@ -17,7 +17,7 @@ def run_financials(req: FinancialsRequest):
     if not ticker:
         raise HTTPException(status_code=400, detail="Ticker is required")
 
-    key = f"financials:v2:{ticker}"
+    key = f"financials:v3:{ticker}"
     cached = get_cached(long_cache, key)
     if cached is not None:
         return cached

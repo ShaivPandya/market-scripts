@@ -173,6 +173,9 @@ export const analyzePositioning = (body: { rows: Record<string, unknown>[] }) =>
 export const fetchFxModelPairs = () =>
   client.get("/fx-model/pairs").then(r => r.data)
 
+export const fetchHedgingToolPrefill = () =>
+  client.get("/hedging-tool/prefill").then(r => r.data)
+
 // ─── POST endpoints ───────────────────────────────────────────────────────────
 
 export const runChart = (body: { ticker: string; lookback: string }) =>
@@ -181,7 +184,6 @@ export const runChart = (body: { ticker: string; lookback: string }) =>
 export const runPortfolioOptimizer = (body: { book: number; target_leverage: number; beta_neutral: boolean }) =>
   client.post("/portfolio-optimizer", body, { timeout: 180_000 }).then(r => r.data)
 
-type OptimizerJobStatus = "queued" | "running" | "done" | "error"
 type OptimizerJobResponse =
   | { job_id: string; status: "queued" | "running" }
   | { job_id: string; status: "error"; error?: string }
@@ -195,7 +197,7 @@ export const fetchPortfolioOptimizerJob = (job_id: string) =>
 
 export async function runPortfolioOptimizerAsync(body: { book: number; target_leverage: number; beta_neutral: boolean }) {
   const started = await startPortfolioOptimizerJob(body)
-  if (started.status === "done" && "result" in started && started.result != null) return started.result as any
+  if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Optimizer failed")
 
   const job_id = started.job_id
@@ -209,12 +211,48 @@ export async function runPortfolioOptimizerAsync(body: { book: number; target_le
     const job = await fetchPortfolioOptimizerJob(job_id)
 
     if (job.status === "done") {
-      if ("result" in job && job.result != null) return job.result as any
+      if ("result" in job && job.result != null) return job.result
       // cached:* jobs return done without result in the poll endpoint
       // (the initial response already carried the payload).
-      return (started as any).result
+      return "result" in started ? started.result : undefined
     }
     if (job.status === "error") throw new Error(job.error || "Optimizer failed")
+  }
+}
+
+export const runHedgingTool = (body: { book: number; positions: { ticker: string; weight: number }[] }) =>
+  client.post("/hedging-tool", body, { timeout: 180_000 }).then(r => r.data)
+
+type HedgingJobResponse =
+  | { job_id: string; status: "queued" | "running" }
+  | { job_id: string; status: "error"; error?: string }
+  | { job_id: string; status: "done"; result?: unknown }
+
+export const startHedgingToolJob = (body: { book: number; positions: { ticker: string; weight: number }[] }) =>
+  client.post("/hedging-tool/async", body, { timeout: 30_000 }).then(r => r.data as HedgingJobResponse)
+
+export const fetchHedgingToolJob = (job_id: string) =>
+  client.get(`/hedging-tool/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as HedgingJobResponse)
+
+export async function runHedgingToolAsync(body: { book: number; positions: { ticker: string; weight: number }[] }) {
+  const started = await startHedgingToolJob(body)
+  if (started.status === "done" && "result" in started && started.result != null) return started.result
+  if (started.status === "error") throw new Error(started.error || "Hedging tool failed")
+
+  const job_id = started.job_id
+  const deadline = Date.now() + 180_000
+
+  for (;;) {
+    if (Date.now() > deadline) throw new Error("Timeout: Hedging tool is taking too long. Try again.")
+
+    await new Promise(r => setTimeout(r, 2000))
+    const job = await fetchHedgingToolJob(job_id)
+
+    if (job.status === "done") {
+      if ("result" in job && job.result != null) return job.result
+      return "result" in started ? started.result : undefined
+    }
+    if (job.status === "error") throw new Error(job.error || "Hedging tool failed")
   }
 }
 

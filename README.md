@@ -153,6 +153,7 @@ All routes below are under the `/api` prefix (see `api/main.py`).
 - Dashboards:
   - `GET /portfolio` → `portfolio/portfolio_dashboard.py`
   - `POST /portfolio-optimizer` → `portfolio/portfolio_optimizer/portfolio_optimizer.py`
+  - `POST /hedging-tool`, `POST /hedging-tool/async`, `GET /hedging-tool/async/{job_id}` → `portfolio/portfolio_optimizer/hedging_tool.py`
   - `GET /momentum` → `portfolio/momentum/price_momentum/momentum.py`
   - `POST /chart` → `portfolio/technical_analysis/technical_analysis.py`
   - `POST /quality-screen` → `equities/quality/quality.py`

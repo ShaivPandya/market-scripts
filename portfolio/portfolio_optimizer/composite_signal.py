@@ -3,10 +3,10 @@
 Multi-Factor Composite Signal Generator for Portfolio Optimization
 
 Generates standardized, clipped composite signals combining:
-- Quality (33%): Profitability, growth, safety metrics
-- Price Momentum (33%): Relative price momentum vs benchmark
+- Price Momentum (40%): Relative price momentum vs benchmark
+- Quality (30%): Profitability, growth, safety metrics
 - Revenue Momentum (20%): Revenue growth and acceleration
-- EPS Momentum (14%): Earnings growth and acceleration
+- EPS Momentum (10%): Earnings growth and acceleration
 
 Signals are z-scored across the portfolio and can be used by portfolio_optimizer.py
 to inform raw target weights.
@@ -46,6 +46,7 @@ try:
         fetch_eps_momentum_batch,
         fetch_revenue_momentum_batch,
         fetch_etf_lookthrough_fundamentals_batch,
+        fetch_spdr_sector_anchor_universe,
     )
 except ImportError:
     from signal_fetchers import (
@@ -54,6 +55,7 @@ except ImportError:
         fetch_eps_momentum_batch,
         fetch_revenue_momentum_batch,
         fetch_etf_lookthrough_fundamentals_batch,
+        fetch_spdr_sector_anchor_universe,
     )
 
 # -----------------------------
@@ -64,10 +66,10 @@ DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)
 DEFAULT_WEIGHTS = {
-    'quality': 0.33,
-    'price_momentum': 0.33,
+    'quality': 0.30,
+    'price_momentum': 0.40,
     'revenue_momentum': 0.20,
-    'eps_momentum': 0.14,
+    'eps_momentum': 0.10,
 }
 DEFAULT_WEIGHTS_SHORT = {
     'quality': 0.30,
@@ -75,6 +77,8 @@ DEFAULT_WEIGHTS_SHORT = {
     'revenue_momentum': 0.20,
     'eps_momentum': 0.10,
 }
+DEFAULT_ANCHOR_TOP_N = 10
+DEFAULT_ANCHOR_MIN_UNIQUE = 60
 
 
 # -----------------------------
@@ -396,6 +400,129 @@ def clip_signal(signal: pd.Series, lower: float = -3.0, upper: float = 3.0) -> p
     return signal.clip(lower=lower, upper=upper)
 
 
+def generate_anchor_normalized_long_equity_signals(
+    long_equity_tickers: List[str],
+    years: int = DEFAULT_YEARS,
+    use_edgar: bool = True,
+    benchmark: str = DEFAULT_BENCHMARK,
+    weights: Optional[Dict[str, float]] = None,
+    clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
+    anchor_top_n: int = DEFAULT_ANCHOR_TOP_N,
+    anchor_min_unique: int = DEFAULT_ANCHOR_MIN_UNIQUE,
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    """
+    Compute long-equity signals against a broad anchor universe.
+
+    The scoring universe is:
+      deduped top-N holdings from 11 SPDR sector ETFs union long_equity_tickers.
+    Signal normalization (rank-zscore) is performed across that full scoring universe.
+
+    Returns:
+      - DataFrame indexed by `long_equity_tickers` with factor/composite signal columns
+      - Metadata describing anchor/fallback state
+    """
+    tickers = list(dict.fromkeys([str(t).strip().upper() for t in long_equity_tickers if str(t).strip()]))
+    mode = "spdr_sector_top10_anchor"
+    if weights is None:
+        weights = DEFAULT_WEIGHTS.copy()
+
+    if not tickers:
+        return pd.DataFrame(), {
+            "signal_anchor_mode": mode,
+            "signal_anchor_universe_size": 0,
+            "signal_anchor_fallback_used": True,
+            "reason": "no_long_equities",
+        }
+
+    anchor_universe, anchor_meta = fetch_spdr_sector_anchor_universe(
+        top_n=anchor_top_n,
+        min_unique=anchor_min_unique,
+    )
+    anchor_universe_size = int(anchor_meta.get("anchor_universe_size", 0))
+    if not anchor_universe:
+        return pd.DataFrame(), {
+            "signal_anchor_mode": mode,
+            "signal_anchor_universe_size": anchor_universe_size,
+            "signal_anchor_fallback_used": True,
+            "reason": "anchor_universe_unavailable",
+            "anchor_metadata": anchor_meta,
+        }
+
+    scoring_universe = list(dict.fromkeys(anchor_universe + tickers))
+    scoring_size = len(scoring_universe)
+    ticker_benchmarks = {t: benchmark for t in scoring_universe}
+    all_tickers = list(set(scoring_universe + [benchmark]))
+
+    try:
+        prices = fetch_prices(all_tickers, years=years)
+    except Exception as e:
+        LOGGER.warning(f"[WARN] Anchor signal pricing failed: {e}")
+        return pd.DataFrame(), {
+            "signal_anchor_mode": mode,
+            "signal_anchor_universe_size": anchor_universe_size,
+            "signal_anchor_fallback_used": True,
+            "reason": "price_fetch_failed",
+            "anchor_metadata": anchor_meta,
+        }
+
+    price_raw = fetch_price_momentum_batch(scoring_universe, ticker_benchmarks, prices)
+    price_signal = compute_price_momentum_signal(price_raw).reindex(scoring_universe, fill_value=0.0)
+
+    quality_raw = fetch_quality_batch(scoring_universe, market=benchmark, growth_years=years)
+    quality_signal = (
+        compute_quality_signal(quality_raw).reindex(scoring_universe)
+        if quality_raw is not None and not quality_raw.empty
+        else pd.Series(np.nan, index=scoring_universe)
+    )
+
+    eps_raw = fetch_eps_momentum_batch(scoring_universe, growth_years=3, use_edgar=use_edgar)
+    eps_signal = (
+        compute_eps_momentum_signal(eps_raw).reindex(scoring_universe)
+        if eps_raw is not None and not eps_raw.empty
+        else pd.Series(np.nan, index=scoring_universe)
+    )
+
+    rev_raw = fetch_revenue_momentum_batch(scoring_universe, growth_years=3, use_edgar=use_edgar)
+    rev_signal = (
+        compute_revenue_momentum_signal(rev_raw).reindex(scoring_universe)
+        if rev_raw is not None and not rev_raw.empty
+        else pd.Series(np.nan, index=scoring_universe)
+    )
+
+    signal_dict = {
+        "quality": quality_signal,
+        "eps_momentum": eps_signal,
+        "revenue_momentum": rev_signal,
+        "price_momentum": price_signal,
+    }
+    composite_signal = combine_signals(signal_dict, weights, scoring_universe)
+    composite_signal = clip_signal(composite_signal, *clip_bounds)
+
+    full_output = pd.DataFrame(
+        {
+            "quality_signal": quality_signal,
+            "eps_mom_signal": eps_signal,
+            "rev_mom_signal": rev_signal,
+            "price_mom_signal": price_signal,
+            "composite_signal": composite_signal,
+        },
+        index=scoring_universe,
+    )
+    target_output = full_output.reindex(tickers)
+    valid_count = int(target_output["composite_signal"].notna().sum()) if "composite_signal" in target_output.columns else 0
+
+    metadata: Dict[str, object] = {
+        "signal_anchor_mode": mode,
+        "signal_anchor_universe_size": anchor_universe_size,
+        "signal_anchor_scoring_universe_size": scoring_size,
+        "signal_anchor_fallback_used": valid_count == 0,
+        "anchor_metadata": anchor_meta,
+    }
+    if valid_count == 0:
+        metadata["reason"] = "no_target_signals"
+    return target_output, metadata
+
+
 # -----------------------------
 # Main Generation Function
 # -----------------------------
@@ -409,6 +536,7 @@ def generate_composite_signals(
     years: int = DEFAULT_YEARS,
     etf_lookthrough_top_n: int = 10,
     clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
+    use_edgar: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
     Generate multi-factor composite signals for portfolio.
@@ -417,12 +545,13 @@ def generate_composite_signals(
         tickers: List of ticker symbols
         asset_map: Dict mapping ticker -> asset type (equity, commodity)
         benchmark_override: If specified, use this benchmark for all tickers
-        weights: Dict of signal weights for longs (default: quality=0.33, price=0.33, revenue=0.20, eps=0.14)
+        weights: Dict of signal weights for longs (default: quality=0.30, price=0.40, revenue=0.20, eps=0.10)
         weights_short: Dict of signal weights for shorts (default: None, uses same as longs)
         direction_map: Dict mapping ticker -> direction ("long" or "short")
         years: Years of price history to fetch
         etf_lookthrough_top_n: If >0, compute ETF fundamentals by looking through to top N holdings
         clip_bounds: (lower, upper) bounds for signal clipping
+        use_edgar: If True, try SEC EDGAR first for EPS/revenue data. If False, use yfinance only.
 
     Returns:
         Tuple of:
@@ -507,6 +636,7 @@ def generate_composite_signals(
                 equities,
                 top_n=etf_lookthrough_top_n,
                 market="SPY",
+                use_edgar=use_edgar,
                 growth_years=years,
             )
 
@@ -528,7 +658,7 @@ def generate_composite_signals(
 
         # EPS Momentum
         print("  Fetching EPS momentum metrics...")
-        eps_raw_stock = fetch_eps_momentum_batch(stock_equities, growth_years=3) if stock_equities else pd.DataFrame()
+        eps_raw_stock = fetch_eps_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar) if stock_equities else pd.DataFrame()
         eps_raw = pd.concat([eps_raw_stock, etf_eps_raw], axis=0) if not etf_eps_raw.empty else eps_raw_stock
         if eps_raw is not None and not eps_raw.empty:
             eps_scores = compute_eps_momentum_signal(eps_raw)
@@ -538,7 +668,7 @@ def generate_composite_signals(
 
         # Revenue Momentum
         print("  Fetching revenue momentum metrics...")
-        rev_raw_stock = fetch_revenue_momentum_batch(stock_equities, growth_years=3) if stock_equities else pd.DataFrame()
+        rev_raw_stock = fetch_revenue_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar) if stock_equities else pd.DataFrame()
         rev_raw = pd.concat([rev_raw_stock, etf_rev_raw], axis=0) if not etf_rev_raw.empty else rev_raw_stock
         if rev_raw is not None and not rev_raw.empty:
             rev_scores = compute_revenue_momentum_signal(rev_raw)

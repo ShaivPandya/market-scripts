@@ -168,9 +168,6 @@ def _annual_fact_entries(entries: List[dict]) -> List[dict]:
     ]
 
     def _key(e: dict) -> str:
-        fy = e.get("fy")
-        if fy is not None:
-            return f"FY:{fy}"
         return f"END:{e.get('end', '')}"
 
     return _sort_newest(_keep_latest_by(filtered, _key))
@@ -193,10 +190,10 @@ def _period_label(e: dict, frequency: str) -> str:
     fp = str(e.get("fp") or "")
 
     if frequency == "annual":
-        if fy is not None:
-            return f"FY{fy}"
         if len(end) >= 4:
             return f"FY{end[:4]}"
+        if fy is not None:
+            return f"FY{fy}"
         return "FY"
 
     if fp in QUARTER_FPS and fy is not None:
@@ -292,7 +289,7 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> List[dict]:
     if frequency == "annual":
         fp_filter = {"FY"}
         forms = ALLOWED_ANNUAL_FORMS
-        period_key = lambda e: f"FY:{e.get('fy') or ''}|END:{e.get('end') or ''}"
+        period_key = lambda e: f"END:{e.get('end') or ''}"
     else:
         fp_filter = QUARTER_FPS
         forms = ALLOWED_QUARTERLY_FORMS
