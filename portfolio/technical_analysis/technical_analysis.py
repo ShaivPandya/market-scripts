@@ -133,6 +133,9 @@ LOOKBACK_OPTIONS = {
     "5Y": pd.DateOffset(years=5),
 }
 
+RATIO_METHOD_PRICE = "price_ratio"
+RATIO_METHODS = {RATIO_METHOD_PRICE}
+
 
 def _fetch_name(ticker: str) -> str:
     """Return the long name for *ticker*, falling back to the ticker symbol."""
@@ -141,6 +144,58 @@ def _fetch_name(ticker: str) -> str:
         return info.get("longName") or info.get("shortName") or ticker.upper()
     except Exception:
         return ticker.upper()
+
+
+def _fetch_pair_daily(symbol_a: str, symbol_b: str, years: int = 10) -> pd.DataFrame:
+    """Download daily close prices for a two-symbol ratio series."""
+    symbols = [symbol_a.upper(), symbol_b.upper()]
+    raw = yf.download(
+        symbols,
+        period=f"{years}y",
+        interval="1d",
+        auto_adjust=False,
+        progress=False,
+    )
+    if raw.empty:
+        raise ValueError(f"No data returned for symbols '{symbols[0]}' and '{symbols[1]}'")
+
+    if not isinstance(raw.columns, pd.MultiIndex):
+        raise ValueError("Unexpected Yahoo response while fetching paired symbols.")
+
+    level0 = set(raw.columns.get_level_values(0))
+    if "Close" in level0:
+        close = raw["Close"].copy()
+    elif "Adj Close" in level0:
+        close = raw["Adj Close"].copy()
+    else:
+        raise ValueError("Yahoo response did not include Close prices.")
+
+    close.columns = [str(col).strip().upper() for col in close.columns]
+    missing = [symbol for symbol in symbols if symbol not in close.columns]
+    if missing:
+        raise ValueError(f"Missing price history for symbol(s): {missing}")
+
+    close = close[symbols].dropna(how="all")
+    close.index = pd.DatetimeIndex(close.index).tz_localize(None)
+    return close
+
+
+def _parse_optional_date(value: str | None, field_name: str) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = pd.to_datetime(text, errors="coerce")
+    if pd.isna(parsed):
+        raise ValueError(f"Invalid {field_name}: '{value}'. Use YYYY-MM-DD.")
+    return pd.Timestamp(parsed).normalize()
+
+
+def _compute_price_ratio(close_df: pd.DataFrame, symbol_a: str, symbol_b: str) -> pd.Series:
+    safe_denominator = close_df[symbol_b].replace(0, pd.NA)
+    ratio = close_df[symbol_a] / safe_denominator
+    return ratio.rename("Ratio")
 
 
 def get_data(ticker: str, lookback: str = "2Y") -> dict:
@@ -164,6 +219,93 @@ def get_data(ticker: str, lookback: str = "2Y") -> dict:
             "price_data": price_df,
             "roc_data": roc_df,
             "summary": summary,
+            "timestamp": datetime.now(),
+        }
+    except Exception as e:
+        import traceback
+        return {"error": f"{e}\n\n{traceback.format_exc()}"}
+
+
+def get_ratio_data(
+    symbol_a: str,
+    symbol_b: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    method: str = RATIO_METHOD_PRICE,
+) -> dict:
+    """Fetch and compute ratio data for two symbols."""
+    try:
+        a = str(symbol_a).strip().upper()
+        b = str(symbol_b).strip().upper()
+        if not a or not b:
+            raise ValueError("Both symbol_a and symbol_b are required.")
+        if a == b:
+            raise ValueError("symbol_a and symbol_b must be different.")
+
+        method_normalized = str(method).strip().lower() or RATIO_METHOD_PRICE
+        if method_normalized not in RATIO_METHODS:
+            supported = ", ".join(sorted(RATIO_METHODS))
+            raise ValueError(f"Unsupported method '{method}'. Supported methods: {supported}.")
+
+        start_ts = _parse_optional_date(start_date, "start_date")
+        end_ts = _parse_optional_date(end_date, "end_date")
+        if start_ts is not None and end_ts is not None and start_ts > end_ts:
+            raise ValueError("start_date must be less than or equal to end_date.")
+
+        close_df = _fetch_pair_daily(a, b, years=10)
+        if start_ts is not None:
+            close_df = close_df.loc[close_df.index >= start_ts]
+        if end_ts is not None:
+            close_df = close_df.loc[close_df.index <= end_ts]
+
+        close_df = close_df.dropna(subset=[a, b])
+        if close_df.empty:
+            raise ValueError("No overlapping price history found in the selected date range.")
+
+        ratio_series = _compute_price_ratio(close_df, a, b)
+        ratio_df = pd.DataFrame({
+            "Price A": close_df[a],
+            "Price B": close_df[b],
+            "Ratio": ratio_series,
+        }).dropna(subset=["Ratio"])
+        if ratio_df.empty:
+            raise ValueError("Ratio series is empty after filtering.")
+
+        start_ratio = float(ratio_df["Ratio"].iloc[0])
+        end_ratio = float(ratio_df["Ratio"].iloc[-1])
+        ratio_change_pct = ((end_ratio / start_ratio) - 1.0) if start_ratio != 0 else None
+        historical_avg = float(ratio_df["Ratio"].mean())
+        historical_median = float(ratio_df["Ratio"].median())
+        current_vs_historical_avg_pct = ((end_ratio / historical_avg) - 1.0) if historical_avg != 0 else None
+        if abs(end_ratio - historical_avg) < 1e-12:
+            historical_position = "at"
+        elif end_ratio > historical_avg:
+            historical_position = "above"
+        else:
+            historical_position = "below"
+
+        return {
+            "symbol_a": a,
+            "symbol_b": b,
+            "name_a": _fetch_name(a),
+            "name_b": _fetch_name(b),
+            "method": method_normalized,
+            "ratio_label": f"{a}/{b}",
+            "ratio_data": ratio_df,
+            "stats": {
+                "start_ratio": start_ratio,
+                "end_ratio": end_ratio,
+                "change_pct": ratio_change_pct,
+                "historical_avg": historical_avg,
+                "historical_median": historical_median,
+                "current_vs_historical_avg_pct": current_vs_historical_avg_pct,
+                "historical_position": historical_position,
+                "min_ratio": float(ratio_df["Ratio"].min()),
+                "max_ratio": float(ratio_df["Ratio"].max()),
+                "start_date": ratio_df.index.min().date().isoformat(),
+                "end_date": ratio_df.index.max().date().isoformat(),
+                "observations": int(len(ratio_df)),
+            },
             "timestamp": datetime.now(),
         }
     except Exception as e:

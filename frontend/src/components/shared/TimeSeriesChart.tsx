@@ -21,6 +21,7 @@ export interface SeriesDef {
   strokeWidth?: number
   /** Maps to strokeOpacity on the Line element */
   opacity?: number
+  strokeDasharray?: string
 }
 
 interface TimeSeriesChartProps {
@@ -165,6 +166,7 @@ export function TimeSeriesChart({
                   dot={false}
                   strokeWidth={s.strokeWidth ?? 1.5}
                   strokeOpacity={s.opacity ?? 1}
+                  strokeDasharray={s.strokeDasharray}
                   connectNulls={false}
                 />
               ))

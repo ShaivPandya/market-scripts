@@ -55,6 +55,10 @@ interface SizerResponse {
   constraints?: Record<string, SizerConstraint>
   weights_df?: Record<string, unknown>[]
   hedges_df?: Record<string, unknown>[]
+  hedge_spy_weight?: number
+  hedge_iwm_weight?: number
+  hedge_direction_warning?: string | null
+  hedge_direction_issues?: string[]
   max_scaled?: SizerMaxScaled
   [key: string]: unknown
 }
@@ -166,6 +170,11 @@ function firstNumber(...values: unknown[]) {
     if (num != null) return num
   }
   return null
+}
+
+function getHedgeWeightFromRows(rows: Record<string, unknown>[], ticker: string): number | null {
+  const row = rows.find(r => String(r.ticker ?? "").trim().toUpperCase() === ticker)
+  return row ? toNumber(row.weight) : null
 }
 
 function clamp01(value: number) {
@@ -338,6 +347,22 @@ export function PortfolioSizer() {
   const volDaily = firstNumber(data?.vol_daily)
   const grossLeverage = firstNumber(data?.gross_leverage)
   const hedgeGross = firstNumber(exposures.hedge_gross, 0) ?? 0
+  const hedgeSpyWeight = firstNumber(data?.hedge_spy_weight, getHedgeWeightFromRows(hedgesRows, "SPY"))
+  const hedgeIwmWeight = firstNumber(data?.hedge_iwm_weight, getHedgeWeightFromRows(hedgesRows, "IWM"))
+  const hedgeDirectionIssues = Array.from(new Set([
+    ...(Array.isArray(data?.hedge_direction_issues) ? data.hedge_direction_issues.filter(v => typeof v === "string") : []),
+    ...(hedgeSpyWeight != null && hedgeSpyWeight > 0
+      ? [`SPY hedge is long (${hedgeSpyWeight >= 0 ? "+" : ""}${hedgeSpyWeight.toFixed(4)}). Long exposure should generally be hedged by shorting SPY.`]
+      : []),
+    ...(hedgeIwmWeight != null && hedgeIwmWeight < 0
+      ? [`IWM hedge is short (${hedgeIwmWeight >= 0 ? "+" : ""}${hedgeIwmWeight.toFixed(4)}). Short exposure should generally be hedged by going long IWM.`]
+      : []),
+  ]))
+  const hedgeDirectionWarning = typeof data?.hedge_direction_warning === "string" && data.hedge_direction_warning.trim().length > 0
+    ? data.hedge_direction_warning
+    : hedgeDirectionIssues.length > 0
+      ? "Potential hedge direction mismatch detected."
+      : null
   const equityNet = firstNumber(exposures.equity_net, data?.equity_net)
   const netBetaSpy = firstNumber(data?.net_beta_spy)
   const netBetaIwm = firstNumber(data?.net_beta_iwm)
@@ -463,6 +488,20 @@ export function PortfolioSizer() {
 
       {data && !mutation.isPending && (
         <div className="space-y-6">
+          {hedgeDirectionWarning && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-900">Hedge Direction Warning</p>
+              <p className="mt-1 text-sm text-amber-800">{hedgeDirectionWarning}</p>
+              {hedgeDirectionIssues.length > 0 && (
+                <ul className="mt-2 list-disc pl-5 text-sm text-amber-800 space-y-1">
+                  {hedgeDirectionIssues.map(issue => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {showHeaderMetrics && (
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
               {volDaily != null && <MetricCard title="Daily Volatility" value={`${(volDaily * 100).toFixed(2)}%`} />}

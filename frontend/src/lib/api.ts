@@ -184,34 +184,48 @@ export const fetchSizerPrefill = () =>
 export const runChart = (body: { ticker: string; lookback: string }) =>
   client.post("/chart", body).then(r => r.data)
 
-export const runPortfolioOptimizer = (body: { book: number; target_leverage: number; beta_neutral: boolean }) =>
-  client.post("/portfolio-optimizer", body, { timeout: 180_000 }).then(r => r.data)
+export const runPriceRatioChart = (body: {
+  symbol_a: string
+  symbol_b: string
+  method?: string
+  start_date?: string
+  end_date?: string
+}) => client.post("/chart/ratio", body).then(r => r.data)
 
-type OptimizerJobResponse =
+type AnalyzerRequest = {
+  book?: number
+  target_leverage?: number
+  beta_neutral?: boolean
+}
+
+export const runPortfolioAnalyzer = (body: AnalyzerRequest = {}) =>
+  client.post("/portfolio-analyzer", body, { timeout: 180_000 }).then(r => r.data)
+
+type AnalyzerJobResponse =
   | { job_id: string; status: "queued" | "running" }
   | { job_id: string; status: "error"; error?: string }
   | { job_id: string; status: "done"; result?: unknown }
 
-export const startPortfolioOptimizerJob = (body: { book: number; target_leverage: number; beta_neutral: boolean }) =>
-  client.post("/portfolio-optimizer/async", body, { timeout: 30_000 }).then(r => r.data as OptimizerJobResponse)
+export const startPortfolioAnalyzerJob = (body: AnalyzerRequest = {}) =>
+  client.post("/portfolio-analyzer/async", body, { timeout: 30_000 }).then(r => r.data as AnalyzerJobResponse)
 
-export const fetchPortfolioOptimizerJob = (job_id: string) =>
-  client.get(`/portfolio-optimizer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OptimizerJobResponse)
+export const fetchPortfolioAnalyzerJob = (job_id: string) =>
+  client.get(`/portfolio-analyzer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as AnalyzerJobResponse)
 
-export async function runPortfolioOptimizerAsync(body: { book: number; target_leverage: number; beta_neutral: boolean }) {
-  const started = await startPortfolioOptimizerJob(body)
+export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
+  const started = await startPortfolioAnalyzerJob(body)
   if (started.status === "done" && "result" in started && started.result != null) return started.result
-  if (started.status === "error") throw new Error(started.error || "Optimizer failed")
+  if (started.status === "error") throw new Error(started.error || "Portfolio analyzer failed")
 
   const job_id = started.job_id
   const deadline = Date.now() + 180_000
 
   // Poll until completion; each request is short to avoid edge proxy timeouts.
   for (;;) {
-    if (Date.now() > deadline) throw new Error("Timeout: Optimizer is taking too long. Try again.")
+    if (Date.now() > deadline) throw new Error("Timeout: Portfolio analyzer is taking too long. Try again.")
 
     await new Promise(r => setTimeout(r, 2000))
-    const job = await fetchPortfolioOptimizerJob(job_id)
+    const job = await fetchPortfolioAnalyzerJob(job_id)
 
     if (job.status === "done") {
       if ("result" in job && job.result != null) return job.result
@@ -219,8 +233,16 @@ export async function runPortfolioOptimizerAsync(body: { book: number; target_le
       // (the initial response already carried the payload).
       return "result" in started ? started.result : undefined
     }
-    if (job.status === "error") throw new Error(job.error || "Optimizer failed")
+    if (job.status === "error") throw new Error(job.error || "Portfolio analyzer failed")
   }
+}
+
+// Backward-compatible exports.
+export const runPortfolioOptimizer = runPortfolioAnalyzer
+export const startPortfolioOptimizerJob = startPortfolioAnalyzerJob
+export const fetchPortfolioOptimizerJob = fetchPortfolioAnalyzerJob
+export async function runPortfolioOptimizerAsync(body: AnalyzerRequest = {}) {
+  return runPortfolioAnalyzerAsync(body)
 }
 
 export const runHedgingTool = (body: { book: number; positions: { ticker: string; weight: number }[] }) =>

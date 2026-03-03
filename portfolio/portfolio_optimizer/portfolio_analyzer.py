@@ -29,16 +29,16 @@ WHAT THIS SCRIPT DOES
 HOW TO RUN
 ═══════════════════════════════════════════════════════════════════════════════
 Basic usage:
-    python3 equities/portfolio/portfolio_optimizer.py
+    python3 equities/portfolio/portfolio_analyzer.py
 
 With dollar book size (shows dollar weights):
-    python3 equities/portfolio/portfolio_optimizer.py --book 100000
+    python3 equities/portfolio/portfolio_analyzer.py --book 100000
 
 With debug output (shows raw/optimized/final weight evolution):
-    python3 equities/portfolio/portfolio_optimizer.py --debug-weights
+    python3 equities/portfolio/portfolio_analyzer.py --debug-weights
 
 Combined:
-    python3 equities/portfolio/portfolio_optimizer.py --book 250000 --debug-weights
+    python3 equities/portfolio/portfolio_analyzer.py --book 250000 --debug-weights
 
 ═══════════════════════════════════════════════════════════════════════════════
 CONFIGURING EXPOSURE LIMITS
@@ -1107,6 +1107,139 @@ def overlay_anchor_long_equity_signals(
     return signal_composite_out, sub_out, metadata
 
 
+def analyze_portfolio() -> dict:
+    """
+    Build an informational signal table for conviction analysis.
+
+    Returns:
+        Dictionary containing weights_df with signal/factor metrics only.
+    """
+    from datetime import datetime
+
+    try:
+        meta = pd.read_csv(PORTFOLIO_CSV)
+        meta["direction"] = meta["direction"].fillna("")
+        meta = meta.set_index("ticker")
+
+        tickers = meta.index.tolist()
+        if not tickers:
+            return {"error": "portfolio.csv has no tickers."}
+
+        # Download prices needed for signals and distressed gating.
+        fx_tickers = get_required_fx_tickers(tickers)
+        market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
+        all_tickers_to_fetch = list(set(tickers + market_tickers))
+        prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
+
+        missing_cols = [t for t in tickers if t not in prices_all.columns]
+        if missing_cols:
+            return {"error": f"Failed to download tickers: {missing_cols}"}
+
+        for mt in market_tickers:
+            if mt not in prices_all.columns:
+                return {"error": f"Failed to download {mt} for signal calibration."}
+
+        usd_prices = pd.DataFrame(index=prices_all.index)
+        for t in list(set(tickers + market_tickers)):
+            local_px = prices_all[t]
+            ccy = CURRENCY_OF_TICKER.get(t, BASE_CCY)
+            usd_prices[t] = to_usd_price(local_px, ccy, prices_all)
+
+        usd_prices = usd_prices.ffill()
+        rets = usd_prices.pct_change(fill_method=None).dropna(how="all")
+        tickers = [t for t in tickers if t in rets.columns]
+        if not tickers:
+            return {"error": "No instruments with sufficient return history for signal analysis."}
+
+        meta = meta.loc[tickers]
+        meta = apply_distressed_gating(meta, prices_all)
+
+        active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
+        asset_map = dict(zip(meta.index, meta["asset"]))
+        direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
+
+        signals_df, _ = generate_composite_signals(
+            tickers=active_tickers,
+            asset_map=asset_map,
+            benchmark_override=MARKET_TICKER_LONG,
+            direction_map=direction_map,
+            weights_short=DEFAULT_WEIGHTS_SHORT,
+            use_edgar=False,
+        )
+        signal_composite = (
+            signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+        )
+        signal_composite = signal_composite.reindex(tickers).fillna(0.0)
+
+        signal_subcomponents: Dict[str, pd.Series] = {}
+        for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
+            if not signals_df.empty and col in signals_df.columns:
+                signal_subcomponents[col] = signals_df[col].reindex(tickers)
+            else:
+                signal_subcomponents[col] = pd.Series(np.nan, index=tickers)
+
+        signal_composite, signal_subcomponents, signal_anchor_meta = overlay_anchor_long_equity_signals(
+            tickers=tickers,
+            meta=meta,
+            signal_composite=signal_composite,
+            signal_subcomponents=signal_subcomponents,
+            years=5,
+            use_edgar=False,
+        )
+
+        signal_effective = signal_composite.copy()
+        distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
+        distressed_tickers = distressed_active[distressed_active].index.tolist()
+        if distressed_tickers:
+            distressed_drawdowns = meta.loc[distressed_tickers, "drawdown_52w"].astype(float)
+            distress_signal = ((distressed_drawdowns - DISTRESSED_DD_THRESHOLD) / DISTRESSED_SIGNAL_DD_SCALE).clip(
+                lower=0.0,
+                upper=DISTRESSED_SIGNAL_CLIP,
+            )
+            signal_effective.loc[distressed_tickers] = distress_signal
+
+        direction_display = (
+            meta["direction_intended"]
+            .fillna(meta["direction"])
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+
+        weights_df = pd.DataFrame(
+            {
+                "ticker": tickers,
+                "asset": meta["asset"].values,
+                "direction": direction_display.values,
+                "distressed": meta["distressed"].values,
+                "drawdown_52w": meta["drawdown_52w"].values,
+                "stabilized_10d": meta["stabilized_10d"].values,
+                "days_since_new_low": meta["days_since_new_low"].values,
+                "signal": signal_effective.values,
+                "quality_signal": signal_subcomponents["quality_signal"].values,
+                "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
+                "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
+                "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
+            }
+        )
+        weights_df = weights_df.sort_values(["signal", "ticker"], ascending=[False, True]).reset_index(drop=True)
+
+        return {
+            "status": "ok",
+            "error": None,
+            "timestamp": datetime.now(),
+            "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
+            "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
+            "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
+            "weights_df": weights_df,
+        }
+
+    except Exception as e:
+        import traceback
+
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 def optimize_portfolio(
     book: Optional[float] = None,
     target_leverage: Optional[float] = None,
@@ -1530,17 +1663,18 @@ def optimize_portfolio(
 
 def get_data(book: Optional[float] = None, target_leverage: Optional[float] = None, beta_neutral: bool = True) -> dict:
     """
-    Fetch portfolio optimization results for GUI consumption.
+    Fetch portfolio analyzer results for GUI consumption.
 
     Args:
-        book: Book size in dollars (optional)
-        target_leverage: Target gross leverage ratio (0.5-4.0). If None, uses volatility targeting.
-        beta_neutral: If True (default), adjust weights so equity net exposure = 0%.
+        book: Legacy optimizer argument, ignored for analyzer output.
+        target_leverage: Legacy optimizer argument, ignored for analyzer output.
+        beta_neutral: Legacy optimizer argument, ignored for analyzer output.
 
     Returns:
-        Dictionary with optimization results or error.
+        Dictionary with analyzer results or error.
     """
-    return optimize_portfolio(book=book, target_leverage=target_leverage, beta_neutral=beta_neutral)
+    _ = (book, target_leverage, beta_neutral)
+    return analyze_portfolio()
 
 
 # -----------------------------

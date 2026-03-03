@@ -224,7 +224,7 @@ def get_portfolio_sizer_job(job_id: str):
 def get_sizer_prefill():
     try:
         import pandas as pd
-        from portfolio_optimizer.portfolio_optimizer import PORTFOLIO_CSV
+        from portfolio_optimizer.portfolio_analyzer import PORTFOLIO_CSV
 
         df = pd.read_csv(PORTFOLIO_CSV)
         if "ticker" not in df.columns:
