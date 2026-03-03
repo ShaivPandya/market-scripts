@@ -176,6 +176,9 @@ export const fetchFxModelPairs = () =>
 export const fetchHedgingToolPrefill = () =>
   client.get("/hedging-tool/prefill").then(r => r.data)
 
+export const fetchSizerPrefill = () =>
+  client.get("/portfolio-sizer/prefill").then(r => r.data)
+
 // ─── POST endpoints ───────────────────────────────────────────────────────────
 
 export const runChart = (body: { ticker: string; lookback: string }) =>
@@ -253,6 +256,47 @@ export async function runHedgingToolAsync(body: { book: number; positions: { tic
       return "result" in started ? started.result : undefined
     }
     if (job.status === "error") throw new Error(job.error || "Hedging tool failed")
+  }
+}
+
+type SizerJobResponse =
+  | { job_id: string; status: "queued" | "running" }
+  | { job_id: string; status: "error"; error?: string }
+  | { job_id: string; status: "done"; result?: unknown }
+
+export const startSizerJob = (body: {
+  book: number
+  target_leverage: number
+  positions: { ticker: string; conviction: number }[]
+}) =>
+  client.post("/portfolio-sizer/async", body, { timeout: 30_000 }).then(r => r.data as SizerJobResponse)
+
+export const fetchSizerJob = (job_id: string) =>
+  client.get(`/portfolio-sizer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as SizerJobResponse)
+
+export async function runPortfolioSizerAsync(body: {
+  book: number
+  target_leverage: number
+  positions: { ticker: string; conviction: number }[]
+}) {
+  const started = await startSizerJob(body)
+  if (started.status === "done" && "result" in started && started.result != null) return started.result
+  if (started.status === "error") throw new Error(started.error || "Sizer failed")
+
+  const job_id = started.job_id
+  const deadline = Date.now() + 180_000
+
+  for (;;) {
+    if (Date.now() > deadline) throw new Error("Timeout: Sizer is taking too long. Try again.")
+
+    await new Promise(r => setTimeout(r, 2000))
+    const job = await fetchSizerJob(job_id)
+
+    if (job.status === "done") {
+      if ("result" in job && job.result != null) return job.result
+      return "result" in started ? started.result : undefined
+    }
+    if (job.status === "error") throw new Error(job.error || "Sizer failed")
   }
 }
 
