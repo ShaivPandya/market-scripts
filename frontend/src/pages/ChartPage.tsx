@@ -1,30 +1,62 @@
-import { useState, useMemo } from "react"
+import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { runChart } from "@/lib/api"
+
+import { runChart, runPriceRatioChart } from "@/lib/api"
 import { TimeSeriesChart, type SeriesDef } from "@/components/shared/TimeSeriesChart"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { SegmentedControl, TextInput, ActionButton } from "@/components/shared/FormControls"
+import { MetricCard } from "@/components/shared/MetricCard"
 
 const LOOKBACKS = ["3M", "1Y", "2Y", "5Y"] as const
+
+type ChartMode = "single" | "ratio"
+type RatioWindow = "5Y" | "10Y"
+
+interface RatioPreset {
+  label: string
+  symbolA: string
+  symbolB: string
+}
+
+interface RatioPayload {
+  symbol_a: string
+  symbol_b: string
+  start_date?: string
+  end_date?: string
+}
+
+interface RatioRow {
+  date: string
+  priceA: number | null
+  priceB: number | null
+  ratio: number | null
+}
+
+const RATIO_PRESETS: RatioPreset[] = [
+  { label: "HD / LOW", symbolA: "HD", symbolB: "LOW" },
+  { label: "V / MA", symbolA: "V", symbolB: "MA" },
+  { label: "IWM / IJR", symbolA: "IWM", symbolB: "IJR" },
+  { label: "Silver / Gold", symbolA: "SI=F", symbolB: "GC=F" },
+]
 
 const MA_COLUMNS = ["100D SMA", "150D SMA", "200D SMA", "40W SMA", "200W SMA", "10M SMA", "20M SMA"]
 const ROC_COLUMNS = ["1M ROC", "3M ROC", "12M ROC"]
 
 const PRICE_SERIES: SeriesDef[] = [
-  { key: "Close",    color: "#1f77b4", strokeWidth: 2,   opacity: 1    },
-  { key: "100D SMA", color: "#ff7f0e", strokeWidth: 1,   opacity: 0.75 },
-  { key: "150D SMA", color: "#2ca02c", strokeWidth: 1,   opacity: 0.75 },
-  { key: "200D SMA", color: "#d62728", strokeWidth: 1,   opacity: 0.75 },
-  { key: "40W SMA",  color: "#9467bd", strokeWidth: 1,   opacity: 0.75 },
-  { key: "200W SMA", color: "#8c564b", strokeWidth: 1,   opacity: 0.75 },
-  { key: "10M SMA",  color: "#e377c2", strokeWidth: 1,   opacity: 0.75 },
-  { key: "20M SMA",  color: "#7f7f7f", strokeWidth: 1,   opacity: 0.75 },
+  { key: "Close", color: "#1f77b4", strokeWidth: 2, opacity: 1 },
+  { key: "100D SMA", color: "#ff7f0e", strokeWidth: 1, opacity: 0.75 },
+  { key: "150D SMA", color: "#2ca02c", strokeWidth: 1, opacity: 0.75 },
+  { key: "200D SMA", color: "#d62728", strokeWidth: 1, opacity: 0.75 },
+  { key: "40W SMA", color: "#9467bd", strokeWidth: 1, opacity: 0.75 },
+  { key: "200W SMA", color: "#8c564b", strokeWidth: 1, opacity: 0.75 },
+  { key: "10M SMA", color: "#e377c2", strokeWidth: 1, opacity: 0.75 },
+  { key: "20M SMA", color: "#7f7f7f", strokeWidth: 1, opacity: 0.75 },
 ]
 
 const ROC_SERIES: SeriesDef[] = [
-  { key: "1M ROC",  color: "#1f77b4" },
-  { key: "3M ROC",  color: "#ff7f0e" },
+  { key: "1M ROC", color: "#1f77b4" },
+  { key: "3M ROC", color: "#ff7f0e" },
   { key: "12M ROC", color: "#2ca02c" },
 ]
 
@@ -35,78 +67,178 @@ const PRICE_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 })
 
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
 function lookbackCutoff(lookback: string): Date {
   const now = new Date()
   switch (lookback) {
     case "3M": return new Date(now.getFullYear(), now.getMonth() - 3, now.getDate())
     case "1Y": return new Date(now.getFullYear() - 1, now.getMonth(), now.getDate())
     case "2Y": return new Date(now.getFullYear() - 2, now.getMonth(), now.getDate())
-    default:   return new Date(0)
+    default: return new Date(0)
   }
 }
 
+function toDateInputValue(date: Date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, "0")
+  const d = String(date.getDate()).padStart(2, "0")
+  return `${y}-${m}-${d}`
+}
+
+function isoDateToday() {
+  return toDateInputValue(new Date())
+}
+
+function computeWindowStartDate(window: RatioWindow): string {
+  const years = window === "10Y" ? 10 : 5
+  const end = new Date()
+  end.setFullYear(end.getFullYear() - years)
+  return toDateInputValue(end)
+}
+
+function buildRatioPayload(
+  symbolA: string,
+  symbolB: string,
+  startDate: string,
+  endDate: string,
+): RatioPayload {
+  const payload: RatioPayload = {
+    symbol_a: symbolA,
+    symbol_b: symbolB,
+  }
+  const start = startDate.trim()
+  const end = endDate.trim()
+  if (start) payload.start_date = start
+  if (end) payload.end_date = end
+  return payload
+}
+
+function formatRatio(value: number | null, digits = 4): string {
+  if (value == null) return "N/A"
+  return value.toFixed(digits)
+}
+
+function formatPercentFromDecimal(value: number | null): string {
+  if (value == null) return "N/A"
+  const pct = value * 100
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`
+}
+
 export function ChartPage() {
+  const [mode, setMode] = useState<ChartMode>("single")
+
   const [ticker, setTicker] = useState("")
   const [lookback, setLookback] = useState<string>("2Y")
-
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
-  const { data, isFetching, isError, error } = useQuery({
-    queryKey: ["chart", submittedTicker],
+  const [ratioSymbolA, setRatioSymbolA] = useState("HD")
+  const [ratioSymbolB, setRatioSymbolB] = useState("LOW")
+  const [ratioWindow, setRatioWindow] = useState<RatioWindow>("5Y")
+  const [submittedRatio, setSubmittedRatio] = useState<RatioPayload | null>(null)
+
+  const singleQuery = useQuery({
+    queryKey: ["chart", "single", submittedTicker],
     queryFn: () => runChart({ ticker: submittedTicker!, lookback: "5Y" }),
     enabled: Boolean(submittedTicker),
     staleTime: Infinity,
   })
 
-  const isLoading = isFetching
+  const ratioQuery = useQuery({
+    queryKey: ["chart", "ratio", submittedRatio],
+    queryFn: () => runPriceRatioChart(submittedRatio!),
+    enabled: Boolean(submittedRatio),
+    staleTime: Infinity,
+  })
+
+  const isLoading = mode === "ratio" ? ratioQuery.isFetching : singleQuery.isFetching
+  const isError = mode === "ratio" ? ratioQuery.isError : singleQuery.isError
+  const error = mode === "ratio" ? ratioQuery.error : singleQuery.error
+
+  const singleData = (singleQuery.data ?? null) as Record<string, unknown> | null
+  const ratioData = (ratioQuery.data ?? null) as Record<string, unknown> | null
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const normalizedTicker = ticker.trim().toUpperCase()
-    if (!normalizedTicker) return
-    setSubmittedTicker(normalizedTicker)
+
+    if (mode === "single") {
+      const normalizedTicker = ticker.trim().toUpperCase()
+      if (!normalizedTicker) return
+      setSubmittedTicker(normalizedTicker)
+      return
+    }
+
+    const symbolA = ratioSymbolA.trim().toUpperCase()
+    const symbolB = ratioSymbolB.trim().toUpperCase()
+    if (!symbolA || !symbolB) return
+
+    const endDate = isoDateToday()
+    const startDate = computeWindowStartDate(ratioWindow)
+    setRatioSymbolA(symbolA)
+    setRatioSymbolB(symbolB)
+    setSubmittedRatio(buildRatioPayload(symbolA, symbolB, startDate, endDate))
   }
 
-  // Parse the full 5Y datasets once when data arrives
-  const allPriceData = useMemo<Record<string, unknown>[]>(() => (
-    (data?.price_data ?? []).map((r: Record<string, unknown>) => {
-      const pt: Record<string, unknown> = {
-        date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
-        Close: r["Close"] != null ? Number(r["Close"]) : null,
-      }
-      for (const col of MA_COLUMNS) {
-        const v = r[col]
-        pt[col] = v != null && v !== "" ? Number(v) : null
-      }
-      return pt
-    }).filter((d: Record<string, unknown>) => d.date)
-  ), [data])
+  function handleRatioPresetClick(preset: RatioPreset) {
+    setMode("ratio")
+    setRatioSymbolA(preset.symbolA)
+    setRatioSymbolB(preset.symbolB)
+    const endDate = isoDateToday()
+    const startDate = computeWindowStartDate(ratioWindow)
+    setSubmittedRatio(buildRatioPayload(preset.symbolA, preset.symbolB, startDate, endDate))
+  }
 
-  const allRocData = useMemo<Record<string, unknown>[]>(() => (
-    (data?.roc_data ?? []).map((r: Record<string, unknown>) => {
-      const pt: Record<string, unknown> = {
-        date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
-      }
-      for (const col of ROC_COLUMNS) {
-        const v = r[col]
-        pt[col] = v != null && v !== "" ? Number(v) : null
-      }
-      return pt
-    }).filter((d: Record<string, unknown>) => d.date)
-  ), [data])
+  const allPriceData = useMemo<Record<string, unknown>[]>(() => {
+    const rows = Array.isArray(singleData?.price_data) ? singleData.price_data : []
+    return rows
+      .map((r: Record<string, unknown>) => {
+        const pt: Record<string, unknown> = {
+          date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+          Close: r["Close"] != null ? Number(r["Close"]) : null,
+        }
+        for (const col of MA_COLUMNS) {
+          const v = r[col]
+          pt[col] = v != null && v !== "" ? Number(v) : null
+        }
+        return pt
+      })
+      .filter((d: Record<string, unknown>) => d.date)
+  }, [singleData])
 
-  // Slice to the selected lookback client-side — instant, no re-fetch
+  const allRocData = useMemo<Record<string, unknown>[]>(() => {
+    const rows = Array.isArray(singleData?.roc_data) ? singleData.roc_data : []
+    return rows
+      .map((r: Record<string, unknown>) => {
+        const pt: Record<string, unknown> = {
+          date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+        }
+        for (const col of ROC_COLUMNS) {
+          const v = r[col]
+          pt[col] = v != null && v !== "" ? Number(v) : null
+        }
+        return pt
+      })
+      .filter((d: Record<string, unknown>) => d.date)
+  }, [singleData])
+
   const cutoff = lookbackCutoff(lookback)
   const priceMultiData = useMemo(
     () => allPriceData.filter(d => new Date(String(d.date)) >= cutoff),
-    [allPriceData, cutoff]
+    [allPriceData, cutoff],
   )
   const rocMultiData = useMemo(
     () => allRocData.filter(d => new Date(String(d.date)) >= cutoff),
-    [allRocData, cutoff]
+    [allRocData, cutoff],
   )
 
-  const summaryRows: Record<string, unknown>[] = Array.isArray(data?.summary) ? data.summary : []
+  const summaryRows: Record<string, unknown>[] = Array.isArray(singleData?.summary) ? singleData.summary : []
   const summaryCols: ColumnDef[] = summaryRows.length > 0
     ? Object.keys(summaryRows[0]).map(k => ({
         key: k,
@@ -117,8 +249,8 @@ export function ChartPage() {
       }))
     : []
 
-  const displayTicker = String(data?.ticker ?? ticker).toUpperCase()
-  const displayName = typeof data?.name === "string" && data.name.trim() ? data.name.trim() : displayTicker
+  const displayTicker = String(singleData?.ticker ?? ticker).toUpperCase()
+  const displayName = typeof singleData?.name === "string" && singleData.name.trim() ? singleData.name.trim() : displayTicker
 
   const currentPrice = useMemo<number | null>(() => {
     for (let i = allPriceData.length - 1; i >= 0; i -= 1) {
@@ -128,37 +260,208 @@ export function ChartPage() {
     return null
   }, [allPriceData])
 
+  const ratioRows = useMemo<RatioRow[]>(() => {
+    const rows = Array.isArray(ratioData?.ratio_data) ? ratioData.ratio_data : []
+    return rows
+      .map((r: Record<string, unknown>) => ({
+        date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+        priceA: toNumber(r["Price A"]),
+        priceB: toNumber(r["Price B"]),
+        ratio: toNumber(r["Ratio"]),
+      }))
+      .filter(r => r.date.length > 0)
+  }, [ratioData])
+
+  const ratioStats = (ratioData?.stats && typeof ratioData.stats === "object")
+    ? ratioData.stats as Record<string, unknown>
+    : {}
+
+  const activeRatioSymbolA = String(ratioData?.symbol_a ?? ratioSymbolA).trim().toUpperCase()
+  const activeRatioSymbolB = String(ratioData?.symbol_b ?? ratioSymbolB).trim().toUpperCase()
+  const activeRatioNameA = typeof ratioData?.name_a === "string" ? ratioData.name_a : activeRatioSymbolA
+  const activeRatioNameB = typeof ratioData?.name_b === "string" ? ratioData.name_b : activeRatioSymbolB
+  const historicalAvg = toNumber(ratioStats.historical_avg) ?? (
+    ratioRows.length > 0
+      ? (() => {
+          const values = ratioRows
+            .map(r => r.ratio)
+            .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+          if (values.length === 0) return null
+          return values.reduce((sum, v) => sum + v, 0) / values.length
+        })()
+      : null
+  )
+  const currentRatio = toNumber(ratioStats.end_ratio) ?? (
+    ratioRows.length > 0 ? ratioRows[ratioRows.length - 1].ratio : null
+  )
+  const currentVsHistoricalPct = toNumber(ratioStats.current_vs_historical_avg_pct) ?? (
+    historicalAvg != null && historicalAvg !== 0 && currentRatio != null
+      ? (currentRatio / historicalAvg) - 1
+      : null
+  )
+  const historicalPosition = (() => {
+    const statsPosition = String(ratioStats.historical_position ?? "").toLowerCase()
+    if (statsPosition === "above" || statsPosition === "below" || statsPosition === "at") return statsPosition
+    if (historicalAvg == null || currentRatio == null) return "n/a"
+    if (Math.abs(currentRatio - historicalAvg) < 1e-12) return "at"
+    return currentRatio > historicalAvg ? "above" : "below"
+  })()
+
+  const ratioChartSeries: SeriesDef[] = useMemo(() => [
+    { key: "Ratio", color: "#0f766e", strokeWidth: 2 },
+    { key: "Historical Avg", color: "#f59e0b", strokeWidth: 1.5, opacity: 0.9, strokeDasharray: "6 4" },
+  ], [])
+
+  const ratioMultiChartData = useMemo<Record<string, unknown>[]>(() => (
+    ratioRows.map(r => ({
+      date: r.date,
+      Ratio: r.ratio,
+      "Historical Avg": historicalAvg,
+    }))
+  ), [ratioRows, historicalAvg])
+
+  const ratioColumns: ColumnDef[] = useMemo(() => [
+    { key: "date", header: "Date" },
+    {
+      key: "priceA",
+      header: `${activeRatioSymbolA} Price`,
+      format: (v: unknown) => {
+        const n = toNumber(v)
+        return n == null ? "N/A" : PRICE_FORMATTER.format(n)
+      },
+    },
+    {
+      key: "priceB",
+      header: `${activeRatioSymbolB} Price`,
+      format: (v: unknown) => {
+        const n = toNumber(v)
+        return n == null ? "N/A" : PRICE_FORMATTER.format(n)
+      },
+    },
+    {
+      key: "ratio",
+      header: `${activeRatioSymbolA}/${activeRatioSymbolB}`,
+      format: (v: unknown) => formatRatio(toNumber(v), 4),
+    },
+  ], [activeRatioSymbolA, activeRatioSymbolB])
+
+  const ratioRecentRows = useMemo<Record<string, unknown>[]>(() => (
+    ratioRows.slice(-250).map(r => ({
+      date: r.date,
+      priceA: r.priceA,
+      priceB: r.priceB,
+      ratio: r.ratio,
+    }))
+  ), [ratioRows])
+
+  function handleRatioWindowChange(nextWindow: RatioWindow) {
+    setRatioWindow(nextWindow)
+    if (!submittedRatio) return
+
+    const symbolA = ratioSymbolA.trim().toUpperCase()
+    const symbolB = ratioSymbolB.trim().toUpperCase()
+    if (!symbolA || !symbolB) return
+
+    const endDate = isoDateToday()
+    const startDate = computeWindowStartDate(nextWindow)
+    setSubmittedRatio(buildRatioPayload(symbolA, symbolB, startDate, endDate))
+  }
+
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Chart</h1>
       </div>
 
-      <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-4 mb-6">
-        <TextInput
-          label="Ticker"
-          value={ticker}
-          onChange={v => setTicker(v.toUpperCase())}
-          placeholder="SPY"
-          className="w-28"
-        />
+      <form onSubmit={handleSubmit} className="mb-4 space-y-3">
         <div>
-          <label className="block text-sm text-gray-600 mb-1.5">Lookback</label>
+          <label className="block text-sm text-gray-600 mb-1.5">Mode</label>
           <SegmentedControl
-            options={LOOKBACKS.map(l => ({ value: l, label: l }))}
-            value={lookback}
-            onChange={setLookback}
+            options={[
+              { value: "single", label: "Single Symbol" },
+              { value: "ratio", label: "Ratio" },
+            ]}
+            value={mode}
+            onChange={setMode}
           />
         </div>
-        <ActionButton type="submit" loading={isLoading} loadingText="Analyzing..." className="w-auto px-6">
-          Analyze
-        </ActionButton>
+
+        {mode === "single" && (
+          <div className="flex flex-wrap items-end gap-4">
+            <TextInput
+              label="Ticker"
+              value={ticker}
+              onChange={v => setTicker(v.toUpperCase())}
+              placeholder="SPY"
+              className="w-28"
+            />
+            <div>
+              <label className="block text-sm text-gray-600 mb-1.5">Lookback</label>
+              <SegmentedControl
+                options={LOOKBACKS.map(l => ({ value: l, label: l }))}
+                value={lookback}
+                onChange={setLookback}
+              />
+            </div>
+            <ActionButton type="submit" loading={isLoading} loadingText="Analyzing..." className="w-auto px-6">
+              Analyze
+            </ActionButton>
+          </div>
+        )}
+
+        {mode === "ratio" && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end gap-4">
+              <TextInput
+                label="Symbol A (Numerator)"
+                value={ratioSymbolA}
+                onChange={v => setRatioSymbolA(v.toUpperCase())}
+                placeholder="HD"
+                className="w-40"
+              />
+              <TextInput
+                label="Symbol B (Denominator)"
+                value={ratioSymbolB}
+                onChange={v => setRatioSymbolB(v.toUpperCase())}
+                placeholder="LOW"
+                className="w-40"
+              />
+              <div>
+                <label className="block text-sm text-gray-600 mb-1.5">View Window</label>
+                <SegmentedControl
+                  options={[
+                    { value: "5Y", label: "5Y" },
+                    { value: "10Y", label: "10Y" },
+                  ]}
+                  value={ratioWindow}
+                  onChange={handleRatioWindowChange}
+                />
+              </div>
+              <ActionButton type="submit" loading={isLoading} loadingText="Computing..." className="w-auto px-6">
+                Run Ratio
+              </ActionButton>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {RATIO_PRESETS.map(preset => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => handleRatioPresetClick(preset)}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </form>
 
-      {isLoading && <LoadingSpinner message="Fetching chart data..." />}
+      {isLoading && <LoadingSpinner message={mode === "ratio" ? "Fetching ratio data..." : "Fetching chart data..."} />}
       {isError && <ErrorMessage message={String(error)} />}
 
-      {data && !isLoading && (
+      {mode === "single" && singleData && !isLoading && (
         <div className="space-y-6">
           {priceMultiData.length > 0 && (
             <div>
@@ -173,12 +476,14 @@ export function ChartPage() {
               <TimeSeriesChart multiData={priceMultiData} series={PRICE_SERIES} height={280} />
             </div>
           )}
+
           {rocMultiData.length > 0 && (
             <div>
               <h2 className="text-base font-semibold mb-2">Rate of Change</h2>
               <TimeSeriesChart multiData={rocMultiData} series={ROC_SERIES} height={220} zeroLine />
             </div>
           )}
+
           {summaryRows.length > 0 && (
             <div>
               <h2 className="text-base font-semibold mb-2">Signal Summary</h2>
@@ -188,8 +493,72 @@ export function ChartPage() {
         </div>
       )}
 
-      {!data && !isLoading && !isError && (
+      {mode === "ratio" && ratioData && !isLoading && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-base font-semibold">
+              {activeRatioSymbolA}/{activeRatioSymbolB}
+            </h2>
+            <p className="text-sm text-gray-600">
+              {activeRatioNameA} vs {activeRatioNameB}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Date Range: {String(ratioStats.start_date ?? "N/A")} to {String(ratioStats.end_date ?? "N/A")}
+              {"  "}
+              ({String(ratioStats.observations ?? 0)} observations)
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <MetricCard title="Start Ratio" value={formatRatio(toNumber(ratioStats.start_ratio), 4)} />
+            <MetricCard title="Current Ratio" value={formatRatio(toNumber(ratioStats.end_ratio), 4)} />
+            <MetricCard title="Range Change" value={formatPercentFromDecimal(toNumber(ratioStats.change_pct))} />
+            <MetricCard title="Historical Avg" value={formatRatio(historicalAvg, 4)} />
+            <MetricCard
+              title="Vs Historical Avg"
+              value={formatPercentFromDecimal(currentVsHistoricalPct)}
+              signal={
+                historicalPosition === "above"
+                  ? "success"
+                  : historicalPosition === "below"
+                    ? "warning"
+                    : "info"
+              }
+              signalLabel={
+                historicalPosition === "above"
+                  ? "Above Historical"
+                  : historicalPosition === "below"
+                    ? "Below Historical"
+                    : "At Historical"
+              }
+            />
+            <MetricCard title="Min Ratio" value={formatRatio(toNumber(ratioStats.min_ratio), 4)} />
+            <MetricCard title="Max Ratio" value={formatRatio(toNumber(ratioStats.max_ratio), 4)} />
+          </div>
+
+          <div>
+            <h2 className="text-base font-semibold mb-2">Price Ratio Over Time</h2>
+            <TimeSeriesChart multiData={ratioMultiChartData} series={ratioChartSeries} height={300} />
+            <p className="text-xs text-gray-500 mt-2">
+              Historical level shown as dashed line ({ratioWindow} average).
+            </p>
+          </div>
+
+          <DataTable
+            label="Recent Ratio Data (last 250 rows)"
+            columns={ratioColumns}
+            rows={ratioRecentRows}
+            maxHeight="460px"
+          />
+        </div>
+      )}
+
+      {mode === "single" && !singleData && !isLoading && !isError && (
         <p className="text-gray-400 text-sm">Enter a ticker and click Analyze to view the chart.</p>
+      )}
+
+      {mode === "ratio" && !ratioData && !isLoading && !isError && (
+        <p className="text-gray-400 text-sm">Set two symbols and click Run Ratio, or choose a preset pair.</p>
       )}
     </div>
   )

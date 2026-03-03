@@ -184,6 +184,14 @@ export const fetchSizerPrefill = () =>
 export const runChart = (body: { ticker: string; lookback: string }) =>
   client.post("/chart", body).then(r => r.data)
 
+export const runPriceRatioChart = (body: {
+  symbol_a: string
+  symbol_b: string
+  method?: string
+  start_date?: string
+  end_date?: string
+}) => client.post("/chart/ratio", body).then(r => r.data)
+
 export const runPortfolioOptimizer = (body: { book: number; target_leverage: number; beta_neutral: boolean }) =>
   client.post("/portfolio-optimizer", body, { timeout: 180_000 }).then(r => r.data)
 
