@@ -25,6 +25,7 @@ import argparse
 import datetime as dt
 import math
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -60,6 +61,10 @@ SECTOR_ETFS: Dict[str, str] = {
 
 
 BENCHMARK_ETF = "SPY"
+DEFAULT_CACHE_TTL_HOURS = 24.0
+DEFAULT_METADATA_CACHE_PATH = os.path.join(
+    os.path.dirname(__file__), ".sector_metrics_marketdata_cache.csv"
+)
 
 @dataclass(frozen=True)
 class Lookbacks:
@@ -169,49 +174,194 @@ def _safe_float(x) -> Optional[float]:
         return None
 
 
+def _extract_numeric_field(obj, keys: Iterable[str]) -> Optional[float]:
+    for key in keys:
+        value = None
+        try:
+            if hasattr(obj, "get"):
+                value = obj.get(key)
+            else:
+                value = getattr(obj, key, None)
+        except Exception:
+            value = getattr(obj, key, None)
+        num = _safe_float(value)
+        if num is not None and not math.isnan(num):
+            return num
+    return None
+
+
+def _load_marketdata_cache(cache_path: Optional[str]) -> pd.DataFrame:
+    cols = ["MarketCap", "SharesOutstanding", "CacheTs"]
+    if not cache_path or not os.path.exists(cache_path):
+        return pd.DataFrame(columns=cols, index=pd.Index([], name="Ticker"))
+    try:
+        cache = pd.read_csv(cache_path)
+    except Exception:
+        return pd.DataFrame(columns=cols, index=pd.Index([], name="Ticker"))
+
+    required = {"Ticker", "MarketCap", "SharesOutstanding", "CacheTs"}
+    if not required.issubset(cache.columns):
+        return pd.DataFrame(columns=cols, index=pd.Index([], name="Ticker"))
+
+    cache = cache[["Ticker", "MarketCap", "SharesOutstanding", "CacheTs"]].dropna(subset=["Ticker"])
+    cache = cache.drop_duplicates(subset=["Ticker"], keep="last").set_index("Ticker")
+    cache["MarketCap"] = pd.to_numeric(cache["MarketCap"], errors="coerce")
+    cache["SharesOutstanding"] = pd.to_numeric(cache["SharesOutstanding"], errors="coerce")
+    cache["CacheTs"] = pd.to_numeric(cache["CacheTs"], errors="coerce")
+    return cache
+
+
+def _write_marketdata_cache(cache: pd.DataFrame, cache_path: Optional[str]) -> None:
+    if not cache_path:
+        return
+    try:
+        folder = os.path.dirname(cache_path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        out = cache[["MarketCap", "SharesOutstanding", "CacheTs"]].copy()
+        out = out[~out.index.duplicated(keep="last")]
+        out.reset_index().to_csv(cache_path, index=False, float_format="%.10g")
+    except Exception:
+        # Cache write failures should never break the main data pipeline.
+        return
+
+
 def fetch_marketcap_and_shares(
     tickers: List[str],
     last_prices: pd.Series,
     max_workers: int = 12,
+    cache_path: Optional[str] = DEFAULT_METADATA_CACHE_PATH,
+    cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
 ) -> pd.DataFrame:
     """
-    Fetch current marketCap + sharesOutstanding per ticker via yfinance info.
+    Fetch current marketCap + sharesOutstanding per ticker via yfinance.
+    Uses a local cache to avoid refreshing unchanged metadata on every run.
     If sharesOutstanding missing, infer shares from marketCap / last_price if possible.
     """
+    ordered_tickers = list(dict.fromkeys(tickers))
+    cache = _load_marketdata_cache(cache_path)
+    now_ts = time.time()
+    stale_cutoff = now_ts - (cache_ttl_hours * 3600.0)
+
+    cached_subset = cache.reindex(ordered_tickers)
+    if cached_subset.empty:
+        fresh_mask = pd.Series(False, index=pd.Index(ordered_tickers, name="Ticker"))
+    else:
+        fresh_mask = cached_subset["CacheTs"].ge(stale_cutoff).fillna(False)
+
+    tickers_to_fetch = [t for t in ordered_tickers if not bool(fresh_mask.get(t, False))]
+
     def worker(t: str) -> Tuple[str, Optional[float], Optional[float]]:
+        ticker_obj = yf.Ticker(t)
+        mcap = None
+        shares = None
         try:
-            info = yf.Ticker(t).get_info()
-            mcap = _safe_float(info.get("marketCap"))
-            shares = _safe_float(info.get("sharesOutstanding"))
-            return t, mcap, shares
+            fast_info = ticker_obj.fast_info
+            mcap = _extract_numeric_field(fast_info, ("market_cap", "marketCap"))
+            shares = _extract_numeric_field(
+                fast_info, ("shares", "shares_outstanding", "sharesOutstanding")
+            )
         except Exception:
-            return t, None, None
+            pass
+
+        # Fall back to get_info for fields unavailable in fast_info.
+        if mcap is None or shares is None:
+            try:
+                info = ticker_obj.get_info()
+                if mcap is None:
+                    mcap = _safe_float(info.get("marketCap"))
+                if shares is None:
+                    shares = _safe_float(info.get("sharesOutstanding"))
+            except Exception:
+                pass
+
+        return t, mcap, shares
 
     results: List[Tuple[str, Optional[float], Optional[float]]] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(worker, t): t for t in tickers}
-        for fut in as_completed(futs):
-            results.append(fut.result())
+    if tickers_to_fetch:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futs = {ex.submit(worker, t): t for t in tickers_to_fetch}
+            for fut in as_completed(futs):
+                results.append(fut.result())
 
-    df = pd.DataFrame(results, columns=["Ticker", "MarketCap", "SharesOutstanding"]).set_index("Ticker")
+    fetched = pd.DataFrame(results, columns=["Ticker", "MarketCap", "SharesOutstanding"])
+    if fetched.empty:
+        fetched = pd.DataFrame(columns=["MarketCap", "SharesOutstanding"], index=pd.Index([], name="Ticker"))
+    else:
+        fetched = fetched.set_index("Ticker")
+        fetched["MarketCap"] = pd.to_numeric(fetched["MarketCap"], errors="coerce")
+        fetched["SharesOutstanding"] = pd.to_numeric(fetched["SharesOutstanding"], errors="coerce")
 
-    # Infer shares if missing
-    inferred = []
-    for t in df.index:
-        shares = df.at[t, "SharesOutstanding"]
-        if shares is not None and not (isinstance(shares, float) and math.isnan(shares)):
-            inferred.append(False)
-            continue
-        mcap = df.at[t, "MarketCap"]
-        px = _safe_float(last_prices.get(t))
-        if mcap is not None and px is not None and px > 0:
-            df.at[t, "SharesOutstanding"] = mcap / px
-            inferred.append(True)
-        else:
-            inferred.append(False)
+    # If a refresh fails, keep stale cached data as fallback.
+    if not fetched.empty:
+        stale_fallback = cached_subset.reindex(fetched.index)[["MarketCap", "SharesOutstanding"]]
+        fetched[["MarketCap", "SharesOutstanding"]] = fetched[["MarketCap", "SharesOutstanding"]].where(
+            fetched[["MarketCap", "SharesOutstanding"]].notna(),
+            stale_fallback,
+        )
 
-    df["SharesInferred"] = inferred
+    fresh_cached = cached_subset[fresh_mask][["MarketCap", "SharesOutstanding"]]
+    raw = pd.concat([fresh_cached, fetched], axis=0)
+    raw = raw[~raw.index.duplicated(keep="last")].reindex(ordered_tickers)
+
+    # Update cache only with rows that actually returned at least one value.
+    if not fetched.empty and cache_path:
+        valid = fetched[fetched[["MarketCap", "SharesOutstanding"]].notna().any(axis=1)].copy()
+        if not valid.empty:
+            valid["CacheTs"] = now_ts
+            cache_next = pd.concat([cache, valid], axis=0)
+            cache_next = cache_next[~cache_next.index.duplicated(keep="last")]
+            _write_marketdata_cache(cache_next, cache_path)
+
+    df = raw.copy()
+    df["MarketCap"] = pd.to_numeric(df["MarketCap"], errors="coerce")
+    df["SharesOutstanding"] = pd.to_numeric(df["SharesOutstanding"], errors="coerce")
+
+    px = pd.to_numeric(last_prices.reindex(df.index), errors="coerce")
+    infer_mask = df["SharesOutstanding"].isna() & df["MarketCap"].notna() & px.notna() & (px > 0)
+    df.loc[infer_mask, "SharesOutstanding"] = df.loc[infer_mask, "MarketCap"] / px[infer_mask]
+    df["SharesInferred"] = infer_mask.fillna(False)
     return df
+
+
+def compute_sector_weights_for_dates(
+    constituents: pd.DataFrame,
+    prices: pd.DataFrame,
+    shares: pd.Series,
+    asof_dates: Dict[str, pd.Timestamp],
+) -> pd.DataFrame:
+    """
+    Compute sector weights for multiple as-of dates in one vectorized pass.
+    Returns a DataFrame indexed by sector with columns from `asof_dates`.
+    """
+    if not asof_dates:
+        return pd.DataFrame()
+
+    snapped_dates = {
+        label: nearest_on_or_before(prices.index, pd.Timestamp(asof).tz_localize(None))
+        for label, asof in asof_dates.items()
+    }
+    labels = list(asof_dates.keys())
+
+    base = constituents[["Ticker", "Sector"]].dropna().drop_duplicates(subset=["Ticker"], keep="last").copy()
+    base = base.merge(shares.rename("Shares"), left_on="Ticker", right_index=True, how="left")
+    base = base.dropna(subset=["Shares"])
+    base = base[base["Ticker"].isin(prices.columns)].copy()
+    if base.empty:
+        return pd.DataFrame(index=pd.Index([], name="Sector"), columns=labels)
+
+    tickers = base["Ticker"].tolist()
+    px = prices.loc[[snapped_dates[label] for label in labels], tickers].copy()
+    px.index = labels
+
+    mapper = base.set_index("Ticker")
+    caps = px.T.mul(mapper["Shares"], axis=0)
+    caps["Sector"] = mapper["Sector"]
+
+    sector_caps = caps.groupby("Sector").sum(min_count=1)
+    totals = sector_caps.sum(axis=0)
+    weights = sector_caps.div(totals, axis=1)
+    return weights.sort_index()
 
 
 def compute_sector_weights(
@@ -224,23 +374,16 @@ def compute_sector_weights(
     Sector weight at date `asof`:
     sector_cap(asof) / total_cap(asof), where cap(asof) ≈ shares_now * price(asof)
     """
-    asof = pd.Timestamp(asof).tz_localize(None)
-    asof = nearest_on_or_before(prices.index, asof)
-
-    px = prices.loc[asof].copy()
-    # Keep only tickers in constituents and available in price data
-    df = constituents.copy()
-    df = df[df["Ticker"].isin(px.index)].copy()
-
-    df["Price"] = df["Ticker"].map(px.to_dict())
-    df["Shares"] = df["Ticker"].map(shares.to_dict())
-    df = df.dropna(subset=["Price", "Shares"])
-    df["Cap"] = df["Price"].astype(float) * df["Shares"].astype(float)
-
-    sector_caps = df.groupby("Sector")["Cap"].sum().sort_index()
-    total = sector_caps.sum()
-    weights = sector_caps / total
-    return weights
+    col = "__asof__"
+    out = compute_sector_weights_for_dates(
+        constituents=constituents,
+        prices=prices,
+        shares=shares,
+        asof_dates={col: asof},
+    )
+    if col not in out.columns:
+        return pd.Series(dtype=float)
+    return out[col].dropna()
 
 
 def fetch_etf_prices(sector_etfs: Dict[str, str], benchmark: str = BENCHMARK_ETF, period: str = "2y") -> pd.DataFrame:
@@ -320,7 +463,21 @@ def main():
     ap.add_argument("--batch-size", type=int, default=100, help="Ticker batch size for price downloads.")
     ap.add_argument("--max-workers", type=int, default=12, help="Threads for yfinance info calls.")
     ap.add_argument("--outdir", default=".", help="Directory to write CSV outputs.")
+    ap.add_argument(
+        "--cache-path",
+        default=None,
+        help="Path to market data cache CSV (default: <outdir>/sp500_ticker_marketdata_cache.csv).",
+    )
+    ap.add_argument(
+        "--cache-ttl-hours",
+        type=float,
+        default=DEFAULT_CACHE_TTL_HOURS,
+        help=f"Refresh cached market data older than this many hours (default: {DEFAULT_CACHE_TTL_HOURS}).",
+    )
     args = ap.parse_args()
+
+    os.makedirs(args.outdir, exist_ok=True)
+    cache_path = args.cache_path or os.path.join(args.outdir, "sp500_ticker_marketdata_cache.csv")
 
     constituents = get_sp500_constituents()
     tickers = sorted(constituents["Ticker"].unique().tolist())
@@ -333,6 +490,8 @@ def main():
         tickers=list(last_prices.index),
         last_prices=last_prices,
         max_workers=args.max_workers,
+        cache_path=cache_path,
+        cache_ttl_hours=args.cache_ttl_hours,
     )
     shares = md["SharesOutstanding"].dropna()
 
@@ -343,27 +502,33 @@ def main():
     d_3m = month_ago_dates(idx, 3)
     d_6m = month_ago_dates(idx, 6)
 
-    w_now = compute_sector_weights(constituents, prices, shares, asof_now)
-    w_1m = compute_sector_weights(constituents, prices, shares, d_1m)
-    w_3m = compute_sector_weights(constituents, prices, shares, d_3m)
-    w_6m = compute_sector_weights(constituents, prices, shares, d_6m)
+    weight_now_col = "Weight_Now"
+    weight_1m_col = f"Weight_{d_1m.date()}"
+    weight_3m_col = f"Weight_{d_3m.date()}"
+    weight_6m_col = f"Weight_{d_6m.date()}"
+
+    weights_by_date = compute_sector_weights_for_dates(
+        constituents=constituents,
+        prices=prices,
+        shares=shares,
+        asof_dates={
+            weight_now_col: asof_now,
+            weight_1m_col: d_1m,
+            weight_3m_col: d_3m,
+            weight_6m_col: d_6m,
+        },
+    )
 
     # Align on the 11 standard sectors (some may be absent if data missing)
-    all_sectors = sorted(set(SECTOR_ETFS.keys()) | set(w_now.index) | set(w_1m.index) | set(w_3m.index) | set(w_6m.index))
-
-    weights = pd.DataFrame(
-        {
-            "Weight_Now": w_now.reindex(all_sectors),
-            f"Weight_{d_1m.date()}": w_1m.reindex(all_sectors),
-            f"Weight_{d_3m.date()}": w_3m.reindex(all_sectors),
-            f"Weight_{d_6m.date()}": w_6m.reindex(all_sectors),
-        }
+    all_sectors = sorted(set(SECTOR_ETFS.keys()) | set(weights_by_date.index))
+    weights = weights_by_date.reindex(all_sectors).reindex(
+        columns=[weight_now_col, weight_1m_col, weight_3m_col, weight_6m_col]
     )
 
     # Changes in percentage points
-    weights["Chg_1M_pp"] = (weights["Weight_Now"] - weights[f"Weight_{d_1m.date()}"]) * 100.0
-    weights["Chg_3M_pp"] = (weights["Weight_Now"] - weights[f"Weight_{d_3m.date()}"]) * 100.0
-    weights["Chg_6M_pp"] = (weights["Weight_Now"] - weights[f"Weight_{d_6m.date()}"]) * 100.0
+    weights["Chg_1M_pp"] = (weights[weight_now_col] - weights[weight_1m_col]) * 100.0
+    weights["Chg_3M_pp"] = (weights[weight_now_col] - weights[weight_3m_col]) * 100.0
+    weights["Chg_6M_pp"] = (weights[weight_now_col] - weights[weight_6m_col]) * 100.0
 
     # Download sector ETF prices (+ SPY benchmark) once, share across computations
     etf_prices = fetch_etf_prices(SECTOR_ETFS, benchmark=BENCHMARK_ETF, period=args.period)
@@ -383,7 +548,6 @@ def main():
     weights_sorted = weights.loc[list(SECTOR_ETFS.keys())].copy()
 
     # Output
-    os.makedirs(args.outdir, exist_ok=True)
     path_weights = os.path.join(args.outdir, "sp500_sector_weights_and_changes.csv")
     path_marketdata = os.path.join(args.outdir, "sp500_ticker_marketdata_snapshot.csv")
 
@@ -400,10 +564,10 @@ def main():
             display[c] = display[c] * 100.0
     print("\nSector weights (% of total S&P 500 market cap, approximated) and changes (pp):")
     print(display[[
-        "Weight_Now",
-        f"Weight_{d_1m.date()}",
-        f"Weight_{d_3m.date()}",
-        f"Weight_{d_6m.date()}",
+        weight_now_col,
+        weight_1m_col,
+        weight_3m_col,
+        weight_6m_col,
         "Chg_1M_pp",
         "Chg_3M_pp",
         "Chg_6M_pp",
@@ -420,7 +584,13 @@ def main():
     print(f"- Relative performance uses SPDR sector ETFs vs {BENCHMARK_ETF} as the S&P 500 benchmark.")
 
 
-def get_data(period: str = "2y", batch_size: int = 100, max_workers: int = 12) -> dict:
+def get_data(
+    period: str = "2y",
+    batch_size: int = 100,
+    max_workers: int = 12,
+    cache_path: Optional[str] = DEFAULT_METADATA_CACHE_PATH,
+    cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+) -> dict:
     """
     Return sector metrics as a dict for the Streamlit GUI.
 
@@ -440,6 +610,8 @@ def get_data(period: str = "2y", batch_size: int = 100, max_workers: int = 12) -
         tickers=list(last_prices.index),
         last_prices=last_prices,
         max_workers=max_workers,
+        cache_path=cache_path,
+        cache_ttl_hours=cache_ttl_hours,
     )
     shares = md["SharesOutstanding"].dropna()
 
@@ -449,21 +621,25 @@ def get_data(period: str = "2y", batch_size: int = 100, max_workers: int = 12) -
     d_3m = month_ago_dates(idx, 3)
     d_6m = month_ago_dates(idx, 6)
 
-    w_now = compute_sector_weights(constituents, prices, shares, asof_now)
-    w_1m  = compute_sector_weights(constituents, prices, shares, d_1m)
-    w_3m  = compute_sector_weights(constituents, prices, shares, d_3m)
-    w_6m  = compute_sector_weights(constituents, prices, shares, d_6m)
-
-    all_sectors = sorted(
-        set(SECTOR_ETFS.keys()) | set(w_now.index) | set(w_1m.index) | set(w_3m.index) | set(w_6m.index)
+    weights_by_date = compute_sector_weights_for_dates(
+        constituents=constituents,
+        prices=prices,
+        shares=shares,
+        asof_dates={
+            "Weight_Now": asof_now,
+            "Weight_1M": d_1m,
+            "Weight_3M": d_3m,
+            "Weight_6M": d_6m,
+        },
     )
 
-    weights = pd.DataFrame({
-        "Weight_Now": w_now.reindex(all_sectors),
-        "Weight_1M":  w_1m.reindex(all_sectors),
-        "Weight_3M":  w_3m.reindex(all_sectors),
-        "Weight_6M":  w_6m.reindex(all_sectors),
-    })
+    all_sectors = sorted(
+        set(SECTOR_ETFS.keys()) | set(weights_by_date.index)
+    )
+
+    weights = weights_by_date.reindex(all_sectors).reindex(
+        columns=["Weight_Now", "Weight_1M", "Weight_3M", "Weight_6M"]
+    )
 
     weights["Chg_1M_pp"] = (weights["Weight_Now"] - weights["Weight_1M"]) * 100.0
     weights["Chg_3M_pp"] = (weights["Weight_Now"] - weights["Weight_3M"]) * 100.0
