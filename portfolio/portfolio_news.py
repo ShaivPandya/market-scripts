@@ -32,8 +32,18 @@ PORTFOLIO_CSV = Path(__file__).parent / "portfolio.csv"
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 IB_PORT = int(os.environ.get("IB_PORT", "4001"))
 IB_CLIENT_ID = int(os.environ.get("IB_CLIENT_ID", "10"))
-IB_NEWS_PROVIDERS = "BZ+FLY"   # Benzinga + Fly On The Wall
 IB_MAX_HEADLINES = 10
+
+IB_NEWS_PROVIDER_PREFERENCE = (
+    "DJ-RTG",    # Dow Jones Top Stories Global
+    "DJ-RT",     # Dow Jones Trader News
+    "DJ-N",      # Dow Jones Global Equity Trader
+    "DJNL",      # Dow Jones Newsletters
+    "DJ-RTA",    # Dow Jones Top Stories Asia Pacific
+    "DJ-RTE",    # Dow Jones Top Stories Europe
+    "BRFG",      # Briefing.com General Market Columns
+    "BRFUPDN",   # Briefing.com Analyst Actions
+)
 
 LEGAL_ENTITY_SUFFIXES = {
     "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited",
@@ -129,22 +139,49 @@ def _qualify_contract(ib, ticker: str, asset: str):
     return None
 
 
-def _query_ibkr(ib, ticker: str, asset: str) -> list[dict[str, Any]]:
+def _select_ibkr_news_providers(ib) -> str:
+    """
+    Return a '+'-joined provider code string that this account is entitled to.
+    Prefers a small curated set; falls back to all available providers.
+    """
+    try:
+        providers = ib.reqNewsProviders() or []
+    except Exception as e:
+        logger.info("IBKR reqNewsProviders() failed (%s); skipping IB news", e)
+        return ""
+
+    available = [getattr(p, "code", "") for p in providers]
+    available = [c for c in available if c]
+    if not available:
+        return ""
+
+    available_set = set(available)
+    chosen = [c for c in IB_NEWS_PROVIDER_PREFERENCE if c in available_set]
+    if not chosen:
+        chosen = available
+
+    return "+".join(chosen)
+
+
+def _query_ibkr(ib, ticker: str, asset: str, provider_codes: str) -> list[dict[str, Any]]:
     """
     Query IBKR TWS API for historical news headlines for a ticker.
     Returns a list of article dicts.
     """
+    if not provider_codes:
+        return []
+
     contract = _qualify_contract(ib, ticker, asset)
     if contract is None:
         return []
 
-    start_dt = datetime.now() - timedelta(days=3)
-    end_dt = ""  # current time
+    start_dt = datetime.now(timezone.utc) - timedelta(days=3)
+    end_dt = datetime.now(timezone.utc)
 
     try:
         headlines = ib.reqHistoricalNews(
             contract.conId,
-            IB_NEWS_PROVIDERS,
+            provider_codes,
             start_dt,
             end_dt,
             IB_MAX_HEADLINES,
@@ -163,7 +200,14 @@ def _query_ibkr(ib, ticker: str, asset: str) -> list[dict[str, Any]]:
         seendate = ""
         if article_time:
             try:
-                seendate = article_time.isoformat() + "Z"
+                if isinstance(article_time, datetime):
+                    if article_time.tzinfo is None:
+                        article_time = article_time.replace(tzinfo=timezone.utc)
+                    else:
+                        article_time = article_time.astimezone(timezone.utc)
+                    seendate = article_time.isoformat().replace("+00:00", "Z")
+                else:
+                    seendate = str(article_time)
             except Exception:
                 seendate = str(article_time)
 
@@ -254,9 +298,16 @@ def _truncate_for_log(text: str, max_len: int = 100) -> str:
 def _is_within_lookback(seendate: str, now_utc: datetime) -> bool:
     if not seendate:
         return False
+    parsed = None
     try:
         parsed = datetime.fromisoformat(seendate.replace("Z", "+00:00"))
     except Exception:
+        # Some feeds use RFC 822 / RFC 1123 date strings.
+        try:
+            parsed = email.utils.parsedate_to_datetime(seendate)
+        except Exception:
+            return False
+    if parsed is None:
         return False
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
@@ -344,6 +395,7 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
     # Try to establish IBKR connection (graceful failure)
     ib = _connect_ib()
     now_utc = datetime.now(timezone.utc)
+    ib_provider_codes = _select_ibkr_news_providers(ib) if ib is not None else ""
 
     for pos in positions:
         ticker = pos["ticker"]
@@ -355,7 +407,7 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
         ibkr_articles = []
         if ib is not None:
             try:
-                ibkr_articles = _query_ibkr(ib, ticker, asset)
+                ibkr_articles = _query_ibkr(ib, ticker, asset, ib_provider_codes)
             except Exception as e:
                 logger.warning("IBKR query error for %s: %s", ticker, e)
 
