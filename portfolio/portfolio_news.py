@@ -13,6 +13,7 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 import email.utils
+import concurrent.futures
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -93,20 +94,53 @@ def _resolve_name(ticker: str, asset: str) -> str:
 
 # ── IBKR ──────────────────────────────────────────────────────────────────────
 
-def _connect_ib():
+def _fetch_all_ibkr_news(positions: list[dict[str, str]]) -> dict[str, list[dict[str, Any]]]:
     """
-    Try to connect to IB Gateway / TWS.  Returns an IB instance or None.
+    Run all IBKR news fetching in a separate thread with its own event loop,
+    avoiding conflicts with uvicorn's uvloop.
+    Returns a dict mapping ticker -> list of articles.
     """
+    def _run():
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        try:
+            from ib_insync import IB
+            ib = IB()
+            ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=5)
+        except Exception as e:
+            logger.warning("IBKR connection unavailable (%s: %s), skipping IB news", type(e).__name__, e)
+            return {}
+
+        try:
+            provider_codes = _select_ibkr_news_providers(ib)
+            if not provider_codes:
+                logger.warning("No IBKR news providers available")
+                ib.disconnect()
+                return {}
+
+            results: dict[str, list[dict[str, Any]]] = {}
+            for pos in positions:
+                ticker = pos["ticker"]
+                asset = pos.get("asset", "equity")
+                try:
+                    results[ticker] = _query_ibkr(ib, ticker, asset, provider_codes)
+                except Exception as e:
+                    logger.warning("IBKR query error for %s: %s", ticker, e)
+                    results[ticker] = []
+            return results
+        finally:
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+
     try:
-        import nest_asyncio
-        nest_asyncio.apply()
-        from ib_insync import IB
-        ib = IB()
-        ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=5)
-        return ib
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run)
+            return future.result(timeout=30)
     except Exception as e:
-        logger.info("IBKR connection unavailable (%s), skipping IB news", e)
-        return None
+        logger.warning("IBKR thread failed (%s: %s), skipping IB news", type(e).__name__, e)
+        return {}
 
 
 def _qualify_contract(ib, ticker: str, asset: str):
@@ -195,7 +229,7 @@ def _query_ibkr(ib, ticker: str, asset: str, provider_codes: str) -> list[dict[s
     results = []
     for h in headlines:
         # HistoricalNews has: time, providerCode, articleId, headline
-        headline_text = getattr(h, "headline", "") or ""
+        headline_text = re.sub(r"^\{[^}]*\}", "", getattr(h, "headline", "") or "").strip()
         article_time = getattr(h, "time", None)
         provider_code = getattr(h, "providerCode", "") or ""
 
@@ -394,10 +428,10 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
     by_ticker: dict[str, list[dict[str, Any]]] = {}
     ticker_names: dict[str, str] = {}
 
-    # Try to establish IBKR connection (graceful failure)
-    ib = _connect_ib()
     now_utc = datetime.now(timezone.utc)
-    ib_provider_codes = _select_ibkr_news_providers(ib) if ib is not None else ""
+
+    # Fetch IBKR news in a separate thread (avoids uvloop conflicts)
+    ibkr_by_ticker = _fetch_all_ibkr_news(positions)
 
     for pos in positions:
         ticker = pos["ticker"]
@@ -405,15 +439,7 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
         name = _resolve_name(ticker, asset)
         ticker_names[ticker] = name
 
-        # Fetch from IBKR (if connected)
-        ibkr_articles = []
-        if ib is not None:
-            try:
-                ibkr_articles = _query_ibkr(ib, ticker, asset, ib_provider_codes)
-            except Exception as e:
-                logger.warning("IBKR query error for %s: %s", ticker, e)
-
-        # Fetch from Google RSS
+        ibkr_articles = ibkr_by_ticker.get(ticker, [])
         rss_articles = _query_google_rss(ticker, name)
 
         combined_articles = [
@@ -423,13 +449,6 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
         ]
         by_ticker[ticker] = combined_articles
         all_items.extend(combined_articles)
-
-    # Disconnect IBKR if connected
-    if ib is not None:
-        try:
-            ib.disconnect()
-        except Exception:
-            pass
 
     # Sort all items chronologically (newest first)
     all_items.sort(key=lambda x: x.get("seendate", ""), reverse=True)
