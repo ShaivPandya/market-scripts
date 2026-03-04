@@ -11,10 +11,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import logging
 import threading
 import time
 from cachetools import TTLCache
 from pathlib import Path
+
+logger = logging.getLogger("uvicorn.error")
 
 short_cache: TTLCache = TTLCache(maxsize=32, ttl=300)
 long_cache: TTLCache = TTLCache(maxsize=16, ttl=3600)
@@ -23,6 +26,13 @@ _lock = threading.Lock()
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DISK_CACHE_ROOT = Path(os.getenv("API_DISK_CACHE_DIR") or (_REPO_ROOT / "data_cache" / "api_cache"))
 _DISK_CACHE_ENABLED = os.getenv("API_DISK_CACHE_DISABLE", "").strip().lower() not in ("1", "true", "yes")
+logger.info(
+    "api cache init: disk_cache=%s root=%s short_ttl=%ss long_ttl=%ss",
+    "enabled" if _DISK_CACHE_ENABLED else "disabled",
+    str(_DISK_CACHE_ROOT),
+    getattr(short_cache, "ttl", "n/a"),
+    getattr(long_cache, "ttl", "n/a"),
+)
 
 
 def _disk_cache_path(cache: TTLCache, key: str) -> Path:
@@ -46,6 +56,7 @@ def _disk_get(cache: TTLCache, key: str):
         payload = json.loads(path.read_text(encoding="utf-8"))
         return payload.get("value")
     except Exception:
+        logger.debug("api cache disk read failed (key=%s path=%s)", key, str(path), exc_info=True)
         return None
 
 
@@ -60,6 +71,7 @@ def _disk_set(cache: TTLCache, key: str, value) -> None:
         tmp.replace(path)
     except Exception:
         # Disk cache is best-effort; ignore failures.
+        logger.debug("api cache disk write failed (key=%s path=%s)", key, str(path), exc_info=True)
         return
 
 
@@ -92,6 +104,7 @@ def delete_cached(cache: TTLCache, key: str) -> None:
                 _disk_cache_path(cache, key).unlink(missing_ok=True)
             except Exception:
                 pass
+    logger.info("api cache delete (key=%s)", key)
 
 
 def invalidate_all() -> None:
@@ -99,6 +112,7 @@ def invalidate_all() -> None:
     with _lock:
         short_cache.clear()
         long_cache.clear()
+    logger.info("api cache invalidate_all: memory cleared")
     try:
         if _DISK_CACHE_ROOT.exists():
             for sub in ("short", "long"):
@@ -110,4 +124,4 @@ def invalidate_all() -> None:
                         except Exception:
                             pass
     except Exception:
-        pass
+        logger.debug("api cache invalidate_all: disk cleanup failed", exc_info=True)

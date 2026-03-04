@@ -1,8 +1,11 @@
 import os
+import logging
+import time
 from fastapi import APIRouter, HTTPException, Query
 from api.cache import long_cache, delete_cached, get_cached, set_cached
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 
 def _format_level(value: float, decimals_if_lt_100: int = 4) -> str:
@@ -62,18 +65,26 @@ def get_weekly_report(
     cached_only: bool = Query(False, description="If true, return cached report only (404 if missing)."),
 ):
     key = "weekly_report_generated"
+    logger.info("weekly_report request refresh=%s cached_only=%s", refresh, cached_only)
     if cached_only:
         cached = get_cached(long_cache, key)
         if cached is not None:
+            logger.info("weekly_report cache hit (cached_only=true)")
             return cached
+        logger.info("weekly_report cache miss (cached_only=true)")
         raise HTTPException(status_code=404, detail="No cached weekly report available.")
 
     if refresh:
+        logger.info("weekly_report refresh requested; clearing cache key=%s", key)
         delete_cached(long_cache, key)
 
     cached = get_cached(long_cache, key)
     if cached is not None:
+        logger.info("weekly_report cache hit")
         return cached
+
+    started = time.perf_counter()
+    logger.info("weekly_report cache miss; generating")
 
     # 1. Fetch all required data
     index_order = None
@@ -82,16 +93,30 @@ def get_weekly_report(
     try:
         from index_dashboard import get_data as get_index_data, INDEX_ORDER
         index_order = INDEX_ORDER
+        t0 = time.perf_counter()
         indices = get_index_data("This Week")
+        logger.info(
+            "weekly_report indices fetched in %.2fs (n=%s)",
+            time.perf_counter() - t0,
+            len((indices or {}).get("indices", {})) if isinstance(indices, dict) else "n/a",
+        )
     except Exception as e:
         indices = {"error": str(e)}
+        logger.warning("weekly_report indices fetch failed: %s", e, exc_info=True)
 
     try:
         from fx_dashboard import get_data as get_fx_data, PAIR_ORDER
         pair_order = PAIR_ORDER
+        t0 = time.perf_counter()
         fx = get_fx_data("This Week")
+        logger.info(
+            "weekly_report fx fetched in %.2fs (n=%s)",
+            time.perf_counter() - t0,
+            len((fx or {}).get("pairs", {})) if isinstance(fx, dict) else "n/a",
+        )
     except Exception as e:
         fx = {"error": str(e)}
+        logger.warning("weekly_report fx fetch failed: %s", e, exc_info=True)
 
     try:
         import sys
@@ -99,31 +124,49 @@ def get_weekly_report(
         # but the router should have access if it's imported properly. 
         from commodities_dashboard import get_data as get_commodity_data, COMMODITY_ORDER
         commodity_order = COMMODITY_ORDER
+        t0 = time.perf_counter()
         commodities = get_commodity_data("This Week")
+        logger.info(
+            "weekly_report commodities fetched in %.2fs (n=%s)",
+            time.perf_counter() - t0,
+            len((commodities or {}).get("commodities", {})) if isinstance(commodities, dict) else "n/a",
+        )
     except Exception as e:
         commodities = {"error": str(e)}
+        logger.warning("weekly_report commodities fetch failed: %s", e, exc_info=True)
 
     try:
         from market_breadth import get_data as get_breadth_data
+        t0 = time.perf_counter()
         breadth = get_breadth_data(period="1y")
+        logger.info("weekly_report breadth fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
         breadth = {"error": str(e)}
+        logger.warning("weekly_report breadth fetch failed: %s", e, exc_info=True)
 
     try:
         from top50_breadth import get_data as get_top50_data
+        t0 = time.perf_counter()
         top50 = get_top50_data()
+        logger.info("weekly_report top50 breadth fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
         top50 = {"error": str(e)}
+        logger.warning("weekly_report top50 breadth fetch failed: %s", e, exc_info=True)
 
     try:
         from vix_term_structure import get_data as get_vix_data
+        t0 = time.perf_counter()
         vix = get_vix_data()
+        logger.info("weekly_report vix term structure fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
         vix = {"error": str(e)}
+        logger.warning("weekly_report vix term structure fetch failed: %s", e, exc_info=True)
 
     try:
         from sector_metrics import get_data as get_sector_data
+        t0 = time.perf_counter()
         sector = get_sector_data()
+        logger.info("weekly_report sector metrics fetched in %.2fs", time.perf_counter() - t0)
         
         # We need to process sector_metrics as it returns a DataFrame for weights_df
         weights_df = sector.get("weights_df")
@@ -136,26 +179,33 @@ def get_weekly_report(
                 
     except Exception as e:
         sector = {"error": str(e)}
+        logger.warning("weekly_report sector metrics fetch failed: %s", e, exc_info=True)
 
     try:
         from positioning import fetch_multiple_instruments, DEFAULT_DOMAIN, DATASETS
         # Fetching basic summary for positioning
+        t0 = time.perf_counter()
         pos = fetch_multiple_instruments(
             domain=DEFAULT_DOMAIN,
             dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
             app_token=os.environ.get("SODA_APP_TOKEN"),
             instruments=["SP500", "NASDAQ", "US10Y", "EUR", "GOLD", "OIL"],
         )
+        logger.info("weekly_report positioning fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
         pos = {"error": str(e)}
+        logger.warning("weekly_report positioning fetch failed: %s", e, exc_info=True)
 
     try:
         from technical_analysis import get_ratio_data
+        t0 = time.perf_counter()
         silver_gold = get_ratio_data("SI=F", "GC=F", "This Week")
         sp_eq = get_ratio_data("^GSPC", "RSP", "This Week")
+        logger.info("weekly_report ratios fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
         silver_gold = {"error": str(e)}
         sp_eq = {"error": str(e)}
+        logger.warning("weekly_report ratios fetch failed: %s", e, exc_info=True)
 
     # 2a. Deterministic weekly performance tables (Indices/FX/Commodities)
     try:
@@ -202,6 +252,12 @@ def get_weekly_report(
             _build_perf_table("Commodities", commodities_rows, decimals_if_lt_100=4).strip(),
         ]
     ).strip()
+    logger.info(
+        "weekly_report performance computed (indices=%d fx=%d commodities=%d)",
+        len(indices_rows),
+        len(fx_rows),
+        len(commodities_rows),
+    )
 
     # 2. Extract specific rules for Breadth and VIX to include in prompt
     rules_text = """
@@ -280,16 +336,25 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
     try:
         from openai import OpenAI
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        t0 = time.perf_counter()
         resp = client.responses.create(model="gpt-5-mini", input=prompt)
         report_md = (resp.output_text or "").strip()
         if not report_md:
             raise ValueError("OpenAI returned empty response")
+        logger.info(
+            "weekly_report LLM done in %.2fs (prompt_chars=%d output_chars=%d)",
+            time.perf_counter() - t0,
+            len(prompt),
+            len(report_md),
+        )
     except Exception as exc:
+        logger.error("weekly_report LLM generation failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"LLM Generation failed: {exc}")
 
     report_md = _insert_weekly_performance(report_md, perf_md)
     result = {"report": report_md}
     # Cache for 1 hour (long_cache) to prevent spamming the LLM
     set_cached(long_cache, key, result)
+    logger.info("weekly_report cached (key=%s) total_time=%.2fs", key, time.perf_counter() - started)
     
     return result
