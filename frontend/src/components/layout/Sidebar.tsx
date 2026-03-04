@@ -14,6 +14,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "🎯 Portfolio Sizer", path: "/sizer" },
       { label: "🛡️ Hedging Tool", path: "/hedging-tool" },
       { label: "🚀 Momentum", path: "/momentum" },
+      { label: "📰 Portfolio News", path: "/portfolio-news" },
     ],
   },
   {

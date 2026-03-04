@@ -71,7 +71,9 @@
       "WebFetch(domain:data.oecd.org)",
       "WebFetch(domain:www.stat-search.boj.or.jp)",
       "Bash(git -C /Users/shaivpandya/Desktop/market-scripts log --oneline --all)",
-      "Bash(git -C /Users/shaivpandya/Desktop/market-scripts log --oneline --all -20)"
+      "Bash(git -C /Users/shaivpandya/Desktop/market-scripts log --oneline --all -20)",
+      "Bash(uvicorn --version)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.12/bin/pip3 install ib_insync)"
     ]
   }
 }
