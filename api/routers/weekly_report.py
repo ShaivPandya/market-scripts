@@ -2,6 +2,7 @@ import os
 import logging
 import time
 from datetime import datetime, timedelta
+import re
 from fastapi import APIRouter, HTTPException, Query
 from api.cache import long_cache, delete_cached, get_cached, set_cached
 
@@ -94,6 +95,58 @@ def _insert_weekly_performance(report_md: str, perf_md: str) -> str:
         rest = "\n".join(lines[1:]).lstrip("\n")
         return f"{first}\n\n{perf_md}\n\n{rest}".strip()
     return f"{perf_md}\n\n{report_md}".strip()
+
+_HR_RE = re.compile(r"^\s*([-*_]\s*){3,}\s*$")
+_META_START_RES = [
+    re.compile(r"^\s*if\s+you\s+(want|would\s+like|want\s+me|need)\b", re.IGNORECASE),
+    re.compile(r"^\s*if\s+you['’]d\s+like\b", re.IGNORECASE),
+    re.compile(r"^\s*let\s+me\s+know\s+if\b", re.IGNORECASE),
+    re.compile(r"^\s*i\s+can\s+(also\s+)?\b", re.IGNORECASE),
+    re.compile(r"^\s*happy\s+to\b", re.IGNORECASE),
+    re.compile(r"^\s*need\s+anything\s+else\b", re.IGNORECASE),
+    re.compile(r"^\s*want\s+me\s+to\b", re.IGNORECASE),
+]
+
+
+def _strip_llm_meta(report_md: str) -> str:
+    """
+    Remove common LLM "assistant-y" boilerplate like:
+      ---
+      If you want, I can:
+      - ...
+    """
+    original = (report_md or "").strip()
+    if not original:
+        return original
+
+    lines = original.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    while lines and _HR_RE.match(lines[-1]):
+        lines.pop()
+
+    lookback = 80
+    start_idx = None
+    scan_from = max(0, len(lines) - lookback)
+    for i in range(scan_from, len(lines)):
+        line = lines[i].strip()
+        if not line:
+            continue
+        if any(rx.search(line) for rx in _META_START_RES):
+            start_idx = i
+            if i > 0 and _HR_RE.match(lines[i - 1]):
+                start_idx = i - 1
+            break
+
+    if start_idx is not None:
+        lines = lines[:start_idx]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        while lines and _HR_RE.match(lines[-1]):
+            lines.pop()
+
+    cleaned = "\n".join(lines).strip()
+    return cleaned or original
 
 
 def _slim_error(value):
@@ -406,6 +459,9 @@ Avoid printing raw, unrounded floating point values or internal column keys with
 
 Output the report in clean Markdown format. Group it into logical sections (e.g., Dashboards, Technicals & Breadth, Sectors & Positioning, Key Ratios).
 Remember: No commentary, no editorializing. Just the facts and explicitly flagged threshold breaches.
+
+Hard requirement: Do NOT include any assistant meta text like "If you want, I can...", "Let me know...", suggested next steps, or offers to help.
+End the output immediately after the report content.
 """
 
     try:
@@ -427,6 +483,10 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
         raise HTTPException(status_code=500, detail=f"LLM Generation failed: {exc}")
 
     report_md = _insert_weekly_performance(report_md, perf_md)
+    cleaned = _strip_llm_meta(report_md)
+    if cleaned != report_md:
+        logger.info("weekly_report stripped assistant meta text (removed_chars=%d)", len(report_md) - len(cleaned))
+    report_md = cleaned
     result = {"report": report_md}
     # Cache for 1 hour (long_cache) to prevent spamming the LLM
     set_cached(long_cache, key, result)
