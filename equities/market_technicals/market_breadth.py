@@ -34,7 +34,7 @@ import requests
 import yfinance as yf
 
 # Download configuration
-CHUNK_SIZE = 25  # Tickers per batch
+CHUNK_SIZE = 50  # Tickers per batch
 MAX_RETRIES = 3  # Retry attempts for failed tickers
 RETRY_DELAY = 2.0  # Base seconds between retries (exponential backoff)
 BATCH_DELAY = 1.0  # Seconds between successful batches

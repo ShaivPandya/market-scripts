@@ -38,7 +38,7 @@ from typing import Dict, List
 import pandas as pd
 
 # Download configuration
-CHUNK_SIZE = 25   # Tickers per batch
+CHUNK_SIZE = 50   # Tickers per batch
 BATCH_DELAY = 1.0 # Seconds between batches
 MAX_WORKERS = 8   # Threads per batch
 
