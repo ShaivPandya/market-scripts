@@ -357,6 +357,19 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
     result = {"report": report_md}
     # Cache for 1 hour (long_cache) to prevent spamming the LLM
     set_cached(long_cache, key, result)
-    logger.info("weekly_report cached (key=%s) total_time=%.2fs", key, time.perf_counter() - started)
+    try:
+        import api.cache as _cache
+        disk_enabled = bool(getattr(_cache, "_DISK_CACHE_ENABLED", False))
+        disk_path = _cache._disk_cache_path(long_cache, key) if disk_enabled else None  # type: ignore[attr-defined]
+        disk_exists = bool(disk_path and disk_path.exists())
+        logger.info(
+            "weekly_report cached (key=%s disk_enabled=%s disk_exists=%s) total_time=%.2fs",
+            key,
+            disk_enabled,
+            disk_exists,
+            time.perf_counter() - started,
+        )
+    except Exception:
+        logger.info("weekly_report cached (key=%s) total_time=%.2fs", key, time.perf_counter() - started)
     
     return result

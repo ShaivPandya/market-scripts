@@ -7,6 +7,29 @@ interface WeeklyReportResponse {
     report: string
 }
 
+const WEEKLY_REPORT_LOCAL_KEY = "weekly_report:last"
+
+function loadLocalWeeklyReport(): WeeklyReportResponse | null {
+    try {
+        const raw = window.localStorage.getItem(WEEKLY_REPORT_LOCAL_KEY)
+        if (!raw) return null
+        const parsed = JSON.parse(raw) as { report?: unknown }
+        if (typeof parsed?.report !== "string" || !parsed.report.trim()) return null
+        return { report: parsed.report }
+    } catch {
+        return null
+    }
+}
+
+function saveLocalWeeklyReport(report: string) {
+    try {
+        if (!report.trim()) return
+        window.localStorage.setItem(WEEKLY_REPORT_LOCAL_KEY, JSON.stringify({ report }))
+    } catch {
+        // ignore
+    }
+}
+
 type ListType = "ul" | "ol"
 
 function isTableSeparatorLine(line: string) {
@@ -304,9 +327,9 @@ async function copyToClipboard(text: string) {
 
 export function WeeklyReport() {
     const [isLoading, setIsLoading] = useState(false)
-    const [isCheckingCache, setIsCheckingCache] = useState(true)
+    const [isCheckingCache, setIsCheckingCache] = useState(() => !loadLocalWeeklyReport())
     const [error, setError] = useState<string | null>(null)
-    const [data, setData] = useState<WeeklyReportResponse | null>(null)
+    const [data, setData] = useState<WeeklyReportResponse | null>(() => loadLocalWeeklyReport())
     const [copied, setCopied] = useState(false)
     const cacheFetchIdRef = useRef(0)
 
@@ -319,6 +342,7 @@ export function WeeklyReport() {
         try {
             const json = await generateWeeklyReport()
             setData(json)
+            saveLocalWeeklyReport(json.report)
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err))
         } finally {
@@ -329,11 +353,14 @@ export function WeeklyReport() {
     useEffect(() => {
         const fetchId = ++cacheFetchIdRef.current
         async function loadCached() {
-            setIsCheckingCache(true)
+            setIsCheckingCache(!loadLocalWeeklyReport())
             try {
                 const cached = await fetchWeeklyReportCached()
                 if (cacheFetchIdRef.current !== fetchId) return
-                if (cached) setData(cached)
+                if (cached) {
+                    setData(cached)
+                    saveLocalWeeklyReport(cached.report)
+                }
             } catch (err: unknown) {
                 if (cacheFetchIdRef.current !== fetchId) return
                 setError(err instanceof Error ? err.message : String(err))
@@ -401,7 +428,7 @@ export function WeeklyReport() {
                 </div>
             </div>
 
-            {(isLoading || isCheckingCache) && (
+            {(isLoading || (isCheckingCache && !data)) && (
                 <div className="bg-white p-8 rounded-xl border shadow-sm flex flex-col items-center justify-center min-h-[400px]">
                     <LoadingSpinner />
                     <p className="mt-4 text-sm text-gray-500 animate-pulse">
@@ -418,7 +445,7 @@ export function WeeklyReport() {
                 </div>
             )}
 
-            {data && !isLoading && !isCheckingCache && (
+            {data && !isLoading && (
                 <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
                     <div className="px-6 py-8 md:px-8">
                         <div className="prose prose-blue prose-sm sm:prose-base max-w-none break-words prose-headings:font-semibold prose-a:text-blue-600 prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200 prose-pre:rounded-lg prose-pre:px-4 prose-pre:py-3 prose-table:border-collapse prose-th:px-4 prose-th:py-2 prose-th:bg-gray-50 prose-th:border prose-th:border-gray-200 prose-td:px-4 prose-td:py-2 prose-td:border prose-td:border-gray-200">

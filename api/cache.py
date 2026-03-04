@@ -20,7 +20,7 @@ from pathlib import Path
 logger = logging.getLogger("uvicorn.error")
 
 short_cache: TTLCache = TTLCache(maxsize=32, ttl=300)
-long_cache: TTLCache = TTLCache(maxsize=16, ttl=3600)
+long_cache: TTLCache = TTLCache(maxsize=32, ttl=3600)
 _lock = threading.Lock()
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +33,18 @@ logger.info(
     getattr(short_cache, "ttl", "n/a"),
     getattr(long_cache, "ttl", "n/a"),
 )
+
+if _DISK_CACHE_ENABLED:
+    try:
+        (_DISK_CACHE_ROOT / "short").mkdir(parents=True, exist_ok=True)
+        (_DISK_CACHE_ROOT / "long").mkdir(parents=True, exist_ok=True)
+    except Exception:
+        logger.warning(
+            "api cache init: failed to create disk cache dirs at %s; disabling disk cache",
+            str(_DISK_CACHE_ROOT),
+            exc_info=True,
+        )
+        _DISK_CACHE_ENABLED = False
 
 
 def _disk_cache_path(cache: TTLCache, key: str) -> Path:
