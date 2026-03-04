@@ -8,11 +8,23 @@ a unified feed with both grouped-by-ticker and flat chronological views.
 import csv
 import os
 import logging
+import re
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+import email.utils
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+PREMIUM_DOMAINS = [
+    "bloomberg.com", "ft.com", "reuters.com", "wsj.com", 
+    "nytimes.com", "marketwatch.com", "asia.nikkei.com", 
+    "scmp.com", "caixinglobal.com", "axios.com", 
+    "politico.com", "cnbc.com", "theglobeandmail.com"
+]
 
 PORTFOLIO_CSV = Path(__file__).parent / "portfolio.csv"
 
@@ -22,6 +34,20 @@ IB_PORT = int(os.environ.get("IB_PORT", "4001"))
 IB_CLIENT_ID = int(os.environ.get("IB_CLIENT_ID", "10"))
 IB_NEWS_PROVIDERS = "BZ+FLY"   # Benzinga + Fly On The Wall
 IB_MAX_HEADLINES = 10
+
+LEGAL_ENTITY_SUFFIXES = {
+    "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited",
+    "llc", "plc", "group", "sa", "ag", "nv", "lp", "holdings", "holding",
+}
+
+
+def _parse_strict_tickers(raw: str) -> set[str]:
+    tickers = {part.strip().upper() for part in raw.split(",") if part.strip()}
+    return tickers or {"FLY"}
+
+
+NEWS_STRICT_TICKERS = _parse_strict_tickers(os.environ.get("NEWS_STRICT_TICKERS", "FLY"))
+NEWS_LOOKBACK_DAYS = 90
 
 # Cache ticker → company name so we don't re-fetch every call
 _name_cache: dict[str, str] = {}
@@ -156,6 +182,149 @@ def _query_ibkr(ib, ticker: str, asset: str) -> list[dict[str, Any]]:
     return results
 
 
+def _normalize_text(text: str) -> str:
+    normalized = re.sub(r"<[^>]+>", " ", text or "")
+    normalized = normalized.lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def _build_company_aliases(name: str) -> list[str]:
+    normalized_name = _normalize_text(name)
+    if not normalized_name:
+        return []
+
+    aliases: list[str] = [normalized_name]
+    tokens = normalized_name.split()
+    while tokens and tokens[-1] in LEGAL_ENTITY_SUFFIXES:
+        tokens = tokens[:-1]
+
+    stripped_name = " ".join(tokens)
+    if stripped_name and stripped_name not in aliases:
+        aliases.append(stripped_name)
+
+    # Keep only non-trivial aliases.
+    return [alias for alias in aliases if len(alias) > 1]
+
+
+def _is_reliable_alias(ticker: str, alias: str) -> bool:
+    if not alias:
+        return False
+
+    ticker_norm = _normalize_text(ticker)
+    if alias == ticker_norm:
+        return False
+
+    meaningful_tokens = [tok for tok in alias.split() if tok not in LEGAL_ENTITY_SUFFIXES]
+    if not meaningful_tokens:
+        return False
+
+    return len("".join(meaningful_tokens)) >= 4
+
+
+def _build_google_rss_query(ticker: str, name: str) -> tuple[str, bool, list[str]]:
+    sites_query = " OR ".join(f"site:{domain}" for domain in PREMIUM_DOMAINS)
+    strict_mode = ticker.upper() in NEWS_STRICT_TICKERS
+    aliases = _build_company_aliases(name)
+
+    if strict_mode:
+        reliable_aliases = [alias for alias in aliases if _is_reliable_alias(ticker, alias)]
+        if not reliable_aliases:
+            return "", True, []
+
+        alias_query = " OR ".join(f'"{alias}"' for alias in reliable_aliases)
+        return f"({alias_query}) AND ({sites_query})", True, reliable_aliases
+
+    return f'({ticker} OR "{name}") AND ({sites_query})', False, aliases
+
+
+def _article_mentions_alias(title: str, description: str, aliases: list[str]) -> bool:
+    article_text = _normalize_text(f"{title} {description}")
+    article_text_padded = f" {article_text} "
+    return any(f" {alias} " in article_text_padded for alias in aliases)
+
+
+def _truncate_for_log(text: str, max_len: int = 100) -> str:
+    s = (text or "").strip()
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 3] + "..."
+
+
+def _is_within_lookback(seendate: str, now_utc: datetime) -> bool:
+    if not seendate:
+        return False
+    try:
+        parsed = datetime.fromisoformat(seendate.replace("Z", "+00:00"))
+    except Exception:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    cutoff = now_utc - timedelta(days=NEWS_LOOKBACK_DAYS)
+    return parsed >= cutoff
+
+
+def _query_google_rss(ticker: str, name: str) -> list[dict[str, Any]]:
+    """
+    Query Google News RSS for the specified premium publisher domains.
+    Returns a list of article dicts.
+    """
+    query, strict_mode, strict_aliases = _build_google_rss_query(ticker, name)
+    if strict_mode and not strict_aliases:
+        logger.info(
+            "Skipping Google RSS for strict ticker %s: no reliable aliases derived from name '%s'",
+            ticker,
+            name,
+        )
+        return []
+
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
+    
+    results = []
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read()
+            
+        root = ET.fromstring(xml_data)
+        for item in root.findall('./channel/item'):
+            title = item.findtext('title') or ""
+            description = item.findtext('description') or ""
+            link = item.findtext('link') or ""
+            source = item.findtext('source') or "Google News"
+            pubDate = item.findtext('pubDate') or ""
+
+            if strict_mode and not _article_mentions_alias(title, description, strict_aliases):
+                logger.debug(
+                    "Dropped Google RSS item for %s (reason=no_alias_match, title='%s')",
+                    ticker,
+                    _truncate_for_log(title),
+                )
+                continue
+            
+            try:
+                parsed_date = email.utils.parsedate_to_datetime(pubDate)
+                seendate = parsed_date.isoformat().replace("+00:00", "Z")
+            except Exception:
+                seendate = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            
+            results.append({
+                "ticker": ticker,
+                "title": title,
+                "url": link,
+                "source": source,
+                "seendate": seendate,
+                "socialimage": "",
+                "language": "English",
+                "provider": "Google RSS",
+            })
+    except Exception as e:
+        logger.warning("Google RSS query failed for %s: %s", ticker, e)
+        
+    return results
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def get_data(refresh: bool = False) -> dict[str, Any]:
@@ -174,6 +343,7 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
 
     # Try to establish IBKR connection (graceful failure)
     ib = _connect_ib()
+    now_utc = datetime.now(timezone.utc)
 
     for pos in positions:
         ticker = pos["ticker"]
@@ -189,8 +359,16 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
             except Exception as e:
                 logger.warning("IBKR query error for %s: %s", ticker, e)
 
-        by_ticker[ticker] = ibkr_articles
-        all_items.extend(ibkr_articles)
+        # Fetch from Google RSS
+        rss_articles = _query_google_rss(ticker, name)
+
+        combined_articles = [
+            article
+            for article in (ibkr_articles + rss_articles)
+            if _is_within_lookback(str(article.get("seendate", "")), now_utc)
+        ]
+        by_ticker[ticker] = combined_articles
+        all_items.extend(combined_articles)
 
     # Disconnect IBKR if connected
     if ib is not None:
