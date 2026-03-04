@@ -80,6 +80,20 @@ def set_cached(cache: TTLCache, key: str, value) -> None:
         _disk_set(cache, key, value)
 
 
+def delete_cached(cache: TTLCache, key: str) -> None:
+    """Delete a single cache entry from memory and disk (best-effort)."""
+    with _lock:
+        try:
+            cache.pop(key, None)
+        except Exception:
+            pass
+        if _DISK_CACHE_ENABLED:
+            try:
+                _disk_cache_path(cache, key).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 def invalidate_all() -> None:
     """Clear both caches (used by /api/cache/clear endpoint)."""
     with _lock:

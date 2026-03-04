@@ -1,12 +1,24 @@
 import os
-from fastapi import APIRouter, HTTPException
-from api.cache import long_cache, get_cached, set_cached
+from fastapi import APIRouter, HTTPException, Query
+from api.cache import long_cache, delete_cached, get_cached, set_cached
 
 router = APIRouter()
 
 @router.get("/weekly-report")
-def get_weekly_report():
+def get_weekly_report(
+    refresh: bool = Query(False, description="If true, clear the cached report and regenerate."),
+    cached_only: bool = Query(False, description="If true, return cached report only (404 if missing)."),
+):
     key = "weekly_report_generated"
+    if cached_only:
+        cached = get_cached(long_cache, key)
+        if cached is not None:
+            return cached
+        raise HTTPException(status_code=404, detail="No cached weekly report available.")
+
+    if refresh:
+        delete_cached(long_cache, key)
+
     cached = get_cached(long_cache, key)
     if cached is not None:
         return cached
@@ -161,7 +173,7 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
     try:
         from openai import OpenAI
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        resp = client.responses.create(model="gpt-4o-mini", input=prompt)
+        resp = client.responses.create(model="gpt-5-mini", input=prompt)
         report_md = (resp.output_text or "").strip()
         if not report_md:
             raise ValueError("OpenAI returned empty response")
