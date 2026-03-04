@@ -6,9 +6,9 @@ import { cn } from "@/lib/utils"
 
 /* ── colour helpers ───────────────────────────────────────────────────────── */
 
-const DIRECTION_COLORS: Record<string, string> = {
-    long: "#30D158",
-    short: "#FF4245",
+const PROVIDER_STYLES: Record<string, { bg: string; text: string }> = {
+    GDELT: { bg: "bg-blue-50", text: "text-blue-600" },
+    IBKR: { bg: "bg-amber-50", text: "text-amber-700" },
 }
 
 function tickerColor(ticker: string) {
@@ -28,6 +28,7 @@ interface NewsArticle {
     seendate: string
     socialimage: string
     language: string
+    provider: string
 }
 
 interface NewsData {
@@ -195,6 +196,17 @@ function NewsCard({
                         {showTicker && tickerName && tickerName !== article.ticker && (
                             <span className="text-[10px] text-gray-400">
                                 {tickerName}
+                            </span>
+                        )}
+                        {article.provider && (
+                            <span
+                                className={cn(
+                                    "inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase",
+                                    PROVIDER_STYLES[article.provider]?.bg ?? "bg-gray-50",
+                                    PROVIDER_STYLES[article.provider]?.text ?? "text-gray-500",
+                                )}
+                            >
+                                {article.provider}
                             </span>
                         )}
                         {article.source && (
