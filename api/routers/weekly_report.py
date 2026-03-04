@@ -4,6 +4,58 @@ from api.cache import long_cache, delete_cached, get_cached, set_cached
 
 router = APIRouter()
 
+
+def _format_level(value: float, decimals_if_lt_100: int = 4) -> str:
+    try:
+        v = float(value)
+    except Exception:
+        return "N/A"
+    if abs(v) >= 100:
+        return f"{v:,.2f}"
+    return f"{v:.{decimals_if_lt_100}f}"
+
+
+def _pct_change(start: float, latest: float) -> float | None:
+    try:
+        s = float(start)
+        l = float(latest)
+    except Exception:
+        return None
+    if s == 0:
+        return None
+    return ((l - s) / s) * 100.0
+
+
+def _build_perf_table(
+    title: str,
+    rows: list[tuple[str, float, float]],
+    decimals_if_lt_100: int = 4,
+) -> str:
+    if not rows:
+        return f"### {title}\n\n_No data available._\n"
+    header = f"### {title}\n\n| Asset | Start | Latest | Change |\n|---|---:|---:|---:|\n"
+    body_lines = []
+    for name, start, latest in rows:
+        pct = _pct_change(start, latest)
+        pct_str = "N/A" if pct is None else f"{pct:+.2f}%"
+        body_lines.append(
+            f"| {name} | {_format_level(start, decimals_if_lt_100)} | {_format_level(latest, decimals_if_lt_100)} | {pct_str} |"
+        )
+    return header + "\n".join(body_lines) + "\n"
+
+
+def _insert_weekly_performance(report_md: str, perf_md: str) -> str:
+    perf_md = (perf_md or "").strip()
+    report_md = (report_md or "").strip()
+    if not perf_md:
+        return report_md
+    lines = report_md.splitlines()
+    if lines and lines[0].startswith("# "):
+        first = lines[0]
+        rest = "\n".join(lines[1:]).lstrip("\n")
+        return f"{first}\n\n{perf_md}\n\n{rest}".strip()
+    return f"{perf_md}\n\n{report_md}".strip()
+
 @router.get("/weekly-report")
 def get_weekly_report(
     refresh: bool = Query(False, description="If true, clear the cached report and regenerate."),
@@ -24,14 +76,19 @@ def get_weekly_report(
         return cached
 
     # 1. Fetch all required data
+    index_order = None
+    pair_order = None
+    commodity_order = None
     try:
-        from index_dashboard import get_index_data
+        from index_dashboard import get_data as get_index_data, INDEX_ORDER
+        index_order = INDEX_ORDER
         indices = get_index_data("This Week")
     except Exception as e:
         indices = {"error": str(e)}
 
     try:
-        from fx_dashboard import get_fx_data
+        from fx_dashboard import get_data as get_fx_data, PAIR_ORDER
+        pair_order = PAIR_ORDER
         fx = get_fx_data("This Week")
     except Exception as e:
         fx = {"error": str(e)}
@@ -40,7 +97,8 @@ def get_weekly_report(
         import sys
         # Commodities isn't easily exposed without sys.path hacks that main.py does,
         # but the router should have access if it's imported properly. 
-        from commodities_dashboard import get_data as get_commodity_data
+        from commodities_dashboard import get_data as get_commodity_data, COMMODITY_ORDER
+        commodity_order = COMMODITY_ORDER
         commodities = get_commodity_data("This Week")
     except Exception as e:
         commodities = {"error": str(e)}
@@ -98,6 +156,52 @@ def get_weekly_report(
     except Exception as e:
         silver_gold = {"error": str(e)}
         sp_eq = {"error": str(e)}
+
+    # 2a. Deterministic weekly performance tables (Indices/FX/Commodities)
+    try:
+        import pandas as pd
+    except Exception:
+        pd = None  # type: ignore[assignment]
+
+    def _series_map_to_rows(series_map: dict, order: list[str] | None) -> list[tuple[str, float, float]]:
+        rows: list[tuple[str, float, float]] = []
+        if not isinstance(series_map, dict) or not series_map:
+            return rows
+        names = order or list(series_map.keys())
+        for name in names:
+            series = series_map.get(name)
+            if series is None:
+                continue
+            try:
+                if pd is not None and isinstance(series, pd.Series):
+                    s = series.dropna()
+                    if s.empty:
+                        continue
+                    start = float(s.iloc[0])
+                    latest = float(s.iloc[-1])
+                else:
+                    start = float(series[0])  # type: ignore[index]
+                    latest = float(series[-1])  # type: ignore[index]
+                rows.append((str(name), start, latest))
+            except Exception:
+                continue
+        return rows
+
+    indices_rows = _series_map_to_rows(indices.get("indices", {}) if isinstance(indices, dict) else {}, index_order)  # type: ignore[arg-type]
+    fx_rows = _series_map_to_rows(fx.get("pairs", {}) if isinstance(fx, dict) else {}, pair_order)  # type: ignore[arg-type]
+    commodities_rows = _series_map_to_rows(
+        commodities.get("commodities", {}) if isinstance(commodities, dict) else {},
+        commodity_order,  # type: ignore[arg-type]
+    )
+
+    perf_md = "\n\n".join(
+        [
+            "## Weekly Performance",
+            _build_perf_table("Indices", indices_rows, decimals_if_lt_100=2).strip(),
+            _build_perf_table("FX", fx_rows, decimals_if_lt_100=4).strip(),
+            _build_perf_table("Commodities", commodities_rows, decimals_if_lt_100=4).strip(),
+        ]
+    ).strip()
 
     # 2. Extract specific rules for Breadth and VIX to include in prompt
     rules_text = """
@@ -159,6 +263,9 @@ SP500/RSP: {sp_eq}
 Your goal is to summarize the moves of the past week into a clean report to catch up the user on what happened in the markets. 
 FLAG anything that stands out, but strictly AVOID commentary. Do not explain *why* something happened, just note *that* it happened.
 
+The final output will already include a "Weekly Performance" section (Indices/FX/Commodities) with start, latest, and % change.
+Do NOT repeat that section — focus on notable moves and threshold breaches instead.
+
 Use the explicit rules provided below to flag technicals.
 For other dashboards (Indices, FX, Commodities, Sectors, Positioning, Ratios), use your best judgment as an LLM to identify and highlight significant outliers, major percentage moves, or extremes.
 
@@ -180,6 +287,7 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM Generation failed: {exc}")
 
+    report_md = _insert_weekly_performance(report_md, perf_md)
     result = {"report": report_md}
     # Cache for 1 hour (long_cache) to prevent spamming the LLM
     set_cached(long_cache, key, result)
