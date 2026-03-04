@@ -117,6 +117,9 @@ export const fetchVixTermStructure = () =>
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)
 
+export const fetchWeeklyReport = () =>
+  client.get("/weekly-report", { timeout: 180_000 }).then(r => r.data)
+
 export const analyzeMarketTechnicals = (body: {
   market_breadth: Record<string, unknown>
   top50_breadth: Record<string, unknown>

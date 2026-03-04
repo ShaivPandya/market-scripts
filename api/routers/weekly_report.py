@@ -169,7 +169,7 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
         raise HTTPException(status_code=500, detail=f"LLM Generation failed: {exc}")
 
     result = {"report": report_md}
-    # Cache for 1 hour to prevent spamming LLM
-    set_cached(long_cache, key, result, ttl=3600)
+    # Cache for 1 hour (long_cache) to prevent spamming the LLM
+    set_cached(long_cache, key, result)
     
     return result

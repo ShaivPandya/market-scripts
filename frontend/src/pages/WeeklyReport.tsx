@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
+import { fetchWeeklyReport } from "@/lib/api"
 
 interface WeeklyReportResponse {
     report: string
@@ -14,9 +15,7 @@ export function WeeklyReport() {
         setIsLoading(true)
         setError(null)
         try {
-            const res = await fetch("http://localhost:8000/api/weekly-report")
-            if (!res.ok) throw new Error("Failed to fetch weekly report")
-            const json = await res.json()
+            const json = await fetchWeeklyReport()
             setData(json)
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err))
