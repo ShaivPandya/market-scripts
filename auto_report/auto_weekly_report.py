@@ -76,7 +76,7 @@ log = logging.getLogger("auto_weekly_report")
 # Constants
 # ---------------------------------------------------------------------------
 ET = ZoneInfo("America/New_York")
-OUTPUT_DIR = PROJECT_ROOT / "outputs"
+OUTPUT_DIR = SCRIPT_DIR / "outputs"
 HISTORY_DIR = OUTPUT_DIR / "history"
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
 SUMMARY_SEPARATOR = "<!-- SUMMARY_JSON -->"

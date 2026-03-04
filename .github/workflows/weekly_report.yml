@@ -44,5 +44,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: weekly-report-${{ github.run_id }}
-          path: outputs/
+          path: auto_report/outputs/
           retention-days: 90
