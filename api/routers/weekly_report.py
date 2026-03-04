@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query
 from api.cache import long_cache, delete_cached, get_cached, set_cached
 
@@ -47,6 +48,41 @@ def _build_perf_table(
     return header + "\n".join(body_lines) + "\n"
 
 
+def _build_key_ratios_table(rows: list[tuple[str, dict]]) -> str:
+    """
+    rows: list of (display_name, ratio_result_dict)
+    """
+    header = "## Key Ratios (Past Week)\n\n| Ratio | Start | Latest | Change | Date Range |\n|---|---:|---:|---:|---|\n"
+    body_lines: list[str] = []
+    for name, r in rows:
+        if not isinstance(r, dict):
+            body_lines.append(f"| {name} | N/A | N/A | N/A | N/A |")
+            continue
+        if "error" in r:
+            err = str(r.get("error") or "Unknown error").strip()
+            body_lines.append(f"| {name} | N/A | N/A | ERROR | {err} |")
+            continue
+        stats = r.get("stats") if isinstance(r.get("stats"), dict) else {}
+        start_ratio = stats.get("start_ratio")
+        end_ratio = stats.get("end_ratio")
+        change = stats.get("change_pct")
+        try:
+            start_s = _format_level(float(start_ratio), decimals_if_lt_100=6)
+            end_s = _format_level(float(end_ratio), decimals_if_lt_100=6)
+        except Exception:
+            start_s = "N/A"
+            end_s = "N/A"
+        try:
+            change_pct = float(change) * 100.0
+            change_s = f"{change_pct:+.2f}%"
+        except Exception:
+            change_s = "N/A"
+        date_range = f"{stats.get('start_date', 'N/A')} → {stats.get('end_date', 'N/A')}"
+        body_lines.append(f"| {name} | {start_s} | {end_s} | {change_s} | {date_range} |")
+
+    return header + "\n".join(body_lines) + "\n"
+
+
 def _insert_weekly_performance(report_md: str, perf_md: str) -> str:
     perf_md = (perf_md or "").strip()
     report_md = (report_md or "").strip()
@@ -58,6 +94,32 @@ def _insert_weekly_performance(report_md: str, perf_md: str) -> str:
         rest = "\n".join(lines[1:]).lstrip("\n")
         return f"{first}\n\n{perf_md}\n\n{rest}".strip()
     return f"{perf_md}\n\n{report_md}".strip()
+
+
+def _slim_error(value):
+    if not isinstance(value, dict):
+        return value
+    err = value.get("error")
+    if not isinstance(err, str):
+        return value
+    first = err.strip().splitlines()[0] if err.strip() else "Unknown error"
+    return {"error": first}
+
+
+def _slim_ratio_result(value):
+    if not isinstance(value, dict):
+        return value
+    if "error" in value:
+        return _slim_error(value)
+    stats = value.get("stats") if isinstance(value.get("stats"), dict) else None
+    out = {
+        "ratio_label": value.get("ratio_label"),
+        "name_a": value.get("name_a"),
+        "name_b": value.get("name_b"),
+        "stats": stats,
+    }
+    return out
+
 
 @router.get("/weekly-report")
 def get_weekly_report(
@@ -90,6 +152,7 @@ def get_weekly_report(
     index_order = None
     pair_order = None
     commodity_order = None
+    week_start = (datetime.now() - timedelta(days=7)).date().isoformat()
     try:
         from index_dashboard import get_data as get_index_data, INDEX_ORDER
         index_order = INDEX_ORDER
@@ -174,7 +237,11 @@ def get_weekly_report(
             # We just want top-level summary for the prompt
             import pandas as pd
             if isinstance(weights_df, pd.DataFrame):
-                sector["weights_summary"] = weights_df.to_dict(orient="records")
+                df = weights_df.reset_index()
+                if "index" in df.columns and "Sector" not in df.columns:
+                    df = df.rename(columns={"index": "Sector"})
+                df = df.round(2)
+                sector["weights_summary"] = df.to_dict(orient="records")
                 del sector["weights_df"]
                 
     except Exception as e:
@@ -201,8 +268,8 @@ def get_weekly_report(
     try:
         from technical_analysis import get_ratio_data
         t0 = time.perf_counter()
-        silver_gold = get_ratio_data("SI=F", "GC=F", "This Week")
-        sp_eq = get_ratio_data("^GSPC", "RSP", "This Week")
+        silver_gold = _slim_ratio_result(get_ratio_data("SI=F", "GC=F", start_date=week_start))
+        sp_eq = _slim_ratio_result(get_ratio_data("^GSPC", "RSP", start_date=week_start))
         logger.info("weekly_report ratios fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
         silver_gold = {"error": str(e)}
@@ -254,6 +321,7 @@ def get_weekly_report(
             _build_perf_table("Commodities", commodities_rows, decimals_if_lt_100=4).strip(),
         ]
     ).strip()
+    perf_md = f"{perf_md}\n\n{_build_key_ratios_table([('Silver/Gold', silver_gold), ('S&P 500 / RSP', sp_eq)]).strip()}".strip()
     logger.info(
         "weekly_report performance computed (indices=%d fx=%d commodities=%d)",
         len(indices_rows),
@@ -321,11 +389,16 @@ SP500/RSP: {sp_eq}
 Your goal is to summarize the moves of the past week into a clean report to catch up the user on what happened in the markets. 
 FLAG anything that stands out, but strictly AVOID commentary. Do not explain *why* something happened, just note *that* it happened.
 
-The final output will already include a "Weekly Performance" section (Indices/FX/Commodities) with start, latest, and % change.
-Do NOT repeat that section — focus on notable moves and threshold breaches instead.
+    The final output will already include:
+    - "Weekly Performance" (Indices/FX/Commodities) with start, latest, and % change
+    - "Key Ratios (Past Week)" (Silver/Gold and S&P 500 / RSP)
+    Do NOT repeat those sections — focus on notable moves and threshold breaches instead.
 
 Use the explicit rules provided below to flag technicals.
 For other dashboards (Indices, FX, Commodities, Sectors, Positioning, Ratios), use your best judgment as an LLM to identify and highlight significant outliers, major percentage moves, or extremes.
+
+For the sector metrics, use the provided `weights_summary` rows which include the sector name and are pre-rounded.
+Avoid printing raw, unrounded floating point values or internal column keys without context.
 
 {rules_text}
 

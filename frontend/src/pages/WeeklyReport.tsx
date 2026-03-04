@@ -111,6 +111,7 @@ function renderInlineMarkdown(text: string) {
                                 href={safeUrl}
                                 target="_blank"
                                 rel="noreferrer"
+                                className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
                             >
                                 {label}
                             </a>,
@@ -152,27 +153,102 @@ function renderMarkdownLite(markdown: string) {
     let codeFenceLang = ""
     let codeLines: string[] = []
 
-    let pendingList: { type: ListType; items: string[] } | null = null
+    type ListNode = { type: ListType; items: ListItem[] }
+    type ListItem = { text: string; children?: ListNode }
+    type ListFrame = { indent: number; node: ListNode; lastItem: ListItem | null }
+
+    let listRoot: ListNode | null = null
+    let listStack: ListFrame[] = []
+
+    const renderListNode = (node: ListNode, depth: number): ReactNode => {
+        const Tag = node.type
+        const marker = node.type === "ul" ? "list-disc" : "list-decimal"
+        return (
+            <Tag
+                className={[
+                    depth === 0 ? "my-3" : "my-2",
+                    "pl-5",
+                    marker,
+                    "space-y-1",
+                    "text-sm sm:text-base text-gray-900",
+                ].join(" ")}
+            >
+                {node.items.map((item, itemIdx) => (
+                    <li key={`li-${depth}-${itemIdx}`} className="leading-6">
+                        <span>{renderInlineMarkdown(item.text)}</span>
+                        {item.children ? renderListNode(item.children, depth + 1) : null}
+                    </li>
+                ))}
+            </Tag>
+        )
+    }
 
     const flushList = () => {
-        if (!pendingList) return
-        const list = pendingList
-        pendingList = null
-
-        const Tag = list.type
+        if (!listRoot) return
+        const root = listRoot
+        listRoot = null
+        listStack = []
         blocks.push(
-            <Tag key={`list-${blocks.length}`}>
-                {list.items.map((item, idx) => (
-                    <li key={`li-${idx}`}>{renderInlineMarkdown(item)}</li>
-                ))}
-            </Tag>,
+            <div key={`list-${blocks.length}`}>
+                {renderListNode(root, 0)}
+            </div>,
         )
+    }
+
+    const startListAt = (indent: number, type: ListType) => {
+        const node: ListNode = { type, items: [] }
+        listRoot = node
+        listStack = [{ indent, node, lastItem: null }]
+        return listStack[0]
+    }
+
+    const addListItem = (indent: number, type: ListType, text: string) => {
+        // Normalize tabs → 4 spaces.
+        const normalizedIndent = Math.max(0, indent)
+
+        if (!listRoot || listStack.length === 0) {
+            startListAt(normalizedIndent, type)
+        }
+
+        while (listStack.length > 0 && normalizedIndent < listStack[listStack.length - 1].indent) {
+            listStack.pop()
+        }
+
+        if (listStack.length === 0) {
+            startListAt(normalizedIndent, type)
+        }
+
+        let frame = listStack[listStack.length - 1]
+
+        if (normalizedIndent > frame.indent) {
+            // Nest under the previous list item.
+            const parentItem = frame.lastItem
+            if (parentItem) {
+                if (!parentItem.children || parentItem.children.type !== type) {
+                    parentItem.children = { type, items: [] }
+                }
+                const child = parentItem.children
+                frame = { indent: normalizedIndent, node: child, lastItem: null }
+                listStack.push(frame)
+            }
+        } else if (frame.node.type !== type) {
+            // Mixed list types at same indent; flush and restart.
+            flushList()
+            frame = startListAt(normalizedIndent, type)
+        }
+
+        const item: ListItem = { text }
+        frame.node.items.push(item)
+        frame.lastItem = item
     }
 
     const flushCode = () => {
         if (!inCodeBlock) return
         blocks.push(
-            <pre key={`pre-${blocks.length}`}>
+            <pre
+                key={`pre-${blocks.length}`}
+                className="my-4 overflow-x-auto rounded-lg border border-gray-200 bg-gray-50 p-4 text-xs sm:text-sm text-gray-900"
+            >
                 <code className={codeFenceLang ? `language-${codeFenceLang}` : undefined}>
                     {codeLines.join("\n")}
                 </code>
@@ -218,12 +294,12 @@ function renderMarkdownLite(markdown: string) {
             const keyId = `h-${blocks.length}`
             const body = renderInlineMarkdown(content)
             const clamped = Math.min(6, Math.max(1, level))
-            if (clamped === 1) blocks.push(<h1 key={keyId}>{body}</h1>)
-            else if (clamped === 2) blocks.push(<h2 key={keyId}>{body}</h2>)
-            else if (clamped === 3) blocks.push(<h3 key={keyId}>{body}</h3>)
-            else if (clamped === 4) blocks.push(<h4 key={keyId}>{body}</h4>)
-            else if (clamped === 5) blocks.push(<h5 key={keyId}>{body}</h5>)
-            else blocks.push(<h6 key={keyId}>{body}</h6>)
+            if (clamped === 1) blocks.push(<h1 key={keyId} className="mt-0 mb-3 text-xl sm:text-2xl font-semibold text-gray-900">{body}</h1>)
+            else if (clamped === 2) blocks.push(<h2 key={keyId} className="mt-7 mb-2 text-lg sm:text-xl font-semibold text-gray-900">{body}</h2>)
+            else if (clamped === 3) blocks.push(<h3 key={keyId} className="mt-6 mb-2 text-base sm:text-lg font-semibold text-gray-900">{body}</h3>)
+            else if (clamped === 4) blocks.push(<h4 key={keyId} className="mt-5 mb-2 text-sm sm:text-base font-semibold text-gray-900">{body}</h4>)
+            else if (clamped === 5) blocks.push(<h5 key={keyId} className="mt-4 mb-2 text-sm font-semibold text-gray-900">{body}</h5>)
+            else blocks.push(<h6 key={keyId} className="mt-4 mb-2 text-sm font-semibold text-gray-900">{body}</h6>)
             continue
         }
 
@@ -242,50 +318,60 @@ function renderMarkdownLite(markdown: string) {
 
             const rows = rowLines.map(splitTableRow)
             blocks.push(
-                <table key={`table-${blocks.length}`}>
-                    <thead>
-                        <tr>
-                            {headerCells.map((c, i) => (
-                                <th key={`th-${i}`}>{renderInlineMarkdown(c)}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows.map((row, r) => (
-                            <tr key={`tr-${r}`}>
-                                {row.map((c, i) => (
-                                    <td key={`td-${r}-${i}`}>{renderInlineMarkdown(c)}</td>
+                <div key={`tablewrap-${blocks.length}`} className="my-4 -mx-2 overflow-x-auto">
+                    <div className="px-2">
+                        <table className="w-full border-collapse text-sm text-gray-900">
+                            <thead>
+                                <tr className="bg-gray-50">
+                                    {headerCells.map((c, i) => (
+                                        <th
+                                            key={`th-${i}`}
+                                            className="border border-gray-200 px-3 py-2 text-left font-semibold"
+                                        >
+                                            {renderInlineMarkdown(c)}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((row, r) => (
+                                    <tr key={`tr-${r}`} className="odd:bg-white even:bg-gray-50/40">
+                                        {row.map((c, i) => (
+                                            <td
+                                                key={`td-${r}-${i}`}
+                                                className="border border-gray-200 px-3 py-2 align-top"
+                                            >
+                                                {renderInlineMarkdown(c)}
+                                            </td>
+                                        ))}
+                                    </tr>
                                 ))}
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>,
+                            </tbody>
+                        </table>
+                    </div>
+                </div>,
             )
             continue
         }
 
-        const ulMatch = line.match(/^\s*[-*]\s+(.*)$/)
-        const olMatch = line.match(/^\s*(\d+)\.\s+(.*)$/)
+        const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/)
+        const olMatch = line.match(/^(\s*)(\d+)\.\s+(.*)$/)
         if (ulMatch) {
-            if (!pendingList || pendingList.type !== "ul") {
-                flushList()
-                pendingList = { type: "ul", items: [] }
-            }
-            pendingList.items.push(ulMatch[1] ?? "")
+            const indent = (ulMatch[1] ?? "").replace(/\t/g, "    ").length
+            addListItem(indent, "ul", ulMatch[2] ?? "")
             continue
         }
         if (olMatch) {
-            if (!pendingList || pendingList.type !== "ol") {
-                flushList()
-                pendingList = { type: "ol", items: [] }
-            }
-            pendingList.items.push(olMatch[2] ?? "")
+            const indent = (olMatch[1] ?? "").replace(/\t/g, "    ").length
+            addListItem(indent, "ol", olMatch[3] ?? "")
             continue
         }
 
         flushList()
         blocks.push(
-            <p key={`p-${blocks.length}`}>{renderInlineMarkdown(line)}</p>,
+            <p key={`p-${blocks.length}`} className="my-2 text-sm sm:text-base leading-6 text-gray-900 whitespace-pre-wrap">
+                {renderInlineMarkdown(line)}
+            </p>,
         )
     }
 
@@ -448,7 +534,7 @@ export function WeeklyReport() {
             {data && !isLoading && (
                 <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
                     <div className="px-6 py-8 md:px-8">
-                        <div className="prose prose-blue prose-sm sm:prose-base max-w-none break-words prose-headings:font-semibold prose-a:text-blue-600 prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200 prose-pre:rounded-lg prose-pre:px-4 prose-pre:py-3 prose-table:border-collapse prose-th:px-4 prose-th:py-2 prose-th:bg-gray-50 prose-th:border prose-th:border-gray-200 prose-td:px-4 prose-td:py-2 prose-td:border prose-td:border-gray-200">
+                        <div className="max-w-none break-words">
                             {rendered ?? <p>{data.report}</p>}
                         </div>
                     </div>
