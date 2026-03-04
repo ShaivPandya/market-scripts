@@ -356,17 +356,17 @@ def main():
     pct_24wk_highs = metrics['pct_at_24wk_high']
     pct_24wk_lows = metrics['pct_at_24wk_low']
 
-    # Green if > 80% or < 15%
+    # Green if > 80% or < 15% (strong momentum or too much fear)
     line_200 = f"Above 200-day MA:  {metrics['above_200dma']:>4} / {metrics['total_analyzed']}  ({pct_200:.1f}%)"
     if pct_200 > 80 or pct_200 < 15:
         line_200 = colorize(line_200, "green")
 
-    # Green if > 80% or < 20%
+    # Green if > 80% or < 20% (strong momentum or too much fear)
     line_20 = f"Above 20-day MA:   {metrics['above_20dma']:>4} / {metrics['total_analyzed']}  ({pct_20:.1f}%)"
     if pct_20 > 80 or pct_20 < 20:
         line_20 = colorize(line_20, "green")
 
-    # Green if > 50%
+    # Green if > 50% (strong momentum)
     line_highs = f"At 20-day highs:   {metrics['at_20day_high']:>4} / {metrics['total_analyzed']}  ({pct_highs:.1f}%)"
     if pct_highs > 50:
         line_highs = colorize(line_highs, "green")
@@ -376,7 +376,7 @@ def main():
     if pct_lows > 50:
         line_lows = colorize(line_lows, "green")
 
-    # Green if > 15%
+    # Green if > 15% (strong momentum)
     line_52wk_highs = f"At 52-week highs:  {metrics['at_52wk_high']:>4} / {metrics['total_analyzed']}  ({pct_52wk_highs:.1f}%)"
     if pct_52wk_highs > 15:
         line_52wk_highs = colorize(line_52wk_highs, "green")
@@ -386,7 +386,7 @@ def main():
     if pct_52wk_lows > 15:
         line_52wk_lows = colorize(line_52wk_lows, "green")
 
-    # Green if > 20%
+    # Green if > 20% (strong momentum)
     line_24wk_highs = f"At 24-week highs:  {metrics['at_24wk_high']:>4} / {metrics['total_analyzed']}  ({pct_24wk_highs:.1f}%)"
     if pct_24wk_highs > 20:
         line_24wk_highs = colorize(line_24wk_highs, "green")
