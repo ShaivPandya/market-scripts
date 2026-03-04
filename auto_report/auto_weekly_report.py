@@ -1,0 +1,870 @@
+#!/usr/bin/env python3
+"""
+Automated weekly market report.
+
+Orchestrates data collection from existing modules, calls Claude to generate
+a Markdown report, writes outputs, archives to history, and creates a GitHub Issue.
+
+Run:
+    python auto_report/auto_weekly_report.py --force   # bypass Friday-afternoon gate
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# ---------------------------------------------------------------------------
+# sys.path — replicate api/main.py so data-module imports resolve
+# ---------------------------------------------------------------------------
+SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent
+
+_PATHS = [
+    PROJECT_ROOT,
+    PROJECT_ROOT / "equities" / "market_technicals",
+    PROJECT_ROOT / "macro" / "economic_growth",
+    PROJECT_ROOT / "macro" / "liquidity",
+    PROJECT_ROOT / "macro" / "breakout",
+    PROJECT_ROOT / "macro" / "positioning",
+    PROJECT_ROOT / "equities" / "portfolio",
+    PROJECT_ROOT / "portfolio" / "momentum" / "price_momentum",
+    PROJECT_ROOT / "fx" / "model",
+    PROJECT_ROOT / "fx" / "fx_dashboard",
+    PROJECT_ROOT / "commodities",
+    PROJECT_ROOT / "equities" / "index_dashboard",
+    PROJECT_ROOT / "portfolio",
+    PROJECT_ROOT / "macro" / "central_banks",
+    PROJECT_ROOT / "macro" / "industry",
+    PROJECT_ROOT / "portfolio" / "technical_analysis",
+    PROJECT_ROOT / "equities" / "quality",
+    PROJECT_ROOT / "equities",
+    PROJECT_ROOT / "macro" / "country_dashboard",
+    PROJECT_ROOT / "equities" / "short_screen",
+    PROJECT_ROOT / "equities" / "sector_metrics",
+    PROJECT_ROOT / "portfolio" / "momentum" / "fundamental_momentum",
+]
+for _p in reversed(_PATHS):
+    _p_str = str(_p)
+    if _p_str not in sys.path:
+        sys.path.insert(0, _p_str)
+
+from dotenv import load_dotenv
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("auto_weekly_report")
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+ET = ZoneInfo("America/New_York")
+OUTPUT_DIR = PROJECT_ROOT / "outputs"
+HISTORY_DIR = OUTPUT_DIR / "history"
+PROMPTS_DIR = SCRIPT_DIR / "prompts"
+SUMMARY_SEPARATOR = "<!-- SUMMARY_JSON -->"
+
+RULES_TEXT = """
+STRICT FORMATTING RULES (Apply these to the data provided below):
+
+MARKET BREADTH THRESHOLDS:
+- 200-day MA: Flag if > 80% or < 15%
+- 20-day MA: Flag if > 80% or < 20%
+- 20-day Highs: Flag if > 50%
+- 20-day Lows: Flag if > 50% (Capitulation signal)
+- 52-week Highs: Flag if > 15%
+- 52-week Lows: Flag if > 15%
+- 24-week Highs: Flag if > 20%
+- 24-week Lows: Flag if > 20%
+
+TOP 50 S&P 500 BREADTH:
+- Simply state the % below 50-DMA, % with >=3 distribution days (last 20), and % that broke prior 20-day low in last 5 days.
+
+VIX TERM STRUCTURE:
+- Signal is 'Complacency' if 3M/1M Ratio >= 1.25
+- Signal is 'Fear' if Ratio < 1.0
+- Otherwise 'Neutral'
+"""
+
+# ---------------------------------------------------------------------------
+# Pure helpers (copied from api/routers/weekly_report.py — no FastAPI deps)
+# ---------------------------------------------------------------------------
+
+
+def _format_level(value: float, decimals_if_lt_100: int = 4) -> str:
+    try:
+        v = float(value)
+    except Exception:
+        return "N/A"
+    if abs(v) >= 100:
+        return f"{v:,.2f}"
+    return f"{v:.{decimals_if_lt_100}f}"
+
+
+def _pct_change(start: float, latest: float) -> float | None:
+    try:
+        s = float(start)
+        l = float(latest)
+    except Exception:
+        return None
+    if s == 0:
+        return None
+    return ((l - s) / s) * 100.0
+
+
+def _build_perf_table(
+    title: str,
+    rows: list[tuple[str, float, float]],
+    decimals_if_lt_100: int = 4,
+) -> str:
+    if not rows:
+        return f"### {title}\n\n_No data available._\n"
+    header = f"### {title}\n\n| Asset | Start | Latest | Change |\n|---|---:|---:|---:|\n"
+    body_lines = []
+    for name, start, latest in rows:
+        pct = _pct_change(start, latest)
+        pct_str = "N/A" if pct is None else f"{pct:+.2f}%"
+        body_lines.append(
+            f"| {name} | {_format_level(start, decimals_if_lt_100)} | {_format_level(latest, decimals_if_lt_100)} | {pct_str} |"
+        )
+    return header + "\n".join(body_lines) + "\n"
+
+
+def _build_key_ratios_table(rows: list[tuple[str, dict]]) -> str:
+    header = "## Key Ratios (Past Week)\n\n| Ratio | Start | Latest | Change | Date Range |\n|---|---:|---:|---:|---|\n"
+    body_lines: list[str] = []
+    for name, r in rows:
+        if not isinstance(r, dict):
+            body_lines.append(f"| {name} | N/A | N/A | N/A | N/A |")
+            continue
+        if "error" in r:
+            err = str(r.get("error") or "Unknown error").strip()
+            body_lines.append(f"| {name} | N/A | N/A | ERROR | {err} |")
+            continue
+        stats = r.get("stats") if isinstance(r.get("stats"), dict) else {}
+        start_ratio = stats.get("start_ratio")
+        end_ratio = stats.get("end_ratio")
+        change = stats.get("change_pct")
+        try:
+            start_s = _format_level(float(start_ratio), decimals_if_lt_100=6)
+            end_s = _format_level(float(end_ratio), decimals_if_lt_100=6)
+        except Exception:
+            start_s = "N/A"
+            end_s = "N/A"
+        try:
+            change_pct = float(change) * 100.0
+            change_s = f"{change_pct:+.2f}%"
+        except Exception:
+            change_s = "N/A"
+        date_range = f"{stats.get('start_date', 'N/A')} → {stats.get('end_date', 'N/A')}"
+        body_lines.append(
+            f"| {name} | {start_s} | {end_s} | {change_s} | {date_range} |"
+        )
+    return header + "\n".join(body_lines) + "\n"
+
+
+def _insert_weekly_performance(report_md: str, perf_md: str) -> str:
+    perf_md = (perf_md or "").strip()
+    report_md = (report_md or "").strip()
+    if not perf_md:
+        return report_md
+    lines = report_md.splitlines()
+    if lines and lines[0].startswith("# "):
+        first = lines[0]
+        rest = "\n".join(lines[1:]).lstrip("\n")
+        return f"{first}\n\n{perf_md}\n\n{rest}".strip()
+    return f"{perf_md}\n\n{report_md}".strip()
+
+
+_HR_RE = re.compile(r"^\s*([-*_]\s*){3,}\s*$")
+_META_START_RES = [
+    re.compile(r"^\s*if\s+you\s+(want|would\s+like|want\s+me|need)\b", re.IGNORECASE),
+    re.compile(r"^\s*if\s+you['']d\s+like\b", re.IGNORECASE),
+    re.compile(r"^\s*let\s+me\s+know\s+if\b", re.IGNORECASE),
+    re.compile(r"^\s*i\s+can\s+(also\s+)?\b", re.IGNORECASE),
+    re.compile(r"^\s*happy\s+to\b", re.IGNORECASE),
+    re.compile(r"^\s*need\s+anything\s+else\b", re.IGNORECASE),
+    re.compile(r"^\s*want\s+me\s+to\b", re.IGNORECASE),
+]
+
+
+def _strip_llm_meta(report_md: str) -> str:
+    original = (report_md or "").strip()
+    if not original:
+        return original
+    lines = original.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    while lines and _HR_RE.match(lines[-1]):
+        lines.pop()
+    lookback = 80
+    start_idx = None
+    scan_from = max(0, len(lines) - lookback)
+    for i in range(scan_from, len(lines)):
+        line = lines[i].strip()
+        if not line:
+            continue
+        if any(rx.search(line) for rx in _META_START_RES):
+            start_idx = i
+            if i > 0 and _HR_RE.match(lines[i - 1]):
+                start_idx = i - 1
+            break
+    if start_idx is not None:
+        lines = lines[:start_idx]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        while lines and _HR_RE.match(lines[-1]):
+            lines.pop()
+    cleaned = "\n".join(lines).strip()
+    return cleaned or original
+
+
+def _slim_error(value):
+    if not isinstance(value, dict):
+        return value
+    err = value.get("error")
+    if not isinstance(err, str):
+        return value
+    first = err.strip().splitlines()[0] if err.strip() else "Unknown error"
+    return {"error": first}
+
+
+def _slim_ratio_result(value):
+    if not isinstance(value, dict):
+        return value
+    if "error" in value:
+        return _slim_error(value)
+    stats = value.get("stats") if isinstance(value.get("stats"), dict) else None
+    return {
+        "ratio_label": value.get("ratio_label"),
+        "name_a": value.get("name_a"),
+        "name_b": value.get("name_b"),
+        "stats": stats,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Schedule gate
+# ---------------------------------------------------------------------------
+
+
+def _is_friday_afternoon_et() -> bool:
+    now_et = datetime.now(ET)
+    return now_et.weekday() == 4 and now_et.hour == 16
+
+
+# ---------------------------------------------------------------------------
+# Prompt loading
+# ---------------------------------------------------------------------------
+
+
+def load_prompt_file(path: Path, name: str) -> str:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Required prompt file missing: {path}\n"
+            f"Create {name} with your content before running."
+        )
+    content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        raise ValueError(
+            f"Prompt file is empty: {path}\n"
+            f"Add content to {name} before running."
+        )
+    return content
+
+
+def load_last_week_summary(history_dir: Path) -> str | None:
+    if not history_dir.exists():
+        return None
+    dirs = sorted(
+        [d for d in history_dir.iterdir() if d.is_dir() and len(d.name) == 10],
+        reverse=True,
+    )
+    if not dirs:
+        return None
+    summary_path = dirs[0] / "summary.json"
+    if not summary_path.exists():
+        return None
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        return json.dumps(data, indent=2)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Data collection
+# ---------------------------------------------------------------------------
+
+
+def collect_data() -> dict:
+    results = {}
+    week_start = (datetime.now() - timedelta(days=7)).date().isoformat()
+
+    # 1. Indices
+    try:
+        from index_dashboard import get_data as get_index_data, INDEX_ORDER
+
+        t0 = time.perf_counter()
+        indices = get_index_data("This Week")
+        log.info("indices fetched in %.2fs", time.perf_counter() - t0)
+        results["indices"] = {"data": indices, "order": list(INDEX_ORDER)}
+    except Exception as e:
+        log.warning("indices fetch failed: %s", e, exc_info=True)
+        results["indices"] = {"error": str(e)}
+
+    # 2. FX
+    try:
+        from fx_dashboard import get_data as get_fx_data, PAIR_ORDER
+
+        t0 = time.perf_counter()
+        fx = get_fx_data("This Week")
+        log.info("fx fetched in %.2fs", time.perf_counter() - t0)
+        results["fx"] = {"data": fx, "order": list(PAIR_ORDER)}
+    except Exception as e:
+        log.warning("fx fetch failed: %s", e, exc_info=True)
+        results["fx"] = {"error": str(e)}
+
+    # 3. Commodities
+    try:
+        from commodities_dashboard import (
+            get_data as get_commodity_data,
+            COMMODITY_ORDER,
+        )
+
+        t0 = time.perf_counter()
+        commodities = get_commodity_data("This Week")
+        log.info("commodities fetched in %.2fs", time.perf_counter() - t0)
+        results["commodities"] = {
+            "data": commodities,
+            "order": list(COMMODITY_ORDER),
+        }
+    except Exception as e:
+        log.warning("commodities fetch failed: %s", e, exc_info=True)
+        results["commodities"] = {"error": str(e)}
+
+    # 4. Market Breadth
+    try:
+        from market_breadth import get_data as get_breadth_data
+
+        t0 = time.perf_counter()
+        breadth = get_breadth_data(period="1y")
+        # Drop raw ticker list to keep bundle lean
+        breadth.pop("tickers", None)
+        log.info("breadth fetched in %.2fs", time.perf_counter() - t0)
+        results["breadth"] = breadth
+    except Exception as e:
+        log.warning("breadth fetch failed: %s", e, exc_info=True)
+        results["breadth"] = {"error": str(e)}
+
+    # 5. Top 50 Breadth
+    try:
+        from top50_breadth import get_data as get_top50_data
+
+        t0 = time.perf_counter()
+        top50 = get_top50_data()
+        log.info("top50 breadth fetched in %.2fs", time.perf_counter() - t0)
+        results["top50"] = top50
+    except Exception as e:
+        log.warning("top50 breadth fetch failed: %s", e, exc_info=True)
+        results["top50"] = {"error": str(e)}
+
+    # 6. VIX Term Structure
+    try:
+        from vix_term_structure import get_data as get_vix_data
+
+        t0 = time.perf_counter()
+        vix = get_vix_data()
+        log.info("vix term structure fetched in %.2fs", time.perf_counter() - t0)
+        results["vix"] = vix
+    except Exception as e:
+        log.warning("vix term structure fetch failed: %s", e, exc_info=True)
+        results["vix"] = {"error": str(e)}
+
+    # 7. Sector Metrics — pre-process weights_df
+    try:
+        from sector_metrics import get_data as get_sector_data
+
+        t0 = time.perf_counter()
+        sector = get_sector_data()
+        weights_df = sector.get("weights_df")
+        if weights_df is not None:
+            import pandas as pd
+
+            if isinstance(weights_df, pd.DataFrame):
+                df = weights_df.reset_index()
+                if "index" in df.columns and "Sector" not in df.columns:
+                    df = df.rename(columns={"index": "Sector"})
+                df = df.round(2)
+                sector["weights_summary"] = df.to_dict(orient="records")
+                del sector["weights_df"]
+        log.info("sector metrics fetched in %.2fs", time.perf_counter() - t0)
+        results["sector"] = sector
+    except Exception as e:
+        log.warning("sector metrics fetch failed: %s", e, exc_info=True)
+        results["sector"] = {"error": str(e)}
+
+    # 8. Positioning
+    try:
+        from positioning import fetch_multiple_instruments, DEFAULT_DOMAIN, DATASETS
+
+        t0 = time.perf_counter()
+        pos = fetch_multiple_instruments(
+            domain=DEFAULT_DOMAIN,
+            dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
+            app_token=os.environ.get("SODA_APP_TOKEN"),
+            instruments=["SP500", "NASDAQ", "US10Y", "EUR", "GOLD", "OIL"],
+            start="2015-01-01",
+            end=None,
+        )
+        log.info("positioning fetched in %.2fs", time.perf_counter() - t0)
+        results["positioning"] = pos
+    except Exception as e:
+        log.warning("positioning fetch failed: %s", e, exc_info=True)
+        results["positioning"] = {"error": str(e)}
+
+    # 9. Ratios
+    try:
+        from technical_analysis import get_ratio_data
+
+        t0 = time.perf_counter()
+        silver_gold = _slim_ratio_result(
+            get_ratio_data("SI=F", "GC=F", start_date=week_start)
+        )
+        sp_eq = _slim_ratio_result(
+            get_ratio_data("^GSPC", "RSP", start_date=week_start)
+        )
+        log.info("ratios fetched in %.2fs", time.perf_counter() - t0)
+        results["ratios"] = {"silver_gold": silver_gold, "sp500_rsp": sp_eq}
+    except Exception as e:
+        log.warning("ratios fetch failed: %s", e, exc_info=True)
+        results["ratios"] = {"error": str(e)}
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
+
+from api.serializers import serialize_value
+
+
+def serialize_bundle(raw: dict) -> dict:
+    return {k: serialize_value(v) for k, v in raw.items()}
+
+
+def write_bundle(bundle: dict, output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "weekly_bundle.json"
+    path.write_text(json.dumps(bundle, indent=2, default=str), encoding="utf-8")
+    log.info("Bundle written to %s (%d bytes)", path, path.stat().st_size)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Performance tables (from raw, pre-serialized data)
+# ---------------------------------------------------------------------------
+
+
+def _series_map_to_rows(
+    series_map: dict, order: list[str] | None
+) -> list[tuple[str, float, float]]:
+    rows: list[tuple[str, float, float]] = []
+    if not isinstance(series_map, dict) or not series_map:
+        return rows
+    try:
+        import pandas as pd
+    except Exception:
+        pd = None  # type: ignore[assignment]
+    names = order or list(series_map.keys())
+    for name in names:
+        series = series_map.get(name)
+        if series is None:
+            continue
+        try:
+            if pd is not None and isinstance(series, pd.Series):
+                s = series.dropna()
+                if s.empty:
+                    continue
+                start = float(s.iloc[0])
+                latest = float(s.iloc[-1])
+            else:
+                start = float(series[0])
+                latest = float(series[-1])
+            rows.append((str(name), start, latest))
+        except Exception:
+            continue
+    return rows
+
+
+def build_performance_markdown(raw_data: dict) -> str:
+    # Extract data + orders
+    idx = raw_data.get("indices", {})
+    idx_data = idx.get("data", {}) if isinstance(idx, dict) else {}
+    idx_order = idx.get("order") if isinstance(idx, dict) else None
+
+    fx = raw_data.get("fx", {})
+    fx_data = fx.get("data", {}) if isinstance(fx, dict) else {}
+    fx_order = fx.get("order") if isinstance(fx, dict) else None
+
+    com = raw_data.get("commodities", {})
+    com_data = com.get("data", {}) if isinstance(com, dict) else {}
+    com_order = com.get("order") if isinstance(com, dict) else None
+
+    indices_rows = _series_map_to_rows(
+        idx_data.get("indices", {}) if isinstance(idx_data, dict) else {},
+        idx_order,
+    )
+    fx_rows = _series_map_to_rows(
+        fx_data.get("pairs", {}) if isinstance(fx_data, dict) else {},
+        fx_order,
+    )
+    commodities_rows = _series_map_to_rows(
+        com_data.get("commodities", {}) if isinstance(com_data, dict) else {},
+        com_order,
+    )
+
+    perf_md = "\n\n".join(
+        [
+            "## Weekly Performance",
+            _build_perf_table("Indices", indices_rows, decimals_if_lt_100=2).strip(),
+            _build_perf_table("FX", fx_rows, decimals_if_lt_100=4).strip(),
+            _build_perf_table(
+                "Commodities", commodities_rows, decimals_if_lt_100=4
+            ).strip(),
+        ]
+    ).strip()
+
+    # Key ratios
+    ratios = raw_data.get("ratios", {})
+    if isinstance(ratios, dict) and "error" not in ratios:
+        silver_gold = ratios.get("silver_gold", {})
+        sp_eq = ratios.get("sp500_rsp", {})
+    else:
+        silver_gold = ratios if isinstance(ratios, dict) else {}
+        sp_eq = {}
+
+    ratios_md = _build_key_ratios_table(
+        [("Silver/Gold", silver_gold), ("S&P 500 / RSP", sp_eq)]
+    ).strip()
+    perf_md = f"{perf_md}\n\n{ratios_md}".strip()
+
+    log.info(
+        "performance tables built (indices=%d fx=%d commodities=%d)",
+        len(indices_rows),
+        len(fx_rows),
+        len(commodities_rows),
+    )
+    return perf_md
+
+
+# ---------------------------------------------------------------------------
+# Prepare bundle for Claude prompt (strip bulky fields)
+# ---------------------------------------------------------------------------
+
+
+def _prepare_prompt_bundle(bundle: dict) -> dict:
+    """Return a copy of the bundle with raw_df stripped from top50."""
+    import copy
+
+    prompt_bundle = copy.deepcopy(bundle)
+    top50 = prompt_bundle.get("top50")
+    if isinstance(top50, dict):
+        top50.pop("raw_df", None)
+        # Also drop per-ticker lists to save tokens
+        top50.pop("tickers_below_50dma", None)
+        top50.pop("tickers_3plus_dist", None)
+        top50.pop("tickers_broke_20low", None)
+    return prompt_bundle
+
+
+# ---------------------------------------------------------------------------
+# Claude call
+# ---------------------------------------------------------------------------
+
+
+def call_claude(system_msg: str, user_msg: str) -> str:
+    import anthropic
+
+    client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
+    t0 = time.perf_counter()
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=16384,
+        system=system_msg,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    text = response.content[0].text
+    log.info(
+        "Claude call completed in %.2fs (%d input tokens, %d output tokens)",
+        time.perf_counter() - t0,
+        response.usage.input_tokens,
+        response.usage.output_tokens,
+    )
+    return text
+
+
+def _build_user_message(bundle: dict, perf_md: str) -> str:
+    prompt_bundle = _prepare_prompt_bundle(bundle)
+    bundle_json = json.dumps(prompt_bundle, indent=2, default=str)
+
+    return f"""Here is this week's market data bundle:
+
+```json
+{bundle_json}
+```
+
+{perf_md}
+
+{RULES_TEXT}
+
+Write the weekly report with these exact sections:
+1. **Executive Summary** — max 5 bullets
+2. **Market Moves & Regime Shifts**
+3. **Macro Data Highlights**
+4. **Positioning**
+5. **Key Risks & Signposts** — include specific thresholds/triggers
+6. **Recommended Actions** — exactly one stance
+7. **What Would Change the Stance** — if-then pivots
+
+Constraints:
+- Cite metrics from the data for major claims.
+- If evidence is mixed, say so and define what would disambiguate.
+- Keep it concise. No filler.
+
+After the report, output the separator `{SUMMARY_SEPARATOR}` on its own line, then a JSON block:
+```json
+{{
+  "stance": "<bullish|bearish|neutral|cautious>",
+  "confidence": "<high|medium|low>",
+  "drivers": ["<top 3-5 drivers>"],
+  "watchlist_triggers": ["<3-5 specific triggers that would change stance>"]
+}}
+```
+
+End immediately after the JSON. No assistant meta text."""
+
+
+# ---------------------------------------------------------------------------
+# Response parsing
+# ---------------------------------------------------------------------------
+
+
+def _fallback_summary() -> dict:
+    return {
+        "stance": "unknown",
+        "confidence": "low",
+        "drivers": [],
+        "watchlist_triggers": [],
+        "parse_error": True,
+    }
+
+
+def parse_response(text: str) -> tuple[str, dict]:
+    if SUMMARY_SEPARATOR in text:
+        parts = text.split(SUMMARY_SEPARATOR, 1)
+        report_md = parts[0].strip()
+        json_part = parts[1].strip()
+        # Strip markdown code fences
+        if json_part.startswith("```"):
+            json_part = json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
+        if json_part.endswith("```"):
+            json_part = json_part[:-3]
+        json_part = json_part.strip()
+        try:
+            summary = json.loads(json_part)
+        except json.JSONDecodeError:
+            log.warning("Failed to parse summary JSON from Claude response")
+            summary = _fallback_summary()
+    else:
+        log.warning("No summary separator found in Claude response")
+        report_md = text.strip()
+        summary = _fallback_summary()
+    return report_md, summary
+
+
+# ---------------------------------------------------------------------------
+# Output writing and archival
+# ---------------------------------------------------------------------------
+
+
+def write_outputs(
+    report_md: str, summary: dict, bundle: dict, output_dir: Path, today: str
+):
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    (output_dir / "report.md").write_text(report_md, encoding="utf-8")
+    (output_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
+    log.info("Wrote report.md and summary.json to %s", output_dir)
+
+    # Archive
+    archive_dir = output_dir / "history" / today
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (archive_dir / "weekly_bundle.json").write_text(
+        json.dumps(bundle, indent=2, default=str), encoding="utf-8"
+    )
+    (archive_dir / "report.md").write_text(report_md, encoding="utf-8")
+    (archive_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
+    log.info("Archived to %s", archive_dir)
+
+
+# ---------------------------------------------------------------------------
+# GitHub Issue
+# ---------------------------------------------------------------------------
+
+
+def _detect_repo() -> str | None:
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if repo:
+        return repo
+    try:
+        url = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(PROJECT_ROOT),
+            text=True,
+        ).strip()
+        m = re.search(r"github\.com[:/](.+?)(?:\.git)?$", url)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def create_github_issue(title: str, body: str) -> str | None:
+    import requests
+
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        log.warning("GITHUB_TOKEN not set — skipping issue creation")
+        return None
+    repo = _detect_repo()
+    if not repo:
+        log.warning("Could not detect repo owner/name — skipping issue creation")
+        return None
+
+    url = f"https://api.github.com/repos/{repo}/issues"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    # GitHub body limit is 65536 chars
+    if len(body) > 60000:
+        body = body[:60000] + "\n\n... (truncated)"
+
+    resp = requests.post(
+        url, headers=headers, json={"title": title, "body": body}, timeout=30
+    )
+    if resp.status_code == 201:
+        issue_url = resp.json().get("html_url", "")
+        log.info("Created GitHub Issue: %s", issue_url)
+        return issue_url
+    else:
+        log.error(
+            "GitHub Issue creation failed (%d): %s",
+            resp.status_code,
+            resp.text[:500],
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Automated weekly market report")
+    parser.add_argument("--force", action="store_true", help="Bypass Friday-afternoon schedule gate")
+    args = parser.parse_args()
+
+    if not args.force and not os.environ.get("FORCE_RUN") and not _is_friday_afternoon_et():
+        log.info("Not Friday 16:xx ET — exiting (use --force to override)")
+        sys.exit(0)
+
+    today_str = datetime.now(ET).strftime("%Y-%m-%d")
+    log.info("=== Weekly report run starting (%s) ===", today_str)
+
+    # 1. Load prompts
+    system_md = load_prompt_file(PROMPTS_DIR / "system.md", "prompts/system.md")
+    playbook_md = load_prompt_file(PROMPTS_DIR / "playbook.md", "prompts/playbook.md")
+
+    # 2. Load last-week summary
+    last_week = load_last_week_summary(HISTORY_DIR)
+    system_parts = [system_md, playbook_md]
+    if last_week:
+        system_parts.append(f"## Last Week's Summary\n\n```json\n{last_week}\n```")
+        log.info("Loaded last-week summary from history")
+    else:
+        log.info("No prior summary found in history")
+    system_msg = "\n\n---\n\n".join(system_parts)
+
+    # 3. Collect data
+    log.info("Collecting data from all sources...")
+    t_collect = time.perf_counter()
+    raw_data = collect_data()
+    log.info("Data collection completed in %.2fs", time.perf_counter() - t_collect)
+
+    # 4. Serialize and write bundle
+    bundle = serialize_bundle(raw_data)
+    write_bundle(bundle, OUTPUT_DIR)
+
+    # 5. Build deterministic performance tables (from raw data, before serialization flattened Series)
+    perf_md = build_performance_markdown(raw_data)
+
+    # 6. Call Claude
+    user_msg = _build_user_message(bundle, perf_md)
+    report_md = None
+    summary = None
+    error_msg = None
+
+    try:
+        response_text = call_claude(system_msg, user_msg)
+        report_md, summary = parse_response(response_text)
+        report_md = _insert_weekly_performance(report_md, perf_md)
+        report_md = _strip_llm_meta(report_md)
+    except Exception as e:
+        log.error("Claude call failed: %s", e, exc_info=True)
+        error_msg = str(e)
+        report_md = (
+            f"# Weekly Report — {today_str}\n\n"
+            f"**Error**: Claude generation failed.\n\n```\n{error_msg}\n```"
+        )
+        summary = _fallback_summary()
+        summary["error"] = error_msg
+
+    # 7. Write outputs + archive
+    write_outputs(report_md, summary, bundle, OUTPUT_DIR, today_str)
+
+    # 8. Create GitHub Issue
+    issue_title = f"Weekly Market Report — {today_str}"
+    try:
+        create_github_issue(issue_title, report_md)
+    except Exception as e:
+        log.error("GitHub Issue creation failed: %s", e, exc_info=True)
+
+    log.info("=== Weekly report run complete ===")
+
+
+if __name__ == "__main__":
+    main()

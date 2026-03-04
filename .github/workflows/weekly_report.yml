@@ -1,0 +1,48 @@
+name: Weekly Market Report
+
+on:
+  schedule:
+    # Friday 20:05 UTC = Friday 16:05 ET (EDT, Mar–Nov)
+    # Friday 21:05 UTC = Friday 16:05 ET (EST, Nov–Mar)
+    - cron: "5 20 * * 5"
+    - cron: "5 21 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate weekly report
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          SODA_APP_TOKEN: ${{ secrets.SODA_APP_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_RUN: "1"
+        run: python auto_report/auto_weekly_report.py
+
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-report-${{ github.run_id }}
+          path: outputs/
+          retention-days: 90
