@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils"
 /* ── colour helpers ───────────────────────────────────────────────────────── */
 
 const PROVIDER_STYLES: Record<string, { bg: string; text: string }> = {
-    GDELT: { bg: "bg-blue-50", text: "text-blue-600" },
     IBKR: { bg: "bg-amber-50", text: "text-amber-700" },
 }
 

@@ -1,30 +1,20 @@
 """
-Portfolio News Feed via GDELT DOC 2.0 API + IBKR TWS API.
+Portfolio News Feed via IBKR TWS API.
 
-Queries GDELT and (optionally) IBKR for each ticker/company-name in
-portfolio.csv and returns a unified feed with both grouped-by-ticker
-and flat chronological views.
+Queries IBKR for each ticker/company-name in portfolio.csv and returns
+a unified feed with both grouped-by-ticker and flat chronological views.
 """
 
 import csv
 import os
-import time
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any
 
-import requests
-
 logger = logging.getLogger(__name__)
 
 PORTFOLIO_CSV = Path(__file__).parent / "portfolio.csv"
-
-# ── GDELT settings ────────────────────────────────────────────────────────────
-GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
-GDELT_TIMESPAN = "3d"
-GDELT_MAX_RECORDS = 10
-REQUEST_DELAY = 0.6  # seconds between GDELT calls to avoid rate-limiting
 
 # ── IBKR settings (via env) ───────────────────────────────────────────────────
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
@@ -63,75 +53,6 @@ def _resolve_name(ticker: str, asset: str) -> str:
 
     _name_cache[ticker] = name
     return name
-
-
-# ── GDELT ─────────────────────────────────────────────────────────────────────
-
-def _query_gdelt(ticker: str, name: str) -> list[dict[str, Any]]:
-    """
-    Query GDELT DOC 2.0 API for articles matching a ticker or company name.
-    Returns a list of article dicts.
-    """
-    # Build query: (TICKER OR "Company Name") if name differs from ticker
-    if name and name.upper() != ticker.upper():
-        query = f'({ticker} OR "{name}")'
-    else:
-        query = ticker
-
-    params = {
-        "query": query,
-        "mode": "ArtList",
-        "format": "json",
-        "timespan": GDELT_TIMESPAN,
-        "maxrecords": GDELT_MAX_RECORDS,
-    }
-
-    max_retries = 3
-    data = {}
-    for attempt in range(max_retries):
-        try:
-            resp = requests.get(GDELT_DOC_URL, params=params, timeout=25)
-            resp.raise_for_status()
-            data = resp.json()
-            break
-        except requests.exceptions.RequestException as e:
-            if attempt < max_retries - 1:
-                logger.debug("GDELT query for %s failed, retrying in %ds... (%s)", ticker, 2 ** attempt, e)
-                time.sleep(2 ** attempt)
-                continue
-            logger.warning("GDELT query failed for %s after %d retries: %s", ticker, max_retries, e)
-            return []
-        except Exception as e:
-            logger.warning("GDELT query failed for %s with unexpected error: %s", ticker, e)
-            return []
-
-    articles = data.get("articles") or []
-    results = []
-    for art in articles:
-        results.append(
-            {
-                "ticker": ticker,
-                "title": art.get("title", ""),
-                "url": art.get("url", ""),
-                "source": art.get("domain", ""),
-                "seendate": _parse_gdelt_date(art.get("seendate", "")),
-                "socialimage": art.get("socialimage", ""),
-                "language": art.get("language", ""),
-                "provider": "GDELT",
-            }
-        )
-    return results
-
-
-def _parse_gdelt_date(raw: str) -> str:
-    """Parse GDELT seendate (YYYYMMDDTHHMMSSz) into ISO format."""
-    if not raw:
-        return ""
-    try:
-        dt = datetime.strptime(raw.rstrip("Z"), "%Y%m%dT%H%M%S")
-        return dt.isoformat() + "Z"
-    except ValueError:
-        return raw
 
 
 # ── IBKR ──────────────────────────────────────────────────────────────────────
@@ -254,14 +175,11 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
     # Try to establish IBKR connection (graceful failure)
     ib = _connect_ib()
 
-    for i, pos in enumerate(positions):
+    for pos in positions:
         ticker = pos["ticker"]
         asset = pos.get("asset", "equity")
         name = _resolve_name(ticker, asset)
         ticker_names[ticker] = name
-
-        # Fetch from GDELT
-        gdelt_articles = _query_gdelt(ticker, name)
 
         # Fetch from IBKR (if connected)
         ibkr_articles = []
@@ -271,13 +189,8 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
             except Exception as e:
                 logger.warning("IBKR query error for %s: %s", ticker, e)
 
-        combined = gdelt_articles + ibkr_articles
-        by_ticker[ticker] = combined
-        all_items.extend(combined)
-
-        # Rate-limit GDELT: sleep between requests (skip after last one)
-        if i < len(positions) - 1:
-            time.sleep(REQUEST_DELAY)
+        by_ticker[ticker] = ibkr_articles
+        all_items.extend(ibkr_articles)
 
     # Disconnect IBKR if connected
     if ib is not None:
