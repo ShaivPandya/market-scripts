@@ -77,6 +77,7 @@ from api.routers import (
     industry,
     yield_curve,
     financials,
+    portfolio_news,
 )
 
 app = FastAPI(
@@ -142,6 +143,7 @@ app.include_router(sector_metrics.router,       prefix="/api", dependencies=_aut
 app.include_router(industry.router,             prefix="/api", dependencies=_auth_dep)
 app.include_router(yield_curve.router,          prefix="/api", dependencies=_auth_dep)
 app.include_router(financials.router,           prefix="/api", dependencies=_auth_dep)
+app.include_router(portfolio_news.router,       prefix="/api", dependencies=_auth_dep)
 
 
 @app.delete("/api/cache", dependencies=_auth_dep)

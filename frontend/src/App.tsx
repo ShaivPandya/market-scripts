@@ -30,6 +30,7 @@ import { CountryDashboard } from "@/pages/CountryDashboard"
 import { CentralBanks } from "@/pages/CentralBanks"
 import { IndustryMonitor } from "@/pages/IndustryMonitor"
 import { YieldCurve } from "@/pages/YieldCurve"
+import { PortfolioNews } from "@/pages/PortfolioNews"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -89,6 +90,7 @@ function AppRoutes() {
           <Route path="/central-banks" element={<CentralBanks />} />
           <Route path="/industry-monitor" element={<IndustryMonitor />} />
           <Route path="/yield-curve" element={<YieldCurve />} />
+          <Route path="/portfolio-news" element={<PortfolioNews />} />
         </Route>
       </Route>
     </Routes>

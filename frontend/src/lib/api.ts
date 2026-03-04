@@ -77,9 +77,9 @@ client.interceptors.response.use(
 )
 
 export const authApi = {
-  login:  (password: string) => client.post("/auth/login", { password }).then(r => r.data),
-  logout: ()                 => client.post("/auth/logout").then(r => r.data),
-  me:     ()                 => client.get("/auth/me").then(r => r.data),
+  login: (password: string) => client.post("/auth/login", { password }).then(r => r.data),
+  logout: () => client.post("/auth/logout").then(r => r.data),
+  me: () => client.get("/auth/me").then(r => r.data),
 }
 
 // ─── GET endpoints ───────────────────────────────────────────────────────────
@@ -152,6 +152,9 @@ export const fetchBreakout = () =>
 
 export const fetchCentralBanks = (refresh = false) =>
   client.get(`/central-banks?refresh=${refresh}`).then(r => r.data)
+
+export const fetchPortfolioNews = (refresh = false) =>
+  client.get(`/portfolio-news?refresh=${refresh}`).then(r => r.data)
 
 export const fetchSectorMetrics = () =>
   client.get("/sector-metrics").then(r => r.data)
@@ -230,7 +233,7 @@ export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
   const deadline = Date.now() + 180_000
 
   // Poll until completion; each request is short to avoid edge proxy timeouts.
-  for (;;) {
+  for (; ;) {
     if (Date.now() > deadline) throw new Error("Timeout: Portfolio analyzer is taking too long. Try again.")
 
     await new Promise(r => setTimeout(r, 2000))
@@ -276,7 +279,7 @@ export async function runHedgingToolAsync(body: { book: number; positions: { tic
   const job_id = started.job_id
   const deadline = Date.now() + 180_000
 
-  for (;;) {
+  for (; ;) {
     if (Date.now() > deadline) throw new Error("Timeout: Hedging tool is taking too long. Try again.")
 
     await new Promise(r => setTimeout(r, 2000))
@@ -317,7 +320,7 @@ export async function runPortfolioSizerAsync(body: {
   const job_id = started.job_id
   const deadline = Date.now() + 180_000
 
-  for (;;) {
+  for (; ;) {
     if (Date.now() > deadline) throw new Error("Timeout: Sizer is taking too long. Try again.")
 
     await new Promise(r => setTimeout(r, 2000))
