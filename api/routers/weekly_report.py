@@ -190,6 +190,8 @@ def get_weekly_report(
             dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
             app_token=os.environ.get("SODA_APP_TOKEN"),
             instruments=["SP500", "NASDAQ", "US10Y", "EUR", "GOLD", "OIL"],
+            start="2015-01-01",
+            end=None,
         )
         logger.info("weekly_report positioning fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
