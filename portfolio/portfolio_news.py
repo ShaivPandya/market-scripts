@@ -98,6 +98,8 @@ def _connect_ib():
     Try to connect to IB Gateway / TWS.  Returns an IB instance or None.
     """
     try:
+        import nest_asyncio
+        nest_asyncio.apply()
         from ib_insync import IB
         ib = IB()
         ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=5)
@@ -121,7 +123,7 @@ def _qualify_contract(ib, ticker: str, asset: str):
         local_symbol = ticker.split(".")[0]
         suffix = ticker.split(".")[-1]
         exchange_map = {
-            "HE": "NASDAQ OMX",
+            "HE": "HEX",
             "L": "LSE",
         }
         exchange = exchange_map.get(suffix, "SMART")

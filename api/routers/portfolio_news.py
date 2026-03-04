@@ -7,7 +7,7 @@ router = APIRouter()
 
 @router.get("/portfolio-news")
 def get_portfolio_news(refresh: bool = False):
-    key = f"portfolio_news:{refresh}"
+    key = "portfolio_news"
     if not refresh:
         cached = get_cached(long_cache, key)
         if cached is not None:

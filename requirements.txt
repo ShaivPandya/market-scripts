@@ -26,3 +26,4 @@ statsmodels>=0.14.0
 streamlit>=1.28.0
 yfinance>=0.2.0
 ib_insync>=0.9.86
+nest_asyncio>=1.5.0
