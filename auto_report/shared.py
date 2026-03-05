@@ -1,0 +1,259 @@
+"""Shared utilities for auto report scripts (weekly & daily)."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import subprocess
+import time
+from pathlib import Path
+
+log = logging.getLogger("auto_report.shared")
+
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+# ---------------------------------------------------------------------------
+# Prompt loading
+# ---------------------------------------------------------------------------
+
+
+def load_prompt_file(path: Path, name: str) -> str:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Required prompt file missing: {path}\n"
+            f"Create {name} with your content before running."
+        )
+    content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        raise ValueError(
+            f"Prompt file is empty: {path}\n"
+            f"Add content to {name} before running."
+        )
+    return content
+
+
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
+
+from api.serializers import serialize_value  # noqa: E402
+
+
+def serialize_bundle(raw: dict) -> dict:
+    return {k: serialize_value(v) for k, v in raw.items()}
+
+
+def write_bundle(bundle: dict, path: Path) -> Path:
+    """Write a JSON bundle to *path* (full file path, not directory)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(bundle, indent=2, default=str), encoding="utf-8")
+    log.info("Bundle written to %s (%d bytes)", path, path.stat().st_size)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# LLM meta-text stripping
+# ---------------------------------------------------------------------------
+
+_HR_RE = re.compile(r"^\s*([-*_]\s*){3,}\s*$")
+_META_START_RES = [
+    re.compile(r"^\s*if\s+you\s+(want|would\s+like|want\s+me|need)\b", re.IGNORECASE),
+    re.compile(r"^\s*if\s+you['']d\s+like\b", re.IGNORECASE),
+    re.compile(r"^\s*let\s+me\s+know\s+if\b", re.IGNORECASE),
+    re.compile(r"^\s*i\s+can\s+(also\s+)?\b", re.IGNORECASE),
+    re.compile(r"^\s*happy\s+to\b", re.IGNORECASE),
+    re.compile(r"^\s*need\s+anything\s+else\b", re.IGNORECASE),
+    re.compile(r"^\s*want\s+me\s+to\b", re.IGNORECASE),
+]
+
+
+def strip_llm_meta(report_md: str) -> str:
+    """Strip trailing LLM meta-commentary from a generated report."""
+    original = (report_md or "").strip()
+    if not original:
+        return original
+    lines = original.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    while lines and _HR_RE.match(lines[-1]):
+        lines.pop()
+    lookback = 80
+    start_idx = None
+    scan_from = max(0, len(lines) - lookback)
+    for i in range(scan_from, len(lines)):
+        line = lines[i].strip()
+        if not line:
+            continue
+        if any(rx.search(line) for rx in _META_START_RES):
+            start_idx = i
+            if i > 0 and _HR_RE.match(lines[i - 1]):
+                start_idx = i - 1
+            break
+    if start_idx is not None:
+        lines = lines[:start_idx]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        while lines and _HR_RE.match(lines[-1]):
+            lines.pop()
+    cleaned = "\n".join(lines).strip()
+    return cleaned or original
+
+
+# ---------------------------------------------------------------------------
+# Slim error helper
+# ---------------------------------------------------------------------------
+
+
+def slim_error(value):
+    if not isinstance(value, dict):
+        return value
+    err = value.get("error")
+    if not isinstance(err, str):
+        return value
+    first = err.strip().splitlines()[0] if err.strip() else "Unknown error"
+    return {"error": first}
+
+
+# ---------------------------------------------------------------------------
+# Claude call
+# ---------------------------------------------------------------------------
+
+
+def call_claude(
+    system_msg: str,
+    user_msg: str,
+    allowed_domains: list[str] | None = None,
+    model: str = "claude-opus-4-6",
+    max_tokens: int = 16384,
+) -> tuple[str, list[tuple[str, str]]]:
+    """Call Claude, optionally with web search.
+
+    Returns (text, citations) where citations is a list of (title, url) tuples.
+    """
+    import anthropic
+
+    client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
+
+    tools = []
+    if allowed_domains is not None:
+        tools.append(
+            {
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 5,
+                "allowed_domains": allowed_domains,
+            }
+        )
+
+    kwargs = dict(
+        model=model,
+        max_tokens=max_tokens,
+        system=system_msg,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    if tools:
+        kwargs["tools"] = tools
+
+    t0 = time.perf_counter()
+    response = client.messages.create(**kwargs)
+
+    # Handle pause_turn for long-running web search turns
+    messages = list(kwargs["messages"])
+    while response.stop_reason == "pause_turn":
+        messages.append({"role": "assistant", "content": response.content})
+        messages.append(
+            {"role": "user", "content": [{"type": "text", "text": "Continue."}]}
+        )
+        kwargs["messages"] = messages
+        response = client.messages.create(**kwargs)
+
+    # Extract text and citations from all content blocks
+    text_parts = []
+    seen_urls: set[str] = set()
+    citations: list[tuple[str, str]] = []
+    for block in response.content:
+        if hasattr(block, "text"):
+            text_parts.append(block.text)
+            # Collect citations from text blocks
+            if hasattr(block, "citations") and block.citations:
+                for cite in block.citations:
+                    url = getattr(cite, "url", None)
+                    title = getattr(cite, "title", None)
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        citations.append((title or url, url))
+
+    search_count = 0
+    if hasattr(response.usage, "server_tool_use") and response.usage.server_tool_use:
+        search_count = getattr(
+            response.usage.server_tool_use, "web_search_requests", 0
+        )
+
+    log.info(
+        "Claude call completed in %.2fs (%d input tokens, %d output tokens, %d web searches)",
+        time.perf_counter() - t0,
+        response.usage.input_tokens,
+        response.usage.output_tokens,
+        search_count,
+    )
+    return "\n".join(text_parts), citations
+
+
+# ---------------------------------------------------------------------------
+# GitHub Issue
+# ---------------------------------------------------------------------------
+
+
+def _detect_repo() -> str | None:
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if repo:
+        return repo
+    try:
+        url = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(PROJECT_ROOT),
+            text=True,
+        ).strip()
+        m = re.search(r"github\.com[:/](.+?)(?:\.git)?$", url)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def create_github_issue(title: str, body: str) -> str | None:
+    import requests
+
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        log.warning("GITHUB_TOKEN not set — skipping issue creation")
+        return None
+    repo = _detect_repo()
+    if not repo:
+        log.warning("Could not detect repo owner/name — skipping issue creation")
+        return None
+
+    url = f"https://api.github.com/repos/{repo}/issues"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    # GitHub body limit is 65536 chars
+    if len(body) > 60000:
+        body = body[:60000] + "\n\n... (truncated)"
+
+    resp = requests.post(
+        url, headers=headers, json={"title": title, "body": body}, timeout=30
+    )
+    if resp.status_code == 201:
+        issue_url = resp.json().get("html_url", "")
+        log.info("Created GitHub Issue: %s", issue_url)
+        return issue_url
+    else:
+        log.error(
+            "GitHub Issue creation failed (%d): %s",
+            resp.status_code,
+            resp.text[:500],
+        )
+        return None
