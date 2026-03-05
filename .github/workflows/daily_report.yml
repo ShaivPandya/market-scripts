@@ -1,0 +1,58 @@
+name: Daily Portfolio Risk Report
+
+on:
+  schedule:
+    # Weekdays at 21:10 UTC = 17:10 ET (EDT, Mar–Nov)
+    # Weekdays at 22:10 UTC = 17:10 ET (EST, Nov–Mar)
+    - cron: "10 21 * * 1-5"
+    - cron: "10 22 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Decode open_positions.csv from secret
+        env:
+          OPEN_POSITIONS_B64: ${{ secrets.OPEN_POSITIONS_B64 }}
+        run: |
+          if [ -n "$OPEN_POSITIONS_B64" ]; then
+            echo "$OPEN_POSITIONS_B64" | base64 --decode > portfolio/open_positions.csv
+            echo "Decoded open_positions.csv ($(wc -l < portfolio/open_positions.csv) lines)"
+          else
+            echo "OPEN_POSITIONS_B64 secret not set — running without open positions"
+          fi
+
+      - name: Generate daily report
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_RUN: "1"
+        run: python auto_report/auto_daily_report.py
+
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-${{ github.run_id }}
+          path: auto_report/outputs/daily/
+          retention-days: 90

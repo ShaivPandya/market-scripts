@@ -205,6 +205,10 @@ Some modules have their own deeper docs:
   - Cloudflare Access (optional) and/or
   - `API_PROXY_SECRET` + the Pages function proxy
 
+## Deployment
+
+Site is deployed using Cloudflare Pages and Render.
+
 ## Disclaimer
 
 This is a personal research toolkit. Nothing here is investment advice.
