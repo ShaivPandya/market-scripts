@@ -81,6 +81,13 @@ HISTORY_DIR = OUTPUT_DIR / "history"
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
 SUMMARY_SEPARATOR = "<!-- SUMMARY_JSON -->"
 
+DEFAULT_NEWS_SOURCES = [
+    "bloomberg.com",
+    "cnbc.com",
+    "federalreserve.gov",
+    "bls.gov",
+]
+
 RULES_TEXT = """
 STRICT FORMATTING RULES (Apply these to the data provided below):
 
@@ -635,30 +642,96 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def call_claude(system_msg: str, user_msg: str) -> str:
+def call_claude(
+    system_msg: str,
+    user_msg: str,
+    allowed_domains: list[str] | None = None,
+) -> tuple[str, list[tuple[str, str]]]:
+    """Call Claude, optionally with web search.
+
+    Returns (text, citations) where citations is a list of (title, url) tuples.
+    """
     import anthropic
 
     client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
-    t0 = time.perf_counter()
-    response = client.messages.create(
+
+    tools = []
+    if allowed_domains is not None:
+        tools.append(
+            {
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 5,
+                "allowed_domains": allowed_domains,
+            }
+        )
+
+    kwargs = dict(
         model="claude-opus-4-6",
         max_tokens=16384,
         system=system_msg,
         messages=[{"role": "user", "content": user_msg}],
     )
-    text = response.content[0].text
+    if tools:
+        kwargs["tools"] = tools
+
+    t0 = time.perf_counter()
+    response = client.messages.create(**kwargs)
+
+    # Handle pause_turn for long-running web search turns
+    messages = list(kwargs["messages"])
+    while response.stop_reason == "pause_turn":
+        messages.append({"role": "assistant", "content": response.content})
+        messages.append(
+            {"role": "user", "content": [{"type": "text", "text": "Continue."}]}
+        )
+        kwargs["messages"] = messages
+        response = client.messages.create(**kwargs)
+
+    # Extract text and citations from all content blocks
+    text_parts = []
+    seen_urls: set[str] = set()
+    citations: list[tuple[str, str]] = []
+    for block in response.content:
+        if hasattr(block, "text"):
+            text_parts.append(block.text)
+            # Collect citations from text blocks
+            if hasattr(block, "citations") and block.citations:
+                for cite in block.citations:
+                    url = getattr(cite, "url", None)
+                    title = getattr(cite, "title", None)
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        citations.append((title or url, url))
+
+    search_count = 0
+    if hasattr(response.usage, "server_tool_use") and response.usage.server_tool_use:
+        search_count = getattr(
+            response.usage.server_tool_use, "web_search_requests", 0
+        )
+
     log.info(
-        "Claude call completed in %.2fs (%d input tokens, %d output tokens)",
+        "Claude call completed in %.2fs (%d input tokens, %d output tokens, %d web searches)",
         time.perf_counter() - t0,
         response.usage.input_tokens,
         response.usage.output_tokens,
+        search_count,
     )
-    return text
+    return "\n".join(text_parts), citations
 
 
-def _build_user_message(bundle: dict, perf_md: str) -> str:
+def _build_user_message(bundle: dict, perf_md: str, web_search: bool = True) -> str:
     prompt_bundle = _prepare_prompt_bundle(bundle)
     bundle_json = json.dumps(prompt_bundle, indent=2, default=str)
+
+    search_instruction = ""
+    if web_search:
+        search_instruction = """
+Before writing the report, use the web search tool to find the key market-moving
+news from the past week (Fed decisions, economic data releases, geopolitical events,
+major earnings, trade policy) that explain the moves in the data below. Weave this
+context into each relevant section and cite your sources for news-driven claims.
+"""
 
     return f"""Here is this week's market data bundle:
 
@@ -669,7 +742,7 @@ def _build_user_message(bundle: dict, perf_md: str) -> str:
 {perf_md}
 
 {RULES_TEXT}
-
+{search_instruction}
 Write the weekly report with these exact sections:
 1. **Executive Summary** — max 5 bullets
 2. **Market Moves & Regime Shifts**
@@ -830,6 +903,13 @@ def create_github_issue(title: str, body: str) -> str | None:
 def main():
     parser = argparse.ArgumentParser(description="Automated weekly market report")
     parser.add_argument("--force", action="store_true", help="Bypass Friday-afternoon schedule gate")
+    parser.add_argument("--no-search", action="store_true", help="Disable web search for news context")
+    parser.add_argument(
+        "--news-sources",
+        type=str,
+        default=None,
+        help="Comma-separated list of domains to restrict news search (overrides defaults)",
+    )
     args = parser.parse_args()
 
     if not args.force and not os.environ.get("FORCE_RUN") and not _is_friday_afternoon_et():
@@ -866,17 +946,41 @@ def main():
     # 5. Build deterministic performance tables (from raw data, before serialization flattened Series)
     perf_md = build_performance_markdown(raw_data)
 
-    # 6. Call Claude
-    user_msg = _build_user_message(bundle, perf_md)
+    # 6. Resolve web search settings
+    use_search = not args.no_search
+    if use_search:
+        if args.news_sources:
+            allowed_domains = [
+                d.strip() for d in args.news_sources.split(",") if d.strip()
+            ]
+        else:
+            allowed_domains = list(DEFAULT_NEWS_SOURCES)
+        log.info("Web search enabled — domains: %s", allowed_domains)
+    else:
+        allowed_domains = None
+        log.info("Web search disabled")
+
+    # 7. Call Claude
+    user_msg = _build_user_message(bundle, perf_md, web_search=use_search)
     report_md = None
     summary = None
     error_msg = None
 
     try:
-        response_text = call_claude(system_msg, user_msg)
+        response_text, citations = call_claude(
+            system_msg, user_msg, allowed_domains=allowed_domains
+        )
         report_md, summary = parse_response(response_text)
         report_md = _insert_weekly_performance(report_md, perf_md)
         report_md = _strip_llm_meta(report_md)
+
+        # Append sources section from web search citations
+        if citations:
+            sources_lines = ["\n\n---\n\n## Sources\n"]
+            for title, url in citations:
+                sources_lines.append(f"- [{title}]({url})")
+            report_md += "\n".join(sources_lines)
+            log.info("Appended %d citation sources to report", len(citations))
     except Exception as e:
         log.error("Claude call failed: %s", e, exc_info=True)
         error_msg = str(e)
@@ -887,10 +991,10 @@ def main():
         summary = _fallback_summary()
         summary["error"] = error_msg
 
-    # 7. Write outputs + archive
+    # 8. Write outputs + archive
     write_outputs(report_md, summary, bundle, OUTPUT_DIR, today_str)
 
-    # 8. Create GitHub Issue
+    # 9. Create GitHub Issue
     issue_title = f"Weekly Market Report — {today_str}"
     try:
         create_github_issue(issue_title, report_md)
