@@ -83,10 +83,10 @@ DAILY_SUMMARY_SEPARATOR = "<!-- DAILY_SUMMARY_JSON -->"
 # ---------------------------------------------------------------------------
 
 
-def _is_weekday_afternoon_et() -> bool:
-    """True if it's a weekday at 17:xx ET."""
+def _is_weekday_morning_et() -> bool:
+    """True if it's a weekday at 09:xx ET."""
     now_et = datetime.now(ET)
-    return now_et.weekday() < 5 and now_et.hour == 17
+    return now_et.weekday() < 5 and now_et.hour == 9
 
 
 # ---------------------------------------------------------------------------
@@ -621,9 +621,9 @@ def main():
     if (
         not args.force
         and not os.environ.get("FORCE_RUN")
-        and not _is_weekday_afternoon_et()
+        and not _is_weekday_morning_et()
     ):
-        log.info("Not weekday 17:xx ET — exiting (use --force to override)")
+        log.info("Not weekday 09:xx ET — exiting (use --force to override)")
         sys.exit(0)
 
     today_str = datetime.now(ET).strftime("%Y-%m-%d")
