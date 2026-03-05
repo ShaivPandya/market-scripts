@@ -582,17 +582,51 @@ def build_performance_markdown(raw_data: dict) -> str:
 
 
 def _prepare_prompt_bundle(bundle: dict) -> dict:
-    """Return a copy of the bundle with raw_df stripped from top50."""
+    """Return a slimmed copy of the bundle for the Claude prompt.
+
+    Strips bulky intraday series (indices/fx/commodities) down to
+    start+latest values, and removes heavy fields from top50.
+    """
     import copy
 
     prompt_bundle = copy.deepcopy(bundle)
+
+    # --- Strip intraday series from dashboards ---
+    # The serialized bundle contains full 15-min intraday Series
+    # (~130 points per instrument) which bloat the prompt.  The
+    # performance markdown table already captures start/latest, so
+    # Claude only needs summary values per instrument.
+    _SERIES_KEYS = {
+        "indices": "indices",
+        "fx": "pairs",
+        "commodities": "commodities",
+    }
+    for block_key, series_key in _SERIES_KEYS.items():
+        block = prompt_bundle.get(block_key)
+        if not isinstance(block, dict) or "error" in block:
+            continue
+        data = block.get("data")
+        if not isinstance(data, dict):
+            continue
+        series_map = data.get(series_key)
+        if not isinstance(series_map, dict):
+            continue
+        for name, series_list in list(series_map.items()):
+            if isinstance(series_list, list) and len(series_list) > 2:
+                first = series_list[0]
+                last = series_list[-1]
+                series_map[name] = {"start": first, "latest": last}
+        # Drop the order list — not needed by Claude
+        block.pop("order", None)
+
+    # --- Strip heavy fields from top50 ---
     top50 = prompt_bundle.get("top50")
     if isinstance(top50, dict):
         top50.pop("raw_df", None)
-        # Also drop per-ticker lists to save tokens
         top50.pop("tickers_below_50dma", None)
         top50.pop("tickers_3plus_dist", None)
         top50.pop("tickers_broke_20low", None)
+
     return prompt_bundle
 
 
