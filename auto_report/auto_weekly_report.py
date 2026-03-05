@@ -464,6 +464,42 @@ def collect_data() -> dict:
         log.warning("ratios fetch failed: %s", e, exc_info=True)
         results["ratios"] = {"error": str(e)}
 
+    # 10. Economic Growth
+    try:
+        from economic_growth import get_data as get_econ_growth_data
+
+        t0 = time.perf_counter()
+        econ_growth = get_econ_growth_data()
+        log.info("economic growth fetched in %.2fs", time.perf_counter() - t0)
+        results["economic_growth"] = econ_growth
+    except Exception as e:
+        log.warning("economic growth fetch failed: %s", e, exc_info=True)
+        results["economic_growth"] = {"error": str(e)}
+
+    # 11. Liquidity
+    try:
+        from liquidity import get_snapshot as get_liquidity_snapshot
+
+        t0 = time.perf_counter()
+        liquidity = get_liquidity_snapshot()
+        log.info("liquidity fetched in %.2fs", time.perf_counter() - t0)
+        results["liquidity"] = liquidity
+    except Exception as e:
+        log.warning("liquidity fetch failed: %s", e, exc_info=True)
+        results["liquidity"] = {"error": str(e)}
+
+    # 12. Industry Monitor
+    try:
+        from industry_monitor import get_data as get_industry_data
+
+        t0 = time.perf_counter()
+        industry = get_industry_data(refresh=False)
+        log.info("industry monitor fetched in %.2fs", time.perf_counter() - t0)
+        results["industry"] = industry
+    except Exception as e:
+        log.warning("industry monitor fetch failed: %s", e, exc_info=True)
+        results["industry"] = {"error": str(e)}
+
     return results
 
 
@@ -633,6 +669,22 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
         top50.pop("tickers_below_50dma", None)
         top50.pop("tickers_3plus_dist", None)
         top50.pop("tickers_broke_20low", None)
+
+    # --- Strip heavy fields from liquidity ---
+    liq = prompt_bundle.get("liquidity")
+    if isinstance(liq, dict) and "error" not in liq:
+        liq.pop("df_weekly", None)
+        liq.pop("composite_series", None)
+
+    # --- Strip per-company detail from industry ---
+    ind = prompt_bundle.get("industry")
+    if isinstance(ind, dict) and "error" not in ind:
+        by_sector = ind.get("by_sector")
+        if isinstance(by_sector, dict):
+            for sector_data in by_sector.values():
+                if isinstance(sector_data, dict):
+                    sector_data.pop("companies", None)
+        ind.pop("counts", None)
 
     return prompt_bundle
 
