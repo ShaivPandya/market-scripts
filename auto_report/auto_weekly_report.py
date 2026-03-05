@@ -82,10 +82,7 @@ PROMPTS_DIR = SCRIPT_DIR / "prompts"
 SUMMARY_SEPARATOR = "<!-- SUMMARY_JSON -->"
 
 DEFAULT_NEWS_SOURCES = [
-    "reuters.com",
     "bloomberg.com",
-    "ft.com",
-    "wsj.com",
     "cnbc.com",
     "federalreserve.gov",
     "bls.gov",
