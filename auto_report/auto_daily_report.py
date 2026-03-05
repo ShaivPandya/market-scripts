@@ -369,12 +369,22 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
     # --- Sizer exposures ---
     exposures = sizer_result.get("exposures")
     if isinstance(exposures, dict):
+        exposure_labels = {
+            "equity_gross": "Equity Gross",
+            "equity_net": "Equity Net",
+            "commodity_gross": "Commodity Gross",
+            "commodity_net": "Commodity Net",
+            "total_gross": "Total Gross",
+            "total_net": "Total Net",
+            "hedge_gross": "Hedge Gross",
+        }
         sections.append("## Portfolio Exposures\n")
         for k, v in exposures.items():
+            label = exposure_labels.get(k, k.replace("_", " ").title())
             try:
-                sections.append(f"- **{k}**: {float(v):.4f}")
+                sections.append(f"- **{label}**: {float(v) * 100:.1f}%")
             except (TypeError, ValueError):
-                sections.append(f"- **{k}**: {v}")
+                sections.append(f"- **{label}**: {v}")
         sections.append("")
 
     # --- Constraints utilization ---
@@ -435,9 +445,9 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
             sections.append(
                 f"| {row['ticker']} | "
                 f"{str(row.get('direction', '')).lower()[:1].upper()} | "
-                f"{row.get('conviction', '')} | {row['weight']:.4f} | "
+                f"{row.get('conviction', '')} | {row['weight'] * 100:.2f}% | "
                 f"{row.get('beta_spy', 0):.3f} | {row.get('beta_iwm', 0):.3f} | "
-                f"{row.get('realized_vol', 0):.4f} | "
+                f"{row.get('realized_vol', 0) * 100:.2f}% | "
                 f"{row.get('shares', 0):,} | ${row.get('dollar_weight', 0):,.0f} |"
             )
         sections.append("")
