@@ -236,15 +236,22 @@ def get_sizer_prefill():
             if "direction" in df.columns
             else pd.Series([""] * len(df))
         )
+        convictions = (
+            pd.to_numeric(df["conviction"], errors="coerce").fillna(3).astype(int).clip(1, 5)
+            if "conviction" in df.columns
+            else pd.Series([3] * len(df))
+        )
 
         deduped_rows: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for ticker, direction in zip(tickers.tolist(), directions.tolist()):
+        for ticker, direction, conviction in zip(
+            tickers.tolist(), directions.tolist(), convictions.tolist()
+        ):
             if ticker and ticker not in seen:
                 seen.add(ticker)
                 deduped_rows.append({
                     "ticker": ticker,
-                    "conviction": 3,
+                    "conviction": conviction,
                     "direction": direction,
                 })
 
