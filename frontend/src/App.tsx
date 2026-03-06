@@ -30,6 +30,7 @@ import { CountryDashboard } from "@/pages/CountryDashboard"
 import { CentralBanks } from "@/pages/CentralBanks"
 import { IndustryMonitor } from "@/pages/IndustryMonitor"
 import { YieldCurve } from "@/pages/YieldCurve"
+import { CommoditiesCurve } from "@/pages/CommoditiesCurve"
 import { PortfolioNews } from "@/pages/PortfolioNews"
 import { WeeklyReport } from "@/pages/WeeklyReport"
 
@@ -91,6 +92,7 @@ function AppRoutes() {
           <Route path="/central-banks" element={<CentralBanks />} />
           <Route path="/industry-monitor" element={<IndustryMonitor />} />
           <Route path="/yield-curve" element={<YieldCurve />} />
+          <Route path="/commodities-curve" element={<CommoditiesCurve />} />
           <Route path="/portfolio-news" element={<PortfolioNews />} />
           <Route path="/weekly-report" element={<WeeklyReport />} />
         </Route>
