@@ -26,9 +26,7 @@ def load_prompt_file(path: Path, name: str) -> str:
         )
     content = path.read_text(encoding="utf-8").strip()
     if not content:
-        raise ValueError(
-            f"Prompt file is empty: {path}\nAdd content to {name} before running."
-        )
+        raise ValueError(f"Prompt file is empty: {path}\nAdd content to {name} before running.")
     return content
 
 
@@ -188,9 +186,7 @@ def call_claude(
     messages = list(kwargs["messages"])
     while response.stop_reason == "pause_turn":
         messages.append({"role": "assistant", "content": response.content})
-        messages.append(
-            {"role": "user", "content": [{"type": "text", "text": "Continue."}]}
-        )
+        messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
         kwargs["messages"] = messages
         response = _create_with_retry(**kwargs)
 
@@ -266,9 +262,7 @@ def create_github_issue(title: str, body: str) -> str | None:
     if len(body) > 60000:
         body = body[:60000] + "\n\n... (truncated)"
 
-    resp = requests.post(
-        url, headers=headers, json={"title": title, "body": body}, timeout=30
-    )
+    resp = requests.post(url, headers=headers, json={"title": title, "body": body}, timeout=30)
     if resp.status_code == 201:
         issue_url = resp.json().get("html_url", "")
         log.info("Created GitHub Issue: %s", issue_url)
