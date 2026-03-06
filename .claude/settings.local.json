@@ -70,6 +70,8 @@
       "WebFetch(domain:www.oecd.org)",
       "WebFetch(domain:data.oecd.org)",
       "WebFetch(domain:www.stat-search.boj.or.jp)",
+      "WebSearch",
+      "WebSearch(query:*)",
       "Bash(git -C /Users/shaivpandya/Desktop/market-scripts log --oneline --all)",
       "Bash(git -C /Users/shaivpandya/Desktop/market-scripts log --oneline --all -20)",
       "Bash(uvicorn --version)",

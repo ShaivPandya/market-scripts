@@ -62,19 +62,23 @@ def _build_futures_tickers(
 ) -> list[dict]:
     """
     Build Yahoo Finance futures ticker symbols for consecutive delivery months
-    starting from the current month.
+    starting from next month (current month contracts are typically expired).
     """
     if ref_date is None:
         ref_date = date.today()
 
     contracts: list[dict] = []
-    month = ref_date.month
+    # Start from next month — current month's contract is typically expired
+    month = ref_date.month + 1
     year = ref_date.year
+    if month > 12:
+        month = 1
+        year += 1
 
     for _ in range(num_months):
         code = MONTH_CODES[month]
         yy = year % 100
-        ticker = f"{base}{code}{yy:02d}=F"
+        ticker = f"{base}{code}{yy:02d}.NYM"
         label = f"{MONTH_NAMES[month]} {year}"
         contracts.append({
             "ticker": ticker,
@@ -254,8 +258,18 @@ def get_data(commodity: str = "CL", lookback_days: int = 30) -> dict:
     commodity_info = next(c for c in COMMODITIES if c[0] == commodity)
     code, name, unit = commodity_info
 
-    contracts = _build_futures_tickers(base=code, num_months=12)
+    # Fetch extra contracts to compensate for expired front-month contracts
+    contracts = _build_futures_tickers(base=code, num_months=15)
     points, curve_warnings = _fetch_curve_prices(contracts, lookback_days=lookback_days)
+
+    # Strip leading empty points (expired contracts) — not worth warning about
+    while points and points[0]["current"] is None:
+        expired_tk = points.pop(0)["ticker"]
+        curve_warnings = [w for w in curve_warnings if not w.startswith(expired_tk)]
+
+    # Keep only 12 contracts for the curve
+    points = points[:12]
+
     analysis = _analyze_curve(points)
 
     return {
