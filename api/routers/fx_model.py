@@ -1,6 +1,10 @@
 from pathlib import Path
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from api.exceptions import DataFetchError
 from api.serializers import serialize_value
 
 router = APIRouter()
@@ -19,9 +23,9 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
     latest_forecast = data.get("latest_forecast", {}) or {}
     models = data.get("models", {}) or {}
 
-    forecast_rows = []
-    ci_series = []
-    driver_breakdown = []
+    forecast_rows: list[dict[str, Any]] = []
+    ci_series: list[dict[str, Any]] = []
+    driver_breakdown: list[dict[str, Any]] = []
 
     for horizon_key, forecast in latest_forecast.items():
         if not isinstance(forecast, dict):
@@ -66,7 +70,7 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
         )
 
         raw_drivers = driver_explanation.get("drivers", [])
-        drivers = []
+        drivers: list[dict[str, Any]] = []
         if isinstance(raw_drivers, list):
             for d in raw_drivers:
                 if not isinstance(d, dict):
@@ -82,12 +86,11 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
                     }
                 )
 
-        drivers.sort(
-            key=lambda d: abs(d.get("contribution", 0))
-            if isinstance(d.get("contribution"), (int, float))
-            else 0,
-            reverse=True,
-        )
+        def _driver_sort_key(driver: dict[str, Any]) -> float:
+            contribution = driver.get("contribution")
+            return abs(float(contribution)) if isinstance(contribution, (int, float)) else 0.0
+
+        drivers.sort(key=_driver_sort_key, reverse=True)
         driver_breakdown.append(
             {
                 "horizon_months": horizon,
@@ -96,9 +99,9 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
             }
         )
 
-    forecast_rows.sort(key=lambda r: r["horizon_months"])
-    ci_series.sort(key=lambda r: r["horizon"])
-    driver_breakdown.sort(key=lambda r: r["horizon_months"])
+    forecast_rows.sort(key=lambda row: int(row.get("horizon_months", 0)))
+    ci_series.sort(key=lambda row: int(row.get("horizon", 0)))
+    driver_breakdown.sort(key=lambda row: int(row.get("horizon_months", 0)))
 
     return {
         "pair": pair,
@@ -115,14 +118,11 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
     }
 
 
-def _missing_dependency_error(e: ModuleNotFoundError) -> HTTPException:
+def _missing_dependency_error(e: ModuleNotFoundError) -> DataFetchError:
     missing = e.name or "unknown"
-    return HTTPException(
-        status_code=500,
-        detail=(
-            f"Missing backend dependency '{missing}'. "
-            "Install dependencies with `pip install -r requirements.txt` and restart the API server."
-        ),
+    return DataFetchError(
+        source="fx_model",
+        detail=f"Missing backend dependency '{missing}'. Install dependencies with `pip install -r requirements.txt` and restart the API server.",
     )
 
 
@@ -131,7 +131,7 @@ def run_fx_model(req: FXModelRequest):
     try:
         horizons = [int(x.strip()) for x in req.horizons.split(",") if x.strip()]
     except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid horizons. Use comma-separated integers, e.g. `12,24`.")
+        raise HTTPException(status_code=422, detail="Invalid horizons. Use comma-separated integers, e.g. `12,24`.")  # noqa: B904
 
     if not horizons:
         raise HTTPException(status_code=422, detail="At least one horizon is required, e.g. `12,24`.")
@@ -157,9 +157,9 @@ def run_fx_model(req: FXModelRequest):
             horizons=horizons,
         )
     except ModuleNotFoundError as e:
-        raise _missing_dependency_error(e)
+        raise _missing_dependency_error(e) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="fx_model", detail=str(e)) from e
 
     compact = _to_compact_response(
         data=data,
@@ -174,8 +174,9 @@ def run_fx_model(req: FXModelRequest):
 def list_pairs():
     try:
         from src.currency_config import list_pairs as _list_pairs
+
         return {"pairs": _list_pairs()}
     except ModuleNotFoundError as e:
-        raise _missing_dependency_error(e)
+        raise _missing_dependency_error(e) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="fx_model", detail=str(e)) from e

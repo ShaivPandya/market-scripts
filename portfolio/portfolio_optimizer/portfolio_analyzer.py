@@ -131,37 +131,37 @@ MAX SCALED PORTFOLIO:
 
 ═══════════════════════════════════════════════════════════════════════════════
 """
-import logging
 
 import argparse
-import numpy as np
-import pandas as pd
-import cvxpy as cp
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple  # noqa: UP035
 
+import cvxpy as cp
+import numpy as np
+import pandas as pd
 import yfinance as yf
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
 from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 LOGGER = logging.getLogger(__name__)
 
 try:
     from .composite_signal import (
-        generate_composite_signals,
-        generate_anchor_normalized_long_equity_signals,
         DEFAULT_WEIGHTS_SHORT,
+        generate_anchor_normalized_long_equity_signals,
+        generate_composite_signals,
     )
 except ImportError:
     from composite_signal import (
-        generate_composite_signals,
-        generate_anchor_normalized_long_equity_signals,
         DEFAULT_WEIGHTS_SHORT,
+        generate_anchor_normalized_long_equity_signals,
+        generate_composite_signals,
     )
 
 console = Console()
@@ -173,8 +173,8 @@ PORTFOLIO_CSV = Path(__file__).parent.parent / "portfolio.csv"
 LOOKBACK_DAYS = 730  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
-MARKET_TICKER_LONG = "SPY"            # SPY used for beta regression on long positions
-MARKET_TICKER_SHORT = "IWM"           # Russell 2000 ETF for beta regression on short positions
+MARKET_TICKER_LONG = "SPY"  # SPY used for beta regression on long positions
+MARKET_TICKER_SHORT = "IWM"  # Russell 2000 ETF for beta regression on short positions
 
 # Beta and hedge configuration
 BETA_METHOD = "ewma_cov_var"
@@ -193,9 +193,9 @@ CMDTY_GROSS_MAX = 1.0
 BOND_10YR_EQUIV_MAX = 3.0  # 300% in 10-year equivalent
 # Beta hedging is done post-optimization via explicit SPY/IWM hedge positions
 MIN_ABS_WEIGHT = 0.01  # minimum absolute size enforced for active shorts
-LONG_MAX = 0.20        # max 25% for any single long position
-SHORT_MIN = -0.10      # max 25% (abs) for any single short position
-SEVERE_DD_MAX = 0.05        # max 5% absolute SHORT position size if 60%+ off 104-week high
+LONG_MAX = 0.20  # max 25% for any single long position
+SHORT_MIN = -0.10  # max 25% (abs) for any single short position
+SEVERE_DD_MAX = 0.05  # max 5% absolute SHORT position size if 60%+ off 104-week high
 SEVERE_DD_THRESHOLD = 0.60  # drawdown from 104-week high that triggers the reduced cap
 DISTRESSED_DD_THRESHOLD = 0.25
 DISTRESSED_STABILIZATION_DAYS = 10
@@ -204,16 +204,16 @@ DISTRESSED_SIGNAL_DD_SCALE = 0.20
 DISTRESSED_SIGNAL_CLIP = 3.0
 
 # Duration (in years) for bond/Treasury futures instruments
-DURATION_OF_TICKER: Dict[str, float] = {
-    "ZN": 6.5,   # 10-year Treasury note futures
-    "ZT": 2.0,   # 2-year Treasury note futures
-    "ZF": 5.0,   # 5-year Treasury note futures
+DURATION_OF_TICKER: dict[str, float] = {
+    "ZN": 6.5,  # 10-year Treasury note futures
+    "ZT": 2.0,  # 2-year Treasury note futures
+    "ZF": 5.0,  # 5-year Treasury note futures
     "ZB": 17.0,  # 30-year Treasury bond futures
 }
 
 # Signal/volatility tilt tuning
 VOL_POWER_LONG = 0.7  # power for inverse-vol weighting for longs: 1/σ^p (p < 1 reduces concentration in low-vol names)
-VOL_POWER_SHORT = 1.4 # power for inverse-vol weighting for shorts: 1/σ^p
+VOL_POWER_SHORT = 1.4  # power for inverse-vol weighting for shorts: 1/σ^p
 LONG_SIGNAL_CAP = 3.0
 LONG_WEIGHTING_MODE = "all_longs_absolute_signal_0_to_20"
 SIGNAL_ANCHOR_MODE = "spdr_sector_top10_anchor"
@@ -229,25 +229,27 @@ SIGNAL_ANCHOR_MODE = "spdr_sector_top10_anchor"
 # Only needed if you include FX tickers as instruments you trade.
 # Example:
 #   "USDJPY": ("USD", "JPY")   # USDJPY quoted as JPY per USD
-FX_PAIR_INFO: Dict[str, Tuple[str, str]] = {
+FX_PAIR_INFO: dict[str, tuple[str, str]] = {
     # Example:
     # "USDJPY": ("USD", "JPY"),
 }
 
+
 # -----------------------------
 # Helpers
 # -----------------------------
-def fetch_currencies(tickers: list) -> Dict[str, str]:
+def fetch_currencies(tickers: list) -> dict[str, str]:
     """
     Fetch currency values from yfinance Ticker.fast_info in parallel.
     Returns a dict mapping ticker to its currency (e.g., 'USD', 'EUR').
     """
+
     def _fetch_one(t: str):
         try:
             return t, yf.Ticker(t).fast_info.currency
         except Exception:
             try:
-                return t, yf.Ticker(t).info.get('currency', BASE_CCY)
+                return t, yf.Ticker(t).info.get("currency", BASE_CCY)
             except Exception:
                 return t, BASE_CCY
 
@@ -260,7 +262,7 @@ def fetch_currencies(tickers: list) -> Dict[str, str]:
     return currencies
 
 
-def get_required_fx_tickers(ticker_currencies: Dict[str, str]) -> list:
+def get_required_fx_tickers(ticker_currencies: dict[str, str]) -> list:
     """
     Determine which FX tickers to download based on the provided ticker_currencies dict.
     Returns yfinance FX ticker symbols (e.g., EURUSD=X).
@@ -295,11 +297,7 @@ def download_prices(tickers: list, fx_tickers: list) -> pd.DataFrame:
     start = end - timedelta(days=LOOKBACK_DAYS)
 
     px = yf.download(
-        tickers=all_tickers,
-        start=start.isoformat(),
-        end=end.isoformat(),
-        auto_adjust=True,
-        progress=False
+        tickers=all_tickers, start=start.isoformat(), end=end.isoformat(), auto_adjust=True, progress=False
     )
 
     # yfinance returns either a single DataFrame or a column MultiIndex
@@ -322,7 +320,7 @@ def download_prices(tickers: list, fx_tickers: list) -> pd.DataFrame:
     return prices
 
 
-def fx_series_for_ccy(prices: pd.DataFrame, ccy: str) -> Tuple[Optional[pd.Series], Optional[str]]:
+def fx_series_for_ccy(prices: pd.DataFrame, ccy: str) -> tuple[pd.Series | None, str | None]:
     """
     Returns (fx, mode) to convert local CCY prices to USD:
       mode == "CCYUSD": fx is USD per CCY (e.g., EURUSD=X). USD_price = local * fx
@@ -382,13 +380,7 @@ def to_usd_price(local_price: pd.Series, ccy: str, prices_all: pd.DataFrame) -> 
 def parse_bool_column(series: pd.Series) -> pd.Series:
     """Parse a CSV boolean-ish column into a strict boolean series."""
     true_values = {"1", "true", "t", "yes", "y"}
-    parsed = (
-        series.fillna("")
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .isin(true_values)
-    )
+    parsed = series.fillna("").astype(str).str.strip().str.lower().isin(true_values)
     return parsed.astype(bool)
 
 
@@ -477,11 +469,7 @@ def apply_distressed_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> p
     out["days_since_new_low"] = np.nan
     out["distressed_eligible"] = False
 
-    candidate_mask = (
-        out["distressed"]
-        & out["asset"].str.lower().eq("equity")
-        & out["direction_intended"].eq("long")
-    )
+    candidate_mask = out["distressed"] & out["asset"].str.lower().eq("equity") & out["direction_intended"].eq("long")
     candidate_tickers = out.index[candidate_mask].tolist()
     if candidate_tickers:
         metrics = compute_distressed_metrics(local_prices=local_prices, tickers=candidate_tickers)
@@ -499,13 +487,13 @@ def compute_severe_drawdown_flags(
     usd_prices: pd.DataFrame,
     equity_tickers: list,
     threshold: float = SEVERE_DD_THRESHOLD,
-) -> Dict[str, bool]:
+) -> dict[str, bool]:
     """
     For each equity ticker, returns True if the stock ever fell at least `threshold`
     (default 60%) from its 104-week high at any point in the lookback window —
     even if it has since partially recovered.
     """
-    result: Dict[str, bool] = {}
+    result: dict[str, bool] = {}
     for t in equity_tickers:
         if t not in usd_prices.columns:
             result[t] = False
@@ -544,10 +532,11 @@ def fetch_yfinance_betas(tickers: list) -> pd.Series:
     Fetch beta values from yfinance Ticker.info in parallel.
     Returns NaN for tickers where beta is unavailable.
     """
+
     def _fetch_one(t: str):
         try:
             info = yf.Ticker(t).info
-            beta = info.get('beta')
+            beta = info.get("beta")
             return t, beta if beta is not None else np.nan
         except Exception:
             return t, np.nan
@@ -608,7 +597,7 @@ def compute_betas(rets: pd.DataFrame, market_col: str) -> pd.Series:
     return pd.Series(betas, index=rets.columns)
 
 
-def compute_beta_frame(rets: pd.DataFrame, tickers: list) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
+def compute_beta_frame(rets: pd.DataFrame, tickers: list) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     """
     Compute per-ticker EWMA betas to both SPY and IWM.
     Returns:
@@ -635,7 +624,7 @@ def compute_equity_net_betas(
     long_mask: np.ndarray,
     short_mask: np.ndarray,
     eq_mask: np.ndarray,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Compute pre-hedge net beta exposures to SPY and IWM.
     """
@@ -643,10 +632,22 @@ def compute_equity_net_betas(
     long_exposure_mask = long_mask & exposure_mask
     short_exposure_mask = short_mask & exposure_mask
 
-    beta_long_spy = float(betas_spy.values[long_exposure_mask] @ w.values[long_exposure_mask]) if long_exposure_mask.any() else 0.0
-    beta_short_spy = float(betas_spy.values[short_exposure_mask] @ w.values[short_exposure_mask]) if short_exposure_mask.any() else 0.0
-    beta_long_iwm = float(betas_iwm.values[long_exposure_mask] @ w.values[long_exposure_mask]) if long_exposure_mask.any() else 0.0
-    beta_short_iwm = float(betas_iwm.values[short_exposure_mask] @ w.values[short_exposure_mask]) if short_exposure_mask.any() else 0.0
+    beta_long_spy = (
+        float(betas_spy.values[long_exposure_mask] @ w.values[long_exposure_mask]) if long_exposure_mask.any() else 0.0
+    )
+    beta_short_spy = (
+        float(betas_spy.values[short_exposure_mask] @ w.values[short_exposure_mask])
+        if short_exposure_mask.any()
+        else 0.0
+    )
+    beta_long_iwm = (
+        float(betas_iwm.values[long_exposure_mask] @ w.values[long_exposure_mask]) if long_exposure_mask.any() else 0.0
+    )
+    beta_short_iwm = (
+        float(betas_iwm.values[short_exposure_mask] @ w.values[short_exposure_mask])
+        if short_exposure_mask.any()
+        else 0.0
+    )
     net_beta_spy = beta_long_spy + beta_short_spy
     net_beta_iwm = beta_long_iwm + beta_short_iwm
 
@@ -665,7 +666,7 @@ def solve_joint_hedge_weights(
     net_beta_iwm: float,
     betas_all_spy: pd.Series,
     betas_all_iwm: pd.Series,
-) -> Tuple[float, float, float, float]:
+) -> tuple[float, float, float, float]:
     """
     Solve SPY/IWM hedge weights jointly so post-hedge beta to both benchmarks is near zero.
     Uses ridge-stabilized least squares for numerical robustness.
@@ -700,7 +701,7 @@ def apply_hedges_with_gross_cap(
     long_mask: np.ndarray,
     short_mask: np.ndarray,
     eq_mask: np.ndarray,
-) -> Tuple[pd.Series, Dict[str, float]]:
+) -> tuple[pd.Series, dict[str, float]]:
     """
     Solve beta hedges and enforce total gross cap including hedge legs.
 
@@ -709,7 +710,7 @@ def apply_hedges_with_gross_cap(
     (portfolio gross + hedge gross) within GROSS_MAX.
     """
 
-    def _solve_for_weights(weights: pd.Series) -> Dict[str, float]:
+    def _solve_for_weights(weights: pd.Series) -> dict[str, float]:
         beta_summary = compute_equity_net_betas(weights, betas_spy, betas_iwm, long_mask, short_mask, eq_mask)
         hedge_spy_weight, hedge_iwm_weight, post_hedge_beta_spy, post_hedge_beta_iwm = solve_joint_hedge_weights(
             beta_summary["net_beta_spy"],
@@ -723,15 +724,17 @@ def apply_hedges_with_gross_cap(
         gross_with_hedges = pre_hedge_gross + hedge_gross
 
         out = dict(beta_summary)
-        out.update({
-            "hedge_spy_weight": hedge_spy_weight,
-            "hedge_iwm_weight": hedge_iwm_weight,
-            "post_hedge_beta_spy": post_hedge_beta_spy,
-            "post_hedge_beta_iwm": post_hedge_beta_iwm,
-            "pre_hedge_gross": pre_hedge_gross,
-            "hedge_gross": hedge_gross,
-            "gross_with_hedges": gross_with_hedges,
-        })
+        out.update(
+            {
+                "hedge_spy_weight": hedge_spy_weight,
+                "hedge_iwm_weight": hedge_iwm_weight,
+                "post_hedge_beta_spy": post_hedge_beta_spy,
+                "post_hedge_beta_iwm": post_hedge_beta_iwm,
+                "pre_hedge_gross": pre_hedge_gross,
+                "hedge_gross": hedge_gross,
+                "gross_with_hedges": gross_with_hedges,
+            }
+        )
         return out
 
     summary = _solve_for_weights(w)
@@ -765,8 +768,8 @@ def compute_defense_volatility(prices: pd.DataFrame, tickers: list) -> pd.Series
     floor_window = 252
     floor_min = 60
 
-    short_var = (log_rets ** 2).ewm(halflife=short_hl, adjust=False).mean()
-    long_var = (log_rets ** 2).ewm(halflife=long_hl, adjust=False).mean()
+    short_var = (log_rets**2).ewm(halflife=short_hl, adjust=False).mean()
+    long_var = (log_rets**2).ewm(halflife=long_hl, adjust=False).mean()
     blend_var = blend_w * short_var + (1.0 - blend_w) * long_var
     blend_vol = np.sqrt(blend_var)
 
@@ -785,7 +788,7 @@ def compute_defense_volatility(prices: pd.DataFrame, tickers: list) -> pd.Series
 
 def build_raw_weights(
     meta: pd.DataFrame,
-    signals: Optional[pd.Series] = None,
+    signals: pd.Series | None = None,
     G_L: float = 1.0,
     G_S: float = 1.0,
     signal_scale_equity_long: float = 1.5,
@@ -856,8 +859,7 @@ def build_raw_weights(
                 # Determine signal scale based on asset type
                 is_equity = shorts["asset"].str.lower().eq("equity")
                 signal_scale = pd.Series(
-                    np.where(is_equity, signal_scale_equity_short, signal_scale_other),
-                    index=shorts.index
+                    np.where(is_equity, signal_scale_equity_short, signal_scale_other), index=shorts.index
                 )
                 signal_mult = np.exp(signal_scale * sig)
                 base_w = base_w * signal_mult
@@ -868,7 +870,7 @@ def build_raw_weights(
     return w_raw
 
 
-def exposures_by_class(w: pd.Series, meta: pd.DataFrame) -> Dict[str, float]:
+def exposures_by_class(w: pd.Series, meta: pd.DataFrame) -> dict[str, float]:
     out = {}
     for cls in ["equity", "fx", "commodity", "bond"]:
         mask = meta["asset"].str.lower().eq(cls)
@@ -1068,17 +1070,17 @@ def overlay_anchor_long_equity_signals(
     tickers: list,
     meta: pd.DataFrame,
     signal_composite: pd.Series,
-    signal_subcomponents: Dict[str, pd.Series],
+    signal_subcomponents: dict[str, pd.Series],
     years: int = 5,
     use_edgar: bool = False,
-) -> Tuple[pd.Series, Dict[str, pd.Series], Dict[str, object]]:
+) -> tuple[pd.Series, dict[str, pd.Series], dict[str, object]]:
     """
     Overlay long-equity composite/factor signals from the anchor universe model.
 
     Baseline signals are kept for all names by default and replaced only where
     anchor-normalized long-equity signals are available.
     """
-    metadata: Dict[str, object] = {
+    metadata: dict[str, object] = {
         "signal_anchor_mode": SIGNAL_ANCHOR_MODE,
         "signal_anchor_universe_size": 0,
         "signal_anchor_fallback_used": True,
@@ -1197,7 +1199,7 @@ def analyze_portfolio() -> dict:
         meta = apply_distressed_gating(meta, prices_all)
 
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
-        asset_map = dict(zip(meta.index, meta["asset"]))
+        asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
         direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
 
         signals_df, _ = generate_composite_signals(
@@ -1213,7 +1215,7 @@ def analyze_portfolio() -> dict:
         )
         signal_composite = signal_composite.reindex(tickers).fillna(0.0)
 
-        signal_subcomponents: Dict[str, pd.Series] = {}
+        signal_subcomponents: dict[str, pd.Series] = {}
         for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal"]:
             if not signals_df.empty and col in signals_df.columns:
                 signal_subcomponents[col] = signals_df[col].reindex(tickers)
@@ -1240,13 +1242,7 @@ def analyze_portfolio() -> dict:
             )
             signal_effective.loc[distressed_tickers] = distress_signal
 
-        direction_display = (
-            meta["direction_intended"]
-            .fillna(meta["direction"])
-            .astype(str)
-            .str.strip()
-            .str.lower()
-        )
+        direction_display = meta["direction_intended"].fillna(meta["direction"]).astype(str).str.strip().str.lower()
 
         weights_df = pd.DataFrame(
             {
@@ -1283,8 +1279,8 @@ def analyze_portfolio() -> dict:
 
 
 def optimize_portfolio(
-    book: Optional[float] = None,
-    target_leverage: Optional[float] = None,
+    book: float | None = None,
+    target_leverage: float | None = None,
     beta_neutral: bool = True,
 ) -> dict:
     """
@@ -1347,9 +1343,7 @@ def optimize_portfolio(
         severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
         meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
         flagged_shorts = [
-            t
-            for t, v in severe_dd_flags.items()
-            if v and meta.loc[t, "direction"].strip().lower() == "short"
+            t for t, v in severe_dd_flags.items() if v and meta.loc[t, "direction"].strip().lower() == "short"
         ]
         if flagged_shorts:
             console.print(f"[yellow]Severe drawdown short cap (5% abs) applied to: {flagged_shorts}[/yellow]")
@@ -1372,7 +1366,7 @@ def optimize_portfolio(
 
         # Generate composite signals
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
-        asset_map = dict(zip(meta.index, meta["asset"]))
+        asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
         direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
         signals_df, _ = generate_composite_signals(
             tickers=active_tickers,
@@ -1382,7 +1376,9 @@ def optimize_portfolio(
             weights_short=DEFAULT_WEIGHTS_SHORT,
             use_edgar=False,
         )
-        signal_composite = signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+        signal_composite = (
+            signals_df["composite_signal"] if not signals_df.empty else pd.Series(0.0, index=active_tickers)
+        )
         signal_composite = signal_composite.reindex(tickers).fillna(0.0)
 
         # Extract individual signal subcomponents for reporting
@@ -1414,8 +1410,18 @@ def optimize_portfolio(
             signal_effective.loc[distressed_tickers] = distress_signal
 
         # Raw weights
-        w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0,
-                                   vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
+        w_raw = (
+            build_raw_weights(
+                meta,
+                signals=signal_effective,
+                G_L=1.0,
+                G_S=1.0,
+                vol_power_long=VOL_POWER_LONG,
+                vol_power_short=VOL_POWER_SHORT,
+            )
+            .reindex(tickers)
+            .fillna(0.0)
+        )
         w_raw_vec = w_raw.values
 
         # Masks
@@ -1581,28 +1587,30 @@ def optimize_portfolio(
 
         # Build weights DataFrame
         latest_prices = usd_prices[tickers].iloc[-1]
-        weights_df = pd.DataFrame({
-            "ticker": tickers,
-            "asset": meta["asset"].values,
-            "direction": meta["direction"].values,
-            "direction_intended": meta["direction_intended"].values,
-            "distressed": meta["distressed"].values,
-            "drawdown_52w": meta["drawdown_52w"].values,
-            "stabilized_10d": meta["stabilized_10d"].values,
-            "days_since_new_low": meta["days_since_new_low"].values,
-            "signal": signal_effective.values,
-            "signal_composite": signal_composite.values,
-            "signal_effective": signal_effective.values,
-            "quality_signal": signal_subcomponents["quality_signal"].values,
-            "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
-            "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
-            "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
-            "beta_spy": betas_spy.values,
-            "beta_iwm": betas_iwm.values,
-            "realized_vol": meta["realized_vol"].values,
-            "weight": w_final.values,
-            "price": latest_prices.values,
-        })
+        weights_df = pd.DataFrame(
+            {
+                "ticker": tickers,
+                "asset": meta["asset"].values,
+                "direction": meta["direction"].values,
+                "direction_intended": meta["direction_intended"].values,
+                "distressed": meta["distressed"].values,
+                "drawdown_52w": meta["drawdown_52w"].values,
+                "stabilized_10d": meta["stabilized_10d"].values,
+                "days_since_new_low": meta["days_since_new_low"].values,
+                "signal": signal_effective.values,
+                "signal_composite": signal_composite.values,
+                "signal_effective": signal_effective.values,
+                "quality_signal": signal_subcomponents["quality_signal"].values,
+                "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
+                "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
+                "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
+                "beta_spy": betas_spy.values,
+                "beta_iwm": betas_iwm.values,
+                "realized_vol": meta["realized_vol"].values,
+                "weight": w_final.values,
+                "price": latest_prices.values,
+            }
+        )
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
             weights_df["shares"] = (weights_df["dollar_weight"] / weights_df["price"]).round(0).astype(int)
@@ -1633,16 +1641,20 @@ def optimize_portfolio(
         binding = identify_binding_constraint(w_max_scaled, meta, include_position_limits=False)
         exp_max = exposures_by_class(w_max_scaled, meta)
 
-        max_scaled_weights_df = pd.DataFrame({
-            "ticker": tickers,
-            "asset": meta["asset"].values,
-            "direction": meta["direction"].values,
-            "weight": w_max_scaled.values,
-            "price": latest_prices.values,
-        })
+        max_scaled_weights_df = pd.DataFrame(
+            {
+                "ticker": tickers,
+                "asset": meta["asset"].values,
+                "direction": meta["direction"].values,
+                "weight": w_max_scaled.values,
+                "price": latest_prices.values,
+            }
+        )
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
-            max_scaled_weights_df["shares"] = (max_scaled_weights_df["dollar_weight"] / max_scaled_weights_df["price"]).round(0).astype(int)
+            max_scaled_weights_df["shares"] = (
+                (max_scaled_weights_df["dollar_weight"] / max_scaled_weights_df["price"]).round(0).astype(int)
+            )
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
 
         return {
@@ -1652,21 +1664,19 @@ def optimize_portfolio(
             "book_size": book,
             "target_leverage": target_leverage,
             "beta_neutral": beta_neutral,
-
             # Solution metrics
             "vol_daily": vol_final,
             "vol_spy": vol_spy,
             "vol_iwm": vol_iwm,
             "gross_leverage": exp["total_gross"],
             "gross_max": GROSS_MAX,
-
             # Beta hedging
-            "beta_long_spy":  beta_long_spy,
+            "beta_long_spy": beta_long_spy,
             "beta_short_spy": beta_short_spy,
-            "beta_long_iwm":  beta_long_iwm,
+            "beta_long_iwm": beta_long_iwm,
             "beta_short_iwm": beta_short_iwm,
-            "net_beta_spy":   net_beta_spy,
-            "net_beta_iwm":   net_beta_iwm,
+            "net_beta_spy": net_beta_spy,
+            "net_beta_iwm": net_beta_iwm,
             "post_hedge_beta_spy": post_hedge_beta_spy,
             "post_hedge_beta_iwm": post_hedge_beta_iwm,
             "hedge_spy_weight": hedge_spy_weight,
@@ -1679,17 +1689,13 @@ def optimize_portfolio(
             "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
             "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
             "long_weighting_mode": LONG_WEIGHTING_MODE,
-
             # Exposures
             "exposures": exp,
-
             # Constraints utilization
             "constraints": constraints_util,
-
             # DataFrames
             "weights_df": weights_df,
             "hedges_df": hedges_df,
-
             # Max scaled version
             "max_scaled": {
                 "scale_factor": k_max,
@@ -1702,10 +1708,11 @@ def optimize_portfolio(
 
     except Exception as e:
         import traceback
+
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
-def get_data(book: Optional[float] = None, target_leverage: Optional[float] = None, beta_neutral: bool = True) -> dict:
+def get_data(book: float | None = None, target_leverage: float | None = None, beta_neutral: bool = True) -> dict:
     """
     Fetch portfolio analyzer results for GUI consumption.
 
@@ -1724,7 +1731,7 @@ def get_data(book: Optional[float] = None, target_leverage: Optional[float] = No
 # -----------------------------
 # Main (CLI)
 # -----------------------------
-def main(book: Optional[float] = None, debug_weights: bool = False):
+def main(book: float | None = None, debug_weights: bool = False):
     meta = pd.read_csv(PORTFOLIO_CSV)
     meta["direction"] = meta["direction"].fillna("")
     # realized_vol will be computed from price data, not loaded from CSV
@@ -1741,7 +1748,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     # Determine required FX tickers and download all prices from yfinance
     fx_tickers = get_required_fx_tickers(ticker_currencies)
-    console.print(f"[cyan]Downloading prices for {len(all_tickers_to_fetch)} tickers + {len(fx_tickers)} FX rates...[/cyan]")
+    console.print(
+        f"[cyan]Downloading prices for {len(all_tickers_to_fetch)} tickers + {len(fx_tickers)} FX rates...[/cyan]"
+    )
     prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
     missing_cols = [t for t in tickers if t not in prices_all.columns]
@@ -1778,9 +1787,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
     meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
     flagged_shorts = [
-        t
-        for t, v in severe_dd_flags.items()
-        if v and meta.loc[t, "direction"].strip().lower() == "short"
+        t for t, v in severe_dd_flags.items() if v and meta.loc[t, "direction"].strip().lower() == "short"
     ]
     if flagged_shorts:
         console.print(f"[yellow]Severe drawdown short cap (5% abs) applied to: {flagged_shorts}[/yellow]")
@@ -1807,7 +1814,7 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     # Generate composite signals for active tickers (those with direction)
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
     console.print(f"[cyan]Generating composite signals for {len(active_tickers)} active tickers...[/cyan]")
-    asset_map = dict(zip(meta.index, meta["asset"]))
+    asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
     direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
     signals_df, _ = generate_composite_signals(
         tickers=active_tickers,
@@ -1849,7 +1856,18 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         signal_effective.loc[distressed_tickers] = distress_signal
 
     # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
-    w_raw = build_raw_weights(meta, signals=signal_effective, G_L=1.0, G_S=1.0, vol_power_long=VOL_POWER_LONG, vol_power_short=VOL_POWER_SHORT).reindex(tickers).fillna(0.0)
+    w_raw = (
+        build_raw_weights(
+            meta,
+            signals=signal_effective,
+            G_L=1.0,
+            G_S=1.0,
+            vol_power_long=VOL_POWER_LONG,
+            vol_power_short=VOL_POWER_SHORT,
+        )
+        .reindex(tickers)
+        .fillna(0.0)
+    )
     w_raw_vec = w_raw.values
 
     # Masks
@@ -1966,16 +1984,20 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
     if debug_weights:
         console.print()
-        dbg = pd.DataFrame({
-            "asset": meta["asset"],
-            "direction": meta["direction"],
-            "realized_vol": meta["realized_vol"],
-            "w_raw": w_raw,
-            "w_star": w_star,
-            "w_final": w_final,
-        }).sort_values("w_final", ascending=False)
+        dbg = pd.DataFrame(
+            {
+                "asset": meta["asset"],
+                "direction": meta["direction"],
+                "realized_vol": meta["realized_vol"],
+                "w_raw": w_raw,
+                "w_star": w_star,
+                "w_final": w_final,
+            }
+        ).sort_values("w_final", ascending=False)
 
-        dbg_table = Table(title="[bold]Weight Diagnostics[/bold]", box=box.ROUNDED, show_header=True, header_style="bold yellow")
+        dbg_table = Table(
+            title="[bold]Weight Diagnostics[/bold]", box=box.ROUNDED, show_header=True, header_style="bold yellow"
+        )
         dbg_table.add_column("Ticker", style="bold white")
         dbg_table.add_column("Asset", style="white")
         dbg_table.add_column("Direction", style="white")
@@ -2027,22 +2049,24 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     console.print(exp_table)
 
     console.print()
-    out = pd.DataFrame({
-        "asset": meta["asset"],
-        "direction": meta["direction"],
-        "direction_intended": meta["direction_intended"],
-        "distressed": meta["distressed"],
-        "drawdown_52w": meta["drawdown_52w"],
-        "stabilized_10d": meta["stabilized_10d"],
-        "days_since_new_low": meta["days_since_new_low"],
-        "signal": signal_effective,
-        "signal_composite": signal_composite,
-        "signal_effective": signal_effective,
-        "beta_to_SPY": betas_spy,
-        "beta_to_IWM": betas_iwm,
-        "realized_volatility": meta["realized_vol"],
-        "weight": w_final,
-    })
+    out = pd.DataFrame(
+        {
+            "asset": meta["asset"],
+            "direction": meta["direction"],
+            "direction_intended": meta["direction_intended"],
+            "distressed": meta["distressed"],
+            "drawdown_52w": meta["drawdown_52w"],
+            "stabilized_10d": meta["stabilized_10d"],
+            "days_since_new_low": meta["days_since_new_low"],
+            "signal": signal_effective,
+            "signal_composite": signal_composite,
+            "signal_effective": signal_effective,
+            "beta_to_SPY": betas_spy,
+            "beta_to_IWM": betas_iwm,
+            "realized_volatility": meta["realized_vol"],
+            "weight": w_final,
+        }
+    )
     if book is not None:
         out["dollar_weight"] = w_final * book
         latest_prices = usd_prices[tickers].iloc[-1]
@@ -2051,7 +2075,9 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     out = out.sort_values("weight", ascending=False)
 
     # Build rich table for weights
-    weights_table = Table(title="[bold]Weights (% NAV notional)[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan")
+    weights_table = Table(
+        title="[bold]Weights (% NAV notional)[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan"
+    )
     weights_table.add_column("Ticker", style="bold white")
     weights_table.add_column("Asset", style="white")
     weights_table.add_column("Direction", style="white")
@@ -2182,10 +2208,14 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
         f"[bold]Binding constraint:[/bold] [yellow]{binding}[/yellow]\n"
         f"[bold]Vol (daily):[/bold]        {vol_max_scaled:.6f}"
     )
-    console.print(Panel(max_scaled_text, title="[bold magenta]Max Scaled Portfolio[/bold magenta]", border_style="magenta"))
+    console.print(
+        Panel(max_scaled_text, title="[bold magenta]Max Scaled Portfolio[/bold magenta]", border_style="magenta")
+    )
 
     exp_max = exposures_by_class(w_max_scaled, meta)
-    exp_max_table = Table(title="[bold]Max Scaled Exposures[/bold]", box=box.ROUNDED, show_header=True, header_style="bold magenta")
+    exp_max_table = Table(
+        title="[bold]Max Scaled Exposures[/bold]", box=box.ROUNDED, show_header=True, header_style="bold magenta"
+    )
     exp_max_table.add_column("Type", style="white")
     exp_max_table.add_column("Value", justify="right", style="white")
     for k0 in sorted(exp_max.keys()):
@@ -2201,11 +2231,13 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     console.print(exp_max_table)
 
     console.print()
-    out_max = pd.DataFrame({
-        "asset": meta["asset"],
-        "direction": meta["direction"],
-        "weight": w_max_scaled,
-    })
+    out_max = pd.DataFrame(
+        {
+            "asset": meta["asset"],
+            "direction": meta["direction"],
+            "weight": w_max_scaled,
+        }
+    )
     if book is not None:
         out_max["dollar_weight"] = w_max_scaled * book
         latest_prices = usd_prices[tickers].iloc[-1]
@@ -2214,7 +2246,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
     out_max = out_max.sort_values("weight", ascending=False)
 
     # Build rich table for max scaled weights
-    max_weights_table = Table(title="[bold]Max Scaled Weights (% NAV notional)[/bold]", box=box.ROUNDED, show_header=True, header_style="bold magenta")
+    max_weights_table = Table(
+        title="[bold]Max Scaled Weights (% NAV notional)[/bold]",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold magenta",
+    )
     max_weights_table.add_column("Ticker", style="bold white")
     max_weights_table.add_column("Asset", style="white")
     max_weights_table.add_column("Direction", style="white")
@@ -2248,10 +2285,12 @@ def main(book: Optional[float] = None, debug_weights: bool = False):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     parser = argparse.ArgumentParser(description="Portfolio optimizer with beta-neutral and volatility targeting.")
     parser.add_argument("--book", type=float, default=None, help="Book size in dollars to compute dollar weights")
-    parser.add_argument("--debug-weights", action="store_true", help="Print raw/optimized/final weights for diagnostics")
+    parser.add_argument(
+        "--debug-weights", action="store_true", help="Print raw/optimized/final weights for diagnostics"
+    )
     args = parser.parse_args()
     main(book=args.book, debug_weights=args.debug_weights)

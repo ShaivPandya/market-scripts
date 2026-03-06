@@ -4,17 +4,18 @@ Optional (OpenAI): pip install openai
 """
 
 from __future__ import annotations
-import logging
 
+import hashlib
+import json
+import logging
 import os
 import re
-import json
-import hashlib
 import sqlite3
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterable, Optional
+from datetime import UTC, datetime, timezone
+from typing import Optional
 
 import feedparser
 import httpx
@@ -103,10 +104,15 @@ CLASSIFIERS = [
     # Sveriges Riksbank
     ("RIKSBANK", "Policy rate decision", re.compile(r"\b(policy rate|repo rate)\b", re.I)),
     ("RIKSBANK", "Monetary Policy Report", re.compile(r"\bMonetary Policy Report\b", re.I)),
-    ("RIKSBANK", "Minutes of monetary policy meeting", re.compile(r"\bMinutes of the (Executive Board.s )?monetary policy meeting\b", re.I)),
+    (
+        "RIKSBANK",
+        "Minutes of monetary policy meeting",
+        re.compile(r"\bMinutes of the (Executive Board.s )?monetary policy meeting\b", re.I),
+    ),
 ]
 
 DB_PATH = "centralbank_summaries.sqlite3"
+
 
 # ---------- Data model ----------
 @dataclass
@@ -118,19 +124,22 @@ class Item:
     guid: str
     kind: str  # classified label
 
+
 def _to_dt(entry) -> datetime:
     # feedparser provides published_parsed / updated_parsed as time.struct_time
     t = entry.get("published_parsed") or entry.get("updated_parsed")
     if not t:
-        return datetime.now(timezone.utc)
-    return datetime(*t[:6], tzinfo=timezone.utc)
+        return datetime.now(UTC)
+    return datetime(*t[:6], tzinfo=UTC)
 
-def classify(source: str, title: str, url: str) -> Optional[str]:
+
+def classify(source: str, title: str, url: str) -> str | None:
     text = f"{title} {url}"
     for s, kind, rx in CLASSIFIERS:
         if s == source and rx.search(text):
             return kind
     return None
+
 
 # ---------- Storage ----------
 def init_db(conn: sqlite3.Connection) -> None:
@@ -151,6 +160,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
+
 def upsert_item(conn: sqlite3.Connection, item: Item) -> None:
     conn.execute(
         """
@@ -161,6 +171,7 @@ def upsert_item(conn: sqlite3.Connection, item: Item) -> None:
     )
     conn.commit()
 
+
 def set_content(conn: sqlite3.Connection, guid: str, text: str) -> None:
     sha = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
     conn.execute(
@@ -169,12 +180,14 @@ def set_content(conn: sqlite3.Connection, guid: str, text: str) -> None:
     )
     conn.commit()
 
+
 def set_summary(conn: sqlite3.Connection, guid: str, summary: dict) -> None:
     conn.execute(
         "UPDATE items SET summary_json=? WHERE guid=?",
         (json.dumps(summary, ensure_ascii=False), guid),
     )
     conn.commit()
+
 
 # ---------- Extraction ----------
 def fetch_url(client: httpx.Client, url: str) -> tuple[str, str]:
@@ -187,6 +200,7 @@ def fetch_url(client: httpx.Client, url: str) -> tuple[str, str]:
     ctype = r.headers.get("content-type", "").lower()
     return ctype, r.text if "text" in ctype or "html" in ctype else r.content.decode("latin-1", errors="ignore")
 
+
 def extract_text_from_html(html: str) -> str:
     # Readability to isolate main article, then soup get_text
     doc = Document(html)
@@ -197,14 +211,17 @@ def extract_text_from_html(html: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text
 
+
 def extract_text_from_pdf_url(client: httpx.Client, url: str) -> str:
     # Minimal PDF extraction
     from io import BytesIO
+
     from pdfminer.high_level import extract_text
 
     r = client.get(url, follow_redirects=True, timeout=60)
     r.raise_for_status()
     return extract_text(BytesIO(r.content)) or ""
+
 
 def extract_full_text(client: httpx.Client, url: str) -> str:
     if url.lower().endswith(".pdf"):
@@ -213,6 +230,7 @@ def extract_full_text(client: httpx.Client, url: str) -> str:
     if "pdf" in ctype:
         return extract_text_from_pdf_url(client, url)
     return extract_text_from_html(body)
+
 
 # ---------- Summarization ----------
 def summarize_with_llm(text: str, meta: dict) -> dict:
@@ -232,6 +250,7 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
         ]
     }
 
+
 # Example OpenAI Responses API call (optional).
 # Docs: https://platform.openai.com/docs/api-reference/responses  (use current models per your account)
 def summarize_with_openai(text: str, meta: dict) -> dict:
@@ -239,6 +258,7 @@ def summarize_with_openai(text: str, meta: dict) -> dict:
     Requires: pip install openai ; export OPENAI_API_KEY=...
     """
     from openai import OpenAI
+
     client = OpenAI()
 
     # Chunk if needed (very simple chunking)
@@ -260,10 +280,10 @@ Return STRICT JSON:
   }}
 }}
 
-Source: {meta['source']}
-Type: {meta['kind']}
-Title: {meta['title']}
-Date: {meta['published_at']}
+Source: {meta["source"]}
+Type: {meta["kind"]}
+Title: {meta["title"]}
+Date: {meta["published_at"]}
 Text:
 {text_in}
 """.strip()
@@ -282,13 +302,15 @@ Text:
         raise ValueError("OpenAI returned empty response")
     return json.loads(out)
 
+
 # ---------- Main ----------
-def _resolve_db_path(db_path: Optional[str] = None) -> str:
+def _resolve_db_path(db_path: str | None = None) -> str:
     if db_path:
         return db_path
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
 
-def iter_feed_items(sources: Optional[list[str]] = None) -> Iterable[Item]:
+
+def iter_feed_items(sources: list[str] | None = None) -> Iterable[Item]:
     for source, feed_urls in FEEDS.items():
         if sources and source not in sources:
             continue
@@ -306,7 +328,8 @@ def iter_feed_items(sources: Optional[list[str]] = None) -> Iterable[Item]:
                 guid = (e.get("id") or url).strip()
                 yield Item(source=source, title=title, url=url, published_at=published_at, guid=guid, kind=kind)
 
-def _fetch_and_store(conn: sqlite3.Connection, sources: Optional[list[str]] = None) -> None:
+
+def _fetch_and_store(conn: sqlite3.Connection, sources: list[str] | None = None) -> None:
     """Fetch RSS feeds, extract content, store in DB."""
     headers = {"User-Agent": "cb-summarizer/0.1 (+contact: you@example.com)"}
     fetched = 0
@@ -367,11 +390,16 @@ def _fetch_and_store(conn: sqlite3.Connection, sources: Optional[list[str]] = No
                 set_summary(conn, guid, summary)
             except Exception as ex:
                 failed = futures[future]
-                LOGGER.warning("Summarization failed for %s %s: %s", failed[2]['source'], failed[2]['kind'], ex)
+                LOGGER.warning("Summarization failed for %s %s: %s", failed[2]["source"], failed[2]["kind"], ex)
 
-    LOGGER.info("Central bank data fetch and summarization complete — %d item(s) fetched, %d new summary(ies) generated.", fetched, len(to_summarize))
+    LOGGER.info(
+        "Central bank data fetch and summarization complete — %d item(s) fetched, %d new summary(ies) generated.",
+        fetched,
+        len(to_summarize),
+    )
 
-def _query_items(conn: sqlite3.Connection, sources: Optional[list[str]] = None) -> list[dict]:
+
+def _query_items(conn: sqlite3.Connection, sources: list[str] | None = None) -> list[dict]:
     """Query stored items and return as list of dicts."""
     if sources:
         placeholders = ",".join("?" for _ in sources)
@@ -398,20 +426,23 @@ def _query_items(conn: sqlite3.Connection, sources: Optional[list[str]] = None) 
     items = []
     for source, kind, title, url, published_at, summary_json, content_text in rows:
         summary = json.loads(summary_json) if summary_json else {}
-        items.append({
-            "source": source,
-            "kind": kind,
-            "title": title,
-            "url": url,
-            "published_at": published_at,
-            "summary_bullets": summary.get("bullets", []),
-            "signals": summary.get("signals", {}),
-            "has_full_text": bool(content_text),
-            "content_preview": (content_text or "")[:500],
-        })
+        items.append(
+            {
+                "source": source,
+                "kind": kind,
+                "title": title,
+                "url": url,
+                "published_at": published_at,
+                "summary_bullets": summary.get("bullets", []),
+                "signals": summary.get("signals", {}),
+                "has_full_text": bool(content_text),
+                "content_preview": (content_text or "")[:500],
+            }
+        )
     return items
 
-def get_data(db_path: str = None, refresh: bool = False, sources: Optional[list[str]] = None) -> dict:
+
+def get_data(db_path: str = None, refresh: bool = False, sources: list[str] | None = None) -> dict:
     """
     Return structured data for GUI consumption.
 
@@ -442,7 +473,7 @@ def get_data(db_path: str = None, refresh: bool = False, sources: Optional[list[
             "items": items,
             "by_source": by_source,
             "counts": counts,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "last_updated": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -450,10 +481,11 @@ def get_data(db_path: str = None, refresh: bool = False, sources: Optional[list[
         if conn is not None:
             conn.close()
 
+
 def run():
     data = get_data()
     if "error" in data:
-        LOGGER.error("Error: %s", data['error'])
+        LOGGER.error("Error: %s", data["error"])
         return
 
     for item in data["items"]:
@@ -464,7 +496,8 @@ def run():
             print(f" - {b}")
         print(f"   {item['url']}")
 
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     run()

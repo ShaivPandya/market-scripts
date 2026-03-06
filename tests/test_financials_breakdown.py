@@ -1,12 +1,3 @@
-from pathlib import Path
-import sys
-
-
-ROOT = Path(__file__).resolve().parents[1]
-FM_PATH = ROOT / "portfolio" / "momentum" / "fundamental_momentum"
-if str(FM_PATH) not in sys.path:
-    sys.path.insert(0, str(FM_PATH))
-
 import financials_single as fs
 
 
@@ -188,7 +179,7 @@ def test_missing_axis_no_openai_key(monkeypatch):
 def test_missing_axes_filled_by_html(monkeypatch):
     _patch_common(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    
+
     # 1. XBRL returns nothing
     monkeypatch.setattr(
         fs,
@@ -213,11 +204,13 @@ def test_missing_axes_filled_by_html(monkeypatch):
             "by_segment": [{"label": "Hardware", "value": 100.0, "pct_of_total": 0.5}],
             "by_region": [{"label": "Americas", "value": 120.0, "pct_of_total": 0.6}],
         }
+
     monkeypatch.setattr(fs, "_extract_breakdown_from_html", _mock_html)
 
     # 3. NLP should not run since HTML found both
     def _should_not_run_ai(**kwargs):
         raise AssertionError("AI fallback should not be called when HTML has both axes")
+
     monkeypatch.setattr(fs, "_extract_breakdown_via_nlp", _should_not_run_ai)
 
     out = fs._build_breakdown({}, "0000123456", None)
@@ -231,14 +224,19 @@ def test_missing_axes_filled_by_html(monkeypatch):
 def test_html_fails_falls_back_to_nlp(monkeypatch):
     _patch_common(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    
+
     # 1. XBRL returns nothing
     monkeypatch.setattr(
-        fs, "_extract_breakdown_for_filing",
+        fs,
+        "_extract_breakdown_for_filing",
         lambda us_gaap, accn: {
-            "accn": accn, "period_end": "2024-12-31", "filed": "2025-02-01", "form": "10-K",
-            "by_segment": [], "by_region": [],
-        }
+            "accn": accn,
+            "period_end": "2024-12-31",
+            "filed": "2025-02-01",
+            "form": "10-K",
+            "by_segment": [],
+            "by_region": [],
+        },
     )
 
     # 2. HTML returns nothing (fails)
@@ -247,11 +245,16 @@ def test_html_fails_falls_back_to_nlp(monkeypatch):
     # 3. NLP returns data
     def _mock_nlp(**kwargs):
         return {
-            "accn": kwargs["accn"], "period_end": "2024-12-31", "filed": kwargs["filed"], "form": "10-K",
+            "accn": kwargs["accn"],
+            "period_end": "2024-12-31",
+            "filed": kwargs["filed"],
+            "form": "10-K",
             "by_segment": [{"label": "Software", "value": 80.0, "pct_of_total": 1.0}],
             "by_region": [],
-            "segment_disclosed": True, "region_disclosed": False,
+            "segment_disclosed": True,
+            "region_disclosed": False,
         }
+
     monkeypatch.setattr(fs, "_extract_breakdown_via_nlp", _mock_nlp)
 
     out = fs._build_breakdown({}, "0000123456", None)

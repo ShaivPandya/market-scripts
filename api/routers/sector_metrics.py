@@ -2,7 +2,9 @@ import os
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from api.cache import long_cache, get_cached, set_cached
+
+from api.cache import get_cached, long_cache, set_cached
+from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -16,11 +18,13 @@ def get_sector_metrics():
         return cached
     try:
         from sector_metrics import get_data
+
         data = get_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="sector_metrics", detail=str(e)) from e
 
     import pandas as pd
+
     weights_df = data.get("weights_df")
     result = {
         "weights_df": serialize_dataframe(weights_df.reset_index()) if isinstance(weights_df, pd.DataFrame) else [],
@@ -78,7 +82,7 @@ def _build_sector_table(rows: list[dict]) -> str:
 def analyze_sector_metrics(req: SectorMetricsAnalyzeRequest):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+        raise ConfigurationError("OPENAI_API_KEY")
     if not req.rows:
         raise HTTPException(status_code=400, detail="No sector metric rows provided")
 
@@ -106,12 +110,13 @@ Be specific about the numbers. Write for a professional investor audience."""
 
     try:
         from openai import OpenAI
+
         client = OpenAI()
         resp = client.responses.create(model="gpt-5-mini", input=prompt)
         analysis = (resp.output_text or "").strip()
         if not analysis:
             raise ValueError("OpenAI returned empty response")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}")
+        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 
     return {"analysis": analysis}

@@ -33,45 +33,61 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List  # noqa: UP035
 
 import pandas as pd
 
 # Download configuration
-CHUNK_SIZE = 50   # Tickers per batch
-BATCH_DELAY = 1.0 # Seconds between batches
-MAX_WORKERS = 8   # Threads per batch
+CHUNK_SIZE = 50  # Tickers per batch
+BATCH_DELAY = 1.0  # Seconds between batches
+MAX_WORKERS = 8  # Threads per batch
 
 try:
     import yfinance as yf  # used indirectly by quality_single
 except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import load_universe, list_universes, get_sp500_universe, get_universe_tickers
-
-from quality_single import fetch_raw_metrics, compute_scores, RawMetrics
-
+from common import get_sp500_universe, get_universe_tickers, list_universes, load_universe
+from quality_single import RawMetrics, compute_scores, fetch_raw_metrics
 
 # GICS sectors and their SPDR ETF tickers
-SECTOR_ETFS: Dict[str, tuple] = {
-    "xlb":  ("XLB",  "Materials"),
-    "xlc":  ("XLC",  "Communication Services"),
-    "xle":  ("XLE",  "Energy"),
-    "xlf":  ("XLF",  "Financials"),
-    "xli":  ("XLI",  "Industrials"),
-    "xlk":  ("XLK",  "Technology"),
-    "xlp":  ("XLP",  "Consumer Staples"),
+SECTOR_ETFS: dict[str, tuple] = {
+    "xlb": ("XLB", "Materials"),
+    "xlc": ("XLC", "Communication Services"),
+    "xle": ("XLE", "Energy"),
+    "xlf": ("XLF", "Financials"),
+    "xli": ("XLI", "Industrials"),
+    "xlk": ("XLK", "Technology"),
+    "xlp": ("XLP", "Consumer Staples"),
     "xlre": ("XLRE", "Real Estate"),
-    "xlu":  ("XLU",  "Utilities"),
-    "xlv":  ("XLV",  "Health Care"),
-    "xly":  ("XLY",  "Consumer Discretionary"),
+    "xlu": ("XLU", "Utilities"),
+    "xlv": ("XLV", "Health Care"),
+    "xly": ("XLY", "Consumer Discretionary"),
 }
 
 _INTL_SUFFIXES = (
-    ".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC",
-    ".SI", ".HK", ".T", ".NS", ".BO", ".KS", ".KQ", ".TW", ".TWO", ".SA",
+    ".HE",
+    ".L",
+    ".TO",
+    ".AX",
+    ".PA",
+    ".DE",
+    ".MI",
+    ".AS",
+    ".SW",
+    ".MC",
+    ".SI",
+    ".HK",
+    ".T",
+    ".NS",
+    ".BO",
+    ".KS",
+    ".KQ",
+    ".TW",
+    ".TWO",
+    ".SA",
 )
 
 
@@ -84,7 +100,7 @@ def _clean_ticker(tk: str) -> str:
     return tk.replace(".", "-")
 
 
-def load_screen_universe(name: str) -> tuple[List[str], str]:
+def load_screen_universe(name: str) -> tuple[list[str], str]:
     """
     Resolve the user-supplied universe name to a ticker list and display label.
 
@@ -132,19 +148,13 @@ Universe options:
         """,
     )
     ap.add_argument(
-        "input", nargs="?",
-        help="Universe: sp500, russell2000, sp400, sector ETF (xlk, xle, ...), or file path"
+        "input", nargs="?", help="Universe: sp500, russell2000, sp400, sector ETF (xlk, xle, ...), or file path"
     )
-    ap.add_argument("--list-universes", action="store_true",
-                    help="List available universe files and exit")
-    ap.add_argument("--market", default="SPY",
-                    help="Market proxy for beta (default: SPY)")
-    ap.add_argument("--growth_years", type=int, default=5,
-                    help="Growth window in years (default: 5)")
-    ap.add_argument("--beta_years", type=float, default=3.0,
-                    help="Beta lookback in years (default: 3)")
-    ap.add_argument("--out_csv", default="",
-                    help="Optional path to save full results as CSV")
+    ap.add_argument("--list-universes", action="store_true", help="List available universe files and exit")
+    ap.add_argument("--market", default="SPY", help="Market proxy for beta (default: SPY)")
+    ap.add_argument("--growth_years", type=int, default=5, help="Growth window in years (default: 5)")
+    ap.add_argument("--beta_years", type=float, default=3.0, help="Beta lookback in years (default: 3)")
+    ap.add_argument("--out_csv", default="", help="Optional path to save full results as CSV")
     args = ap.parse_args()
 
     if args.list_universes:
@@ -166,7 +176,7 @@ Universe options:
 
     # Fetch raw metrics for each ticker in batches
     print("\nFetching data for each ticker...")
-    raws: Dict[str, RawMetrics] = {}
+    raws: dict[str, RawMetrics] = {}
     failed = []
 
     chunks = [universe[i : i + CHUNK_SIZE] for i in range(0, len(universe), CHUNK_SIZE)]
@@ -221,8 +231,10 @@ Universe options:
     print(f"{'Rank':<6}{'Ticker':<10}{'Quality':>10}{'Profit':>10}{'Growth':>10}{'Safety':>10}")
     print("-" * 60)
     for rank, (ticker, row) in enumerate(scores_sorted.head(10).iterrows(), 1):
-        print(f"{rank:<6}{ticker:<10}{row['quality']:>10.3f}{row['profitability']:>10.3f}"
-              f"{row['growth']:>10.3f}{row['safety']:>10.3f}")
+        print(
+            f"{rank:<6}{ticker:<10}{row['quality']:>10.3f}{row['profitability']:>10.3f}"
+            f"{row['growth']:>10.3f}{row['safety']:>10.3f}"
+        )
 
     # Display bottom 10
     print("\n" + "=" * 60)
@@ -232,8 +244,10 @@ Universe options:
     print("-" * 60)
     bottom10 = scores_sorted.tail(10).iloc[::-1]
     for rank, (ticker, row) in enumerate(bottom10.iterrows(), n - 9):
-        print(f"{rank:<6}{ticker:<10}{row['quality']:>10.3f}{row['profitability']:>10.3f}"
-              f"{row['growth']:>10.3f}{row['safety']:>10.3f}")
+        print(
+            f"{rank:<6}{ticker:<10}{row['quality']:>10.3f}{row['profitability']:>10.3f}"
+            f"{row['growth']:>10.3f}{row['safety']:>10.3f}"
+        )
 
     # Save full results if requested
     if args.out_csv:

@@ -25,10 +25,10 @@ Breakout rules (no stops/exits):
 """
 
 from __future__ import annotations
-import logging
 
+import logging
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -50,7 +50,7 @@ class Params:
 P = Params()
 
 
-UNIVERSE: Dict[str, Dict[str, str]] = {
+UNIVERSE: dict[str, dict[str, str]] = {
     "FX": {
         "EURUSD": "EURUSD=X",
         "GBPUSD": "GBPUSD=X",
@@ -88,19 +88,31 @@ def compute_features(df: pd.DataFrame, p: Params) -> pd.DataFrame:
 
     df["TR"] = true_range(df)
     df["ATR"] = wilder_rma(df["TR"], p.atr_period)
-    df["ATRMin100"] = df["ATR"].rolling(
-        p.atr_compression_lookback,
-        min_periods=p.atr_compression_lookback,
-    ).min()
+    df["ATRMin100"] = (
+        df["ATR"]
+        .rolling(
+            p.atr_compression_lookback,
+            min_periods=p.atr_compression_lookback,
+        )
+        .min()
+    )
 
-    df["RangeHigh30"] = df["High"].rolling(
-        p.congestion_lookback,
-        min_periods=p.congestion_lookback,
-    ).max()
-    df["RangeLow30"] = df["Low"].rolling(
-        p.congestion_lookback,
-        min_periods=p.congestion_lookback,
-    ).min()
+    df["RangeHigh30"] = (
+        df["High"]
+        .rolling(
+            p.congestion_lookback,
+            min_periods=p.congestion_lookback,
+        )
+        .max()
+    )
+    df["RangeLow30"] = (
+        df["Low"]
+        .rolling(
+            p.congestion_lookback,
+            min_periods=p.congestion_lookback,
+        )
+        .min()
+    )
 
     df["SMA20"] = df["Close"].rolling(p.sma_period, min_periods=p.sma_period).mean()
 
@@ -111,11 +123,7 @@ def compute_features(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     df["CondRangeATR"] = df["RangeATRRatio"] <= p.range_atr_max
     df["CondSMADistance"] = (df["Close"] - df["SMA20"]).abs() <= df["ATR"]
 
-    df["Congestion"] = (
-        df["CondATRCompression"]
-        & df["CondRangeATR"]
-        & df["CondSMADistance"]
-    )
+    df["Congestion"] = df["CondATRCompression"] & df["CondRangeATR"] & df["CondSMADistance"]
 
     df["PrevCongestion"] = df["Congestion"].shift(1).eq(True)
     df["RangeHigh30Prev"] = df["RangeHigh30"].shift(1)
@@ -131,7 +139,7 @@ def compute_features(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     return df
 
 
-def download_daily(tickers: List[str], period: str = "3y") -> Dict[str, pd.DataFrame]:
+def download_daily(tickers: list[str], period: str = "3y") -> dict[str, pd.DataFrame]:
     raw = yf.download(
         tickers=tickers,
         period=period,
@@ -142,7 +150,7 @@ def download_daily(tickers: List[str], period: str = "3y") -> Dict[str, pd.DataF
         progress=False,
     )
 
-    out: Dict[str, pd.DataFrame] = {}
+    out: dict[str, pd.DataFrame] = {}
 
     if raw is None or raw.empty:
         return out
@@ -161,9 +169,9 @@ def download_daily(tickers: List[str], period: str = "3y") -> Dict[str, pd.DataF
     return out
 
 
-def _universe_meta() -> Tuple[List[str], List[Tuple[str, str, str]]]:
-    tickers: List[str] = []
-    meta: List[Tuple[str, str, str]] = []
+def _universe_meta() -> tuple[list[str], list[tuple[str, str, str]]]:
+    tickers: list[str] = []
+    meta: list[tuple[str, str, str]] = []
     for market, items in UNIVERSE.items():
         for name, ticker in items.items():
             tickers.append(ticker)
@@ -188,7 +196,7 @@ def _asset_latest_row(
     name: str,
     ticker: str,
     feats: pd.DataFrame,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     row = feats.iloc[-1]
     dt = feats.index[-1]
 
@@ -228,12 +236,12 @@ def _asset_events(
     name: str,
     ticker: str,
     feats: pd.DataFrame,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     event_mask = feats["LongBreakout"] | feats["ShortBreakout"]
     if not event_mask.any():
         return []
 
-    events: List[Dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
     for dt, row in feats.loc[event_mask].iterrows():
         direction = "LONG" if _to_bool(row["LongBreakout"]) else "SHORT"
         events.append(
@@ -254,7 +262,7 @@ def _asset_events(
     return events
 
 
-def _asset_history_rows(feats: pd.DataFrame) -> List[Dict[str, Any]]:
+def _asset_history_rows(feats: pd.DataFrame) -> list[dict[str, Any]]:
     cols = [
         "Open",
         "High",
@@ -274,7 +282,7 @@ def _asset_history_rows(feats: pd.DataFrame) -> List[Dict[str, Any]]:
         "ShortBreakout",
     ]
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for dt, row in feats[cols].iterrows():
         rows.append(
             {
@@ -301,13 +309,13 @@ def _asset_history_rows(feats: pd.DataFrame) -> List[Dict[str, Any]]:
     return rows
 
 
-def _analyze(period: str = "3y") -> Dict[str, Any]:
+def _analyze(period: str = "3y") -> dict[str, Any]:
     tickers, meta = _universe_meta()
     raw = download_daily(tickers, period=period)
 
-    latest: List[Dict[str, Any]] = []
-    events: List[Dict[str, Any]] = []
-    history: Dict[str, Dict[str, Any]] = {}
+    latest: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    history: dict[str, dict[str, Any]] = {}
 
     for market, name, ticker in meta:
         df = raw.get(ticker)
@@ -343,7 +351,7 @@ def _analyze(period: str = "3y") -> Dict[str, Any]:
     }
 
 
-def get_data() -> Dict[str, Any]:
+def get_data() -> dict[str, Any]:
     try:
         return _analyze(period="3y")
     except Exception as e:
@@ -359,7 +367,7 @@ def _fmt(v: Any, digits: int = 4) -> str:
         return str(v)
 
 
-def _print_latest_breakout_section(latest: List[Dict[str, Any]], direction: str) -> None:
+def _print_latest_breakout_section(latest: list[dict[str, Any]], direction: str) -> None:
     items = [x for x in latest if x.get("direction") == direction]
     title = "LATEST LONG BREAKOUTS" if direction == "LONG" else "LATEST SHORT BREAKOUTS"
 
@@ -377,7 +385,7 @@ def _print_latest_breakout_section(latest: List[Dict[str, Any]], direction: str)
         )
 
 
-def _print_congestion_section(latest: List[Dict[str, Any]]) -> None:
+def _print_congestion_section(latest: list[dict[str, Any]]) -> None:
     items = [x for x in latest if x.get("congestion")]
 
     print("\nCURRENT CONGESTION REGIME")
@@ -394,7 +402,7 @@ def _print_congestion_section(latest: List[Dict[str, Any]]) -> None:
         )
 
 
-def _print_recent_events_section(events: List[Dict[str, Any]], limit: int = 20) -> None:
+def _print_recent_events_section(events: list[dict[str, Any]], limit: int = 20) -> None:
     print(f"\nRECENT HISTORICAL BREAKOUT EVENTS (last {limit})")
     print("-" * 45)
 
@@ -403,17 +411,14 @@ def _print_recent_events_section(events: List[Dict[str, Any]], limit: int = 20) 
         return
 
     for ev in events[:limit]:
-        print(
-            f"{ev['date']}  {ev['name']} ({ev['market']})  {ev['direction']}  "
-            f"close={_fmt(ev['close'])}"
-        )
+        print(f"{ev['date']}  {ev['name']} ({ev['market']})  {ev['direction']}  close={_fmt(ev['close'])}")
 
 
 def main() -> None:
     result = get_data()
 
     if "error" in result:
-        LOGGER.error("Error: %s", result['error'])
+        LOGGER.error("Error: %s", result["error"])
         return
 
     latest = result.get("latest", [])
@@ -433,6 +438,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

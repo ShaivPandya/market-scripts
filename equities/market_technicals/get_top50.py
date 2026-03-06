@@ -15,15 +15,15 @@ python3 get_top50.py
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from io import StringIO
 from pathlib import Path
-from typing import Iterable, List
+from typing import List  # noqa: UP035
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 import requests
-
+import yfinance as yf
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
@@ -44,13 +44,13 @@ def get_sp500_tickers():
     return pd.unique(tickers).tolist()
 
 
-def chunked(xs: List[str], n: int) -> Iterable[List[str]]:
+def chunked(xs: list[str], n: int) -> Iterable[list[str]]:
     for i in range(0, len(xs), n):
         yield xs[i : i + n]
 
 
 def download_close_prices(
-    tickers: List[str],
+    tickers: list[str],
     period: str = "1y",
     interval: str = "1d",
     chunk_size: int = 100,
@@ -62,7 +62,7 @@ def download_close_prices(
             tickers=chunk,
             period=period,
             interval=interval,
-            auto_adjust=True,   # adjusted prices (splits/dividends) :contentReference[oaicite:4]{index=4}
+            auto_adjust=True,  # adjusted prices (splits/dividends) :contentReference[oaicite:4]{index=4}
             group_by="column",
             threads=True,
             progress=False,
@@ -95,6 +95,7 @@ def total_return_from_prices(close: pd.DataFrame) -> pd.Series:
     Computes total return proxy per ticker:
       (last_valid_price / first_valid_price) - 1
     """
+
     def one_ticker_return(s: pd.Series) -> float:
         s2 = s.dropna()
         if len(s2) < 2:

@@ -2,8 +2,10 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
+
 class ModelDataError(ValueError):
     pass
+
 
 def fit_horizon_ols(df: pd.DataFrame, horizon: int, feature_cols: list, target_col: str = "logS"):
     d = df.copy()
@@ -40,6 +42,7 @@ def fit_horizon_ols(df: pd.DataFrame, horizon: int, feature_cols: list, target_c
     res = sm.OLS(y_train, X_train).fit(cov_type="HAC", cov_kwds={"maxlags": max(3, horizon // 6)})
     return res, est
 
+
 def predict_from_row(res, x_row: pd.DataFrame) -> float:
     """Predict using a single-row feature DataFrame.
 
@@ -54,6 +57,7 @@ def predict_from_row(res, x_row: pd.DataFrame) -> float:
     Xp = sm.add_constant(x_row, has_constant="add")
     return float(res.predict(Xp).iloc[0])
 
+
 def predict_latest(df: pd.DataFrame, res, feature_cols: list) -> float:
     d = df.replace([np.inf, -np.inf], np.nan)
     x_all = d[feature_cols].dropna()
@@ -62,6 +66,7 @@ def predict_latest(df: pd.DataFrame, res, feature_cols: list) -> float:
     x = x_all.iloc[[-1]]
     Xp = sm.add_constant(x, has_constant="add")
     return float(res.predict(Xp).iloc[0])
+
 
 def bootstrap_forecast_distribution(res, x_row: pd.DataFrame, draws: int = 2000, seed: int = 0) -> np.ndarray:
     rng = np.random.default_rng(seed)
@@ -75,9 +80,7 @@ def bootstrap_forecast_distribution(res, x_row: pd.DataFrame, draws: int = 2000,
     # NumPy 2.x disallows float() on 1-D arrays; extract the scalar explicitly.
     linear_pred = np.asarray(Xp @ b)
     if linear_pred.size != 1:
-        raise ModelDataError(
-            f"Expected a single linear prediction value, got shape={tuple(linear_pred.shape)}."
-        )
+        raise ModelDataError(f"Expected a single linear prediction value, got shape={tuple(linear_pred.shape)}.")
     base = float(linear_pred.reshape(-1)[0])
     resid = np.asarray(res.resid)
     if resid.size < 10:

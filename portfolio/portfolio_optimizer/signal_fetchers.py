@@ -12,12 +12,12 @@ All functions return DataFrames with tickers as index and metrics as columns.
 """
 
 from __future__ import annotations
-import logging
 
+import logging
 import sys
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -27,17 +27,17 @@ LOGGER = logging.getLogger(__name__)
 try:
     import yfinance as yf
 except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 # Import from existing single-ticker scripts
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "momentum" / "fundamental_momentum"))
 
-from quality_single import fetch_raw_metrics as fetch_quality_raw_metrics, RawMetrics
-from eps_momentum_single import fetch_eps_metrics, EPSMetrics
-from revenue_momentum_single import fetch_revenue_metrics, RevenueMetrics
-
+from eps_momentum_single import EPSMetrics, fetch_eps_metrics
+from quality_single import RawMetrics
+from quality_single import fetch_raw_metrics as fetch_quality_raw_metrics
+from revenue_momentum_single import RevenueMetrics, fetch_revenue_metrics
 
 # -------------------------
 # Price Momentum Utilities
@@ -57,8 +57,8 @@ def safe_div(a: float, b: float) -> float:
 def compute_momentum_metrics(
     ticker_prices: pd.Series,
     benchmark_prices: pd.Series,
-    ticker_volume: Optional[pd.Series] = None,
-) -> Optional[Dict[str, float]]:
+    ticker_volume: pd.Series | None = None,
+) -> dict[str, float] | None:
     """
     Compute momentum metrics for a single ticker relative to benchmark.
 
@@ -71,10 +71,7 @@ def compute_momentum_metrics(
     Returns None if insufficient data.
     """
     # Align on common dates
-    combined = pd.DataFrame({
-        "ticker": ticker_prices,
-        "benchmark": benchmark_prices
-    }).dropna()
+    combined = pd.DataFrame({"ticker": ticker_prices, "benchmark": benchmark_prices}).dropna()
 
     if len(combined) < MIN_DATA_POINTS:
         return None
@@ -122,11 +119,12 @@ def compute_momentum_metrics(
 # Batch Fetching Functions
 # -------------------------
 
+
 def fetch_price_momentum_batch(
-    tickers: List[str],
-    benchmark_map: Dict[str, str],
+    tickers: list[str],
+    benchmark_map: dict[str, str],
     prices: pd.DataFrame,
-    volumes: Optional[pd.DataFrame] = None,
+    volumes: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Compute price momentum metrics for multiple tickers in batch.
@@ -140,8 +138,8 @@ def fetch_price_momentum_batch(
     Returns:
         DataFrame with tickers as index and columns: avg20_roc63, avg20_vol_roc63, rel_roc42, avg10_rel_roc
     """
-    raw_metrics: Dict[str, Dict[str, float]] = {}
-    failed_tickers: List[str] = []
+    raw_metrics: dict[str, dict[str, float]] = {}
+    failed_tickers: list[str] = []
 
     for ticker in tickers:
         if ticker not in prices.columns:
@@ -174,7 +172,7 @@ def fetch_price_momentum_batch(
 
 
 def fetch_quality_batch(
-    tickers: List[str],
+    tickers: list[str],
     market: str = "SPY",
     growth_years: int = 5,
     beta_years: float = 3.0,
@@ -191,8 +189,8 @@ def fetch_quality_batch(
     Returns:
         DataFrame with tickers as index and 15 columns for quality metrics
     """
-    raws: Dict[str, RawMetrics] = {}
-    failed_tickers: List[str] = []
+    raws: dict[str, RawMetrics] = {}
+    failed_tickers: list[str] = []
 
     if tickers:
         max_workers = min(MAX_BATCH_WORKERS, len(tickers))
@@ -223,7 +221,7 @@ def fetch_quality_batch(
 
 
 def fetch_eps_momentum_batch(
-    tickers: List[str],
+    tickers: list[str],
     growth_years: int = 3,
     use_edgar: bool = True,
 ) -> pd.DataFrame:
@@ -239,13 +237,15 @@ def fetch_eps_momentum_batch(
         DataFrame with tickers as index and columns:
             eps_yoy_change, eps_cagr, eps_growth_acceleration
     """
-    raws: Dict[str, EPSMetrics] = {}
-    failed_tickers: List[str] = []
+    raws: dict[str, EPSMetrics] = {}
+    failed_tickers: list[str] = []
 
     if tickers:
         max_workers = min(MAX_BATCH_WORKERS, len(tickers))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(fetch_eps_metrics, ticker, growth_years, use_edgar=use_edgar): ticker for ticker in tickers}
+            futures = {
+                pool.submit(fetch_eps_metrics, ticker, growth_years, use_edgar=use_edgar): ticker for ticker in tickers
+            }
             for i, future in enumerate(as_completed(futures), 1):
                 ticker = futures[future]
                 try:
@@ -268,7 +268,7 @@ def fetch_eps_momentum_batch(
 
 
 def fetch_revenue_momentum_batch(
-    tickers: List[str],
+    tickers: list[str],
     growth_years: int = 3,
     use_edgar: bool = True,
 ) -> pd.DataFrame:
@@ -284,13 +284,16 @@ def fetch_revenue_momentum_batch(
         DataFrame with tickers as index and columns:
             revenue_yoy_change, revenue_cagr, revenue_growth_acceleration
     """
-    raws: Dict[str, RevenueMetrics] = {}
-    failed_tickers: List[str] = []
+    raws: dict[str, RevenueMetrics] = {}
+    failed_tickers: list[str] = []
 
     if tickers:
         max_workers = min(MAX_BATCH_WORKERS, len(tickers))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(fetch_revenue_metrics, ticker, growth_years, use_edgar=use_edgar): ticker for ticker in tickers}
+            futures = {
+                pool.submit(fetch_revenue_metrics, ticker, growth_years, use_edgar=use_edgar): ticker
+                for ticker in tickers
+            }
             for i, future in enumerate(as_completed(futures), 1):
                 ticker = futures[future]
                 try:
@@ -316,7 +319,7 @@ def fetch_revenue_momentum_batch(
 # ETF Look-through Utilities
 # -------------------------
 
-SPDR_SECTOR_ETFS: List[str] = [
+SPDR_SECTOR_ETFS: list[str] = [
     "XLB",
     "XLC",
     "XLE",
@@ -331,9 +334,26 @@ SPDR_SECTOR_ETFS: List[str] = [
 ]
 
 _INTL_SUFFIXES = (
-    ".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC",
-    ".SI", ".HK", ".T", ".NS", ".BO",
-    ".KS", ".KQ", ".TW", ".TWO", ".SA",
+    ".HE",
+    ".L",
+    ".TO",
+    ".AX",
+    ".PA",
+    ".DE",
+    ".MI",
+    ".AS",
+    ".SW",
+    ".MC",
+    ".SI",
+    ".HK",
+    ".T",
+    ".NS",
+    ".BO",
+    ".KS",
+    ".KQ",
+    ".TW",
+    ".TWO",
+    ".SA",
 )
 
 
@@ -400,13 +420,13 @@ def fetch_etf_top_holdings(etf_ticker: str, top_n: int = 10) -> pd.Series:
     return _normalize_holding_weights(raw_w)
 
 
-def fetch_etf_top_holdings_batch(etf_tickers: List[str], top_n: int = 10) -> Dict[str, pd.Series]:
+def fetch_etf_top_holdings_batch(etf_tickers: list[str], top_n: int = 10) -> dict[str, pd.Series]:
     """
     Fetch top holdings for multiple ETFs.
 
     Only ETFs with non-empty holdings are returned in the dict.
     """
-    out: Dict[str, pd.Series] = {}
+    out: dict[str, pd.Series] = {}
     for etf in etf_tickers:
         w = fetch_etf_top_holdings(etf, top_n=top_n)
         if not w.empty:
@@ -417,7 +437,7 @@ def fetch_etf_top_holdings_batch(etf_tickers: List[str], top_n: int = 10) -> Dic
 def fetch_spdr_sector_anchor_universe(
     top_n: int = 10,
     min_unique: int = 60,
-) -> Tuple[List[str], Dict[str, object]]:
+) -> tuple[list[str], dict[str, object]]:
     """
     Build an equal-member anchor universe from SPDR sector ETF top holdings.
 
@@ -426,8 +446,8 @@ def fetch_spdr_sector_anchor_universe(
         - Metadata with per-ETF holding counts and availability flags
     """
     etf_holdings = fetch_etf_top_holdings_batch(SPDR_SECTOR_ETFS, top_n=top_n)
-    per_etf_counts: Dict[str, int] = {}
-    anchor_ordered: List[str] = []
+    per_etf_counts: dict[str, int] = {}
+    anchor_ordered: list[str] = []
 
     for etf in SPDR_SECTOR_ETFS:
         holdings = etf_holdings.get(etf)
@@ -441,7 +461,7 @@ def fetch_spdr_sector_anchor_universe(
 
     unique_count = len(anchor_ordered)
     is_available = unique_count >= int(min_unique)
-    metadata: Dict[str, object] = {
+    metadata: dict[str, object] = {
         "etfs_requested": SPDR_SECTOR_ETFS.copy(),
         "etfs_fetched": sorted(etf_holdings.keys()),
         "top_n": int(top_n),
@@ -477,7 +497,7 @@ def _weighted_average_row(metrics: pd.DataFrame, weights: pd.Series) -> pd.Serie
     m = metrics.reindex(available)
     w = weights.reindex(available)
 
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     for col in m.columns:
         v = pd.to_numeric(m[col], errors="coerce").astype("float64")
         mask = v.notna() & w.notna()
@@ -495,7 +515,7 @@ def _weighted_average_row(metrics: pd.DataFrame, weights: pd.Series) -> pd.Serie
 
 
 def compute_lookthrough_raw_metrics(
-    etf_to_holdings: Dict[str, pd.Series],
+    etf_to_holdings: dict[str, pd.Series],
     holdings_raw: pd.DataFrame,
 ) -> pd.DataFrame:
     """
@@ -511,7 +531,7 @@ def compute_lookthrough_raw_metrics(
     if not etf_to_holdings or holdings_raw is None or holdings_raw.empty:
         return pd.DataFrame()
 
-    rows: Dict[str, pd.Series] = {}
+    rows: dict[str, pd.Series] = {}
     for etf, w in etf_to_holdings.items():
         rows[etf] = _weighted_average_row(holdings_raw, w)
 
@@ -522,13 +542,13 @@ def compute_lookthrough_raw_metrics(
 
 
 def fetch_etf_lookthrough_fundamentals_batch(
-    etf_tickers: List[str],
+    etf_tickers: list[str],
     top_n: int = 10,
     market: str = "SPY",
     growth_years: int = 5,
     beta_years: float = 3.0,
     use_edgar: bool = True,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, pd.Series]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, pd.Series]]:
     """
     Compute ETF look-through fundamentals using the top N holdings.
 
@@ -545,12 +565,22 @@ def fetch_etf_lookthrough_fundamentals_batch(
     if not holding_universe:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), etf_to_holdings
 
-    quality_holdings = fetch_quality_batch(holding_universe, market=market, growth_years=growth_years, beta_years=beta_years)
+    quality_holdings = fetch_quality_batch(
+        holding_universe, market=market, growth_years=growth_years, beta_years=beta_years
+    )
     eps_holdings = fetch_eps_momentum_batch(holding_universe, growth_years=3, use_edgar=use_edgar)
     rev_holdings = fetch_revenue_momentum_batch(holding_universe, growth_years=3, use_edgar=use_edgar)
 
-    quality_etf = compute_lookthrough_raw_metrics(etf_to_holdings, quality_holdings) if not quality_holdings.empty else pd.DataFrame()
-    eps_etf = compute_lookthrough_raw_metrics(etf_to_holdings, eps_holdings) if not eps_holdings.empty else pd.DataFrame()
-    rev_etf = compute_lookthrough_raw_metrics(etf_to_holdings, rev_holdings) if not rev_holdings.empty else pd.DataFrame()
+    quality_etf = (
+        compute_lookthrough_raw_metrics(etf_to_holdings, quality_holdings)
+        if not quality_holdings.empty
+        else pd.DataFrame()
+    )
+    eps_etf = (
+        compute_lookthrough_raw_metrics(etf_to_holdings, eps_holdings) if not eps_holdings.empty else pd.DataFrame()
+    )
+    rev_etf = (
+        compute_lookthrough_raw_metrics(etf_to_holdings, rev_holdings) if not rev_holdings.empty else pd.DataFrame()
+    )
 
     return quality_etf, eps_etf, rev_etf, etf_to_holdings

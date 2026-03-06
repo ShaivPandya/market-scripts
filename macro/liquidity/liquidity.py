@@ -10,8 +10,9 @@ Run:
   python macro/liquidity/liquidity.py
   python macro/liquidity/liquidity.py --plot
 """
-import logging
+
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ LOGGER = logging.getLogger(__name__)
 # Load environment variables from .env file
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from load_env import load_env
+
 load_env()
 
 import pandas as pd
@@ -28,38 +30,36 @@ from fredapi import Fred
 
 try:
     import sdmx
+
     SDMX_AVAILABLE = True
 except ImportError:
     SDMX_AVAILABLE = False
 
 try:
     from rich.console import Console
-    from rich.table import Table
     from rich.panel import Panel
+    from rich.table import Table
     from rich.text import Text
 except ImportError:
     Console = None
 
 SERIES = {
     # H.4.1 plumbing
-    "fed_assets_wed_level": "WALCL",    # Total assets (less eliminations), weekly as-of Wed
-    "reserve_balances_wavg": "WRESBAL", # Reserve balances, week avg
-    "tga_wavg": "WTREGEN",              # Treasury General Account, week avg
-    "on_rrp": "RRPONTSYD",              # ON RRP (Treasuries), daily aggregated
-
+    "fed_assets_wed_level": "WALCL",  # Total assets (less eliminations), weekly as-of Wed
+    "reserve_balances_wavg": "WRESBAL",  # Reserve balances, week avg
+    "tga_wavg": "WTREGEN",  # Treasury General Account, week avg
+    "on_rrp": "RRPONTSYD",  # ON RRP (Treasuries), daily aggregated
     # Japan central bank
-    "boj_assets": "JPNASSETS",          # BoJ total assets, monthly (100 million JPY)
-    "jpn_m3_yoy": "JPNMABMM301GYSAM",   # M3 YoY growth (monthly, OECD)
-    "jpn_credit_private": "QJPPAM770A", # Credit to private sector (quarterly, BIS)
-
+    "boj_assets": "JPNASSETS",  # BoJ total assets, monthly (100 million JPY)
+    "jpn_m3_yoy": "JPNMABMM301GYSAM",  # M3 YoY growth (monthly, OECD)
+    "jpn_credit_private": "QJPPAM770A",  # Credit to private sector (quarterly, BIS)
     # Credit / conditions
-    "ig_oas": "BAMLC0A0CM",             # ICE BofA US Corporate OAS
-    "hy_oas": "BAMLH0A0HYM2",           # ICE BofA HY OAS
+    "ig_oas": "BAMLC0A0CM",  # ICE BofA US Corporate OAS
+    "hy_oas": "BAMLH0A0HYM2",  # ICE BofA HY OAS
     "nfci": "NFCI",
-
     # Broad money and activity
-    "m2": "M2SL",                       # M2 Money Stock, monthly SA
-    "gdp": "GDP",                       # Nominal GDP, quarterly SAAR
+    "m2": "M2SL",  # M2 Money Stock, monthly SA
+    "gdp": "GDP",  # Nominal GDP, quarterly SAAR
 }
 
 # ECB SDMX series (fetched separately via sdmx1 library)
@@ -76,9 +76,21 @@ SERIES_META = {
 
 # Regional component definitions (weights sum to 1.0 within each region)
 US_COMPONENTS = [
-    {"key": "net_liquidity_change_4w", "label": "Net Liquidity (4w change)", "polarity": 1, "weight": 0.25, "value_kind": "billions"},
+    {
+        "key": "net_liquidity_change_4w",
+        "label": "Net Liquidity (4w change)",
+        "polarity": 1,
+        "weight": 0.25,
+        "value_kind": "billions",
+    },
     {"key": "net_liquidity", "label": "Net Liquidity (level)", "polarity": 1, "weight": 0.20, "value_kind": "billions"},
-    {"key": "reserves_change_4w", "label": "Reserve Balances (4w change)", "polarity": 1, "weight": 0.20, "value_kind": "billions"},
+    {
+        "key": "reserves_change_4w",
+        "label": "Reserve Balances (4w change)",
+        "polarity": 1,
+        "weight": 0.20,
+        "value_kind": "billions",
+    },
     {"key": "ig_oas", "label": "IG OAS", "polarity": -1, "weight": 0.15, "value_kind": "percent"},
     {"key": "hy_oas", "label": "HY OAS", "polarity": -1, "weight": 0.10, "value_kind": "percent"},
     {"key": "nfci", "label": "NFCI", "polarity": -1, "weight": 0.05, "value_kind": "index"},
@@ -86,8 +98,20 @@ US_COMPONENTS = [
 ]
 
 EUROPE_COMPONENTS = [
-    {"key": "ecb_excess_liquidity", "label": "Excess Liquidity", "polarity": 1, "weight": 0.60, "value_kind": "billions"},
-    {"key": "ecb_net_liquidity_effect", "label": "Net Liquidity Effect", "polarity": 1, "weight": 0.40, "value_kind": "billions"},
+    {
+        "key": "ecb_excess_liquidity",
+        "label": "Excess Liquidity",
+        "polarity": 1,
+        "weight": 0.60,
+        "value_kind": "billions",
+    },
+    {
+        "key": "ecb_net_liquidity_effect",
+        "label": "Net Liquidity Effect",
+        "polarity": 1,
+        "weight": 0.40,
+        "value_kind": "billions",
+    },
 ]
 
 JAPAN_COMPONENTS = [
@@ -194,7 +218,7 @@ def fetch_ecb_series():
                 # We want the TIME_PERIOD which is usually the first level
                 time_level = None
                 for i, level_name in enumerate(series.index.names):
-                    if level_name and 'TIME' in str(level_name).upper():
+                    if level_name and "TIME" in str(level_name).upper():
                         time_level = i
                         break
 
@@ -260,21 +284,15 @@ def add_japan_derived_series(df_weekly, df_raw, week_ending="W-WED"):
     # BoJ Assets YoY (12-month pct_change on monthly data)
     boj_assets = df_raw["boj_assets"].ffill()
     boj_yoy = boj_assets.pct_change(12, fill_method=None) * 100
-    df["boj_assets_yoy"] = align_series_to_weekly(
-        boj_yoy, week_ending=week_ending, target_index=df.index
-    )
+    df["boj_assets_yoy"] = align_series_to_weekly(boj_yoy, week_ending=week_ending, target_index=df.index)
 
     # M3 YoY - already provided as YoY from FRED, just align to weekly
-    df["jpn_m3_yoy"] = align_series_to_weekly(
-        df_raw["jpn_m3_yoy"], week_ending=week_ending, target_index=df.index
-    )
+    df["jpn_m3_yoy"] = align_series_to_weekly(df_raw["jpn_m3_yoy"], week_ending=week_ending, target_index=df.index)
 
     # Credit to private sector YoY (4-quarter pct_change on quarterly data)
     credit_private = df_raw["jpn_credit_private"].ffill()
     credit_yoy = credit_private.pct_change(4, fill_method=None) * 100
-    df["jpn_credit_yoy"] = align_series_to_weekly(
-        credit_yoy, week_ending=week_ending, target_index=df.index
-    )
+    df["jpn_credit_yoy"] = align_series_to_weekly(credit_yoy, week_ending=week_ending, target_index=df.index)
 
     return df
 
@@ -501,10 +519,7 @@ def build_components_table(df, latest_date, z_scores, contributions):
 
     for region_name, components in ALL_REGIONS:
         # Add region header row
-        table.add_row(
-            Text(f"── {region_name} ──", style="bold magenta"),
-            "", "", "", "", ""
-        )
+        table.add_row(Text(f"── {region_name} ──", style="bold magenta"), "", "", "", "", "")
 
         for comp in components:
             key = comp["key"]
@@ -754,17 +769,19 @@ def get_snapshot() -> dict:
             value = get_value_asof(df_weekly[key], latest_date)
             z_val = get_value_asof(z_scores.get(key, pd.Series()), latest_date)
             contrib = get_value_asof(contributions.get(key, pd.Series()), latest_date)
-            components.append({
-                "region": region_name,
-                "key": key,
-                "label": comp["label"],
-                "value": value,
-                "value_kind": comp["value_kind"],
-                "z_score": z_val,
-                "weight": comp["weight"],
-                "contribution": contrib,
-                "polarity": comp["polarity"],
-            })
+            components.append(
+                {
+                    "region": region_name,
+                    "key": key,
+                    "label": comp["label"],
+                    "value": value,
+                    "value_kind": comp["value_kind"],
+                    "z_score": z_val,
+                    "weight": comp["weight"],
+                    "contribution": contrib,
+                    "polarity": comp["polarity"],
+                }
+            )
 
     changes = {}
     change_series = [
@@ -790,7 +807,7 @@ def get_snapshot() -> dict:
         "composite_score": latest_score,
         "regime": regime,
         "regime_color": color,
-        "latest_date": latest_date.date() if hasattr(latest_date, 'date') else latest_date,
+        "latest_date": latest_date.date() if hasattr(latest_date, "date") else latest_date,
         "regional_scores": regional_latest,
         "components": components,
         "changes": changes,
@@ -800,6 +817,6 @@ def get_snapshot() -> dict:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

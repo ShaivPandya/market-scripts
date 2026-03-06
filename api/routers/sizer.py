@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -27,13 +28,13 @@ class SizerRequest(BaseModel):
 
 def _canonical_positions(req: SizerRequest) -> list[tuple[str, int]]:
     aggregated: dict[str, int] = {}
-    for idx, row in enumerate(req.positions):
+    for idx, row in enumerate(req.positions):  # noqa: B007
         ticker = str(row.ticker).strip().upper()
         conviction = int(row.conviction)
         if not ticker:
             continue
         if conviction < 1 or conviction > 5:
-            raise ValueError(f"Position '{ticker}' conviction must be 1–5, got {conviction}.")
+            raise ValueError(f"Position '{ticker}' conviction must be 1-5, got {conviction}.")
         # Take the max conviction for duplicate tickers
         aggregated[ticker] = max(aggregated.get(ticker, 0), conviction)
     if not aggregated:
@@ -146,7 +147,7 @@ def run_portfolio_sizer(req: SizerRequest):
     try:
         key = _cache_key(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     cached = get_cached(short_cache, key)
     if cached is not None:
@@ -155,9 +156,9 @@ def run_portfolio_sizer(req: SizerRequest):
     try:
         result = _compute_sizer_result(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="portfolio_sizer", detail=str(e)) from e
 
     set_cached(short_cache, key, result)
     return result
@@ -168,7 +169,7 @@ def start_portfolio_sizer(req: SizerRequest):
     try:
         key = _cache_key(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     cached = get_cached(short_cache, key)
     if cached is not None:
@@ -244,21 +245,21 @@ def get_sizer_prefill():
 
         deduped_rows: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for ticker, direction, conviction in zip(
-            tickers.tolist(), directions.tolist(), convictions.tolist()
-        ):
+        for ticker, direction, conviction in zip(tickers.tolist(), directions.tolist(), convictions.tolist()):  # noqa: B905
             if ticker and ticker not in seen:
                 seen.add(ticker)
-                deduped_rows.append({
-                    "ticker": ticker,
-                    "conviction": conviction,
-                    "direction": direction,
-                })
+                deduped_rows.append(
+                    {
+                        "ticker": ticker,
+                        "conviction": conviction,
+                        "direction": direction,
+                    }
+                )
 
         return {
             "positions": deduped_rows,
-            "source": str(PORTFOLIO_CSV),
+            "source": PORTFOLIO_CSV.name,
             "count": len(deduped_rows),
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="portfolio_sizer", detail=str(e)) from e

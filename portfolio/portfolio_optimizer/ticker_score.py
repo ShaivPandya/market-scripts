@@ -19,13 +19,13 @@ Usage:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -35,20 +35,20 @@ LOGGER = logging.getLogger(__name__)
 try:
     import yfinance as yf
 except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
-from equities.common import load_universe, list_universes, get_sp500_universe
-
 from signal_fetchers import (
+    compute_lookthrough_raw_metrics,
+    fetch_eps_momentum_batch,
+    fetch_etf_top_holdings_batch,
     fetch_price_momentum_batch,
     fetch_quality_batch,
-    fetch_eps_momentum_batch,
     fetch_revenue_momentum_batch,
-    fetch_etf_top_holdings_batch,
-    compute_lookthrough_raw_metrics,
 )
+
+from equities.common import get_sp500_universe, list_universes, load_universe
 
 # -----------------------------
 # Configuration
@@ -57,10 +57,10 @@ DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)
 DEFAULT_WEIGHTS = {
-    'quality': 0.33,
-    'price_momentum': 0.33,
-    'revenue_momentum': 0.20,
-    'eps_momentum': 0.14,
+    "quality": 0.33,
+    "price_momentum": 0.33,
+    "revenue_momentum": 0.20,
+    "eps_momentum": 0.14,
 }
 
 
@@ -94,9 +94,9 @@ def zscore_of_ranks(values: pd.Series) -> pd.Series:
 # -----------------------------
 # Price Fetching
 # -----------------------------
-def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
+def fetch_prices(tickers: list[str], years: int = 5) -> pd.DataFrame:
     """Download adjusted close prices for multiple tickers from yfinance."""
-    end = datetime.now(timezone.utc).date() + timedelta(days=1)
+    end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
     df = yf.download(
@@ -152,7 +152,7 @@ def select_benchmark_ticker(ticker: str) -> str:
 # -----------------------------
 # Signal Computation Functions
 # -----------------------------
-def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_quality_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """
     Compute quality z-scores from raw quality metrics.
     Returns (quality_signal, pillar_scores DataFrame).
@@ -189,7 +189,7 @@ def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFram
 
     z_metrics = oriented.apply(zscore_of_ranks, axis=0)
 
-    def pillar(cols: List[str]) -> pd.Series:
+    def pillar(cols: list[str]) -> pd.Series:
         available = [c for c in cols if c in z_metrics.columns]
         if not available:
             return pd.Series(np.nan, index=z_metrics.index)
@@ -200,11 +200,14 @@ def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFram
     growth = pillar(["dgpoa", "droe", "droa", "dcfoa", "dgmar"])
     safety = pillar(["bab", "lev", "zscore", "evol"])
 
-    pillars = pd.DataFrame({
-        "profitability": profitability,
-        "growth": growth,
-        "safety": safety,
-    }, index=df.index)
+    pillars = pd.DataFrame(
+        {
+            "profitability": profitability,
+            "growth": growth,
+            "safety": safety,
+        },
+        index=df.index,
+    )
 
     combo = profitability + growth + safety
     quality = zscore_of_ranks(combo)
@@ -212,7 +215,7 @@ def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFram
     return quality, pillars
 
 
-def compute_price_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_price_momentum_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """Compute price momentum z-scores from raw momentum metrics."""
     if raw_df.empty:
         return pd.Series(dtype="float64"), pd.DataFrame()
@@ -229,7 +232,7 @@ def compute_price_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.D
     return zscore_of_ranks(composite), z_metrics
 
 
-def compute_eps_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_eps_momentum_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """Compute EPS momentum z-scores from raw EPS metrics."""
     if raw_df.empty:
         return pd.Series(dtype="float64"), pd.DataFrame()
@@ -246,7 +249,7 @@ def compute_eps_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.Dat
     return zscore_of_ranks(composite), z_metrics
 
 
-def compute_revenue_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_revenue_momentum_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """Compute revenue momentum z-scores from raw revenue metrics."""
     if raw_df.empty:
         return pd.Series(dtype="float64"), pd.DataFrame()
@@ -267,9 +270,9 @@ def compute_revenue_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd
 # Signal Combination
 # -----------------------------
 def combine_signals(
-    signal_dict: Dict[str, pd.Series],
-    weights: Dict[str, float],
-    tickers: List[str],
+    signal_dict: dict[str, pd.Series],
+    weights: dict[str, float],
+    tickers: list[str],
 ) -> pd.Series:
     """Weighted combination of signals with dynamic weight adjustment for missing data."""
     signals_df = pd.DataFrame(signal_dict, index=tickers)
@@ -291,10 +294,7 @@ def combine_signals(
         weight_sum = sum(available_weights.values())
         normalized_weights = {k: v / weight_sum for k, v in available_weights.items()}
 
-        weighted_sum = sum(
-            normalized_weights[k] * available[k]
-            for k in normalized_weights.keys()
-        )
+        weighted_sum = sum(normalized_weights[k] * available[k] for k in normalized_weights.keys())
         composite[ticker] = weighted_sum
 
     return zscore_of_ranks(composite)
@@ -324,12 +324,12 @@ def display_ticker_scores(
     rev_mom: float,
     rev_mom_pct: float,
     rev_z_metrics: pd.Series,
-    weights: Dict[str, float],
+    weights: dict[str, float],
 ) -> None:
     """Display detailed scores for a single ticker."""
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"  {ticker} Composite Score")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     if pd.notna(composite):
         print(f"Composite:  {composite:+.2f} z-score | {composite_pct:.0f}th percentile")
@@ -337,28 +337,44 @@ def display_ticker_scores(
         print("Composite:  N/A")
 
     # Quality
-    print(f"\nQuality:        {quality:+.2f} (weight: {weights['quality']:.0%}) | {quality_pct:.0f}th pctl" if pd.notna(quality) else "\nQuality:        N/A")
+    print(
+        f"\nQuality:        {quality:+.2f} (weight: {weights['quality']:.0%}) | {quality_pct:.0f}th pctl"
+        if pd.notna(quality)
+        else "\nQuality:        N/A"
+    )
     if pd.notna(quality) and not quality_pillars.empty:
         for pillar, val in quality_pillars.items():
             if pd.notna(val):
                 print(f"  {pillar:14s}: {val:+.2f}")
 
     # Price Momentum
-    print(f"\nPrice Momentum: {price_mom:+.2f} (weight: {weights['price_momentum']:.0%}) | {price_mom_pct:.0f}th pctl" if pd.notna(price_mom) else "\nPrice Momentum: N/A")
+    print(
+        f"\nPrice Momentum: {price_mom:+.2f} (weight: {weights['price_momentum']:.0%}) | {price_mom_pct:.0f}th pctl"
+        if pd.notna(price_mom)
+        else "\nPrice Momentum: N/A"
+    )
     if pd.notna(price_mom) and not price_z_metrics.empty:
         for metric, val in price_z_metrics.items():
             if pd.notna(val):
                 print(f"  {metric:14s}: {val:+.2f}")
 
     # EPS Momentum
-    print(f"\nEPS Momentum:   {eps_mom:+.2f} (weight: {weights['eps_momentum']:.0%}) | {eps_mom_pct:.0f}th pctl" if pd.notna(eps_mom) else "\nEPS Momentum:   N/A")
+    print(
+        f"\nEPS Momentum:   {eps_mom:+.2f} (weight: {weights['eps_momentum']:.0%}) | {eps_mom_pct:.0f}th pctl"
+        if pd.notna(eps_mom)
+        else "\nEPS Momentum:   N/A"
+    )
     if pd.notna(eps_mom) and not eps_z_metrics.empty:
         for metric, val in eps_z_metrics.items():
             if pd.notna(val):
                 print(f"  {metric:14s}: {val:+.2f}")
 
     # Revenue Momentum
-    print(f"\nRev Momentum:   {rev_mom:+.2f} (weight: {weights['revenue_momentum']:.0%}) | {rev_mom_pct:.0f}th pctl" if pd.notna(rev_mom) else "\nRev Momentum:   N/A")
+    print(
+        f"\nRev Momentum:   {rev_mom:+.2f} (weight: {weights['revenue_momentum']:.0%}) | {rev_mom_pct:.0f}th pctl"
+        if pd.notna(rev_mom)
+        else "\nRev Momentum:   N/A"
+    )
     if pd.notna(rev_mom) and not rev_z_metrics.empty:
         for metric, val in rev_z_metrics.items():
             if pd.notna(val):
@@ -411,7 +427,7 @@ def main() -> int:
         return 0
 
     # Parse target tickers
-    target_tickers = [t.strip().upper() for t in args.tickers.split(',')]
+    target_tickers = [t.strip().upper() for t in args.tickers.split(",")]
 
     # Load universe
     print(f"Loading universe: {args.universe}...")
@@ -429,17 +445,19 @@ def main() -> int:
     if args.max_universe and args.max_universe > 0:
         # Keep targets at front
         universe = target_tickers + [t for t in universe if t not in target_tickers]
-        universe = universe[:args.max_universe]
+        universe = universe[: args.max_universe]
 
     print(f"Universe size: {len(universe)} tickers")
     print(f"Target ticker(s): {', '.join(target_tickers)}")
 
     weights = DEFAULT_WEIGHTS.copy()
-    print(f"Weights: Quality={weights['quality']:.0%}, Price={weights['price_momentum']:.0%}, "
-          f"Revenue={weights['revenue_momentum']:.0%}, EPS={weights['eps_momentum']:.0%}")
+    print(
+        f"Weights: Quality={weights['quality']:.0%}, Price={weights['price_momentum']:.0%}, "
+        f"Revenue={weights['revenue_momentum']:.0%}, EPS={weights['eps_momentum']:.0%}"
+    )
 
     # Determine benchmarks
-    ticker_benchmarks: Dict[str, str] = {}
+    ticker_benchmarks: dict[str, str] = {}
     if args.benchmark:
         print(f"\nUsing benchmark override: {args.benchmark}")
         for ticker in universe:
@@ -478,7 +496,8 @@ def main() -> int:
 
     # ETF look-through fundamentals (top holdings) for target tickers that lack direct fundamentals.
     etf_candidates = [
-        t for t in target_tickers
+        t
+        for t in target_tickers
         if (quality_raw is None or t not in quality_raw.index)
         or (eps_raw is None or t not in eps_raw.index)
         or (rev_raw is None or t not in rev_raw.index)
@@ -521,10 +540,10 @@ def main() -> int:
 
     # Combine signals
     signal_dict = {
-        'quality': quality_signal,
-        'eps_momentum': eps_signal,
-        'revenue_momentum': rev_signal,
-        'price_momentum': price_signal,
+        "quality": quality_signal,
+        "eps_momentum": eps_signal,
+        "revenue_momentum": rev_signal,
+        "price_momentum": price_signal,
     }
     composite_signal = combine_signals(signal_dict, weights, universe)
     composite_signal = clip_signal(composite_signal, *CLIP_BOUNDS)
@@ -556,11 +575,11 @@ def main() -> int:
             weights=weights,
         )
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     return 0
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     raise SystemExit(main())

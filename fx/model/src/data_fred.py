@@ -1,18 +1,22 @@
 import os
 from pathlib import Path
-import requests
+
 import pandas as pd
+import requests
 
 FRED_ENDPOINT = "https://api.stlouisfed.org/fred/series/observations"
 
+
 class FredError(RuntimeError):
     pass
+
 
 def _fred_api_key():
     key = os.getenv("FRED_API_KEY")
     if not key:
         raise FredError("Missing FRED_API_KEY. Set it in your environment or in a .env file.")
     return key
+
 
 def fetch_fred_series(series_id: str, start: str, cache_dir: Path, refresh: bool = False) -> pd.Series:
     # Fetch a FRED series as a pandas Series with DatetimeIndex. Cache raw observations to CSV.

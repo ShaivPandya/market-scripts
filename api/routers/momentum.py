@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException
-from api.cache import short_cache, get_cached, set_cached
+from fastapi import APIRouter
+
+from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -13,13 +15,15 @@ def get_momentum():
         return cached
     try:
         from momentum import get_data
+
         data = get_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="momentum", detail=str(e)) from e
 
     result = {}
     for k, v in data.items():
         import pandas as pd
+
         if isinstance(v, pd.DataFrame):
             result[k] = serialize_dataframe(v.reset_index())
         else:

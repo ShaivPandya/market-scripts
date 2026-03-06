@@ -1,0 +1,719 @@
+from operator import attrgetter
+from typing import cast
+
+import pytest
+
+import sdmx
+import sdmx.message
+from sdmx.model import common, v21
+from sdmx.model import v21 as model
+from sdmx.model.common import (
+    AttributeValue,
+    Code,
+    Dimension,
+    DimensionDescriptor,
+    Key,
+    KeyValue,
+)
+from sdmx.model.v21 import (
+    Annotation,
+    AttributeDescriptor,
+    Codelist,
+    Component,
+    ComponentList,
+    ComponentValue,
+    Constraint,
+    ConstraintRole,
+    ConstraintRoleType,
+    ContentConstraint,
+    CubeRegion,
+    DataAttribute,
+    DataflowDefinition,
+    DataKey,
+    DataKeySet,
+    DataSet,
+    DataStructureDefinition,
+    GroupKey,
+    MemberSelection,
+    MemberValue,
+    Observation,
+    TargetObjectKey,
+    TextAttributeValue,
+    value_for_dsd_ref,
+)
+from sdmx.testing import CompareTests
+
+
+class TestAnnotation:
+    def test_value(self) -> None:
+        a0 = Annotation()
+
+        # Value defaults None
+        assert None is a0.value
+
+        # Value cannot be set
+        with pytest.raises(AttributeError):
+            a0.value = "foo"  # type: ignore [misc]
+
+
+class TestComponent:
+    def test_contains(self):
+        c = Component()
+
+        with pytest.raises(TypeError):
+            "foo" in c
+
+
+class TestComponentList:
+    @pytest.fixture(scope="function")
+    def cl(self):
+        # Use concrete class to test abstract parent class ComponentList
+        return DimensionDescriptor()
+
+    @pytest.fixture(scope="function")
+    def components(self):
+        return [Dimension(id="C1"), Dimension(id="C2"), Dimension(id="C3")]
+
+    def test_append(self, cl: ComponentList, components: list[Dimension]) -> None:
+        # Components have no order
+        assert (None, None, None) == tuple(map(attrgetter("order"), components))
+
+        cl.append(components[2])
+        cl.append(components[1])
+        cl.append(components[0])
+
+        # Order is assigned to components when they are added
+        assert 1 == components[2].order
+        assert 2 == components[1].order
+        assert 3 == components[0].order
+
+    def test_getdefault(self, cl) -> None:
+        ad = AttributeDescriptor()
+        foo = ad.getdefault("FOO")
+        assert isinstance(foo, DataAttribute)
+        assert not hasattr(foo, "order")
+
+    def test_extend_no_order(
+        self, cl: ComponentList, components: list[Dimension]
+    ) -> None:
+        cl.extend(components)
+
+        # extend() also adds order
+        assert (1, 2, 3) == tuple(map(attrgetter("order"), components))
+
+    def test_extend_order(self, cl: ComponentList, components: list[Dimension]) -> None:
+        components[2].order = 1
+        components[1].order = 2
+        components[0].order = 3
+
+        cl.extend(components)
+
+        # Order is not altered
+        assert (3, 2, 1) == tuple(map(attrgetter("order"), components))
+
+    def test_repr(self, cl) -> None:
+        assert "<ComponentList: >" == repr(ComponentList(id="Foo"))
+
+
+class TestCode:
+    @pytest.fixture
+    def c(self) -> Code:
+        return Code(id="FOO", name=("en", "Foo"))
+
+    def test_id(self) -> None:
+        with pytest.raises(TypeError, match="got int"):
+            Code(id=1)  # type: ignore [arg-type]
+
+    def test_hash(self, c):
+        s = set([c])
+        s.add(c)
+
+        assert 1 == len(s)
+
+    def test_name(self, c) -> None:
+        assert "Foo" == c.name.localizations["en"]
+
+    def test_str(self, c) -> None:
+        assert "FOO" == str(c) == f"{c}"
+
+    def test_repr(self, c) -> None:
+        assert "<Code FOO: Foo>" == repr(c)
+
+
+class TestDataKeySet:
+    @pytest.fixture
+    def dks(self):
+        return DataKeySet(included=True)
+
+    def test_len(self, dks):
+        """__len__() works."""
+        assert 0 == len(dks)
+
+
+class TestConstraint:
+    def test_contains(self):
+        c = Constraint(role=ConstraintRole(role=ConstraintRoleType["allowable"]))
+        d = Dimension(id="FOO")
+        kv = KeyValue(value_for=d, id="FOO", value=1)
+        key = Key([kv])
+
+        with pytest.raises(
+            NotImplementedError, match="Constraint does not contain a DataKeySet"
+        ):
+            key in c
+
+        # Add an empty DKS
+        c.data_content_keys = DataKeySet(included=True)
+
+        # Empty DKS does not contain `key`
+        assert (key in c) is False
+
+        # Add a matching DataKey to the DKS
+        c.data_content_keys.keys.append(
+            DataKey(included=True, key_value={d: ComponentValue(value_for=d, value=1)})
+        )
+
+        # __contains__() returns True
+        assert (key in c) is True
+
+
+class TestMemberValue:
+    def test_repr(self):
+        mv = MemberValue(value="foo")
+        assert "'foo'" == repr(mv)
+        mv.cascade_values = True
+        assert "'foo' + children" == repr(mv)
+
+
+class TestMemberSelection:
+    def test_repr(self):
+        ms = MemberSelection(
+            values_for=Component(id="FOO"),
+            values=[
+                MemberValue(value="foo0", cascade_values=True),
+                MemberValue(value="foo1"),
+            ],
+        )
+        assert "<MemberSelection FOO in {'foo0' + children, 'foo1'}>" == repr(ms)
+        ms.included = False
+        ms.values.pop(0)
+        assert "<MemberSelection FOO not in {'foo1'}>" == repr(ms)
+
+
+class TestCubeRegion:
+    def test_contains(self):
+        FOO = Dimension(id="FOO")
+
+        cr = CubeRegion()
+        cr.member[FOO] = MemberSelection(
+            values_for=FOO, values=[MemberValue(value="1")]
+        )
+
+        # KeyValue, but no value_for to associate with a particular Dimension
+        kv = KeyValue(id="FOO", value="1")
+        # __contains__() returns False
+        assert (kv in cr) is False
+
+        # Containment works with value_for
+        kv.value_for = FOO
+        assert (kv in cr) is True
+
+    def test_contains_excluded(self):
+        # Two dimensions
+        FOO = Dimension(id="FOO")
+        BAR = Dimension(id="BAR")
+
+        # A CubeRegion that *excludes* only FOO=1, BAR=A
+        cr = CubeRegion(included=False)
+        cr.member[FOO] = MemberSelection(
+            values_for=FOO, values=[MemberValue(value="1")]
+        )
+        cr.member[BAR] = MemberSelection(
+            values_for=BAR, values=[MemberValue(value="A")]
+        )
+
+        # Targeted key(s) are excluded
+        assert (Key(FOO="1", BAR="A") in cr) is False
+
+        # Key with more dimensions but fully within this reason
+        assert (Key(FOO="1", BAR="A", BAZ=3) in cr) is False
+
+        # Other key(s) that intersect only partly with the region are not excluded
+        assert (Key(FOO="1", BAR="B") in cr) is True
+        assert (Key(FOO="2", BAR="A", BAZ=3) in cr) is True
+
+        # KeyValues for a subset of the dimensions cannot be excluded, because it
+        # cannot be determined if they are fully within the region
+        assert (KeyValue(value_for=FOO, id="FOO", value="1") in cr) is True
+
+        # KeyValues not associated with a dimension cannot be excluded
+        assert (KeyValue(value_for=None, id="BAR", value="A") in cr) is True
+
+        # New MemberSelections with included=False. This is a CubeRegion that excludes
+        # all values where FOO is other than "1" *and* BAR is other than "A".
+        cr.member[FOO] = MemberSelection(
+            included=False, values_for=FOO, values=[MemberValue(value="1")]
+        )
+        cr.member[BAR] = MemberSelection(
+            included=False, values_for=BAR, values=[MemberValue(value="A")]
+        )
+
+        # FOO is other than 1, BAR is other than A → excluded
+        assert (Key(FOO="2", BAR="B") in cr) is False
+
+        # Other combinations → not excluded
+        assert (Key(FOO="1", BAR="A") in cr) is True
+        assert (Key(FOO="1", BAR="B") in cr) is True
+        assert (Key(FOO="2", BAR="A") in cr) is True
+
+    def test_repr(self):
+        FOO = Dimension(id="FOO")
+
+        cr = CubeRegion()
+        cr.member[FOO] = MemberSelection(
+            values_for=FOO, values=[MemberValue(value="1")]
+        )
+
+        assert "<CubeRegion include <MemberSelection FOO in {'1'}>>" == repr(cr)
+        cr.included = False
+        assert "<CubeRegion exclude <MemberSelection FOO in {'1'}>>" == repr(cr)
+
+
+class TestContentConstraint:
+    @pytest.fixture
+    def dsd(self) -> DataStructureDefinition:
+        return DataStructureDefinition()
+
+    def test_role(self) -> None:
+        crole = ConstraintRole(role=ConstraintRoleType["allowable"])
+        cr = ContentConstraint(role=crole)
+        cr.content = {DataflowDefinition()}
+        cr.data_content_region.append(CubeRegion(included=True, member={}))
+
+    def test_contains(self) -> None:
+        cc = ContentConstraint()
+
+        with pytest.raises(NotImplementedError):
+            "foo" in cc
+
+    def test_to_query_string(self, caplog, dsd) -> None:
+        cc = ContentConstraint(
+            role=ConstraintRole(role=ConstraintRoleType["allowable"])
+        )
+
+        with pytest.raises(RuntimeError, match="does not contain"):
+            cc.to_query_string(dsd)
+
+        cc.data_content_region.extend([CubeRegion(), CubeRegion()])
+
+        cc.to_query_string(dsd)
+
+        assert "first of 2 CubeRegions" in caplog.messages[-1]
+
+
+class TestDataAttribute:
+    def test_hash(self):
+        cl = [DataAttribute(id="FOO"), DataAttribute(id="BAR")]
+        print(cl[0].__eq__)
+        print(f"{'FOO' == cl[0] = }")
+        assert "FOO" in cl
+        assert "BAZ" not in cl
+
+
+class TestDimension:
+    def test_init(self):
+        # Constructor
+        Dimension(id="CURRENCY", order=0)
+
+    def test_hash(self):
+        d = Dimension(id="CURRENCY")
+        assert hash("CURRENCY") == hash(d)
+
+
+class TestDimensionDescriptor:
+    def test_from_key(self):
+        # from_key()
+        key1 = Key(foo=1, bar=2, baz=3)
+        dd = DimensionDescriptor.from_key(key1)
+
+        # Key in reverse order
+        key2 = Key(baz=3, bar=2, foo=1)
+        assert list(key1.values.keys()) == list(reversed(list(key2.values.keys())))
+        key3 = dd.order_key(key2)
+        assert list(key1.values.keys()) == list(key3.values.keys())
+
+
+class TestDataStructureDefinition:
+    def test_general(self):
+        dsd = DataStructureDefinition()
+
+        # Convenience methods
+        da = dsd.attributes.getdefault(id="foo")
+        assert isinstance(da, DataAttribute)
+
+        d = dsd.dimensions.getdefault(id="baz", order=-1)
+        assert isinstance(d, Dimension)
+
+        # make_key(GroupKey, ..., extend=True, group_id=None)
+        gk = dsd.make_key(GroupKey, dict(foo=1, bar=2), extend=True, group_id=None)
+
+        # … does not create a GroupDimensionDescriptor (anonymous group)
+        assert gk.described_by is None
+        assert len(dsd.group_dimensions) == 0
+
+        # But does create the 'bar' dimension
+        assert "bar" in dsd.dimensions
+
+        # make_key(..., group_id=...) creates a GroupDimensionDescriptor
+        gk = dsd.make_key(GroupKey, dict(foo=1, baz2=4), extend=True, group_id="g1")
+        assert gk.described_by is dsd.group_dimensions["g1"]
+        assert len(dsd.group_dimensions) == 1
+
+        # …also creates the "baz2" dimension and adds it to the GDD
+        assert dsd.dimensions.get("baz2") is dsd.group_dimensions["g1"].get("baz2")
+
+        # from_keys()
+        key1 = Key(foo=1, bar=2, baz=3)
+        key2 = Key(foo=4, bar=5, baz=6)
+        DataStructureDefinition.from_keys([key1, key2])
+
+    @pytest.fixture
+    def dsd(self) -> DataStructureDefinition:
+        return DataStructureDefinition.from_keys(
+            [Key(foo=1, bar=2, baz=3), Key(foo=4, bar=5, baz=6)]
+        )
+
+    def test_iter_keys(self, caplog, dsd):
+        keys0 = list(dsd.iter_keys())
+        assert all(isinstance(k, Key) for k in keys0)
+        assert 2**3 == len(keys0)
+
+        # Iterate over only some dimensions
+        keys1 = list(dsd.iter_keys(dims=["foo"]))
+        assert 2 == len(keys1)
+        assert "<Key: foo=1, bar=(bar), baz=(baz)>" == repr(keys1[0])
+
+        # Create a ContentConstraint (containing a single CubeRegion(included=True))
+        cc0 = dsd.make_constraint(dict(foo="1", bar="2+5", baz="3+6"))
+
+        # Resulting Keys have only "1" for the "foo" dimension
+        keys2 = list(dsd.iter_keys(constraint=cc0))
+        assert 1 * 2**2 == len(keys2)
+
+        # Use make_constraint() to create & modify a different CubeRegion
+        cc1 = dsd.make_constraint(dict(baz="6"))
+        cr = cc1.data_content_region[0]
+        # Exclude this region
+        cr.included = False
+
+        # Add to `cc0` so that there are two CubeRegions
+        cc0.data_content_region.append(cr)
+
+        # Resulting keys have only "1" for the "foo" dimension, and not "6" for the
+        # "baz" dimension
+        keys3 = list(dsd.iter_keys(constraint=cc0))
+        assert 1 * 2 * 1 == len(keys3)
+
+        # Call ContentConstraint.iter_keys()
+
+        # Message is logged
+        assert 1 * 2 * 1 == len(list(cc0.iter_keys(dsd)))
+        assert (
+            "<DataStructureDefinition (missing id)> is not in "
+            "<ContentConstraint (missing id)>.content" in caplog.messages
+        )
+        caplog.clear()
+
+        # Add the DSD to the content referenced by the ContentConstraint
+        cc0.content.add(dsd)
+        assert 1 * 2 * 1 == len(list(cc0.iter_keys(dsd)))
+        assert 0 == len(caplog.messages)
+
+        # Call DataflowDefinition.iter_keys()
+        dfd = DataflowDefinition(structure=dsd)
+        keys4 = list(dfd.iter_keys(constraint=cc0))
+        assert 1 * 2 * 1 == len(keys4)
+
+    def test_make_constraint(self, dsd) -> None:
+        # Create a ContentConstraint (containing a single CubeRegion(included=True))
+        with pytest.raises(ValueError):
+            dsd.make_constraint(dict(foo="1", bar="2+5", qux="7"))
+
+    def test_make_key(self, dsd) -> None:
+        with pytest.raises(KeyError):
+            dsd.make_key(GroupKey, None, group_id="FOO")
+
+    def test_value_for_dsd_ref(self, dsd) -> None:
+        kwargs = dict(dsd=dsd, value_for="foo")
+        _, result_kw = value_for_dsd_ref("dimension", tuple(), kwargs)
+        assert dsd.dimensions.get("foo") is result_kw["value_for"]
+
+        _, result_kw = value_for_dsd_ref("dimension", tuple(), kwargs)
+        assert kwargs == result_kw
+
+
+class TestObservation(CompareTests):
+    @pytest.fixture
+    def obj(self) -> v21.Observation:
+        return v21.Observation(
+            attached_attribute={"FOO": common.AttributeValue(value="f1")},
+            dimension=common.Key(BAR="b1"),
+            group_keys={common.GroupKey(id="g1")},
+            series_key=common.SeriesKey(),
+            value=1.0,
+            value_for=v21.PrimaryMeasure(id="m1"),
+        )
+
+    def test_compare(self, obj: v21.Observation, callback=None) -> None:
+        """:py:`compare(…)` is :any:`False` when .value_for is changed.
+
+        For other attributes, see test_common.TestBaseObservation.test_compare.
+        """
+        super().test_compare(
+            obj, lambda obs: setattr(obs, "value_for", v21.PrimaryMeasure(id="m2"))
+        )
+
+    def test_str(self) -> None:
+        obs = Observation(value=3.4, dimension=Key(FOO="bar", BAZ="qux"))
+
+        assert "(FOO=bar, BAZ=qux): 3.4" == str(obs)
+
+    def test_others(self):
+        obs = Observation()
+
+        av = AttributeValue
+
+        # Set by item name
+        obs.attached_attribute["TIME_PERIOD"] = av(3)
+        # NB the following does not work; see Observation.attrib()
+        # obs.attrib['TIME_PERIOD'] = 3
+
+        obs.attached_attribute["CURRENCY"] = av("USD")
+
+        # Access by attribute name
+        assert obs.attrib.TIME_PERIOD == 3
+        assert obs.attrib.CURRENCY == "USD"
+
+        # Access by item index
+        assert obs.attrib[1] == "USD"
+
+        # Add attributes
+        obs.attached_attribute["FOO"] = av("1")
+        obs.attached_attribute["BAR"] = av("2")
+        assert obs.attrib.FOO == "1" and obs.attrib["BAR"] == "2"
+
+        # Using classes
+        da = DataAttribute(id="FOO")
+        av = AttributeValue(value_for=da, value="baz")
+        obs.attached_attribute[da.id] = av
+        assert obs.attrib[da.id] == "baz"
+
+
+class TestDataSet:
+    def test_init(self):
+        # Enumeration values can be used to initialize
+        from sdmx.model.v21 import ActionType
+
+        ds0 = DataSet(action=ActionType["information"])
+
+        # String can be used to initialize
+        ds1 = DataSet(action="information")
+
+        assert ds0.action == ds1.action
+
+
+class TestReportedAttribute:
+    @pytest.fixture
+    def ra(self) -> v21.ReportedAttribute:
+        mda1 = common.MetadataAttribute(id="FOO")
+        mda2 = common.MetadataAttribute(id="BAR")
+        return v21.ReportedAttribute(
+            value_for=mda1,
+            child=[v21.OtherNonEnumeratedAttributeValue(value_for=mda2, value="baz")],
+        )
+
+    def test_get_child(self, ra: v21.ReportedAttribute) -> None:
+        # Child can be retrieved by MetadataAttribute instance
+        mda = common.MetadataAttribute(id="BAR")
+        result1 = ra.get_child(mda)
+        assert result1 is not None and "baz" == result1.value
+
+        # Child can be retrieved by MetadataAttribute.id
+        result2 = ra.get_child(mda.id)
+        assert result2 is not None and "baz" == result2.value
+
+        # Retrieval with an ID not among the children gives None
+        mda = common.MetadataAttribute(id="QUX")
+        assert None is ra.get_child(mda) is ra.get_child(mda.id)
+
+
+class TestMetadataReport:
+    @pytest.fixture
+    def mdr(self) -> v21.MetadataReport:
+        ra1 = v21.OtherNonEnumeratedAttributeValue(
+            value_for=common.MetadataAttribute(id="FOO"),
+            value="foo value",
+            child=[
+                v21.TextAttributeValue(
+                    value_for=common.MetadataAttribute(id="QUX"),
+                    text={"en": "qux value", "fr": "value du qux"},
+                )
+            ],
+        )
+        ra2 = v21.OtherNonEnumeratedAttributeValue(
+            value_for=common.MetadataAttribute(id="BAR"),
+            value="bar value",
+            child=[
+                v21.OtherNonEnumeratedAttributeValue(
+                    value_for=common.MetadataAttribute(id="BAZ"), value="baz value"
+                )
+            ],
+        )
+        return v21.MetadataReport(metadata=[ra1, ra2])
+
+    def test_get(self, mdr: v21.MetadataReport) -> None:
+        # Top-level can be retrieved by MetadataAttribute instance
+        mda1 = common.MetadataAttribute(id="FOO")
+        result1 = mdr.get(mda1)
+        assert "foo value" == result1.value
+
+        # … by MetadataAttribute.id
+        result2 = mdr.get(mda1.id)
+        assert "foo value" == result2.value
+
+        # Child can be retrieved by MetadataAttribute instance
+        mda2 = common.MetadataAttribute(id="BAZ")
+        result3 = mdr.get(mda2)
+        assert "baz value" == result3.value
+
+        # … by MetadataAttribute.id
+        result4 = mdr.get(mda2.id)
+        assert "baz value" == result4.value
+
+        # Retrieval with an ID not among the ReportedAttributes raises KeyError
+        mda3 = common.MetadataAttribute(id="ZZZ")
+        with pytest.raises(KeyError):
+            mdr.get(mda3)
+        with pytest.raises(KeyError):
+            mdr.get(mda3.id)
+
+    def test_get_value(self, mdr: v21.MetadataReport) -> None:
+        # Top-level can be retrieved by MetadataAttribute instance
+        mda1 = common.MetadataAttribute(id="FOO")
+        assert "foo value" == mdr.get_value(mda1) == mdr.get_value(mda1.id)
+
+        # Child can be retrieved by MetadataAttribute instance
+        mda2 = common.MetadataAttribute(id="BAZ")
+        assert "baz value" == mdr.get_value(mda2) == mdr.get_value(mda2.id)
+
+        # InternationalString value can be retrieved
+        mda3 = common.MetadataAttribute(id="QUX")
+        result3a = mdr.get_value(mda3)
+        result3b = mdr.get_value(mda3.id)
+        assert (
+            isinstance(result3a, common.InternationalString)
+            and isinstance(result3b, common.InternationalString)
+            and (
+                {"en": "qux value", "fr": "value du qux"}
+                == result3a.localizations
+                == result3b.localizations
+            )
+        )
+
+        # Retrieval with an ID not among the ReportedAttributes raises KeyError
+        mda4 = common.MetadataAttribute(id="ZZZ")
+        with pytest.raises(KeyError):
+            mdr.get_value(mda4)
+        with pytest.raises(KeyError):
+            mdr.get_value(mda4.id)
+
+
+class TestMetadataSet:
+    @pytest.fixture(scope="class")
+    def msg(self, specimen) -> sdmx.message.MetadataMessage:
+        with specimen("esms_generic.xml") as f:
+            return cast(sdmx.message.MetadataMessage, sdmx.read_sdmx(f))
+
+    def test_report_hierarchy(self, msg: sdmx.message.MetadataMessage) -> None:
+        # Access message → metadata set → report
+        r = msg.data[0].report[0]
+
+        # Number of top-level ReportedAttribute
+        assert 3 == len(r.metadata)
+        # Number of ReportedAttribute in tree branches
+        assert 4 == len(r.metadata[0])
+        assert 0 == len(r.metadata[0][0])
+        assert 4 == len(r.metadata[0][2])
+        assert 0 == len(r.metadata[0][2][0])
+        assert 3 == len(r.metadata[1])
+        assert 1 == len(r.metadata[2])
+
+
+class TestHierarchicalCodelist:
+    @pytest.fixture(scope="class")
+    def msg(self, specimen):
+        with specimen("BIS/hierarchicalcodelist-0.xml") as f:
+            return sdmx.read_sdmx(f)
+
+    @pytest.fixture(scope="class")
+    def obj(self, msg) -> model.HierarchicalCodelist:
+        return msg.hierarchical_codelist["BIS:HCL_COUNTRY(1.0)"]
+
+    def test_hierarchy(self, msg: sdmx.message.StructureMessage) -> None:
+        for key, hcl in msg.hierarchical_codelist.items():
+            assert 1 == len(hcl.hierarchy)
+            # print(f"{hcl = }")
+
+        hcl = msg.hierarchical_codelist["BIS:HCL_COUNTRY(1.0)"]
+
+        # Access a Hierarchy
+        h = hcl.hierarchy[0]
+        assert "HIERARCHY_COUNTRY" == h.id
+        assert False is h.has_formal_levels
+        assert 2 == len(h.codes)
+
+        c1 = h.codes["1"]
+        c2 = h.codes["2"]
+
+        assert 4 == len(c1.child)
+
+        assert 56 == len(c2.child)
+        # HierarchicalCode has a `code` attribute
+        assert isinstance(c2.code, Code)
+        assert "OC" == c2.code
+
+        # This Code is contained within a code list
+        assert isinstance(c2.code.parent, Codelist)
+        assert c2.code.parent.urn.endswith("Codelist=BIS:CL_WEBSTATS_CODES(1.0)")
+
+        # The code has a child associated with a different code list
+        c3 = c2.child[0]
+        assert "6J" == c3.code
+        assert c3.code and c3.code.parent and c3.code.parent.urn
+        assert c3.code.parent.urn.endswith("Codelist=BIS:CL_BIS_IF_REF_AREA(1.0)")
+
+    def test_repr(self, obj: model.HierarchicalCodelist):
+        assert "<HierarchicalCodelist HCL_COUNTRY: 1 hierarchies>" == repr(obj)
+
+
+class TestTargetObjectKey:
+    def test_getitem(self) -> None:
+        """:meth:`TargetObjectKey.__getitem__` works."""
+        to = v21.TargetObject(id="FOO")
+        c = Code(id="BAR")
+        tok = TargetObjectKey(
+            key_values={"FOO": v21.TargetIdentifiableObject(value_for=to, obj=c)}
+        )
+
+        assert tok["FOO"].obj is c  # type: ignore [attr-defined]
+
+
+class TestTextAttributeValue:
+    def test_value_attr(self) -> None:
+        av = TextAttributeValue(
+            text={"en": "foo", "fr": "bar"}, value_for=v21.MetadataAttribute()
+        )
+
+        assert "en: foo\nfr: bar" == repr(av.text)
+        # Value can also be accessed via .value
+        assert "en: foo\nfr: bar" == repr(av.value)

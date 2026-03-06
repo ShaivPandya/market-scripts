@@ -26,21 +26,20 @@ import argparse
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional  # noqa: UP035
 
 import pandas as pd
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import load_universe, list_universes, get_sp500_universe, clean_ticker
-
-from quality_single import fetch_raw_metrics, compute_scores, RawMetrics
+from common import clean_ticker, get_sp500_universe, list_universes, load_universe
+from quality_single import RawMetrics, compute_scores, fetch_raw_metrics
 
 
 def _build_universe(
-    tickers: List[str],
-    benchmark: Optional[str],
-) -> tuple[List[str], List[str], str]:
+    tickers: list[str],
+    benchmark: str | None,
+) -> tuple[list[str], list[str], str]:
     """
     Build the full scoring universe from input tickers + benchmark.
 
@@ -66,7 +65,7 @@ def _build_universe(
 
 
 def get_data(
-    tickers: List[str],
+    tickers: list[str],
     benchmark: str = "sp500",
     market: str = "SPY",
     growth_years: int = 5,
@@ -92,14 +91,12 @@ def get_data(
         return {"error": "No tickers provided"}
 
     try:
-        scoring_universe, input_tickers, benchmark_name = _build_universe(
-            tickers, benchmark
-        )
+        scoring_universe, input_tickers, benchmark_name = _build_universe(tickers, benchmark)
     except Exception as e:
         return {"error": f"Failed to build universe: {e}"}
 
     # Fetch raw metrics for the full scoring universe (parallelized)
-    raws: Dict[str, RawMetrics] = {}
+    raws: dict[str, RawMetrics] = {}
     failed = []
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -190,9 +187,7 @@ def main():
         action="store_true",
         help="List available universe files and exit",
     )
-    ap.add_argument(
-        "--market", default="SPY", help="Market proxy for beta (default: SPY)"
-    )
+    ap.add_argument("--market", default="SPY", help="Market proxy for beta (default: SPY)")
     ap.add_argument(
         "--growth_years",
         type=int,
@@ -205,9 +200,7 @@ def main():
         default=3.0,
         help="Beta lookback in years (default: 3)",
     )
-    ap.add_argument(
-        "--out_csv", default="", help="Optional path to save full results as CSV"
-    )
+    ap.add_argument("--out_csv", default="", help="Optional path to save full results as CSV")
     args = ap.parse_args()
 
     if args.list_universes:
@@ -230,9 +223,7 @@ def main():
         tickers = [t.upper().strip() for t in args.tickers]
         print(f"Scoring {len(tickers)} ticker(s): {', '.join(tickers)}")
     else:
-        ap.error(
-            "Provide tickers as arguments or use --universe. Use --list-universes to see options."
-        )
+        ap.error("Provide tickers as arguments or use --universe. Use --list-universes to see options.")
 
     benchmark = args.benchmark
     print(f"Benchmark: {benchmark}")
@@ -258,8 +249,10 @@ def main():
     results_df = result["results_df"]
     failed = result["failed"]
 
-    print(f"\nScored {len(results_df)} tickers against {result['benchmark_name']} "
-          f"({result['scored_count']}/{result['universe_size']} universe tickers succeeded)")
+    print(
+        f"\nScored {len(results_df)} tickers against {result['benchmark_name']} "
+        f"({result['scored_count']}/{result['universe_size']} universe tickers succeeded)"
+    )
 
     if failed:
         print(f"Failed input tickers: {', '.join(failed)}")
@@ -268,16 +261,13 @@ def main():
     print("\n" + "=" * 80)
     print("QUALITY RANKING")
     print("=" * 80)
-    print(
-        f"{'Rank':<6}{'Ticker':<10}{'Quality':>10}{'Pctl':>8}"
-        f"{'Profit':>10}{'Growth':>10}{'Safety':>10}"
-    )
+    print(f"{'Rank':<6}{'Ticker':<10}{'Quality':>10}{'Pctl':>8}{'Profit':>10}{'Growth':>10}{'Safety':>10}")
     print("-" * 80)
 
     for rank, (ticker, row) in enumerate(results_df.iterrows(), 1):
         pctl = row.get("quality_pct", 0)
         print(
-            f"{rank:<6}{ticker:<10}{row['quality']:>10.3f}{pctl*100:>7.1f}%"
+            f"{rank:<6}{ticker:<10}{row['quality']:>10.3f}{pctl * 100:>7.1f}%"
             f"{row['profitability']:>10.3f}{row['growth']:>10.3f}{row['safety']:>10.3f}"
         )
 

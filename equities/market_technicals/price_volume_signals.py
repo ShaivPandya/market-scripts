@@ -17,15 +17,16 @@ Run:
 """
 
 from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
 try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.text import Text
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
 except ImportError:
     Console = None
 
@@ -39,9 +40,9 @@ except ImportError as e:
 
 # ANSI color codes
 class Color:
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    RESET = '\033[0m'
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    RESET = "\033[0m"
 
 
 def colorize_retpct(value: float) -> str:
@@ -171,19 +172,19 @@ def render_hits_tables(hits_df: pd.DataFrame) -> None:
 START_DATE = "2000-01-01"
 
 # downside + volume extreme
-LOOKBACK_DAYS = 252          # rolling "record" window
-MIN_DOWN_PCT = 0.0           # require down day (<= 0). Set e.g. -2.0 for -2% threshold.
+LOOKBACK_DAYS = 252  # rolling "record" window
+MIN_DOWN_PCT = 0.0  # require down day (<= 0). Set e.g. -2.0 for -2% threshold.
 
 # new high on low volume
-NEW_HIGH_LOOKBACK = 252      # define "new high" vs rolling max close
-LOWVOL_LOOKBACK = 50         # baseline for volume
-LOWVOL_MAX_RATIO = 0.80      # volume <= 80% of rolling avg volume => "low volume" high
+NEW_HIGH_LOOKBACK = 252  # define "new high" vs rolling max close
+LOWVOL_LOOKBACK = 50  # baseline for volume
+LOWVOL_MAX_RATIO = 0.80  # volume <= 80% of rolling avg volume => "low volume" high
 
 # high-volume churn / distribution-like action
-CHURN_WINDOW = 5             # "several days"
-CHURN_MIN_HIVOL_DAYS = 3     # within window, at least this many high-volume days
+CHURN_WINDOW = 5  # "several days"
+CHURN_MIN_HIVOL_DAYS = 3  # within window, at least this many high-volume days
 HIVOL_LOOKBACK = 50
-HIVOL_MIN_RATIO = 1.20       # day volume >= 120% of rolling avg => "high volume"
+HIVOL_MIN_RATIO = 1.20  # day volume >= 120% of rolling avg => "high volume"
 MAX_UPSIDE_PROGRESS_PCT = 1.0  # within the window, total close-to-close progress <= +1%
 
 
@@ -192,10 +193,11 @@ MAX_UPSIDE_PROGRESS_PCT = 1.0  # within the window, total close-to-close progres
 # ----------------------------
 
 SYMBOLS = {
-    "S&P 500":    {"primary": "^GSPC", "fallback": "SPY"},
-    "Nasdaq":     {"primary": "^IXIC", "fallback": "QQQ"},
-    "Russell 2000":{"primary": "^RUT", "fallback": "IWM"},
+    "S&P 500": {"primary": "^GSPC", "fallback": "SPY"},
+    "Nasdaq": {"primary": "^IXIC", "fallback": "QQQ"},
+    "Russell 2000": {"primary": "^RUT", "fallback": "IWM"},
 }
+
 
 def download_ohlcv(ticker: str, start: str) -> pd.DataFrame:
     df = yf.download(ticker, start=start, auto_adjust=False, progress=False)
@@ -207,6 +209,7 @@ def download_ohlcv(ticker: str, start: str) -> pd.DataFrame:
     df = df.rename(columns=str.title)  # standardize just in case
     # Expected: Open, High, Low, Close, Adj Close, Volume
     return df
+
 
 def ensure_volume(df: pd.DataFrame) -> bool:
     """Return True if volume appears usable (not all 0/NaN)."""
@@ -221,6 +224,7 @@ def ensure_volume(df: pd.DataFrame) -> bool:
 # ----------------------------
 # Signal logic
 # ----------------------------
+
 
 def add_signals(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -239,18 +243,12 @@ def add_signals(df: pd.DataFrame) -> pd.DataFrame:
     df["RollHighClose"] = df["Close"].rolling(NEW_HIGH_LOOKBACK).max()
 
     # 1) down day + rolling max volume (or equal within float tolerance)
-    df["DownsideRecordVol"] = (
-        (df["RetPct"] <= MIN_DOWN_PCT) &
-        (df["Volume"] >= df["VolMax"])
-    )
+    df["DownsideRecordVol"] = (df["RetPct"] <= MIN_DOWN_PCT) & (df["Volume"] >= df["VolMax"])
 
     # 2A) new high on low volume
     # "new high" means close equals rolling max close (including today)
     # require enough lookback data and non-null vol avg
-    df["NewHigh_LowVol"] = (
-        (df["Close"] >= df["RollHighClose"]) &
-        (df["Volume"] <= LOWVOL_MAX_RATIO * df["VolAvg50"])
-    )
+    df["NewHigh_LowVol"] = (df["Close"] >= df["RollHighClose"]) & (df["Volume"] <= LOWVOL_MAX_RATIO * df["VolAvg50"])
 
     # 2B) churn: several high-volume days with little upside progress
     df["HiVolDay"] = df["Volume"] >= HIVOL_MIN_RATIO * df["VolAvgHV"]
@@ -261,9 +259,8 @@ def add_signals(df: pd.DataFrame) -> pd.DataFrame:
     # Window progress: % change from close N days ago to today
     df["WinProgressPct"] = (df["Close"] / df["Close"].shift(CHURN_WINDOW - 1) - 1.0) * 100.0
 
-    df["HiVol_Churn"] = (
-        (df["HiVolCountWin"] >= CHURN_MIN_HIVOL_DAYS) &
-        (df["WinProgressPct"] <= MAX_UPSIDE_PROGRESS_PCT)
+    df["HiVol_Churn"] = (df["HiVolCountWin"] >= CHURN_MIN_HIVOL_DAYS) & (
+        df["WinProgressPct"] <= MAX_UPSIDE_PROGRESS_PCT
     )
 
     return df
@@ -271,28 +268,36 @@ def add_signals(df: pd.DataFrame) -> pd.DataFrame:
 
 def summarize_latest(df: pd.DataFrame, label: str) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame([{
-            "Market": label,
-            "Date": None,
-            "DownsideRecordVol": None,
-            "NewHigh_LowVol": None,
-            "HiVol_Churn": None,
-            "Close": None,
-            "RetPct": None,
-            "Volume": None,
-        }])
+        return pd.DataFrame(
+            [
+                {
+                    "Market": label,
+                    "Date": None,
+                    "DownsideRecordVol": None,
+                    "NewHigh_LowVol": None,
+                    "HiVol_Churn": None,
+                    "Close": None,
+                    "RetPct": None,
+                    "Volume": None,
+                }
+            ]
+        )
 
     last = df.iloc[-1]
-    return pd.DataFrame([{
-        "Market": label,
-        "Date": df.index[-1].date().isoformat(),
-        "DownsideRecordVol": bool(last.get("DownsideRecordVol", False)),
-        "NewHigh_LowVol": bool(last.get("NewHigh_LowVol", False)),
-        "HiVol_Churn": bool(last.get("HiVol_Churn", False)),
-        "Close": float(last["Close"]),
-        "RetPct": float(last.get("RetPct", np.nan)),
-        "Volume": float(last["Volume"]),
-    }])
+    return pd.DataFrame(
+        [
+            {
+                "Market": label,
+                "Date": df.index[-1].date().isoformat(),
+                "DownsideRecordVol": bool(last.get("DownsideRecordVol", False)),
+                "NewHigh_LowVol": bool(last.get("NewHigh_LowVol", False)),
+                "HiVol_Churn": bool(last.get("HiVol_Churn", False)),
+                "Close": float(last["Close"]),
+                "RetPct": float(last.get("RetPct", np.nan)),
+                "Volume": float(last["Volume"]),
+            }
+        ]
+    )
 
 
 def main():
@@ -329,7 +334,16 @@ def main():
         # collect all historical hit dates for each signal
         hits = sig.loc[
             sig["DownsideRecordVol"] | sig["NewHigh_LowVol"] | sig["HiVol_Churn"],
-            ["Close", "RetPct", "Volume", "DownsideRecordVol", "NewHigh_LowVol", "HiVol_Churn", "UsedTicker", "MarketName"]
+            [
+                "Close",
+                "RetPct",
+                "Volume",
+                "DownsideRecordVol",
+                "NewHigh_LowVol",
+                "HiVol_Churn",
+                "UsedTicker",
+                "MarketName",
+            ],
         ].copy()
         hits.index = pd.to_datetime(hits.index)
         hits["Date"] = hits.index.date.astype(str)
@@ -344,17 +358,21 @@ def main():
         else:
             print("\n=== Latest Signals ===")
             # Print header
-            print(f"{'Market':<20} {'Date':<12} {'DownsideRecordVol':<18} {'NewHigh_LowVol':<16} {'HiVol_Churn':<12} {'Close':>10} {'RetPct':>8} {'Volume':>14}")
+            print(
+                f"{'Market':<20} {'Date':<12} {'DownsideRecordVol':<18} {'NewHigh_LowVol':<16} {'HiVol_Churn':<12} {'Close':>10} {'RetPct':>8} {'Volume':>14}"
+            )
 
             # Print each row with colored RetPct
             for _, row in latest_df.iterrows():
-                colored_retpct = colorize_retpct(row['RetPct'])
+                colored_retpct = colorize_retpct(row["RetPct"])
                 # ANSI codes add 11 chars (escape sequences), so pad accordingly
-                padding = 19 if '\033[' in colored_retpct else 8
+                padding = 19 if "\033[" in colored_retpct else 8
 
-                print(f"{row['Market']:<20} {row['Date']:<12} {str(row['DownsideRecordVol']):<18} "
-                      f"{str(row['NewHigh_LowVol']):<16} {str(row['HiVol_Churn']):<12} "
-                      f"{row['Close']:>10.2f} {colored_retpct:>{padding}} {row['Volume']:>14.1f}")
+                print(
+                    f"{row['Market']:<20} {row['Date']:<12} {str(row['DownsideRecordVol']):<18} "
+                    f"{str(row['NewHigh_LowVol']):<16} {str(row['HiVol_Churn']):<12} "
+                    f"{row['Close']:>10.2f} {colored_retpct:>{padding}} {row['Volume']:>14.1f}"
+                )
 
     if all_hits:
         hits_df = pd.concat(all_hits, ignore_index=True)
@@ -366,8 +384,7 @@ def main():
         else:
             # Show most recent signals grouped by index
             print("\n=== Most Recent Signal Dates (by Index) ===")
-            cols = ["Date", "Close", "RetPct", "Volume",
-                    "DownsideRecordVol", "NewHigh_LowVol", "HiVol_Churn"]
+            cols = ["Date", "Close", "RetPct", "Volume", "DownsideRecordVol", "NewHigh_LowVol", "HiVol_Churn"]
 
             for market_name in hits_df["MarketName"].unique():
                 market_hits = hits_df[hits_df["MarketName"] == market_name]
@@ -418,7 +435,16 @@ def get_data() -> dict:
 
         hits = sig.loc[
             sig["DownsideRecordVol"] | sig["NewHigh_LowVol"] | sig["HiVol_Churn"],
-            ["Close", "RetPct", "Volume", "DownsideRecordVol", "NewHigh_LowVol", "HiVol_Churn", "UsedTicker", "MarketName"]
+            [
+                "Close",
+                "RetPct",
+                "Volume",
+                "DownsideRecordVol",
+                "NewHigh_LowVol",
+                "HiVol_Churn",
+                "UsedTicker",
+                "MarketName",
+            ],
         ].copy()
         hits.index = pd.to_datetime(hits.index)
         hits["Date"] = hits.index.date.astype(str)

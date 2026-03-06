@@ -31,9 +31,9 @@ Requirements:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 from datetime import UTC, datetime, timedelta
 
@@ -46,7 +46,7 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
     try:
         import yfinance as yf
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
+        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
@@ -76,10 +76,22 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("ticker", help="Ticker symbol, e.g. AAPL")
-    p.add_argument("--lower", type=float, default=None, help="Lower bound for condition test (percent). If not specified, no lower bound.")
-    p.add_argument("--upper", type=float, default=1.0, help="Upper bound for condition test (percent). Default is 1.0 (finds values <= 1%%).")
+    p.add_argument(
+        "--lower",
+        type=float,
+        default=None,
+        help="Lower bound for condition test (percent). If not specified, no lower bound.",
+    )
+    p.add_argument(
+        "--upper",
+        type=float,
+        default=1.0,
+        help="Upper bound for condition test (percent). Default is 1.0 (finds values <= 1%%).",
+    )
     p.add_argument("--years", type=int, default=5, help="How many years of history to download (default: 5)")
-    p.add_argument("--last", type=int, default=1, help="Number of most recent times to show when condition was met (default: 1)")
+    p.add_argument(
+        "--last", type=int, default=1, help="Number of most recent times to show when condition was met (default: 1)"
+    )
     args = p.parse_args()
 
     ticker = args.ticker.strip().upper()
@@ -93,7 +105,9 @@ def main() -> int:
     # Need at least 63 + 20 data points to get the latest 20-day average.
     min_points = 63 + 20
     if len(prices) < min_points:
-        LOGGER.warning("Not enough data for %s: need at least %d trading days, got %d.", ticker, min_points, len(prices))
+        LOGGER.warning(
+            "Not enough data for %s: need at least %d trading days, got %d.", ticker, min_points, len(prices)
+        )
         return 2
 
     roc63 = (prices / prices.shift(63) - 1.0) * 100.0
@@ -101,7 +115,11 @@ def main() -> int:
 
     latest_date = prices.index[-1]
     latest_close = float(prices.iloc[-1].iloc[0]) if isinstance(prices.iloc[-1], pd.Series) else float(prices.iloc[-1])
-    latest_avg = float(avg20_roc63.iloc[-1].iloc[0]) if isinstance(avg20_roc63.iloc[-1], pd.Series) else float(avg20_roc63.iloc[-1])
+    latest_avg = (
+        float(avg20_roc63.iloc[-1].iloc[0])
+        if isinstance(avg20_roc63.iloc[-1], pd.Series)
+        else float(avg20_roc63.iloc[-1])
+    )
 
     print(f"Ticker: {ticker}")
     print(f"As of:  {latest_date.date().isoformat()}")
@@ -151,6 +169,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     raise SystemExit(main())

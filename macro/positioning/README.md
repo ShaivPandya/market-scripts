@@ -12,7 +12,6 @@ This script is at `macro/positioning/positioning.py`.
   - `GET /api/positioning/summary`
   - `GET /api/positioning/timeseries`
   - `GET /api/positioning/instruments`
-- Streamlit GUI: `gui/app.py` (page: “📌 Positioning”)
 - React UI: “Positioning” page in `frontend/`
 
 ## Requirements

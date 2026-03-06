@@ -1,4 +1,5 @@
 """Currency pair configurations for FX models."""
+
 from dataclasses import dataclass, field
 from typing import Optional
 

@@ -7,7 +7,6 @@ The Economic Growth Dashboard is a Python-based tool that tracks key economic in
 ## Where this is used
 
 - Standalone CLI: `python3 macro/economic_growth/economic_growth.py`
-- Streamlit GUI: `gui/app.py` (page: “📊 Economic Growth”)
 - FastAPI: `GET /api/economic-growth` (see `api/routers/economic_growth.py`)
 - React UI: “Economic Growth” page in `frontend/`
 

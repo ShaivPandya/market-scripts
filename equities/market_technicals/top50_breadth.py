@@ -13,17 +13,19 @@ Usage:
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any
+
+from pathlib import Path
+from typing import Any, Dict, List  # noqa: UP035
+
 import pandas as pd
 import yfinance as yf
-from pathlib import Path
 
 try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.text import Text
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
 except ImportError:
     Console = None
 
@@ -51,7 +53,7 @@ def format_ticker_list(series):
     return tickers
 
 
-def analyze_ticker(df: pd.DataFrame) -> Dict[str, Any]:
+def analyze_ticker(df: pd.DataFrame) -> dict[str, Any]:
     out = {
         "below_50dma": False,
         "dist_days_last20": 0,
@@ -83,7 +85,7 @@ def analyze_ticker(df: pd.DataFrame) -> Dict[str, Any]:
     return out
 
 
-def _no_data_row(ticker: str, error: str = "no data") -> Dict[str, Any]:
+def _no_data_row(ticker: str, error: str = "no data") -> dict[str, Any]:
     return {
         "ticker": ticker.upper(),
         "rows": 0,
@@ -95,7 +97,7 @@ def _no_data_row(ticker: str, error: str = "no data") -> Dict[str, Any]:
     }
 
 
-def compute_metrics(tickers: List[str], period: str = "2y") -> pd.DataFrame:
+def compute_metrics(tickers: list[str], period: str = "2y") -> pd.DataFrame:
     raw = yf.download(
         tickers=tickers,
         period=period,
@@ -124,14 +126,16 @@ def compute_metrics(tickers: List[str], period: str = "2y") -> pd.DataFrame:
                 continue
 
             res = analyze_ticker(ticker_df)
-            rows.append({
-                "ticker": t.upper(),
-                "rows": res["rows"],
-                "below_50dma": res["below_50dma"],
-                "dist_days_last20": res["dist_days_last20"],
-                "has_3plus_dist_days": res["has_3plus_dist_days"],
-                "broke_prior20_low_last_week": res["broke_prior20_low_last_week"],
-            })
+            rows.append(
+                {
+                    "ticker": t.upper(),
+                    "rows": res["rows"],
+                    "below_50dma": res["below_50dma"],
+                    "dist_days_last20": res["dist_days_last20"],
+                    "has_3plus_dist_days": res["has_3plus_dist_days"],
+                    "broke_prior20_low_last_week": res["broke_prior20_low_last_week"],
+                }
+            )
         except Exception as e:
             rows.append(_no_data_row(t, error=str(e)))
 
@@ -189,7 +193,9 @@ def summarize(df: pd.DataFrame) -> None:
         print(f"2) % with ≥3 distribution days (last 20): {pct_3plus_dist:.2f}%")
         print(f"3) % that closed below prior 20-day low in last 5 days: {pct_broke_20low:.2f}%\n")
 
-        print("Distribution days are defined as days where the stock closed lower but volume was above the 50-day average volume.\n");
+        print(
+            "Distribution days are defined as days where the stock closed lower but volume was above the 50-day average volume.\n"
+        )
 
         print("Tickers below 50-DMA:")
         print(", ".join(valid.loc[valid["below_50dma"], "ticker"]) or "(none)")
@@ -199,7 +205,7 @@ def summarize(df: pd.DataFrame) -> None:
         print(", ".join(valid.loc[valid["broke_prior20_low_last_week"], "ticker"]) or "(none)")
 
 
-def get_summary_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+def get_summary_metrics(df: pd.DataFrame) -> dict[str, Any]:
     """
     Extract summary metrics from the computed DataFrame for GUI consumption.
 
@@ -236,7 +242,7 @@ def get_summary_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
-def get_data(period: str = "2y") -> Dict[str, Any]:
+def get_data(period: str = "2y") -> dict[str, Any]:
     """
     Fetch top50 breadth data for GUI consumption.
 

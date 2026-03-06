@@ -1,9 +1,11 @@
 """Report generation for FX models."""
+
 import json
 from pathlib import Path
+
+import matplotlib
 import numpy as np
 import pandas as pd
-import matplotlib
 
 # FastAPI runs sync handlers in a threadpool; enforce a non-GUI backend to
 # avoid macOS crashes from GUI backend initialization in worker threads.
@@ -91,7 +93,7 @@ def plot_forecast_distribution(
 def summarize_distribution(draws: np.ndarray) -> dict:
     """Summarize a distribution with quantiles and moments."""
     qs = [0.05, 0.25, 0.5, 0.75, 0.95]
-    out = {f"q{int(q*100):02d}": float(np.quantile(draws, q)) for q in qs}
+    out = {f"q{int(q * 100):02d}": float(np.quantile(draws, q)) for q in qs}
     out["mean"] = float(np.mean(draws))
     out["std"] = float(np.std(draws))
     return out
@@ -112,8 +114,7 @@ FEATURE_LABELS = {
 }
 
 
-def _describe_driver(name: str, coeff: float, value: float, contribution: float,
-                     base_ccy: str, quote_ccy: str) -> str:
+def _describe_driver(name: str, coeff: float, value: float, contribution: float, base_ccy: str, quote_ccy: str) -> str:
     """Return a one-line interpretation for a single driver."""
     pos = contribution > 0  # positive contribution = base ccy strengthens
 
@@ -126,7 +127,9 @@ def _describe_driver(name: str, coeff: float, value: float, contribution: float,
             return "Valuation near fair value"
         if value > 0:
             return f"{base_ccy} {degree}overvalued vs {quote_ccy}, mean-reversion pressures {'upward' if pos else 'downward'}"
-        return f"{base_ccy} {degree}undervalued vs {quote_ccy}, mean-reversion pressures {'upward' if pos else 'downward'}"
+        return (
+            f"{base_ccy} {degree}undervalued vs {quote_ccy}, mean-reversion pressures {'upward' if pos else 'downward'}"
+        )
 
     if name == "carry":
         if abs(value) < 0.002:
@@ -157,39 +160,34 @@ def _describe_driver(name: str, coeff: float, value: float, contribution: float,
     return f"{'Supports' if pos else 'Weighs on'} {base_ccy}"
 
 
-def _generate_narrative(drivers: list, base_ccy: str, quote_ccy: str,
-                        horizon: int, spot_now: float, point_level: float) -> str:
+def _generate_narrative(
+    drivers: list, base_ccy: str, quote_ccy: str, horizon: int, spot_now: float, point_level: float
+) -> str:
     """Build a 2-4 sentence conclusion paragraph."""
     pct = ((point_level / spot_now) - 1) * 100 if spot_now else 0
     direction = "strengthening" if pct > 0.1 else "weakening" if pct < -0.1 else "roughly flat"
 
     sentences = [
-        f"The model sees {base_ccy} {direction} against {quote_ccy} "
-        f"over the next {horizon} months ({pct:+.1f}%)."
+        f"The model sees {base_ccy} {direction} against {quote_ccy} over the next {horizon} months ({pct:+.1f}%)."
     ]
 
     if not drivers:
         return sentences[0]
 
     top = drivers[0]
-    sentences.append(
-        f"The primary driver is {top['label'].lower()} — {top['description'].lower()}."
-    )
+    sentences.append(f"The primary driver is {top['label'].lower()} — {top['description'].lower()}.")
 
     if len(drivers) >= 2:
         second = drivers[1]
         verb = "also supports" if second["contribution"] * (1 if pct > 0 else -1) > 0 else "partially offsets, as"
-        sentences.append(
-            f"{second['label']} {verb} {second['description'][0].lower()}{second['description'][1:]}."
-        )
+        sentences.append(f"{second['label']} {verb} {second['description'][0].lower()}{second['description'][1:]}.")
 
     # Valuation callout if not already the top driver
     rer_drivers = [d for d in drivers if d["name"] == "rer_z"]
     if rer_drivers and rer_drivers[0] is not top and abs(rer_drivers[0]["value"]) > 1.5:
         z = rer_drivers[0]["value"]
         sentences.append(
-            f"Notably, {base_ccy} appears {'overvalued' if z > 0 else 'undervalued'} "
-            f"(RER z-score: {z:+.2f})."
+            f"Notably, {base_ccy} appears {'overvalued' if z > 0 else 'undervalued'} (RER z-score: {z:+.2f})."
         )
 
     return " ".join(sentences)
@@ -223,14 +221,16 @@ def build_driver_explanation(
             continue
         contrib = coeff * val
         desc = _describe_driver(feat, coeff, val, contrib, base_ccy, quote_ccy)
-        drivers.append({
-            "name": feat,
-            "label": FEATURE_LABELS.get(feat, feat),
-            "coefficient": float(coeff),
-            "value": float(val),
-            "contribution": float(contrib),
-            "description": desc,
-        })
+        drivers.append(
+            {
+                "name": feat,
+                "label": FEATURE_LABELS.get(feat, feat),
+                "coefficient": float(coeff),
+                "value": float(val),
+                "contribution": float(contrib),
+                "description": desc,
+            }
+        )
 
     drivers.sort(key=lambda d: abs(d["contribution"]), reverse=True)
     conclusion = _generate_narrative(drivers, base_ccy, quote_ccy, horizon, spot_now, point_level)

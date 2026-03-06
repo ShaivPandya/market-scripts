@@ -3,7 +3,8 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import short_cache, get_cached, set_cached
+from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
 
 router = APIRouter()
@@ -17,9 +18,10 @@ def get_economic_growth():
         return cached
     try:
         from economic_growth import get_data
+
         data = get_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="economic_growth", detail=str(e)) from e
     result = serialize_response(data)
     set_cached(short_cache, key, result)
     return result
@@ -39,10 +41,7 @@ def _format_table(data: dict, periods: list[str]) -> str:
     lines.append(f"{'Asset':<28}  {header}")
     lines.append("-" * (30 + 10 * len(periods)))
     for name, returns in data.items():
-        vals = "  ".join(
-            f"{returns.get(p):>+8.1f}" if returns.get(p) is not None else f"{'N/A':>8}"
-            for p in periods
-        )
+        vals = "  ".join(f"{returns.get(p):>+8.1f}" if returns.get(p) is not None else f"{'N/A':>8}" for p in periods)
         lines.append(f"{name:<28}  {vals}")
     return "\n".join(lines)
 
@@ -51,7 +50,7 @@ def _format_table(data: dict, periods: list[str]) -> str:
 def analyze_economic_growth(req: EconomicGrowthAnalyzeRequest):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+        raise ConfigurationError("OPENAI_API_KEY")
 
     commodities_table = _format_table(req.commodities, req.equity_periods)
     equities_table = _format_table(req.equities, req.equity_periods)
@@ -102,12 +101,13 @@ Be specific about the numbers. Write for a professional investor audience."""
 
     try:
         from openai import OpenAI
+
         client = OpenAI()
         resp = client.responses.create(model="gpt-5-mini", input=prompt)
         analysis = (resp.output_text or "").strip()
         if not analysis:
             raise ValueError("OpenAI returned empty response")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}")
+        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 
     return {"analysis": analysis}

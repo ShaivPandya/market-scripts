@@ -35,13 +35,13 @@ python3 eps_momentum_single.py AAPL --universe sp500 --growth_years 3
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -55,14 +55,13 @@ except ImportError as e:
 
 # Add equities/ to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from common import load_universe, list_universes, get_sp500_universe, clean_ticker
-
+from common import clean_ticker, get_sp500_universe, list_universes, load_universe
 from edgar_fetcher import fetch_quarterly_eps_edgar
-
 
 # -------------------------
 # Utilities
 # -------------------------
+
 
 def zscore_of_ranks(values: pd.Series) -> pd.Series:
     """Convert a cross-sectional vector into z-scores of ranks. Missing values remain missing."""
@@ -84,14 +83,14 @@ def zscore_of_ranks(values: pd.Series) -> pd.Series:
     return out
 
 
-def col_at(df: Optional[pd.DataFrame], idx: int) -> Optional[pd.Series]:
+def col_at(df: pd.DataFrame | None, idx: int) -> pd.Series | None:
     """Return the column at position idx (0 is the most recent)."""
     if df is None or df.empty or df.shape[1] <= idx:
         return None
     return df.iloc[:, idx]
 
 
-def get_item(s: Optional[pd.Series], keys: List[str]) -> float:
+def get_item(s: pd.Series | None, keys: list[str]) -> float:
     """Return the first matching line item value from a statement column, or NaN if missing."""
     if s is None or s.empty:
         return np.nan
@@ -119,7 +118,7 @@ def safe_div(a: float, b: float) -> float:
     return float(a) / float(b)
 
 
-def try_get_income_stmt(t: yf.Ticker, freq: str) -> Optional[pd.DataFrame]:
+def try_get_income_stmt(t: yf.Ticker, freq: str) -> pd.DataFrame | None:
     """Retrieve an income statement for the requested frequency if available."""
     freq = freq.lower()
 
@@ -163,27 +162,43 @@ def try_get_income_stmt(t: yf.Ticker, freq: str) -> Optional[pd.DataFrame]:
 # -------------------------
 
 EPS_KEYS = [
-    "Diluted EPS", "DilutedEPS", "EPS Diluted", "Earnings Per Share Diluted",
-    "Basic EPS", "BasicEPS", "EPS Basic", "Earnings Per Share Basic",
+    "Diluted EPS",
+    "DilutedEPS",
+    "EPS Diluted",
+    "Earnings Per Share Diluted",
+    "Basic EPS",
+    "BasicEPS",
+    "EPS Basic",
+    "Earnings Per Share Basic",
 ]
 
 DILUTED_SHARES_KEYS = [
-    "Diluted Average Shares", "DilutedAverageShares",
-    "Weighted Average Shares Diluted", "WeightedAverageSharesDiluted",
-    "Diluted Shares", "DilutedShares",
+    "Diluted Average Shares",
+    "DilutedAverageShares",
+    "Weighted Average Shares Diluted",
+    "WeightedAverageSharesDiluted",
+    "Diluted Shares",
+    "DilutedShares",
 ]
 
 BASIC_SHARES_KEYS = [
-    "Basic Average Shares", "BasicAverageShares",
-    "Weighted Average Shares Basic", "WeightedAverageSharesBasic",
-    "Basic Shares", "BasicShares",
+    "Basic Average Shares",
+    "BasicAverageShares",
+    "Weighted Average Shares Basic",
+    "WeightedAverageSharesBasic",
+    "Basic Shares",
+    "BasicShares",
 ]
 
 NET_INCOME_KEYS = [
-    "Net Income", "NetIncome",
-    "Net Income Common Stockholders", "NetIncomeCommonStockholders",
-    "Net Income Applicable To Common Shares", "NetIncomeApplicableToCommonShares",
-    "Net Income Continuous Operations", "NetIncomeContinuousOperations",
+    "Net Income",
+    "NetIncome",
+    "Net Income Common Stockholders",
+    "NetIncomeCommonStockholders",
+    "Net Income Applicable To Common Shares",
+    "NetIncomeApplicableToCommonShares",
+    "Net Income Continuous Operations",
+    "NetIncomeContinuousOperations",
 ]
 
 
@@ -191,8 +206,8 @@ NET_INCOME_KEYS = [
 class EPSMetrics:
     eps_q0: float = np.nan
     eps_q4: float = np.nan
-    eps_yoy_change: float = np.nan   # Average YoY change across last 3 quarters
-    eps_yoy_changes: Optional[List[float]] = None  # [q0vsq4, q1vsq5, q2vsq6]
+    eps_yoy_change: float = np.nan  # Average YoY change across last 3 quarters
+    eps_yoy_changes: list[float] | None = None  # [q0vsq4, q1vsq5, q2vsq6]
 
     eps_a0: float = np.nan
     eps_aN: float = np.nan
@@ -200,17 +215,17 @@ class EPSMetrics:
     years_used: int = 0
 
     # Second derivative of EPS growth (acceleration)
-    eps_growth_rates: Optional[List[float]] = None  # 4 QoQ growth rates (Q0-Q1, Q1-Q2, Q2-Q3, Q3-Q4)
+    eps_growth_rates: list[float] | None = None  # 4 QoQ growth rates (Q0-Q1, Q1-Q2, Q2-Q3, Q3-Q4)
     eps_growth_acceleration: float = np.nan  # Slope of growth rates over time
 
-    q0_end: Optional[pd.Timestamp] = None
-    q4_end: Optional[pd.Timestamp] = None
-    q6_end: Optional[pd.Timestamp] = None
-    a0_end: Optional[pd.Timestamp] = None
-    aN_end: Optional[pd.Timestamp] = None
+    q0_end: pd.Timestamp | None = None
+    q4_end: pd.Timestamp | None = None
+    q6_end: pd.Timestamp | None = None
+    a0_end: pd.Timestamp | None = None
+    aN_end: pd.Timestamp | None = None
 
 
-def compute_eps_from_stmt(stmt_col: pd.Series, fallback_shares: Optional[float] = None) -> float:
+def compute_eps_from_stmt(stmt_col: pd.Series, fallback_shares: float | None = None) -> float:
     """
     Compute EPS for one statement column.
 
@@ -321,14 +336,11 @@ def fetch_eps_metrics(ticker: str, growth_years: int = 3, use_edgar: bool = True
                 for i in range(5):
                     q_col = col_at(q_inc, i)
                     eps_values.append(
-                        compute_eps_from_stmt(q_col, fallback_shares=shares_out)
-                        if q_col is not None else np.nan
+                        compute_eps_from_stmt(q_col, fallback_shares=shares_out) if q_col is not None else np.nan
                     )
                 growth_rates = []
                 for i in range(4):
-                    growth_rates.append(
-                        safe_div(eps_values[i] - eps_values[i + 1], abs(eps_values[i + 1]))
-                    )
+                    growth_rates.append(safe_div(eps_values[i] - eps_values[i + 1], abs(eps_values[i + 1])))
                 out.eps_growth_rates = growth_rates
                 valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
                 if len(valid_growth) >= 2:
@@ -366,7 +378,8 @@ def fetch_eps_metrics(ticker: str, growth_years: int = 3, use_edgar: bool = True
 # Scoring + reporting
 # -------------------------
 
-def compute_universe_scores(raw_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+
+def compute_universe_scores(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     """
     Compute rank-based z-scores for metrics and a combined EPS Momentum score.
 
@@ -406,8 +419,7 @@ def main():
     ap.add_argument("tickers", nargs="*", help="Ticker(s) to score (e.g., AAPL or MCO SPGI EFX)")
     ap.add_argument("--tickers_file", default="", help="Path to file with tickers (one per line, txt/csv)")
     ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
-    ap.add_argument("--list-universes", action="store_true",
-                    help="List available universe files and exit")
+    ap.add_argument("--list-universes", action="store_true", help="List available universe files and exit")
     ap.add_argument("--growth_years", type=int, default=3, help="Target EPS CAGR window in years")
     ap.add_argument("--max_universe", type=int, default=0, help="If >0, limit universe size")
     ap.add_argument("--out_csv", default="", help="Optional path to save full universe output as CSV")
@@ -419,7 +431,7 @@ def main():
         sys.exit(0)
 
     # Build target ticker list from positional args and/or --tickers_file
-    targets: List[str] = [clean_ticker(t) for t in args.tickers]
+    targets: list[str] = [clean_ticker(t) for t in args.tickers]
     if args.tickers_file:
         file_tickers = load_universe(args.tickers_file)
         for t in file_tickers:
@@ -445,7 +457,7 @@ def main():
 
     print(f"Universe size: {len(universe)} | Targets: {', '.join(targets)}")
 
-    raws: Dict[str, EPSMetrics] = {}
+    raws: dict[str, EPSMetrics] = {}
     for i, tk in enumerate(universe, 1):
         try:
             raws[tk] = fetch_eps_metrics(tk, growth_years=args.growth_years)
@@ -476,16 +488,20 @@ def main():
         print(f"{'=' * 60}")
         print("Raw metrics:")
         if tm.q0_end is not None:
-            print(f"  Latest quarter end: {tm.q0_end.date()} | Year-ago quarter end: {tm.q4_end.date() if tm.q4_end is not None else 'NA'}")
+            print(
+                f"  Latest quarter end: {tm.q0_end.date()} | Year-ago quarter end: {tm.q4_end.date() if tm.q4_end is not None else 'NA'}"
+            )
         if tm.a0_end is not None:
-            print(f"  Latest fiscal year end: {tm.a0_end.date()} | {tm.years_used}y-ago fiscal year end: {tm.aN_end.date() if tm.aN_end is not None else 'NA'}")
+            print(
+                f"  Latest fiscal year end: {tm.a0_end.date()} | {tm.years_used}y-ago fiscal year end: {tm.aN_end.date() if tm.aN_end is not None else 'NA'}"
+            )
 
         print(f"  EPS (latest quarter):          {fmt_num(tm.eps_q0)}")
         print(f"  EPS (same qtr 1y ago):         {fmt_num(tm.eps_q4)}")
         print(f"  EPS YoY avg (3Q):              {fmt_pct(tm.eps_yoy_change)}")
         if tm.eps_yoy_changes is not None:
             labels = ["Q0 vs Q4", "Q1 vs Q5", "Q2 vs Q6"]
-            for label, val in zip(labels, tm.eps_yoy_changes):
+            for label, val in zip(labels, tm.eps_yoy_changes):  # noqa: B905
                 print(f"    {label}:                  {fmt_pct(val)}")
         print(f"  EPS CAGR ({tm.years_used}y):               {fmt_pct(tm.eps_cagr)}")
         print(f"  EPS growth acceleration:       {fmt_num(tm.eps_growth_acceleration)}")
@@ -493,10 +509,16 @@ def main():
             rates_str = ", ".join([fmt_pct(r) for r in tm.eps_growth_rates])
             print(f"  EPS QoQ growth rates (5Q):     [{rates_str}]")
 
-        print(f"\nUniverse-relative scores:")
-        print(f"  z_eps_yoy_change:        {z_metrics.loc[ticker, 'eps_yoy_change'] if ticker in z_metrics.index else np.nan: .3f}")
-        print(f"  z_eps_cagr:              {z_metrics.loc[ticker, 'eps_cagr'] if ticker in z_metrics.index else np.nan: .3f}")
-        print(f"  z_eps_growth_accel:      {z_metrics.loc[ticker, 'eps_growth_acceleration'] if ticker in z_metrics.index else np.nan: .3f}")
+        print("\nUniverse-relative scores:")
+        print(
+            f"  z_eps_yoy_change:        {z_metrics.loc[ticker, 'eps_yoy_change'] if ticker in z_metrics.index else np.nan: .3f}"
+        )
+        print(
+            f"  z_eps_cagr:              {z_metrics.loc[ticker, 'eps_cagr'] if ticker in z_metrics.index else np.nan: .3f}"
+        )
+        print(
+            f"  z_eps_growth_accel:      {z_metrics.loc[ticker, 'eps_growth_acceleration'] if ticker in z_metrics.index else np.nan: .3f}"
+        )
         print(f"  EPS Momentum z:          {score.loc[ticker] if ticker in score.index else np.nan: .3f}")
         print(f"  EPS Momentum pct:        {pct_score.loc[ticker] if ticker in pct_score.index else np.nan: .3%}")
 
@@ -505,18 +527,24 @@ def main():
         print(f"\n{'=' * 100}")
         print("COMPARISON SUMMARY (ranked by EPS Momentum)")
         print(f"{'=' * 100}")
-        print(f"{'Ticker':<10} {'EPS Mom z':>10} {'Percentile':>11} {'EPS YoY':>12} {'EPS CAGR':>12} {'Growth Accel':>13}")
+        print(
+            f"{'Ticker':<10} {'EPS Mom z':>10} {'Percentile':>11} {'EPS YoY':>12} {'EPS CAGR':>12} {'Growth Accel':>13}"
+        )
         print(f"{'-' * 100}")
 
         # Sort targets by EPS momentum score descending
         target_scores = {t: score.loc[t] if t in score.index else np.nan for t in valid_targets}
-        sorted_targets = sorted(valid_targets, key=lambda t: target_scores[t] if not np.isnan(target_scores[t]) else -999, reverse=True)
+        sorted_targets = sorted(
+            valid_targets, key=lambda t: target_scores[t] if not np.isnan(target_scores[t]) else -999, reverse=True
+        )
 
         for ticker in sorted_targets:
             tm = raws[ticker]
             z = score.loc[ticker] if ticker in score.index else np.nan
             pct = pct_score.loc[ticker] if ticker in pct_score.index else np.nan
-            print(f"{ticker:<10} {fmt_num(z):>10} {f'{pct:.1%}' if not np.isnan(pct) else 'NA':>11} {fmt_pct(tm.eps_yoy_change):>12} {fmt_pct(tm.eps_cagr):>12} {fmt_num(tm.eps_growth_acceleration):>13}")
+            print(
+                f"{ticker:<10} {fmt_num(z):>10} {f'{pct:.1%}' if not np.isnan(pct) else 'NA':>11} {fmt_pct(tm.eps_yoy_change):>12} {fmt_pct(tm.eps_cagr):>12} {fmt_num(tm.eps_growth_acceleration):>13}"
+            )
 
         print(f"{'=' * 100}")
 
@@ -529,6 +557,6 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

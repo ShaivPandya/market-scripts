@@ -20,9 +20,9 @@ Use --roc-period 42 --avg-period 10
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 from datetime import UTC, datetime, timedelta
 
@@ -35,7 +35,7 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
     try:
         import yfinance as yf
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
+        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
@@ -63,9 +63,7 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(
-        description="Relative price ROC analysis with zero-crossing detection"
-    )
+    p = argparse.ArgumentParser(description="Relative price ROC analysis with zero-crossing detection")
     p.add_argument("ticker", help="Ticker symbol to analyze (e.g., AAPL)")
     p.add_argument("benchmark", help="Benchmark ticker (e.g., SPY, QQQ)")
     p.add_argument("--years", type=int, default=5, help="Years of history (default: 5)")
@@ -87,7 +85,9 @@ def main() -> int:
     combined = pd.DataFrame({"ticker": ticker_prices, "benchmark": benchmark_prices}).dropna()
 
     if len(combined) < args.roc_period + args.avg_period:
-        LOGGER.warning("Not enough data: need at least %d trading days, got %d.", args.roc_period + args.avg_period, len(combined))
+        LOGGER.warning(
+            "Not enough data: need at least %d trading days, got %d.", args.roc_period + args.avg_period, len(combined)
+        )
         return 2
 
     # Calculate relative price
@@ -117,7 +117,7 @@ def main() -> int:
         return 0
 
     # Sign change detection
-    sign_changes = (roc_avg.shift(1) * roc_avg < 0)
+    sign_changes = roc_avg.shift(1) * roc_avg < 0
     cross_dates = roc_avg[sign_changes].index
 
     if len(cross_dates) == 0:
@@ -141,6 +141,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     raise SystemExit(main())

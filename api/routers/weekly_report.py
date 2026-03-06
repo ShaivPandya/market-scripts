@@ -1,10 +1,14 @@
-import os
 import logging
+import os
+import re
 import time
 from datetime import datetime, timedelta
-import re
+from typing import Any, cast
+
 from fastapi import APIRouter, HTTPException, Query
-from api.cache import long_cache, delete_cached, get_cached, set_cached
+
+from api.cache import delete_cached, get_cached, long_cache, set_cached
+from api.exceptions import DataFetchError
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -23,7 +27,7 @@ def _format_level(value: float, decimals_if_lt_100: int = 4) -> str:
 def _pct_change(start: float, latest: float) -> float | None:
     try:
         s = float(start)
-        l = float(latest)
+        l = float(latest)  # noqa: E741
     except Exception:
         return None
     if s == 0:
@@ -49,7 +53,7 @@ def _build_perf_table(
     return header + "\n".join(body_lines) + "\n"
 
 
-def _build_key_ratios_table(rows: list[tuple[str, dict]]) -> str:
+def _build_key_ratios_table(rows: list[tuple[str, dict[str, Any]]]) -> str:
     """
     rows: list of (display_name, ratio_result_dict)
     """
@@ -63,17 +67,24 @@ def _build_key_ratios_table(rows: list[tuple[str, dict]]) -> str:
             err = str(r.get("error") or "Unknown error").strip()
             body_lines.append(f"| {name} | N/A | N/A | ERROR | {err} |")
             continue
-        stats = r.get("stats") if isinstance(r.get("stats"), dict) else {}
+        raw_stats = r.get("stats")
+        stats = cast(dict[str, Any], raw_stats) if isinstance(raw_stats, dict) else {}
         start_ratio = stats.get("start_ratio")
         end_ratio = stats.get("end_ratio")
         change = stats.get("change_pct")
         try:
-            start_s = _format_level(float(start_ratio), decimals_if_lt_100=6)
-            end_s = _format_level(float(end_ratio), decimals_if_lt_100=6)
+            start_ratio_value = float(start_ratio) if start_ratio is not None else None
+            end_ratio_value = float(end_ratio) if end_ratio is not None else None
+            if start_ratio_value is None or end_ratio_value is None:
+                raise ValueError("missing ratio values")
+            start_s = _format_level(start_ratio_value, decimals_if_lt_100=6)
+            end_s = _format_level(end_ratio_value, decimals_if_lt_100=6)
         except Exception:
             start_s = "N/A"
             end_s = "N/A"
         try:
+            if change is None:
+                raise ValueError("missing change")
             change_pct = float(change) * 100.0
             change_s = f"{change_pct:+.2f}%"
         except Exception:
@@ -95,6 +106,7 @@ def _insert_weekly_performance(report_md: str, perf_md: str) -> str:
         rest = "\n".join(lines[1:]).lstrip("\n")
         return f"{first}\n\n{perf_md}\n\n{rest}".strip()
     return f"{perf_md}\n\n{report_md}".strip()
+
 
 _HR_RE = re.compile(r"^\s*([-*_]\s*){3,}\s*$")
 _META_START_RES = [
@@ -207,7 +219,9 @@ def get_weekly_report(
     commodity_order = None
     week_start = (datetime.now() - timedelta(days=7)).date().isoformat()
     try:
-        from index_dashboard import get_data as get_index_data, INDEX_ORDER
+        from index_dashboard import INDEX_ORDER
+        from index_dashboard import get_data as get_index_data
+
         index_order = INDEX_ORDER
         t0 = time.perf_counter()
         indices = get_index_data("This Week")
@@ -221,7 +235,9 @@ def get_weekly_report(
         logger.warning("weekly_report indices fetch failed: %s", e, exc_info=True)
 
     try:
-        from fx_dashboard import get_data as get_fx_data, PAIR_ORDER
+        from fx_dashboard import PAIR_ORDER
+        from fx_dashboard import get_data as get_fx_data
+
         pair_order = PAIR_ORDER
         t0 = time.perf_counter()
         fx = get_fx_data("This Week")
@@ -236,9 +252,13 @@ def get_weekly_report(
 
     try:
         import sys
+
+        from commodities_dashboard import COMMODITY_ORDER
+
         # Commodities isn't easily exposed without sys.path hacks that main.py does,
-        # but the router should have access if it's imported properly. 
-        from commodities_dashboard import get_data as get_commodity_data, COMMODITY_ORDER
+        # but the router should have access if it's imported properly.
+        from commodities_dashboard import get_data as get_commodity_data
+
         commodity_order = COMMODITY_ORDER
         t0 = time.perf_counter()
         commodities = get_commodity_data("This Week")
@@ -253,6 +273,7 @@ def get_weekly_report(
 
     try:
         from market_breadth import get_data as get_breadth_data
+
         t0 = time.perf_counter()
         breadth = get_breadth_data(period="1y")
         logger.info("weekly_report breadth fetched in %.2fs", time.perf_counter() - t0)
@@ -262,6 +283,7 @@ def get_weekly_report(
 
     try:
         from top50_breadth import get_data as get_top50_data
+
         t0 = time.perf_counter()
         top50 = get_top50_data()
         logger.info("weekly_report top50 breadth fetched in %.2fs", time.perf_counter() - t0)
@@ -271,6 +293,7 @@ def get_weekly_report(
 
     try:
         from vix_term_structure import get_data as get_vix_data
+
         t0 = time.perf_counter()
         vix = get_vix_data()
         logger.info("weekly_report vix term structure fetched in %.2fs", time.perf_counter() - t0)
@@ -280,15 +303,17 @@ def get_weekly_report(
 
     try:
         from sector_metrics import get_data as get_sector_data
+
         t0 = time.perf_counter()
         sector = get_sector_data()
         logger.info("weekly_report sector metrics fetched in %.2fs", time.perf_counter() - t0)
-        
+
         # We need to process sector_metrics as it returns a DataFrame for weights_df
         weights_df = sector.get("weights_df")
         if weights_df is not None:
             # We just want top-level summary for the prompt
             import pandas as pd
+
             if isinstance(weights_df, pd.DataFrame):
                 df = weights_df.reset_index()
                 if "index" in df.columns and "Sector" not in df.columns:
@@ -296,13 +321,14 @@ def get_weekly_report(
                 df = df.round(2)
                 sector["weights_summary"] = df.to_dict(orient="records")
                 del sector["weights_df"]
-                
+
     except Exception as e:
         sector = {"error": str(e)}
         logger.warning("weekly_report sector metrics fetch failed: %s", e, exc_info=True)
 
     try:
-        from positioning import fetch_multiple_instruments, DEFAULT_DOMAIN, DATASETS
+        from positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
+
         # Fetching basic summary for positioning
         t0 = time.perf_counter()
         pos = fetch_multiple_instruments(
@@ -320,6 +346,7 @@ def get_weekly_report(
 
     try:
         from technical_analysis import get_ratio_data
+
         t0 = time.perf_counter()
         silver_gold = _slim_ratio_result(get_ratio_data("SI=F", "GC=F", start_date=week_start))
         sp_eq = _slim_ratio_result(get_ratio_data("^GSPC", "RSP", start_date=week_start))
@@ -462,10 +489,11 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
 
 Hard requirement: Do NOT include any assistant meta text like "If you want, I can...", "Let me know...", suggested next steps, or offers to help.
 End the output immediately after the report content.
-"""
+"""  # noqa: W291
 
     try:
         from openai import OpenAI
+
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         t0 = time.perf_counter()
         resp = client.responses.create(model="gpt-5-mini", input=prompt)
@@ -480,7 +508,7 @@ End the output immediately after the report content.
         )
     except Exception as exc:
         logger.error("weekly_report LLM generation failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"LLM Generation failed: {exc}")
+        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 
     report_md = _insert_weekly_performance(report_md, perf_md)
     cleaned = _strip_llm_meta(report_md)
@@ -492,6 +520,7 @@ End the output immediately after the report content.
     set_cached(long_cache, key, result)
     try:
         import api.cache as _cache
+
         disk_enabled = bool(getattr(_cache, "_DISK_CACHE_ENABLED", False))
         disk_path = _cache._disk_cache_path(long_cache, key) if disk_enabled else None  # type: ignore[attr-defined]
         disk_exists = bool(disk_path and disk_path.exists())
@@ -504,5 +533,5 @@ End the output immediately after the report content.
         )
     except Exception:
         logger.info("weekly_report cached (key=%s) total_time=%.2fs", key, time.perf_counter() - started)
-    
+
     return result

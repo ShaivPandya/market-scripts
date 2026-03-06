@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import logging
 import traceback
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Tuple  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -43,10 +44,10 @@ try:
         apply_distressed_gating,
         apply_hedges_with_gross_cap,
         apply_net_neutral,
+        compute_10yr_equivalent,
         compute_beta_frame,
         compute_defense_volatility,
         compute_severe_drawdown_flags,
-        compute_10yr_equivalent,
         download_prices,
         ensure_psd,
         exposures_by_class,
@@ -81,10 +82,10 @@ except ImportError:
         apply_distressed_gating,
         apply_hedges_with_gross_cap,
         apply_net_neutral,
+        compute_10yr_equivalent,
         compute_beta_frame,
         compute_defense_volatility,
         compute_severe_drawdown_flags,
-        compute_10yr_equivalent,
         download_prices,
         ensure_psd,
         exposures_by_class,
@@ -104,13 +105,13 @@ CONVICTION_MAX = 5
 
 def _parse_positions(
     positions: Sequence[Mapping[str, Any]],
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Parse and validate position rows into {ticker: conviction} dict."""
     if not positions:
         raise ValueError("positions must be a non-empty list.")
 
-    result: Dict[str, int] = {}
-    for idx, row in enumerate(positions):
+    result: dict[str, int] = {}
+    for idx, row in enumerate(positions):  # noqa: B007
         ticker = str(row.get("ticker", "")).strip().upper()
         conviction_raw = row.get("conviction", 3)
 
@@ -120,9 +121,7 @@ def _parse_positions(
         try:
             conviction = int(conviction_raw)
         except (TypeError, ValueError):
-            raise ValueError(
-                f"Position '{ticker}' has an invalid conviction: {conviction_raw!r}."
-            ) from None
+            raise ValueError(f"Position '{ticker}' has an invalid conviction: {conviction_raw!r}.") from None
 
         if conviction < CONVICTION_MIN or conviction > CONVICTION_MAX:
             raise ValueError(
@@ -139,7 +138,7 @@ def _parse_positions(
 
 def _build_conviction_weights(
     meta: pd.DataFrame,
-    convictions: Dict[str, int],
+    convictions: dict[str, int],
 ) -> pd.Series:
     """
     Map conviction levels (1–5) to raw target weights.
@@ -166,8 +165,8 @@ def _build_conviction_weights(
 
 def size_portfolio(
     positions: Sequence[Mapping[str, Any]],
-    book: Optional[float] = 100_000.0,
-    target_leverage: Optional[float] = 2.0,
+    book: float | None = 100_000.0,
+    target_leverage: float | None = 2.0,
 ) -> dict:
     """
     Size a portfolio from user conviction levels using CVXPY optimization.
@@ -424,18 +423,20 @@ def size_portfolio(
 
         # Build weights DataFrame
         latest_prices = usd_prices[tickers].iloc[-1]
-        weights_df = pd.DataFrame({
-            "ticker": tickers,
-            "asset": meta["asset"].values,
-            "direction": meta["direction"].values,
-            "distressed": meta["distressed"].values if "distressed" in meta.columns else False,
-            "conviction": [convictions.get(t, 0) for t in tickers],
-            "beta_spy": betas_spy.values,
-            "beta_iwm": betas_iwm.values,
-            "realized_vol": meta["realized_vol"].values,
-            "weight": w_final.values,
-            "price": latest_prices.values,
-        })
+        weights_df = pd.DataFrame(
+            {
+                "ticker": tickers,
+                "asset": meta["asset"].values,
+                "direction": meta["direction"].values,
+                "distressed": meta["distressed"].values if "distressed" in meta.columns else False,
+                "conviction": [convictions.get(t, 0) for t in tickers],
+                "beta_spy": betas_spy.values,
+                "beta_iwm": betas_iwm.values,
+                "realized_vol": meta["realized_vol"].values,
+                "weight": w_final.values,
+                "price": latest_prices.values,
+            }
+        )
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
             weights_df["shares"] = (weights_df["dollar_weight"] / weights_df["price"]).round(0).astype(int)
@@ -460,7 +461,7 @@ def size_portfolio(
         )
         spy_price = float(usd_prices[MARKET_TICKER_LONG].iloc[-1])
         iwm_price = float(usd_prices[MARKET_TICKER_SHORT].iloc[-1])
-        hedges_data: Dict[str, Any] = {
+        hedges_data: dict[str, Any] = {
             "ticker": [MARKET_TICKER_LONG, MARKET_TICKER_SHORT],
             "type": ["hedge", "hedge"],
             "direction": [
@@ -485,18 +486,20 @@ def size_portfolio(
         binding = identify_binding_constraint(w_max_scaled, meta, include_position_limits=False)
         exp_max = exposures_by_class(w_max_scaled, meta)
 
-        max_scaled_weights_df = pd.DataFrame({
-            "ticker": tickers,
-            "asset": meta["asset"].values,
-            "direction": meta["direction"].values,
-            "weight": w_max_scaled.values,
-            "price": latest_prices.values,
-        })
+        max_scaled_weights_df = pd.DataFrame(
+            {
+                "ticker": tickers,
+                "asset": meta["asset"].values,
+                "direction": meta["direction"].values,
+                "weight": w_max_scaled.values,
+                "price": latest_prices.values,
+            }
+        )
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
             max_scaled_weights_df["shares"] = (
-                max_scaled_weights_df["dollar_weight"] / max_scaled_weights_df["price"]
-            ).round(0).astype(int)
+                (max_scaled_weights_df["dollar_weight"] / max_scaled_weights_df["price"]).round(0).astype(int)
+            )
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
 
         return {
@@ -505,13 +508,11 @@ def size_portfolio(
             "timestamp": datetime.now(),
             "book_size": book,
             "target_leverage": target_leverage,
-
             # Solution metrics
             "vol_daily": vol_final,
             "vol_spy": vol_spy,
             "vol_iwm": vol_iwm,
             "gross_leverage": exp["total_gross"],
-
             # Beta hedging
             "beta_long_spy": hedge_summary["beta_long_spy"],
             "beta_short_spy": hedge_summary["beta_short_spy"],
@@ -529,17 +530,13 @@ def size_portfolio(
             "beta_halflife_days": BETA_EWMA_HALFLIFE_DAYS,
             "beta_min_obs": BETA_MIN_OBS,
             "beta_shrink_to_one": BETA_SHRINK_TO_ONE,
-
             # Exposures
             "exposures": exp,
-
             # Constraints utilization
             "constraints": constraints_util,
-
             # DataFrames
             "weights_df": weights_df,
             "hedges_df": hedges_df,
-
             # Max scaled version
             "max_scaled": {
                 "scale_factor": k_max,

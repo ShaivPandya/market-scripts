@@ -4,6 +4,8 @@
 # Secrets
 .env
 .env.*
+open_positions.csv
+**/open_positions.csv
 
 # Python caches
 __pycache__/

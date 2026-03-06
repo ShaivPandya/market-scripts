@@ -37,21 +37,27 @@ OUTPUT:
     - Three-panel chart showing price, momentum, and change in momentum
     - Console table listing all crossover dates with price and direction
 """
+
+import argparse
 import logging
-import argparse, sys
+import sys
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 LOGGER = logging.getLogger(__name__)
 
 try:
     import yfinance as yf
 except ImportError:
-    sys.stderr.write("pip install yfinance pandas matplotlib\n"); sys.exit(1)
+    sys.stderr.write("pip install yfinance pandas matplotlib\n")
+    sys.exit(1)
+
 
 def ema(s, span):
     return s.ewm(span=span, adjust=False).mean()
+
 
 def main():
     p = argparse.ArgumentParser(description="Price, 52w momentum, and 2nd-derivative-of-momentum")
@@ -63,10 +69,10 @@ def main():
     args = p.parse_args()
 
     # weekly closes
-    df = yf.download(args.ticker.upper(), period=f"{args.years}y", interval="1d",
-                     auto_adjust=True, progress=False)
+    df = yf.download(args.ticker.upper(), period=f"{args.years}y", interval="1d", auto_adjust=True, progress=False)
     if df.empty:
-        sys.stderr.write("no data\n"); sys.exit(2)
+        sys.stderr.write("no data\n")
+        sys.exit(2)
     close_w = df["Close"].resample("W-FRI").last().dropna()
 
     # log price
@@ -81,17 +87,22 @@ def main():
     # smooth to cut noise
     r2s = ema(r2, args.smooth)
 
-    fig, (ax0, ax1, ax2) = plt.subplots(3, 1, sharex=True, figsize=(12, 9),
-                                        gridspec_kw={"height_ratios":[3,1,1]})
+    fig, (ax0, ax1, ax2) = plt.subplots(3, 1, sharex=True, figsize=(12, 9), gridspec_kw={"height_ratios": [3, 1, 1]})
     ax0.plot(close_w.index, close_w, lw=1.2)
-    ax0.set_title(f"{args.ticker.upper()} — Price, {args.mom}w Momentum, and ΔMomentum ({args.deriv}w, EMA {args.smooth})")
+    ax0.set_title(
+        f"{args.ticker.upper()} — Price, {args.mom}w Momentum, and ΔMomentum ({args.deriv}w, EMA {args.smooth})"
+    )
     ax0.set_ylabel("Price")
 
-    ax1.plot(r1.index, r1, lw=1.0); ax1.axhline(0, lw=0.8); ax1.set_ylabel("Momentum")
+    ax1.plot(r1.index, r1, lw=1.0)
+    ax1.axhline(0, lw=0.8)
+    ax1.set_ylabel("Momentum")
 
     ax2.plot(r2.index, r2, lw=0.6, alpha=0.4, label="raw ΔMomentum")
     ax2.plot(r2s.index, r2s, lw=1.2, label=f"EMA({args.smooth})")
-    ax2.axhline(0, lw=0.8); ax2.set_ylabel("ΔMomentum"); ax2.set_xlabel("Date")
+    ax2.axhline(0, lw=0.8)
+    ax2.set_ylabel("ΔMomentum")
+    ax2.set_xlabel("Date")
     ax2.legend(loc="upper left")
 
     # Detect crossovers: r2 crossing r2s
@@ -108,15 +119,15 @@ def main():
     if len(combined) > 1:
         # Calculate the difference and detect sign changes
         diff = combined["r2"] - combined["r2s"]
-        crosses = (diff.shift(1) * diff < 0)  # Sign change indicates a cross
+        crosses = diff.shift(1) * diff < 0  # Sign change indicates a cross
 
         cross_dates = combined[crosses].index
         if len(cross_dates) > 0:
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"ΔMomentum (r2) crosses EMA({args.smooth}) - {args.ticker.upper()}")
-            print(f"{'='*70}")
+            print(f"{'=' * 70}")
             print(f"{'Date':<12} {'Price':>10} {'Direction':<15}")
-            print(f"{'-'*70}")
+            print(f"{'-' * 70}")
 
             for date in cross_dates:
                 price = combined.loc[date, "price"]
@@ -128,11 +139,13 @@ def main():
 
                 print(f"{date.strftime('%Y-%m-%d'):<12} ${price:>9.2f} {direction:<15}")
 
-            print(f"{'='*70}\n")
+            print(f"{'=' * 70}\n")
 
-    plt.tight_layout(); plt.show()
+    plt.tight_layout()
+    plt.show()
+
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

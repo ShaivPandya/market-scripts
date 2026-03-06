@@ -1,7 +1,10 @@
-from typing import Optional
+from typing import Any, cast
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from api.cache import long_cache, get_cached, set_cached
+
+from api.cache import get_cached, long_cache, set_cached
+from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -33,24 +36,25 @@ _BENCHMARK_MAP = {
 
 
 class QualityRequest(BaseModel):
-    universe: str = "S&P 500"   # display label from dropdown
-    tickers: str = ""            # comma-separated, used when universe == "custom"
+    universe: str = "S&P 500"  # display label from dropdown
+    tickers: str = ""  # comma-separated, used when universe == "custom"
     benchmark: str = "S&P 500"
     input_mode: str = "Universe"  # "Universe" | "Custom Tickers"
 
 
 def _resolve_universe_tickers(universe_label: str) -> list[str]:
     """Return list of tickers for a named universe label."""
-    from common import list_universes, get_universe_tickers
+    from common import get_universe_tickers
+
     ticker_key = _UNIVERSE_MAP.get(universe_label)
     if ticker_key:
-        return get_universe_tickers(ticker_key)
+        return cast(list[str], get_universe_tickers(ticker_key))
     sector_etf = _SECTOR_PREFIX_MAP.get(universe_label)
     if sector_etf:
-        return get_universe_tickers(sector_etf)
+        return cast(list[str], get_universe_tickers(sector_etf))
     # Try as a raw key
     try:
-        return get_universe_tickers(universe_label)
+        return cast(list[str], get_universe_tickers(universe_label))
     except Exception:
         return []
 
@@ -71,17 +75,19 @@ def run_quality_screen(req: QualityRequest):
             raise HTTPException(status_code=400, detail="No tickers resolved for the requested universe/input.")
 
         benchmark_label = req.benchmark
+        benchmark: str | None
         if benchmark_label == "Same as Input":
             benchmark = "self"
         else:
             benchmark = _BENCHMARK_MAP.get(benchmark_label, benchmark_label)
 
         from quality import get_data
+
         data = get_data(tickers=tickers, benchmark=benchmark)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail={"message": str(e)})
+        raise DataFetchError(source="quality", detail=str(e)) from e
 
     if data.get("error"):
         raise HTTPException(
@@ -93,7 +99,8 @@ def run_quality_screen(req: QualityRequest):
         )
 
     import pandas as pd
-    result = {}
+
+    result: dict[str, Any] = {}
     for k, v in data.items():
         if isinstance(v, pd.DataFrame):
             result[k] = serialize_dataframe(v.reset_index())

@@ -6,7 +6,7 @@ import io
 import re
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional  # noqa: UP035
 
 import pandas as pd
 
@@ -46,24 +46,36 @@ def clean_ticker(tk: str) -> str:
     tk = tk.strip().upper()
     # Common international exchange suffixes that use dots
     intl_suffixes = (
-        ".HE", ".L", ".TO", ".AX", ".PA", ".DE", ".MI", ".AS", ".SW", ".MC",
-        ".SI", ".HK", ".T", ".NS", ".BO",
-        ".KS", ".KQ",  # South Korea (KSE / KOSDAQ)
-        ".TW", ".TWO",  # Taiwan (TWSE / Taipei Exchange)
+        ".HE",
+        ".L",
+        ".TO",
+        ".AX",
+        ".PA",
+        ".DE",
+        ".MI",
+        ".AS",
+        ".SW",
+        ".MC",
+        ".SI",
+        ".HK",
+        ".T",
+        ".NS",
+        ".BO",
+        ".KS",
+        ".KQ",  # South Korea (KSE / KOSDAQ)
+        ".TW",
+        ".TWO",  # Taiwan (TWSE / Taipei Exchange)
     )
     if any(tk.endswith(suffix) for suffix in intl_suffixes):
         return tk
     return tk.replace(".", "-")
 
 
-def list_universes() -> List[str]:
+def list_universes() -> list[str]:
     """List available universe files in the universes/ folder."""
     if not UNIVERSES_DIR.exists():
         return []
-    return sorted([
-        f.stem for f in UNIVERSES_DIR.iterdir()
-        if f.suffix.lower() in (".csv", ".txt")
-    ])
+    return sorted([f.stem for f in UNIVERSES_DIR.iterdir() if f.suffix.lower() in (".csv", ".txt")])
 
 
 def resolve_universe_path(path_or_name: str) -> Path:
@@ -86,12 +98,11 @@ def resolve_universe_path(path_or_name: str) -> Path:
         return candidate
 
     raise FileNotFoundError(
-        f"Universe '{path_or_name}' not found. "
-        f"Available: {', '.join(list_universes()) or '(none)'}"
+        f"Universe '{path_or_name}' not found. Available: {', '.join(list_universes()) or '(none)'}"
     )
 
 
-def load_universe(path_or_name: str) -> List[str]:
+def load_universe(path_or_name: str) -> list[str]:
     """
     Load tickers from a file path or universe name.
 
@@ -111,15 +122,14 @@ def load_universe(path_or_name: str) -> List[str]:
         else:
             tickers = df.iloc[:, 0].astype(str).tolist()
     else:
-        with open(path, "r", encoding="utf-8") as f:
-            tickers = [line.strip() for line in f
-                      if line.strip() and not line.strip().startswith("#")]
+        with open(path, encoding="utf-8") as f:
+            tickers = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
     # Normalize and deduplicate (preserve order)
     return list(dict.fromkeys(clean_ticker(t) for t in tickers if t.strip()))
 
 
-def get_sp500_universe() -> List[str]:
+def get_sp500_universe() -> list[str]:
     """Fetch S&P 500 tickers from Wikipedia."""
     import urllib.request
 
@@ -156,7 +166,7 @@ def get_sp500_universe() -> List[str]:
     return tickers
 
 
-def _read_cached_etf_holdings(etf_ticker: str) -> Optional[List[str]]:
+def _read_cached_etf_holdings(etf_ticker: str) -> list[str] | None:
     etf = clean_ticker(etf_ticker)
     path = _ETF_HOLDINGS_CACHE_DIR / f"{etf}.txt"
     try:
@@ -176,7 +186,7 @@ def _read_cached_etf_holdings(etf_ticker: str) -> Optional[List[str]]:
         return None
 
 
-def _write_cached_etf_holdings(etf_ticker: str, tickers: List[str]) -> None:
+def _write_cached_etf_holdings(etf_ticker: str, tickers: list[str]) -> None:
     etf = clean_ticker(etf_ticker)
     try:
         _ETF_HOLDINGS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -190,7 +200,7 @@ def _write_cached_etf_holdings(etf_ticker: str, tickers: List[str]) -> None:
         return
 
 
-def _extract_tickers_from_table(df: pd.DataFrame) -> List[str]:
+def _extract_tickers_from_table(df: pd.DataFrame) -> list[str]:
     if df is None or df.empty:
         return []
 
@@ -230,7 +240,7 @@ def _extract_tickers_from_table(df: pd.DataFrame) -> List[str]:
 _TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,15}$")
 
 
-def _ticker_score(values: List[str]) -> float:
+def _ticker_score(values: list[str]) -> float:
     if not values:
         return 0.0
     sample = values[:250]
@@ -252,7 +262,7 @@ def _ticker_score(values: List[str]) -> float:
     return ok / total
 
 
-def _best_ticker_column(df: pd.DataFrame) -> Optional[str]:
+def _best_ticker_column(df: pd.DataFrame) -> str | None:
     best_col = None
     best_score = 0.0
     for col in df.columns[:25]:
@@ -269,7 +279,7 @@ def _best_ticker_column(df: pd.DataFrame) -> Optional[str]:
     return best_col
 
 
-def fetch_etf_holdings_ssga(etf_ticker: str) -> List[str]:
+def fetch_etf_holdings_ssga(etf_ticker: str) -> list[str]:
     """
     Fetch ETF holdings from State Street Global Advisors (SSGA) export files.
 
@@ -335,7 +345,7 @@ def fetch_etf_holdings_ssga(etf_ticker: str) -> List[str]:
     return []
 
 
-def fetch_etf_holdings_yfinance(etf_ticker: str) -> List[str]:
+def fetch_etf_holdings_yfinance(etf_ticker: str) -> list[str]:
     """
     Fetch ETF holdings from yfinance.
 
@@ -361,7 +371,7 @@ def fetch_etf_holdings_yfinance(etf_ticker: str) -> List[str]:
     return list(dict.fromkeys(tickers))
 
 
-def get_etf_holdings(etf_ticker: str, *, use_cache: bool = True) -> List[str]:
+def get_etf_holdings(etf_ticker: str, *, use_cache: bool = True) -> list[str]:
     """
     Return (best-effort) full holdings tickers for an ETF.
 
@@ -377,7 +387,7 @@ def get_etf_holdings(etf_ticker: str, *, use_cache: bool = True) -> List[str]:
         if cached:
             return cached
 
-    tickers: List[str] = []
+    tickers: list[str] = []
     if etf in _SPDR_SECTOR_ETFS:
         tickers = fetch_etf_holdings_ssga(etf)
 
@@ -390,7 +400,7 @@ def get_etf_holdings(etf_ticker: str, *, use_cache: bool = True) -> List[str]:
     return tickers
 
 
-def get_universe_tickers(key: str) -> List[str]:
+def get_universe_tickers(key: str) -> list[str]:
     """
     Resolve a universe key to a ticker list.
 

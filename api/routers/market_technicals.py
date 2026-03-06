@@ -3,7 +3,9 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from api.cache import short_cache, get_cached, set_cached
+
+from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
 
 router = APIRouter()
@@ -17,9 +19,10 @@ def get_market_breadth():
         return cached
     try:
         from market_breadth import get_data
+
         data = get_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="market_breadth", detail=str(e)) from e
     result = serialize_response(data)
     set_cached(short_cache, key, result)
     return result
@@ -33,9 +36,10 @@ def get_top50_breadth():
         return cached
     try:
         from top50_breadth import get_data
+
         data = get_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="top50_breadth", detail=str(e)) from e
     result = serialize_response(data)
     set_cached(short_cache, key, result)
     return result
@@ -49,9 +53,10 @@ def get_price_volume_signals():
         return cached
     try:
         from price_volume_signals import get_data
+
         data = get_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="price_volume_signals", detail=str(e)) from e
     result = serialize_response(data)
     set_cached(short_cache, key, result)
     return result
@@ -65,10 +70,11 @@ def get_vix_term_structure():
         return cached
     try:
         from vix_term_structure import get_data
+
         start = (date.today() - timedelta(days=400)).isoformat()
         data = get_data(tail=252, signals_count=20, start=start)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="vix_term_structure", detail=str(e)) from e
     result = serialize_response(data)
     set_cached(short_cache, key, result)
     return result
@@ -139,12 +145,14 @@ def _format_price_volume(data: dict) -> str:
     lines = []
     for r in rows:
         market = r.get("Market", r.get("MarketName", "?"))
-        lines.append(f"  {market} ({r.get('Date', '?')}): "
-                     f"Close={r.get('Close', 'N/A')}, "
-                     f"Ret%={r.get('RetPct', 'N/A')}, "
-                     f"DownsideRecVol={'YES' if r.get('DownsideRecordVol') is True else 'no'}, "
-                     f"NewHi/LoVol={'YES' if r.get('NewHigh_LowVol') is True else 'no'}, "
-                     f"HiVolChurn={'YES' if r.get('HiVol_Churn') is True else 'no'}")
+        lines.append(
+            f"  {market} ({r.get('Date', '?')}): "
+            f"Close={r.get('Close', 'N/A')}, "
+            f"Ret%={r.get('RetPct', 'N/A')}, "
+            f"DownsideRecVol={'YES' if r.get('DownsideRecordVol') is True else 'no'}, "
+            f"NewHi/LoVol={'YES' if r.get('NewHigh_LowVol') is True else 'no'}, "
+            f"HiVolChurn={'YES' if r.get('HiVol_Churn') is True else 'no'}"
+        )
     hits = data.get("hits_df") or []
     if hits:
         lines.append(f"\n  Recent signal hits ({len(hits)} events):")
@@ -157,7 +165,7 @@ def _format_price_volume(data: dict) -> str:
 def analyze_market_technicals(req: MarketTechnicalsAnalyzeRequest):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+        raise ConfigurationError("OPENAI_API_KEY")
 
     breadth_text = _format_breadth(req.market_breadth)
     top50_text = _format_top50(req.top50_breadth)
@@ -189,12 +197,13 @@ Be specific about the numbers. Write for a professional investor audience."""
 
     try:
         from openai import OpenAI
+
         client = OpenAI()
         resp = client.responses.create(model="gpt-5-mini", input=prompt)
         analysis = (resp.output_text or "").strip()
         if not analysis:
             raise ValueError("OpenAI returned empty response")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}")
+        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 
     return {"analysis": analysis}

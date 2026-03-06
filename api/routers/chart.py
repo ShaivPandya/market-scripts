@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -23,9 +25,10 @@ def run_chart(req: ChartRequest):
     ticker = req.ticker.strip().upper()
     try:
         from technical_analysis import get_data
+
         data = get_data(ticker, lookback=req.lookback)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="chart", detail=str(e)) from e
 
     if "error" in data and data["error"]:
         raise HTTPException(status_code=400, detail=data["error"])
@@ -59,7 +62,7 @@ def run_chart_ratio(req: RatioChartRequest):
             method=req.method,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="chart", detail=str(e)) from e
 
     if "error" in data and data["error"]:
         raise HTTPException(status_code=400, detail=data["error"])

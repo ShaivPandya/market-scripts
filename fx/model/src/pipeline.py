@@ -1,27 +1,29 @@
 """FX model pipeline - config-driven for multiple currency pairs."""
+
 import logging
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
 from .currency_config import CurrencyPairConfig
+from .data_bis import BisError, fetch_bis_ws_eer_m
+from .data_estat import EStatError, fetch_estat_cpi
+from .data_eurostat import fetch_euro_area_current_account_pct_gdp
 from .data_fred import fetch_fred_series
 from .data_imf import fetch_imf_datamapper_indicator
 from .data_statcan import fetch_statcan_cpi
-from .data_estat import fetch_estat_cpi, EStatError
-from .data_bis import fetch_bis_ws_eer_m, BisError
-from .data_eurostat import fetch_euro_area_current_account_pct_gdp
 from .features import build_monthly_panel, compute_features, implied_spot_reference_points
-from .models import fit_horizon_ols, predict_from_row, bootstrap_forecast_distribution
+from .models import bootstrap_forecast_distribution, fit_horizon_ols, predict_from_row
 from .report import (
-    save_csv,
-    save_json,
+    build_driver_explanation,
+    plot_forecast_distribution,
     plot_spot_vs_reference,
     plot_valuation_zscore,
-    plot_forecast_distribution,
+    save_csv,
+    save_json,
     summarize_distribution,
-    build_driver_explanation,
 )
 
 log = logging.getLogger(__name__)
@@ -97,14 +99,10 @@ def run_pipeline(
     fred["spot"] = spot_raw
 
     # CPI for base currency
-    fred["cpi_base"] = _fetch_with_candidates(
-        config.cpi_base_ids, "cpi_base", start, cache_dir, refresh
-    )
+    fred["cpi_base"] = _fetch_with_candidates(config.cpi_base_ids, "cpi_base", start, cache_dir, refresh)
 
     # CPI for quote currency
-    fred["cpi_quote"] = _fetch_with_candidates(
-        config.cpi_quote_ids, "cpi_quote", start, cache_dir, refresh
-    )
+    fred["cpi_quote"] = _fetch_with_candidates(config.cpi_quote_ids, "cpi_quote", start, cache_dir, refresh)
 
     # Interest rates
     log.info(f"Downloading FRED {config.rate_base_id} -> r_base")
@@ -148,9 +146,7 @@ def run_pipeline(
             if config.imf_iso3_base.upper() == "EMU" or config.base_ccy.upper() == "EUR":
                 try:
                     log.info("Attempting Eurostat fallback for Euro area CA%GDP")
-                    ca_base = fetch_euro_area_current_account_pct_gdp(
-                        start=start, cache_dir=cache_dir, refresh=refresh
-                    )
+                    ca_base = fetch_euro_area_current_account_pct_gdp(start=start, cache_dir=cache_dir, refresh=refresh)
                 except Exception as e2:
                     log.warning(f"Eurostat CA%GDP fallback failed: {e2}")
 
@@ -272,7 +268,9 @@ def run_pipeline(
         }
 
         plot_forecast_distribution(
-            draws, point, spot_now,
+            draws,
+            point,
+            spot_now,
             outdir / f"forecast_distribution_{h}m.png",
             horizon=h,
             pair_name=pair,

@@ -1,13 +1,16 @@
 from pathlib import Path
+
 import pandas as pd
+
 
 class BisError(RuntimeError):
     pass
 
+
 def fetch_bis_ws_eer_m(series_key: str, cache_dir: Path, refresh: bool = False) -> pd.Series:
     # Fetch BIS WS_EER_M monthly effective exchange rate series using pandaSDMX.
     # series_key example: 'M.R.B.CA' (monthly, REER, broad basket, Canada).
-    cache_path = cache_dir / f"bis_WS_EER_M_{series_key.replace('.','_')}.csv"
+    cache_path = cache_dir / f"bis_WS_EER_M_{series_key.replace('.', '_')}.csv"
     if cache_path.exists() and not refresh:
         df = pd.read_csv(cache_path, parse_dates=["date"])
         s = pd.to_numeric(df["value"], errors="coerce")

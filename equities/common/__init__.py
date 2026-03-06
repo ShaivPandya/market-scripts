@@ -1,10 +1,10 @@
 from .universe_loader import (
-    load_universe,
-    list_universes,
+    UNIVERSES_DIR,
+    clean_ticker,
     get_sp500_universe,
     get_universe_tickers,
-    clean_ticker,
-    UNIVERSES_DIR,
+    list_universes,
+    load_universe,
 )
 
 __all__ = [

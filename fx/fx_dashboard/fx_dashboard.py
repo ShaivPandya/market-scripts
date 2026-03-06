@@ -23,7 +23,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 # ── Currency pair definitions: display_name -> yfinance ticker ──────────────
 CURRENCY_PAIRS = {
-    "DXY":    "DX-Y.NYB",
+    "DXY": "DX-Y.NYB",
     "EURUSD": "EURUSD=X",
     "GBPUSD": "GBPUSD=X",
     "AUDUSD": "AUDUSD=X",
@@ -38,14 +38,15 @@ PAIR_ORDER = list(CURRENCY_PAIRS.keys())
 
 # ── Timeframe configs: name -> yfinance (period, interval) ─────────────────
 TIMEFRAMES = {
-    "This Week": {"period": "5d",  "interval": "15m"},
-    "Daily":     {"period": "90d", "interval": "1d"},
-    "Weekly":    {"period": "2y",  "interval": "1wk"},
-    "Monthly":   {"period": "5y",  "interval": "1mo"},
+    "This Week": {"period": "5d", "interval": "15m"},
+    "Daily": {"period": "90d", "interval": "1d"},
+    "Weekly": {"period": "2y", "interval": "1wk"},
+    "Monthly": {"period": "5y", "interval": "1mo"},
 }
 
 
 # ── Data fetching ──────────────────────────────────────────────────────────
+
 
 def fetch_fx_data(timeframe: str = "Daily") -> dict:
     """
@@ -114,6 +115,7 @@ def get_data(timeframe: str = "Daily") -> dict:
 
 
 # ── Terminal output ────────────────────────────────────────────────────────
+
 
 def print_terminal():
     """Print FX dashboard results for all timeframes."""

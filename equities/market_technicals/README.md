@@ -10,7 +10,6 @@ Analyzes market breadth and price/volume signals for U.S. equities.
   - `GET /api/top50-breadth`
   - `GET /api/price-volume-signals`
   - `GET /api/vix-term-structure`
-- Streamlit GUI: `gui/app.py` (page: “📈 Market Technicals”)
 - React UI: “Market Technicals” page in `frontend/`
 
 ## Quick Start
