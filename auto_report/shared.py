@@ -26,7 +26,9 @@ def load_prompt_file(path: Path, name: str) -> str:
         )
     content = path.read_text(encoding="utf-8").strip()
     if not content:
-        raise ValueError(f"Prompt file is empty: {path}\nAdd content to {name} before running.")
+        raise ValueError(
+            f"Prompt file is empty: {path}\nAdd content to {name} before running."
+        )
     return content
 
 
@@ -152,16 +154,45 @@ def call_claude(
     if tools:
         kwargs["tools"] = tools
 
+    def _create_with_retry(**kw):
+        """Call client.messages.create with automatic retry on rate-limit (429) errors."""
+        import anthropic as _anthropic
+
+        max_retries = 5
+        for attempt in range(max_retries + 1):
+            try:
+                return client.messages.create(**kw)
+            except _anthropic.RateLimitError as exc:
+                if attempt == max_retries:
+                    raise
+                # Use Retry-After header if available, otherwise exponential backoff
+                retry_after = None
+                if hasattr(exc, "response") and exc.response is not None:
+                    retry_after = exc.response.headers.get("retry-after")
+                if retry_after:
+                    wait = float(retry_after)
+                else:
+                    wait = min(2**attempt * 15, 120)  # 15s, 30s, 60s, 120s, 120s
+                log.warning(
+                    "Rate-limited (429) on attempt %d/%d — waiting %.0fs before retry",
+                    attempt + 1,
+                    max_retries + 1,
+                    wait,
+                )
+                time.sleep(wait)
+
     t0 = time.perf_counter()
-    response = client.messages.create(**kwargs)
+    response = _create_with_retry(**kwargs)
 
     # Handle pause_turn for long-running web search turns
     messages = list(kwargs["messages"])
     while response.stop_reason == "pause_turn":
         messages.append({"role": "assistant", "content": response.content})
-        messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
+        messages.append(
+            {"role": "user", "content": [{"type": "text", "text": "Continue."}]}
+        )
         kwargs["messages"] = messages
-        response = client.messages.create(**kwargs)
+        response = _create_with_retry(**kwargs)
 
     # Extract text and citations from all content blocks
     text_parts = []
@@ -235,7 +266,9 @@ def create_github_issue(title: str, body: str) -> str | None:
     if len(body) > 60000:
         body = body[:60000] + "\n\n... (truncated)"
 
-    resp = requests.post(url, headers=headers, json={"title": title, "body": body}, timeout=30)
+    resp = requests.post(
+        url, headers=headers, json={"title": title, "body": body}, timeout=30
+    )
     if resp.status_code == 201:
         issue_url = resp.json().get("html_url", "")
         log.info("Created GitHub Issue: %s", issue_url)
