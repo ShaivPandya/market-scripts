@@ -184,7 +184,6 @@ export function CommoditiesCurve() {
           title="Curve Shape"
           value={analysis.shape}
           signal={shapeSignal(analysis.shape)}
-          signalLabel={analysis.shape}
         />
         <MetricCard
           title="Contracts Available"
