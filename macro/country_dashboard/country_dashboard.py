@@ -20,7 +20,7 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List  # noqa: UP035
 
 LOGGER = logging.getLogger(__name__)
 
@@ -654,7 +654,7 @@ def _fetch_snb_series(
     resp.raise_for_status()
 
     lines = resp.text.strip().splitlines()
-    data_lines = [l for l in lines if not l.startswith('"CubeId"') and not l.startswith('"PublishingDate"')]
+    data_lines = [l for l in lines if not l.startswith('"CubeId"') and not l.startswith('"PublishingDate"')]  # noqa: E741
     df = pd.read_csv(io.StringIO("\n".join(data_lines)), sep=";", quotechar='"')
     df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
     df = df.dropna(subset=["Value"])

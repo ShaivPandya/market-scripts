@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd

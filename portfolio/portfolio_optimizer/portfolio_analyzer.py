@@ -138,7 +138,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -1199,7 +1199,7 @@ def analyze_portfolio() -> dict:
         meta = apply_distressed_gating(meta, prices_all)
 
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
-        asset_map = dict(zip(meta.index, meta["asset"]))
+        asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
         direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
 
         signals_df, _ = generate_composite_signals(
@@ -1366,7 +1366,7 @@ def optimize_portfolio(
 
         # Generate composite signals
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
-        asset_map = dict(zip(meta.index, meta["asset"]))
+        asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
         direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
         signals_df, _ = generate_composite_signals(
             tickers=active_tickers,
@@ -1814,7 +1814,7 @@ def main(book: float | None = None, debug_weights: bool = False):
     # Generate composite signals for active tickers (those with direction)
     active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
     console.print(f"[cyan]Generating composite signals for {len(active_tickers)} active tickers...[/cyan]")
-    asset_map = dict(zip(meta.index, meta["asset"]))
+    asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
     direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
     signals_df, _ = generate_composite_signals(
         tickers=active_tickers,

@@ -34,7 +34,7 @@ import threading
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -467,7 +467,7 @@ def soda_iter_rows(
             raise RuntimeError(f"Unexpected response type: {type(rows)}")
         if not rows:
             break
-        for r in rows:
+        for r in rows:  # noqa: UP028
             yield r
         offset += len(rows)
 

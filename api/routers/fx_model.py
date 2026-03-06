@@ -129,7 +129,7 @@ def run_fx_model(req: FXModelRequest):
     try:
         horizons = [int(x.strip()) for x in req.horizons.split(",") if x.strip()]
     except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid horizons. Use comma-separated integers, e.g. `12,24`.")
+        raise HTTPException(status_code=422, detail="Invalid horizons. Use comma-separated integers, e.g. `12,24`.")  # noqa: B904
 
     if not horizons:
         raise HTTPException(status_code=422, detail="At least one horizon is required, e.g. `12,24`.")

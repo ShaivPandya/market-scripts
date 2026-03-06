@@ -94,7 +94,7 @@ def require_auth(access_token: str | None = Cookie(default=None)) -> str:
         )
         return payload["sub"]
     except JWTError:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
         )

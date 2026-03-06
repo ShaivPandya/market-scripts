@@ -42,7 +42,7 @@ TENOR_ORDER = [
     {"tenor": "30Y", "years": 30.00},
 ]
 
-TENOR_TO_YEARS = {row["tenor"]: row["years"] for row in TENOR_ORDER}
+TENOR_TO_YEARS = {str(row["tenor"]): float(row["years"]) for row in TENOR_ORDER}
 
 COUNTRIES = [
     ("US", "United States"),
@@ -191,7 +191,7 @@ def _build_country_curve(
     csv_map = CSV_SERIES.get(country_code, {})
 
     for tenor_meta in TENOR_ORDER:
-        tenor = tenor_meta["tenor"]
+        tenor = str(tenor_meta["tenor"])
 
         series: pd.Series | None = None
         source: str | None = None
@@ -239,7 +239,7 @@ def _build_country_curve(
 
     points: list[dict] = []
     for tenor_meta in TENOR_ORDER:
-        tenor = tenor_meta["tenor"]
+        tenor = str(tenor_meta["tenor"])
         years = TENOR_TO_YEARS[tenor]
         series_pair = series_map.get(tenor)
 

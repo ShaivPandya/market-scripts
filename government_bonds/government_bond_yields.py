@@ -15,7 +15,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple  # noqa: UP035
 
 import pandas as pd
 

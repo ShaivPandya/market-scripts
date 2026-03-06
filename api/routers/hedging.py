@@ -134,7 +134,7 @@ def run_hedging_tool(req: HedgingRequest):
     try:
         key = _cache_key(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     cached = get_cached(short_cache, key)
     if cached is not None:
@@ -143,7 +143,7 @@ def run_hedging_tool(req: HedgingRequest):
     try:
         result = _compute_hedging_result(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except Exception as e:
         raise DataFetchError(source="hedging_tool", detail=str(e)) from e
 
@@ -156,7 +156,7 @@ def start_hedging_tool(req: HedgingRequest):
     try:
         key = _cache_key(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
     cached = get_cached(short_cache, key)
     if cached is not None:

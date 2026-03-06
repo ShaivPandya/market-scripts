@@ -17,7 +17,7 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -27,7 +27,7 @@ LOGGER = logging.getLogger(__name__)
 try:
     import yfinance as yf
 except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 # Import from existing single-ticker scripts
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

@@ -15,7 +15,7 @@ Usage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List  # noqa: UP035
 
 import pandas as pd
 import yfinance as yf

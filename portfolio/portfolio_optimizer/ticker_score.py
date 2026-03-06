@@ -25,7 +25,7 @@ import logging
 import sys
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -35,7 +35,7 @@ LOGGER = logging.getLogger(__name__)
 try:
     import yfinance as yf
 except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))

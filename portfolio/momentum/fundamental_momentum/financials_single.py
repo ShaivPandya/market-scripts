@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import date
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple  # noqa: UP035
 
 import requests
 from edgar_fetcher import (
@@ -492,7 +492,7 @@ def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -
 
 
 def _derived_eps_entries(us_gaap: dict, frequency: str) -> list[dict]:
-    period_key = lambda e: f"END:{e.get('end') or ''}"
+    period_key = lambda e: f"END:{e.get('end') or ''}"  # noqa: E731
 
     ni_raw = _entries_for(us_gaap, "NetIncomeLoss", "USD")
     if frequency == "annual":

@@ -63,7 +63,7 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> tuple[pd.Series, pd.Se
     try:
         import yfinance as yf
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
+        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
@@ -104,7 +104,7 @@ def fetch_prices_batch(tickers: list[str], years: int = 5) -> tuple[dict[str, pd
     try:
         import yfinance as yf
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
+        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
     if not tickers:
         return {}, {}
@@ -202,7 +202,7 @@ def fetch_ticker_metadata(ticker: str) -> tuple[float | None, str | None, bool]:
     try:
         import yfinance as yf
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")
+        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
     yf_ticker = yf.Ticker(ticker)
     info = yf_ticker.get_info()

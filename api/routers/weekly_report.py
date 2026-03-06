@@ -26,7 +26,7 @@ def _format_level(value: float, decimals_if_lt_100: int = 4) -> str:
 def _pct_change(start: float, latest: float) -> float | None:
     try:
         s = float(start)
-        l = float(latest)
+        l = float(latest)  # noqa: E741
     except Exception:
         return None
     if s == 0:
@@ -481,7 +481,7 @@ Remember: No commentary, no editorializing. Just the facts and explicitly flagge
 
 Hard requirement: Do NOT include any assistant meta text like "If you want, I can...", "Let me know...", suggested next steps, or offers to help.
 End the output immediately after the report content.
-"""
+"""  # noqa: W291
 
     try:
         from openai import OpenAI

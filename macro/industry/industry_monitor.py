@@ -658,7 +658,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
 
     for sector, cfg in SECTORS.items():
         sector_type = cfg["type"]
-        for ticker, company_name, sub_sector, report_time in cfg["companies"]:
+        for ticker, company_name, sub_sector, report_time in cfg["companies"]:  # noqa: B007
             pdf_path = _get_pdf_path(sector, ticker)
 
             if not os.path.isfile(pdf_path):

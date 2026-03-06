@@ -112,7 +112,7 @@ def _format_level(value: float, decimals_if_lt_100: int = 4) -> str:
 def _pct_change(start: float, latest: float) -> float | None:
     try:
         s = float(start)
-        l = float(latest)
+        l = float(latest)  # noqa: E741
     except Exception:
         return None
     if s == 0:

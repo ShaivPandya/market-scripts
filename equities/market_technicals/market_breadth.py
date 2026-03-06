@@ -27,7 +27,7 @@ import argparse
 import time
 from io import StringIO
 from pathlib import Path
-from typing import List
+from typing import List  # noqa: UP035
 
 import pandas as pd
 import requests

@@ -21,7 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -418,7 +418,7 @@ def get_data(
     # t.info to silently return {} for every ticker, producing 0 results.
     # ------------------------------------------------------------------
     try:
-        yf.Ticker(universe[0]).fast_info.last_price
+        yf.Ticker(universe[0]).fast_info.last_price  # noqa: B018
     except Exception:
         LOGGER.debug("yfinance session pre-warm failed", exc_info=True)
 

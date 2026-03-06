@@ -27,7 +27,7 @@ import logging
 import sys
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -37,7 +37,7 @@ LOGGER = logging.getLogger(__name__)
 try:
     import yfinance as yf
 except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 try:
     from .signal_fetchers import (
@@ -844,12 +844,12 @@ def main() -> int:
         meta["direction"] = meta["direction"].fillna("")
 
         # Build asset map
-        asset_map = dict(zip(meta["ticker"], meta["asset"]))
+        asset_map = dict(zip(meta["ticker"], meta["asset"]))  # noqa: B905
 
         # Filter to active tickers (has direction)
         active_mask = meta["direction"].str.strip().ne("")
         active_tickers = meta.loc[active_mask, "ticker"].tolist()
-        direction_map = dict(zip(meta["ticker"], meta["direction"]))
+        direction_map = dict(zip(meta["ticker"], meta["direction"]))  # noqa: B905
 
         if not active_tickers:
             LOGGER.error("No active tickers in portfolio")

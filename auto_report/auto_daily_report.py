@@ -193,7 +193,7 @@ def collect_risk_data(portfolio_df) -> dict:
 
     results = {}
     tickers = list(portfolio_df["ticker"])
-    asset_map = dict(zip(portfolio_df["ticker"], portfolio_df["asset"]))
+    asset_map = dict(zip(portfolio_df["ticker"], portfolio_df["asset"]))  # noqa: B905
 
     # 1. Technical analysis (per-ticker MA signals + ROC)
     try:

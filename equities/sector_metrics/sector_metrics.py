@@ -30,7 +30,7 @@ import urllib.request
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -420,7 +420,7 @@ def compute_relative_performance(
     sector_etfs: dict[str, str],
     etf_prices: pd.DataFrame,
     benchmark: str = BENCHMARK_ETF,
-    lookback_months: list[int] = [1, 3, 6, 12],
+    lookback_months: list[int] = [1, 3, 6, 12],  # noqa: B006
 ) -> pd.DataFrame:
     """
     Relative performance of each sector ETF vs the benchmark over each lookback period.

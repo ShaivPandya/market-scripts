@@ -18,7 +18,7 @@ import math
 from collections.abc import Iterable
 from io import StringIO
 from pathlib import Path
-from typing import List
+from typing import List  # noqa: UP035
 
 import numpy as np
 import pandas as pd

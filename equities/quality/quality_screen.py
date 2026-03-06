@@ -33,7 +33,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List  # noqa: UP035
 
 import pandas as pd
 
@@ -45,7 +45,7 @@ MAX_WORKERS = 8  # Threads per batch
 try:
     import yfinance as yf  # used indirectly by quality_single
 except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")
+    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))

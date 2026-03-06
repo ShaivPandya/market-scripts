@@ -41,7 +41,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
@@ -501,7 +501,7 @@ def main():
         print(f"  EPS YoY avg (3Q):              {fmt_pct(tm.eps_yoy_change)}")
         if tm.eps_yoy_changes is not None:
             labels = ["Q0 vs Q4", "Q1 vs Q5", "Q2 vs Q6"]
-            for label, val in zip(labels, tm.eps_yoy_changes):
+            for label, val in zip(labels, tm.eps_yoy_changes):  # noqa: B905
                 print(f"    {label}:                  {fmt_pct(val)}")
         print(f"  EPS CAGR ({tm.years_used}y):               {fmt_pct(tm.eps_cagr)}")
         print(f"  EPS growth acceleration:       {fmt_num(tm.eps_growth_acceleration)}")

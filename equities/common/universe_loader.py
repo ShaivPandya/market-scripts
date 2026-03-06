@@ -6,7 +6,7 @@ import io
 import re
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional  # noqa: UP035
 
 import pandas as pd
 

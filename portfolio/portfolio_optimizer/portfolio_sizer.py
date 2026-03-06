@@ -14,7 +14,7 @@ import logging
 import traceback
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -111,7 +111,7 @@ def _parse_positions(
         raise ValueError("positions must be a non-empty list.")
 
     result: dict[str, int] = {}
-    for idx, row in enumerate(positions):
+    for idx, row in enumerate(positions):  # noqa: B007
         ticker = str(row.get("ticker", "")).strip().upper()
         conviction_raw = row.get("conviction", 3)
 

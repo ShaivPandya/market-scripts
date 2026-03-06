@@ -111,7 +111,7 @@ def _spawn_analyzer_job(job_id: str, req: AnalyzerRequest, cache_key: str) -> No
 
 @router.post("/portfolio-analyzer")
 @router.post("/portfolio-optimizer")
-def run_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest)):
+def run_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest)):  # noqa: B008
     key = _cache_key(req)
     cached = get_cached(short_cache, key)
     if cached is not None:
@@ -128,7 +128,7 @@ def run_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest)):
 
 @router.post("/portfolio-analyzer/async")
 @router.post("/portfolio-optimizer/async")
-def start_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest)):
+def start_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest)):  # noqa: B008
     """
     Start an analyzer job and return a job_id quickly.
     """

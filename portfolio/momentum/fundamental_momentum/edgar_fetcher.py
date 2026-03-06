@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from datetime import date
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import requests
 

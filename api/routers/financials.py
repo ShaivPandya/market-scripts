@@ -44,7 +44,7 @@ def run_financials(req: FinancialsRequest):
     except ValueError as e:
         if legacy_cached is not None:
             return legacy_cached
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
     except HTTPException:
         if legacy_cached is not None:
             return legacy_cached
