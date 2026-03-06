@@ -1,73 +1,75 @@
 # Analytical Playbook
 
-Decision rubric for translating weekly observations into conclusions and stance adjustments. Every rule is derived from the investment philosophy. No signal should be invented, no threshold applied unless grounded in the framework.
+Decision rubric for translating observations into conclusions and stance adjustments. Every rule derives from the investment philosophy. No signal invented, no threshold applied unless grounded in the framework.
 
 ---
 
 ## Stance Definitions
 
-- **Aggressively Offensive**: Rare, high-conviction alignment. Leading indicators inflecting favorably, market confirming through breadth and sector leadership, liquidity expanding, consensus hasn't caught up. Cycle turning bust→recovery, credit reopening after shutdown, perception considerably worse than reality, or early-innings secular shift.
+- **Aggressively Offensive**: Rare, high-conviction alignment. Leading indicators inflecting favorably, breadth + sector leadership confirming, liquidity expanding, consensus hasn't caught up. Cycle turning bust→recovery, credit reopening after shutdown, perception far worse than reality, or early-innings secular shift. Press bets. Maximum exposure. If up significantly on year, turn 30% into 100%.
 
 - **Offensive**: Trend intact, fundamentals supportive, market handling news constructively. Leading indicators stable/improving, breadth confirming, credit accommodative but not reckless, consensus broadly correct with room to move.
 
-- **Neutral / Watchful**: No directional edge. Signals mixed or insufficient. Active vigilance, not passivity. Small probing positions to maintain market contact. When there's nothing clever to do, the pitfall is insisting on being clever.
+- **Neutral / Watchful**: No directional edge. Mixed/insufficient signals. Active vigilance, not passivity. Small probing positions for market contact and rhythm. When nothing clever to do, the pitfall is insisting on being clever.
 
-- **Defensive**: Euphoric psychology, careless credit extension, stretched valuations, deteriorating leading indicators, or market failing to respond to good news. Reduce gross exposure, tighten sizes, emphasize liquidity. Late-innings expansion, credit cycle near apex, risk aversion evaporated.
+- **Defensive**: Euphoric psychology, careless credit, stretched valuations, deteriorating leading indicators, or market failing to respond to good news. Reduce gross, tighten sizes, emphasize liquidity. Late-innings expansion, credit near apex, risk aversion evaporated. IPOs predominantly unprofitable. Lowest-quality leading.
 
-- **Aggressively Defensive**: Crisis forming or underway. Survival priority. Maintain maximum liquidity. Prepare buy list for when the cycle turns. Boom-bust entering reversal, credit seizing, forced selling cascading. Financial crises percolate for years but blow up in weeks.
+- **Aggressively Defensive**: Crisis forming/underway. Survival priority. Maximum liquidity. Prepare buy list for turn. Boom-bust entering reversal, credit seizing, forced selling cascading. Financial crises percolate for years, blow up in weeks. In equity bears, concentrate on Treasuries and currencies — don't try to make money shorting stocks.
 
 ---
 
 ## Six Analytical Dimensions
 
-Evaluate weekly. No single dimension is decisive — the balance across all six determines stance.
+Evaluate each period. No single dimension decisive — balance across all six determines stance.
 
 ### 1. Market Behavior
-
-- **Sector internals**: Cyclicals (housing, trucking, retail, semis, banks) vs. defensives (utilities, staples, pharma). Defensives leading + cyclicals weakening = pricing in deterioration regardless of headlines.
-- **Price response to news**: Bull markets ignore bad news. When good news stops producing rallies, character has changed.
-- **Breadth**: >75% S&P above 200-DMA → historically 11% avg forward 12M returns, 85% hit rate. Extremely low breadth often signals bottoms. Narrowing breadth during advance = warning.
-- **Volume**: Confirms or denies price moves. Sudden volume in bombed-out names = accumulation.
-- **Technical**: 200-DMA + 50% Fibonacci retracement coincidence = pay attention. Long consolidation → sharp upmove on volume = high signal.
-- **Cross-market**: Strongest during crisis = leaders when pressure lifts. Intermarket relationships breaking down = systemic change.
+The inside of the stock market is the best economist.
+- **Sector internals**: Cyclicals vs defensives. Defensives leading + cyclicals weakening = pricing in deterioration regardless of headlines. Don't wait for macro confirmation.
+- **News response**: Bull markets ignore bad news. Good news stops producing rallies = character changed. All news great + stock not acting well = get out. Highest-signal input.
+- **Breadth**: >75% S&P above 200-DMA → historically 11% avg forward 12M, 85% hit rate. Extremely low breadth often signals bottoms. Narrowing during advance = warning.
+- **Volume**: Confirms or denies price moves. Sudden volume in bombed-out names = accumulation. Low-volume rallies lack conviction.
+- **Technical**: 200-DMA + 50% Fib coincidence = pay attention. Long consolidation → sharp upmove on volume = high signal. Never buy unless fundamentals AND chart favorable. Rate-of-change leads. Charts sometimes generate initial idea — then find the fundamental story.
+- **Cross-market**: Strongest during crisis = leaders when pressure lifts. Intermarket breakdown = systemic change.
 
 ### 2. Macro Data Momentum
-
-Statistics tell you where you've been. Signal comes from rate of change and real-economy leading sources.
-
-- **Leading inputs**: Management commentary from housing, trucking, retail, banking. One level below top management is most honest.
-- **Yield curve**: 10Y-3M best recession predictor, leads ~1 year. 10Y should trade ~nominal GDP.
-- **Corporate profits**: Recessions never began before profits peaked. Rising profits = recession unlikely. Rolling over = clock ticking.
-- **Commodities**: -15%+ in 40 days during tightening = demand destruction. Demand-driven declines far more ominous than supply-driven.
+Statistics say where you've been. Signal from rate of change and real-economy leading sources.
+- **Leading inputs**: Rail traffic, truck tonnage, housing starts, port activity, weekly hours, initial claims, conference call transcripts. Management commentary from housing, trucking, retail, banking. One level below top management most honest. Barbell: real-world company intelligence + financial plumbing.
+- **Yield curve**: 10Y-3M best recession predictor, leads ~1yr. Persistent inversions (3+ months) = strong signal. 10Y should trade ~nominal GDP.
+- **Corporate profits**: Recession never began before profits peaked. Rising = recession unlikely. Rolling over = clock ticking.
+- **Commodities**: -15%+ in 40 days during tightening = demand destruction. Demand-driven far more ominous than supply-driven.
+- **Inflation**: Soft landings after >4.5% historically unprecedented. Every deflationary bust preceded by asset bubble.
 
 ### 3. Liquidity & Financial Conditions
-
-Liquidity moves markets. The Fed moves markets, not earnings.
-
-- **Central bank**: End of hiking cycle historically great time to buy. But central banks manage by rearview mirror.
-- **Credit availability**: Oversupply → investors accept low returns + thin margins. Slam shut → bargains.
+The Fed moves markets, not earnings.
+- **Central bank**: End of hiking cycle = historically great buy point. Central banks manage by rearview mirror.
+- **Credit**: HY spreads, lending standards, loan growth. Credit leads economy. Oversupply → low returns + thin margins accepted. Slams shut → bargains.
 - **M2 / nominal GDP**: 25% increase = massive injection. Flat/declining = no tailwind.
-- **Spreads**: Reflect expected defaults, not actual. Narrow spreads = complacency, but narrow alone isn't bearish — question is whether spread offsets actual losses.
+- **Spreads**: Reflect expected defaults, not actual. Narrow = complacency, but alone not bearish — question is whether spread offsets actual losses.
+- **Macro instrument rule**: Express macro views with most direct instrument. Don't buy utilities as bond proxy — buy bonds.
 
 ### 4. Positioning
+- **Speculative**: Net long building after net short = crowded long warning. Inverse = potential washout. Directional flips especially dangerous — speculators short then switching heavy long (1987) = maximum vulnerability.
+- **Options**: Heavy protective buying = gestalt shift approaching. Large imbalances can cause crashes.
+- **Crowding**: Crowded ≠ wrong (crowd right 80%). Crowding increases reversal violence. Thesis requires crowd wrong + crowding = dangerous. Thesis right + trend with you → crowding only matters for entry. Best trades: everyone thinks good idea, nobody has it on.
+- **Flows**: Deficit currency rising = long building. Surplus currency falling = short building. Both = reversal fuel. Foreign herd always wrong. Panic → international investment returns home.
 
-- **Speculative**: Net long building after period of net short = crowded long warning. Inverse = potential washout.
-- **Options**: Heavy protective buying = gestalt shift approaching. Knock-out options are particularly dangerous.
-- **Crowding**: Crowded ≠ wrong (crowd is right 80% of the time). But crowding increases reversal violence. When thesis requires crowd to be wrong, crowding is dangerous.
-- **Flows**: Current account deficit currency rising = long building. Surplus currency falling = short building. Both create reversal fuel.
-
-### 5. Risk Sentiment
-
-- **Psychology spectrum**: Panic → euphoria. Euphoric end: novel schemes accepted, credit free, P/E elevated. Panic end: unreasonable scrutiny, 100% focus on avoiding any loss.
-- **Quality signals**: Lowest-quality assets rallying hardest = excessive risk tolerance = near the end. Quality outperforming junk = risk aversion returning.
-- **Anecdotal**: When unsophisticated people start getting rich, too much credit around.
-- **Media**: If it's on the front page, short-term consensus is already formed.
+### 5. Risk Sentiment & Conditions
+- **Volatility**: Low vol ≠ low risk. Lack of volatility → volatility. Increased vol → reduce exposure.
+- **Leverage**: Huge intraday swings netting little weekly = leveraged positioning. Cannot be concentrated + illiquid + leveraged simultaneously.
+- **Correlation**: In crises, correlations go extreme. Seemingly diversified → concentrated. Understand drivers, not just statistics.
+- **Psychology**: Panic → euphoria. Euphoric end: novel schemes, free credit, elevated P/E. Panic end: unreasonable scrutiny, 100% loss-avoidance.
+- **Quality signals**: Lowest-quality rallying hardest = excessive risk tolerance = near end. Quality > junk = risk aversion returning.
+- **Anecdotal**: Unsophisticated people getting rich = too much credit.
+- **Media**: Front page = consensus already formed.
 
 ### 6. Cycle Position
-
-- **Economic**: Use yield curve + leading indicators + credit to triangulate. Early cycle → aggressive offense. Mid → selective offense. Late → defense. End → aggressive defense transitioning to offense at bottom.
-- **Political**: Buying 2 years before general election / selling on election → reliable midterm bottoms. Q3 of final presidential year typically below-average. Q4 has 83% positive return frequency.
-- **Secular vs. cyclical**: Secular shifts (tech, monetary policy, geopolitics, demographics) last years. Even dot-com lasted 2-2.5 years; for core internet, four.
+- **Economic**: Yield curve + leading indicators + credit triangulate. Early → aggressive offense. Mid → selective. Late → defense. End → aggressive defense transitioning to offense at bottom.
+- **Boom-bust stages**: (1) Inception — trend and misconception reinforce. (2) Acceleration — tests reinforce both. (3) Twilight — flattens. (4) Climax — maximum stretch. (5) Downside acceleration — forced liquidation, disillusionment→panic→crisis. Boom long/drawn out; bust short/steep. Sequences form parts of each other.
+- **One-way bets**: Assets that may not move, but if they move only go one direction. Appear at cycle extremes and policy inflections.
+- **Political**: Buy 2yr before election / sell on election → reliable midterm bottoms. Q3 final presidential year = below-average. Q4 = 83% positive.
+- **Secular vs cyclical**: Secular shifts last years. Dot-com lasted 2-2.5yr. When change this big, you think 8th inning, you're in 3rd.
+- **Bear playbook**: Primary profit = Treasuries. Vicious rallies squeeze shorts. Don't get aggressive shorting equity bears. 6-month bears preceded by bubbles don't exist.
+- **Policy inflections**: Unsustainable policy reverses. Bad policy → equally bad opposite reaction = opportunity. Detect braking → excellent entry, often far out of equilibrium.
 
 ---
 
@@ -75,60 +77,60 @@ Liquidity moves markets. The Fed moves markets, not earnings.
 
 **Confirmation** (trend intact): Rallies on good news, shrugs off bad; cyclicals > defensives; breadth expanding; volume up on advances, down on pullbacks; cross-market confirming; rate-of-change accelerating; spreads stable/narrowing.
 
-**Warning** (something changing — elevate monitoring): Good news → flat/negative action; breadth narrowing; defensives outperforming without catalyst; volume declining on rallies; intermarket relationships breaking; P&L inconsistent with exposure matrix; RSI extreme oversold (acute, few weeks, may = opportunity).
+**Warning** (elevate monitoring): Good news → flat/negative action; breadth narrowing; defensives outperforming without catalyst; volume declining on rallies; intermarket breaking; P&L inconsistent with exposure; RSI extreme oversold (acute, few weeks, may = opportunity).
 
-**Regime Change** (re-evaluate everything): Parabolic curve breaks; speculators flip directionally; 11+ month extreme currency move; credit slamming shut after easy period; forced liquidation cascading; lowest-quality assets rallying sharply (terminal bull phase); reflexive process becoming self-defeating; paradigm shift — everyone focused on what used to matter.
+**Regime Change** (re-evaluate everything): Parabolic curve breaks; speculators flip directionally; 11+ month extreme currency move; credit slamming shut after easy period; forced liquidation cascading; lowest-quality rallying sharply (terminal bull); reflexive process self-defeating; paradigm shift — everyone focused on what used to matter.
 
 ---
 
 ## Conflict Resolution
 
-1. **Market price action is the tiebreaker.** If fundamentals and market disagree, respect the market. Reduce size until discrepancy resolves.
-2. **Leading indicators override lagging.** If housing/trucking/delinquencies weaken while employment/GDP say "strong," weight the leaders.
-3. **P&L is the honest signal.** Can't explain portfolio behavior → something you don't understand is happening. Investigate before adding risk.
-4. **When confused, do nothing.** Inaction is legitimate and often optimal.
-5. **Consider asymmetry.** Wrong on bullish side = catastrophic → resolve toward defense. Wrong on bearish side = miss moderate gain → can resolve toward offense.
-6. **Time horizon reconciliation.** Short-term overbought can exist within long-term bullish. Long-term view = direction; short-term signals = timing and entry.
+1. **Price action is tiebreaker.** Fundamentals vs market disagree → respect market. Reduce size until resolved.
+2. **Leading overrides lagging.** Housing/trucking/delinquencies weaken while employment/GDP say "strong" → weight leaders.
+3. **P&L is honest signal.** Can't explain portfolio behavior → something you don't understand. Investigate before adding risk.
+4. **Confused → do nothing.** Inaction is legitimate, often optimal.
+5. **Asymmetry.** Wrong bullish = catastrophic → resolve toward defense. Wrong bearish = miss moderate gain → can resolve toward offense.
+6. **Time horizon.** Short-term overbought within long-term bullish is possible. Long-term = direction; short-term = timing/entry.
+7. **Macro views ≠ trading override.** Strong macro convictions must never override market signals.
 
 ---
 
 ## Escalation Triggers
 
 ### Immediate Review
-
 - Yield curve inverts (10Y-3M) or steepens violently after sustained inversion
 - Broad commodity index -10%+ in <30 days
-- Credit spreads +100bps in a week without transient cause
-- Speculative positioning flips directionally in a major market
-- P&L moves 50bps+ inconsistent with expected direction
-- Major sovereign/financial institution shows liquidity stress
+- Credit spreads +100bps/week without transient cause
+- Speculative positioning flips directionally in major market
+- P&L 50bps+ inconsistent with expected direction
+- Major sovereign/financial institution liquidity stress
 - Breadth collapses below 30% above 200-DMA
 - Major currency multi-sigma single-session move
+- Corporate profits peak and roll over
 
 ### Closer Monitoring
-
-- Good news met with flat/negative reaction for 2+ consecutive sessions
-- Defensives outperforming cyclicals for 3+ weeks without catalyst
-- Credit card delinquencies / charge-offs trending higher
-- Leading-industry conference calls shift optimistic → cautious
-- Volume pattern shift: declining on rallies, expanding on selloffs
-- Options skew shifts — downside protection demand surges
-- Parabolic price curve breaks trendline
+- Good news → flat/negative reaction 2+ consecutive sessions
+- Defensives > cyclicals 3+ weeks without catalyst
+- Credit card delinquencies/charge-offs trending higher
+- Leading-industry calls shift optimistic → cautious
+- Volume declining on rallies, expanding on selloffs
+- Options skew shift — downside protection demand surges
+- Parabolic curve breaks trendline
 
 ---
 
 ## Weekly Process
 
-Execute in order. Each step builds on the prior.
+Execute in order. Each step builds on prior.
 
-**Step 1 — Identify Changes**: Not what happened — what *changed*. A data release confirming the trend is not a change. Document: market moves inconsistent with thesis, leading indicator direction shifts, credit/liquidity tightening or loosening, positioning shifts, management commentary contradicting recent trends, policy actions altering the landscape.
+**Step 1 — Identify Changes**: What *changed*, not what happened. Trend-confirming data ≠ change. Filter noise: ignore after-hours, don't overweight week-to-week fluctuations, disregard pain trade narratives. Document: moves inconsistent with thesis, leading indicator shifts, credit/liquidity changes, positioning shifts, management commentary contradicting trends, policy actions.
 
-**Step 2 — Evaluate Six Dimensions**: For each (Market Behavior, Macro Momentum, Liquidity, Positioning, Risk Sentiment, Cycle Position), assign: **Supportive**, **Neutral**, **Cautionary**, or **Adverse**. Cite specific evidence for each.
+**Step 2 — Evaluate Six Dimensions**: For each, assign **Supportive**, **Neutral**, **Cautionary**, or **Adverse** with specific evidence.
 
-**Step 3 — Balance of Evidence**: Weight dimensions by current environment. Normal: Market Behavior + Liquidity heaviest. Cycle extremes: Risk Sentiment + Cycle Position heaviest. Macro inflecting: Macro Momentum rises. Sharp moves + extreme positioning: Positioning rises. State the tally explicitly.
+**Step 3 — Balance of Evidence**: Weight by environment. Normal: Market Behavior + Liquidity heaviest. Cycle extremes: Risk Sentiment + Cycle Position heaviest. Macro inflecting: Macro Momentum rises. Sharp moves + extreme positioning: Positioning rises. State tally explicitly.
 
-**Step 4 — Assign Stance**: If changed from prior week: what changed, tentative or firm, what would reverse it. If unchanged: what would move it in either direction.
+**Step 4 — Assign Stance**: If changed: what changed, tentative or firm, what reverses it. If unchanged: what moves it either direction.
 
-**Step 5 — Watchlist Triggers**: 3-5 specific, observable, falsifiable events that would trigger reassessment. For each: what it is, which direction it pushes stance, what action it implies.
+**Step 5 — Watchlist Triggers**: 3-5 specific, observable, falsifiable events triggering reassessment. Each: what, direction, implied action.
 
-**Step 6 — The Trade After the Trade**: If the current thesis plays out, what happens next? What's the second-order consequence? This prevents complacency after a correct call.
+**Step 6 — Trade After the Trade**: If thesis plays out, what next? Second-order consequence? Prevents complacency after correct call — often more profitable than original. Year-end discipline: reduce going into year-end, especially currencies. Always a counter-trend.

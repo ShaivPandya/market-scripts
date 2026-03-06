@@ -94,7 +94,6 @@ DEFAULT_NEWS_SOURCES = [
     "bloomberg.com",
     "cnbc.com",
     "federalreserve.gov",
-    "bls.gov",
 ]
 
 RULES_TEXT = """

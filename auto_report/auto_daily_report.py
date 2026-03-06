@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Automated daily portfolio risk report.
+Automated daily portfolio risk report — two-pass architecture.
 
-Collects per-position risk metrics, calls Claude for risk analysis,
-runs the portfolio sizer deterministically, computes share adjustments
-vs open_positions.csv, and creates a GitHub Issue.
+Pass 1: Market analysis using all 12 data sources + news search → stance + leverage.
+Pass 2: Portfolio risk analysis with stance-driven target leverage.
 
 Run:
-    python auto_report/auto_daily_report.py --force   # bypass weekday-afternoon gate
+    python auto_report/auto_daily_report.py --force   # bypass weekday-morning gate
 """
 
 from __future__ import annotations
@@ -23,12 +22,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
-# sys.path — same pattern as auto_weekly_report.py
+# sys.path — merged paths from both daily and weekly modules
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
 
 _PATHS = [
+    # Portfolio risk modules (original daily)
     PROJECT_ROOT,
     PROJECT_ROOT / "portfolio",
     PROJECT_ROOT / "portfolio" / "portfolio_optimizer",
@@ -37,6 +37,22 @@ _PATHS = [
     PROJECT_ROOT / "portfolio" / "momentum" / "fundamental_momentum",
     PROJECT_ROOT / "equities" / "quality",
     PROJECT_ROOT / "equities",
+    # Market data modules (from weekly)
+    PROJECT_ROOT / "equities" / "market_technicals",
+    PROJECT_ROOT / "macro" / "economic_growth",
+    PROJECT_ROOT / "macro" / "liquidity",
+    PROJECT_ROOT / "macro" / "breakout",
+    PROJECT_ROOT / "macro" / "positioning",
+    PROJECT_ROOT / "equities" / "portfolio",
+    PROJECT_ROOT / "fx" / "model",
+    PROJECT_ROOT / "fx" / "fx_dashboard",
+    PROJECT_ROOT / "commodities",
+    PROJECT_ROOT / "equities" / "index_dashboard",
+    PROJECT_ROOT / "macro" / "central_banks",
+    PROJECT_ROOT / "macro" / "industry",
+    PROJECT_ROOT / "macro" / "country_dashboard",
+    PROJECT_ROOT / "equities" / "short_screen",
+    PROJECT_ROOT / "equities" / "sector_metrics",
 ]
 for _p in reversed(_PATHS):
     _p_str = str(_p)
@@ -54,6 +70,15 @@ from auto_report.shared import (  # noqa: E402
     serialize_bundle,
     strip_llm_meta,
     write_bundle,
+)
+
+# Import market data collection + formatting from weekly module
+from auto_report.auto_weekly_report import (  # noqa: E402
+    collect_data as collect_market_data,
+    build_performance_markdown,
+    _prepare_prompt_bundle,
+    RULES_TEXT,
+    DEFAULT_NEWS_SOURCES,
 )
 
 # ---------------------------------------------------------------------------
@@ -75,7 +100,70 @@ HISTORY_DIR = OUTPUT_DIR / "history"
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
 PORTFOLIO_CSV = PROJECT_ROOT / "portfolio" / "portfolio.csv"
 OPEN_POSITIONS_CSV = PROJECT_ROOT / "portfolio" / "open_positions.csv"
+
+# Separators for parsing Claude responses
+PASS1_SUMMARY_SEPARATOR = "<!-- PASS1_STANCE_JSON -->"
 DAILY_SUMMARY_SEPARATOR = "<!-- DAILY_SUMMARY_JSON -->"
+
+# Stance → leverage mapping (hybrid: fixed base ± 0.25 adjustment)
+STANCE_LEVERAGE_MAP = {
+    "Aggressively Offensive": {"base": 3.0, "low": 2.75, "high": 3.0},
+    "Offensive": {"base": 2.5, "low": 2.25, "high": 2.75},
+    "Neutral": {"base": 2.0, "low": 1.75, "high": 2.25},
+    "Defensive": {"base": 1.25, "low": 1.0, "high": 1.5},
+    "Aggressively Defensive": {"base": 0.5, "low": 0.5, "high": 0.75},
+}
+DEFAULT_LEVERAGE = 2.0
+DEFAULT_STANCE = "Neutral"
+
+
+# ---------------------------------------------------------------------------
+# Leverage validation
+# ---------------------------------------------------------------------------
+
+
+def validate_and_clamp_leverage(leverage: float, stance: str) -> float:
+    """Clamp Claude's chosen leverage to the valid range for the given stance."""
+    bounds = STANCE_LEVERAGE_MAP.get(stance)
+    if bounds is None:
+        log.warning("Unknown stance %r — using DEFAULT_LEVERAGE", stance)
+        return DEFAULT_LEVERAGE
+    clamped = max(bounds["low"], min(bounds["high"], float(leverage)))
+    if clamped != leverage:
+        log.warning(
+            "Leverage %.2f outside stance %r range [%.2f, %.2f] — clamped to %.2f",
+            leverage,
+            stance,
+            bounds["low"],
+            bounds["high"],
+            clamped,
+        )
+    return clamped
+
+
+# ---------------------------------------------------------------------------
+# Previous-day context
+# ---------------------------------------------------------------------------
+
+
+def load_last_daily_summary(history_dir: Path) -> str | None:
+    """Load the most recent daily summary.json from the history archive."""
+    if not history_dir.exists():
+        return None
+    dirs = sorted(
+        [d for d in history_dir.iterdir() if d.is_dir() and len(d.name) == 10],
+        reverse=True,
+    )
+    if not dirs:
+        return None
+    summary_path = dirs[0] / "summary.json"
+    if not summary_path.exists():
+        return None
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        return json.dumps(data, indent=2)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +206,7 @@ def load_open_positions():
 
 
 # ---------------------------------------------------------------------------
-# Risk data collection
+# Risk data collection (portfolio-specific)
 # ---------------------------------------------------------------------------
 
 
@@ -239,7 +327,9 @@ def collect_risk_data(portfolio_df) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def run_sizer(portfolio_df, book: float) -> dict:
+def run_sizer(
+    portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERAGE
+) -> dict:
     """Run portfolio sizer and return full result dict."""
     from portfolio_sizer import size_portfolio
 
@@ -248,7 +338,9 @@ def run_sizer(portfolio_df, book: float) -> dict:
         for _, row in portfolio_df.iterrows()
         if row["direction"] in ("long", "short")
     ]
-    return size_portfolio(positions=positions, book=book, target_leverage=2.0)
+    return size_portfolio(
+        positions=positions, book=book, target_leverage=target_leverage
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -471,16 +563,202 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Prompt construction
+# Pass 1: Market Analysis + Stance Determination
 # ---------------------------------------------------------------------------
 
 
-def _build_daily_user_message(
+def _fallback_pass1_result() -> dict:
+    return {
+        "stance": DEFAULT_STANCE,
+        "target_leverage": DEFAULT_LEVERAGE,
+        "leverage_rationale": "Defaulting to neutral stance due to analysis failure.",
+        "confidence": "low",
+        "six_dimensions": {},
+        "drivers": [],
+        "watchlist_triggers": [],
+        "parse_error": True,
+    }
+
+
+def _build_pass1_system_message(last_daily_json: str | None) -> str:
+    """Build system prompt for Pass 1 (market analysis + stance)."""
+    system_md = load_prompt_file(PROMPTS_DIR / "system.md", "prompts/system.md")
+    playbook_md = load_prompt_file(PROMPTS_DIR / "playbook.md", "prompts/playbook.md")
+    parts = [system_md, playbook_md]
+    if last_daily_json:
+        parts.append(
+            f"## Previous Session's Summary\n\n```json\n{last_daily_json}\n```"
+        )
+    return "\n\n---\n\n".join(parts)
+
+
+def _build_pass1_user_message(market_bundle: dict, perf_md: str) -> str:
+    """Build user message for Pass 1: market analysis and stance determination."""
+    prompt_bundle = _prepare_prompt_bundle(market_bundle)
+    bundle_json = json.dumps(prompt_bundle, indent=2, default=str)
+
+    stance_options = " | ".join(STANCE_LEVERAGE_MAP.keys())
+    leverage_table_lines = []
+    for stance_name, bounds in STANCE_LEVERAGE_MAP.items():
+        leverage_table_lines.append(
+            f"  - {stance_name}: base {bounds['base']}, range [{bounds['low']}, {bounds['high']}]"
+        )
+    leverage_table = "\n".join(leverage_table_lines)
+
+    return f"""Here is today's market data bundle:
+
+```json
+{bundle_json}
+```
+
+{perf_md}
+
+{RULES_TEXT}
+
+Before writing the analysis, use the web search tool to find the key market-moving
+news from the past 24 hours (Fed speakers, economic releases, geopolitical events,
+major premarket moves, overnight developments) that are relevant to today's session.
+Weave this context into your analysis and cite sources for news-driven claims.
+
+Analyze the market environment through the lens of the investment philosophy and produce:
+
+1. **Market Regime Assessment** — Where are we in the cycle? What is the dominant market character today? How is the market handling news (constructively or destructively)?
+2. **Six Dimensions** — Evaluate each dimension as Supportive / Neutral / Cautionary / Adverse with one-sentence evidence:
+   - Market Behavior (breadth, sector internals, price action)
+   - Macro Momentum (leading indicators, economic data, earnings)
+   - Liquidity (Fed balance sheet, credit conditions, funding markets)
+   - Positioning (COT data, sentiment, consensus)
+   - Risk Sentiment (VIX term structure, credit spreads, safe haven flows)
+   - Cycle Position (where in boom-bust, credit cycle phase)
+3. **Stance Rationale** — Summarize the balance of evidence and justify the stance. Be explicit about which dimensions dominate and why.
+4. **Watchlist Triggers** — 3-5 specific, observable events that would change the stance. For each: what it is, which direction it pushes, what action it implies.
+
+Stance options: {stance_options}
+
+Leverage ranges per stance:
+{leverage_table}
+
+Pick the stance that best reflects the current environment, then choose a specific
+target_leverage within that stance's range. The leverage should reflect your conviction
+level within the stance — e.g., a borderline Offensive environment might warrant 2.25
+(low end of Offensive) rather than 2.75 (high end).
+
+Constraints:
+- Cite specific metrics from the data and news search.
+- Assess the context for a long/short equity portfolio — not generic market commentary.
+- Be direct and concise. No filler.
+- Max 1200 words for the analysis sections.
+
+After the analysis, output the separator `{PASS1_SUMMARY_SEPARATOR}` on its own line, then a JSON block:
+```json
+{{
+  "stance": "<{stance_options}>",
+  "target_leverage": "<float between 0.5 and 3.0>",
+  "leverage_rationale": "<one sentence explaining leverage choice within the stance range>",
+  "confidence": "<high|medium|low>",
+  "six_dimensions": {{
+    "market_behavior": "<Supportive|Neutral|Cautionary|Adverse>",
+    "macro_momentum": "<Supportive|Neutral|Cautionary|Adverse>",
+    "liquidity": "<Supportive|Neutral|Cautionary|Adverse>",
+    "positioning": "<Supportive|Neutral|Cautionary|Adverse>",
+    "risk_sentiment": "<Supportive|Neutral|Cautionary|Adverse>",
+    "cycle_position": "<Supportive|Neutral|Cautionary|Adverse>"
+  }},
+  "drivers": ["<top 3-5 drivers>"],
+  "watchlist_triggers": ["<3-5 specific triggers>"]
+}}
+```
+
+End immediately after the JSON. No assistant meta text."""
+
+
+def parse_pass1_response(text: str) -> tuple[str, dict]:
+    """Parse Pass 1 response into (market_analysis_md, stance_dict)."""
+    if PASS1_SUMMARY_SEPARATOR in text:
+        parts = text.split(PASS1_SUMMARY_SEPARATOR, 1)
+        analysis_md = parts[0].strip()
+        json_part = parts[1].strip()
+        if json_part.startswith("```"):
+            json_part = (
+                json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
+            )
+        if json_part.endswith("```"):
+            json_part = json_part[:-3]
+        json_part = json_part.strip()
+        try:
+            stance_dict = json.loads(json_part)
+        except json.JSONDecodeError:
+            log.warning("Failed to parse Pass 1 stance JSON — using fallback")
+            stance_dict = _fallback_pass1_result()
+    else:
+        log.warning("No Pass 1 separator found — using fallback")
+        analysis_md = text.strip()
+        stance_dict = _fallback_pass1_result()
+
+    # Validate and clamp leverage
+    raw_leverage = stance_dict.get("target_leverage", DEFAULT_LEVERAGE)
+    try:
+        raw_leverage = float(raw_leverage)
+    except (TypeError, ValueError):
+        log.warning(
+            "Non-numeric target_leverage %r — defaulting to %.1f",
+            raw_leverage,
+            DEFAULT_LEVERAGE,
+        )
+        raw_leverage = DEFAULT_LEVERAGE
+
+    stance = stance_dict.get("stance", DEFAULT_STANCE)
+    if stance not in STANCE_LEVERAGE_MAP:
+        log.warning("Unknown stance %r — defaulting to %r", stance, DEFAULT_STANCE)
+        stance = DEFAULT_STANCE
+        stance_dict["stance"] = stance
+
+    stance_dict["target_leverage"] = validate_and_clamp_leverage(raw_leverage, stance)
+
+    return analysis_md, stance_dict
+
+
+# ---------------------------------------------------------------------------
+# Pass 2: Portfolio Risk Analysis
+# ---------------------------------------------------------------------------
+
+
+def _build_pass2_system_message(stance_dict: dict) -> str:
+    """Build system prompt for Pass 2, injecting stance context into daily_system.md."""
+    daily_system_md = load_prompt_file(
+        PROMPTS_DIR / "daily_system.md", "prompts/daily_system.md"
+    )
+    stance = stance_dict.get("stance", DEFAULT_STANCE)
+    leverage = stance_dict.get("target_leverage", DEFAULT_LEVERAGE)
+    rationale = stance_dict.get("leverage_rationale", "")
+    confidence = stance_dict.get("confidence", "medium")
+    drivers = stance_dict.get("drivers", [])
+
+    drivers_md = "\n".join(f"- {d}" for d in drivers) if drivers else "- N/A"
+
+    stance_context = f"""## Today's Market Stance (from Pass 1 Analysis)
+
+**Stance**: {stance}
+**Target Leverage**: {leverage:.2f}x
+**Confidence**: {confidence}
+**Leverage Rationale**: {rationale}
+**Key Drivers**:
+{drivers_md}
+
+Frame your portfolio risk analysis in the context of this stance:
+- Under "{stance}" stance at {leverage:.2f}x leverage, flag risks that would jeopardize this positioning.
+- Note whether current portfolio exposures are aligned with or diverge from the target leverage.
+- If the sizer output at {leverage:.2f}x creates unusual concentration or constraint binding, highlight it.
+"""
+    return f"{daily_system_md}\n\n---\n\n{stance_context}"
+
+
+def _build_pass2_user_message(
     bundle: dict,
     risk_summary_md: str,
     adjustments_md: str,
 ) -> str:
-    """Build the user message for the daily risk report Claude call."""
+    """Build the user message for Pass 2 (portfolio risk analysis)."""
     import copy
 
     prompt_bundle = copy.deepcopy(bundle)
@@ -509,7 +787,7 @@ Analyze this portfolio and produce a daily risk report with these sections:
 2. **Position-Level Flags** -- for each position with an actionable signal (deteriorating technicals, momentum divergence, severe drawdown, distressed gating changes, high beta exposure), describe the concern and severity (low/medium/high)
 3. **Portfolio-Level Risks** -- beta neutrality status, gross leverage vs limits, concentration, correlation risks
 4. **Actionable Alerts** -- positions where the share adjustment is large or where risk metrics warrant immediate attention
-5. **Watchlist** -- 3-5 specific triggers that would warrant intraday or next-day action
+5. **Stance Alignment** -- briefly assess whether the portfolio as sized at the target leverage aligns with the market stance from your system context. Flag any tension between the stance and current risk exposures. Note if the leverage level creates any binding constraints or unusual risk concentrations.
 
 Constraints:
 - Cite specific metrics from the data (vol, beta, drawdown %, ROC, MA signals).
@@ -531,7 +809,7 @@ End immediately after the JSON. No assistant meta text."""
 
 
 # ---------------------------------------------------------------------------
-# Response parsing
+# Response parsing (Pass 2)
 # ---------------------------------------------------------------------------
 
 
@@ -568,6 +846,56 @@ def parse_daily_response(text: str) -> tuple[str, dict]:
         report_md = text.strip()
         summary = _fallback_daily_summary()
     return report_md, summary
+
+
+# ---------------------------------------------------------------------------
+# Summary merging + stance header
+# ---------------------------------------------------------------------------
+
+
+def _merge_summary(stance_dict: dict, risk_summary: dict) -> dict:
+    """Merge Pass 1 stance dict with Pass 2 risk summary into final summary.json."""
+    return {
+        # Stance fields (from Pass 1)
+        "stance": stance_dict.get("stance", DEFAULT_STANCE),
+        "target_leverage": stance_dict.get("target_leverage", DEFAULT_LEVERAGE),
+        "stance_confidence": stance_dict.get("confidence", "low"),
+        "leverage_rationale": stance_dict.get("leverage_rationale", ""),
+        "six_dimensions": stance_dict.get("six_dimensions", {}),
+        "stance_drivers": stance_dict.get("drivers", []),
+        "watchlist_triggers": stance_dict.get("watchlist_triggers", []),
+        "pass1_parse_error": stance_dict.get("parse_error", False),
+        # Risk fields (from Pass 2)
+        "risk_level": risk_summary.get("risk_level", "unknown"),
+        "top_risks": risk_summary.get("top_risks", []),
+        "positions_flagged": risk_summary.get("positions_flagged", []),
+        "largest_adjustments": risk_summary.get("largest_adjustments", []),
+        "pass2_parse_error": risk_summary.get("parse_error", False),
+    }
+
+
+def _build_stance_header_markdown(stance_dict: dict) -> str:
+    """Build the stance header section for the final report."""
+    stance = stance_dict.get("stance", DEFAULT_STANCE)
+    leverage = stance_dict.get("target_leverage", DEFAULT_LEVERAGE)
+    confidence = stance_dict.get("confidence", "medium")
+    rationale = stance_dict.get("leverage_rationale", "")
+    parse_error = stance_dict.get("parse_error", False)
+    six_dim = stance_dict.get("six_dimensions", {})
+
+    header = f"### Stance: {stance} | Leverage: {leverage:.2f}x | Confidence: {confidence}\n"
+    if parse_error:
+        header += "\n> **Warning**: Pass 1 analysis failed. Stance and leverage are defaults.\n"
+    if rationale:
+        header += f"\n{rationale}\n"
+
+    if six_dim:
+        header += "\n| Dimension | Assessment |\n|---|---|\n"
+        for dim_key, dim_val in six_dim.items():
+            label = dim_key.replace("_", " ").title()
+            header += f"| {label} | {dim_val} |\n"
+
+    return header
 
 
 # ---------------------------------------------------------------------------
@@ -609,22 +937,27 @@ def write_daily_outputs(
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main — two-pass pipeline
 # ---------------------------------------------------------------------------
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Automated daily portfolio risk report"
+        description="Automated daily portfolio risk report (two-pass)"
     )
     parser.add_argument(
-        "--force", action="store_true", help="Bypass weekday-afternoon gate"
+        "--force", action="store_true", help="Bypass weekday-morning gate"
     )
     parser.add_argument(
         "--book",
         type=float,
         default=None,
         help="Book size in USD (default: sum of abs(PositionValue) from open_positions.csv)",
+    )
+    parser.add_argument(
+        "--no-search",
+        action="store_true",
+        help="Disable web search in Pass 1",
     )
     args = parser.parse_args()
 
@@ -639,7 +972,9 @@ def main():
     today_str = datetime.now(ET).strftime("%Y-%m-%d")
     log.info("=== Daily risk report run starting (%s) ===", today_str)
 
-    # 1. Load portfolio + open positions
+    # ---------------------------------------------------------------
+    # STEP 1: Load portfolio + open positions
+    # ---------------------------------------------------------------
     portfolio_df = load_portfolio()
     open_positions_df = load_open_positions()
     log.info(
@@ -648,7 +983,9 @@ def main():
         len(open_positions_df),
     )
 
-    # 2. Determine book size
+    # ---------------------------------------------------------------
+    # STEP 2: Determine book size
+    # ---------------------------------------------------------------
     if args.book:
         book = args.book
     elif not open_positions_df.empty and "PositionValue" in open_positions_df.columns:
@@ -658,30 +995,101 @@ def main():
         book = 100_000.0
         log.info("Using default book size: $%,.2f", book)
 
-    # 3. Collect risk data
-    log.info("Collecting risk data for %d positions...", len(portfolio_df))
-    t_collect = time.perf_counter()
-    risk_data = collect_risk_data(portfolio_df)
-    log.info("Risk data collected in %.2fs", time.perf_counter() - t_collect)
+    # ---------------------------------------------------------------
+    # STEP 3: Load previous-day summary (feeds Pass 1 context)
+    # ---------------------------------------------------------------
+    last_daily_json = load_last_daily_summary(HISTORY_DIR)
+    if last_daily_json:
+        log.info("Loaded previous-day summary from history")
+    else:
+        log.info("No prior daily summary found in history")
 
-    # 4. Run sizer (deterministic)
-    log.info("Running portfolio sizer (book=$%,.2f)...", book)
+    # ---------------------------------------------------------------
+    # STEP 4: Collect market data (12 sources — same as weekly)
+    # ---------------------------------------------------------------
+    log.info("Collecting market data (12 sources)...")
+    t_collect = time.perf_counter()
+    market_data = collect_market_data()
+    log.info("Market data collected in %.2fs", time.perf_counter() - t_collect)
+
+    # ---------------------------------------------------------------
+    # STEP 5: Build performance tables
+    # ---------------------------------------------------------------
+    perf_md = build_performance_markdown(market_data)
+    market_bundle = serialize_bundle(market_data)
+
+    # ---------------------------------------------------------------
+    # STEP 6: PASS 1 — Market Analysis + Stance Determination
+    # ---------------------------------------------------------------
+    log.info("=== Pass 1: Market Analysis + Stance ===")
+    pass1_system = _build_pass1_system_message(last_daily_json)
+    pass1_user = _build_pass1_user_message(market_bundle, perf_md)
+
+    allowed_domains_pass1 = None if args.no_search else list(DEFAULT_NEWS_SOURCES)
+    stance_dict = None
+    market_analysis_md = None
+    pass1_citations = []
+
+    try:
+        pass1_text, pass1_citations = call_claude(
+            system_msg=pass1_system,
+            user_msg=pass1_user,
+            allowed_domains=allowed_domains_pass1,
+        )
+        market_analysis_md, stance_dict = parse_pass1_response(pass1_text)
+        market_analysis_md = strip_llm_meta(market_analysis_md)
+        log.info(
+            "Pass 1 complete — stance: %s, leverage: %.2f",
+            stance_dict["stance"],
+            stance_dict["target_leverage"],
+        )
+    except Exception as e:
+        log.error("Pass 1 (market analysis) failed: %s", e, exc_info=True)
+        stance_dict = _fallback_pass1_result()
+        stance_dict["error"] = str(e)
+        market_analysis_md = (
+            f"**Pass 1 Error**: Market analysis failed.\n\n```\n{e}\n```"
+        )
+
+    target_leverage = stance_dict["target_leverage"]
+    log.info("Using target_leverage=%.2f for sizer", target_leverage)
+
+    # ---------------------------------------------------------------
+    # STEP 7: Collect portfolio risk data
+    # ---------------------------------------------------------------
+    log.info("Collecting risk data for %d positions...", len(portfolio_df))
+    t_risk = time.perf_counter()
+    risk_data = collect_risk_data(portfolio_df)
+    log.info("Risk data collected in %.2fs", time.perf_counter() - t_risk)
+
+    # ---------------------------------------------------------------
+    # STEP 8: Run sizer at Pass 1's target leverage
+    # ---------------------------------------------------------------
+    log.info(
+        "Running portfolio sizer (book=$%,.2f, leverage=%.2f)...", book, target_leverage
+    )
     t_sizer = time.perf_counter()
-    sizer_result = run_sizer(portfolio_df, book)
+    sizer_result = run_sizer(portfolio_df, book, target_leverage=target_leverage)
     log.info("Sizer completed in %.2fs", time.perf_counter() - t_sizer)
 
     if sizer_result.get("error"):
         log.error("Sizer failed: %s", sizer_result["error"])
 
-    # 5. Compute share adjustments (deterministic)
+    # ---------------------------------------------------------------
+    # STEP 9: Compute share adjustments (deterministic)
+    # ---------------------------------------------------------------
     adjustments_df = compute_adjustments(sizer_result, open_positions_df)
 
-    # 6. Build deterministic Markdown sections
+    # ---------------------------------------------------------------
+    # STEP 10: Build deterministic Markdown sections
+    # ---------------------------------------------------------------
     risk_summary_md = build_risk_summary_markdown(risk_data, sizer_result)
     adjustments_md = format_adjustments_markdown(adjustments_df)
 
-    # 7. Serialize bundle (exclude heavy DataFrames)
-    bundle = serialize_bundle(
+    # ---------------------------------------------------------------
+    # STEP 11: Serialize risk bundle for Pass 2
+    # ---------------------------------------------------------------
+    risk_bundle = serialize_bundle(
         {
             "risk_data": risk_data,
             "sizer_summary": {
@@ -692,59 +1100,97 @@ def main():
         }
     )
 
-    # 8. Load prompt
-    daily_system_md = load_prompt_file(
-        PROMPTS_DIR / "daily_system.md", "prompts/daily_system.md"
-    )
+    # ---------------------------------------------------------------
+    # STEP 12: PASS 2 — Portfolio Risk Analysis
+    # ---------------------------------------------------------------
+    log.info("=== Pass 2: Portfolio Risk Analysis ===")
+    pass2_system = _build_pass2_system_message(stance_dict)
+    pass2_user = _build_pass2_user_message(risk_bundle, risk_summary_md, adjustments_md)
 
-    # 9. Call Claude
-    user_msg = _build_daily_user_message(bundle, risk_summary_md, adjustments_md)
-    report_md = None
-    summary = None
+    risk_analysis_md = None
+    risk_summary_dict = None
+    pass2_citations = []
 
     try:
-        response_text, citations = call_claude(
-            system_msg=daily_system_md,
-            user_msg=user_msg,
-            allowed_domains=None,  # no web search for daily
+        pass2_text, pass2_citations = call_claude(
+            system_msg=pass2_system,
+            user_msg=pass2_user,
+            allowed_domains=None,  # no web search in Pass 2
         )
-        report_md, summary = parse_daily_response(response_text)
-        report_md = strip_llm_meta(report_md)
-
-        # Compose final report: deterministic tables + AI analysis
-        report_md = (
-            f"# Daily Portfolio Risk Report — {today_str}\n\n"
-            f"{risk_summary_md}\n\n"
-            f"{adjustments_md}\n\n"
-            f"---\n\n"
-            f"## AI Risk Analysis\n\n"
-            f"{report_md}"
+        risk_analysis_md, risk_summary_dict = parse_daily_response(pass2_text)
+        risk_analysis_md = strip_llm_meta(risk_analysis_md)
+        log.info(
+            "Pass 2 complete — risk_level: %s",
+            risk_summary_dict.get("risk_level", "unknown"),
         )
-
-        if citations:
-            sources_lines = ["\n\n---\n\n## Sources\n"]
-            for title, url in citations:
-                sources_lines.append(f"- [{title}]({url})")
-            report_md += "\n".join(sources_lines)
     except Exception as e:
-        log.error("Claude call failed: %s", e, exc_info=True)
-        report_md = (
-            f"# Daily Portfolio Risk Report — {today_str}\n\n"
-            f"{risk_summary_md}\n\n"
-            f"{adjustments_md}\n\n"
-            f"---\n\n"
-            f"**Error**: Claude analysis failed.\n\n```\n{e}\n```"
+        log.error("Pass 2 (portfolio risk) failed: %s", e, exc_info=True)
+        risk_analysis_md = (
+            f"**Pass 2 Error**: Risk analysis failed.\n\n```\n{e}\n```"
         )
-        summary = _fallback_daily_summary()
-        summary["error"] = str(e)
+        risk_summary_dict = _fallback_daily_summary()
+        risk_summary_dict["error"] = str(e)
 
-    # 10. Write outputs + archive
-    write_daily_outputs(
-        report_md, summary, bundle, adjustments_df, OUTPUT_DIR, today_str
+    # ---------------------------------------------------------------
+    # STEP 13: Compose final report
+    # ---------------------------------------------------------------
+    stance_header_md = _build_stance_header_markdown(stance_dict)
+
+    # Collect all citations
+    all_citations = pass1_citations + pass2_citations
+
+    report_md = "\n\n".join(
+        [
+            f"# Daily Portfolio Report — {today_str}",
+            "---",
+            "## Market Stance",
+            stance_header_md,
+            "---",
+            "## Market Analysis",
+            market_analysis_md,
+            "---",
+            perf_md,
+            "---",
+            risk_summary_md,
+            adjustments_md,
+            "---",
+            "## AI Risk Analysis",
+            risk_analysis_md,
+        ]
     )
 
-    # 11. Create GitHub Issue
-    issue_title = f"Daily Risk Report — {today_str}"
+    if all_citations:
+        sources_lines = ["\n\n---\n\n## Sources\n"]
+        seen = set()
+        for title, url in all_citations:
+            if url not in seen:
+                seen.add(url)
+                sources_lines.append(f"- [{title}]({url})")
+        report_md += "\n".join(sources_lines)
+
+    # ---------------------------------------------------------------
+    # STEP 14: Merge summary, write outputs, create GitHub Issue
+    # ---------------------------------------------------------------
+    merged_summary = _merge_summary(stance_dict, risk_summary_dict)
+
+    # Full bundle for archive includes both market + risk data
+    full_bundle = serialize_bundle(
+        {
+            "market_data": market_data,
+            "risk_data": risk_data,
+            "sizer_summary": {
+                k: v
+                for k, v in sizer_result.items()
+                if k not in ("weights_df", "hedges_df", "max_scaled")
+            },
+        }
+    )
+
+    write_daily_outputs(
+        report_md, merged_summary, full_bundle, adjustments_df, OUTPUT_DIR, today_str
+    )
+
+    issue_title = f"Daily Report — {today_str} | {stance_dict['stance']}"
     try:
         create_github_issue(issue_title, report_md)
     except Exception as e:

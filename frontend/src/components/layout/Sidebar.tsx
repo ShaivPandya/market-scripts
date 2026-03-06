@@ -48,6 +48,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "📊 Economic Growth", path: "/economic-growth" },
       { label: "💧 Liquidity", path: "/liquidity" },
       { label: "〰️ Yield Curve", path: "/yield-curve" },
+      { label: "📈 Commodities Curve", path: "/commodities-curve" },
       { label: "🌍 Country Dashboard", path: "/country-dashboard" },
     ],
   },

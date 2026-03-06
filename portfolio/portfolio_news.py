@@ -58,7 +58,7 @@ def _parse_strict_tickers(raw: str) -> set[str]:
 
 
 NEWS_STRICT_TICKERS = _parse_strict_tickers(os.environ.get("NEWS_STRICT_TICKERS", "FLY"))
-NEWS_LOOKBACK_DAYS = 90
+NEWS_LOOKBACK_DAYS = 30
 
 # Cache ticker → company name so we don't re-fetch every call
 _name_cache: dict[str, str] = {}
