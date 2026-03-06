@@ -5,11 +5,12 @@ import os
 import pytest
 
 # Ensure auth env vars are set for testing
-os.environ.setdefault("JWT_SECRET", "test-secret-for-ci")
-os.environ.setdefault(
-    "AUTH_PASSWORD_HASH",
-    "$2b$12$LJ3m4ys3Lk0TSwHiRb0v5u1N6DpFV65WJUGAjhBrE8gFnLbMKqGTS",  # hash of "testpass"
+os.environ["JWT_SECRET"] = "test-secret-for-ci"
+os.environ["AUTH_PASSWORD_HASH"] = (
+    # bcrypt hash of "testpass"
+    "$2b$12$43F.9axQmqL0Owf7Hsp4tub0wukaMzCmz8JlTz.UJD8emjTZUVy0C"
 )
+os.environ["AUTH_MODE"] = "password"
 
 
 @pytest.fixture

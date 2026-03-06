@@ -13,28 +13,30 @@ external APIs (yfinance, FRED, etc.) are unavailable. Mark them with
 import pytest
 
 # All GET endpoints that require auth
+_API_PREFIX = "/api/v1"
+
 _AUTH_GET_ENDPOINTS = [
-    "/api/portfolio",
-    "/api/momentum",
-    "/api/market-breadth",
-    "/api/top50-breadth",
-    "/api/price-volume-signals",
-    "/api/vix-term-structure",
-    "/api/economic-growth",
-    "/api/liquidity",
-    "/api/breakout",
-    "/api/positioning/summary",
-    "/api/positioning/instruments",
-    "/api/index-dashboard",
-    "/api/fx-dashboard",
-    "/api/commodities",
-    "/api/central-banks",
-    "/api/sector-metrics",
-    "/api/industry-monitor",
-    "/api/yield-curve",
-    "/api/country-dashboard",
-    "/api/portfolio-news",
-    "/api/fx-model/pairs",
+    f"{_API_PREFIX}/portfolio",
+    f"{_API_PREFIX}/momentum",
+    f"{_API_PREFIX}/market-breadth",
+    f"{_API_PREFIX}/top50-breadth",
+    f"{_API_PREFIX}/price-volume-signals",
+    f"{_API_PREFIX}/vix-term-structure",
+    f"{_API_PREFIX}/economic-growth",
+    f"{_API_PREFIX}/liquidity",
+    f"{_API_PREFIX}/breakout",
+    f"{_API_PREFIX}/positioning/summary",
+    f"{_API_PREFIX}/positioning/instruments",
+    f"{_API_PREFIX}/index-dashboard",
+    f"{_API_PREFIX}/fx-dashboard",
+    f"{_API_PREFIX}/commodities",
+    f"{_API_PREFIX}/central-banks",
+    f"{_API_PREFIX}/sector-metrics",
+    f"{_API_PREFIX}/industry-monitor",
+    f"{_API_PREFIX}/yield-curve",
+    f"{_API_PREFIX}/country-dashboard",
+    f"{_API_PREFIX}/portfolio-news",
+    f"{_API_PREFIX}/fx-model/pairs",
 ]
 
 
