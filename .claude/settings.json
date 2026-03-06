@@ -81,6 +81,8 @@
       "Bash(pip3 *)",
       "Bash(python *)",
       "Bash(python3 *)",
+      "Bash(.venv/bin/python -c *)",
+      "Bash(.venv/bin/python *)",
       "Bash(poetry *)",
       "Bash(uv *)",
       "Bash(pytest *)",
