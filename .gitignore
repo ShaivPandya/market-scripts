@@ -3,6 +3,9 @@
 **/data_cache/
 **/outputs/
 **/portfolio/open_positions.csv
+
 # Environment variables
 .env
 
+# Ignore temporary directory
+tmp/

@@ -15,7 +15,7 @@ permissions:
 jobs:
   generate-report:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -45,6 +45,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          SODA_APP_TOKEN: ${{ secrets.SODA_APP_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RUN: "1"
         run: python auto_report/auto_daily_report.py
