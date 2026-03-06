@@ -2,8 +2,8 @@ name: Weekly Market Report
 
 on:
   schedule:
-    # Friday 20:05 UTC = Friday 16:05 ET (EDT, Mar–Nov)
-    # Friday 21:05 UTC = Friday 16:05 ET (EST, Nov–Mar)
+    # Friday 20:05 UTC = Friday 16:05 ET during EDT
+    # Friday 21:05 UTC = Friday 16:05 ET during EST
     - cron: "5 20 * * 5"
     - cron: "5 21 * * 5"
   workflow_dispatch:
@@ -18,19 +18,44 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Check New York schedule window
+        id: ny_gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ny_day="$(TZ=America/New_York date +%u)"
+          ny_hour="$(TZ=America/New_York date +%H)"
+          ny_minute="$(TZ=America/New_York date +%M)"
+
+          if [ "$ny_day" = "5" ] && [ "$ny_hour" = "16" ] && [ "$ny_minute" = "05" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping run outside Friday 16:05 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
+          fi
+
       - name: Checkout
+        if: steps.ny_gate.outputs.should_run == 'true'
         uses: actions/checkout@v6
 
       - name: Set up Python
+        if: steps.ny_gate.outputs.should_run == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
+        if: steps.ny_gate.outputs.should_run == 'true'
         run: pip install -r requirements.txt
 
       - name: Generate weekly report
+        if: steps.ny_gate.outputs.should_run == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -40,7 +65,7 @@ jobs:
         run: python auto_report/auto_weekly_report.py
 
       - name: Upload outputs
-        if: always()
+        if: always() && steps.ny_gate.outputs.should_run == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: weekly-report-${{ github.run_id }}
