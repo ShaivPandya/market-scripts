@@ -3,19 +3,19 @@ Industry earnings monitor:
 - Read earnings call transcripts from local PDF files in macro/industry/files/
 - Summarize with OpenAI (optional fallback if key/package is unavailable)
 - Cache transcripts + summaries in SQLite
-- Return structured data for Streamlit GUI consumption
+- Return structured data for frontend consumption
 """
 
 from __future__ import annotations
-import logging
 
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -29,46 +29,46 @@ SECTORS = {
     "Housing": {
         "type": "leading",
         "companies": [
-            ("DHI",  "D.R. Horton",         "Homebuilder",        "BMO"),
-            ("LEN",  "Lennar",              "Homebuilder",        "AMC"),
-            ("NVR",  "NVR",                 "Homebuilder",        "BMO"),
-            ("PHM",  "PulteGroup",          "Homebuilder",        "BMO"),
-            ("BLDR", "Builders FirstSource","Building Materials", "BMO"),
-            ("TOL",  "Toll Brothers",       "Homebuilder",        "AMC"),
+            ("DHI", "D.R. Horton", "Homebuilder", "BMO"),
+            ("LEN", "Lennar", "Homebuilder", "AMC"),
+            ("NVR", "NVR", "Homebuilder", "BMO"),
+            ("PHM", "PulteGroup", "Homebuilder", "BMO"),
+            ("BLDR", "Builders FirstSource", "Building Materials", "BMO"),
+            ("TOL", "Toll Brothers", "Homebuilder", "AMC"),
         ],
     },
     "Trucking": {
         "type": "leading",
         "companies": [
-            ("ODFL", "Old Dominion Freight Line", "LTL",       "AMC"),
-            ("XPO",  "XPO",                       "LTL",       "BMO"),
-            ("SAIA", "Saia",                       "LTL",       "AMC"),
-            ("ARCB", "ArcBest",                    "LTL",       "BMO"),
-            ("KNX",  "Knight-Swift",               "Truckload", "BMO"),
-            ("SNDR", "Schneider",                  "Truckload", "BMO"),
-            ("WERN", "Werner Enterprises",         "Truckload", "BMO"),
-            ("MRTN", "Marten Transport",           "Truckload", "BMO"),
+            ("ODFL", "Old Dominion Freight Line", "LTL", "AMC"),
+            ("XPO", "XPO", "LTL", "BMO"),
+            ("SAIA", "Saia", "LTL", "AMC"),
+            ("ARCB", "ArcBest", "LTL", "BMO"),
+            ("KNX", "Knight-Swift", "Truckload", "BMO"),
+            ("SNDR", "Schneider", "Truckload", "BMO"),
+            ("WERN", "Werner Enterprises", "Truckload", "BMO"),
+            ("MRTN", "Marten Transport", "Truckload", "BMO"),
         ],
     },
     "Banks": {
         "type": "coincident",
         "companies": [
-            ("JPM", "JPMorgan Chase",   "Money Center", "BMO"),
-            ("AXP", "American Express", "Card Issuer",  "AMC"),
-            ("C",   "Citigroup",        "Money Center", "BMO"),
-            ("COF", "Capital One",      "Card Issuer",  "AMC"),
-            ("BAC", "Bank of America",  "Money Center", "BMO"),
+            ("JPM", "JPMorgan Chase", "Money Center", "BMO"),
+            ("AXP", "American Express", "Card Issuer", "AMC"),
+            ("C", "Citigroup", "Money Center", "BMO"),
+            ("COF", "Capital One", "Card Issuer", "AMC"),
+            ("BAC", "Bank of America", "Money Center", "BMO"),
         ],
     },
     "Retail": {
         "type": "coincident",
         "companies": [
-            ("HD",   "Home Depot",    "Home Improvement", "BMO"),
-            ("LOW",  "Lowe's",        "Home Improvement", "BMO"),
-            ("DLTR", "Dollar Tree",   "Discount",         "BMO"),
-            ("DG",   "Dollar General","Discount",         "BMO"),
-            ("WMT",  "Walmart",       "Big Box",          "BMO"),
-            ("TGT",  "Target",        "Big Box",          "BMO"),
+            ("HD", "Home Depot", "Home Improvement", "BMO"),
+            ("LOW", "Lowe's", "Home Improvement", "BMO"),
+            ("DLTR", "Dollar Tree", "Discount", "BMO"),
+            ("DG", "Dollar General", "Discount", "BMO"),
+            ("WMT", "Walmart", "Big Box", "BMO"),
+            ("TGT", "Target", "Big Box", "BMO"),
         ],
     },
 }
@@ -80,10 +80,10 @@ SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
 
 # ---------- Helpers ----------
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _resolve_db_path(db_path: Optional[str] = None) -> str:
+def _resolve_db_path(db_path: str | None = None) -> str:
     if db_path:
         return db_path
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
@@ -106,13 +106,7 @@ def _budget_text(text: str, max_chars: int = SUMMARY_MAX_CHARS) -> str:
     middle = int(max_chars * 0.10)
     tail = max_chars - head - middle
     mid_start = max((len(text) - middle) // 2, 0)
-    return (
-        text[:head]
-        + "\n\n[...]\n\n"
-        + text[mid_start : mid_start + middle]
-        + "\n\n[...]\n\n"
-        + text[-tail:]
-    )
+    return text[:head] + "\n\n[...]\n\n" + text[mid_start : mid_start + middle] + "\n\n[...]\n\n" + text[-tail:]
 
 
 def _sentiment_value(sentiment: str) -> int:
@@ -144,14 +138,17 @@ def _extract_text_from_pdf(pdf_path: str) -> str:
 
 
 _QUARTER_WORDS = {
-    "first": 1, "second": 2, "third": 3, "fourth": 4,
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
 }
 
 
 def _parse_period_from_text(text: str, pdf_path: str) -> tuple[int, int, str]:
     header = text[:3000]
-    year: Optional[int] = None
-    quarter: Optional[int] = None
+    year: int | None = None
+    quarter: int | None = None
     transcript_date = ""
 
     m = re.search(r"Q([1-4])\s+(\d{4})", header)
@@ -177,23 +174,24 @@ def _parse_period_from_text(text: str, pdf_path: str) -> tuple[int, int, str]:
     if m:
         transcript_date = m.group(0)
     else:
-        months = (
-            "January|February|March|April|May|June|"
-            "July|August|September|October|November|December"
-        )
-        m = re.search(
-            rf"({months})\s+(\d{{1,2}}),?\s+(\d{{4}})", header
-        )
+        months = "January|February|March|April|May|June|July|August|September|October|November|December"
+        m = re.search(rf"({months})\s+(\d{{1,2}}),?\s+(\d{{4}})", header)
         if m:
             month_map = {
-                "January": "01", "February": "02", "March": "03",
-                "April": "04", "May": "05", "June": "06",
-                "July": "07", "August": "08", "September": "09",
-                "October": "10", "November": "11", "December": "12",
+                "January": "01",
+                "February": "02",
+                "March": "03",
+                "April": "04",
+                "May": "05",
+                "June": "06",
+                "July": "07",
+                "August": "08",
+                "September": "09",
+                "October": "10",
+                "November": "11",
+                "December": "12",
             }
-            transcript_date = (
-                f"{m.group(3)}-{month_map[m.group(1)]}-{int(m.group(2)):02d}"
-            )
+            transcript_date = f"{m.group(3)}-{month_map[m.group(1)]}-{int(m.group(2)):02d}"
 
     if year is None or quarter is None:
         dt = datetime.fromtimestamp(os.path.getmtime(pdf_path))
@@ -242,11 +240,11 @@ def init_db(conn: sqlite3.Connection) -> None:
         pass  # Column already exists
 
 
-def _get_row_by_id(conn: sqlite3.Connection, row_id: str) -> Optional[sqlite3.Row]:
+def _get_row_by_id(conn: sqlite3.Connection, row_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM transcripts WHERE id=?", (row_id,)).fetchone()
 
 
-def _get_latest_row_for_ticker(conn: sqlite3.Connection, ticker: str) -> Optional[sqlite3.Row]:
+def _get_latest_row_for_ticker(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | None:
     return conn.execute(
         """
         SELECT * FROM transcripts
@@ -258,7 +256,7 @@ def _get_latest_row_for_ticker(conn: sqlite3.Connection, ticker: str) -> Optiona
     ).fetchone()
 
 
-def _set_fresh_row(conn: sqlite3.Connection, ticker: str, fresh_row_id: Optional[str]) -> None:
+def _set_fresh_row(conn: sqlite3.Connection, ticker: str, fresh_row_id: str | None) -> None:
     conn.execute("UPDATE transcripts SET is_stale=1 WHERE ticker=?", (ticker,))
     if fresh_row_id:
         conn.execute("UPDATE transcripts SET is_stale=0 WHERE id=?", (fresh_row_id,))
@@ -333,7 +331,7 @@ def _set_summary(conn: sqlite3.Connection, row_id: str, summary: dict) -> None:
 
 
 # ---------- Price reaction ----------
-def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = "BMO") -> Optional[float]:
+def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = "BMO") -> float | None:
     """Return 2-trading-day post-earnings price change (%).
 
     BMO (before market open): reaction starts on transcript_date itself.
@@ -344,18 +342,16 @@ def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = 
         exit  = close 2 trading days later (D+2)
     Returns None if data is unavailable or exit date is in the future.
     """
-    import yfinance as yf
     from datetime import timedelta
+
+    import yfinance as yf
 
     try:
         dt = datetime.strptime(transcript_date, "%Y-%m-%d")
         start = (dt - timedelta(days=10)).strftime("%Y-%m-%d")
         end = (dt + timedelta(days=10)).strftime("%Y-%m-%d")
 
-        data = yf.download(
-            ticker, start=start, end=end,
-            auto_adjust=True, progress=False, threads=False
-        )
+        data = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
         if data.empty:
             return None
 
@@ -391,7 +387,7 @@ def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = 
         return None
 
 
-def _set_price_reaction(conn: sqlite3.Connection, row_id: str, value: Optional[float]) -> None:
+def _set_price_reaction(conn: sqlite3.Connection, row_id: str, value: float | None) -> None:
     conn.execute(
         "UPDATE transcripts SET price_reaction_2d=? WHERE id=?",
         (value, row_id),
@@ -401,9 +397,7 @@ def _set_price_reaction(conn: sqlite3.Connection, row_id: str, value: Optional[f
 
 # Build a ticker → report_time lookup from SECTORS config
 _TICKER_REPORT_TIME: dict[str, str] = {
-    ticker: report_time
-    for cfg in SECTORS.values()
-    for ticker, _, _, report_time in cfg["companies"]
+    ticker: report_time for cfg in SECTORS.values() for ticker, _, _, report_time in cfg["companies"]
 }
 
 
@@ -533,7 +527,7 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
         try:
             return summarize_with_openai(text, meta)
         except Exception as ex:
-            LOGGER.warning("OpenAI summarization failed for %s: %s", meta['ticker'], ex)
+            LOGGER.warning("OpenAI summarization failed for %s: %s", meta["ticker"], ex)
     return _fallback_summary(text, meta)
 
 
@@ -574,8 +568,7 @@ def _aggregate_sector(sector: str, sector_type: str, companies: list[dict]) -> d
             break
 
     headline = (
-        f"{sector} ({sector_type}) currently reads as {signal} "
-        f"based on {len(used)} company transcript summaries."
+        f"{sector} ({sector_type}) currently reads as {signal} based on {len(used)} company transcript summaries."
     )
 
     return {
@@ -588,7 +581,7 @@ def _aggregate_sector(sector: str, sector_type: str, companies: list[dict]) -> d
 
 
 def _company_from_row(
-    row: Optional[sqlite3.Row],
+    row: sqlite3.Row | None,
     *,
     ticker: str,
     company_name: str,
@@ -652,11 +645,7 @@ def _company_from_row(
         "pricing_commentary": summary["pricing_commentary"],
         "guidance_outlook": summary["guidance_outlook"],
         "macro_quotes": summary["macro_quotes"],
-        "price_reaction_2d": (
-            float(row["price_reaction_2d"])
-            if row["price_reaction_2d"] is not None
-            else None
-        ),
+        "price_reaction_2d": (float(row["price_reaction_2d"]) if row["price_reaction_2d"] is not None else None),
         "is_stale": bool(row["is_stale"]),
         "missing_data": False,
     }
@@ -690,17 +679,13 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
                 continue
 
             try:
-                year, quarter, transcript_date = _parse_period_from_text(
-                    transcript_text, pdf_path
-                )
+                year, quarter, transcript_date = _parse_period_from_text(transcript_text, pdf_path)
             except Exception as ex:
                 LOGGER.warning("Failed to parse period from PDF for %s: %s", ticker, ex)
                 _set_fresh_row(conn, ticker, None)
                 continue
 
-            sha = hashlib.sha256(
-                transcript_text.encode("utf-8", errors="ignore")
-            ).hexdigest()
+            sha = hashlib.sha256(transcript_text.encode("utf-8", errors="ignore")).hexdigest()
 
             row_id = _make_id(ticker, year, quarter)
             existing = _get_row_by_id(conn, row_id)
@@ -834,7 +819,7 @@ def get_data(db_path: str = None, refresh: bool = False) -> dict:
 def run() -> None:
     data = get_data()
     if "error" in data:
-        LOGGER.error("Error: %s", data['error'])
+        LOGGER.error("Error: %s", data["error"])
         return
 
     for sector in SECTORS.keys():
@@ -854,12 +839,11 @@ def run() -> None:
                 date_label = "N/A"
             stale = " (stale/missing)" if company.get("is_stale") or company.get("missing_data") else ""
             print(
-                f"  - {company['ticker']} [{date_label}] {company['sentiment']}: "
-                f"{company['summary_headline']}{stale}"
+                f"  - {company['ticker']} [{date_label}] {company['sentiment']}: {company['summary_headline']}{stale}"
             )
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     run()

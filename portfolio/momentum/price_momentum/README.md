@@ -6,7 +6,6 @@ A Python script for analyzing stock momentum using Rate of Change (ROC) indicato
 
 - Standalone CLI: `python3 portfolio/momentum/price_momentum/momentum.py ...`
 - FastAPI: `GET /api/momentum` (see `api/routers/momentum.py`)
-- Streamlit GUI: `gui/app.py` (page: “🚀 Momentum”)
 - React UI: “Momentum” page in `frontend/`
 
 ## Overview

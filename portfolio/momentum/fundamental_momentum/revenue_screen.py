@@ -21,9 +21,9 @@ Usage:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -41,20 +41,19 @@ for _p in (_ROOT / "equities", _ROOT):
         sys.path.insert(0, _p_str)
 
 from common import (
-    load_universe,
-    list_universes,
+    clean_ticker,
     get_sp500_universe,
     get_universe_tickers,
-    clean_ticker,
+    list_universes,
+    load_universe,
 )
-
-from revenue_momentum_single import fetch_revenue_metrics, compute_universe_scores, RevenueMetrics
+from revenue_momentum_single import RevenueMetrics, compute_universe_scores, fetch_revenue_metrics
 
 
 def _build_universe(
-    tickers: List[str],
-    benchmark: Optional[str],
-) -> tuple[List[str], List[str], str]:
+    tickers: list[str],
+    benchmark: str | None,
+) -> tuple[list[str], list[str], str]:
     """
     Build the full scoring universe from input tickers + benchmark.
 
@@ -77,7 +76,7 @@ def _build_universe(
 
 
 def get_data(
-    tickers: List[str],
+    tickers: list[str],
     benchmark: str = "sp500",
     growth_years: int = 3,
     progress_callback=None,
@@ -99,14 +98,12 @@ def get_data(
         return {"error": "No tickers provided"}
 
     try:
-        scoring_universe, input_tickers, benchmark_name = _build_universe(
-            tickers, benchmark
-        )
+        scoring_universe, input_tickers, benchmark_name = _build_universe(tickers, benchmark)
     except Exception as e:
         return {"error": f"Failed to build universe: {e}"}
 
     # Fetch raw metrics for the full scoring universe (parallelized)
-    raws: Dict[str, RevenueMetrics] = {}
+    raws: dict[str, RevenueMetrics] = {}
     failed = []
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -202,9 +199,7 @@ def main():
         default=3,
         help="Revenue CAGR window in years (default: 3)",
     )
-    ap.add_argument(
-        "--out_csv", default="", help="Optional path to save full results as CSV"
-    )
+    ap.add_argument("--out_csv", default="", help="Optional path to save full results as CSV")
     args = ap.parse_args()
 
     if args.list_universes:
@@ -226,9 +221,7 @@ def main():
         tickers = [t.upper().strip() for t in args.tickers]
         print(f"Scoring {len(tickers)} ticker(s): {', '.join(tickers)}")
     else:
-        ap.error(
-            "Provide tickers as arguments or use --universe. Use --list-universes to see options."
-        )
+        ap.error("Provide tickers as arguments or use --universe. Use --list-universes to see options.")
 
     benchmark = args.benchmark
     print(f"Benchmark: {benchmark}")
@@ -264,10 +257,7 @@ def main():
     print("\n" + "=" * 84)
     print("REVENUE MOMENTUM RANKING")
     print("=" * 84)
-    print(
-        f"{'Rank':<6}{'Ticker':<10}{'Rev Mom':>10}{'Pctl':>8}"
-        f"{'Rev YoY':>12}{'Rev CAGR':>12}{'Growth Accel':>14}"
-    )
+    print(f"{'Rank':<6}{'Ticker':<10}{'Rev Mom':>10}{'Pctl':>8}{'Rev YoY':>12}{'Rev CAGR':>12}{'Growth Accel':>14}")
     print("-" * 84)
 
     z_metrics_df = result["z_metrics_df"]
@@ -280,6 +270,7 @@ def main():
         growth_accel = raw_df.loc[ticker, "revenue_growth_acceleration"] if ticker in raw_df.index else float("nan")
 
         import math
+
         pctl_str = f"{pctl * 100:.1f}%" if not math.isnan(pctl) else "NA"
         yoy_str = f"{rev_yoy * 100:.1f}%" if not math.isnan(rev_yoy) else "NA"
         cagr_str = f"{rev_cagr * 100:.1f}%" if not math.isnan(rev_cagr) else "NA"
@@ -300,6 +291,6 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

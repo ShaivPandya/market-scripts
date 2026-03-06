@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
 from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -119,7 +120,7 @@ def run_analyzer(req: AnalyzerRequest = Body(default_factory=AnalyzerRequest)):
     try:
         result = _compute_analyzer_result(req)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="portfolio_analyzer", detail=str(e)) from e
 
     set_cached(short_cache, key, result)
     return result

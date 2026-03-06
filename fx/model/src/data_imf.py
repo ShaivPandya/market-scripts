@@ -1,11 +1,14 @@
 from pathlib import Path
-import requests
+
 import pandas as pd
+import requests
 
 IMF_BASE = "https://www.imf.org/external/datamapper/api/v1"
 
+
 class ImfError(RuntimeError):
     pass
+
 
 def fetch_imf_datamapper_indicator(indicator: str, iso3: str, cache_dir: Path, refresh: bool = False) -> pd.Series:
     # Fetch an IMF DataMapper indicator for an ISO3 country code. Cache extracted annual series to CSV.
@@ -21,9 +24,7 @@ def fetch_imf_datamapper_indicator(indicator: str, iso3: str, cache_dir: Path, r
         raise ImfError(f"IMF DataMapper request failed ({r.status_code}): {r.text[:2000]}")
 
     j = r.json()
-    values = (j.get("values", {})
-                .get(indicator, {})
-                .get(iso3, {}))
+    values = j.get("values", {}).get(indicator, {}).get(iso3, {})
 
     if not values:
         raise ImfError(f"No values returned for {indicator}/{iso3}")

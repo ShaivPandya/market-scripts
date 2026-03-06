@@ -91,7 +91,7 @@ def _dedupe(seq: list[str]) -> list[str]:
     return out
 
 
-def _to_float_percent(value) -> Optional[float]:
+def _to_float_percent(value) -> float | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -118,7 +118,7 @@ def _normalize_series(series: pd.Series) -> pd.Series:
     return out
 
 
-def _build_fred_client() -> tuple[Optional[Fred], Optional[str]]:
+def _build_fred_client() -> tuple[Fred | None, str | None]:
     if not FRED_AVAILABLE:
         return None, "fredapi not installed; FRED data unavailable."
     api_key = (os.environ.get("FRED_API_KEY") or "").strip()
@@ -130,7 +130,7 @@ def _build_fred_client() -> tuple[Optional[Fred], Optional[str]]:
         return None, f"Failed to initialize FRED client: {exc}"
 
 
-def _fetch_fred_series(fred: Fred, series_id: str) -> Optional[pd.Series]:
+def _fetch_fred_series(fred: Fred, series_id: str) -> pd.Series | None:
     try:
         raw = fred.get_series(series_id)
     except Exception:
@@ -141,7 +141,7 @@ def _fetch_fred_series(fred: Fred, series_id: str) -> Optional[pd.Series]:
     return normalized if not normalized.empty else None
 
 
-def _load_csv_series(filename: str) -> Optional[pd.Series]:
+def _load_csv_series(filename: str) -> pd.Series | None:
     path = DATA_DIR / filename
     if not path.exists():
         return None
@@ -165,7 +165,7 @@ def _load_csv_series(filename: str) -> Optional[pd.Series]:
     return normalized if not normalized.empty else None
 
 
-def _value_on_or_before(series: pd.Series, target: pd.Timestamp) -> tuple[Optional[float], Optional[str]]:
+def _value_on_or_before(series: pd.Series, target: pd.Timestamp) -> tuple[float | None, str | None]:
     if series.empty:
         return None, None
     eligible = series[series.index <= target]
@@ -180,8 +180,8 @@ def _build_country_curve(
     country_code: str,
     country_name: str,
     lookback_days: int,
-    fred_client: Optional[Fred],
-    fred_unavailable_warning: Optional[str],
+    fred_client: Fred | None,
+    fred_unavailable_warning: str | None,
 ) -> dict:
     warnings: list[str] = []
     missing_unconfigured: list[str] = []
@@ -193,8 +193,8 @@ def _build_country_curve(
     for tenor_meta in TENOR_ORDER:
         tenor = tenor_meta["tenor"]
 
-        series: Optional[pd.Series] = None
-        source: Optional[str] = None
+        series: pd.Series | None = None
+        source: str | None = None
 
         fred_series_id = fred_map.get(tenor)
         if fred_series_id is not None:
@@ -227,11 +227,9 @@ def _build_country_curve(
             missing_unconfigured.append(tenor)
 
     if missing_unconfigured:
-        warnings.append(
-            "No configured source for tenors: " + ", ".join(missing_unconfigured) + "."
-        )
+        warnings.append("No configured source for tenors: " + ", ".join(missing_unconfigured) + ".")
 
-    as_of: Optional[pd.Timestamp] = None
+    as_of: pd.Timestamp | None = None
     for series, _ in series_map.values():
         last_date = pd.Timestamp(series.index[-1])
         if as_of is None or last_date > as_of:
@@ -268,9 +266,7 @@ def _build_country_curve(
         if current_val is None:
             warnings.append(f"{tenor}: no observation found on or before as-of date.")
         if historical_val is None:
-            warnings.append(
-                f"{tenor}: no observation found on or before {historical_target.date().isoformat()}."
-            )
+            warnings.append(f"{tenor}: no observation found on or before {historical_target.date().isoformat()}.")
 
         change_bps = None
         if current_val is not None and historical_val is not None:
@@ -294,9 +290,7 @@ def _build_country_curve(
         "code": country_code,
         "name": country_name,
         "as_of_date": as_of.date().isoformat() if as_of is not None else None,
-        "historical_target_date": (
-            historical_target.date().isoformat() if historical_target is not None else None
-        ),
+        "historical_target_date": (historical_target.date().isoformat() if historical_target is not None else None),
         "points": points,
         "warnings": _dedupe(warnings),
     }

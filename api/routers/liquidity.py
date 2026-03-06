@@ -2,7 +2,9 @@ import os
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from api.cache import short_cache, get_cached, set_cached
+
+from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
 
 router = APIRouter()
@@ -16,16 +18,14 @@ def get_liquidity():
         return cached
     try:
         from liquidity import get_snapshot
+
         data = get_snapshot()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="liquidity", detail=str(e)) from e
 
     # Drop large DataFrame/Series objects that React doesn't need
     # (composite_series and df_weekly are internal computation artifacts)
-    filtered = {
-        k: v for k, v in data.items()
-        if k not in ("df_weekly", "composite_series")
-    }
+    filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
     result = serialize_response(filtered)
     set_cached(short_cache, key, result)
     return result
@@ -62,10 +62,7 @@ def _build_components_table(rows: list[dict]) -> str:
         key=lambda r: abs(_to_float(r.get("contribution"))),
         reverse=True,
     )
-    header = (
-        f"{'Region':<8}  {'Component':<26}  {'Value':>11}  {'Z':>7}  "
-        f"{'Weight':>7}  {'Contrib':>8}  {'Signal':<11}"
-    )
+    header = f"{'Region':<8}  {'Component':<26}  {'Value':>11}  {'Z':>7}  {'Weight':>7}  {'Contrib':>8}  {'Signal':<11}"
     divider = "-" * len(header)
     lines = [header, divider]
     for r in sorted_rows:
@@ -102,7 +99,7 @@ def _build_changes_table(changes: dict) -> str:
 def analyze_liquidity(req: LiquidityAnalyzeRequest):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+        raise ConfigurationError("OPENAI_API_KEY")
     if not req.components and not req.changes:
         raise HTTPException(status_code=400, detail="No liquidity data provided")
 
@@ -120,7 +117,7 @@ def analyze_liquidity(req: LiquidityAnalyzeRequest):
     prompt = f"""You are an experienced macro strategist. Analyze the following global liquidity dashboard snapshot and provide a concise but insightful interpretation for a professional investor audience.
 
 As of: {req.latest_date or "N/A"}
-Composite liquidity score: {_fmt(req.composite_score, '+.2f')}
+Composite liquidity score: {_fmt(req.composite_score, "+.2f")}
 Current regime: {str(req.regime or "unknown").upper()}
 
 Regional scores:
@@ -148,12 +145,13 @@ Be specific about the numbers."""
 
     try:
         from openai import OpenAI
+
         client = OpenAI()
         resp = client.responses.create(model="gpt-5-mini", input=prompt)
         analysis = (resp.output_text or "").strip()
         if not analysis:
             raise ValueError("OpenAI returned empty response")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}")
+        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 
     return {"analysis": analysis}

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import long_cache, get_cached, set_cached
+from api.cache import get_cached, long_cache, set_cached
+from api.exceptions import DataFetchError
 from api.serializers import serialize_value
 
 router = APIRouter()
@@ -51,7 +52,7 @@ def run_financials(req: FinancialsRequest):
     except Exception as e:
         if legacy_cached is not None:
             return legacy_cached
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="financials", detail=str(e)) from e
 
     result = serialize_value(data)
     set_cached(long_cache, key, result)

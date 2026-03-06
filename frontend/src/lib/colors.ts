@@ -1,5 +1,5 @@
 /**
- * Cell color functions — direct TypeScript port of the Streamlit styling functions
+ * Cell color functions for data tables
  * in gui/app.py lines 270-356.
  *
  * Each function returns a CSS color string (e.g. "#00c853") or "" for no color.

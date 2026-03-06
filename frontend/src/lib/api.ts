@@ -3,7 +3,7 @@ import axios from "axios"
 import { getAuthMode } from "@/lib/authMode"
 
 const client = axios.create({
-  baseURL: (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/+$/, ""),
+  baseURL: (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/, ""),
   withCredentials: true,
   // Avoid "spinning forever" when the backend (or an upstream like Cloudflare) hangs.
   timeout: 60_000,

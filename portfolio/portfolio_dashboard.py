@@ -10,8 +10,8 @@ or prints summary tables in the terminal.
 Terminal:
   python portfolio/portfolio_dashboard.py
 """
-import logging
 
+import logging
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -26,29 +26,29 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 # -- Load portfolio from CSV ──────────────────────────────────────────────────
 _CSV_PATH = Path(__file__).parent / "portfolio.csv"
 
+
 def _load_portfolio() -> pd.DataFrame:
     """Read portfolio.csv and return DataFrame with ticker, asset, direction."""
     return pd.read_csv(_CSV_PATH)
+
 
 _portfolio_df = _load_portfolio()
 
 POSITIONS = {row.ticker: row.ticker for row in _portfolio_df.itertuples()}
 POSITION_ORDER = list(_portfolio_df.ticker)
-POSITION_META = {
-    row.ticker: {"asset": row.asset, "direction": row.direction}
-    for row in _portfolio_df.itertuples()
-}
+POSITION_META = {row.ticker: {"asset": row.asset, "direction": row.direction} for row in _portfolio_df.itertuples()}
 
 # -- Timeframe configs: name -> yfinance (period, interval) ──────────────────
 TIMEFRAMES = {
-    "This Week": {"period": "5d",  "interval": "15m"},
-    "Daily":     {"period": "90d", "interval": "1d"},
-    "Weekly":    {"period": "2y",  "interval": "1wk"},
-    "Monthly":   {"period": "5y",  "interval": "1mo"},
+    "This Week": {"period": "5d", "interval": "15m"},
+    "Daily": {"period": "90d", "interval": "1d"},
+    "Weekly": {"period": "2y", "interval": "1wk"},
+    "Monthly": {"period": "5y", "interval": "1mo"},
 }
 
 
 # -- Data fetching ────────────────────────────────────────────────────────────
+
 
 def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     """
@@ -143,6 +143,7 @@ def format_price(value: float) -> str:
 
 # -- Terminal output ──────────────────────────────────────────────────────────
 
+
 def print_terminal():
     """Print Portfolio dashboard results for all timeframes."""
     from rich.console import Console
@@ -200,7 +201,9 @@ def print_terminal():
                     ticker,
                     f"[{dir_style}]{direction}[/{dir_style}]",
                     asset,
-                    "N/A", "N/A", "N/A",
+                    "N/A",
+                    "N/A",
+                    "N/A",
                 )
                 continue
 
@@ -228,6 +231,6 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

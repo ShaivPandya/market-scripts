@@ -3,8 +3,7 @@
 A collection of Python “market dashboards” (macro, equities, FX, commodities, portfolio analytics) that can be run in three ways:
 
 1. As standalone Python scripts (terminal output, CSV/PNG outputs for some modules)
-2. Via a Streamlit GUI (`gui/app.py`)
-3. Via a FastAPI backend (`api/`) + React frontend (`frontend/`) web dashboard
+2. Via a FastAPI backend (`api/`) + React frontend (`frontend/`) web dashboard
 
 This repo is intentionally “flat”: most analysis modules are plain Python files inside topical folders, and the GUI/API layers import them by adding those folders to `sys.path`.
 
@@ -84,12 +83,6 @@ One command (from `frontend/`):
 npm run dev:all
 ```
 
-### 5) (Optional) Run the Streamlit GUI
-
-```bash
-streamlit run gui/app.py
-```
-
 ## How the codebase fits together
 
 ### The core pattern: “data modules”
@@ -107,9 +100,6 @@ Those functions typically return a Python `dict` containing a mix of:
 Each module also often has a `__main__` / CLI path for terminal usage.
 
 ### UI layers
-
-**Streamlit UI (`gui/`)**
-- Directly imports the analysis modules and renders them.
 
 **FastAPI (`api/`)**
 - Wraps the analysis modules under `/api/*` routes.
@@ -135,7 +125,6 @@ Each module also often has a `__main__` / CLI path for terminal usage.
 
 - `api/` — FastAPI server (`api/main.py`) + route adapters in `api/routers/`
 - `frontend/` — React + TypeScript + Vite UI, plus Cloudflare Pages Functions under `frontend/functions/`
-- `gui/` — Streamlit dashboard (`gui/app.py`)
 - `macro/` — macro monitors (liquidity, country dashboard, positioning, breakouts, central banks, industry transcripts)
 - `equities/` — equity screens + dashboards (index dashboard, market technicals, quality, sector metrics, short screen, universes)
 - `portfolio/` — portfolio dashboard, analyzer/sizer modules, momentum modules, technical analysis chart module

@@ -11,12 +11,9 @@ or prints summary tables in the terminal.
 
 Terminal:
   python macro/country_dashboard/country_dashboard.py
-
-GUI:
-  Accessed via sidebar in gui/app.py
 """
-import logging
 
+import logging
 import os
 import re
 import sys
@@ -69,20 +66,14 @@ EUROSTAT_UNEMPLOYMENT_DATASET = os.environ.get("EUROSTAT_UNEMPLOYMENT_DATASET", 
 
 _DEFAULT_ONS_CPI_UK_SERIES_ID = "d7g7"
 _DEFAULT_ONS_CPI_UK_DATASET_ID = "mm23"
-ONS_CPI_UK_SERIES_ID = os.environ.get(
-    "ONS_CPI_UK_SERIES_ID", _DEFAULT_ONS_CPI_UK_SERIES_ID
-)
-ONS_CPI_UK_DATASET_ID = os.environ.get(
-    "ONS_CPI_UK_DATASET_ID", _DEFAULT_ONS_CPI_UK_DATASET_ID
-)
+ONS_CPI_UK_SERIES_ID = os.environ.get("ONS_CPI_UK_SERIES_ID", _DEFAULT_ONS_CPI_UK_SERIES_ID)
+ONS_CPI_UK_DATASET_ID = os.environ.get("ONS_CPI_UK_DATASET_ID", _DEFAULT_ONS_CPI_UK_DATASET_ID)
 
 ESTAT_APP_ID = os.environ.get("ESTAT_APP_ID", "")
 # Default statsDataId: Japan national CPI, all items, 2020=100, monthly
 # (Statistics Bureau of Japan via e-Stat)
 _DEFAULT_ESTAT_CPI_STATS_DATA_ID = "0003427113"
-ESTAT_CPI_STATS_DATA_ID = os.environ.get(
-    "ESTAT_CPI_STATS_DATA_ID", _DEFAULT_ESTAT_CPI_STATS_DATA_ID
-)
+ESTAT_CPI_STATS_DATA_ID = os.environ.get("ESTAT_CPI_STATS_DATA_ID", _DEFAULT_ESTAT_CPI_STATS_DATA_ID)
 
 # ── Country definitions: display_name -> FRED series IDs per metric ──────────
 # For inflation, we prefer direct YoY series and keep fallbacks where needed.
@@ -316,6 +307,7 @@ _DEFAULT_MAX_AGE_DAYS = {
 
 # ── Data fetching ────────────────────────────────────────────────────────────
 
+
 def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
     """
     Minimal Statistics Canada Web Data Service (WDS) client.
@@ -389,12 +381,7 @@ def _fetch_statcan_vector_latest_n(
         return s == str(vector_id_int)
 
     block = obj[0] if len(obj) == 1 else next((b for b in obj if _matches_vector(b)), obj[0])
-    points = (
-        block.get("vectorDataPoint")
-        or block.get("vectorDataPoints")
-        or block.get("dataPoints")
-        or []
-    )
+    points = block.get("vectorDataPoint") or block.get("vectorDataPoints") or block.get("dataPoints") or []
     if not isinstance(points, list) or not points:
         raise RuntimeError("Statistics Canada WDS returned no datapoints")
 
@@ -464,9 +451,7 @@ def _fetch_ons_timeseries(
     months = data.get("months")
     quarters = data.get("quarters")
     if not months and not quarters:
-        raise RuntimeError(
-            f"ONS timeseries {series_id}/{dataset_id}: no monthly or quarterly data returned"
-        )
+        raise RuntimeError(f"ONS timeseries {series_id}/{dataset_id}: no monthly or quarterly data returned")
 
     dates = []
     values = []
@@ -487,9 +472,7 @@ def _fetch_ons_timeseries(
                 year = point.get("year", "")
                 month_name = point.get("month", "")
                 if year and month_name:
-                    dt = pd.to_datetime(
-                        f"{year} {month_name}", format="%Y %B", errors="coerce"
-                    )
+                    dt = pd.to_datetime(f"{year} {month_name}", format="%Y %B", errors="coerce")
             if pd.isna(dt):
                 continue
 
@@ -519,10 +502,7 @@ def _fetch_ons_timeseries(
             values.append(val)
 
     if not dates:
-        raise RuntimeError(
-            f"ONS timeseries {series_id}/{dataset_id}: "
-            "no data points could be parsed"
-        )
+        raise RuntimeError(f"ONS timeseries {series_id}/{dataset_id}: no data points could be parsed")
 
     series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
     series = series[~series.index.duplicated(keep="last")]
@@ -544,10 +524,7 @@ def _fetch_eurostat_hicp(
         "EUROSTAT_API_BASE_URL",
         "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0",
     ).rstrip("/")
-    url = (
-        f"{base_url}/data/{dataset}"
-        f"?format=JSON&geo={geo}&unit=I15&coicop=CP00"
-    )
+    url = f"{base_url}/data/{dataset}?format=JSON&geo={geo}&unit=I15&coicop=CP00"
 
     resp = requests.get(url, timeout=timeout)
     resp.raise_for_status()
@@ -556,9 +533,7 @@ def _fetch_eurostat_hicp(
     time_dim = data.get("dimension", {}).get("time", {})
     time_index = time_dim.get("category", {}).get("index", {})
     if not time_index:
-        raise RuntimeError(
-            f"Eurostat {dataset}: no time dimension in response"
-        )
+        raise RuntimeError(f"Eurostat {dataset}: no time dimension in response")
 
     raw_values = data.get("value", {})
     if not raw_values:
@@ -578,9 +553,7 @@ def _fetch_eurostat_hicp(
         values.append(float(val))
 
     if not dates:
-        raise RuntimeError(
-            f"Eurostat {dataset}: no data points could be parsed"
-        )
+        raise RuntimeError(f"Eurostat {dataset}: no data points could be parsed")
 
     series = pd.Series(values, index=pd.to_datetime(dates)).sort_index()
     series = series[~series.index.duplicated(keep="last")]
@@ -676,18 +649,12 @@ def _fetch_snb_series(
     import re as _re
 
     from_date = observation_start.strftime("%Y-%m")
-    url = (
-        f"https://data.snb.ch/api/cube/{cube}/data/csv/en"
-        f"?dimSel={dim_sel}&fromDate={from_date}"
-    )
+    url = f"https://data.snb.ch/api/cube/{cube}/data/csv/en?dimSel={dim_sel}&fromDate={from_date}"
     resp = requests.get(url, timeout=timeout)
     resp.raise_for_status()
 
     lines = resp.text.strip().splitlines()
-    data_lines = [
-        l for l in lines
-        if not l.startswith('"CubeId"') and not l.startswith('"PublishingDate"')
-    ]
+    data_lines = [l for l in lines if not l.startswith('"CubeId"') and not l.startswith('"PublishingDate"')]
     df = pd.read_csv(io.StringIO("\n".join(data_lines)), sep=";", quotechar='"')
     df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
     df = df.dropna(subset=["Value"])
@@ -728,9 +695,7 @@ def _fetch_oecd_series(
     Returns a pd.Series indexed by datetime with values already in the
     units delivered by OECD (typically YoY % for GY/GYSA measures).
     """
-    base_url = os.environ.get(
-        "OECD_API_BASE_URL", "https://stats.oecd.org/sdmx-json/data"
-    )
+    base_url = os.environ.get("OECD_API_BASE_URL", "https://stats.oecd.org/sdmx-json/data")
     url = f"{base_url}/{dataset}/{key}/OECD"
 
     if key.endswith(".Q"):
@@ -744,36 +709,28 @@ def _fetch_oecd_series(
     data = resp.json()
 
     if not isinstance(data, dict):
-        raise RuntimeError(
-            f"OECD {dataset}/{key}: unexpected response type {type(data).__name__}"
-        )
+        raise RuntimeError(f"OECD {dataset}/{key}: unexpected response type {type(data).__name__}")
 
     # OECD has returned multiple SDMX-JSON variants over time.
-    root_candidates: List[Dict[str, Any]] = [data]
+    root_candidates: list[dict[str, Any]] = [data]
     nested_data = data.get("data")
     if isinstance(nested_data, dict):
         root_candidates.append(nested_data)
 
-    error_message = (
-        data.get("error_message")
-        or data.get("error")
-        or data.get("message")
-    )
+    error_message = data.get("error_message") or data.get("error") or data.get("message")
     if error_message:
         raise RuntimeError(f"OECD {dataset}/{key}: {error_message}")
 
-    dataset_obj: Dict[str, Any] = {}
+    dataset_obj: dict[str, Any] = {}
     for root in root_candidates:
         data_sets = root.get("dataSets")
         if isinstance(data_sets, list) and data_sets and isinstance(data_sets[0], dict):
             dataset_obj = data_sets[0]
             break
     if not dataset_obj:
-        raise RuntimeError(
-            f"OECD {dataset}/{key}: missing dataSets in response keys={list(data.keys())}"
-        )
+        raise RuntimeError(f"OECD {dataset}/{key}: missing dataSets in response keys={list(data.keys())}")
 
-    time_values: List[str] = []
+    time_values: list[str] = []
     for root in root_candidates:
         structure = root.get("structure")
         if isinstance(structure, dict):
@@ -786,9 +743,7 @@ def _fetch_oecd_series(
                             values = dim.get("values")
                             if isinstance(values, list):
                                 parsed = [
-                                    str(v["id"])
-                                    for v in values
-                                    if isinstance(v, dict) and v.get("id") is not None
+                                    str(v["id"]) for v in values if isinstance(v, dict) and v.get("id") is not None
                                 ]
                                 if parsed:
                                     time_values = parsed
@@ -797,7 +752,7 @@ def _fetch_oecd_series(
                         break
 
     series_map = dataset_obj.get("series")
-    observations: Dict[str, Any] = {}
+    observations: dict[str, Any] = {}
     if isinstance(series_map, dict):
         for series_obj in series_map.values():
             if isinstance(series_obj, dict):
@@ -825,7 +780,7 @@ def _fetch_oecd_series(
             return None
         return pd.Timestamp(ts)
 
-    records: Dict[pd.Timestamp, float] = {}
+    records: dict[pd.Timestamp, float] = {}
     for obs_key, obs in observations.items():
         obs_key_text = str(obs_key)
         period = None
@@ -916,7 +871,7 @@ def _fetch_abs_indicator(
     }
     root = ET.fromstring(resp.text)
 
-    records: Dict[pd.Timestamp, float] = {}
+    records: dict[pd.Timestamp, float] = {}
     for obs in root.findall(".//g:Obs", ns):
         dim = obs.find("g:ObsDimension", ns)
         val_el = obs.find("g:ObsValue", ns)
@@ -978,9 +933,7 @@ def _fetch_estat_cpi(
             result = resp_json[root_key]["RESULT"]
             status = str(result.get("STATUS", ""))
             if status != "0":
-                raise RuntimeError(
-                    f"e-Stat API error (status={status}): {result.get('ERROR_MSG', 'unknown error')}"
-                )
+                raise RuntimeError(f"e-Stat API error (status={status}): {result.get('ERROR_MSG', 'unknown error')}")
         except (KeyError, TypeError):
             pass
 
@@ -1026,21 +979,18 @@ def _fetch_estat_cpi(
                 return item.get("@code")
         return None
 
-    tab_code = _find_code("tab", ["指数"])      # index level (not MoM/YoY %)
+    tab_code = _find_code("tab", ["指数"])  # index level (not MoM/YoY %)
     cat01_code = _find_code("cat01", ["総合"])  # all items
-    area_code = _find_code("area", ["全国"])    # all Japan
+    area_code = _find_code("area", ["全国"])  # all Japan
 
     time_items = _dim_items("time")
     time_code_to_name = {
-        str(item.get("@code")): str(item.get("@name", ""))
-        for item in time_items
-        if item.get("@code") is not None
+        str(item.get("@code")): str(item.get("@name", "")) for item in time_items if item.get("@code") is not None
     }
 
     if not tab_code or not cat01_code or not area_code:
         raise RuntimeError(
-            f"e-Stat CPI: could not resolve classification codes "
-            f"(tab={tab_code}, cat01={cat01_code}, area={area_code})"
+            f"e-Stat CPI: could not resolve classification codes (tab={tab_code}, cat01={cat01_code}, area={area_code})"
         )
 
     # ── Step 2: fetch the filtered time series ────────────────────────────────
@@ -1240,19 +1190,19 @@ def _infer_series_frequency(series: pd.Series) -> str | None:
     return None
 
 
-def _metric_candidates(metric_key: str, config: dict) -> List[Dict[str, object]]:
+def _metric_candidates(metric_key: str, config: dict) -> list[dict[str, object]]:
     metric_config = config[metric_key]
 
     if isinstance(metric_config, str):
         transform = "yoy4" if metric_key == "gdp" else "none"
         return [{"source": "fred", "id": metric_config, "transform": transform, "params": {}}]
 
-    candidates: List[Dict[str, object]] = []
+    candidates: list[dict[str, object]] = []
     for item in metric_config:
         if isinstance(item, str):
             candidates.append({"source": "fred", "id": item, "transform": "none", "params": {}})
         else:
-            candidate: Dict[str, object] = {
+            candidate: dict[str, object] = {
                 "source": item.get("source", "fred"),
                 "id": item["id"],
                 "transform": item.get("transform", "none"),
@@ -1318,9 +1268,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     sid = candidate.get("series_id")
                     did = candidate.get("dataset_id")
                     if not sid or not did:
-                        raise ValueError(
-                            "Missing series_id or dataset_id for ONS source"
-                        )
+                        raise ValueError("Missing series_id or dataset_id for ONS source")
                     series = _fetch_ons_timeseries(
                         series_id=sid,
                         dataset_id=did,
@@ -1335,9 +1283,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     qp = candidate.get("query_params")
                     if qp:
                         freq = candidate.get("freq", "monthly")
-                        series = _fetch_eurostat_series(
-                            dataset=ds, geo=geo, query_params=qp, freq=freq
-                        )
+                        series = _fetch_eurostat_series(dataset=ds, geo=geo, query_params=qp, freq=freq)
                     else:
                         series = _fetch_eurostat_hicp(dataset=ds, geo=geo)
                     series = series[series.index >= observation_start]
@@ -1400,9 +1346,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                 series = series[series.index >= display_start]
 
                 if series.empty:
-                    country_errors.append(
-                        f"{series_id}: no data in last {_DISPLAY_YEARS} years"
-                    )
+                    country_errors.append(f"{series_id}: no data in last {_DISPLAY_YEARS} years")
                     continue
 
                 latest_ts = pd.Timestamp(series.index[-1])
@@ -1419,9 +1363,7 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                 if max_age_days:
                     age_days = (now.date() - effective_latest_ts.date()).days
                     if age_days > int(max_age_days):
-                        country_errors.append(
-                            f"{series_id}: stale ({age_days}d old > {int(max_age_days)}d)"
-                        )
+                        country_errors.append(f"{series_id}: stale ({age_days}d old > {int(max_age_days)}d)")
                         continue
 
                 countries[name] = series
@@ -1454,6 +1396,7 @@ def format_value(value: float) -> str:
 
 
 # ── Terminal output ──────────────────────────────────────────────────────────
+
 
 def print_terminal():
     """Print Country dashboard results for all metrics."""
@@ -1530,6 +1473,6 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

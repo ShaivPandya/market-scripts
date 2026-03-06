@@ -42,8 +42,18 @@ MONTH_CODES = {
 }
 
 MONTH_NAMES = {
-    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
-    7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+    1: "Jan",
+    2: "Feb",
+    3: "Mar",
+    4: "Apr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Aug",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dec",
 }
 
 COMMODITIES = [
@@ -58,7 +68,7 @@ VALID_CODES = {c[0] for c in COMMODITIES}
 def _build_futures_tickers(
     base: str,
     num_months: int = 12,
-    ref_date: Optional[date] = None,
+    ref_date: date | None = None,
 ) -> list[dict]:
     """
     Build Yahoo Finance futures ticker symbols for consecutive delivery months
@@ -80,12 +90,14 @@ def _build_futures_tickers(
         yy = year % 100
         ticker = f"{base}{code}{yy:02d}.NYM"
         label = f"{MONTH_NAMES[month]} {year}"
-        contracts.append({
-            "ticker": ticker,
-            "month": month,
-            "year": year,
-            "label": label,
-        })
+        contracts.append(
+            {
+                "ticker": ticker,
+                "month": month,
+                "year": year,
+                "label": label,
+            }
+        )
         month += 1
         if month > 12:
             month = 1
@@ -163,33 +175,33 @@ def _fetch_curve_prices(
             target_date = pd.Timestamp(date.today()) - pd.Timedelta(days=lookback_days)
             hist_eligible = series[series.index <= target_date]
 
-            historical_price: Optional[float] = None
-            historical_date_str: Optional[str] = None
+            historical_price: float | None = None
+            historical_date_str: str | None = None
             if not hist_eligible.empty:
                 historical_price = float(hist_eligible.iloc[-1])
                 historical_date_str = hist_eligible.index[-1].date().isoformat()
 
-            change: Optional[float] = None
-            change_pct: Optional[float] = None
+            change: float | None = None
+            change_pct: float | None = None
             if historical_price is not None:
                 change = round(current_price - historical_price, 4)
                 if historical_price != 0:
-                    change_pct = round(
-                        (current_price - historical_price) / historical_price * 100, 2
-                    )
+                    change_pct = round((current_price - historical_price) / historical_price * 100, 2)
 
-            points.append({
-                "ticker": tk,
-                "label": contract["label"],
-                "month": contract["month"],
-                "year": contract["year"],
-                "current": round(current_price, 4),
-                "historical": round(historical_price, 4) if historical_price is not None else None,
-                "change": change,
-                "change_pct": change_pct,
-                "current_date": current_date.date().isoformat(),
-                "historical_date": historical_date_str,
-            })
+            points.append(
+                {
+                    "ticker": tk,
+                    "label": contract["label"],
+                    "month": contract["month"],
+                    "year": contract["year"],
+                    "current": round(current_price, 4),
+                    "historical": round(historical_price, 4) if historical_price is not None else None,
+                    "change": change,
+                    "change_pct": change_pct,
+                    "current_date": current_date.date().isoformat(),
+                    "historical_date": historical_date_str,
+                }
+            )
 
         except Exception as exc:
             warn.append(f"{tk}: {exc}")

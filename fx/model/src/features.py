@@ -10,6 +10,7 @@ Uses generic column names:
 RER = log(spot) + log(cpi_base) - log(cpi_quote)
 Carry = (r_quote - r_base) / 100
 """
+
 import numpy as np
 import pandas as pd
 

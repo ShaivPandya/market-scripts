@@ -11,20 +11,23 @@ Countries covered:
 - Japan
 """
 
-import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
-import sys
 import os
+import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, List, Tuple
+
+import pandas as pd
 
 # Load environment variables from .env file
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from load_env import load_env
+
 load_env()
 
 try:
     from fredapi import Fred
+
     FRED_AVAILABLE = True
 except ImportError:
     FRED_AVAILABLE = False
@@ -32,14 +35,14 @@ except ImportError:
     print("FRED API key also required. Get one at: https://fred.stlouisfed.org/docs/api/api_key.html", file=sys.stderr)
 
 # FRED API configuration
-FRED_API_KEY = os.environ.get('FRED_API_KEY', None)
+FRED_API_KEY = os.environ.get("FRED_API_KEY", None)
 
 # FRED series IDs for US Treasury yields
 FRED_SERIES = {
     "United States": {
-        "2-Year": "DGS2",   # 2-Year Treasury Constant Maturity Rate
-        "10-Year": "DGS10", # 10-Year Treasury Constant Maturity Rate
-        "30-Year": "DGS30"  # 30-Year Treasury Constant Maturity Rate
+        "2-Year": "DGS2",  # 2-Year Treasury Constant Maturity Rate
+        "10-Year": "DGS10",  # 10-Year Treasury Constant Maturity Rate
+        "30-Year": "DGS30",  # 30-Year Treasury Constant Maturity Rate
     }
 }
 
@@ -48,16 +51,16 @@ FRED_SERIES = {
 BOND_DATA_FILES = {
     "United Kingdom": {
         "2-Year": "Download Data - BOND_BX_XTUP_TMBMKGB-02Y.csv",
-        "10-Year": "Download Data - BOND_BX_XTUP_TMBMKGB-10Y.csv"
+        "10-Year": "Download Data - BOND_BX_XTUP_TMBMKGB-10Y.csv",
     },
     "Germany": {
         "2-Year": "Download Data - BOND_BX_XTUP_TMBMKDE-02Y.csv",
-        "10-Year": "Download Data - BOND_BX_XTUP_TMBMKDE-10Y.csv"
+        "10-Year": "Download Data - BOND_BX_XTUP_TMBMKDE-10Y.csv",
     },
     "Japan": {
         "2-Year": "Download Data - BOND_BX_XTUP_TMBMKJP-02Y.csv",
-        "10-Year": "Download Data - BOND_BX_XTUP_TMBMKJP-10Y.csv"
-    }
+        "10-Year": "Download Data - BOND_BX_XTUP_TMBMKJP-10Y.csv",
+    },
 }
 
 # Data directory path
@@ -85,7 +88,7 @@ def get_fred_data(series_id: str, start_date: datetime, end_date: datetime) -> p
         data = fred.get_series(series_id, observation_start=start_date, observation_end=end_date)
 
         # Convert to DataFrame format similar to yfinance
-        df = pd.DataFrame({'Close': data})
+        df = pd.DataFrame({"Close": data})
         return df
     except Exception as e:
         print(f"Error fetching FRED data for {series_id}: {str(e)}", file=sys.stderr)
@@ -114,17 +117,17 @@ def load_bond_data_from_csv(filename: str, end_date: datetime) -> pd.DataFrame:
         df = pd.read_csv(filepath)
 
         # Convert Date column to datetime (format: MM/DD/YYYY)
-        df['Date'] = pd.to_datetime(df['Date'], format='%m/%d/%Y')
-        df = df.set_index('Date')
+        df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y")
+        df = df.set_index("Date")
 
         # Sort by date (ascending order) - CSV files may have dates in descending order
         df = df.sort_index()
 
         # Remove percentage signs and convert Close column to float
-        if 'Close' in df.columns:
-            df['Close'] = df['Close'].str.rstrip('%').astype('float')
-        elif 'Yield' in df.columns:
-            df['Close'] = df['Yield'].str.rstrip('%').astype('float')
+        if "Close" in df.columns:
+            df["Close"] = df["Close"].str.rstrip("%").astype("float")
+        elif "Yield" in df.columns:
+            df["Close"] = df["Yield"].str.rstrip("%").astype("float")
 
         # Only filter by end date - we want all historical data available
         # for calculating changes over various time periods
@@ -154,19 +157,19 @@ def get_current_yield_from_csv(filename: str) -> float:
 
     try:
         df = pd.read_csv(filepath)
-        df['Date'] = pd.to_datetime(df['Date'], format='%m/%d/%Y')
-        df = df.sort_values('Date')
+        df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y")
+        df = df.sort_values("Date")
 
         # Get the most recent yield (remove % sign and convert to float)
-        if 'Close' in df.columns and not df.empty:
-            close_value = df['Close'].iloc[-1]
+        if "Close" in df.columns and not df.empty:
+            close_value = df["Close"].iloc[-1]
             if isinstance(close_value, str):
-                return float(close_value.rstrip('%'))
+                return float(close_value.rstrip("%"))
             return float(close_value)
-        elif 'Yield' in df.columns and not df.empty:
-            yield_value = df['Yield'].iloc[-1]
+        elif "Yield" in df.columns and not df.empty:
+            yield_value = df["Yield"].iloc[-1]
             if isinstance(yield_value, str):
-                return float(yield_value.rstrip('%'))
+                return float(yield_value.rstrip("%"))
             return float(yield_value)
 
         return None
@@ -175,8 +178,9 @@ def get_current_yield_from_csv(filename: str) -> float:
         return None
 
 
-def calculate_yield_changes(current_yield: float, historical_data: pd.DataFrame,
-                           periods: List[Tuple[str, int]]) -> Dict[str, float]:
+def calculate_yield_changes(
+    current_yield: float, historical_data: pd.DataFrame, periods: list[tuple[str, int]]
+) -> dict[str, float]:
     """
     Calculate yield changes over specified time periods.
 
@@ -206,7 +210,7 @@ def calculate_yield_changes(current_yield: float, historical_data: pd.DataFrame,
             closest_data = historical_data[historical_data.index <= target_date]
 
             if not closest_data.empty:
-                historical_yield = closest_data.iloc[-1]['Close']
+                historical_yield = closest_data.iloc[-1]["Close"]
                 change = current_yield - historical_yield
                 changes[period_name] = round(change, 4)
             else:
@@ -252,9 +256,9 @@ def format_yield_change(change: float) -> str:
         return "N/A"
 
     # ANSI color codes
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    RESET = '\033[0m'
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    RESET = "\033[0m"
 
     sign = "+" if change >= 0 else ""
     formatted_value = f"{sign}{change:.4f}"
@@ -283,12 +287,7 @@ def main():
         print("Get a free API key at: https://fred.stlouisfed.org/docs/api/api_key.html\n")
 
     # Define time periods for comparison (name, days back)
-    periods = [
-        ("1 Month", 30),
-        ("3 Months", 90),
-        ("6 Months", 180),
-        ("1 Year", 365)
-    ]
+    periods = [("1 Month", 30), ("3 Months", 90), ("6 Months", 180), ("1 Year", 365)]
 
     # Fetch data going back 1 year + buffer
     end_date = datetime.now()
@@ -308,7 +307,7 @@ def main():
             current_yield = get_current_yield_fred(series_id)
 
             if current_yield is None:
-                print(f"  Current Yield: N/A (Data not available)")
+                print("  Current Yield: N/A (Data not available)")
                 continue
 
             print(f"  Current Yield: {current_yield:.4f}%")
@@ -319,11 +318,15 @@ def main():
             # Calculate changes
             changes = calculate_yield_changes(current_yield, historical_data, periods)
 
-            print(f"\n  Changes:")
+            print("\n  Changes:")
             for period_name, _ in periods:
                 change = changes.get(period_name)
                 formatted_change = format_yield_change(change)
-                print(f"    {period_name:12s}: {formatted_change:>10s} bps" if change is not None else f"    {period_name:12s}: N/A")
+                print(
+                    f"    {period_name:12s}: {formatted_change:>10s} bps"
+                    if change is not None
+                    else f"    {period_name:12s}: N/A"
+                )
 
         print()
 
@@ -341,7 +344,7 @@ def main():
             current_yield = get_current_yield_from_csv(filename)
 
             if current_yield is None:
-                print(f"  Current Yield: N/A (Data not available)")
+                print("  Current Yield: N/A (Data not available)")
                 continue
 
             print(f"  Current Yield: {current_yield:.4f}%")
@@ -352,11 +355,15 @@ def main():
             # Calculate changes
             changes = calculate_yield_changes(current_yield, historical_data, periods)
 
-            print(f"\n  Changes:")
+            print("\n  Changes:")
             for period_name, _ in periods:
                 change = changes.get(period_name)
                 formatted_change = format_yield_change(change)
-                print(f"    {period_name:12s}: {formatted_change:>10s} bps" if change is not None else f"    {period_name:12s}: N/A")
+                print(
+                    f"    {period_name:12s}: {formatted_change:>10s} bps"
+                    if change is not None
+                    else f"    {period_name:12s}: N/A"
+                )
 
         print()
 
@@ -377,12 +384,7 @@ def export_to_csv(filename: str = "government_bond_yields.csv"):
     Args:
         filename: Output CSV filename
     """
-    periods = [
-        ("1 Month", 30),
-        ("3 Months", 90),
-        ("6 Months", 180),
-        ("1 Year", 365)
-    ]
+    periods = [("1 Month", 30), ("3 Months", 90), ("6 Months", 180), ("1 Year", 365)]
 
     end_date = datetime.now()
     start_date = end_date - timedelta(days=400)

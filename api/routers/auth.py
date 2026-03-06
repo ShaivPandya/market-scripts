@@ -11,12 +11,16 @@ Dependency:
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+_limiter = Limiter(key_func=get_remote_address)
 
 # ── Config (read from .env via load_dotenv() in main.py) ─────────────────────
 _AUTH_MODE = (os.environ.get("AUTH_MODE") or "").strip().lower() or "password"
@@ -48,14 +52,16 @@ def _get_jwt_algorithm() -> str:
 def _get_jwt_ttl_hours() -> int:
     return int(os.environ.get("JWT_TTL_HOURS", "12"))
 
+
 router = APIRouter(tags=["auth"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _create_token() -> str:
     ttl_hours = _get_jwt_ttl_hours()
-    expire = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+    expire = datetime.now(UTC) + timedelta(hours=ttl_hours)
     return jwt.encode(
         {"sub": "admin", "exp": expire},
         _get_jwt_secret(),
@@ -64,6 +70,7 @@ def _create_token() -> str:
 
 
 # ── Dependency — inject via dependencies=[Depends(require_auth)] ──────────────
+
 
 def require_auth(access_token: str | None = Cookie(default=None)) -> str:
     """
@@ -95,14 +102,17 @@ def require_auth(access_token: str | None = Cookie(default=None)) -> str:
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
+
 class LoginRequest(BaseModel):
     password: str
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+
 @router.post("/auth/login")
-def login(body: LoginRequest, response: Response):
+@_limiter.limit("5/minute")
+def login(request: Request, body: LoginRequest, response: Response):
     if not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

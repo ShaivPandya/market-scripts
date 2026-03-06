@@ -1,8 +1,11 @@
 import os
 from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from api.cache import long_cache, get_cached, set_cached
+
+from api.cache import get_cached, long_cache, set_cached
+from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -12,11 +15,11 @@ router = APIRouter()
 def get_positioning_summary(
     instruments: str = "SP500,NASDAQ,RUSSELL,US10Y,EUR",
     start: str = "2015-01-01",
-    end: Optional[str] = None,
-    groups: Optional[str] = None,
+    end: str | None = None,
+    groups: str | None = None,
     z_window: int = 0,
     force_threshold: float = 2.0,
-    app_token: Optional[str] = None,
+    app_token: str | None = None,
 ):
     resolved_token = app_token or os.environ.get("SODA_APP_TOKEN") or None
     key = f"positioning_summary:{instruments}:{start}:{end}:{groups}:{z_window}:{force_threshold}"
@@ -25,11 +28,12 @@ def get_positioning_summary(
         return cached
     try:
         from positioning import (
-            fetch_multiple_instruments,
             DATASETS,
             DEFAULT_DOMAIN,
             INSTRUMENTS,
+            fetch_multiple_instruments,
         )
+
         instrument_list = [i.strip() for i in instruments.split(",") if i.strip()]
         results = fetch_multiple_instruments(
             domain=DEFAULT_DOMAIN,
@@ -43,7 +47,7 @@ def get_positioning_summary(
             force_threshold=force_threshold,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="positioning", detail=str(e)) from e
 
     result = serialize_value(results)
     set_cached(long_cache, key, result)
@@ -54,11 +58,11 @@ def get_positioning_summary(
 def get_positioning_timeseries(
     market: str,
     start: str = "2015-01-01",
-    end: Optional[str] = None,
-    groups: Optional[str] = None,
+    end: str | None = None,
+    groups: str | None = None,
     z_window: int = 0,
     force_threshold: float = 2.0,
-    app_token: Optional[str] = None,
+    app_token: str | None = None,
 ):
     resolved_token = app_token or os.environ.get("SODA_APP_TOKEN") or None
     key = f"positioning_ts:{market}:{start}:{end}:{groups}:{z_window}:{force_threshold}"
@@ -66,7 +70,8 @@ def get_positioning_timeseries(
     if cached is not None:
         return cached
     try:
-        from positioning import fetch_market_timeseries, DATASETS, DEFAULT_DOMAIN
+        from positioning import DATASETS, DEFAULT_DOMAIN, fetch_market_timeseries
+
         df = fetch_market_timeseries(
             domain=DEFAULT_DOMAIN,
             dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
@@ -79,7 +84,7 @@ def get_positioning_timeseries(
             force_threshold=force_threshold,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="positioning", detail=str(e)) from e
 
     result = serialize_dataframe(df.reset_index(drop=True))
     set_cached(long_cache, key, result)
@@ -91,9 +96,10 @@ def get_positioning_instruments():
     """Return available instrument aliases."""
     try:
         from positioning import INSTRUMENTS
+
         return {"instruments": INSTRUMENTS}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="positioning", detail=str(e)) from e
 
 
 class PositioningAnalyzeRequest(BaseModel):
@@ -113,7 +119,7 @@ def _fmt(v, fmt=".1f", suffix=""):
 def analyze_positioning(req: PositioningAnalyzeRequest):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+        raise ConfigurationError("OPENAI_API_KEY")
 
     # Sort rows by absolute z-score descending so most extreme positions appear first
     rows = sorted(
@@ -123,7 +129,9 @@ def analyze_positioning(req: PositioningAnalyzeRequest):
     )
 
     # Build a readable table
-    header = f"{'Instrument':<12}  {'Report Date':<12}  {'Net % OI':>8}  {'Pos Z':>7}  {'Delev Z':>7}  {'Forced Flow':<18}"
+    header = (
+        f"{'Instrument':<12}  {'Report Date':<12}  {'Net % OI':>8}  {'Pos Z':>7}  {'Delev Z':>7}  {'Forced Flow':<18}"
+    )
     divider = "-" * len(header)
     lines = [header, divider]
     for r in rows:
@@ -159,12 +167,13 @@ Be specific about the numbers. Write for a professional investor audience."""
 
     try:
         from openai import OpenAI
+
         client = OpenAI()
         resp = client.responses.create(model="gpt-5-mini", input=prompt)
         analysis = (resp.output_text or "").strip()
         if not analysis:
             raise ValueError("OpenAI returned empty response")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}")
+        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 
     return {"analysis": analysis}

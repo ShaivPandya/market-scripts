@@ -6,7 +6,6 @@ This module scans the FX/commodity universe for a strict congestion regime and p
 
 - Standalone CLI: `python3 macro/breakout/breakout.py`
 - FastAPI: `GET /api/breakout` (see `api/routers/breakout.py`)
-- Streamlit GUI: `gui/app.py` (page: “🔔 Breakout”)
 - React UI: “Breakout” page in `frontend/`
 
 ## Universe

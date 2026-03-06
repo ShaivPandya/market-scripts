@@ -21,11 +21,11 @@ Usage:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -41,20 +41,20 @@ except ImportError:
 
 try:
     from .signal_fetchers import (
+        fetch_eps_momentum_batch,
+        fetch_etf_lookthrough_fundamentals_batch,
         fetch_price_momentum_batch,
         fetch_quality_batch,
-        fetch_eps_momentum_batch,
         fetch_revenue_momentum_batch,
-        fetch_etf_lookthrough_fundamentals_batch,
         fetch_spdr_sector_anchor_universe,
     )
 except ImportError:
     from signal_fetchers import (
+        fetch_eps_momentum_batch,
+        fetch_etf_lookthrough_fundamentals_batch,
         fetch_price_momentum_batch,
         fetch_quality_batch,
-        fetch_eps_momentum_batch,
         fetch_revenue_momentum_batch,
-        fetch_etf_lookthrough_fundamentals_batch,
         fetch_spdr_sector_anchor_universe,
     )
 
@@ -66,16 +66,16 @@ DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)
 DEFAULT_WEIGHTS = {
-    'quality': 0.30,
-    'price_momentum': 0.40,
-    'revenue_momentum': 0.20,
-    'eps_momentum': 0.10,
+    "quality": 0.30,
+    "price_momentum": 0.40,
+    "revenue_momentum": 0.20,
+    "eps_momentum": 0.10,
 }
 DEFAULT_WEIGHTS_SHORT = {
-    'quality': 0.30,
-    'price_momentum': 0.40,
-    'revenue_momentum': 0.20,
-    'eps_momentum': 0.10,
+    "quality": 0.30,
+    "price_momentum": 0.40,
+    "revenue_momentum": 0.20,
+    "eps_momentum": 0.10,
 }
 DEFAULT_ANCHOR_TOP_N = 10
 DEFAULT_ANCHOR_MIN_UNIQUE = 60
@@ -115,12 +115,12 @@ def zscore_of_ranks(values: pd.Series) -> pd.Series:
 # -----------------------------
 # Price Fetching
 # -----------------------------
-def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
+def fetch_prices(tickers: list[str], years: int = 5) -> pd.DataFrame:
     """
     Download adjusted close prices for multiple tickers from yfinance.
     Returns DataFrame with tickers as columns, dates as index.
     """
-    end = datetime.now(timezone.utc).date() + timedelta(days=1)
+    end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
     df = yf.download(
@@ -150,7 +150,7 @@ def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
 # -----------------------------
 # Benchmark Selection
 # -----------------------------
-def fetch_ticker_metadata(ticker: str) -> Tuple[Optional[float], Optional[str], bool]:
+def fetch_ticker_metadata(ticker: str) -> tuple[float | None, str | None, bool]:
     """
     Fetch market cap, sector, and ETF status from yfinance.
     """
@@ -166,7 +166,7 @@ def fetch_ticker_metadata(ticker: str) -> Tuple[Optional[float], Optional[str], 
     return market_cap, sector, is_etf
 
 
-def select_benchmark_ticker(ticker: str, asset_type: Optional[str] = None) -> str:
+def select_benchmark_ticker(ticker: str, asset_type: str | None = None) -> str:
     """
     Auto-select benchmark based on ticker metadata and asset type.
 
@@ -275,7 +275,7 @@ def compute_quality_signal(raw_df: pd.DataFrame) -> pd.Series:
     z_metrics = oriented.apply(zscore_of_ranks, axis=0)
 
     # Pillars: average available z's, then z-score across universe
-    def pillar(cols: List[str]) -> pd.Series:
+    def pillar(cols: list[str]) -> pd.Series:
         available = [c for c in cols if c in z_metrics.columns]
         if not available:
             return pd.Series(np.nan, index=z_metrics.index)
@@ -344,9 +344,9 @@ def compute_revenue_momentum_signal(raw_df: pd.DataFrame) -> pd.Series:
 # Signal Combination
 # -----------------------------
 def combine_signals(
-    signal_dict: Dict[str, pd.Series],
-    weights: Dict[str, float],
-    tickers: List[str],
+    signal_dict: dict[str, pd.Series],
+    weights: dict[str, float],
+    tickers: list[str],
 ) -> pd.Series:
     """
     Weighted combination of signals with dynamic weight adjustment for missing data.
@@ -385,10 +385,7 @@ def combine_signals(
         normalized_weights = {k: v / weight_sum for k, v in available_weights.items()}
 
         # Weighted average
-        weighted_sum = sum(
-            normalized_weights[k] * available[k]
-            for k in normalized_weights.keys()
-        )
+        weighted_sum = sum(normalized_weights[k] * available[k] for k in normalized_weights.keys())
         composite[ticker] = weighted_sum
 
     # Final z-score for cross-sectional ranking
@@ -401,15 +398,15 @@ def clip_signal(signal: pd.Series, lower: float = -3.0, upper: float = 3.0) -> p
 
 
 def generate_anchor_normalized_long_equity_signals(
-    long_equity_tickers: List[str],
+    long_equity_tickers: list[str],
     years: int = DEFAULT_YEARS,
     use_edgar: bool = True,
     benchmark: str = DEFAULT_BENCHMARK,
-    weights: Optional[Dict[str, float]] = None,
-    clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
+    weights: dict[str, float] | None = None,
+    clip_bounds: tuple[float, float] = CLIP_BOUNDS,
     anchor_top_n: int = DEFAULT_ANCHOR_TOP_N,
     anchor_min_unique: int = DEFAULT_ANCHOR_MIN_UNIQUE,
-) -> Tuple[pd.DataFrame, Dict[str, object]]:
+) -> tuple[pd.DataFrame, dict[str, object]]:
     """
     Compute long-equity signals against a broad anchor universe.
 
@@ -509,9 +506,11 @@ def generate_anchor_normalized_long_equity_signals(
         index=scoring_universe,
     )
     target_output = full_output.reindex(tickers)
-    valid_count = int(target_output["composite_signal"].notna().sum()) if "composite_signal" in target_output.columns else 0
+    valid_count = (
+        int(target_output["composite_signal"].notna().sum()) if "composite_signal" in target_output.columns else 0
+    )
 
-    metadata: Dict[str, object] = {
+    metadata: dict[str, object] = {
         "signal_anchor_mode": mode,
         "signal_anchor_universe_size": anchor_universe_size,
         "signal_anchor_scoring_universe_size": scoring_size,
@@ -527,17 +526,17 @@ def generate_anchor_normalized_long_equity_signals(
 # Main Generation Function
 # -----------------------------
 def generate_composite_signals(
-    tickers: List[str],
-    asset_map: Dict[str, str],
-    benchmark_override: Optional[str] = None,
-    weights: Dict[str, float] = None,
-    weights_short: Optional[Dict[str, float]] = None,
-    direction_map: Optional[Dict[str, str]] = None,
+    tickers: list[str],
+    asset_map: dict[str, str],
+    benchmark_override: str | None = None,
+    weights: dict[str, float] = None,
+    weights_short: dict[str, float] | None = None,
+    direction_map: dict[str, str] | None = None,
     years: int = DEFAULT_YEARS,
     etf_lookthrough_top_n: int = 10,
-    clip_bounds: Tuple[float, float] = CLIP_BOUNDS,
+    clip_bounds: tuple[float, float] = CLIP_BOUNDS,
     use_edgar: bool = True,
-) -> Tuple[pd.DataFrame, Dict[str, str]]:
+) -> tuple[pd.DataFrame, dict[str, str]]:
     """
     Generate multi-factor composite signals for portfolio.
 
@@ -566,7 +565,7 @@ def generate_composite_signals(
         return pd.DataFrame(), {}
 
     # Determine benchmark for each ticker
-    ticker_benchmarks: Dict[str, str] = {}
+    ticker_benchmarks: dict[str, str] = {}
     if benchmark_override:
         print(f"Using benchmark override: {benchmark_override}")
         for ticker in tickers:
@@ -596,13 +595,15 @@ def generate_composite_signals(
         prices = fetch_prices(all_tickers, years=years)
     except Exception as e:
         LOGGER.error("Failed to fetch prices: %s", e)
-        empty_df = pd.DataFrame({
-            'quality_signal': pd.Series(np.nan, index=tickers),
-            'eps_mom_signal': pd.Series(np.nan, index=tickers),
-            'rev_mom_signal': pd.Series(np.nan, index=tickers),
-            'price_mom_signal': pd.Series(0.0, index=tickers),
-            'composite_signal': pd.Series(0.0, index=tickers),
-        })
+        empty_df = pd.DataFrame(
+            {
+                "quality_signal": pd.Series(np.nan, index=tickers),
+                "eps_mom_signal": pd.Series(np.nan, index=tickers),
+                "rev_mom_signal": pd.Series(np.nan, index=tickers),
+                "price_mom_signal": pd.Series(0.0, index=tickers),
+                "composite_signal": pd.Series(0.0, index=tickers),
+            }
+        )
         return empty_df, ticker_benchmarks
 
     # Verify all benchmarks exist
@@ -628,7 +629,7 @@ def generate_composite_signals(
         etf_quality_raw = pd.DataFrame()
         etf_eps_raw = pd.DataFrame()
         etf_rev_raw = pd.DataFrame()
-        etf_holdings_map: Dict[str, pd.Series] = {}
+        etf_holdings_map: dict[str, pd.Series] = {}
 
         if etf_lookthrough_top_n and etf_lookthrough_top_n > 0:
             print(f"  ETF look-through: top {etf_lookthrough_top_n} holdings...")
@@ -648,8 +649,12 @@ def generate_composite_signals(
 
         # Quality
         print("  Fetching quality metrics...")
-        quality_raw_stock = fetch_quality_batch(stock_equities, market="SPY", growth_years=years) if stock_equities else pd.DataFrame()
-        quality_raw = pd.concat([quality_raw_stock, etf_quality_raw], axis=0) if not etf_quality_raw.empty else quality_raw_stock
+        quality_raw_stock = (
+            fetch_quality_batch(stock_equities, market="SPY", growth_years=years) if stock_equities else pd.DataFrame()
+        )
+        quality_raw = (
+            pd.concat([quality_raw_stock, etf_quality_raw], axis=0) if not etf_quality_raw.empty else quality_raw_stock
+        )
         if quality_raw is not None and not quality_raw.empty:
             quality_scores = compute_quality_signal(quality_raw)
             for ticker in quality_scores.index:
@@ -658,7 +663,11 @@ def generate_composite_signals(
 
         # EPS Momentum
         print("  Fetching EPS momentum metrics...")
-        eps_raw_stock = fetch_eps_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar) if stock_equities else pd.DataFrame()
+        eps_raw_stock = (
+            fetch_eps_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar)
+            if stock_equities
+            else pd.DataFrame()
+        )
         eps_raw = pd.concat([eps_raw_stock, etf_eps_raw], axis=0) if not etf_eps_raw.empty else eps_raw_stock
         if eps_raw is not None and not eps_raw.empty:
             eps_scores = compute_eps_momentum_signal(eps_raw)
@@ -668,7 +677,11 @@ def generate_composite_signals(
 
         # Revenue Momentum
         print("  Fetching revenue momentum metrics...")
-        rev_raw_stock = fetch_revenue_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar) if stock_equities else pd.DataFrame()
+        rev_raw_stock = (
+            fetch_revenue_momentum_batch(stock_equities, growth_years=3, use_edgar=use_edgar)
+            if stock_equities
+            else pd.DataFrame()
+        )
         rev_raw = pd.concat([rev_raw_stock, etf_rev_raw], axis=0) if not etf_rev_raw.empty else rev_raw_stock
         if rev_raw is not None and not rev_raw.empty:
             rev_scores = compute_revenue_momentum_signal(rev_raw)
@@ -681,10 +694,10 @@ def generate_composite_signals(
 
     # 3. Combine signals with dynamic weight adjustment
     signal_dict = {
-        'quality': quality_signal,
-        'eps_momentum': eps_mom_signal,
-        'revenue_momentum': rev_mom_signal,
-        'price_momentum': price_signal,
+        "quality": quality_signal,
+        "eps_momentum": eps_mom_signal,
+        "revenue_momentum": rev_mom_signal,
+        "price_momentum": price_signal,
     }
 
     # Direction-specific composite signals
@@ -711,13 +724,16 @@ def generate_composite_signals(
     composite_signal = clip_signal(composite_signal, *clip_bounds)
 
     # 5. Build output DataFrame
-    output = pd.DataFrame({
-        'quality_signal': quality_signal,
-        'eps_mom_signal': eps_mom_signal,
-        'rev_mom_signal': rev_mom_signal,
-        'price_mom_signal': price_signal,
-        'composite_signal': composite_signal,
-    }, index=tickers)
+    output = pd.DataFrame(
+        {
+            "quality_signal": quality_signal,
+            "eps_mom_signal": eps_mom_signal,
+            "rev_mom_signal": rev_mom_signal,
+            "price_mom_signal": price_signal,
+            "composite_signal": composite_signal,
+        },
+        index=tickers,
+    )
 
     return output, ticker_benchmarks
 
@@ -726,9 +742,7 @@ def generate_composite_signals(
 # CLI
 # -----------------------------
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Generate multi-factor composite signals for portfolio tickers."
-    )
+    ap = argparse.ArgumentParser(description="Generate multi-factor composite signals for portfolio tickers.")
     ap.add_argument(
         "--portfolio",
         default=str(PORTFOLIO_CSV),
@@ -759,25 +773,25 @@ def main() -> int:
     ap.add_argument(
         "--quality-weight",
         type=float,
-        default=DEFAULT_WEIGHTS['quality'],
+        default=DEFAULT_WEIGHTS["quality"],
         help=f"Quality weight (default: {DEFAULT_WEIGHTS['quality']})",
     )
     ap.add_argument(
         "--price-weight",
         type=float,
-        default=DEFAULT_WEIGHTS['price_momentum'],
+        default=DEFAULT_WEIGHTS["price_momentum"],
         help=f"Price momentum weight (default: {DEFAULT_WEIGHTS['price_momentum']})",
     )
     ap.add_argument(
         "--revenue-weight",
         type=float,
-        default=DEFAULT_WEIGHTS['revenue_momentum'],
+        default=DEFAULT_WEIGHTS["revenue_momentum"],
         help=f"Revenue momentum weight (default: {DEFAULT_WEIGHTS['revenue_momentum']})",
     )
     ap.add_argument(
         "--eps-weight",
         type=float,
-        default=DEFAULT_WEIGHTS['eps_momentum'],
+        default=DEFAULT_WEIGHTS["eps_momentum"],
         help=f"EPS momentum weight (default: {DEFAULT_WEIGHTS['eps_momentum']})",
     )
     ap.add_argument(
@@ -801,10 +815,10 @@ def main() -> int:
 
     # Build weights dict from CLI args
     weights = {
-        'quality': args.quality_weight,
-        'price_momentum': args.price_weight,
-        'revenue_momentum': args.revenue_weight,
-        'eps_momentum': args.eps_weight,
+        "quality": args.quality_weight,
+        "price_momentum": args.price_weight,
+        "revenue_momentum": args.revenue_weight,
+        "eps_momentum": args.eps_weight,
     }
 
     # Validate weights sum to 1.0 (warn if not)
@@ -815,7 +829,7 @@ def main() -> int:
 
     # Handle --ticker argument (overrides portfolio CSV)
     if args.ticker:
-        active_tickers = [t.strip() for t in args.ticker.split(',')]
+        active_tickers = [t.strip() for t in args.ticker.split(",")]
         asset_map = {ticker: args.asset for ticker in active_tickers}
         # Create dummy direction for output
         direction_map = {ticker: "long" for ticker in active_tickers}
@@ -842,8 +856,10 @@ def main() -> int:
             return 1
 
     print(f"Portfolio: {len(active_tickers)} active tickers")
-    print(f"Weights: Quality={weights['quality']:.1%}, Price={weights['price_momentum']:.1%}, "
-          f"Revenue={weights['revenue_momentum']:.1%}, EPS={weights['eps_momentum']:.1%}")
+    print(
+        f"Weights: Quality={weights['quality']:.1%}, Price={weights['price_momentum']:.1%}, "
+        f"Revenue={weights['revenue_momentum']:.1%}, EPS={weights['eps_momentum']:.1%}"
+    )
 
     # Generate signals
     signals_df, ticker_benchmarks = generate_composite_signals(
@@ -856,10 +872,12 @@ def main() -> int:
     )
 
     # Add metadata columns
-    output = pd.DataFrame({
-        "direction": pd.Series(direction_map),
-        "benchmark": pd.Series(ticker_benchmarks),
-    })
+    output = pd.DataFrame(
+        {
+            "direction": pd.Series(direction_map),
+            "benchmark": pd.Series(ticker_benchmarks),
+        }
+    )
     output = output.join(signals_df)
     output.index.name = "ticker"
 
@@ -869,11 +887,13 @@ def main() -> int:
 
     # Summary stats per signal
     print("\n=== Signal Statistics ===")
-    for col in ['quality_signal', 'eps_mom_signal', 'rev_mom_signal', 'price_mom_signal', 'composite_signal']:
+    for col in ["quality_signal", "eps_mom_signal", "rev_mom_signal", "price_mom_signal", "composite_signal"]:
         valid = signals_df[col].dropna()
         if len(valid) > 0:
-            print(f"{col:20s}: n={len(valid):2d}, mean={valid.mean(): .4f}, std={valid.std(): .4f}, "
-                  f"min={valid.min(): .4f}, max={valid.max(): .4f}")
+            print(
+                f"{col:20s}: n={len(valid):2d}, mean={valid.mean(): .4f}, std={valid.std(): .4f}, "
+                f"min={valid.min(): .4f}, max={valid.max(): .4f}"
+            )
         else:
             print(f"{col:20s}: no valid data")
 
@@ -886,6 +906,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     raise SystemExit(main())

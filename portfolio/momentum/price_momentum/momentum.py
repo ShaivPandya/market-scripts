@@ -21,9 +21,9 @@ Requirements:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
@@ -36,7 +36,7 @@ LOGGER = logging.getLogger(__name__)
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
-from equities.common import load_universe, list_universes
+from equities.common import list_universes, load_universe
 
 # ANSI color codes
 RED = "\033[91m"
@@ -264,7 +264,9 @@ def analyze_ticker(
     # Need enough data: 63 + 20 = 83 days minimum
     min_points = 63 + 20
     if len(combined) < min_points:
-        LOGGER.warning("Not enough data for %s: need at least %d trading days, got %d.", ticker, min_points, len(combined))
+        LOGGER.warning(
+            "Not enough data for %s: need at least %d trading days, got %d.", ticker, min_points, len(combined)
+        )
         return None
 
     prices = combined["ticker"]
@@ -334,9 +336,7 @@ def get_data(universe: str = None, years: int = 5) -> dict:
             portfolio_df["ticker"] = portfolio_df["ticker"].str.strip().str.upper()
             tickers = list(portfolio_df["ticker"].dropna())
             direction_map = (
-                portfolio_df.dropna(subset=["ticker"])
-                .set_index("ticker")["direction"]
-                .to_dict()
+                portfolio_df.dropna(subset=["ticker"]).set_index("ticker")["direction"].to_dict()
                 if "direction" in portfolio_df.columns
                 else {}
             )
@@ -366,7 +366,9 @@ def get_data(universe: str = None, years: int = 5) -> dict:
             if benchmark_prices is None:
                 continue
 
-            result = analyze_ticker(ticker, benchmark_prices, years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker))
+            result = analyze_ticker(
+                ticker, benchmark_prices, years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker)
+            )
             if result:
                 result["benchmark"] = benchmark_ticker
                 result["direction"] = direction_map.get(ticker, "long")
@@ -461,7 +463,9 @@ def main() -> int:
             LOGGER.warning("No data for benchmark %s", benchmark_ticker)
             continue
 
-        result = analyze_ticker(ticker, benchmark_prices, args.years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker))
+        result = analyze_ticker(
+            ticker, benchmark_prices, args.years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker)
+        )
         if result:
             result["benchmark"] = benchmark_ticker
             results.append(result)
@@ -482,7 +486,7 @@ def main() -> int:
             print(f"As of: {r['date'].date().isoformat()}")
         print(f"Ticker: {r['ticker']:<6}  Close: {r['close']:.4f}")
         print(f"  20-day avg of 63-day ROC (%):        {colorize(r['avg20_roc63'], 1.5)}")
-        vol_str = colorize(r['avg20_vol_roc63'], 0) if r.get('avg20_vol_roc63') is not None else "N/A"
+        vol_str = colorize(r["avg20_vol_roc63"], 0) if r.get("avg20_vol_roc63") is not None else "N/A"
         print(f"  20-day avg of 63-day vol ROC (%):    {vol_str}")
         print(f"  42-day ROC of relative price (%):   {colorize(r['rel_roc42'], 0)}")
         print(f"  10-day avg of relative ROC (%):     {colorize(r['avg10_rel_roc'], 0)}")
@@ -492,6 +496,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     raise SystemExit(main())

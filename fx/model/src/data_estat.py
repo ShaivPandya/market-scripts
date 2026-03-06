@@ -1,9 +1,11 @@
 """e-Stat (Statistics Bureau of Japan) CPI fetcher for the FX model pipeline."""
+
 import os
 import re
+from pathlib import Path
+
 import pandas as pd
 import requests
-from pathlib import Path
 
 ESTAT_CPI_STATS_DATA_ID = "0003427113"
 _ESTAT_BASE_URL = "https://api.e-stat.go.jp/rest/3.0/app/json"
@@ -18,9 +20,7 @@ def _check_status(resp_json: dict, root_key: str) -> None:
         result = resp_json[root_key]["RESULT"]
         status = str(result.get("STATUS", ""))
         if status != "0":
-            raise EStatError(
-                f"e-Stat API error (status={status}): {result.get('ERROR_MSG', 'unknown error')}"
-            )
+            raise EStatError(f"e-Stat API error (status={status}): {result.get('ERROR_MSG', 'unknown error')}")
     except (KeyError, TypeError):
         pass
 
@@ -145,22 +145,19 @@ def fetch_estat_cpi(
                 return item.get("@code")
         return None
 
-    tab_code = _find_code("tab", ["指数"])      # index level (not MoM/YoY %)
+    tab_code = _find_code("tab", ["指数"])  # index level (not MoM/YoY %)
     cat01_code = _find_code("cat01", ["総合"])  # all items
-    area_code = _find_code("area", ["全国"])    # all Japan
+    area_code = _find_code("area", ["全国"])  # all Japan
 
     if not tab_code or not cat01_code or not area_code:
         raise EStatError(
-            f"e-Stat CPI: could not resolve classification codes "
-            f"(tab={tab_code}, cat01={cat01_code}, area={area_code})"
+            f"e-Stat CPI: could not resolve classification codes (tab={tab_code}, cat01={cat01_code}, area={area_code})"
         )
 
     # Build time code -> label map for date parsing
     time_items = _dim_items("time")
     time_code_to_name = {
-        str(item.get("@code")): str(item.get("@name", ""))
-        for item in time_items
-        if item.get("@code") is not None
+        str(item.get("@code")): str(item.get("@name", "")) for item in time_items if item.get("@code") is not None
     }
 
     def _parse_estat_month(time_code: str) -> "pd.Timestamp | None":
@@ -239,9 +236,7 @@ def fetch_estat_cpi(
     if not dates:
         raise EStatError("e-Stat CPI: no data points could be parsed")
 
-    series = pd.Series(
-        values, index=pd.to_datetime(dates), name=f"ESTAT_{stats_data_id}"
-    ).sort_index()
+    series = pd.Series(values, index=pd.to_datetime(dates), name=f"ESTAT_{stats_data_id}").sort_index()
     series = series[~series.index.duplicated(keep="last")]
 
     pd.DataFrame({"date": series.index, "value": series.values}).to_csv(cache_path, index=False)

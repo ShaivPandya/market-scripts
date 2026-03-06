@@ -42,11 +42,12 @@ except ImportError:
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import load_universe, list_universes, get_sp500_universe
+from common import get_sp500_universe, list_universes, load_universe
 
 # ----------------------------
 # Utilities
 # ----------------------------
+
 
 def zscore_of_ranks(values: pd.Series) -> pd.Series:
     """
@@ -81,7 +82,7 @@ def safe_div(a: float, b: float) -> float:
     return a / b
 
 
-def last_col(df: Optional[pd.DataFrame]) -> Optional[pd.Series]:
+def last_col(df: pd.DataFrame | None) -> pd.Series | None:
     """
     yfinance financial statement tables are usually in columns of dates.
     Returns most recent column as a Series.
@@ -91,7 +92,7 @@ def last_col(df: Optional[pd.DataFrame]) -> Optional[pd.Series]:
     return df.iloc[:, 0]
 
 
-def get_item(s: Optional[pd.Series], keys: List[str]) -> float:
+def get_item(s: pd.Series | None, keys: list[str]) -> float:
     """
     Try multiple label keys in a yfinance statement series.
     Returns float or NaN.
@@ -108,7 +109,7 @@ def get_item(s: Optional[pd.Series], keys: List[str]) -> float:
     return np.nan
 
 
-_market_cache: Dict[str, pd.Series] = {}
+_market_cache: dict[str, pd.Series] = {}
 _market_cache_lock = threading.Lock()
 
 
@@ -162,8 +163,7 @@ def compute_beta(stock: str, market: str = "SPY", window_years: float = 3.0) -> 
 
 
 def approx_altman_z(
-    ca: float, cl: float, ta: float, re: float, ebit: float,
-    mve: float, tl: float, sales: float
+    ca: float, cl: float, ta: float, re: float, ebit: float, mve: float, tl: float, sales: float
 ) -> float:
     """
     Classic Altman Z-score (public manufacturing form):
@@ -175,13 +175,7 @@ def approx_altman_z(
     if any(v is None or np.isnan(v) for v in vals) or ta == 0 or tl == 0:
         return np.nan
     wc = ca - cl
-    return float(
-        1.2 * (wc / ta) +
-        1.4 * (re / ta) +
-        3.3 * (ebit / ta) +
-        0.6 * (mve / tl) +
-        1.0 * (sales / ta)
-    )
+    return float(1.2 * (wc / ta) + 1.4 * (re / ta) + 3.3 * (ebit / ta) + 0.6 * (mve / tl) + 1.0 * (sales / ta))
 
 
 @dataclass
@@ -208,11 +202,7 @@ class RawMetrics:
     roe_vol_low_is_good: float
 
 
-def compute_growth_change_over_lag(
-    num_series: pd.Series,
-    den_series: pd.Series,
-    lag_years: int
-) -> float:
+def compute_growth_change_over_lag(num_series: pd.Series, den_series: pd.Series, lag_years: int) -> float:
     """
     Approximate "five-year change in numerator divided by lagged denominator".
     Uses the earliest available point that is >= lag_years back; otherwise uses max available lag.
@@ -279,19 +269,42 @@ def fetch_raw_metrics(ticker: str, market: str, growth_years: int, beta_years: f
     ebit = get_item(inc_last, ["EBIT", "Ebit", "Operating Income", "OperatingIncome"])
 
     total_assets = get_item(bal_last, ["Total Assets", "TotalAssets"])
-    equity = get_item(bal_last, ["Total Stockholder Equity", "TotalStockholderEquity", "Stockholders Equity", "StockholdersEquity"])
-    total_liab = get_item(bal_last, ["Total Liab", "TotalLiab", "Total Liabilities Net Minority Interest", "TotalLiabilitiesNetMinorityInterest"])
+    equity = get_item(
+        bal_last, ["Total Stockholder Equity", "TotalStockholderEquity", "Stockholders Equity", "StockholdersEquity"]
+    )
+    total_liab = get_item(
+        bal_last,
+        ["Total Liab", "TotalLiab", "Total Liabilities Net Minority Interest", "TotalLiabilitiesNetMinorityInterest"],
+    )
     current_assets = get_item(bal_last, ["Total Current Assets", "TotalCurrentAssets"])
     current_liab = get_item(bal_last, ["Total Current Liabilities", "TotalCurrentLiabilities"])
     retained_earnings = get_item(bal_last, ["Retained Earnings", "RetainedEarnings"])
 
-    st_debt = get_item(bal_last, ["Short Long Term Debt", "ShortLongTermDebt", "Short Term Debt", "ShortTermDebt", "Current Debt", "CurrentDebt"])
+    st_debt = get_item(
+        bal_last,
+        [
+            "Short Long Term Debt",
+            "ShortLongTermDebt",
+            "Short Term Debt",
+            "ShortTermDebt",
+            "Current Debt",
+            "CurrentDebt",
+        ],
+    )
     lt_debt = get_item(bal_last, ["Long Term Debt", "LongTermDebt"])
     total_debt = np.nan
     if not np.isnan(st_debt) or not np.isnan(lt_debt):
         total_debt = (0.0 if np.isnan(st_debt) else st_debt) + (0.0 if np.isnan(lt_debt) else lt_debt)
 
-    op_cf = get_item(cfs_last, ["Total Cash From Operating Activities", "TotalCashFromOperatingActivities", "Operating Cash Flow", "OperatingCashFlow"])
+    op_cf = get_item(
+        cfs_last,
+        [
+            "Total Cash From Operating Activities",
+            "TotalCashFromOperatingActivities",
+            "Operating Cash Flow",
+            "OperatingCashFlow",
+        ],
+    )
 
     # Profitability metrics
     gpoa = safe_div(gross_profit, total_assets)
@@ -301,12 +314,14 @@ def fetch_raw_metrics(ticker: str, market: str, growth_years: int, beta_years: f
     gmar = safe_div(gross_profit, revenue)
 
     # Accruals: (NI - CFO)/Assets; "low accruals" is good -> multiply by -1
-    accruals = safe_div((net_income - op_cf), total_assets) if (not np.isnan(net_income) and not np.isnan(op_cf)) else np.nan
+    accruals = (
+        safe_div((net_income - op_cf), total_assets) if (not np.isnan(net_income) and not np.isnan(op_cf)) else np.nan
+    )
     acc_low_is_good = -accruals if not np.isnan(accruals) else np.nan
 
     # Growth inputs: need time series. yfinance columns are dates; we want aligned series.
     # Build series for numerator/denominator pairs
-    def series_from_table(df: pd.DataFrame, keys: List[str]) -> Optional[pd.Series]:
+    def series_from_table(df: pd.DataFrame, keys: list[str]) -> pd.Series | None:
         if df is None or df.empty:
             return None
         for k in keys:
@@ -332,9 +347,19 @@ def fetch_raw_metrics(ticker: str, market: str, growth_years: int, beta_years: f
     rev_series = series_from_table(inc, ["Total Revenue", "TotalRevenue", "Revenue"])
 
     assets_series = series_from_table(bal, ["Total Assets", "TotalAssets"])
-    equity_series = series_from_table(bal, ["Total Stockholder Equity", "TotalStockholderEquity", "Stockholders Equity", "StockholdersEquity"])
+    equity_series = series_from_table(
+        bal, ["Total Stockholder Equity", "TotalStockholderEquity", "Stockholders Equity", "StockholdersEquity"]
+    )
 
-    opcf_series = series_from_table(cfs, ["Total Cash From Operating Activities", "TotalCashFromOperatingActivities", "Operating Cash Flow", "OperatingCashFlow"])
+    opcf_series = series_from_table(
+        cfs,
+        [
+            "Total Cash From Operating Activities",
+            "TotalCashFromOperatingActivities",
+            "Operating Cash Flow",
+            "OperatingCashFlow",
+        ],
+    )
 
     # Approx growth per paper idea: change in numerator over lagged denominator
     dgpoa = compute_growth_change_over_lag(gp_series, assets_series, growth_years)
@@ -379,14 +404,25 @@ def fetch_raw_metrics(ticker: str, market: str, growth_years: int, beta_years: f
     roe_vol = compute_roe_vol(ni_series, equity_series)
 
     return RawMetrics(
-        gpoa=gpoa, roe=roe, roa=roa, cfoa=cfoa, gmar=gmar, acc_low_is_good=acc_low_is_good,
-        dgpoa=dgpoa, droe=droe, droa=droa, dcfoa=dcfoa, dgmar=dgmar,
-        beta_low_is_good=beta, leverage_low_is_good=leverage, zscore_high_is_good=z,
-        roe_vol_low_is_good=roe_vol
+        gpoa=gpoa,
+        roe=roe,
+        roa=roa,
+        cfoa=cfoa,
+        gmar=gmar,
+        acc_low_is_good=acc_low_is_good,
+        dgpoa=dgpoa,
+        droe=droe,
+        droa=droa,
+        dcfoa=dcfoa,
+        dgmar=dgmar,
+        beta_low_is_good=beta,
+        leverage_low_is_good=leverage,
+        zscore_high_is_good=z,
+        roe_vol_low_is_good=roe_vol,
     )
 
 
-def compute_scores(raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def compute_scores(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Given raw metrics across universe, compute z-scores of ranks for each metric,
     then pillars, then Quality.
@@ -411,16 +447,16 @@ def compute_scores(raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     oriented["dcfoa"] = df["dcfoa"]
     oriented["dgmar"] = df["dgmar"]
 
-    oriented["bab"] = -df["beta_low_is_good"]          # low beta => higher is better
-    oriented["lev"] = -df["leverage_low_is_good"]      # low leverage => higher is better
-    oriented["zscore"] = df["zscore_high_is_good"]     # high Z => higher is better
-    oriented["evol"] = -df["roe_vol_low_is_good"]      # low ROE vol => higher is better
+    oriented["bab"] = -df["beta_low_is_good"]  # low beta => higher is better
+    oriented["lev"] = -df["leverage_low_is_good"]  # low leverage => higher is better
+    oriented["zscore"] = df["zscore_high_is_good"]  # high Z => higher is better
+    oriented["evol"] = -df["roe_vol_low_is_good"]  # low ROE vol => higher is better
 
     # Per-metric z-scores of ranks
     z_metrics = oriented.apply(zscore_of_ranks, axis=0)
 
     # Pillars: average available z's, then z-score across universe (as z(sum) style)
-    def pillar(cols: List[str]) -> pd.Series:
+    def pillar(cols: list[str]) -> pd.Series:
         tmp = z_metrics[cols].mean(axis=1, skipna=True)
         return zscore_of_ranks(tmp)
 
@@ -431,12 +467,9 @@ def compute_scores(raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     combo = profitability + growth + safety
     quality = zscore_of_ranks(combo)
 
-    scores = pd.DataFrame({
-        "profitability": profitability,
-        "growth": growth,
-        "safety": safety,
-        "quality": quality
-    }, index=df.index)
+    scores = pd.DataFrame(
+        {"profitability": profitability, "growth": growth, "safety": safety, "quality": quality}, index=df.index
+    )
 
     return z_metrics, scores
 
@@ -445,8 +478,7 @@ def main():
     ap = argparse.ArgumentParser(description="Compute QMJ-style Quality score for a ticker relative to a universe.")
     ap.add_argument("ticker", nargs="?", help="Ticker to score (e.g., AAPL)")
     ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
-    ap.add_argument("--list-universes", action="store_true",
-                    help="List available universe files and exit")
+    ap.add_argument("--list-universes", action="store_true", help="List available universe files and exit")
     ap.add_argument("--market", default="SPY", help="Market proxy ticker for beta (default: SPY)")
     ap.add_argument("--growth_years", type=int, default=5, help="Target growth window in years (default: 5)")
     ap.add_argument("--beta_years", type=float, default=3.0, help="Beta lookback window in years (default: 3)")
@@ -481,10 +513,12 @@ def main():
     print(f"Universe size: {len(universe)} | Target: {ticker}")
 
     # Collect raw metrics (parallelized)
-    raws: Dict[str, RawMetrics] = {}
+    raws: dict[str, RawMetrics] = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = {
-            pool.submit(fetch_raw_metrics, tk, market=args.market, growth_years=args.growth_years, beta_years=args.beta_years): tk
+            pool.submit(
+                fetch_raw_metrics, tk, market=args.market, growth_years=args.growth_years, beta_years=args.beta_years
+            ): tk
             for tk in universe
         }
         for i, future in enumerate(as_completed(futures), 1):
@@ -513,10 +547,10 @@ def main():
     t_pct = pct.loc[ticker]
     print("\n--- QMJ-style Quality Score (relative to universe) ---")
     print(f"Ticker: {ticker}")
-    print(f"Quality z-score: {t_scores['quality']:.3f} | Percentile: {100*t_pct['quality']:.1f}%")
-    print(f"  Profitability: {t_scores['profitability']:.3f} | {100*t_pct['profitability']:.1f}%")
-    print(f"  Growth:        {t_scores['growth']:.3f} | {100*t_pct['growth']:.1f}%")
-    print(f"  Safety:        {t_scores['safety']:.3f} | {100*t_pct['safety']:.1f}%")
+    print(f"Quality z-score: {t_scores['quality']:.3f} | Percentile: {100 * t_pct['quality']:.1f}%")
+    print(f"  Profitability: {t_scores['profitability']:.3f} | {100 * t_pct['profitability']:.1f}%")
+    print(f"  Growth:        {t_scores['growth']:.3f} | {100 * t_pct['growth']:.1f}%")
+    print(f"  Safety:        {t_scores['safety']:.3f} | {100 * t_pct['safety']:.1f}%")
 
     # Show underlying metric z-scores for the ticker
     print("\n--- Underlying metric z-scores (rank->z) ---")

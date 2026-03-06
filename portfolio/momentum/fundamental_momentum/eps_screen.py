@@ -21,9 +21,9 @@ Usage:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -41,20 +41,19 @@ for _p in (_ROOT / "equities", _ROOT):
         sys.path.insert(0, _p_str)
 
 from common import (
-    load_universe,
-    list_universes,
+    clean_ticker,
     get_sp500_universe,
     get_universe_tickers,
-    clean_ticker,
+    list_universes,
+    load_universe,
 )
-
-from eps_momentum_single import fetch_eps_metrics, compute_universe_scores, EPSMetrics
+from eps_momentum_single import EPSMetrics, compute_universe_scores, fetch_eps_metrics
 
 
 def _build_universe(
-    tickers: List[str],
-    benchmark: Optional[str],
-) -> tuple[List[str], List[str], str]:
+    tickers: list[str],
+    benchmark: str | None,
+) -> tuple[list[str], list[str], str]:
     """
     Build the full scoring universe from input tickers + benchmark.
 
@@ -77,7 +76,7 @@ def _build_universe(
 
 
 def get_data(
-    tickers: List[str],
+    tickers: list[str],
     benchmark: str = "sp500",
     growth_years: int = 3,
     progress_callback=None,
@@ -99,19 +98,16 @@ def get_data(
         return {"error": "No tickers provided"}
 
     try:
-        scoring_universe, input_tickers, benchmark_name = _build_universe(
-            tickers, benchmark
-        )
+        scoring_universe, input_tickers, benchmark_name = _build_universe(tickers, benchmark)
     except Exception as e:
         return {"error": f"Failed to build universe: {e}"}
 
-    raws: Dict[str, EPSMetrics] = {}
+    raws: dict[str, EPSMetrics] = {}
     failed = []
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = {
-            pool.submit(fetch_eps_metrics, ticker, growth_years=growth_years): ticker
-            for ticker in scoring_universe
+            pool.submit(fetch_eps_metrics, ticker, growth_years=growth_years): ticker for ticker in scoring_universe
         }
         for i, future in enumerate(as_completed(futures), 1):
             ticker = futures[future]
@@ -131,12 +127,7 @@ def get_data(
 
     # Build numeric-only DataFrame for scoring
     numeric_cols = ["eps_yoy_change", "eps_cagr", "eps_growth_acceleration"]
-    raw_df = pd.DataFrame(
-        {
-            ticker: {col: getattr(m, col) for col in numeric_cols}
-            for ticker, m in raws.items()
-        }
-    ).T
+    raw_df = pd.DataFrame({ticker: {col: getattr(m, col) for col in numeric_cols} for ticker, m in raws.items()}).T
 
     z_metrics, score = compute_universe_scores(raw_df)
 
@@ -204,9 +195,7 @@ def main():
         default=3,
         help="EPS CAGR window in years (default: 3)",
     )
-    ap.add_argument(
-        "--out_csv", default="", help="Optional path to save full results as CSV"
-    )
+    ap.add_argument("--out_csv", default="", help="Optional path to save full results as CSV")
     args = ap.parse_args()
 
     if args.list_universes:
@@ -227,9 +216,7 @@ def main():
         tickers = [t.upper().strip() for t in args.tickers]
         print(f"Scoring {len(tickers)} ticker(s): {', '.join(tickers)}")
     else:
-        ap.error(
-            "Provide tickers as arguments or use --universe. Use --list-universes to see options."
-        )
+        ap.error("Provide tickers as arguments or use --universe. Use --list-universes to see options.")
 
     benchmark = args.benchmark
     print(f"Benchmark: {benchmark}")
@@ -266,10 +253,7 @@ def main():
     print("\n" + "=" * 90)
     print("EPS MOMENTUM RANKING")
     print("=" * 90)
-    print(
-        f"{'Rank':<6}{'Ticker':<10}{'EPS Mom z':>10}{'Pctl':>8}"
-        f"{'EPS YoY':>12}{'EPS CAGR':>12}{'Accel':>10}"
-    )
+    print(f"{'Rank':<6}{'Ticker':<10}{'EPS Mom z':>10}{'Pctl':>8}{'EPS YoY':>12}{'EPS CAGR':>12}{'Accel':>10}")
     print("-" * 90)
 
     for rank, (ticker, row) in enumerate(results_df.iterrows(), 1):
@@ -278,7 +262,9 @@ def main():
 
         yoy = raw_metrics_df.loc[ticker, "eps_yoy_change"] if ticker in raw_metrics_df.index else float("nan")
         cagr = raw_metrics_df.loc[ticker, "eps_cagr"] if ticker in raw_metrics_df.index else float("nan")
-        accel = raw_metrics_df.loc[ticker, "eps_growth_acceleration"] if ticker in raw_metrics_df.index else float("nan")
+        accel = (
+            raw_metrics_df.loc[ticker, "eps_growth_acceleration"] if ticker in raw_metrics_df.index else float("nan")
+        )
 
         yoy_str = f"{yoy * 100:.2f}%" if not pd.isna(yoy) else "NA"
         cagr_str = f"{cagr * 100:.2f}%" if not pd.isna(cagr) else "NA"
@@ -290,14 +276,12 @@ def main():
         )
 
     if args.out_csv:
-        out = results_df.join(z_metrics_df.add_prefix("z_")).join(
-            raw_metrics_df.add_prefix("raw_")
-        )
+        out = results_df.join(z_metrics_df.add_prefix("z_")).join(raw_metrics_df.add_prefix("raw_"))
         out.to_csv(args.out_csv, index=True)
         print(f"\nWrote results to: {args.out_csv}")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

@@ -41,6 +41,7 @@ TIMEFRAMES = {
 
 # -- Data fetching ------------------------------------------------------------
 
+
 def fetch_index_data(timeframe: str = "Daily") -> dict:
     """
     Fetch closing-price time series for all tracked indices.
@@ -113,6 +114,7 @@ def format_price(value: float) -> str:
 
 
 # -- Terminal output ----------------------------------------------------------
+
 
 def print_terminal():
     """Print Index dashboard results for all timeframes."""

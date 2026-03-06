@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException
-from api.cache import short_cache, get_cached, set_cached
+from fastapi import APIRouter
+
+from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import DataFetchError
 from api.serializers import serialize_series, serialize_value
 
 router = APIRouter()
@@ -17,25 +19,24 @@ def get_index_dashboard(timeframe: str = "Daily"):
         return cached
     try:
         from index_dashboard import get_data
+
         data = get_data(timeframe=timeframe)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="index_dashboard", detail=str(e)) from e
 
     if "error" in data and data["error"]:
-        raise HTTPException(status_code=500, detail=data["error"])
+        raise DataFetchError(source="index_dashboard", detail=data["error"])
 
     indices_raw = data.get("indices", {})
     result = {
-        "indices": {
-            name: serialize_series(series)
-            for name, series in indices_raw.items()
-        },
+        "indices": {name: serialize_series(series) for name, series in indices_raw.items()},
         "timeframe": timeframe,
         "timestamp": serialize_value(data.get("timestamp")),
     }
 
     try:
         from index_dashboard import INDEX_ORDER
+
         result["index_order"] = INDEX_ORDER
     except ImportError:
         result["index_order"] = list(indices_raw.keys())

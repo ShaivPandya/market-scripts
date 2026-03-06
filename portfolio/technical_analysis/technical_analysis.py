@@ -9,8 +9,8 @@ GUI usage (called from gui/app.py):
     from technical_analysis import get_data
     result = get_data("AAPL")
 """
-import logging
 
+import logging
 import sys
 from datetime import datetime
 
@@ -23,6 +23,7 @@ LOGGER = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
+
 
 def _fetch_daily(ticker: str, years: int = 9) -> pd.Series:
     """Download daily close prices (enough history for 200-week MA over 5Y)."""
@@ -44,6 +45,7 @@ def _fetch_daily(ticker: str, years: int = 9) -> pd.Series:
 # ---------------------------------------------------------------------------
 # Moving averages
 # ---------------------------------------------------------------------------
+
 
 def _moving_averages(close: pd.Series) -> pd.DataFrame:
     """Compute daily, weekly, and monthly SMAs reindexed to daily."""
@@ -75,6 +77,7 @@ def _moving_averages(close: pd.Series) -> pd.DataFrame:
 # Rate of change
 # ---------------------------------------------------------------------------
 
+
 def _rate_of_change(close: pd.Series) -> pd.DataFrame:
     """1-month, 3-month, and 12-month ROC (%)."""
     roc = pd.DataFrame(index=close.index)
@@ -87,6 +90,7 @@ def _rate_of_change(close: pd.Series) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+
 
 def _build_summary(price_df: pd.DataFrame, roc_df: pd.DataFrame) -> list[dict]:
     """Generate a list of signal rows for the summary table."""
@@ -101,23 +105,27 @@ def _build_summary(price_df: pd.DataFrame, roc_df: pd.DataFrame) -> list[dict]:
         ma_val = latest.get(col)
         if pd.notna(ma_val):
             above = close >= ma_val
-            rows.append({
-                "Indicator": f"Price vs {col}",
-                "Value": f"{ma_val:,.2f}",
-                "Signal": "Above" if above else "Below",
-                "Bias": "Bullish" if above else "Bearish",
-            })
+            rows.append(
+                {
+                    "Indicator": f"Price vs {col}",
+                    "Value": f"{ma_val:,.2f}",
+                    "Signal": "Above" if above else "Below",
+                    "Bias": "Bullish" if above else "Bearish",
+                }
+            )
 
     # ROC signals
     for col in ["1M ROC", "3M ROC", "12M ROC"]:
         val = latest_roc.get(col)
         if pd.notna(val):
-            rows.append({
-                "Indicator": col,
-                "Value": f"{val:+.2f}%",
-                "Signal": "Positive" if val >= 0 else "Negative",
-                "Bias": "Bullish" if val >= 0 else "Bearish",
-            })
+            rows.append(
+                {
+                    "Indicator": col,
+                    "Value": f"{val:+.2f}%",
+                    "Signal": "Positive" if val >= 0 else "Negative",
+                    "Bias": "Bullish" if val >= 0 else "Bearish",
+                }
+            )
 
     return rows
 
@@ -223,6 +231,7 @@ def get_data(ticker: str, lookback: str = "2Y") -> dict:
         }
     except Exception as e:
         import traceback
+
         return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
 
@@ -263,11 +272,13 @@ def get_ratio_data(
             raise ValueError("No overlapping price history found in the selected date range.")
 
         ratio_series = _compute_price_ratio(close_df, a, b)
-        ratio_df = pd.DataFrame({
-            "Price A": close_df[a],
-            "Price B": close_df[b],
-            "Ratio": ratio_series,
-        }).dropna(subset=["Ratio"])
+        ratio_df = pd.DataFrame(
+            {
+                "Price A": close_df[a],
+                "Price B": close_df[b],
+                "Ratio": ratio_series,
+            }
+        ).dropna(subset=["Ratio"])
         if ratio_df.empty:
             raise ValueError("Ratio series is empty after filtering.")
 
@@ -310,12 +321,14 @@ def get_ratio_data(
         }
     except Exception as e:
         import traceback
+
         return {"error": f"{e}\n\n{traceback.format_exc()}"}
 
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def _cli(ticker: str) -> None:
     """Render charts with matplotlib and print summary with rich."""
@@ -325,7 +338,7 @@ def _cli(ticker: str) -> None:
 
     result = get_data(ticker)
     if "error" in result:
-        LOGGER.error("Error: %s", result['error'])
+        LOGGER.error("Error: %s", result["error"])
         sys.exit(1)
 
     price_df = result["price_data"]
@@ -336,8 +349,12 @@ def _cli(ticker: str) -> None:
 
     # -- Charts --
     fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(14, 9), height_ratios=[3, 1],
-        sharex=True, gridspec_kw={"hspace": 0.08},
+        2,
+        1,
+        figsize=(14, 9),
+        height_ratios=[3, 1],
+        sharex=True,
+        gridspec_kw={"hspace": 0.08},
     )
 
     # Price + MAs
@@ -409,14 +426,13 @@ def _cli(ticker: str) -> None:
 
     console.print(table)
     console.print(
-        f"\nOverall: [{overall_color}]{overall}[/{overall_color}] "
-        f"({bullish_count}/{total} bullish signals)\n"
+        f"\nOverall: [{overall_color}]{overall}[/{overall_color}] ({bullish_count}/{total} bullish signals)\n"
     )
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     if len(sys.argv) < 2:
         print("Usage: python technical_analysis.py <TICKER>")
         sys.exit(1)

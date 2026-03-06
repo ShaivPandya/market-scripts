@@ -10,8 +10,8 @@ Rate limiting: all EDGAR requests are serialised through a global lock with a
 """
 
 from __future__ import annotations
-import logging
 
+import logging
 import threading
 import time
 from datetime import date
@@ -24,14 +24,14 @@ LOGGER = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Module-level state (process lifetime)
 # ---------------------------------------------------------------------------
-_cik_map: Dict[str, str] = {}          # ticker.upper() -> zero-padded 10-digit CIK
+_cik_map: dict[str, str] = {}  # ticker.upper() -> zero-padded 10-digit CIK
 _cik_map_loaded: bool = False
 _cik_map_lock = threading.Lock()
 
-_edgar_facts_cache: Dict[str, Optional[dict]] = {}   # cik_str -> companyfacts JSON or None
+_edgar_facts_cache: dict[str, dict | None] = {}  # cik_str -> companyfacts JSON or None
 _edgar_facts_lock = threading.Lock()
 
-_edgar_submissions_cache: Dict[str, Optional[dict]] = {}   # cik_str -> submissions JSON or None
+_edgar_submissions_cache: dict[str, dict | None] = {}  # cik_str -> submissions JSON or None
 _edgar_submissions_lock = threading.Lock()
 
 # Serialise all HTTP requests through one lock so concurrent threads cannot
@@ -39,14 +39,15 @@ _edgar_submissions_lock = threading.Lock()
 _edgar_request_lock = threading.Lock()
 
 SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
-_SEC_DELAY = 0.11   # seconds between requests; keeps throughput ≤ 9/s
+_SEC_DELAY = 0.11  # seconds between requests; keeps throughput ≤ 9/s
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _rate_limited_get(url: str, timeout: int = 20) -> Optional[requests.Response]:
+
+def _rate_limited_get(url: str, timeout: int = 20) -> requests.Response | None:
     """Make a GET request, serialised and rate-limited across all threads."""
     with _edgar_request_lock:
         time.sleep(_SEC_DELAY)
@@ -64,9 +65,7 @@ def _load_cik_map() -> None:
         if _cik_map_loaded:
             return
         try:
-            resp = _rate_limited_get(
-                "https://www.sec.gov/files/company_tickers.json", timeout=30
-            )
+            resp = _rate_limited_get("https://www.sec.gov/files/company_tickers.json", timeout=30)
             if resp is not None and resp.status_code == 200:
                 for entry in resp.json().values():
                     tk = str(entry.get("ticker", "")).upper()
@@ -79,7 +78,7 @@ def _load_cik_map() -> None:
             _cik_map_loaded = True
 
 
-def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
+def _fetch_edgar_facts(cik_str: str) -> dict | None:
     """
     Fetch XBRL companyfacts JSON from SEC EDGAR for one CIK.
     Results are cached for the process lifetime.
@@ -90,7 +89,7 @@ def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
 
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik_str}.json"
     resp = _rate_limited_get(url)
-    result: Optional[dict] = None
+    result: dict | None = None
     if resp is not None and resp.status_code == 200:
         try:
             result = resp.json()
@@ -103,7 +102,7 @@ def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
     return result
 
 
-def _fetch_edgar_submissions(cik_str: str) -> Optional[dict]:
+def _fetch_edgar_submissions(cik_str: str) -> dict | None:
     """
     Fetch SEC submissions JSON for one CIK.
     Results are cached for the process lifetime.
@@ -114,7 +113,7 @@ def _fetch_edgar_submissions(cik_str: str) -> Optional[dict]:
 
     url = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
     resp = _rate_limited_get(url)
-    result: Optional[dict] = None
+    result: dict | None = None
     if resp is not None and resp.status_code == 200:
         try:
             result = resp.json()
@@ -127,9 +126,7 @@ def _fetch_edgar_submissions(cik_str: str) -> Optional[dict]:
     return result
 
 
-def _quarterly_entries_from_concept(
-    us_gaap: dict, concept: str, unit: str
-) -> List[dict]:
+def _quarterly_entries_from_concept(us_gaap: dict, concept: str, unit: str) -> list[dict]:
     """
     Return all quarterly fact entries for a given GAAP concept and unit.
 
@@ -141,7 +138,7 @@ def _quarterly_entries_from_concept(
     except (KeyError, TypeError):
         return []
 
-    quarterly: Dict[str, dict] = {}  # end_date_str -> best entry
+    quarterly: dict[str, dict] = {}  # end_date_str -> best entry
     for e in entries:
         if e.get("fp") not in {"Q1", "Q2", "Q3", "Q4"}:
             continue
@@ -160,13 +157,14 @@ def _quarterly_entries_from_concept(
 # Public API
 # ---------------------------------------------------------------------------
 
-def get_cik_for_ticker(ticker: str) -> Optional[str]:
+
+def get_cik_for_ticker(ticker: str) -> str | None:
     """Return zero-padded 10-digit CIK for a ticker, or None if unavailable."""
     _load_cik_map()
     return _cik_map.get(ticker.upper().strip())
 
 
-def fetch_companyfacts_by_cik(cik_str: str) -> Optional[dict]:
+def fetch_companyfacts_by_cik(cik_str: str) -> dict | None:
     """Fetch SEC companyfacts payload for a 10-digit CIK string."""
     cik = str(cik_str).strip()
     if not cik:
@@ -174,7 +172,7 @@ def fetch_companyfacts_by_cik(cik_str: str) -> Optional[dict]:
     return _fetch_edgar_facts(cik.zfill(10))
 
 
-def fetch_companyfacts_by_ticker(ticker: str) -> Optional[dict]:
+def fetch_companyfacts_by_ticker(ticker: str) -> dict | None:
     """Fetch SEC companyfacts payload for a ticker symbol."""
     cik_str = get_cik_for_ticker(ticker)
     if not cik_str:
@@ -182,7 +180,7 @@ def fetch_companyfacts_by_ticker(ticker: str) -> Optional[dict]:
     return _fetch_edgar_facts(cik_str)
 
 
-def fetch_submissions_by_cik(cik_str: str) -> Optional[dict]:
+def fetch_submissions_by_cik(cik_str: str) -> dict | None:
     """Fetch SEC submissions payload for a 10-digit CIK string."""
     cik = str(cik_str).strip()
     if not cik:
@@ -190,7 +188,7 @@ def fetch_submissions_by_cik(cik_str: str) -> Optional[dict]:
     return _fetch_edgar_submissions(cik.zfill(10))
 
 
-def fetch_submissions_by_ticker(ticker: str) -> Optional[dict]:
+def fetch_submissions_by_ticker(ticker: str) -> dict | None:
     """Fetch SEC submissions payload for a ticker symbol."""
     cik_str = get_cik_for_ticker(ticker)
     if not cik_str:
@@ -201,7 +199,7 @@ def fetch_submissions_by_ticker(ticker: str) -> Optional[dict]:
 def build_filing_url(
     cik_str: str,
     accession: str,
-    submissions: Optional[dict] = None,
+    submissions: dict | None = None,
 ) -> str:
     """
     Build a SEC filing URL for an accession.
@@ -231,14 +229,11 @@ def build_filing_url(
         return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accn_nodash}/{primary_doc}"
 
     return (
-        "https://www.sec.gov/cgi-bin/browse-edgar"
-        f"?action=getcompany&CIK={cik_int}&accno={accn}&owner=exclude&count=40"
+        f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik_int}&accno={accn}&owner=exclude&count=40"
     )
 
 
-def extract_quarterly_eps(
-    facts: dict, n: int = 8
-) -> List[Tuple[date, float]]:
+def extract_quarterly_eps(facts: dict, n: int = 8) -> list[tuple[date, float]]:
     """
     Extract up to n quarterly EPS values from companyfacts JSON.
 
@@ -270,7 +265,7 @@ def extract_quarterly_eps(
     if not ni_entries:
         return []
 
-    ni_by_end: Dict[str, float] = {e["end"]: float(e["val"]) for e in ni_entries}
+    ni_by_end: dict[str, float] = {e["end"]: float(e["val"]) for e in ni_entries}
 
     for shares_concept in (
         "WeightedAverageNumberOfDilutedSharesOutstanding",
@@ -279,7 +274,7 @@ def extract_quarterly_eps(
         sh_entries = _quarterly_entries_from_concept(us_gaap, shares_concept, "shares")
         if not sh_entries:
             continue
-        sh_by_end: Dict[str, float] = {e["end"]: float(e["val"]) for e in sh_entries}
+        sh_by_end: dict[str, float] = {e["end"]: float(e["val"]) for e in sh_entries}
 
         common_ends = sorted(
             (e for e in ni_by_end if e in sh_by_end),
@@ -299,9 +294,7 @@ def extract_quarterly_eps(
     return []
 
 
-def extract_quarterly_revenue(
-    facts: dict, n: int = 8
-) -> List[Tuple[date, float]]:
+def extract_quarterly_revenue(facts: dict, n: int = 8) -> list[tuple[date, float]]:
     """
     Extract up to n quarterly revenue values from companyfacts JSON.
 
@@ -336,9 +329,7 @@ def extract_quarterly_revenue(
     return []
 
 
-def fetch_quarterly_eps_edgar(
-    ticker: str, n: int = 8
-) -> Optional[List[Tuple[date, float]]]:
+def fetch_quarterly_eps_edgar(ticker: str, n: int = 8) -> list[tuple[date, float]] | None:
     """
     Fetch quarterly EPS data from SEC EDGAR for one ticker.
 
@@ -358,9 +349,7 @@ def fetch_quarterly_eps_edgar(
     return result if result else None
 
 
-def fetch_quarterly_revenue_edgar(
-    ticker: str, n: int = 8
-) -> Optional[List[Tuple[date, float]]]:
+def fetch_quarterly_revenue_edgar(ticker: str, n: int = 8) -> list[tuple[date, float]] | None:
     """
     Fetch quarterly revenue data from SEC EDGAR for one ticker.
 

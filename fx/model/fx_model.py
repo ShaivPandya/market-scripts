@@ -7,6 +7,7 @@ Usage:
     python fx_model.py --pair GBPUSD --no-bis
     python fx_model.py --pair USDJPY --bootstrap 1000
 """
+
 import argparse
 import json
 from pathlib import Path
@@ -19,9 +20,7 @@ def main():
     script_dir = Path(__file__).resolve().parent
     available_pairs = list_pairs()
 
-    ap = argparse.ArgumentParser(
-        description="FX macro model using FRED + IMF (+ optional BIS)."
-    )
+    ap = argparse.ArgumentParser(description="FX macro model using FRED + IMF (+ optional BIS).")
     ap.add_argument(
         "--pair",
         default="USDCAD",

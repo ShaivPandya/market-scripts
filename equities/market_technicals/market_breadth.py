@@ -40,11 +40,11 @@ RETRY_DELAY = 2.0  # Base seconds between retries (exponential backoff)
 BATCH_DELAY = 1.0  # Seconds between successful batches
 
 try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.text import Text
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
 except ImportError:
     Console = None
 
@@ -73,7 +73,7 @@ def format_pct(value: float, highlight: bool):
     return Text(f"{value:.1f}%", style=style)
 
 
-def get_sp500_tickers() -> List[str]:
+def get_sp500_tickers() -> list[str]:
     """Fetch S&P 500 tickers from Wikipedia."""
     headers = {
         "User-Agent": (
@@ -90,7 +90,7 @@ def get_sp500_tickers() -> List[str]:
     return pd.unique(tickers).tolist()
 
 
-def load_tickers_from_file(filepath: str) -> List[str]:
+def load_tickers_from_file(filepath: str) -> list[str]:
     """Load tickers from a text file (one per line) or CSV."""
     p = Path(filepath)
     if p.suffix.lower() == ".csv":
@@ -102,7 +102,7 @@ def load_tickers_from_file(filepath: str) -> List[str]:
             return [line.strip().upper().replace(".", "-") for line in f if line.strip()]
 
 
-def get_tickers(universe: str) -> List[str]:
+def get_tickers(universe: str) -> list[str]:
     """Get tickers based on universe argument."""
     if universe.lower() == "sp500":
         print("Fetching S&P 500 tickers from Wikipedia...")
@@ -113,12 +113,12 @@ def get_tickers(universe: str) -> List[str]:
 
 
 def download_with_retry(
-    tickers: List[str],
+    tickers: list[str],
     period: str = "1y",
     chunk_size: int = CHUNK_SIZE,
     max_retries: int = MAX_RETRIES,
     batch_delay: float = BATCH_DELAY,
-) -> tuple[pd.DataFrame, List[str]]:
+) -> tuple[pd.DataFrame, list[str]]:
     """
     Download price data in chunks with retry logic for reliability.
 
@@ -162,12 +162,12 @@ def download_with_retry(
                         time.sleep(batch_delay)
                     break
                 elif attempt < max_retries:
-                    time.sleep(RETRY_DELAY * (2 ** attempt))
+                    time.sleep(RETRY_DELAY * (2**attempt))
                 else:
                     failed_tickers.extend(chunk)
             except Exception as e:
                 if attempt < max_retries:
-                    time.sleep(RETRY_DELAY * (2 ** attempt))
+                    time.sleep(RETRY_DELAY * (2**attempt))
                 else:
                     print(f"    Batch {idx} failed after {max_retries + 1} attempts: {e}")
                     failed_tickers.extend(chunk)
@@ -202,7 +202,7 @@ def download_with_retry(
     return combined, failed_tickers
 
 
-def calculate_breadth_metrics(tickers: List[str], period: str = "1y") -> dict:
+def calculate_breadth_metrics(tickers: list[str], period: str = "1y") -> dict:
     """
     Calculate market breadth metrics for a list of tickers.
 
@@ -325,19 +325,9 @@ def colorize(text: str, color: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Calculate S&P 500 market breadth metrics"
-    )
-    parser.add_argument(
-        "--universe",
-        default="sp500",
-        help="Universe: 'sp500' or path to ticker file (default: sp500)"
-    )
-    parser.add_argument(
-        "--period",
-        default="1y",
-        help="Data period for yfinance (default: 1y)"
-    )
+    parser = argparse.ArgumentParser(description="Calculate S&P 500 market breadth metrics")
+    parser.add_argument("--universe", default="sp500", help="Universe: 'sp500' or path to ticker file (default: sp500)")
+    parser.add_argument("--period", default="1y", help="Data period for yfinance (default: 1y)")
     args = parser.parse_args()
 
     print_header()
@@ -347,14 +337,14 @@ def main():
     metrics = calculate_breadth_metrics(tickers, args.period)
 
     # Determine color coding based on thresholds
-    pct_200 = metrics['pct_above_200dma']
-    pct_20 = metrics['pct_above_20dma']
-    pct_highs = metrics['pct_at_20day_high']
-    pct_lows = metrics['pct_at_20day_low']
-    pct_52wk_highs = metrics['pct_at_52wk_high']
-    pct_52wk_lows = metrics['pct_at_52wk_low']
-    pct_24wk_highs = metrics['pct_at_24wk_high']
-    pct_24wk_lows = metrics['pct_at_24wk_low']
+    pct_200 = metrics["pct_above_200dma"]
+    pct_20 = metrics["pct_above_20dma"]
+    pct_highs = metrics["pct_at_20day_high"]
+    pct_lows = metrics["pct_at_20day_low"]
+    pct_52wk_highs = metrics["pct_at_52wk_high"]
+    pct_52wk_lows = metrics["pct_at_52wk_low"]
+    pct_24wk_highs = metrics["pct_at_24wk_high"]
+    pct_24wk_lows = metrics["pct_at_24wk_low"]
 
     # Green if > 80% or < 15% (strong momentum or too much fear)
     line_200 = f"Above 200-day MA:  {metrics['above_200dma']:>4} / {metrics['total_analyzed']}  ({pct_200:.1f}%)"
@@ -377,22 +367,30 @@ def main():
         line_lows = colorize(line_lows, "green")
 
     # Green if > 15% (strong momentum)
-    line_52wk_highs = f"At 52-week highs:  {metrics['at_52wk_high']:>4} / {metrics['total_analyzed']}  ({pct_52wk_highs:.1f}%)"
+    line_52wk_highs = (
+        f"At 52-week highs:  {metrics['at_52wk_high']:>4} / {metrics['total_analyzed']}  ({pct_52wk_highs:.1f}%)"
+    )
     if pct_52wk_highs > 15:
         line_52wk_highs = colorize(line_52wk_highs, "green")
 
     # Green if > 15%
-    line_52wk_lows = f"At 52-week lows:   {metrics['at_52wk_low']:>4} / {metrics['total_analyzed']}  ({pct_52wk_lows:.1f}%)"
+    line_52wk_lows = (
+        f"At 52-week lows:   {metrics['at_52wk_low']:>4} / {metrics['total_analyzed']}  ({pct_52wk_lows:.1f}%)"
+    )
     if pct_52wk_lows > 15:
         line_52wk_lows = colorize(line_52wk_lows, "green")
 
     # Green if > 20% (strong momentum)
-    line_24wk_highs = f"At 24-week highs:  {metrics['at_24wk_high']:>4} / {metrics['total_analyzed']}  ({pct_24wk_highs:.1f}%)"
+    line_24wk_highs = (
+        f"At 24-week highs:  {metrics['at_24wk_high']:>4} / {metrics['total_analyzed']}  ({pct_24wk_highs:.1f}%)"
+    )
     if pct_24wk_highs > 20:
         line_24wk_highs = colorize(line_24wk_highs, "green")
 
     # Green if > 20%
-    line_24wk_lows = f"At 24-week lows:   {metrics['at_24wk_low']:>4} / {metrics['total_analyzed']}  ({pct_24wk_lows:.1f}%)"
+    line_24wk_lows = (
+        f"At 24-week lows:   {metrics['at_24wk_low']:>4} / {metrics['total_analyzed']}  ({pct_24wk_lows:.1f}%)"
+    )
     if pct_24wk_lows > 20:
         line_24wk_lows = colorize(line_24wk_lows, "green")
 
@@ -450,7 +448,9 @@ def main():
         summary.caption_style = "dim"
         CONSOLE.print(summary)
         if failed:
-            CONSOLE.print(f"[dim]Failed tickers: {', '.join(sorted(failed)[:20])}{'...' if len(failed) > 20 else ''}[/dim]")
+            CONSOLE.print(
+                f"[dim]Failed tickers: {', '.join(sorted(failed)[:20])}{'...' if len(failed) > 20 else ''}[/dim]"
+            )
     else:
         print("\n" + "=" * 50)
         print("MARKET BREADTH SUMMARY")

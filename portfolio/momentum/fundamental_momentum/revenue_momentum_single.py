@@ -35,9 +35,9 @@ python3 revenue_momentum_single.py AAPL --universe sp500 --growth_years 3
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,14 +55,13 @@ except ImportError as e:
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from common import load_universe, list_universes, get_sp500_universe, clean_ticker
-
+from common import clean_ticker, get_sp500_universe, list_universes, load_universe
 from edgar_fetcher import fetch_quarterly_revenue_edgar
-
 
 # -------------------------
 # Utilities
 # -------------------------
+
 
 def zscore_of_ranks(values: pd.Series) -> pd.Series:
     """Convert a cross-sectional vector into z-scores of ranks. Missing values remain missing."""
@@ -84,14 +83,14 @@ def zscore_of_ranks(values: pd.Series) -> pd.Series:
     return out
 
 
-def col_at(df: Optional[pd.DataFrame], idx: int) -> Optional[pd.Series]:
+def col_at(df: pd.DataFrame | None, idx: int) -> pd.Series | None:
     """Return the column at position idx (0 is the most recent)."""
     if df is None or df.empty or df.shape[1] <= idx:
         return None
     return df.iloc[:, idx]
 
 
-def get_item(s: Optional[pd.Series], keys: List[str]) -> float:
+def get_item(s: pd.Series | None, keys: list[str]) -> float:
     """Return the first matching line item value from a statement column, or NaN if missing."""
     if s is None or s.empty:
         return np.nan
@@ -119,7 +118,7 @@ def safe_div(a: float, b: float) -> float:
     return float(a) / float(b)
 
 
-def try_get_income_stmt(t: yf.Ticker, freq: str) -> Optional[pd.DataFrame]:
+def try_get_income_stmt(t: yf.Ticker, freq: str) -> pd.DataFrame | None:
     """Retrieve an income statement for the requested frequency if available."""
     freq = freq.lower()
 
@@ -163,8 +162,12 @@ def try_get_income_stmt(t: yf.Ticker, freq: str) -> Optional[pd.DataFrame]:
 # -------------------------
 
 REVENUE_KEYS = [
-    "Total Revenue", "TotalRevenue", "Revenue",
-    "Net Sales", "NetSales", "Sales",
+    "Total Revenue",
+    "TotalRevenue",
+    "Revenue",
+    "Net Sales",
+    "NetSales",
+    "Sales",
 ]
 
 
@@ -172,8 +175,8 @@ REVENUE_KEYS = [
 class RevenueMetrics:
     revenue_q0: float = np.nan
     revenue_q4: float = np.nan
-    revenue_yoy_change: float = np.nan   # Average YoY change across last 3 quarters
-    revenue_yoy_changes: Optional[List[float]] = None  # [q0vsq4, q1vsq5, q2vsq6]
+    revenue_yoy_change: float = np.nan  # Average YoY change across last 3 quarters
+    revenue_yoy_changes: list[float] | None = None  # [q0vsq4, q1vsq5, q2vsq6]
 
     revenue_a0: float = np.nan
     revenue_aN: float = np.nan
@@ -181,14 +184,14 @@ class RevenueMetrics:
     years_used: int = 0
 
     # Second derivative of revenue growth (acceleration)
-    revenue_growth_rates: Optional[List[float]] = None  # 4 QoQ growth rates
+    revenue_growth_rates: list[float] | None = None  # 4 QoQ growth rates
     revenue_growth_acceleration: float = np.nan  # Slope of growth rates over time
 
-    q0_end: Optional[pd.Timestamp] = None
-    q4_end: Optional[pd.Timestamp] = None
-    q6_end: Optional[pd.Timestamp] = None
-    a0_end: Optional[pd.Timestamp] = None
-    aN_end: Optional[pd.Timestamp] = None
+    q0_end: pd.Timestamp | None = None
+    q4_end: pd.Timestamp | None = None
+    q6_end: pd.Timestamp | None = None
+    a0_end: pd.Timestamp | None = None
+    aN_end: pd.Timestamp | None = None
 
 
 def get_revenue_from_stmt(stmt_col: pd.Series) -> float:
@@ -273,14 +276,10 @@ def fetch_revenue_metrics(ticker: str, growth_years: int = 3, use_edgar: bool = 
                 revenue_values = []
                 for i in range(5):
                     q_col = col_at(q_inc, i)
-                    revenue_values.append(
-                        get_revenue_from_stmt(q_col) if q_col is not None else np.nan
-                    )
+                    revenue_values.append(get_revenue_from_stmt(q_col) if q_col is not None else np.nan)
                 growth_rates = []
                 for i in range(4):
-                    growth_rates.append(
-                        safe_div(revenue_values[i] - revenue_values[i + 1], revenue_values[i + 1])
-                    )
+                    growth_rates.append(safe_div(revenue_values[i] - revenue_values[i + 1], revenue_values[i + 1]))
                 out.revenue_growth_rates = growth_rates
                 valid_growth = [(i, g) for i, g in enumerate(growth_rates) if not np.isnan(g)]
                 if len(valid_growth) >= 2:
@@ -318,7 +317,8 @@ def fetch_revenue_metrics(ticker: str, growth_years: int = 3, use_edgar: bool = 
 # Scoring + reporting
 # -------------------------
 
-def compute_universe_scores(raw_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+
+def compute_universe_scores(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     """
     Compute rank-based z-scores for metrics and a combined Revenue Momentum score.
 
@@ -369,8 +369,7 @@ def main():
     ap.add_argument("tickers", nargs="*", help="Ticker(s) to score (e.g., AAPL or MCO SPGI EFX)")
     ap.add_argument("--tickers_file", default="", help="Path to file with tickers (one per line, txt/csv)")
     ap.add_argument("--universe", default="sp500", help="Universe: 'sp500', universe name, or path to file (txt/csv)")
-    ap.add_argument("--list-universes", action="store_true",
-                    help="List available universe files and exit")
+    ap.add_argument("--list-universes", action="store_true", help="List available universe files and exit")
     ap.add_argument("--growth_years", type=int, default=3, help="Target revenue CAGR window in years")
     ap.add_argument("--max_universe", type=int, default=0, help="If >0, limit universe size")
     ap.add_argument("--out_csv", default="", help="Optional path to save full universe output as CSV")
@@ -382,7 +381,7 @@ def main():
         sys.exit(0)
 
     # Build target ticker list from positional args and/or --tickers_file
-    targets: List[str] = [clean_ticker(t) for t in args.tickers]
+    targets: list[str] = [clean_ticker(t) for t in args.tickers]
     if args.tickers_file:
         file_tickers = load_universe(args.tickers_file)
         for t in file_tickers:
@@ -408,7 +407,7 @@ def main():
 
     print(f"Universe size: {len(universe)} | Targets: {', '.join(targets)}")
 
-    raws: Dict[str, RevenueMetrics] = {}
+    raws: dict[str, RevenueMetrics] = {}
     for i, tk in enumerate(universe, 1):
         try:
             raws[tk] = fetch_revenue_metrics(tk, growth_years=args.growth_years)
@@ -439,9 +438,13 @@ def main():
         print(f"{'=' * 60}")
         print("Raw metrics:")
         if tm.q0_end is not None:
-            print(f"  Latest quarter end: {tm.q0_end.date()} | Year-ago quarter end: {tm.q4_end.date() if tm.q4_end is not None else 'NA'}")
+            print(
+                f"  Latest quarter end: {tm.q0_end.date()} | Year-ago quarter end: {tm.q4_end.date() if tm.q4_end is not None else 'NA'}"
+            )
         if tm.a0_end is not None:
-            print(f"  Latest fiscal year end: {tm.a0_end.date()} | {tm.years_used}y-ago fiscal year end: {tm.aN_end.date() if tm.aN_end is not None else 'NA'}")
+            print(
+                f"  Latest fiscal year end: {tm.a0_end.date()} | {tm.years_used}y-ago fiscal year end: {tm.aN_end.date() if tm.aN_end is not None else 'NA'}"
+            )
 
         print(f"  Revenue (latest quarter):      {fmt_revenue(tm.revenue_q0)}")
         print(f"  Revenue (same qtr 1y ago):     {fmt_revenue(tm.revenue_q4)}")
@@ -456,10 +459,16 @@ def main():
             rates_str = ", ".join([fmt_pct(r) for r in tm.revenue_growth_rates])
             print(f"  Revenue QoQ growth rates (5Q): [{rates_str}]")
 
-        print(f"\nUniverse-relative scores:")
-        print(f"  z_revenue_yoy_change:    {z_metrics.loc[ticker, 'revenue_yoy_change'] if ticker in z_metrics.index else np.nan: .3f}")
-        print(f"  z_revenue_cagr:          {z_metrics.loc[ticker, 'revenue_cagr'] if ticker in z_metrics.index else np.nan: .3f}")
-        print(f"  z_revenue_growth_accel:  {z_metrics.loc[ticker, 'revenue_growth_acceleration'] if ticker in z_metrics.index else np.nan: .3f}")
+        print("\nUniverse-relative scores:")
+        print(
+            f"  z_revenue_yoy_change:    {z_metrics.loc[ticker, 'revenue_yoy_change'] if ticker in z_metrics.index else np.nan: .3f}"
+        )
+        print(
+            f"  z_revenue_cagr:          {z_metrics.loc[ticker, 'revenue_cagr'] if ticker in z_metrics.index else np.nan: .3f}"
+        )
+        print(
+            f"  z_revenue_growth_accel:  {z_metrics.loc[ticker, 'revenue_growth_acceleration'] if ticker in z_metrics.index else np.nan: .3f}"
+        )
         print(f"  Revenue Momentum z:      {score.loc[ticker] if ticker in score.index else np.nan: .3f}")
         print(f"  Revenue Momentum pct:    {pct_score.loc[ticker] if ticker in pct_score.index else np.nan: .3%}")
 
@@ -468,18 +477,24 @@ def main():
         print(f"\n{'=' * 105}")
         print("COMPARISON SUMMARY (ranked by Revenue Momentum)")
         print(f"{'=' * 105}")
-        print(f"{'Ticker':<10} {'Rev Mom z':>10} {'Percentile':>11} {'Rev YoY':>12} {'Rev CAGR':>12} {'Growth Accel':>13}")
+        print(
+            f"{'Ticker':<10} {'Rev Mom z':>10} {'Percentile':>11} {'Rev YoY':>12} {'Rev CAGR':>12} {'Growth Accel':>13}"
+        )
         print(f"{'-' * 105}")
 
         # Sort targets by revenue momentum score descending
         target_scores = {t: score.loc[t] if t in score.index else np.nan for t in valid_targets}
-        sorted_targets = sorted(valid_targets, key=lambda t: target_scores[t] if not np.isnan(target_scores[t]) else -999, reverse=True)
+        sorted_targets = sorted(
+            valid_targets, key=lambda t: target_scores[t] if not np.isnan(target_scores[t]) else -999, reverse=True
+        )
 
         for ticker in sorted_targets:
             tm = raws[ticker]
             z = score.loc[ticker] if ticker in score.index else np.nan
             pct = pct_score.loc[ticker] if ticker in pct_score.index else np.nan
-            print(f"{ticker:<10} {fmt_num(z):>10} {f'{pct:.1%}' if not np.isnan(pct) else 'NA':>11} {fmt_pct(tm.revenue_yoy_change):>12} {fmt_pct(tm.revenue_cagr):>12} {fmt_num(tm.revenue_growth_acceleration):>13}")
+            print(
+                f"{ticker:<10} {fmt_num(z):>10} {f'{pct:.1%}' if not np.isnan(pct) else 'NA':>11} {fmt_pct(tm.revenue_yoy_change):>12} {fmt_pct(tm.revenue_cagr):>12} {fmt_num(tm.revenue_growth_acceleration):>13}"
+            )
 
         print(f"{'=' * 105}")
 
@@ -492,6 +507,6 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

@@ -1,0 +1,63 @@
+[project]
+name = "market-scripts"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+    ".",
+    "equities/market_technicals",
+    "macro/economic_growth",
+    "macro/liquidity",
+    "macro/breakout",
+    "macro/positioning",
+    "equities/portfolio",
+    "portfolio/momentum/price_momentum",
+    "fx/model",
+    "fx/fx_dashboard",
+    "commodities",
+    "equities/index_dashboard",
+    "portfolio",
+    "macro/central_banks",
+    "macro/industry",
+    "portfolio/technical_analysis",
+    "equities/quality",
+    "equities",
+    "macro/country_dashboard",
+    "equities/short_screen",
+    "equities/sector_metrics",
+    "portfolio/momentum/fundamental_momentum",
+    "portfolio/portfolio_optimizer",
+    "government_bonds",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "E402",   # module level import not at top — needed for sys.path setup
+    "F401",   # imported but unused — some re-exports are intentional
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "api",
+    "auto_report",
+    "equities",
+    "macro",
+    "portfolio",
+    "fx",
+    "commodities",
+    "government_bonds",
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

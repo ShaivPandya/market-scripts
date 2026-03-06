@@ -22,11 +22,11 @@ import numpy as np
 import pandas as pd
 
 try:
+    from rich import box
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-    from rich import box
 except ImportError:
     Console = None
 
@@ -179,9 +179,7 @@ def print_table(data: pd.DataFrame, used_vix3m: str, title: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="VIX term structure: 3M VIX / 1M VIX ratio"
-    )
+    parser = argparse.ArgumentParser(description="VIX term structure: 3M VIX / 1M VIX ratio")
     parser.add_argument("--start", default=DEFAULT_START, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--low", type=float, default=DEFAULT_LOW, help="Low threshold (fear)")
     parser.add_argument("--high", type=float, default=DEFAULT_HIGH, help="High threshold (complacency)")
@@ -240,14 +238,18 @@ def get_data(
         return {"latest_df": pd.DataFrame(), "recent_df": pd.DataFrame(), "hits_df": pd.DataFrame()}
 
     latest = signals.iloc[-1]
-    latest_df = pd.DataFrame([{
-        "Date": latest.name.date().isoformat(),
-        "VIX": float(latest["VIX"]),
-        "VIX3M": float(latest["VIX3M"]),
-        "Ratio": float(latest["Ratio"]),
-        "Signal": str(latest["Signal"]),
-        "UsedTicker": used_vix3m,
-    }])
+    latest_df = pd.DataFrame(
+        [
+            {
+                "Date": latest.name.date().isoformat(),
+                "VIX": float(latest["VIX"]),
+                "VIX3M": float(latest["VIX3M"]),
+                "Ratio": float(latest["Ratio"]),
+                "Signal": str(latest["Signal"]),
+                "UsedTicker": used_vix3m,
+            }
+        ]
+    )
 
     recent_df = signals.tail(tail).copy() if tail > 0 else pd.DataFrame()
     if not recent_df.empty:

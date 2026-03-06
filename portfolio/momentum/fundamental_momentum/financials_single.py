@@ -7,17 +7,17 @@ metrics and latest-filing segment/region revenue breakdown.
 """
 
 from __future__ import annotations
+
 import logging
 import os
-import warnings
-
 import re
+import warnings
 from collections import defaultdict
+from collections.abc import Callable, Iterable
 from datetime import date
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
-
 from edgar_fetcher import (
     build_filing_url,
     fetch_companyfacts_by_cik,
@@ -48,7 +48,7 @@ ANNUAL_YOY_STEP = 1
 QUARTERLY_YOY_STEP = 4
 
 
-def _as_float(v: object) -> Optional[float]:
+def _as_float(v: object) -> float | None:
     try:
         x = float(v)
     except Exception:
@@ -58,7 +58,7 @@ def _as_float(v: object) -> Optional[float]:
     return x
 
 
-def _safe_growth(numer: Optional[float], denom: Optional[float], denom_abs: bool = False) -> Optional[float]:
+def _safe_growth(numer: float | None, denom: float | None, denom_abs: bool = False) -> float | None:
     if numer is None or denom is None:
         return None
     d = abs(denom) if denom_abs else denom
@@ -67,7 +67,7 @@ def _safe_growth(numer: Optional[float], denom: Optional[float], denom_abs: bool
     return numer / d
 
 
-def _parse_iso_date(s: object) -> Optional[date]:
+def _parse_iso_date(s: object) -> date | None:
     if not isinstance(s, str) or not s:
         return None
     try:
@@ -76,7 +76,7 @@ def _parse_iso_date(s: object) -> Optional[date]:
         return None
 
 
-def _entries_for(us_gaap: dict, concept: str, unit: str) -> List[dict]:
+def _entries_for(us_gaap: dict, concept: str, unit: str) -> list[dict]:
     try:
         rows = us_gaap[concept]["units"][unit]
     except (KeyError, TypeError):
@@ -88,8 +88,8 @@ def _is_valid_fact_row(e: dict) -> bool:
     return bool(e.get("end")) and _as_float(e.get("val")) is not None
 
 
-def _keep_latest_by(entries: Iterable[dict], key_fn) -> List[dict]:
-    best: Dict[str, dict] = {}
+def _keep_latest_by(entries: Iterable[dict], key_fn) -> list[dict]:
+    best: dict[str, dict] = {}
     for e in entries:
         key = key_fn(e)
         if not key:
@@ -101,7 +101,7 @@ def _keep_latest_by(entries: Iterable[dict], key_fn) -> List[dict]:
     return list(best.values())
 
 
-def _sort_newest(entries: List[dict]) -> List[dict]:
+def _sort_newest(entries: list[dict]) -> list[dict]:
     def _k(e: dict):
         d = _parse_iso_date(e.get("end"))
         return (
@@ -112,7 +112,7 @@ def _sort_newest(entries: List[dict]) -> List[dict]:
     return sorted(entries, key=_k, reverse=True)
 
 
-def _latest_end_date(entries: List[dict]) -> date:
+def _latest_end_date(entries: list[dict]) -> date:
     latest = date.min
     for e in entries:
         d = _parse_iso_date(e.get("end"))
@@ -121,7 +121,7 @@ def _latest_end_date(entries: List[dict]) -> date:
     return latest
 
 
-def _latest_filed_date(entries: List[dict]) -> str:
+def _latest_filed_date(entries: list[dict]) -> str:
     if not entries:
         return ""
     return max(str(e.get("filed") or "") for e in entries)
@@ -131,8 +131,8 @@ def _pick_best_concept_entries(
     us_gaap: dict,
     concepts: Iterable[str],
     unit: str,
-    extractor: Callable[[List[dict]], List[dict]],
-) -> List[dict]:
+    extractor: Callable[[list[dict]], list[dict]],
+) -> list[dict]:
     """
     Choose the strongest concept series for a metric.
     Priority:
@@ -140,8 +140,8 @@ def _pick_best_concept_entries(
       2) largest history length
       3) latest filing date
     """
-    best_entries: List[dict] = []
-    best_score: Optional[Tuple[date, int, str]] = None
+    best_entries: list[dict] = []
+    best_score: tuple[date, int, str] | None = None
 
     for concept in concepts:
         raw = _entries_for(us_gaap, concept, unit)
@@ -163,13 +163,11 @@ def _pick_best_concept_entries(
     return best_entries
 
 
-def _annual_fact_entries(entries: List[dict]) -> List[dict]:
+def _annual_fact_entries(entries: list[dict]) -> list[dict]:
     filtered = [
         e
         for e in entries
-        if _is_valid_fact_row(e)
-        and e.get("fp") == "FY"
-        and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
+        if _is_valid_fact_row(e) and e.get("fp") == "FY" and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
     ]
 
     def _key(e: dict) -> str:
@@ -178,7 +176,7 @@ def _annual_fact_entries(entries: List[dict]) -> List[dict]:
     return _sort_newest(_keep_latest_by(filtered, _key))
 
 
-def _duration_days(e: dict) -> Optional[int]:
+def _duration_days(e: dict) -> int | None:
     start = _parse_iso_date(e.get("start"))
     end = _parse_iso_date(e.get("end"))
     if start is None or end is None or end < start:
@@ -186,7 +184,7 @@ def _duration_days(e: dict) -> Optional[int]:
     return (end - start).days + 1
 
 
-def _infer_ytd_quarters(e: dict) -> Optional[int]:
+def _infer_ytd_quarters(e: dict) -> int | None:
     dur = _duration_days(e)
     if dur is not None:
         if dur <= 130:
@@ -209,14 +207,14 @@ def _infer_ytd_quarters(e: dict) -> Optional[int]:
     return None
 
 
-def _as_int(v: object) -> Optional[int]:
+def _as_int(v: object) -> int | None:
     try:
         return int(str(v))
     except Exception:
         return None
 
 
-def _annual_calendar(entries: List[dict]) -> List[Tuple[date, int]]:
+def _annual_calendar(entries: list[dict]) -> list[tuple[date, int]]:
     """
     Build a clean fiscal-year anchor calendar: one trusted fiscal-year-end date per FY.
 
@@ -224,8 +222,8 @@ def _annual_calendar(entries: List[dict]) -> List[Tuple[date, int]]:
     where deduping by period-end and "latest filed" can attach misleading FY metadata.
     Grouping by FY first avoids mapping old period-ends into a newer fiscal year.
     """
-    grouped: Dict[int, List[dict]] = defaultdict(list)
-    fallback: List[Tuple[date, int]] = []
+    grouped: dict[int, list[dict]] = defaultdict(list)
+    fallback: list[tuple[date, int]] = []
 
     for e in entries:
         if not _is_valid_fact_row(e):
@@ -245,7 +243,7 @@ def _annual_calendar(entries: List[dict]) -> List[Tuple[date, int]]:
             continue
         grouped[fy].append(e)
 
-    out: List[Tuple[date, int]] = []
+    out: list[tuple[date, int]] = []
     for fy, rows in grouped.items():
         # Prefer the row with the latest period-end; tie-break by filed date.
         best = max(rows, key=lambda r: (_parse_iso_date(r.get("end")) or date.min, str(r.get("filed") or "")))
@@ -258,7 +256,7 @@ def _annual_calendar(entries: List[dict]) -> List[Tuple[date, int]]:
     return sorted(fallback, key=lambda x: x[0])
 
 
-def _assign_fiscal_year(end: date, annual_calendar: List[Tuple[date, int]]) -> int:
+def _assign_fiscal_year(end: date, annual_calendar: list[tuple[date, int]]) -> int:
     if not annual_calendar:
         return end.year
 
@@ -285,13 +283,13 @@ def _assign_fiscal_year(end: date, annual_calendar: List[Tuple[date, int]]) -> i
     return nearest_fy + offset
 
 
-def _pick_best_for_target(entries: List[dict], target_quarters: int, prefer_form: str) -> Optional[dict]:
+def _pick_best_for_target(entries: list[dict], target_quarters: int, prefer_form: str) -> dict | None:
     if not entries:
         return None
 
     target_days = 91 * max(1, target_quarters)
 
-    def _score(e: dict) -> Tuple[int, str, int]:
+    def _score(e: dict) -> tuple[int, str, int]:
         form = str(e.get("form") or "")
         filed = str(e.get("filed") or "")
         dur = _duration_days(e)
@@ -307,7 +305,7 @@ def _pick_best_for_target(entries: List[dict], target_quarters: int, prefer_form
     return max(entries, key=_score)
 
 
-def _quarterly_fact_entries(entries: List[dict]) -> List[dict]:
+def _quarterly_fact_entries(entries: list[dict]) -> list[dict]:
     filtered = [
         e
         for e in entries
@@ -318,13 +316,13 @@ def _quarterly_fact_entries(entries: List[dict]) -> List[dict]:
     if not filtered:
         return []
 
-    by_end: Dict[str, List[dict]] = defaultdict(list)
+    by_end: dict[str, list[dict]] = defaultdict(list)
     for e in filtered:
         end = str(e.get("end") or "")
         if end:
             by_end[end].append(e)
 
-    ordered_ends: List[Tuple[date, str]] = []
+    ordered_ends: list[tuple[date, str]] = []
     for end_str in by_end.keys():
         d = _parse_iso_date(end_str)
         if d is not None:
@@ -334,18 +332,18 @@ def _quarterly_fact_entries(entries: List[dict]) -> List[dict]:
     ordered_ends.sort(key=lambda x: x[0])
 
     annual_calendar = _annual_calendar(entries)
-    ends_by_fy: Dict[int, List[Tuple[date, str]]] = defaultdict(list)
+    ends_by_fy: dict[int, list[tuple[date, str]]] = defaultdict(list)
     for end_date, end_str in ordered_ends:
         fy = _assign_fiscal_year(end_date, annual_calendar)
         ends_by_fy[fy].append((end_date, end_str))
 
-    normalized: List[dict] = []
+    normalized: list[dict] = []
     for fy, ends in ends_by_fy.items():
         fy_ends = sorted(ends, key=lambda x: x[0])
         if len(fy_ends) > 4:
             fy_ends = fy_ends[-4:]
 
-        ytd_prev: Optional[float] = None
+        ytd_prev: float | None = None
         for q_idx, (_, end_str) in enumerate(fy_ends, start=1):
             candidates = by_end[end_str]
             prefer_form = "annual" if q_idx == 4 else "quarterly"
@@ -360,8 +358,8 @@ def _quarterly_fact_entries(entries: List[dict]) -> List[dict]:
             ]
             ytd_entry = _pick_best_for_target(ytd_candidates, q_idx, prefer_form=prefer_form)
 
-            value: Optional[float] = None
-            source: Optional[dict] = None
+            value: float | None = None
+            source: dict | None = None
 
             if direct_entry is not None:
                 value = _as_float(direct_entry.get("val"))
@@ -415,16 +413,16 @@ def _period_label(e: dict, frequency: str) -> str:
 
 
 def _rows_from_entries(
-    entries: List[dict],
+    entries: list[dict],
     *,
     frequency: str,
     limit: int,
     cik_str: str,
-    submissions: Optional[dict],
+    submissions: dict | None,
     yoy_step: int,
     yoy_abs_denom: bool,
-) -> List[dict]:
-    rows: List[dict] = []
+) -> list[dict]:
+    rows: list[dict] = []
     for e in entries[:limit]:
         val = _as_float(e.get("val"))
         if val is None:
@@ -456,7 +454,7 @@ def _rows_from_entries(
     return rows
 
 
-def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -> Tuple[List[dict], List[dict]]:
+def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -> tuple[list[dict], list[dict]]:
     annual_entries = _pick_best_concept_entries(
         us_gaap,
         REVENUE_CONCEPTS,
@@ -493,7 +491,7 @@ def _build_revenue_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]
     return annual_rows_full[:ANNUAL_DISPLAY_LIMIT], quarterly_rows_full[:QUARTERLY_DISPLAY_LIMIT]
 
 
-def _derived_eps_entries(us_gaap: dict, frequency: str) -> List[dict]:
+def _derived_eps_entries(us_gaap: dict, frequency: str) -> list[dict]:
     period_key = lambda e: f"END:{e.get('end') or ''}"
 
     ni_raw = _entries_for(us_gaap, "NetIncomeLoss", "USD")
@@ -533,7 +531,7 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> List[dict]:
 
     shares_by_period = {period_key(e): e for e in _keep_latest_by(shares, period_key)}
 
-    derived: List[dict] = []
+    derived: list[dict] = []
     for ni_row in _keep_latest_by(ni, period_key):
         key = period_key(ni_row)
         sh_row = shares_by_period.get(key)
@@ -551,9 +549,9 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> List[dict]:
     return _sort_newest(derived)
 
 
-def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -> Tuple[List[dict], List[dict]]:
-    annual_entries: List[dict] = []
-    quarterly_entries: List[dict] = []
+def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -> tuple[list[dict], list[dict]]:
+    annual_entries: list[dict] = []
+    quarterly_entries: list[dict] = []
 
     for concept in EPS_CONCEPTS:
         for unit in EPS_UNITS:
@@ -597,7 +595,7 @@ def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: Optional[dict]) ->
     return annual_rows_full[:ANNUAL_DISPLAY_LIMIT], quarterly_rows_full[:QUARTERLY_DISPLAY_LIMIT]
 
 
-def _calc_cagr(rows: List[dict], years: int = 3, *, abs_fallback: bool = False) -> Optional[float]:
+def _calc_cagr(rows: list[dict], years: int = 3, *, abs_fallback: bool = False) -> float | None:
     values = [_as_float(r.get("value")) for r in rows]
     clean = [v for v in values if v is not None]
     if len(clean) < 2:
@@ -617,11 +615,11 @@ def _calc_cagr(rows: List[dict], years: int = 3, *, abs_fallback: bool = False) 
     return (abs(latest) / abs(prior)) ** (1.0 / n) - 1.0
 
 
-def _calc_avg_3q_yoy(rows: List[dict], denom_abs: bool) -> Optional[float]:
+def _calc_avg_3q_yoy(rows: list[dict], denom_abs: bool) -> float | None:
     values = [_as_float(r.get("value")) for r in rows]
     if len(values) < 7:
         return None
-    changes: List[float] = []
+    changes: list[float] = []
     for i in (0, 1, 2):
         a = values[i]
         b = values[i + 4]
@@ -635,14 +633,14 @@ def _calc_avg_3q_yoy(rows: List[dict], denom_abs: bool) -> Optional[float]:
     return sum(changes) / len(changes)
 
 
-def _iter_segment_pairs(segment_obj: object) -> List[Tuple[str, str]]:
+def _iter_segment_pairs(segment_obj: object) -> list[tuple[str, str]]:
     if isinstance(segment_obj, dict):
         if "dimension" in segment_obj and "value" in segment_obj:
             dim = str(segment_obj.get("dimension") or "").strip()
             val = str(segment_obj.get("value") or "").strip()
             if dim and val:
                 return [(dim, val)]
-        out: List[Tuple[str, str]] = []
+        out: list[tuple[str, str]] = []
         for k, v in segment_obj.items():
             if isinstance(v, str):
                 out.append((str(k), v))
@@ -653,18 +651,29 @@ def _iter_segment_pairs(segment_obj: object) -> List[Tuple[str, str]]:
                     out.extend(_iter_segment_pairs(item))
         return out
     if isinstance(segment_obj, list):
-        out: List[Tuple[str, str]] = []
+        out: list[tuple[str, str]] = []
         for item in segment_obj:
             out.extend(_iter_segment_pairs(item))
         return out
     return []
 
 
-def _classify_dimension(dimension: str) -> Optional[str]:
+def _classify_dimension(dimension: str) -> str | None:
     d = dimension.lower()
     if any(k in d for k in ("geo", "geograph", "region", "country", "market", "area", "location", "territor")):
         return "region"
-    if any(k in d for k in ("product", "service", "segment", "lineofbusiness", "business", "operatingsegment", "reportablesegment")):
+    if any(
+        k in d
+        for k in (
+            "product",
+            "service",
+            "segment",
+            "lineofbusiness",
+            "business",
+            "operatingsegment",
+            "reportablesegment",
+        )
+    ):
         return "segment"
     return None
 
@@ -705,8 +714,8 @@ def _is_total_like_member(member: str) -> bool:
     )
 
 
-def _classified_row_members(segment_obj: object) -> List[Tuple[str, str]]:
-    out: List[Tuple[str, str]] = []
+def _classified_row_members(segment_obj: object) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
     seen: set = set()
     for dim, member in _iter_segment_pairs(segment_obj):
         kind = _classify_dimension(dim)
@@ -738,13 +747,13 @@ def _row_has_only_total_context(row: dict) -> bool:
     return True
 
 
-def _pick_best_period_rows(rows: List[dict]) -> List[dict]:
-    grouped: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
+def _pick_best_period_rows(rows: list[dict]) -> list[dict]:
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for row in rows:
         key = (str(row.get("fp") or ""), str(row.get("start") or ""))
         grouped[key].append(row)
 
-    def _score(group_rows: List[dict]) -> Tuple[int, int, int, str]:
+    def _score(group_rows: list[dict]) -> tuple[int, int, int, str]:
         informative = 0
         total_like = 0
         for row in group_rows:
@@ -758,7 +767,7 @@ def _pick_best_period_rows(rows: List[dict]) -> List[dict]:
     return max(grouped.values(), key=_score)
 
 
-def _pct_rows(values_by_label: Dict[str, float], total: Optional[float]) -> List[dict]:
+def _pct_rows(values_by_label: dict[str, float], total: float | None) -> list[dict]:
     rows = []
     for label, value in sorted(values_by_label.items(), key=lambda kv: kv[1], reverse=True):
         pct = None
@@ -768,7 +777,7 @@ def _pct_rows(values_by_label: Dict[str, float], total: Optional[float]) -> List
     return rows
 
 
-def _parse_money_like(v: object) -> Optional[float]:
+def _parse_money_like(v: object) -> float | None:
     if isinstance(v, (int, float)):
         return _as_float(v)
     if not isinstance(v, str):
@@ -793,8 +802,8 @@ def _parse_money_like(v: object) -> Optional[float]:
     return -out if neg else out
 
 
-def _rows_to_value_map(rows: object) -> Dict[str, float]:
-    out: Dict[str, float] = {}
+def _rows_to_value_map(rows: object) -> dict[str, float]:
+    out: dict[str, float] = {}
     if not isinstance(rows, list):
         return out
     for row in rows:
@@ -812,7 +821,7 @@ def _rows_to_value_map(rows: object) -> Dict[str, float]:
     return out
 
 
-def _parse_optional_bool(v: object) -> Optional[bool]:
+def _parse_optional_bool(v: object) -> bool | None:
     if isinstance(v, bool):
         return v
     if isinstance(v, str):
@@ -838,7 +847,7 @@ def _filing_context_for_nlp(html: str) -> str:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
         soup = BeautifulSoup(html, parser)
-    blocks: List[str] = []
+    blocks: list[str] = []
     keywords = ("revenue", "segment", "geograph", "region", "united states", "foreign")
 
     for table in soup.find_all("table"):
@@ -909,7 +918,7 @@ _REGION_CONTEXT_KW = (
 )
 
 
-def _classify_table(heading_text: str, table_text: str) -> Optional[str]:
+def _classify_table(heading_text: str, table_text: str) -> str | None:
     """Classify a table as 'segment', 'region', or None based on heading and content."""
     h = heading_text.lower()
     t = table_text.lower()
@@ -945,7 +954,7 @@ def _detect_unit_scale(text: str) -> float:
     return 1.0
 
 
-def _extract_number_from_cell(cell_text: str) -> Optional[float]:
+def _extract_number_from_cell(cell_text: str) -> float | None:
     """Extract a numeric value from a table cell like '$209,586' or '(1,234)'."""
     s = cell_text.strip()
     if not s or s in ("—", "–", "-", "—", "N/A", "n/a"):
@@ -983,9 +992,9 @@ def _extract_breakdown_from_html(
     accn: str,
     form: str,
     filed: str,
-    submissions: Optional[dict],
-    wanted_axes: Set[str],
-) -> Optional[dict]:
+    submissions: dict | None,
+    wanted_axes: set[str],
+) -> dict | None:
     """
     Fetch the filing HTML and parse revenue-breakdown tables directly.
 
@@ -1026,12 +1035,12 @@ def _extract_breakdown_from_html(
 
     # ── Collect all tables with their preceding text context ─────────────
     tables = soup.find_all("table")
-    breakdowns: Dict[str, Dict[str, float]] = {}  # kind -> { label: value }
+    breakdowns: dict[str, dict[str, float]] = {}  # kind -> { label: value }
 
     for table in tables:
         # Build heading context: walk backwards from the table to find
         # descriptive text (headings, bold spans, or regular paragraphs).
-        heading_parts: List[str] = []
+        heading_parts: list[str] = []
         node = table
         for _ in range(15):  # look at up to 15 preceding siblings/parents
             node = node.find_previous(["p", "div", "span", "b", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "td"])
@@ -1049,10 +1058,10 @@ def _extract_breakdown_from_html(
                     break
 
         heading_context = " ".join(reversed(heading_parts))
-        
+
         # Get just the first few rows of the table for context checking
         table_text = "\n".join([r.get_text(" ", strip=True) for r in table.find_all("tr")[:10]])
-        
+
         kind = _classify_table(heading_context, table_text)
         if kind is None or kind not in wanted_axes:
             continue
@@ -1071,7 +1080,7 @@ def _extract_breakdown_from_html(
         if not rows:
             continue
 
-        values: Dict[str, float] = {}
+        values: dict[str, float] = {}
         for row in rows:
             cells = row.find_all(["td", "th"])
             if len(cells) < 2:
@@ -1112,7 +1121,7 @@ def _extract_breakdown_from_html(
     by_segment_map = breakdowns.get("segment", {})
     by_region_map = breakdowns.get("region", {})
 
-    total_val: Optional[float] = None
+    total_val: float | None = None
     seg_sum = sum(abs(v) for v in by_segment_map.values()) if by_segment_map else 0.0
     reg_sum = sum(abs(v) for v in by_region_map.values()) if by_region_map else 0.0
     total_val = max(seg_sum, reg_sum) if max(seg_sum, reg_sum) > 0 else None
@@ -1132,9 +1141,9 @@ def _extract_breakdown_via_nlp(
     accn: str,
     form: str,
     filed: str,
-    submissions: Optional[dict],
-    wanted_axes: Set[str],
-) -> Optional[dict]:
+    submissions: dict | None,
+    wanted_axes: set[str],
+) -> dict | None:
     if not os.environ.get("OPENAI_API_KEY"):
         return None
 
@@ -1267,7 +1276,7 @@ def _extract_breakdown_for_filing(us_gaap: dict, accn: str) -> dict:
         period_rows = _pick_best_period_rows(period_rows)
 
         total_candidates = [e for e in period_rows if _row_has_only_total_context(e)]
-        total_val: Optional[float] = None
+        total_val: float | None = None
         if total_candidates:
             total_row = max(
                 total_candidates,
@@ -1275,8 +1284,8 @@ def _extract_breakdown_for_filing(us_gaap: dict, accn: str) -> dict:
             )
             total_val = _as_float(total_row.get("val"))
 
-        by_segment: Dict[str, float] = {}
-        by_region: Dict[str, float] = {}
+        by_segment: dict[str, float] = {}
+        by_region: dict[str, float] = {}
 
         for row in period_rows:
             classified = _classified_row_members(row.get("segment"))
@@ -1313,8 +1322,8 @@ def _extract_breakdown_for_filing(us_gaap: dict, accn: str) -> dict:
     return {"accn": accn, "by_segment": [], "by_region": []}
 
 
-def _candidate_revenue_filings(us_gaap: dict) -> List[dict]:
-    by_accn: Dict[str, dict] = {}
+def _candidate_revenue_filings(us_gaap: dict) -> list[dict]:
+    by_accn: dict[str, dict] = {}
     for concept in REVENUE_CONCEPTS:
         for e in _entries_for(us_gaap, concept, "USD"):
             form = str(e.get("form") or "")
@@ -1328,7 +1337,7 @@ def _candidate_revenue_filings(us_gaap: dict) -> List[dict]:
     return sorted(by_accn.values(), key=lambda x: x["filed"], reverse=True)
 
 
-def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -> dict:
+def _build_breakdown(us_gaap: dict, cik_str: str, submissions: dict | None) -> dict:
     def _axis_meta(status: str, source: str) -> dict:
         return {"status": status, "source": source}
 
@@ -1348,7 +1357,7 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
     annual_filings = [f for f in filings if str(f.get("form") or "") in ALLOWED_ANNUAL_FORMS]
     search_filings = annual_filings if annual_filings else filings
     latest_filing = search_filings[0]
-    xbrl_choice: Optional[dict] = None
+    xbrl_choice: dict | None = None
     for f in search_filings:
         candidate = _extract_breakdown_for_filing(us_gaap, f["accn"])
         if candidate.get("by_segment") or candidate.get("by_region"):
@@ -1358,13 +1367,13 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
     xbrl_segment = (xbrl_choice or {}).get("by_segment") or []
     xbrl_region = (xbrl_choice or {}).get("by_region") or []
 
-    missing_axes: Set[str] = set()
+    missing_axes: set[str] = set()
     if not xbrl_segment:
         missing_axes.add("segment")
     if not xbrl_region:
         missing_axes.add("region")
 
-    html_candidate: Optional[dict] = None
+    html_candidate: dict | None = None
     if missing_axes:
         html_candidate = _extract_breakdown_from_html(
             cik_str=cik_str,
@@ -1384,7 +1393,7 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: Optional[dict]) -
         missing_axes.discard("region")
 
     ai_fallback_attempted = False
-    nlp_candidate: Optional[dict] = None
+    nlp_candidate: dict | None = None
     if missing_axes and os.environ.get("OPENAI_API_KEY"):
         ai_fallback_attempted = True
         nlp_candidate = _extract_breakdown_via_nlp(
@@ -1510,8 +1519,8 @@ def get_data(ticker: str) -> dict:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     import argparse
     import json
 

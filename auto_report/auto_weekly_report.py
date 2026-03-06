@@ -22,40 +22,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# ---------------------------------------------------------------------------
-# sys.path — replicate api/main.py so data-module imports resolve
-# ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
 
-_PATHS = [
-    PROJECT_ROOT,
-    PROJECT_ROOT / "equities" / "market_technicals",
-    PROJECT_ROOT / "macro" / "economic_growth",
-    PROJECT_ROOT / "macro" / "liquidity",
-    PROJECT_ROOT / "macro" / "breakout",
-    PROJECT_ROOT / "macro" / "positioning",
-    PROJECT_ROOT / "equities" / "portfolio",
-    PROJECT_ROOT / "portfolio" / "momentum" / "price_momentum",
-    PROJECT_ROOT / "fx" / "model",
-    PROJECT_ROOT / "fx" / "fx_dashboard",
-    PROJECT_ROOT / "commodities",
-    PROJECT_ROOT / "equities" / "index_dashboard",
-    PROJECT_ROOT / "portfolio",
-    PROJECT_ROOT / "macro" / "central_banks",
-    PROJECT_ROOT / "macro" / "industry",
-    PROJECT_ROOT / "portfolio" / "technical_analysis",
-    PROJECT_ROOT / "equities" / "quality",
-    PROJECT_ROOT / "equities",
-    PROJECT_ROOT / "macro" / "country_dashboard",
-    PROJECT_ROOT / "equities" / "short_screen",
-    PROJECT_ROOT / "equities" / "sector_metrics",
-    PROJECT_ROOT / "portfolio" / "momentum" / "fundamental_momentum",
-]
-for _p in reversed(_PATHS):
-    _p_str = str(_p)
-    if _p_str not in sys.path:
-        sys.path.insert(0, _p_str)
+# Centralised path setup — replaces inline sys.path block
+sys.path.insert(0, str(PROJECT_ROOT))
+from paths import setup_paths
+
+setup_paths()
 
 from dotenv import load_dotenv
 
@@ -68,6 +42,8 @@ from auto_report.shared import (  # noqa: E402
     serialize_bundle,
     slim_error,
     strip_llm_meta,
+)
+from auto_report.shared import (
     write_bundle as _write_bundle_to_path,
 )
 
@@ -189,9 +165,7 @@ def _build_key_ratios_table(rows: list[tuple[str, dict]]) -> str:
         except Exception:
             change_s = "N/A"
         date_range = f"{stats.get('start_date', 'N/A')} → {stats.get('end_date', 'N/A')}"
-        body_lines.append(
-            f"| {name} | {start_s} | {end_s} | {change_s} | {date_range} |"
-        )
+        body_lines.append(f"| {name} | {start_s} | {end_s} | {change_s} | {date_range} |")
     return header + "\n".join(body_lines) + "\n"
 
 
@@ -235,7 +209,6 @@ def _is_friday_afternoon_et() -> bool:
     return now_et.weekday() == 4 and now_et.hour == 16
 
 
-
 def load_last_week_summary(history_dir: Path) -> str | None:
     if not history_dir.exists():
         return None
@@ -266,7 +239,8 @@ def collect_data() -> dict:
 
     # 1. Indices
     try:
-        from index_dashboard import get_data as get_index_data, INDEX_ORDER
+        from index_dashboard import INDEX_ORDER
+        from index_dashboard import get_data as get_index_data
 
         t0 = time.perf_counter()
         indices = get_index_data("This Week")
@@ -278,7 +252,8 @@ def collect_data() -> dict:
 
     # 2. FX
     try:
-        from fx_dashboard import get_data as get_fx_data, PAIR_ORDER
+        from fx_dashboard import PAIR_ORDER
+        from fx_dashboard import get_data as get_fx_data
 
         t0 = time.perf_counter()
         fx = get_fx_data("This Week")
@@ -291,8 +266,10 @@ def collect_data() -> dict:
     # 3. Commodities
     try:
         from commodities_dashboard import (
-            get_data as get_commodity_data,
             COMMODITY_ORDER,
+        )
+        from commodities_dashboard import (
+            get_data as get_commodity_data,
         )
 
         t0 = time.perf_counter()
@@ -369,7 +346,7 @@ def collect_data() -> dict:
 
     # 8. Positioning
     try:
-        from positioning import fetch_multiple_instruments, DEFAULT_DOMAIN, DATASETS
+        from positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
 
         t0 = time.perf_counter()
         pos = fetch_multiple_instruments(
@@ -391,12 +368,8 @@ def collect_data() -> dict:
         from technical_analysis import get_ratio_data
 
         t0 = time.perf_counter()
-        silver_gold = _slim_ratio_result(
-            get_ratio_data("SI=F", "GC=F", start_date=week_start)
-        )
-        sp_eq = _slim_ratio_result(
-            get_ratio_data("^GSPC", "RSP", start_date=week_start)
-        )
+        silver_gold = _slim_ratio_result(get_ratio_data("SI=F", "GC=F", start_date=week_start))
+        sp_eq = _slim_ratio_result(get_ratio_data("^GSPC", "RSP", start_date=week_start))
         log.info("ratios fetched in %.2fs", time.perf_counter() - t0)
         results["ratios"] = {"silver_gold": silver_gold, "sp500_rsp": sp_eq}
     except Exception as e:
@@ -457,9 +430,7 @@ def write_bundle(bundle: dict, output_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _series_map_to_rows(
-    series_map: dict, order: list[str] | None
-) -> list[tuple[str, float, float]]:
+def _series_map_to_rows(series_map: dict, order: list[str] | None) -> list[tuple[str, float, float]]:
     rows: list[tuple[str, float, float]] = []
     if not isinstance(series_map, dict) or not series_map:
         return rows
@@ -520,9 +491,7 @@ def build_performance_markdown(raw_data: dict) -> str:
             "## Weekly Performance",
             _build_perf_table("Indices", indices_rows, decimals_if_lt_100=2).strip(),
             _build_perf_table("FX", fx_rows, decimals_if_lt_100=4).strip(),
-            _build_perf_table(
-                "Commodities", commodities_rows, decimals_if_lt_100=4
-            ).strip(),
+            _build_perf_table("Commodities", commodities_rows, decimals_if_lt_100=4).strip(),
         ]
     ).strip()
 
@@ -535,9 +504,7 @@ def build_performance_markdown(raw_data: dict) -> str:
         silver_gold = ratios if isinstance(ratios, dict) else {}
         sp_eq = {}
 
-    ratios_md = _build_key_ratios_table(
-        [("Silver/Gold", silver_gold), ("S&P 500 / RSP", sp_eq)]
-    ).strip()
+    ratios_md = _build_key_ratios_table([("Silver/Gold", silver_gold), ("S&P 500 / RSP", sp_eq)]).strip()
     perf_md = f"{perf_md}\n\n{ratios_md}".strip()
 
     log.info(
@@ -619,9 +586,7 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
     return prompt_bundle
 
 
-
 # call_claude is imported from auto_report.shared
-
 
 
 def _build_user_message(bundle: dict, perf_md: str, web_search: bool = True) -> str:
@@ -717,33 +682,23 @@ def parse_response(text: str) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 
 
-def write_outputs(
-    report_md: str, summary: dict, bundle: dict, output_dir: Path, today: str
-):
+def write_outputs(report_md: str, summary: dict, bundle: dict, output_dir: Path, today: str):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     (output_dir / "report.md").write_text(report_md, encoding="utf-8")
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2), encoding="utf-8"
-    )
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     log.info("Wrote report.md and summary.json to %s", output_dir)
 
     # Archive
     archive_dir = output_dir / "history" / today
     archive_dir.mkdir(parents=True, exist_ok=True)
-    (archive_dir / "weekly_bundle.json").write_text(
-        json.dumps(bundle, indent=2, default=str), encoding="utf-8"
-    )
+    (archive_dir / "weekly_bundle.json").write_text(json.dumps(bundle, indent=2, default=str), encoding="utf-8")
     (archive_dir / "report.md").write_text(report_md, encoding="utf-8")
-    (archive_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2), encoding="utf-8"
-    )
+    (archive_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     log.info("Archived to %s", archive_dir)
 
 
-
 # create_github_issue is imported from auto_report.shared
-
 
 
 # ---------------------------------------------------------------------------
@@ -801,9 +756,7 @@ def main():
     use_search = not args.no_search
     if use_search:
         if args.news_sources:
-            allowed_domains = [
-                d.strip() for d in args.news_sources.split(",") if d.strip()
-            ]
+            allowed_domains = [d.strip() for d in args.news_sources.split(",") if d.strip()]
         else:
             allowed_domains = list(DEFAULT_NEWS_SOURCES)
         log.info("Web search enabled — domains: %s", allowed_domains)
@@ -818,9 +771,7 @@ def main():
     error_msg = None
 
     try:
-        response_text, citations = call_claude(
-            system_msg, user_msg, allowed_domains=allowed_domains
-        )
+        response_text, citations = call_claude(system_msg, user_msg, allowed_domains=allowed_domains)
         report_md, summary = parse_response(response_text)
         report_md = _insert_weekly_performance(report_md, perf_md)
         report_md = strip_llm_meta(report_md)
@@ -835,10 +786,7 @@ def main():
     except Exception as e:
         log.error("Claude call failed: %s", e, exc_info=True)
         error_msg = str(e)
-        report_md = (
-            f"# Weekly Report — {today_str}\n\n"
-            f"**Error**: Claude generation failed.\n\n```\n{error_msg}\n```"
-        )
+        report_md = f"# Weekly Report — {today_str}\n\n**Error**: Claude generation failed.\n\n```\n{error_msg}\n```"
         summary = _fallback_summary()
         summary["error"] = error_msg
 

@@ -5,26 +5,35 @@ Queries IBKR for each ticker/company-name in portfolio.csv and returns
 a unified feed with both grouped-by-ticker and flat chronological views.
 """
 
-import csv
-import os
-import logging
-import re
-import urllib.request
-import urllib.parse
-import xml.etree.ElementTree as ET
-import email.utils
 import concurrent.futures
+import csv
+import email.utils
+import logging
+import os
+import re
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 PREMIUM_DOMAINS = [
-    "bloomberg.com", "ft.com", "reuters.com", "wsj.com", 
-    "nytimes.com", "marketwatch.com", "asia.nikkei.com", 
-    "scmp.com", "caixinglobal.com", "axios.com", 
-    "politico.com", "cnbc.com", "theglobeandmail.com"
+    "bloomberg.com",
+    "ft.com",
+    "reuters.com",
+    "wsj.com",
+    "nytimes.com",
+    "marketwatch.com",
+    "asia.nikkei.com",
+    "scmp.com",
+    "caixinglobal.com",
+    "axios.com",
+    "politico.com",
+    "cnbc.com",
+    "theglobeandmail.com",
 ]
 
 PORTFOLIO_CSV = Path(__file__).parent / "portfolio.csv"
@@ -36,19 +45,34 @@ IB_CLIENT_ID = int(os.environ.get("IB_CLIENT_ID", "10"))
 IB_MAX_HEADLINES = 10
 
 IB_NEWS_PROVIDER_PREFERENCE = (
-    "DJ-RTG",    # Dow Jones Top Stories Global
-    "DJ-RT",     # Dow Jones Trader News
-    "DJ-N",      # Dow Jones Global Equity Trader
-    "DJNL",      # Dow Jones Newsletters
-    "DJ-RTA",    # Dow Jones Top Stories Asia Pacific
-    "DJ-RTE",    # Dow Jones Top Stories Europe
-    "BRFG",      # Briefing.com General Market Columns
-    "BRFUPDN",   # Briefing.com Analyst Actions
+    "DJ-RTG",  # Dow Jones Top Stories Global
+    "DJ-RT",  # Dow Jones Trader News
+    "DJ-N",  # Dow Jones Global Equity Trader
+    "DJNL",  # Dow Jones Newsletters
+    "DJ-RTA",  # Dow Jones Top Stories Asia Pacific
+    "DJ-RTE",  # Dow Jones Top Stories Europe
+    "BRFG",  # Briefing.com General Market Columns
+    "BRFUPDN",  # Briefing.com Analyst Actions
 )
 
 LEGAL_ENTITY_SUFFIXES = {
-    "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited",
-    "llc", "plc", "group", "sa", "ag", "nv", "lp", "holdings", "holding",
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "co",
+    "company",
+    "ltd",
+    "limited",
+    "llc",
+    "plc",
+    "group",
+    "sa",
+    "ag",
+    "nv",
+    "lp",
+    "holdings",
+    "holding",
 }
 
 
@@ -94,17 +118,21 @@ def _resolve_name(ticker: str, asset: str) -> str:
 
 # ── IBKR ──────────────────────────────────────────────────────────────────────
 
+
 def _fetch_all_ibkr_news(positions: list[dict[str, str]]) -> dict[str, list[dict[str, Any]]]:
     """
     Run all IBKR news fetching in a separate thread with its own event loop,
     avoiding conflicts with uvicorn's uvloop.
     Returns a dict mapping ticker -> list of articles.
     """
+
     def _run():
         import asyncio
+
         asyncio.set_event_loop(asyncio.new_event_loop())
         try:
             from ib_insync import IB
+
             ib = IB()
             ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=5)
         except Exception as e:
@@ -148,7 +176,7 @@ def _qualify_contract(ib, ticker: str, asset: str):
     Build and qualify an IB contract for the given ticker.
     Returns the qualified contract or None.
     """
-    from ib_insync import Stock, Contract
+    from ib_insync import Contract, Stock
 
     # Skip non-equity for now (commodities / ETFs can be added later)
     # Determine exchange based on ticker suffix
@@ -211,8 +239,8 @@ def _query_ibkr(ib, ticker: str, asset: str, provider_codes: str) -> list[dict[s
     if contract is None:
         return []
 
-    start_dt = datetime.now(timezone.utc) - timedelta(days=3)
-    end_dt = datetime.now(timezone.utc)
+    start_dt = datetime.now(UTC) - timedelta(days=3)
+    end_dt = datetime.now(UTC)
 
     try:
         headlines = ib.reqHistoricalNews(
@@ -238,9 +266,9 @@ def _query_ibkr(ib, ticker: str, asset: str, provider_codes: str) -> list[dict[s
             try:
                 if isinstance(article_time, datetime):
                     if article_time.tzinfo is None:
-                        article_time = article_time.replace(tzinfo=timezone.utc)
+                        article_time = article_time.replace(tzinfo=UTC)
                     else:
-                        article_time = article_time.astimezone(timezone.utc)
+                        article_time = article_time.astimezone(UTC)
                     seendate = article_time.isoformat().replace("+00:00", "Z")
                 else:
                     seendate = str(article_time)
@@ -346,7 +374,7 @@ def _is_within_lookback(seendate: str, now_utc: datetime) -> bool:
     if parsed is None:
         return False
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     cutoff = now_utc - timedelta(days=NEWS_LOOKBACK_DAYS)
     return parsed >= cutoff
 
@@ -367,20 +395,20 @@ def _query_google_rss(ticker: str, name: str) -> list[dict[str, Any]]:
 
     encoded_query = urllib.parse.quote(query)
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
-    
+
     results = []
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         with urllib.request.urlopen(req, timeout=10) as response:
             xml_data = response.read()
-            
+
         root = ET.fromstring(xml_data)
-        for item in root.findall('./channel/item'):
-            title = item.findtext('title') or ""
-            description = item.findtext('description') or ""
-            link = item.findtext('link') or ""
-            source = item.findtext('source') or "Google News"
-            pubDate = item.findtext('pubDate') or ""
+        for item in root.findall("./channel/item"):
+            title = item.findtext("title") or ""
+            description = item.findtext("description") or ""
+            link = item.findtext("link") or ""
+            source = item.findtext("source") or "Google News"
+            pubDate = item.findtext("pubDate") or ""
 
             if strict_mode and not _article_mentions_alias(title, description, strict_aliases):
                 logger.debug(
@@ -389,30 +417,33 @@ def _query_google_rss(ticker: str, name: str) -> list[dict[str, Any]]:
                     _truncate_for_log(title),
                 )
                 continue
-            
+
             try:
                 parsed_date = email.utils.parsedate_to_datetime(pubDate)
                 seendate = parsed_date.isoformat().replace("+00:00", "Z")
             except Exception:
-                seendate = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            
-            results.append({
-                "ticker": ticker,
-                "title": title,
-                "url": link,
-                "source": source,
-                "seendate": seendate,
-                "socialimage": "",
-                "language": "English",
-                "provider": "Google RSS",
-            })
+                seendate = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+            results.append(
+                {
+                    "ticker": ticker,
+                    "title": title,
+                    "url": link,
+                    "source": source,
+                    "seendate": seendate,
+                    "socialimage": "",
+                    "language": "English",
+                    "provider": "Google RSS",
+                }
+            )
     except Exception as e:
         logger.warning("Google RSS query failed for %s: %s", ticker, e)
-        
+
     return results
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def get_data(refresh: bool = False) -> dict[str, Any]:
     """
@@ -428,7 +459,7 @@ def get_data(refresh: bool = False) -> dict[str, Any]:
     by_ticker: dict[str, list[dict[str, Any]]] = {}
     ticker_names: dict[str, str] = {}
 
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
 
     # Fetch IBKR news in a separate thread (avoids uvloop conflicts)
     ibkr_by_ticker = _fetch_all_ibkr_news(positions)

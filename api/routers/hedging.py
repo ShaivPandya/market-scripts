@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -144,7 +145,7 @@ def run_hedging_tool(req: HedgingRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="hedging_tool", detail=str(e)) from e
 
     set_cached(short_cache, key, result)
     return result
@@ -216,20 +217,15 @@ def get_hedging_tool_prefill():
         if "ticker" not in df.columns:
             raise ValueError("portfolio.csv is missing required 'ticker' column.")
 
-        tickers = (
-            df["ticker"]
-            .astype(str)
-            .str.strip()
-            .str.upper()
-        )
+        tickers = df["ticker"].astype(str).str.strip().str.upper()
         tickers = [t for t in tickers.tolist() if t]
         # Preserve CSV order while deduplicating.
         deduped = list(dict.fromkeys(tickers))
 
         return {
             "positions": [{"ticker": t, "weight": 0.0} for t in deduped],
-            "source": str(PORTFOLIO_CSV),
+            "source": PORTFOLIO_CSV.name,
             "count": len(deduped),
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="hedging_tool", detail=str(e)) from e

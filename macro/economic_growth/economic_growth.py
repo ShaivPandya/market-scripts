@@ -10,20 +10,20 @@ Requirements:
 Usage:
     python economic_growth.py [--crb-file path/to/crb.xlsx]
 """
-import logging
 
 import argparse
+import logging
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
-import warnings
 
 import pandas as pd
 import yfinance as yf
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,23 +40,23 @@ DEFAULT_CRB_PATH = Path(__file__).resolve().with_name("crb.xlsx")
 # ============================================================================
 
 COMMODITIES = {
-    "Copper": "HG=F",                    # COMEX Copper Futures
-    "GS Commodity Index": "GSG",         # iShares S&P GSCI Commodity ETF
-    CRB_INDEX_NAME: None,                # Read from XLS file
+    "Copper": "HG=F",  # COMEX Copper Futures
+    "GS Commodity Index": "GSG",  # iShares S&P GSCI Commodity ETF
+    CRB_INDEX_NAME: None,  # Read from XLS file
 }
 
 EQUITIES = {
-    "S&P 500": "SPY",                    # SPDR S&P 500 ETF
-    "Russell 2000": "IWM",               # iShares Russell 2000 ETF
-    "S&P 600": "IJR",                    # iShares Core S&P Small-Cap ETF
-    "DJ Transport": "IYT",               # iShares Transportation Average ETF
-    "KBW Banks": "KBWB",                 # Invesco KBW Bank ETF
-    "US Retail": "XRT",                  # SPDR S&P Retail ETF
-    "US Staples": "XLP",                 # Consumer Staples Select Sector SPDR
-    "US Utilities": "XLU",               # Utilities Select Sector SPDR
-    "STOXX 600": "^STOXX",               # STOXX Europe 600 Index
-    "Europe Banks": "EXV1.DE",           # iShares STOXX Europe 600 Banks UCITS ETF
-    "MSCI Korea": "EWY",                 # iShares MSCI South Korea ETF
+    "S&P 500": "SPY",  # SPDR S&P 500 ETF
+    "Russell 2000": "IWM",  # iShares Russell 2000 ETF
+    "S&P 600": "IJR",  # iShares Core S&P Small-Cap ETF
+    "DJ Transport": "IYT",  # iShares Transportation Average ETF
+    "KBW Banks": "KBWB",  # Invesco KBW Bank ETF
+    "US Retail": "XRT",  # SPDR S&P Retail ETF
+    "US Staples": "XLP",  # Consumer Staples Select Sector SPDR
+    "US Utilities": "XLU",  # Utilities Select Sector SPDR
+    "STOXX 600": "^STOXX",  # STOXX Europe 600 Index
+    "Europe Banks": "EXV1.DE",  # iShares STOXX Europe 600 Banks UCITS ETF
+    "MSCI Korea": "EWY",  # iShares MSCI South Korea ETF
 }
 
 CURRENCIES = {
@@ -81,6 +81,7 @@ CURRENCY_PERIODS = {
 # ============================================================================
 # CRB FILE READING FUNCTIONS
 # ============================================================================
+
 
 def read_crb_from_xls(xls_path):
     """
@@ -110,8 +111,9 @@ def read_crb_from_xls(xls_path):
 
     except Exception as exc:
         console.print(f"[yellow]Warning: Could not read CRB file: {exc}[/yellow]")
-        console.print(f"[yellow]Make sure the file is in .xlsx format and openpyxl is installed[/yellow]")
+        console.print("[yellow]Make sure the file is in .xlsx format and openpyxl is installed[/yellow]")
         return None
+
 
 def calculate_crb_returns(df, periods):
     """Calculate returns from CRB DataFrame for given periods."""
@@ -140,9 +142,11 @@ def calculate_crb_returns(df, periods):
 
     return returns
 
+
 # ============================================================================
 # DATA FETCHING FUNCTIONS
 # ============================================================================
+
 
 def download_close_series(ticker_dict, period=DEFAULT_YF_PERIOD):
     """Download close-price series for name->ticker mappings in one yfinance call."""
@@ -196,6 +200,7 @@ def download_close_series(ticker_dict, period=DEFAULT_YF_PERIOD):
     series_by_name[only_name] = close.sort_index()
     return series_by_name
 
+
 def _normalize_reference_time(reference_time, index):
     """Align a timestamp with a DatetimeIndex timezone."""
     if index.tz is None:
@@ -206,6 +211,7 @@ def _normalize_reference_time(reference_time, index):
     if reference_time.tzinfo is None:
         return reference_time.tz_localize(index.tz)
     return reference_time.tz_convert(index.tz)
+
 
 def calculate_return(close_series, days, reference_time=None):
     """Calculate return over a calendar-day lookback from a close-price series."""
@@ -231,6 +237,7 @@ def calculate_return(close_series, days, reference_time=None):
         return None
 
     return float((current_price - past_price) / past_price * 100)
+
 
 def fetch_all_returns(ticker_dict, periods, category_name, crb_returns=None):
     """Fetch returns for all tickers in a category."""
@@ -271,9 +278,11 @@ def fetch_all_returns(ticker_dict, periods, category_name, crb_returns=None):
 
     return results
 
+
 # ============================================================================
 # TABLE CREATION FUNCTIONS
 # ============================================================================
+
 
 def format_return(value, benchmark=None, is_benchmark=False):
     """Format return value with color coding."""
@@ -295,6 +304,7 @@ def format_return(value, benchmark=None, is_benchmark=False):
         else:
             return Text(text, style="yellow")
 
+
 def create_commodities_table(results, periods):
     """Create commodities performance table."""
     table = Table(
@@ -302,7 +312,7 @@ def create_commodities_table(results, periods):
         show_header=True,
         header_style="bold cyan",
         title_style="bold white",
-        border_style="blue"
+        border_style="blue",
     )
     table.add_column("Name", style="bold white", min_width=22)
 
@@ -317,6 +327,7 @@ def create_commodities_table(results, periods):
 
     return table
 
+
 def create_equities_table(results, periods):
     """Create equities table with benchmark coloring.
     US equities vs S&P 500, Europe Banks vs STOXX 600.
@@ -326,7 +337,7 @@ def create_equities_table(results, periods):
         show_header=True,
         header_style="bold cyan",
         title_style="bold white",
-        border_style="blue"
+        border_style="blue",
     )
     table.add_column("Name", style="bold white", min_width=20)
 
@@ -338,7 +349,7 @@ def create_equities_table(results, periods):
 
     for name, returns in results.items():
         row = [name]
-        is_benchmark = (name == "S&P 500" or name == "STOXX 600")
+        is_benchmark = name == "S&P 500" or name == "STOXX 600"
 
         # Europe Banks compared to STOXX 600, others to S&P 500
         if name == "Europe Banks":
@@ -355,6 +366,7 @@ def create_equities_table(results, periods):
 
     return table
 
+
 def create_currencies_table(results, periods):
     """Create currencies performance table."""
     table = Table(
@@ -362,7 +374,7 @@ def create_currencies_table(results, periods):
         show_header=True,
         header_style="bold cyan",
         title_style="bold white",
-        border_style="blue"
+        border_style="blue",
     )
     table.add_column("Pair", style="bold white", min_width=12)
 
@@ -377,9 +389,11 @@ def create_currencies_table(results, periods):
 
     return table
 
+
 # ============================================================================
 # DISPLAY FUNCTIONS
 # ============================================================================
+
 
 def print_header():
     """Print dashboard header."""
@@ -388,9 +402,10 @@ def print_header():
         f"[dim]Live Data from Yahoo Finance + CRB from Moody's Analytics[/dim]\n"
         f"[dim]Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/dim]",
         border_style="bold blue",
-        padding=(1, 2)
+        padding=(1, 2),
     )
     console.print(header)
+
 
 def print_legend():
     """Print color legend."""
@@ -399,6 +414,7 @@ def print_legend():
     console.print("  [bold red]Red[/bold red] = Underperforming benchmark for that period")
     console.print("  [dim]Benchmark: S&P 500 for US equities, STOXX 600 for Europe Banks[/dim]")
     console.print("  [green]Benchmark rows[/green] = Colored by positive/negative only")
+
 
 def print_data_sources(crb_file_used):
     """Print data source information."""
@@ -410,12 +426,14 @@ def print_data_sources(crb_file_used):
     console.print("[dim]  • STOXX 600 (^STOXX) = STOXX Europe 600 Index[/dim]")
     console.print("[dim]  • Europe Banks (EXV1.DE) = iShares STOXX Europe 600 Banks UCITS ETF[/dim]")
 
+
 # ============================================================================
 # MAIN FUNCTION
 # ============================================================================
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Market Performance Dashboard')
+    parser = argparse.ArgumentParser(description="Market Performance Dashboard")
     parser.add_argument(
         "--crb-file",
         type=Path,
@@ -439,7 +457,9 @@ def main():
         if crb_df is not None:
             crb_returns = calculate_crb_returns(crb_df, EQUITY_PERIODS)
             crb_file_used = True
-            console.print(f"[green]✓ Loaded {len(crb_df)} data points (latest: {crb_df['date'].iloc[-1].date()})[/green]")
+            console.print(
+                f"[green]✓ Loaded {len(crb_df)} data points (latest: {crb_df['date'].iloc[-1].date()})[/green]"
+            )
         else:
             console.print("[yellow]Could not read CRB file, will show N/A[/yellow]")
     else:
@@ -465,6 +485,7 @@ def main():
     print_legend()
     print_data_sources(crb_file_used)
     console.print()
+
 
 def get_data(crb_file: str = None) -> dict:
     """
@@ -512,6 +533,6 @@ def get_data(crb_file: str = None) -> dict:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     main()

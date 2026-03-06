@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
@@ -26,7 +28,7 @@ _SECTOR_PREFIX_MAP = {
 
 
 class FMRequest(BaseModel):
-    screen_type: str = "Both"      # "EPS" | "Revenue" | "Both"
+    screen_type: str = "Both"  # "EPS" | "Revenue" | "Both"
     universe: str = "S&P 500"
     tickers: str = ""
     benchmark: str = "S&P 500"
@@ -37,6 +39,7 @@ def _resolve_tickers(req: FMRequest) -> list[str]:
     if req.input_mode == "Custom Tickers":
         return [t.strip().upper() for t in req.tickers.split(",") if t.strip()]
     from common import get_universe_tickers
+
     key = _UNIVERSE_MAP.get(req.universe) or _SECTOR_PREFIX_MAP.get(req.universe, req.universe)
     try:
         return get_universe_tickers(key)
@@ -46,6 +49,7 @@ def _resolve_tickers(req: FMRequest) -> list[str]:
 
 def _serialize_fm(data: dict) -> dict:
     import pandas as pd
+
     result = {}
     for k, v in data.items():
         if isinstance(v, pd.DataFrame):
@@ -73,17 +77,19 @@ def run_fundamental_momentum(req: FMRequest):
 
         if req.screen_type in ("EPS", "Both"):
             from eps_screen import get_data as get_eps
+
             eps_data = get_eps(tickers=tickers, benchmark=benchmark)
             result["eps"] = _serialize_fm(eps_data)
 
         if req.screen_type in ("Revenue", "Both"):
             from revenue_screen import get_data as get_rev
+
             rev_data = get_rev(tickers=tickers, benchmark=benchmark)
             result["rev"] = _serialize_fm(rev_data)
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="fundamental_momentum", detail=str(e)) from e
 
     return result

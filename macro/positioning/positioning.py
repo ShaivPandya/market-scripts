@@ -25,19 +25,20 @@ Notes:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import os
 import sys
-import time
-from dataclasses import dataclass
 import threading
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+import time
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
-import requests
 import numpy as np
 import pandas as pd
+import requests
 
 LOGGER = logging.getLogger(__name__)
 
@@ -119,23 +120,23 @@ GROUP_LABEL = {
 class Fields:
     report_date: str
     market_name: str
-    open_interest: Optional[str]
+    open_interest: str | None
     lf_long: str
     lf_short: str
-    dealer_long: Optional[str] = None
-    dealer_short: Optional[str] = None
-    asset_mgr_long: Optional[str] = None
-    asset_mgr_short: Optional[str] = None
-    other_rept_long: Optional[str] = None
-    other_rept_short: Optional[str] = None
-    nonrept_long: Optional[str] = None
-    nonrept_short: Optional[str] = None
+    dealer_long: str | None = None
+    dealer_short: str | None = None
+    asset_mgr_long: str | None = None
+    asset_mgr_short: str | None = None
+    other_rept_long: str | None = None
+    other_rept_short: str | None = None
+    nonrept_long: str | None = None
+    nonrept_short: str | None = None
 
 
 def _http_get_json(
     url: str,
-    headers: Dict[str, str],
-    params: Optional[Dict[str, Any]] = None,
+    headers: dict[str, str],
+    params: dict[str, Any] | None = None,
     max_retries: int = 6,
     backoff_s: float = 1.25,
 ) -> Any:
@@ -145,7 +146,7 @@ def _http_get_json(
         if r.status_code == 200:
             return r.json()
         if r.status_code in (429, 500, 502, 503, 504):
-            sleep_s = backoff_s * (2 ** attempt)
+            sleep_s = backoff_s * (2**attempt)
             time.sleep(min(sleep_s, 30))
             continue
         # Non-retryable
@@ -153,7 +154,7 @@ def _http_get_json(
     raise RuntimeError(f"Exceeded retries for {url}")
 
 
-def get_dataset_metadata(domain: str, dataset_id: str, app_token: Optional[str]) -> Dict[str, Any]:
+def get_dataset_metadata(domain: str, dataset_id: str, app_token: str | None) -> dict[str, Any]:
     # Socrata metadata endpoint (cache in-process; schema changes are rare).
     url = f"https://{domain}/api/views/{dataset_id}.json"
     headers = {}
@@ -172,12 +173,12 @@ def get_dataset_metadata(domain: str, dataset_id: str, app_token: Optional[str])
     return meta
 
 
-_META_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
-_FIELDS_CACHE: Dict[Tuple[str, str], "Fields"] = {}
+_META_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_FIELDS_CACHE: dict[tuple[str, str], Fields] = {}
 _META_CACHE_LOCK = threading.Lock()
 
 
-def get_dataset_fields(domain: str, dataset_id: str, app_token: Optional[str]) -> Fields:
+def get_dataset_fields(domain: str, dataset_id: str, app_token: str | None) -> Fields:
     """
     Return detected Fields for a dataset (cached in-process).
     """
@@ -197,23 +198,23 @@ def _normalize(s: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else " " for ch in s).strip()
 
 
-def detect_fields(meta: Dict[str, Any]) -> Fields:
+def detect_fields(meta: dict[str, Any]) -> Fields:
     cols = meta.get("columns", [])
     if not cols:
         raise RuntimeError("No columns found in metadata; cannot detect fields.")
 
-    col_pairs: List[Tuple[str, str]] = []
+    col_pairs: list[tuple[str, str]] = []
     for c in cols:
         human = str(c.get("name", "") or "")
         field = str(c.get("fieldName", "") or "")
         if field:
             col_pairs.append((human, field))
 
-    def find_one(required_terms: List[str], prefer_field_terms: Optional[List[str]] = None) -> str:
+    def find_one(required_terms: list[str], prefer_field_terms: list[str] | None = None) -> str:
         required_terms_n = [_normalize(t) for t in required_terms]
         prefer_terms_n = [_normalize(t) for t in (prefer_field_terms or [])]
 
-        candidates: List[Tuple[int, int, str]] = []
+        candidates: list[tuple[int, int, str]] = []
         for human, field in col_pairs:
             h = _normalize(human)
             f = _normalize(field)
@@ -229,8 +230,8 @@ def detect_fields(meta: Dict[str, Any]) -> Fields:
         candidates.sort(reverse=True)
         return candidates[0][2]
 
-    def find_first(alternatives: List[List[str]], prefer: Optional[List[str]] = None) -> str:
-        last_err: Optional[Exception] = None
+    def find_first(alternatives: list[list[str]], prefer: list[str] | None = None) -> str:
+        last_err: Exception | None = None
         for terms in alternatives:
             try:
                 return find_one(terms, prefer_field_terms=prefer)
@@ -242,7 +243,7 @@ def detect_fields(meta: Dict[str, Any]) -> Fields:
         )[:50]
         raise RuntimeError(f"{last_err}\nLikely related fields (sample): {likely}")
 
-    def try_find_first(alternatives: List[List[str]], prefer: Optional[List[str]] = None) -> Optional[str]:
+    def try_find_first(alternatives: list[list[str]], prefer: list[str] | None = None) -> str | None:
         try:
             return find_first(alternatives, prefer=prefer)
         except RuntimeError:
@@ -264,8 +265,13 @@ def detect_fields(meta: Dict[str, Any]) -> Fields:
         f = _normalize(field)
         blob = f"{h} {f}"
         # Must contain "open" and "interest", but NOT "pct" or "percent"
-        if ("open" in blob and "interest" in blob and
-            "pct" not in blob and "percent" not in blob and "change" not in blob):
+        if (
+            "open" in blob
+            and "interest" in blob
+            and "pct" not in blob
+            and "percent" not in blob
+            and "change" not in blob
+        ):
             open_interest = field
             break
 
@@ -340,7 +346,7 @@ def detect_fields(meta: Dict[str, Any]) -> Fields:
     )
 
 
-def parse_groups(groups: Optional[str]) -> List[str]:
+def parse_groups(groups: str | None) -> list[str]:
     """
     Parse comma-separated participant groups.
 
@@ -356,7 +362,7 @@ def parse_groups(groups: Optional[str]) -> List[str]:
     if any(g in ("all", "*") for g in requested):
         return list(CANONICAL_GROUPS)
 
-    resolved: List[str] = []
+    resolved: list[str] = []
     for g in requested:
         key = GROUP_ALIASES.get(g)
         if not key:
@@ -371,7 +377,7 @@ def parse_groups(groups: Optional[str]) -> List[str]:
     return resolved
 
 
-def _zscore(series: pd.Series, window: Optional[int]) -> pd.Series:
+def _zscore(series: pd.Series, window: int | None) -> pd.Series:
     s = pd.to_numeric(series, errors="coerce")
     if window and window > 0:
         mu = s.rolling(window, min_periods=window).mean()
@@ -389,7 +395,7 @@ def _add_group_metrics(
     df: pd.DataFrame,
     long_col: str,
     short_col: str,
-    open_interest_col: Optional[str],
+    open_interest_col: str | None,
     prefix: str,
     z_window: int,
     force_threshold: float,
@@ -436,14 +442,13 @@ def _add_group_metrics(
     df[f"{prefix}_forced"] = forced
 
 
-
 def soda_iter_rows(
     domain: str,
     dataset_id: str,
-    app_token: Optional[str],
-    soql_params: Dict[str, Any],
+    app_token: str | None,
+    soql_params: dict[str, Any],
     page_size: int = 50000,
-) -> Iterable[Dict[str, Any]]:
+) -> Iterable[dict[str, Any]]:
     """
     Iterate rows from the Socrata SODA endpoint using $limit/$offset pagination.
     """
@@ -470,11 +475,11 @@ def soda_iter_rows(
 def fetch_market_timeseries(
     domain: str,
     dataset_id: str,
-    app_token: Optional[str],
+    app_token: str | None,
     market_exact: str,
-    start: Optional[str],
-    end: Optional[str],
-    groups: Optional[str] = None,
+    start: str | None,
+    end: str | None,
+    groups: str | None = None,
     z_window: int = 0,
     force_threshold: float = 2.0,
 ) -> pd.DataFrame:
@@ -499,7 +504,7 @@ def fetch_market_timeseries(
     if fields.open_interest:
         select_fields.append(fields.open_interest)
 
-    group_cols: Dict[str, Tuple[Optional[str], Optional[str]]] = {
+    group_cols: dict[str, tuple[str | None, str | None]] = {
         "dealer": (fields.dealer_long, fields.dealer_short),
         "asset_mgr": (fields.asset_mgr_long, fields.asset_mgr_short),
         "other_rept": (fields.other_rept_long, fields.other_rept_short),
@@ -522,15 +527,13 @@ def fetch_market_timeseries(
 
     rows = list(soda_iter_rows(domain, dataset_id, app_token, soql_params=soql, page_size=50000))
     if not rows:
-        raise RuntimeError(
-            "No rows returned. Check the exact market name (market_and_exchange_names) and date range."
-        )
+        raise RuntimeError("No rows returned. Check the exact market name (market_and_exchange_names) and date range.")
 
     df = pd.DataFrame(rows)
 
     # Parse and coerce numeric fields
     df[fields.report_date] = pd.to_datetime(df[fields.report_date], errors="coerce").dt.date
-    numeric_cols: List[str] = [fields.lf_long, fields.lf_short]
+    numeric_cols: list[str] = [fields.lf_long, fields.lf_short]
     if fields.open_interest:
         numeric_cols.append(fields.open_interest)
     for g in group_keys:
@@ -608,7 +611,7 @@ def _add_group_metrics_by_market(
     market_col: str,
     long_col: str,
     short_col: str,
-    open_interest_col: Optional[str],
+    open_interest_col: str | None,
     prefix: str,
     z_window: int,
     force_threshold: float,
@@ -658,11 +661,11 @@ def _add_group_metrics_by_market(
 def fetch_markets_timeseries(
     domain: str,
     dataset_id: str,
-    app_token: Optional[str],
-    markets_exact: List[str],
-    start: Optional[str],
-    end: Optional[str],
-    groups: Optional[str] = None,
+    app_token: str | None,
+    markets_exact: list[str],
+    start: str | None,
+    end: str | None,
+    groups: str | None = None,
     z_window: int = 0,
     force_threshold: float = 2.0,
 ) -> pd.DataFrame:
@@ -691,7 +694,7 @@ def fetch_markets_timeseries(
     if fields.open_interest:
         select_fields.append(fields.open_interest)
 
-    group_cols: Dict[str, Tuple[Optional[str], Optional[str]]] = {
+    group_cols: dict[str, tuple[str | None, str | None]] = {
         "dealer": (fields.dealer_long, fields.dealer_short),
         "asset_mgr": (fields.asset_mgr_long, fields.asset_mgr_short),
         "other_rept": (fields.other_rept_long, fields.other_rept_short),
@@ -720,7 +723,7 @@ def fetch_markets_timeseries(
 
     # Parse and coerce numeric fields
     df[fields.report_date] = pd.to_datetime(df[fields.report_date], errors="coerce").dt.date
-    numeric_cols: List[str] = [fields.lf_long, fields.lf_short]
+    numeric_cols: list[str] = [fields.lf_long, fields.lf_short]
     if fields.open_interest:
         numeric_cols.append(fields.open_interest)
     for g in group_keys:
@@ -799,21 +802,21 @@ def fetch_markets_timeseries(
 def fetch_multiple_instruments(
     domain: str,
     dataset_id: str,
-    app_token: Optional[str],
-    instruments: List[str],
-    start: Optional[str],
-    end: Optional[str],
-    groups: Optional[str] = None,
+    app_token: str | None,
+    instruments: list[str],
+    start: str | None,
+    end: str | None,
+    groups: str | None = None,
     z_window: int = 0,
     force_threshold: float = 2.0,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Fetch latest positioning for multiple instruments and return summary data.
     """
     # Pre-warm schema detection once per dataset for this request.
     _ = get_dataset_fields(domain, dataset_id, app_token)
 
-    instrument_list: List[str] = []
+    instrument_list: list[str] = []
     for alias in instruments:
         if alias in INSTRUMENTS:
             instrument_list.append(alias)
@@ -840,12 +843,12 @@ def fetch_multiple_instruments(
         force_threshold=force_threshold,
     )
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for alias, market_name in alias_to_market.items():
         try:
             df = df_all[df_all["market_and_exchange_names"] == market_name]
             latest = df.dropna(subset=["report_date"]).iloc[-1]
-            row: Dict[str, Any] = {
+            row: dict[str, Any] = {
                 "instrument": alias,
                 "report_date": latest["report_date"],
                 "lf_net": latest["lf_net"],
@@ -871,7 +874,7 @@ def fetch_multiple_instruments(
     return results
 
 
-def print_summary_table(results: List[Dict[str, Any]]) -> None:
+def print_summary_table(results: list[dict[str, Any]]) -> None:
     """
     Print a formatted summary table of positioning results, sorted by Z-score.
     """
@@ -895,9 +898,13 @@ def print_summary_table(results: List[Dict[str, Any]]) -> None:
 
     # Print rows
     for r in sorted_results:
-        net = f"{r['lf_net']:,.0f}" if r['lf_net'] is not None and not pd.isna(r['lf_net']) else "N/A"
-        pct = f"{r['lf_net_pct_oi']:.1f}%" if r['lf_net_pct_oi'] is not None and not pd.isna(r['lf_net_pct_oi']) else "N/A"
-        z = f"{r['lf_z']:.2f}" if r['lf_z'] is not None and not pd.isna(r['lf_z']) else "N/A"
+        net = f"{r['lf_net']:,.0f}" if r["lf_net"] is not None and not pd.isna(r["lf_net"]) else "N/A"
+        pct = (
+            f"{r['lf_net_pct_oi']:.1f}%"
+            if r["lf_net_pct_oi"] is not None and not pd.isna(r["lf_net_pct_oi"])
+            else "N/A"
+        )
+        z = f"{r['lf_z']:.2f}" if r["lf_z"] is not None and not pd.isna(r["lf_z"]) else "N/A"
         dz = (
             f"{r['lf_deleveraging_z']:.2f}"
             if r.get("lf_deleveraging_z") is not None and not pd.isna(r.get("lf_deleveraging_z"))
@@ -953,7 +960,9 @@ def main() -> int:
         help="Threshold for *_forced classification using *_deleveraging_z.",
     )
     p.add_argument("--all", action="store_true", help="Fetch all predefined instruments.")
-    p.add_argument("--instruments", default=None, help="Comma-separated list of instrument aliases (e.g., SP500,EUR,US10Y).")
+    p.add_argument(
+        "--instruments", default=None, help="Comma-separated list of instrument aliases (e.g., SP500,EUR,US10Y)."
+    )
     p.add_argument("--list-instruments", action="store_true", help="List available instrument aliases and exit.")
 
     args = p.parse_args()
@@ -1028,6 +1037,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     raise SystemExit(main())

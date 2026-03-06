@@ -1,6 +1,9 @@
 from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from api.exceptions import DataFetchError
 from api.serializers import serialize_value
 
 router = APIRouter()
@@ -83,9 +86,7 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
                 )
 
         drivers.sort(
-            key=lambda d: abs(d.get("contribution", 0))
-            if isinstance(d.get("contribution"), (int, float))
-            else 0,
+            key=lambda d: abs(d.get("contribution", 0)) if isinstance(d.get("contribution"), (int, float)) else 0,
             reverse=True,
         )
         driver_breakdown.append(
@@ -115,14 +116,11 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
     }
 
 
-def _missing_dependency_error(e: ModuleNotFoundError) -> HTTPException:
+def _missing_dependency_error(e: ModuleNotFoundError) -> DataFetchError:
     missing = e.name or "unknown"
-    return HTTPException(
-        status_code=500,
-        detail=(
-            f"Missing backend dependency '{missing}'. "
-            "Install dependencies with `pip install -r requirements.txt` and restart the API server."
-        ),
+    return DataFetchError(
+        source="fx_model",
+        detail=f"Missing backend dependency '{missing}'. Install dependencies with `pip install -r requirements.txt` and restart the API server.",
     )
 
 
@@ -157,9 +155,9 @@ def run_fx_model(req: FXModelRequest):
             horizons=horizons,
         )
     except ModuleNotFoundError as e:
-        raise _missing_dependency_error(e)
+        raise _missing_dependency_error(e) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="fx_model", detail=str(e)) from e
 
     compact = _to_compact_response(
         data=data,
@@ -174,8 +172,9 @@ def run_fx_model(req: FXModelRequest):
 def list_pairs():
     try:
         from src.currency_config import list_pairs as _list_pairs
+
         return {"pairs": _list_pairs()}
     except ModuleNotFoundError as e:
-        raise _missing_dependency_error(e)
+        raise _missing_dependency_error(e) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="fx_model", detail=str(e)) from e

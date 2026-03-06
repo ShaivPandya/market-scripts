@@ -6,7 +6,6 @@ A macro liquidity monitoring tool that fetches data from FRED, computes a compos
 
 - Standalone CLI: `python3 macro/liquidity/liquidity.py`
 - FastAPI: `GET /api/liquidity` (see `api/routers/liquidity.py`)
-- Streamlit GUI: `gui/app.py` (page: “💧 Liquidity”)
 - React UI: “Liquidity” page in `frontend/`
 
 ## Overview

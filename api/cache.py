@@ -1,7 +1,7 @@
 """
 TTL caching for FastAPI route handlers.
 
-Mirrors Streamlit's @st.cache_data(ttl=...) behaviour:
+TTL cache behaviour:
 - short_cache: 300s  — live market data (prices, breadth, signals)
 - long_cache:  3600s — slow/external scrapes (country dashboard, central banks, industry)
 """
@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import logging
+import os
 import threading
 import time
-from cachetools import TTLCache
 from pathlib import Path
+
+from cachetools import TTLCache
 
 logger = logging.getLogger("uvicorn.error")
 

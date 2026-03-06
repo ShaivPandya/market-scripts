@@ -1,6 +1,7 @@
+from pathlib import Path
+
 import pandas as pd
 import requests
-from pathlib import Path
 
 
 class StatCanError(RuntimeError):
@@ -54,12 +55,7 @@ def _fetch_statcan_vector_latest_n(*, vector_id: int, latest_n: int, timeout: in
         return str(raw).lstrip("v") == str(vector_id_int)
 
     block = obj[0] if len(obj) == 1 else next((b for b in obj if _matches_vector(b)), obj[0])
-    points = (
-        block.get("vectorDataPoint")
-        or block.get("vectorDataPoints")
-        or block.get("dataPoints")
-        or []
-    )
+    points = block.get("vectorDataPoint") or block.get("vectorDataPoints") or block.get("dataPoints") or []
     if not isinstance(points, list) or not points:
         raise StatCanError("Statistics Canada WDS returned no datapoints")
 

@@ -19,50 +19,36 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-# ---------------------------------------------------------------------------
-# sys.path — merged paths from both daily and weekly modules
-# ---------------------------------------------------------------------------
+if TYPE_CHECKING:
+    import pandas as pd
+
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
 
-_PATHS = [
-    # Portfolio risk modules (original daily)
-    PROJECT_ROOT,
-    PROJECT_ROOT / "portfolio",
-    PROJECT_ROOT / "portfolio" / "portfolio_optimizer",
-    PROJECT_ROOT / "portfolio" / "technical_analysis",
-    PROJECT_ROOT / "portfolio" / "momentum" / "price_momentum",
-    PROJECT_ROOT / "portfolio" / "momentum" / "fundamental_momentum",
-    PROJECT_ROOT / "equities" / "quality",
-    PROJECT_ROOT / "equities",
-    # Market data modules (from weekly)
-    PROJECT_ROOT / "equities" / "market_technicals",
-    PROJECT_ROOT / "macro" / "economic_growth",
-    PROJECT_ROOT / "macro" / "liquidity",
-    PROJECT_ROOT / "macro" / "breakout",
-    PROJECT_ROOT / "macro" / "positioning",
-    PROJECT_ROOT / "equities" / "portfolio",
-    PROJECT_ROOT / "fx" / "model",
-    PROJECT_ROOT / "fx" / "fx_dashboard",
-    PROJECT_ROOT / "commodities",
-    PROJECT_ROOT / "equities" / "index_dashboard",
-    PROJECT_ROOT / "macro" / "central_banks",
-    PROJECT_ROOT / "macro" / "industry",
-    PROJECT_ROOT / "macro" / "country_dashboard",
-    PROJECT_ROOT / "equities" / "short_screen",
-    PROJECT_ROOT / "equities" / "sector_metrics",
-]
-for _p in reversed(_PATHS):
-    _p_str = str(_p)
-    if _p_str not in sys.path:
-        sys.path.insert(0, _p_str)
+# Centralised path setup — replaces inline sys.path block
+sys.path.insert(0, str(PROJECT_ROOT))
+from paths import setup_paths
+
+setup_paths()
 
 from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
+from auto_report.auto_weekly_report import (
+    DEFAULT_NEWS_SOURCES,
+    RULES_TEXT,
+    _prepare_prompt_bundle,
+    build_performance_markdown,
+)
+
+# Import market data collection + formatting from weekly module
+from auto_report.auto_weekly_report import (  # noqa: E402
+    collect_data as collect_market_data,
+)
 from auto_report.shared import (  # noqa: E402
     call_claude,
     create_github_issue,
@@ -70,15 +56,6 @@ from auto_report.shared import (  # noqa: E402
     serialize_bundle,
     strip_llm_meta,
     write_bundle,
-)
-
-# Import market data collection + formatting from weekly module
-from auto_report.auto_weekly_report import (  # noqa: E402
-    collect_data as collect_market_data,
-    build_performance_markdown,
-    _prepare_prompt_bundle,
-    RULES_TEXT,
-    DEFAULT_NEWS_SOURCES,
 )
 
 # ---------------------------------------------------------------------------
@@ -283,26 +260,19 @@ def collect_risk_data(portfolio_df) -> dict:
         results["defense_volatility"] = defense_vol.to_dict()
 
         # Severe drawdown flags
-        equity_tickers = [
-            t for t in tickers if asset_map.get(t, "").lower() == "equity"
-        ]
+        equity_tickers = [t for t in tickers if asset_map.get(t, "").lower() == "equity"]
         severe_dd = compute_severe_drawdown_flags(usd_prices, equity_tickers)
         results["severe_drawdown_flags"] = severe_dd
 
         # Distressed metrics
         distressed_tickers = list(
             portfolio_df.loc[
-                portfolio_df["distressed"]
-                .astype(str)
-                .str.lower()
-                .isin(["true", "1", "yes"]),
+                portfolio_df["distressed"].astype(str).str.lower().isin(["true", "1", "yes"]),
                 "ticker",
             ]
         )
         if distressed_tickers:
-            distressed_metrics = compute_distressed_metrics(
-                prices_all, distressed_tickers
-            )
+            distressed_metrics = compute_distressed_metrics(prices_all, distressed_tickers)
             results["distressed_metrics"] = distressed_metrics.to_dict(orient="index")
         else:
             results["distressed_metrics"] = {}
@@ -312,9 +282,7 @@ def collect_risk_data(portfolio_df) -> dict:
         beta_frame, _, _ = compute_beta_frame(rets, valid_tickers)
         results["beta_frame"] = beta_frame.to_dict(orient="index")
 
-        log.info(
-            "portfolio risk metrics fetched in %.2fs", time.perf_counter() - t0
-        )
+        log.info("portfolio risk metrics fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
         log.warning("portfolio risk metrics fetch failed: %s", e, exc_info=True)
         results["portfolio_risk"] = {"error": str(e)}
@@ -327,9 +295,7 @@ def collect_risk_data(portfolio_df) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def run_sizer(
-    portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERAGE
-) -> dict:
+def run_sizer(portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERAGE) -> dict:
     """Run portfolio sizer and return full result dict."""
     from portfolio_sizer import size_portfolio
 
@@ -338,9 +304,7 @@ def run_sizer(
         for _, row in portfolio_df.iterrows()
         if row["direction"] in ("long", "short")
     ]
-    return size_portfolio(
-        positions=positions, book=book, target_leverage=target_leverage
-    )
+    return size_portfolio(positions=positions, book=book, target_leverage=target_leverage)
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +312,7 @@ def run_sizer(
 # ---------------------------------------------------------------------------
 
 
-def compute_adjustments(sizer_result: dict, open_positions_df) -> "pd.DataFrame":
+def compute_adjustments(sizer_result: dict, open_positions_df) -> pd.DataFrame:
     """Compare sizer target shares to current open positions.
 
     Returns DataFrame with columns: ticker, direction, target_shares,
@@ -490,8 +454,7 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
                 continue
             util_pct = float(info.get("utilization", 0)) * 100
             sections.append(
-                f"| {name} | {info.get('limit', 'N/A')} | "
-                f"{float(info.get('current', 0)):.4f} | {util_pct:.1f}% |"
+                f"| {name} | {info.get('limit', 'N/A')} | {float(info.get('current', 0)):.4f} | {util_pct:.1f}% |"
             )
         sections.append("")
 
@@ -527,12 +490,8 @@ def build_risk_summary_markdown(risk_data: dict, sizer_result: dict) -> str:
     weights_df = sizer_result.get("weights_df")
     if weights_df is not None:
         sections.append("## Position Details\n")
-        sections.append(
-            "| Ticker | Dir | Conv | Weight | Beta SPY | Beta IWM | Vol | Shares | $ Weight |"
-        )
-        sections.append(
-            "|--------|-----|-----:|-------:|---------:|---------:|----:|-------:|---------:|"
-        )
+        sections.append("| Ticker | Dir | Conv | Weight | Beta SPY | Beta IWM | Vol | Shares | $ Weight |")
+        sections.append("|--------|-----|-----:|-------:|---------:|---------:|----:|-------:|---------:|")
         for _, row in weights_df.iterrows():
             sections.append(
                 f"| {row['ticker']} | "
@@ -586,9 +545,7 @@ def _build_pass1_system_message(last_daily_json: str | None) -> str:
     playbook_md = load_prompt_file(PROMPTS_DIR / "playbook.md", "prompts/playbook.md")
     parts = [system_md, playbook_md]
     if last_daily_json:
-        parts.append(
-            f"## Previous Session's Summary\n\n```json\n{last_daily_json}\n```"
-        )
+        parts.append(f"## Previous Session's Summary\n\n```json\n{last_daily_json}\n```")
     return "\n\n---\n\n".join(parts)
 
 
@@ -679,9 +636,7 @@ def parse_pass1_response(text: str) -> tuple[str, dict]:
         analysis_md = parts[0].strip()
         json_part = parts[1].strip()
         if json_part.startswith("```"):
-            json_part = (
-                json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
-            )
+            json_part = json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
         if json_part.endswith("```"):
             json_part = json_part[:-3]
         json_part = json_part.strip()
@@ -725,9 +680,7 @@ def parse_pass1_response(text: str) -> tuple[str, dict]:
 
 def _build_pass2_system_message(stance_dict: dict) -> str:
     """Build system prompt for Pass 2, injecting stance context into daily_system.md."""
-    daily_system_md = load_prompt_file(
-        PROMPTS_DIR / "daily_system.md", "prompts/daily_system.md"
-    )
+    daily_system_md = load_prompt_file(PROMPTS_DIR / "daily_system.md", "prompts/daily_system.md")
     stance = stance_dict.get("stance", DEFAULT_STANCE)
     leverage = stance_dict.get("target_leverage", DEFAULT_LEVERAGE)
     rationale = stance_dict.get("leverage_rationale", "")
@@ -830,9 +783,7 @@ def parse_daily_response(text: str) -> tuple[str, dict]:
         report_md = parts[0].strip()
         json_part = parts[1].strip()
         if json_part.startswith("```"):
-            json_part = (
-                json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
-            )
+            json_part = json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
         if json_part.endswith("```"):
             json_part = json_part[:-3]
         json_part = json_part.strip()
@@ -915,9 +866,7 @@ def write_daily_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     (output_dir / "report.md").write_text(report_md, encoding="utf-8")
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2), encoding="utf-8"
-    )
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     write_bundle(bundle, output_dir / "daily_bundle.json")
     if not adjustments_df.empty:
         adjustments_df.to_csv(output_dir / "adjustments.csv", index=False)
@@ -927,9 +876,7 @@ def write_daily_outputs(
     archive_dir = output_dir / "history" / today
     archive_dir.mkdir(parents=True, exist_ok=True)
     (archive_dir / "report.md").write_text(report_md, encoding="utf-8")
-    (archive_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2), encoding="utf-8"
-    )
+    (archive_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     write_bundle(bundle, archive_dir / "daily_bundle.json")
     if not adjustments_df.empty:
         adjustments_df.to_csv(archive_dir / "adjustments.csv", index=False)
@@ -942,12 +889,8 @@ def write_daily_outputs(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Automated daily portfolio risk report (two-pass)"
-    )
-    parser.add_argument(
-        "--force", action="store_true", help="Bypass weekday-morning gate"
-    )
+    parser = argparse.ArgumentParser(description="Automated daily portfolio risk report (two-pass)")
+    parser.add_argument("--force", action="store_true", help="Bypass weekday-morning gate")
     parser.add_argument(
         "--book",
         type=float,
@@ -961,11 +904,7 @@ def main():
     )
     args = parser.parse_args()
 
-    if (
-        not args.force
-        and not os.environ.get("FORCE_RUN")
-        and not _is_weekday_morning_et()
-    ):
+    if not args.force and not os.environ.get("FORCE_RUN") and not _is_weekday_morning_et():
         log.info("Not weekday 09:xx ET — exiting (use --force to override)")
         sys.exit(0)
 
@@ -1047,9 +986,7 @@ def main():
         log.error("Pass 1 (market analysis) failed: %s", e, exc_info=True)
         stance_dict = _fallback_pass1_result()
         stance_dict["error"] = str(e)
-        market_analysis_md = (
-            f"**Pass 1 Error**: Market analysis failed.\n\n```\n{e}\n```"
-        )
+        market_analysis_md = f"**Pass 1 Error**: Market analysis failed.\n\n```\n{e}\n```"
 
     target_leverage = stance_dict["target_leverage"]
     log.info("Using target_leverage=%.2f for sizer", target_leverage)
@@ -1065,9 +1002,7 @@ def main():
     # ---------------------------------------------------------------
     # STEP 8: Run sizer at Pass 1's target leverage
     # ---------------------------------------------------------------
-    log.info(
-        "Running portfolio sizer (book=$%,.2f, leverage=%.2f)...", book, target_leverage
-    )
+    log.info("Running portfolio sizer (book=$%,.2f, leverage=%.2f)...", book, target_leverage)
     t_sizer = time.perf_counter()
     sizer_result = run_sizer(portfolio_df, book, target_leverage=target_leverage)
     log.info("Sizer completed in %.2fs", time.perf_counter() - t_sizer)
@@ -1093,9 +1028,7 @@ def main():
         {
             "risk_data": risk_data,
             "sizer_summary": {
-                k: v
-                for k, v in sizer_result.items()
-                if k not in ("weights_df", "hedges_df", "max_scaled")
+                k: v for k, v in sizer_result.items() if k not in ("weights_df", "hedges_df", "max_scaled")
             },
         }
     )
@@ -1125,9 +1058,7 @@ def main():
         )
     except Exception as e:
         log.error("Pass 2 (portfolio risk) failed: %s", e, exc_info=True)
-        risk_analysis_md = (
-            f"**Pass 2 Error**: Risk analysis failed.\n\n```\n{e}\n```"
-        )
+        risk_analysis_md = f"**Pass 2 Error**: Risk analysis failed.\n\n```\n{e}\n```"
         risk_summary_dict = _fallback_daily_summary()
         risk_summary_dict["error"] = str(e)
 
@@ -1179,16 +1110,12 @@ def main():
             "market_data": market_data,
             "risk_data": risk_data,
             "sizer_summary": {
-                k: v
-                for k, v in sizer_result.items()
-                if k not in ("weights_df", "hedges_df", "max_scaled")
+                k: v for k, v in sizer_result.items() if k not in ("weights_df", "hedges_df", "max_scaled")
             },
         }
     )
 
-    write_daily_outputs(
-        report_md, merged_summary, full_bundle, adjustments_df, OUTPUT_DIR, today_str
-    )
+    write_daily_outputs(report_md, merged_summary, full_bundle, adjustments_df, OUTPUT_DIR, today_str)
 
     issue_title = f"Daily Report — {today_str} | {stance_dict['stance']}"
     try:

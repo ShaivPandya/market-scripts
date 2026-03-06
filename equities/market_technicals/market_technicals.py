@@ -7,15 +7,15 @@ Usage:
 """
 
 from market_breadth import main as run_market_breadth
-from top50_breadth import main as run_top50_breadth
 from price_volume_signals import main as run_price_volume_signals
+from top50_breadth import main as run_top50_breadth
 from vix_term_structure import main as run_vix_term_structure
 
 try:
+    from rich import box
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
-    from rich import box
 except ImportError:
     Console = None
 

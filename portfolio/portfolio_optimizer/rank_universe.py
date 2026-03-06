@@ -11,12 +11,12 @@ Usage:
 """
 
 from __future__ import annotations
-import logging
 
 import argparse
+import logging
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -32,16 +32,16 @@ except ImportError:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
-from equities.common import load_universe, list_universes, get_sp500_universe
-
 from signal_fetchers import (
+    compute_lookthrough_raw_metrics,
+    fetch_eps_momentum_batch,
+    fetch_etf_top_holdings_batch,
     fetch_price_momentum_batch,
     fetch_quality_batch,
-    fetch_eps_momentum_batch,
     fetch_revenue_momentum_batch,
-    fetch_etf_top_holdings_batch,
-    compute_lookthrough_raw_metrics,
 )
+
+from equities.common import get_sp500_universe, list_universes, load_universe
 
 # -----------------------------
 # Configuration
@@ -50,10 +50,10 @@ DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)
 DEFAULT_WEIGHTS = {
-    'quality': 0.33,
-    'price_momentum': 0.33,
-    'revenue_momentum': 0.20,
-    'eps_momentum': 0.14,
+    "quality": 0.33,
+    "price_momentum": 0.33,
+    "revenue_momentum": 0.20,
+    "eps_momentum": 0.14,
 }
 
 
@@ -87,7 +87,7 @@ def zscore_of_ranks(values: pd.Series) -> pd.Series:
 # -----------------------------
 # Price Fetching
 # -----------------------------
-def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100, delay: float = 1.0) -> pd.DataFrame:
+def fetch_prices_batch(tickers: list[str], years: int = 5, batch_size: int = 100, delay: float = 1.0) -> pd.DataFrame:
     """
     Download adjusted close prices for multiple tickers from yfinance in batches.
 
@@ -100,7 +100,7 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
     Returns:
         DataFrame with dates as index and tickers as columns
     """
-    end = datetime.now(timezone.utc).date() + timedelta(days=1)
+    end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
     all_prices = []
@@ -110,7 +110,7 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
     num_batches = (len(tickers) + batch_size - 1) // batch_size
 
     for i in range(0, len(tickers), batch_size):
-        batch = tickers[i:i + batch_size]
+        batch = tickers[i : i + batch_size]
         batch_num = (i // batch_size) + 1
 
         print(f"  Batch {batch_num}/{num_batches}: Downloading {len(batch)} tickers...")
@@ -147,7 +147,7 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
             time.sleep(delay)
 
     if not all_prices:
-        raise RuntimeError(f"No price data downloaded for any tickers")
+        raise RuntimeError("No price data downloaded for any tickers")
 
     # Combine all batches
     combined = pd.concat(all_prices, axis=1)
@@ -161,11 +161,11 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
     return combined.dropna(how="all")
 
 
-def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
+def fetch_prices(tickers: list[str], years: int = 5) -> pd.DataFrame:
     """Download adjusted close prices for multiple tickers from yfinance."""
     # For small batches (<=100), use direct download
     if len(tickers) <= 100:
-        end = datetime.now(timezone.utc).date() + timedelta(days=1)
+        end = datetime.now(UTC).date() + timedelta(days=1)
         start = end - timedelta(days=365 * years)
 
         df = yf.download(
@@ -196,7 +196,7 @@ def fetch_prices(tickers: List[str], years: int = 5) -> pd.DataFrame:
 # -----------------------------
 # Signal Computation Functions
 # -----------------------------
-def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_quality_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """
     Compute quality z-scores from raw quality metrics.
     Returns (quality_signal, pillar_scores DataFrame).
@@ -233,7 +233,7 @@ def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFram
 
     z_metrics = oriented.apply(zscore_of_ranks, axis=0)
 
-    def pillar(cols: List[str]) -> pd.Series:
+    def pillar(cols: list[str]) -> pd.Series:
         available = [c for c in cols if c in z_metrics.columns]
         if not available:
             return pd.Series(np.nan, index=z_metrics.index)
@@ -244,11 +244,14 @@ def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFram
     growth = pillar(["dgpoa", "droe", "droa", "dcfoa", "dgmar"])
     safety = pillar(["bab", "lev", "zscore", "evol"])
 
-    pillars = pd.DataFrame({
-        "profitability": profitability,
-        "growth": growth,
-        "safety": safety,
-    }, index=df.index)
+    pillars = pd.DataFrame(
+        {
+            "profitability": profitability,
+            "growth": growth,
+            "safety": safety,
+        },
+        index=df.index,
+    )
 
     combo = profitability + growth + safety
     quality = zscore_of_ranks(combo)
@@ -256,7 +259,7 @@ def compute_quality_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFram
     return quality, pillars
 
 
-def compute_price_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_price_momentum_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """Compute price momentum z-scores from raw momentum metrics."""
     if raw_df.empty:
         return pd.Series(dtype="float64"), pd.DataFrame()
@@ -273,7 +276,7 @@ def compute_price_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.D
     return zscore_of_ranks(composite), z_metrics
 
 
-def compute_eps_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_eps_momentum_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """Compute EPS momentum z-scores from raw EPS metrics."""
     if raw_df.empty:
         return pd.Series(dtype="float64"), pd.DataFrame()
@@ -290,7 +293,7 @@ def compute_eps_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.Dat
     return zscore_of_ranks(composite), z_metrics
 
 
-def compute_revenue_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
+def compute_revenue_momentum_scores(raw_df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     """Compute revenue momentum z-scores from raw revenue metrics."""
     if raw_df.empty:
         return pd.Series(dtype="float64"), pd.DataFrame()
@@ -311,9 +314,9 @@ def compute_revenue_momentum_scores(raw_df: pd.DataFrame) -> Tuple[pd.Series, pd
 # Signal Combination
 # -----------------------------
 def combine_signals(
-    signal_dict: Dict[str, pd.Series],
-    weights: Dict[str, float],
-    tickers: List[str],
+    signal_dict: dict[str, pd.Series],
+    weights: dict[str, float],
+    tickers: list[str],
 ) -> pd.Series:
     """Weighted combination of signals with dynamic weight adjustment for missing data."""
     signals_df = pd.DataFrame(signal_dict, index=tickers)
@@ -335,10 +338,7 @@ def combine_signals(
         weight_sum = sum(available_weights.values())
         normalized_weights = {k: v / weight_sum for k, v in available_weights.items()}
 
-        weighted_sum = sum(
-            normalized_weights[k] * available[k]
-            for k in normalized_weights.keys()
-        )
+        weighted_sum = sum(normalized_weights[k] * available[k] for k in normalized_weights.keys())
         composite[ticker] = weighted_sum
 
     return zscore_of_ranks(composite)
@@ -362,54 +362,64 @@ def display_rankings(
 ) -> None:
     """Display top and bottom ranked tickers."""
     # Create rankings dataframe
-    rankings_df = pd.DataFrame({
-        'Ticker': composite.index,
-        'Composite': composite.values,
-        'Quality': quality.reindex(composite.index).values,
-        'Price Mom': price_mom.reindex(composite.index).values,
-        'EPS Mom': eps_mom.reindex(composite.index).values,
-        'Rev Mom': rev_mom.reindex(composite.index).values,
-    })
+    rankings_df = pd.DataFrame(
+        {
+            "Ticker": composite.index,
+            "Composite": composite.values,
+            "Quality": quality.reindex(composite.index).values,
+            "Price Mom": price_mom.reindex(composite.index).values,
+            "EPS Mom": eps_mom.reindex(composite.index).values,
+            "Rev Mom": rev_mom.reindex(composite.index).values,
+        }
+    )
 
     # Sort by composite score
-    rankings_df = rankings_df.sort_values('Composite', ascending=False)
-    rankings_df['Rank'] = range(1, len(rankings_df) + 1)
+    rankings_df = rankings_df.sort_values("Composite", ascending=False)
+    rankings_df["Rank"] = range(1, len(rankings_df) + 1)
 
     # Get top and bottom
     top = rankings_df.head(top_n)
     bottom = rankings_df.tail(top_n).iloc[::-1]  # Reverse to show worst first
 
     # Display top performers
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"TOP {top_n} PERFORMERS (by Composite Score)")
-    print(f"{'='*80}")
-    print(f"{'Rank':<6} {'Ticker':<8} {'Composite':>10} {'Quality':>10} {'Price Mom':>10} {'EPS Mom':>10} {'Rev Mom':>10}")
-    print(f"{'-'*80}")
+    print(f"{'=' * 80}")
+    print(
+        f"{'Rank':<6} {'Ticker':<8} {'Composite':>10} {'Quality':>10} {'Price Mom':>10} {'EPS Mom':>10} {'Rev Mom':>10}"
+    )
+    print(f"{'-' * 80}")
 
     for _, row in top.iterrows():
-        print(f"{int(row['Rank']):<6} {row['Ticker']:<8} "
-              f"{row['Composite']:>10.2f} "
-              f"{row['Quality']:>10.2f} "
-              f"{row['Price Mom']:>10.2f} "
-              f"{row['EPS Mom']:>10.2f} "
-              f"{row['Rev Mom']:>10.2f}")
+        print(
+            f"{int(row['Rank']):<6} {row['Ticker']:<8} "
+            f"{row['Composite']:>10.2f} "
+            f"{row['Quality']:>10.2f} "
+            f"{row['Price Mom']:>10.2f} "
+            f"{row['EPS Mom']:>10.2f} "
+            f"{row['Rev Mom']:>10.2f}"
+        )
 
     # Display bottom performers
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"BOTTOM {top_n} PERFORMERS (by Composite Score)")
-    print(f"{'='*80}")
-    print(f"{'Rank':<6} {'Ticker':<8} {'Composite':>10} {'Quality':>10} {'Price Mom':>10} {'EPS Mom':>10} {'Rev Mom':>10}")
-    print(f"{'-'*80}")
+    print(f"{'=' * 80}")
+    print(
+        f"{'Rank':<6} {'Ticker':<8} {'Composite':>10} {'Quality':>10} {'Price Mom':>10} {'EPS Mom':>10} {'Rev Mom':>10}"
+    )
+    print(f"{'-' * 80}")
 
     for _, row in bottom.iterrows():
-        print(f"{int(row['Rank']):<6} {row['Ticker']:<8} "
-              f"{row['Composite']:>10.2f} "
-              f"{row['Quality']:>10.2f} "
-              f"{row['Price Mom']:>10.2f} "
-              f"{row['EPS Mom']:>10.2f} "
-              f"{row['Rev Mom']:>10.2f}")
+        print(
+            f"{int(row['Rank']):<6} {row['Ticker']:<8} "
+            f"{row['Composite']:>10.2f} "
+            f"{row['Quality']:>10.2f} "
+            f"{row['Price Mom']:>10.2f} "
+            f"{row['EPS Mom']:>10.2f} "
+            f"{row['Rev Mom']:>10.2f}"
+        )
 
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     return rankings_df
 
@@ -418,9 +428,7 @@ def display_rankings(
 # Main Function
 # -----------------------------
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Rank all constituents in a universe by composite score."
-    )
+    ap = argparse.ArgumentParser(description="Rank all constituents in a universe by composite score.")
     ap.add_argument(
         "--universe",
         default="sp500",
@@ -475,13 +483,15 @@ def main() -> int:
 
     # Optional trim for testing
     if args.max_universe and args.max_universe > 0:
-        universe = universe[:args.max_universe]
+        universe = universe[: args.max_universe]
 
     print(f"Universe size: {len(universe)} tickers")
 
     weights = DEFAULT_WEIGHTS.copy()
-    print(f"Weights: Quality={weights['quality']:.0%}, Price={weights['price_momentum']:.0%}, "
-          f"Revenue={weights['revenue_momentum']:.0%}, EPS={weights['eps_momentum']:.0%}")
+    print(
+        f"Weights: Quality={weights['quality']:.0%}, Price={weights['price_momentum']:.0%}, "
+        f"Revenue={weights['revenue_momentum']:.0%}, EPS={weights['eps_momentum']:.0%}"
+    )
 
     # Use single benchmark for all
     print(f"Benchmark: {args.benchmark}")
@@ -552,10 +562,10 @@ def main() -> int:
 
     # Combine signals
     signal_dict = {
-        'quality': quality_signal,
-        'eps_momentum': eps_signal,
-        'revenue_momentum': rev_signal,
-        'price_momentum': price_signal,
+        "quality": quality_signal,
+        "eps_momentum": eps_signal,
+        "revenue_momentum": rev_signal,
+        "price_momentum": price_signal,
     }
     composite_signal = combine_signals(signal_dict, weights, universe)
     composite_signal = clip_signal(composite_signal, *CLIP_BOUNDS)
@@ -580,6 +590,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
-    LOGGER.info('Starting script execution: %s', __file__)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    LOGGER.info("Starting script execution: %s", __file__)
     raise SystemExit(main())

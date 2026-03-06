@@ -23,29 +23,30 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 # -- Commodity definitions: display_name -> yfinance ticker ────────────────
 COMMODITIES = {
-    "Gold":            "GC=F",
-    "Silver":          "SI=F",
-    "Copper":          "HG=F",
-    "Platinum":        "PL=F",
-    "Palladium":       "PA=F",
-    "Aluminum":        "ALI=F",
-    "WTI Crude Oil":   "CL=F",
+    "Gold": "GC=F",
+    "Silver": "SI=F",
+    "Copper": "HG=F",
+    "Platinum": "PL=F",
+    "Palladium": "PA=F",
+    "Aluminum": "ALI=F",
+    "WTI Crude Oil": "CL=F",
     "Brent Crude Oil": "BZ=F",
-    "Natural Gas":     "NG=F",
+    "Natural Gas": "NG=F",
 }
 
 COMMODITY_ORDER = list(COMMODITIES.keys())
 
 # -- Timeframe configs: name -> yfinance (period, interval) ────────────────
 TIMEFRAMES = {
-    "This Week": {"period": "5d",  "interval": "15m"},
-    "Daily":     {"period": "90d", "interval": "1d"},
-    "Weekly":    {"period": "2y",  "interval": "1wk"},
-    "Monthly":   {"period": "5y",  "interval": "1mo"},
+    "This Week": {"period": "5d", "interval": "15m"},
+    "Daily": {"period": "90d", "interval": "1d"},
+    "Weekly": {"period": "2y", "interval": "1wk"},
+    "Monthly": {"period": "5y", "interval": "1mo"},
 }
 
 
 # -- Data fetching ─────────────────────────────────────────────────────────
+
 
 def fetch_commodities_data(timeframe: str = "Daily") -> dict:
     """
@@ -121,6 +122,7 @@ def format_price(value: float) -> str:
 
 
 # -- Terminal output ───────────────────────────────────────────────────────
+
 
 def print_terminal():
     """Print Commodities dashboard results for all timeframes."""

@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException
-from api.cache import short_cache, get_cached, set_cached
+from fastapi import APIRouter
+
+from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import DataFetchError
 from api.serializers import serialize_series, serialize_value
 
 router = APIRouter()
@@ -22,16 +24,18 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
 
     try:
         from portfolio_dashboard import get_data
+
         data = get_data(timeframe=timeframe, all_timeframes=all_timeframes)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="portfolio", detail=str(e)) from e
 
     if "error" in data and data["error"]:
-        raise HTTPException(status_code=500, detail=data["error"])
+        raise DataFetchError(source="portfolio", detail=data["error"])
 
     # Include ordering / display name lists if the module exposes them
     try:
         from portfolio_dashboard import POSITION_ORDER
+
         position_order = POSITION_ORDER
     except ImportError:
         position_order = []
@@ -46,10 +50,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
         for tf_name, tf_data in timeframes.items():
             positions_raw = tf_data.get("positions", {})
             tf_result = {
-                "positions": {
-                    ticker: serialize_series(series)
-                    for ticker, series in positions_raw.items()
-                },
+                "positions": {ticker: serialize_series(series) for ticker, series in positions_raw.items()},
                 "metadata": serialize_value(tf_data.get("metadata", {})),
                 "timeframe": tf_name,
                 "timestamp": tf_data["timestamp"].isoformat() if tf_data.get("timestamp") else None,
@@ -59,10 +60,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
     else:
         positions_raw = data.get("positions", {})
         result = {
-            "positions": {
-                ticker: serialize_series(series)
-                for ticker, series in positions_raw.items()
-            },
+            "positions": {ticker: serialize_series(series) for ticker, series in positions_raw.items()},
             "metadata": serialize_value(data.get("metadata", {})),
             "timeframe": timeframe,
             "timestamp": data["timestamp"].isoformat() if data.get("timestamp") else None,

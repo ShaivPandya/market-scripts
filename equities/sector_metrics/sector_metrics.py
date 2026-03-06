@@ -26,13 +26,14 @@ import datetime as dt
 import math
 import os
 import time
+import urllib.request
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import urllib.request
 
 try:
     import yfinance as yf
@@ -41,11 +42,16 @@ except ImportError as e:
 
 # Set User-Agent to avoid 403 errors from Yahoo Finance / Wikipedia
 opener = urllib.request.build_opener()
-opener.addheaders = [('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')]
+opener.addheaders = [
+    (
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    )
+]
 urllib.request.install_opener(opener)
 
 
-SECTOR_ETFS: Dict[str, str] = {
+SECTOR_ETFS: dict[str, str] = {
     "Communication Services": "XLC",
     "Consumer Discretionary": "XLY",
     "Consumer Staples": "XLP",
@@ -62,9 +68,8 @@ SECTOR_ETFS: Dict[str, str] = {
 
 BENCHMARK_ETF = "SPY"
 DEFAULT_CACHE_TTL_HOURS = 24.0
-DEFAULT_METADATA_CACHE_PATH = os.path.join(
-    os.path.dirname(__file__), ".sector_metrics_marketdata_cache.csv"
-)
+DEFAULT_METADATA_CACHE_PATH = os.path.join(os.path.dirname(__file__), ".sector_metrics_marketdata_cache.csv")
+
 
 @dataclass(frozen=True)
 class Lookbacks:
@@ -100,7 +105,7 @@ def get_sp500_constituents() -> pd.DataFrame:
 
 
 def download_prices(
-    tickers: List[str],
+    tickers: list[str],
     period: str = "2y",
     batch_size: int = 100,
     auto_adjust: bool = True,
@@ -109,7 +114,7 @@ def download_prices(
     Returns dataframe indexed by date with columns=tickers (Adj Close if auto_adjust=True).
     Uses batching to reduce Yahoo throttling failures.
     """
-    all_closes: List[pd.DataFrame] = []
+    all_closes: list[pd.DataFrame] = []
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i : i + batch_size]
         data = yf.download(
@@ -161,7 +166,7 @@ def month_ago_dates(prices_index: pd.DatetimeIndex, months: int) -> pd.Timestamp
     return nearest_on_or_before(prices_index, target)
 
 
-def _safe_float(x) -> Optional[float]:
+def _safe_float(x) -> float | None:
     try:
         if x is None:
             return None
@@ -174,7 +179,7 @@ def _safe_float(x) -> Optional[float]:
         return None
 
 
-def _extract_numeric_field(obj, keys: Iterable[str]) -> Optional[float]:
+def _extract_numeric_field(obj, keys: Iterable[str]) -> float | None:
     for key in keys:
         value = None
         try:
@@ -190,7 +195,7 @@ def _extract_numeric_field(obj, keys: Iterable[str]) -> Optional[float]:
     return None
 
 
-def _load_marketdata_cache(cache_path: Optional[str]) -> pd.DataFrame:
+def _load_marketdata_cache(cache_path: str | None) -> pd.DataFrame:
     cols = ["MarketCap", "SharesOutstanding", "CacheTs"]
     if not cache_path or not os.path.exists(cache_path):
         return pd.DataFrame(columns=cols, index=pd.Index([], name="Ticker"))
@@ -211,7 +216,7 @@ def _load_marketdata_cache(cache_path: Optional[str]) -> pd.DataFrame:
     return cache
 
 
-def _write_marketdata_cache(cache: pd.DataFrame, cache_path: Optional[str]) -> None:
+def _write_marketdata_cache(cache: pd.DataFrame, cache_path: str | None) -> None:
     if not cache_path:
         return
     try:
@@ -227,10 +232,10 @@ def _write_marketdata_cache(cache: pd.DataFrame, cache_path: Optional[str]) -> N
 
 
 def fetch_marketcap_and_shares(
-    tickers: List[str],
+    tickers: list[str],
     last_prices: pd.Series,
     max_workers: int = 12,
-    cache_path: Optional[str] = DEFAULT_METADATA_CACHE_PATH,
+    cache_path: str | None = DEFAULT_METADATA_CACHE_PATH,
     cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
 ) -> pd.DataFrame:
     """
@@ -251,16 +256,14 @@ def fetch_marketcap_and_shares(
 
     tickers_to_fetch = [t for t in ordered_tickers if not bool(fresh_mask.get(t, False))]
 
-    def worker(t: str) -> Tuple[str, Optional[float], Optional[float]]:
+    def worker(t: str) -> tuple[str, float | None, float | None]:
         ticker_obj = yf.Ticker(t)
         mcap = None
         shares = None
         try:
             fast_info = ticker_obj.fast_info
             mcap = _extract_numeric_field(fast_info, ("market_cap", "marketCap"))
-            shares = _extract_numeric_field(
-                fast_info, ("shares", "shares_outstanding", "sharesOutstanding")
-            )
+            shares = _extract_numeric_field(fast_info, ("shares", "shares_outstanding", "sharesOutstanding"))
         except Exception:
             pass
 
@@ -277,7 +280,7 @@ def fetch_marketcap_and_shares(
 
         return t, mcap, shares
 
-    results: List[Tuple[str, Optional[float], Optional[float]]] = []
+    results: list[tuple[str, float | None, float | None]] = []
     if tickers_to_fetch:
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             futs = {ex.submit(worker, t): t for t in tickers_to_fetch}
@@ -328,7 +331,7 @@ def compute_sector_weights_for_dates(
     constituents: pd.DataFrame,
     prices: pd.DataFrame,
     shares: pd.Series,
-    asof_dates: Dict[str, pd.Timestamp],
+    asof_dates: dict[str, pd.Timestamp],
 ) -> pd.DataFrame:
     """
     Compute sector weights for multiple as-of dates in one vectorized pass.
@@ -386,13 +389,13 @@ def compute_sector_weights(
     return out[col].dropna()
 
 
-def fetch_etf_prices(sector_etfs: Dict[str, str], benchmark: str = BENCHMARK_ETF, period: str = "2y") -> pd.DataFrame:
+def fetch_etf_prices(sector_etfs: dict[str, str], benchmark: str = BENCHMARK_ETF, period: str = "2y") -> pd.DataFrame:
     """Download all sector ETF prices plus benchmark in one pass."""
     tickers = list(sector_etfs.values()) + [benchmark]
     return download_prices(tickers, period=period, batch_size=50, auto_adjust=True)
 
 
-def compute_pct_above_200dma(sector_etfs: Dict[str, str], etf_prices: pd.DataFrame) -> pd.Series:
+def compute_pct_above_200dma(sector_etfs: dict[str, str], etf_prices: pd.DataFrame) -> pd.Series:
     """
     For each sector ETF: (last_close - SMA200) / SMA200 * 100
     """
@@ -414,10 +417,10 @@ def compute_pct_above_200dma(sector_etfs: Dict[str, str], etf_prices: pd.DataFra
 
 
 def compute_relative_performance(
-    sector_etfs: Dict[str, str],
+    sector_etfs: dict[str, str],
     etf_prices: pd.DataFrame,
     benchmark: str = BENCHMARK_ETF,
-    lookback_months: List[int] = [1, 3, 6, 12],
+    lookback_months: list[int] = [1, 3, 6, 12],
 ) -> pd.DataFrame:
     """
     Relative performance of each sector ETF vs the benchmark over each lookback period.
@@ -431,25 +434,25 @@ def compute_relative_performance(
     today = idx.max()
     prices_ffill = etf_prices.ffill()
 
-    rows: Dict[str, Dict[str, float]] = {}
+    rows: dict[str, dict[str, float]] = {}
     for sector, etf in sector_etfs.items():
-        row: Dict[str, float] = {}
+        row: dict[str, float] = {}
         for m in lookback_months:
             col = f"RelPerf_{m}M_pp"
             d_past = nearest_on_or_before(idx, today - pd.DateOffset(months=m))
             try:
-                etf_now   = float(prices_ffill.loc[today,  etf])
-                etf_then  = float(prices_ffill.loc[d_past, etf])
-                bench_now  = float(prices_ffill.loc[today,  benchmark])
+                etf_now = float(prices_ffill.loc[today, etf])
+                etf_then = float(prices_ffill.loc[d_past, etf])
+                bench_now = float(prices_ffill.loc[today, benchmark])
                 bench_then = float(prices_ffill.loc[d_past, benchmark])
                 if any(math.isnan(v) for v in [etf_now, etf_then, bench_now, bench_then]):
                     row[col] = np.nan
                 elif etf_then == 0 or bench_then == 0:
                     row[col] = np.nan
                 else:
-                    etf_ret   = (etf_now  - etf_then)  / etf_then  * 100.0
+                    etf_ret = (etf_now - etf_then) / etf_then * 100.0
                     bench_ret = (bench_now - bench_then) / bench_then * 100.0
-                    row[col]  = etf_ret - bench_ret
+                    row[col] = etf_ret - bench_ret
             except (KeyError, ValueError):
                 row[col] = np.nan
         rows[sector] = row
@@ -563,23 +566,29 @@ def main():
         if c.startswith("Weight_"):
             display[c] = display[c] * 100.0
     print("\nSector weights (% of total S&P 500 market cap, approximated) and changes (pp):")
-    print(display[[
-        weight_now_col,
-        weight_1m_col,
-        weight_3m_col,
-        weight_6m_col,
-        "Chg_1M_pp",
-        "Chg_3M_pp",
-        "Chg_6M_pp",
-        "Pct_Above_200DMA",
-    ]].round(3))
+    print(
+        display[
+            [
+                weight_now_col,
+                weight_1m_col,
+                weight_3m_col,
+                weight_6m_col,
+                "Chg_1M_pp",
+                "Chg_3M_pp",
+                "Chg_6M_pp",
+                "Pct_Above_200DMA",
+            ]
+        ].round(3)
+    )
 
     print("\nRelative performance vs S&P 500 / SPY (percentage points; positive = outperformed):")
     print(display[["RelPerf_1M_pp", "RelPerf_3M_pp", "RelPerf_6M_pp", "RelPerf_12M_pp"]].round(2))
 
     print(f"\nWrote:\n- {path_weights}\n- {path_marketdata}")
     print("\nInterpretation notes:")
-    print("- Sector weights are based on constituents’ current sharesOutstanding (or inferred) times historical prices.")
+    print(
+        "- Sector weights are based on constituents’ current sharesOutstanding (or inferred) times historical prices."
+    )
     print("- Pct_Above_200DMA is computed from sector ETF prices (SPDR Select Sector ETFs).")
     print(f"- Relative performance uses SPDR sector ETFs vs {BENCHMARK_ETF} as the S&P 500 benchmark.")
 
@@ -588,11 +597,11 @@ def get_data(
     period: str = "2y",
     batch_size: int = 100,
     max_workers: int = 12,
-    cache_path: Optional[str] = DEFAULT_METADATA_CACHE_PATH,
+    cache_path: str | None = DEFAULT_METADATA_CACHE_PATH,
     cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
 ) -> dict:
     """
-    Return sector metrics as a dict for the Streamlit GUI.
+    Return sector metrics as a dict for the frontend.
 
     Keys:
       weights_df  — DataFrame indexed by sector; weight columns already in %,
@@ -633,9 +642,7 @@ def get_data(
         },
     )
 
-    all_sectors = sorted(
-        set(SECTOR_ETFS.keys()) | set(weights_by_date.index)
-    )
+    all_sectors = sorted(set(SECTOR_ETFS.keys()) | set(weights_by_date.index))
 
     weights = weights_by_date.reindex(all_sectors).reindex(
         columns=["Weight_Now", "Weight_1M", "Weight_3M", "Weight_6M"]

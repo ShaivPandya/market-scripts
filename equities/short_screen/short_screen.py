@@ -34,31 +34,32 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import load_universe
 
 # ---------------------------------------------------------------------------
-# Module-level SEC caches (survive across Streamlit reruns within a session)
+# Module-level SEC caches
 # ---------------------------------------------------------------------------
-_cik_map: Dict[str, str] = {}       # ticker.upper() -> zero-padded 10-digit CIK string
+_cik_map: dict[str, str] = {}  # ticker.upper() -> zero-padded 10-digit CIK string
 _cik_map_loaded: bool = False
 _cik_map_lock = threading.Lock()
 
-_edgar_facts_cache: Dict[str, Optional[dict]] = {}   # cik_str -> raw companyfacts JSON or None
+_edgar_facts_cache: dict[str, dict | None] = {}  # cik_str -> raw companyfacts JSON or None
 _edgar_facts_lock = threading.Lock()
 
 SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
-SEC_RATE_LIMIT_DELAY = 0.12   # comfortably under SEC's 10 requests/second limit
+SEC_RATE_LIMIT_DELAY = 0.12  # comfortably under SEC's 10 requests/second limit
 
 
 # ---------------------------------------------------------------------------
 # yfinance helpers (pattern from equities/quality/quality_single.py)
 # ---------------------------------------------------------------------------
 
-def last_col(df: Optional[pd.DataFrame]) -> Optional[pd.Series]:
+
+def last_col(df: pd.DataFrame | None) -> pd.Series | None:
     """Return most recent column of a yfinance financial statement."""
     if df is None or df.empty:
         return None
     return df.iloc[:, 0]
 
 
-def get_item(s: Optional[pd.Series], keys: List[str]) -> float:
+def get_item(s: pd.Series | None, keys: list[str]) -> float:
     """Try multiple label variants in a yfinance statement series, return first match."""
     if s is None:
         return np.nan
@@ -75,6 +76,7 @@ def get_item(s: Optional[pd.Series], keys: List[str]) -> float:
 # ---------------------------------------------------------------------------
 # Phase 1: yfinance data fetch
 # ---------------------------------------------------------------------------
+
 
 def fetch_yf_data(ticker: str) -> dict:
     """
@@ -119,7 +121,7 @@ def fetch_yf_data(ticker: str) -> dict:
             if mc_fast is not None:
                 market_cap = float(mc_fast)
         except Exception:
-            LOGGER.debug("fast_info.market_cap failed for %s", tk, exc_info=True)
+            LOGGER.debug("fast_info.market_cap failed for %s", ticker, exc_info=True)
         if np.isnan(market_cap):
             mc_raw = info.get("marketCap")
             if mc_raw is not None:
@@ -129,13 +131,16 @@ def fetch_yf_data(ticker: str) -> dict:
                     pass
 
         # Book value from balance sheet
-        book_value = get_item(bal_last, [
-            "Stockholders Equity",
-            "StockholdersEquity",
-            "Total Stockholder Equity",
-            "TotalStockholderEquity",
-            "Common Stock Equity",
-        ])
+        book_value = get_item(
+            bal_last,
+            [
+                "Stockholders Equity",
+                "StockholdersEquity",
+                "Total Stockholder Equity",
+                "TotalStockholderEquity",
+                "Common Stock Equity",
+            ],
+        )
 
         # P/B fallback: market_cap / book_value when priceToBook is missing
         if np.isnan(price_to_book) and not np.isnan(market_cap) and not np.isnan(book_value) and book_value > 0:
@@ -145,12 +150,15 @@ def fetch_yf_data(ticker: str) -> dict:
         gross_profit = get_item(inc_last, ["Gross Profit", "GrossProfit"])
 
         # Operating income (most recent annual)
-        operating_income = get_item(inc_last, [
-            "Operating Income",
-            "OperatingIncome",
-            "EBIT",
-            "Ebit",
-        ])
+        operating_income = get_item(
+            inc_last,
+            [
+                "Operating Income",
+                "OperatingIncome",
+                "EBIT",
+                "Ebit",
+            ],
+        )
 
         company_name: str = info.get("longName") or info.get("shortName") or ""
 
@@ -168,7 +176,7 @@ def fetch_yf_data(ticker: str) -> dict:
         return {"ticker": ticker, "error": str(e)}
 
 
-def screen_ticker(ticker: str, pb_threshold: float, loss_type: str) -> Tuple[bool, dict]:
+def screen_ticker(ticker: str, pb_threshold: float, loss_type: str) -> tuple[bool, dict]:
     """
     Apply Phase 1 criteria (P/B + loss type) using yfinance data.
 
@@ -199,6 +207,7 @@ def screen_ticker(ticker: str, pb_threshold: float, loss_type: str) -> Tuple[boo
 # Phase 2: SEC EDGAR equity issuance
 # ---------------------------------------------------------------------------
 
+
 def _load_cik_map() -> None:
     """
     Download SEC's full company-ticker-CIK mapping once per process lifetime.
@@ -227,7 +236,7 @@ def _load_cik_map() -> None:
             _cik_map_loaded = True
 
 
-def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
+def _fetch_edgar_facts(cik_str: str) -> dict | None:
     """
     Fetch XBRL company facts from SEC EDGAR for one CIK.
     Rate-limited via SEC_RATE_LIMIT_DELAY sleep before each network request.
@@ -240,7 +249,7 @@ def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
     # Sleep outside the lock so other threads are not blocked during the wait
     time.sleep(SEC_RATE_LIMIT_DELAY)
 
-    result: Optional[dict] = None
+    result: dict | None = None
     try:
         url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik_str}.json"
         resp = requests.get(url, headers=SEC_HEADERS, timeout=20)
@@ -256,7 +265,7 @@ def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
     return result
 
 
-def _extract_annual_10k(entries: list) -> Optional[float]:
+def _extract_annual_10k(entries: list) -> float | None:
     """
     From a list of XBRL fact entries, return the value from the most recent 10-K
     whose 'end' date falls within the past 18 months.
@@ -265,8 +274,8 @@ def _extract_annual_10k(entries: list) -> Optional[float]:
     fiscal year ends and can file their 10-Ks up to 9 months later.
     """
     cutoff = date.today() - timedelta(days=548)
-    best_end: Optional[date] = None
-    best_val: Optional[float] = None
+    best_end: date | None = None
+    best_val: float | None = None
 
     for entry in entries:
         if entry.get("form") != "10-K":
@@ -309,14 +318,8 @@ def fetch_sec_issuance(ticker: str) -> dict:
     try:
         us_gaap = facts.get("facts", {}).get("us-gaap", {})
 
-        proceeds_entries = (
-            us_gaap.get("ProceedsFromIssuanceOfCommonStock", {})
-                   .get("units", {}).get("USD", [])
-        )
-        repurchase_entries = (
-            us_gaap.get("PaymentsForRepurchaseOfCommonStock", {})
-                   .get("units", {}).get("USD", [])
-        )
+        proceeds_entries = us_gaap.get("ProceedsFromIssuanceOfCommonStock", {}).get("units", {}).get("USD", [])
+        repurchase_entries = us_gaap.get("PaymentsForRepurchaseOfCommonStock", {}).get("units", {}).get("USD", [])
 
         proceeds = _extract_annual_10k(proceeds_entries)
         repurchases = _extract_annual_10k(repurchase_entries)
@@ -325,8 +328,7 @@ def fetch_sec_issuance(ticker: str) -> dict:
         repurchases_f = float(repurchases) if repurchases is not None else np.nan
 
         if not (np.isnan(proceeds_f) and np.isnan(repurchases_f)):
-            net = (0.0 if np.isnan(proceeds_f) else proceeds_f) - \
-                  (0.0 if np.isnan(repurchases_f) else repurchases_f)
+            net = (0.0 if np.isnan(proceeds_f) else proceeds_f) - (0.0 if np.isnan(repurchases_f) else repurchases_f)
         else:
             net = np.nan
 
@@ -344,14 +346,16 @@ def fetch_sec_issuance(ticker: str) -> dict:
 # Result row builder
 # ---------------------------------------------------------------------------
 
+
 def _build_result_row(data: dict) -> dict:
     """Convert raw yfinance data dict to a display-ready row (values in $M)."""
-    def to_m(val) -> Optional[float]:
+
+    def to_m(val) -> float | None:
         if val is None or (isinstance(val, float) and np.isnan(val)):
             return None
         return round(float(val) / 1e6, 1)
 
-    def fmt_pb(val) -> Optional[float]:
+    def fmt_pb(val) -> float | None:
         if val is None or (isinstance(val, float) and np.isnan(val)):
             return None
         return round(float(val), 2)
@@ -369,6 +373,7 @@ def _build_result_row(data: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
+
 
 def get_data(
     pb_threshold: float = 3.0,
@@ -420,15 +425,12 @@ def get_data(
     # ------------------------------------------------------------------
     # Phase 1: Parallel yfinance fetch + P/B + loss filter
     # ------------------------------------------------------------------
-    phase1_pass_data: List[dict] = []
-    failed_tickers: List[str] = []
+    phase1_pass_data: list[dict] = []
+    failed_tickers: list[str] = []
     done_count = 0
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {
-            pool.submit(screen_ticker, tk, pb_threshold, loss_type): tk
-            for tk in universe
-        }
+        futures = {pool.submit(screen_ticker, tk, pb_threshold, loss_type): tk for tk in universe}
         for future in as_completed(futures):
             tk = futures[future]
             try:
@@ -461,14 +463,14 @@ def get_data(
     # Keeps only stocks in the top quartile of net equity issuance
     # among the Phase 1 passers that have valid SEC data.
     # ------------------------------------------------------------------
-    final_rows: List[dict] = []
+    final_rows: list[dict] = []
 
     if not check_issuance:
         for data in phase1_pass_data:
             final_rows.append(_build_result_row(data))
     else:
         # Step 1: fetch issuance data for all Phase 1 passers
-        issuance_records: List[dict] = []
+        issuance_records: list[dict] = []
         for data in phase1_pass_data:
             sec = fetch_sec_issuance(data["ticker"])
             if "error" in sec:
@@ -478,17 +480,19 @@ def get_data(
             mktcap = data.get("market_cap", np.nan)
 
             if (
-                isinstance(net, float) and np.isnan(net)
-            ) or (
-                isinstance(mktcap, float) and np.isnan(mktcap)
-            ) or mktcap <= 0:
+                (isinstance(net, float) and np.isnan(net))
+                or (isinstance(mktcap, float) and np.isnan(mktcap))
+                or mktcap <= 0
+            ):
                 continue  # Cannot compute issuance; exclude
 
-            issuance_records.append({
-                "data": data,
-                "net": net,
-                "pct": net / mktcap,
-            })
+            issuance_records.append(
+                {
+                    "data": data,
+                    "net": net,
+                    "pct": net / mktcap,
+                }
+            )
 
         if issuance_records:
             # Step 2: top-quartile cutoff (75th percentile of net issuance)
@@ -521,15 +525,20 @@ def get_data(
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Short Screen — Russell 2000")
     parser.add_argument("--pb", type=float, default=3.0, help="P/B threshold (default 3.0)")
-    parser.add_argument("--loss", choices=["gross", "operating"], default="gross",
-                        help="Loss type: gross (default) or operating")
-    parser.add_argument("--issuance", action="store_true",
-                        help="Keep only top-quartile net equity issuers among screened stocks (SEC EDGAR)")
+    parser.add_argument(
+        "--loss", choices=["gross", "operating"], default="gross", help="Loss type: gross (default) or operating"
+    )
+    parser.add_argument(
+        "--issuance",
+        action="store_true",
+        help="Keep only top-quartile net equity issuers among screened stocks (SEC EDGAR)",
+    )
     args = parser.parse_args()
 
     loss_type = "Gross Loss" if args.loss == "gross" else "Operating Loss"
@@ -537,8 +546,7 @@ def main() -> None:
     def cb(done, total):
         print(f"\rPhase 1: {done}/{total}", end="", flush=True)
 
-    print(f"Running short screen: P/B > {args.pb}, {loss_type}"
-          + (", heavy issuance" if args.issuance else ""))
+    print(f"Running short screen: P/B > {args.pb}, {loss_type}" + (", heavy issuance" if args.issuance else ""))
 
     result = get_data(
         pb_threshold=args.pb,

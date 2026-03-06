@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException
-from api.cache import long_cache, get_cached, set_cached
+from fastapi import APIRouter
+
+from api.cache import get_cached, long_cache, set_cached
+from api.exceptions import DataFetchError
 from api.serializers import serialize_series, serialize_value
 
 router = APIRouter()
@@ -16,10 +18,11 @@ def get_country_dashboard(metric: str = "Inflation"):
     if cached is not None:
         return cached
     try:
-        from country_dashboard import get_data, COUNTRY_ORDER
+        from country_dashboard import COUNTRY_ORDER, get_data
+
         data = get_data(metric=metric)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise DataFetchError(source="country_dashboard", detail=str(e)) from e
 
     countries_raw = data.get("countries", {})
     result = {

@@ -124,7 +124,7 @@ def fetch_euro_area_current_account_pct_gdp(
     timeout: int = 30,
 ) -> pd.Series:
     """Fetch Euro area CA%GDP with sensible fallbacks (EA20 -> EA19)."""
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
     for geo in ("EA20", "EA19"):
         try:
             return fetch_eurostat_current_account_pct_gdp(
@@ -139,4 +139,3 @@ def fetch_euro_area_current_account_pct_gdp(
             last_err = e
             continue
     raise EurostatError("Eurostat CA%GDP fetch failed for EA20 and EA19") from last_err
-
