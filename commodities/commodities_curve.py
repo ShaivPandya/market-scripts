@@ -268,7 +268,12 @@ def get_data(commodity: str = "CL", lookback_days: int = 30) -> dict:
         curve_warnings = [w for w in curve_warnings if not w.startswith(expired_tk)]
 
     # Keep only 12 contracts for the curve
+    trimmed = points[12:]
     points = points[:12]
+
+    # Strip warnings for contracts that were trimmed (overflow buffer)
+    trimmed_tickers = {p["ticker"] for p in trimmed}
+    curve_warnings = [w for w in curve_warnings if not any(w.startswith(tk) for tk in trimmed_tickers)]
 
     analysis = _analyze_curve(points)
 
