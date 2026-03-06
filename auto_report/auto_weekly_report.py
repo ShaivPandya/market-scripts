@@ -65,6 +65,8 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 HISTORY_DIR = OUTPUT_DIR / "history"
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
 SUMMARY_SEPARATOR = "<!-- SUMMARY_JSON -->"
+THESIS_SEPARATOR = "<!-- THESIS_SUMMARY_JSON -->"
+THESES_DIR = PROJECT_ROOT / "investment_theses"
 
 DEFAULT_NEWS_SOURCES = [
     "bloomberg.com",
@@ -226,6 +228,134 @@ def load_last_week_summary(history_dir: Path) -> str | None:
         return json.dumps(data, indent=2)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Thesis monitoring helpers
+# ---------------------------------------------------------------------------
+
+
+def load_theses() -> dict[str, str | None]:
+    """Load investment thesis markdown files for all portfolio tickers."""
+    import csv
+
+    portfolio_csv = PROJECT_ROOT / "portfolio" / "portfolio.csv"
+    tickers: list[str] = []
+    with open(portfolio_csv, newline="") as f:
+        for row in csv.DictReader(f):
+            t = row.get("ticker", "").strip()
+            if t:
+                tickers.append(t)
+
+    theses: dict[str, str | None] = {}
+    for ticker in tickers:
+        thesis_path = THESES_DIR / f"{ticker}.md"
+        if thesis_path.exists():
+            try:
+                content = thesis_path.read_text(encoding="utf-8").strip()
+                theses[ticker] = content if content else None
+            except Exception as e:
+                log.warning("Failed to read thesis for %s: %s", ticker, e)
+                theses[ticker] = None
+        else:
+            log.debug("No thesis file for %s", ticker)
+            theses[ticker] = None
+    return theses
+
+
+def filter_news_7day(news_data: dict) -> dict[str, list[dict]]:
+    """Filter portfolio news to last 7 calendar days, grouped by ticker."""
+    import email.utils
+    from datetime import UTC
+
+    now_utc = datetime.now(UTC)
+    cutoff = now_utc - timedelta(days=7)
+
+    by_ticker = news_data.get("by_ticker", {})
+    filtered: dict[str, list[dict]] = {}
+    for ticker, articles in by_ticker.items():
+        recent: list[dict] = []
+        for article in articles:
+            seendate = article.get("seendate", "")
+            if not seendate:
+                continue
+            parsed = None
+            try:
+                parsed = datetime.fromisoformat(seendate.replace("Z", "+00:00"))
+            except Exception:
+                try:
+                    parsed = email.utils.parsedate_to_datetime(seendate)
+                except Exception:
+                    continue
+            if parsed is None:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            if parsed >= cutoff:
+                recent.append(article)
+        filtered[ticker] = recent
+    return filtered
+
+
+def collect_thesis_data() -> dict:
+    """Collect all data needed for thesis monitoring."""
+    import csv
+
+    results: dict = {}
+
+    # 1. Load theses
+    results["theses"] = load_theses()
+
+    # 2. Load portfolio positions
+    portfolio_csv = PROJECT_ROOT / "portfolio" / "portfolio.csv"
+    with open(portfolio_csv, newline="") as f:
+        results["portfolio"] = [r for r in csv.DictReader(f) if r.get("ticker")]
+
+    tickers = [p["ticker"] for p in results["portfolio"]]
+
+    # 3. Portfolio news (7-day filtered)
+    try:
+        from portfolio_news import get_data as get_news_data
+
+        t0 = time.perf_counter()
+        news_data = get_news_data(refresh=False)
+        results["news_7day"] = filter_news_7day(news_data)
+        log.info("thesis news fetched and filtered in %.2fs", time.perf_counter() - t0)
+    except Exception as e:
+        log.warning("thesis news fetch failed: %s", e, exc_info=True)
+        results["news_7day"] = {}
+
+    # 4. Technical analysis (per-ticker summaries)
+    try:
+        from technical_analysis import get_data as get_ta_data
+
+        t0 = time.perf_counter()
+        ta_results: dict = {}
+        for ticker in tickers:
+            try:
+                ta = get_ta_data(ticker, lookback="2Y")
+                ta_results[ticker] = ta.get("summary", ta)
+            except Exception as exc:
+                ta_results[ticker] = {"error": str(exc)}
+        log.info("thesis TA fetched in %.2fs", time.perf_counter() - t0)
+        results["technical_analysis"] = ta_results
+    except Exception as e:
+        log.warning("thesis TA fetch failed: %s", e, exc_info=True)
+        results["technical_analysis"] = {}
+
+    # 5. Price momentum (batch)
+    try:
+        from momentum import get_data as get_momentum_data
+
+        t0 = time.perf_counter()
+        momentum = get_momentum_data()
+        log.info("thesis momentum fetched in %.2fs", time.perf_counter() - t0)
+        results["momentum"] = momentum
+    except Exception as e:
+        log.warning("thesis momentum fetch failed: %s", e, exc_info=True)
+        results["momentum"] = {}
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +808,223 @@ def parse_response(text: str) -> tuple[str, dict]:
 
 
 # ---------------------------------------------------------------------------
+# Thesis monitoring prompt, parsing, and merge
+# ---------------------------------------------------------------------------
+
+
+def _build_thesis_prompt(thesis_data: dict) -> tuple[str, str]:
+    """Build (system_msg, user_msg) for the thesis monitoring Claude call."""
+    system_msg = (
+        "You are an investment analyst evaluating portfolio positions against their "
+        "original investment theses. For each position, determine whether recent data "
+        "(news, technicals, momentum) supports, challenges, or is neutral to the thesis. "
+        "Be specific about which data points matter and why. Focus on material developments "
+        "that could change the thesis, not noise. Pay special attention to any earnings-related "
+        "developments in the news flow."
+    )
+
+    theses = thesis_data.get("theses", {})
+    news_7day = thesis_data.get("news_7day", {})
+    ta = thesis_data.get("technical_analysis", {})
+    momentum_data = thesis_data.get("momentum", {})
+    portfolio = thesis_data.get("portfolio", [])
+
+    # Build momentum lookup: ticker -> metrics
+    momentum_by_ticker: dict = {}
+    if isinstance(momentum_data, dict) and "results" in momentum_data:
+        for r in momentum_data["results"]:
+            momentum_by_ticker[r["ticker"]] = {
+                k: v
+                for k, v in r.items()
+                if k
+                in (
+                    "avg20_roc63",
+                    "avg20_vol_roc63",
+                    "rel_roc42",
+                    "avg10_rel_roc",
+                    "benchmark",
+                    "close",
+                    "direction",
+                )
+            }
+
+    # Build per-ticker sections
+    ticker_sections: list[str] = []
+    for pos in portfolio:
+        ticker = pos["ticker"]
+        direction = pos.get("direction", "long")
+        conviction = pos.get("conviction", "")
+        asset = pos.get("asset", "equity")
+        distressed = pos.get("distressed", "false")
+
+        section_parts = [
+            f"### {ticker} (direction: {direction}, conviction: {conviction}, asset: {asset}, distressed: {distressed})"
+        ]
+
+        # Thesis
+        thesis_text = theses.get(ticker)
+        if thesis_text:
+            section_parts.append(f"\n**Investment Thesis:**\n{thesis_text}")
+        else:
+            section_parts.append("\n**Investment Thesis:** _No thesis file provided._")
+
+        # News (7-day)
+        ticker_news = news_7day.get(ticker, []) if isinstance(news_7day, dict) else []
+        if ticker_news:
+            news_lines = [f"\n**Recent News (7-day, {len(ticker_news)} articles):**"]
+            for article in ticker_news[:10]:  # Cap at 10 per ticker for token control
+                date_str = article.get("seendate", "")[:10]
+                source = article.get("source", "Unknown")
+                title = article.get("title", "No title")
+                url = article.get("url", "")
+                line = f"- [{date_str}] [{source}] {title}"
+                if url:
+                    line += f" ({url})"
+                news_lines.append(line)
+            section_parts.append("\n".join(news_lines))
+        else:
+            section_parts.append("\n**Recent News (7-day):** _No articles found._")
+
+        # Technical Analysis
+        ticker_ta = ta.get(ticker) if isinstance(ta, dict) else None
+        if isinstance(ticker_ta, list):
+            ta_lines = ["\n**Technical Signals:**"]
+            for signal in ticker_ta:
+                ta_lines.append(
+                    f"- {signal.get('Indicator', '?')}: {signal.get('Value', '?')} "
+                    f"({signal.get('Signal', '?')}, {signal.get('Bias', '?')})"
+                )
+            section_parts.append("\n".join(ta_lines))
+        elif isinstance(ticker_ta, dict) and "error" in ticker_ta:
+            section_parts.append(f"\n**Technical Signals:** _Error: {ticker_ta['error']}_")
+        else:
+            section_parts.append("\n**Technical Signals:** _Not available._")
+
+        # Momentum
+        ticker_mom = momentum_by_ticker.get(ticker)
+        if ticker_mom:
+            avg_roc = ticker_mom.get("avg20_roc63")
+            rel_roc = ticker_mom.get("rel_roc42")
+            avg_rel = ticker_mom.get("avg10_rel_roc")
+            bench = ticker_mom.get("benchmark", "SPY")
+            parts = ["\n**Momentum:**"]
+            if avg_roc is not None:
+                parts.append(f"avg20_roc63={avg_roc:.2f}%")
+            if rel_roc is not None:
+                parts.append(f"rel_roc42={rel_roc:.2f}%")
+            if avg_rel is not None:
+                parts.append(f"avg10_rel_roc={avg_rel:.2f}%")
+            parts.append(f"(vs {bench})")
+            section_parts.append(" ".join(parts))
+        else:
+            section_parts.append("\n**Momentum:** _Not available._")
+
+        ticker_sections.append("\n".join(section_parts))
+
+    tickers_with_theses = [t for t, v in theses.items() if v is not None]
+    tickers_without = [t for t, v in theses.items() if v is None]
+
+    user_msg = f"""Evaluate each portfolio position below against its investment thesis.
+
+**Tickers with thesis files:** {", ".join(tickers_with_theses) or "None"}
+**Tickers without thesis files:** {", ".join(tickers_without) or "None"}
+
+---
+
+{"---\n".join(ticker_sections)}
+
+---
+
+For each ticker, provide:
+1. **Thesis Status**: strengthen | neutral | weaken | insufficient-data
+2. **Technical Read**: improving | mixed | deteriorating
+3. **Fundamental Read**: supportive | mixed | contradictory | insufficient-data
+4. **Key Developments**: 1-3 specific data points from the news, technicals, or momentum
+5. **Earnings Note**: Flag any earnings-related development if found, otherwise omit
+6. **Action Signal**: hold | monitor | reassess | urgent review (with brief rationale)
+
+Write a concise "## Portfolio Thesis Monitoring" section with a sub-section for each ticker (3-5 sentences max per ticker).
+
+After all ticker evaluations, output the separator `{THESIS_SEPARATOR}` on its own line, then a JSON block:
+```json
+{{
+  "thesis_evaluations": [
+    {{
+      "ticker": "<TICKER>",
+      "thesis_status": "<strengthen|neutral|weaken|insufficient-data>",
+      "technical_read": "<improving|mixed|deteriorating>",
+      "fundamental_read": "<supportive|mixed|contradictory|insufficient-data>",
+      "action": "<hold|monitor|reassess|urgent review>",
+      "confidence": "<high|medium|low>",
+      "key_developments": ["<1-3 evidence points>"],
+      "earnings_note": "<note or null>",
+      "risk_flag": "<emerging risk or null>"
+    }}
+  ],
+  "positions_reviewed": ["<all tickers>"],
+  "thesis_strengthened": ["<tickers where thesis_status is strengthen>"],
+  "thesis_weakened": ["<tickers where thesis_status is weaken>"],
+  "positions_needing_reassessment": ["<tickers with action reassess or urgent review>"],
+  "missing_theses": ["<tickers without thesis files>"],
+  "material_developments": [
+    {{
+      "ticker": "<TICKER>",
+      "type": "<supports_thesis|contradicts_thesis|new_risk|earnings>",
+      "summary": "<one-line summary>"
+    }}
+  ]
+}}
+```
+
+End immediately after the JSON. No assistant meta text."""
+
+    return system_msg, user_msg
+
+
+def _fallback_thesis_summary() -> dict:
+    return {
+        "thesis_evaluations": [],
+        "positions_reviewed": [],
+        "thesis_strengthened": [],
+        "thesis_weakened": [],
+        "positions_needing_reassessment": [],
+        "missing_theses": [],
+        "material_developments": [],
+        "parse_error": True,
+    }
+
+
+def parse_thesis_response(text: str) -> tuple[str, dict]:
+    """Parse thesis monitoring Claude response into (markdown, summary_dict)."""
+    if THESIS_SEPARATOR in text:
+        parts = text.split(THESIS_SEPARATOR, 1)
+        thesis_md = parts[0].strip()
+        json_part = parts[1].strip()
+        if json_part.startswith("```"):
+            json_part = json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
+        if json_part.endswith("```"):
+            json_part = json_part[:-3]
+        json_part = json_part.strip()
+        try:
+            summary = json.loads(json_part)
+        except json.JSONDecodeError:
+            log.warning("Failed to parse thesis summary JSON")
+            summary = _fallback_thesis_summary()
+    else:
+        log.warning("No thesis separator found in response")
+        thesis_md = text.strip()
+        summary = _fallback_thesis_summary()
+    return thesis_md, summary
+
+
+def _merge_thesis_into_summary(base_summary: dict, thesis_summary: dict) -> dict:
+    """Merge thesis monitoring results into the weekly summary.json."""
+    merged = dict(base_summary)
+    merged["thesis_monitoring"] = thesis_summary
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Output writing and archival
 # ---------------------------------------------------------------------------
 
@@ -769,6 +1116,7 @@ def main():
     report_md = None
     summary = None
     error_msg = None
+    citations: list[tuple[str, str]] = []
 
     try:
         response_text, citations = call_claude(system_msg, user_msg, allowed_domains=allowed_domains)
@@ -790,8 +1138,65 @@ def main():
         summary = _fallback_summary()
         summary["error"] = error_msg
 
+    # 7b. Thesis Monitoring Pass
+    thesis_data: dict = {}
+    if THESES_DIR.exists():
+        log.info("=== Thesis Monitoring Pass ===")
+        try:
+            t_thesis = time.perf_counter()
+            thesis_data = collect_thesis_data()
+            thesis_system, thesis_user = _build_thesis_prompt(thesis_data)
+
+            thesis_text, thesis_citations = call_claude(
+                system_msg=thesis_system,
+                user_msg=thesis_user,
+                allowed_domains=None,
+                max_tokens=8192,
+            )
+            thesis_md, thesis_summary = parse_thesis_response(thesis_text)
+            thesis_md = strip_llm_meta(thesis_md)
+
+            if thesis_citations:
+                if citations:
+                    citations.extend(thesis_citations)
+
+            # Append thesis section to report
+            if thesis_md:
+                report_md += "\n\n---\n\n" + thesis_md
+
+            # Merge thesis into summary
+            summary = _merge_thesis_into_summary(summary, thesis_summary)
+
+            log.info(
+                "Thesis pass completed in %.2fs (%d evaluations)",
+                time.perf_counter() - t_thesis,
+                len(thesis_summary.get("thesis_evaluations", [])),
+            )
+        except Exception as e:
+            log.error("Thesis monitoring pass failed: %s", e, exc_info=True)
+            fallback = _fallback_thesis_summary()
+            fallback["error"] = str(e)
+            summary = _merge_thesis_into_summary(summary, fallback)
+            report_md += f"\n\n---\n\n## Portfolio Thesis Monitoring\n\n**Error**: Thesis monitoring failed — {e}"
+    else:
+        log.info("No investment_theses/ directory found — skipping thesis monitoring")
+
     # 8. Write outputs + archive
     write_outputs(report_md, summary, bundle, OUTPUT_DIR, today_str)
+
+    # 8b. Archive thesis bundle
+    if thesis_data:
+        archive_dir = OUTPUT_DIR / "history" / today_str
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            thesis_bundle_serialized = serialize_bundle(thesis_data)
+            (archive_dir / "thesis_bundle.json").write_text(
+                json.dumps(thesis_bundle_serialized, indent=2, default=str),
+                encoding="utf-8",
+            )
+            log.info("Archived thesis_bundle.json to %s", archive_dir)
+        except Exception as e:
+            log.warning("Failed to archive thesis bundle: %s", e)
 
     # 9. Create GitHub Issue
     issue_title = f"Weekly Market Report — {today_str}"
