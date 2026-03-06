@@ -21,7 +21,7 @@ import yfinance as yf
 
 LOGGER = logging.getLogger(__name__)
 
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 # -- Load portfolio from CSV ──────────────────────────────────────────────────
 _CSV_PATH = Path(__file__).parent / "portfolio.csv"

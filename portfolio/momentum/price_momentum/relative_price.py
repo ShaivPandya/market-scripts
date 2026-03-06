@@ -80,14 +80,14 @@ def main() -> int:
         ticker_prices = fetch_prices_yfinance(ticker, years=args.years)
         benchmark_prices = fetch_prices_yfinance(benchmark, years=args.years)
     except Exception as e:
-        LOGGER.error(f"Error: {e}")
+        LOGGER.error("%s", e)
         return 1
 
     # Align the two series on common dates
     combined = pd.DataFrame({"ticker": ticker_prices, "benchmark": benchmark_prices}).dropna()
 
     if len(combined) < args.roc_period + args.avg_period:
-        LOGGER.warning(f"Not enough data: need at least {args.roc_period + args.avg_period} trading days, got {len(combined)}.")
+        LOGGER.warning("Not enough data: need at least %d trading days, got %d.", args.roc_period + args.avg_period, len(combined))
         return 2
 
     # Calculate relative price

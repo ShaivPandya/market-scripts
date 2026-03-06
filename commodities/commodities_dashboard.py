@@ -19,7 +19,7 @@ from datetime import datetime
 import pandas as pd
 import yfinance as yf
 
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 # -- Commodity definitions: display_name -> yfinance ticker ────────────────
 COMMODITIES = {

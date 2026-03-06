@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the repo (API imports modules from many top-level folders)
 COPY . .
 
+RUN useradd --create-home appuser
+USER appuser
+
 EXPOSE 8080
 # Render sets $PORT; default to 8080 for local/dev.
 CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

@@ -223,7 +223,7 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
         try:
             return summarize_with_openai(text, meta)
         except Exception as ex:
-            LOGGER.warning(f"[WARN] OpenAI summarization failed: {ex}")
+            LOGGER.warning("OpenAI summarization failed: %s", ex)
     # naive fallback summary if no LLM
     first = " ".join(text.split()[:60])
     return {
@@ -348,11 +348,11 @@ def _fetch_and_store(conn: sqlite3.Connection, sources: Optional[list[str]] = No
                         set_content(conn, item.guid, text)
                         to_summarize.append((item.guid, text, meta))
                 except Exception as ex:
-                    LOGGER.warning(f"[WARN] {item.source} fetch failed: {item.url} -> {ex}")
+                    LOGGER.warning("%s fetch failed: %s -> %s", item.source, item.url, ex)
 
     # Phase 2: Summarize via LLM in parallel
     if not to_summarize:
-        LOGGER.info(f"[INFO] Central bank data fetch complete — {fetched} item(s) checked, no new summaries needed.")
+        LOGGER.info("Central bank data fetch complete — %d item(s) checked, no new summaries needed.", fetched)
         return
 
     def _do_summarize(item: tuple[str, str, dict]) -> tuple[str, dict]:
@@ -367,9 +367,9 @@ def _fetch_and_store(conn: sqlite3.Connection, sources: Optional[list[str]] = No
                 set_summary(conn, guid, summary)
             except Exception as ex:
                 failed = futures[future]
-                LOGGER.warning(f"[WARN] Summarization failed for {failed[2]['source']} {failed[2]['kind']}: {ex}")
+                LOGGER.warning("Summarization failed for %s %s: %s", failed[2]['source'], failed[2]['kind'], ex)
 
-    LOGGER.info(f"[INFO] Central bank data fetch and summarization complete — {fetched} item(s) fetched, {len(to_summarize)} new summary(ies) generated.")
+    LOGGER.info("Central bank data fetch and summarization complete — %d item(s) fetched, %d new summary(ies) generated.", fetched, len(to_summarize))
 
 def _query_items(conn: sqlite3.Connection, sources: Optional[list[str]] = None) -> list[dict]:
     """Query stored items and return as list of dicts."""
@@ -420,13 +420,13 @@ def get_data(db_path: str = None, refresh: bool = False, sources: Optional[list[
     Returns dict with keys: items, by_source, counts, last_updated, error (on failure).
     """
     db_path = _resolve_db_path(db_path)
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         init_db(conn)
         if refresh:
             _fetch_and_store(conn, sources=sources)
         items = _query_items(conn, sources=sources)
-        conn.close()
 
         active_sources = sources or list(FEEDS.keys())
         by_source: dict[str, list] = {k: [] for k in active_sources}
@@ -446,11 +446,14 @@ def get_data(db_path: str = None, refresh: bool = False, sources: Optional[list[
         }
     except Exception as e:
         return {"error": str(e)}
+    finally:
+        if conn is not None:
+            conn.close()
 
 def run():
     data = get_data()
     if "error" in data:
-        LOGGER.error(f"ERROR: {data['error']}")
+        LOGGER.error("Error: %s", data['error'])
         return
 
     for item in data["items"]:

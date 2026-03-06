@@ -325,7 +325,7 @@ def _cli(ticker: str) -> None:
 
     result = get_data(ticker)
     if "error" in result:
-        LOGGER.error(f"Error: {result['error']}")
+        LOGGER.error("Error: %s", result['error'])
         sys.exit(1)
 
     price_df = result["price_data"]

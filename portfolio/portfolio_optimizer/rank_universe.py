@@ -139,7 +139,7 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
                 failed_tickers.extend(batch)
 
         except Exception as e:
-            LOGGER.warning(f"  Warning: Batch {batch_num} failed with error: {e}")
+            LOGGER.warning("Batch %s failed with error: %s", batch_num, e)
             failed_tickers.extend(batch)
 
         # Delay between batches to avoid rate limiting (except for last batch)
@@ -156,7 +156,7 @@ def fetch_prices_batch(tickers: List[str], years: int = 5, batch_size: int = 100
     combined = combined.loc[:, ~combined.columns.duplicated()]
 
     if failed_tickers:
-        LOGGER.warning(f"  Warning: Failed to download data for {len(failed_tickers)} tickers")
+        LOGGER.warning("Failed to download data for %s tickers", len(failed_tickers))
 
     return combined.dropna(how="all")
 
@@ -494,7 +494,7 @@ def main() -> int:
     try:
         prices = fetch_prices(all_price_tickers, years=args.years)
     except Exception as e:
-        LOGGER.error(f"[ERROR] Failed to fetch prices: {e}")
+        LOGGER.error("Failed to fetch prices: %s", e)
         return 1
 
     # Fetch all metrics
