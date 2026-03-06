@@ -3,6 +3,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -52,7 +53,7 @@ def _build_perf_table(
     return header + "\n".join(body_lines) + "\n"
 
 
-def _build_key_ratios_table(rows: list[tuple[str, dict]]) -> str:
+def _build_key_ratios_table(rows: list[tuple[str, dict[str, Any]]]) -> str:
     """
     rows: list of (display_name, ratio_result_dict)
     """
@@ -66,17 +67,24 @@ def _build_key_ratios_table(rows: list[tuple[str, dict]]) -> str:
             err = str(r.get("error") or "Unknown error").strip()
             body_lines.append(f"| {name} | N/A | N/A | ERROR | {err} |")
             continue
-        stats = r.get("stats") if isinstance(r.get("stats"), dict) else {}
+        raw_stats = r.get("stats")
+        stats = cast(dict[str, Any], raw_stats) if isinstance(raw_stats, dict) else {}
         start_ratio = stats.get("start_ratio")
         end_ratio = stats.get("end_ratio")
         change = stats.get("change_pct")
         try:
-            start_s = _format_level(float(start_ratio), decimals_if_lt_100=6)
-            end_s = _format_level(float(end_ratio), decimals_if_lt_100=6)
+            start_ratio_value = float(start_ratio) if start_ratio is not None else None
+            end_ratio_value = float(end_ratio) if end_ratio is not None else None
+            if start_ratio_value is None or end_ratio_value is None:
+                raise ValueError("missing ratio values")
+            start_s = _format_level(start_ratio_value, decimals_if_lt_100=6)
+            end_s = _format_level(end_ratio_value, decimals_if_lt_100=6)
         except Exception:
             start_s = "N/A"
             end_s = "N/A"
         try:
+            if change is None:
+                raise ValueError("missing change")
             change_pct = float(change) * 100.0
             change_s = f"{change_pct:+.2f}%"
         except Exception:

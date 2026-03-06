@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -44,17 +44,17 @@ class QualityRequest(BaseModel):
 
 def _resolve_universe_tickers(universe_label: str) -> list[str]:
     """Return list of tickers for a named universe label."""
-    from common import get_universe_tickers, list_universes
+    from common import get_universe_tickers
 
     ticker_key = _UNIVERSE_MAP.get(universe_label)
     if ticker_key:
-        return get_universe_tickers(ticker_key)
+        return cast(list[str], get_universe_tickers(ticker_key))
     sector_etf = _SECTOR_PREFIX_MAP.get(universe_label)
     if sector_etf:
-        return get_universe_tickers(sector_etf)
+        return cast(list[str], get_universe_tickers(sector_etf))
     # Try as a raw key
     try:
-        return get_universe_tickers(universe_label)
+        return cast(list[str], get_universe_tickers(universe_label))
     except Exception:
         return []
 
@@ -75,6 +75,7 @@ def run_quality_screen(req: QualityRequest):
             raise HTTPException(status_code=400, detail="No tickers resolved for the requested universe/input.")
 
         benchmark_label = req.benchmark
+        benchmark: str | None
         if benchmark_label == "Same as Input":
             benchmark = "self"
         else:
@@ -99,7 +100,7 @@ def run_quality_screen(req: QualityRequest):
 
     import pandas as pd
 
-    result = {}
+    result: dict[str, Any] = {}
     for k, v in data.items():
         if isinstance(v, pd.DataFrame):
             result[k] = serialize_dataframe(v.reset_index())

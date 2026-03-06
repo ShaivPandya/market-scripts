@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter
 
 from api.cache import get_cached, set_cached, short_cache
@@ -42,7 +44,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
 
     if all_timeframes:
         timeframes = data.get("timeframes", {})
-        result = {
+        result: dict[str, Any] = {
             "timeframes": {},
             "timestamp": data["timestamp"].isoformat() if data.get("timestamp") else None,
         }

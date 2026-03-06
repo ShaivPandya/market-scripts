@@ -88,7 +88,15 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _rate_limit_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, RateLimitExceeded):
+        return _rate_limit_exceeded_handler(request, exc)
+    return JSONResponse(status_code=500, content={"error": "Internal server error", "type": "InternalError"})
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exception_handler)
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
 

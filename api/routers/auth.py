@@ -12,6 +12,7 @@ Dependency:
 
 import os
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Any, cast
 
 import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -62,10 +63,13 @@ router = APIRouter(tags=["auth"])
 def _create_token() -> str:
     ttl_hours = _get_jwt_ttl_hours()
     expire = datetime.now(UTC) + timedelta(hours=ttl_hours)
-    return jwt.encode(
-        {"sub": "admin", "exp": expire},
-        _get_jwt_secret(),
-        algorithm=_get_jwt_algorithm(),
+    return cast(
+        str,
+        jwt.encode(
+            {"sub": "admin", "exp": expire},
+            _get_jwt_secret(),
+            algorithm=_get_jwt_algorithm(),
+        ),
     )
 
 
@@ -87,12 +91,21 @@ def require_auth(access_token: str | None = Cookie(default=None)) -> str:
             detail="Not authenticated",
         )
     try:
-        payload = jwt.decode(
-            access_token,
-            _get_jwt_secret(),
-            algorithms=[_get_jwt_algorithm()],
+        payload = cast(
+            dict[str, Any],
+            jwt.decode(
+                access_token,
+                _get_jwt_secret(),
+                algorithms=[_get_jwt_algorithm()],
+            ),
         )
-        return payload["sub"]
+        sub = payload.get("sub")
+        if isinstance(sub, str):
+            return sub
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
     except JWTError:
         raise HTTPException(  # noqa: B904
             status_code=status.HTTP_401_UNAUTHORIZED,

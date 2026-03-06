@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -22,9 +23,9 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
     latest_forecast = data.get("latest_forecast", {}) or {}
     models = data.get("models", {}) or {}
 
-    forecast_rows = []
-    ci_series = []
-    driver_breakdown = []
+    forecast_rows: list[dict[str, Any]] = []
+    ci_series: list[dict[str, Any]] = []
+    driver_breakdown: list[dict[str, Any]] = []
 
     for horizon_key, forecast in latest_forecast.items():
         if not isinstance(forecast, dict):
@@ -69,7 +70,7 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
         )
 
         raw_drivers = driver_explanation.get("drivers", [])
-        drivers = []
+        drivers: list[dict[str, Any]] = []
         if isinstance(raw_drivers, list):
             for d in raw_drivers:
                 if not isinstance(d, dict):
@@ -85,10 +86,11 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
                     }
                 )
 
-        drivers.sort(
-            key=lambda d: abs(d.get("contribution", 0)) if isinstance(d.get("contribution"), (int, float)) else 0,
-            reverse=True,
-        )
+        def _driver_sort_key(driver: dict[str, Any]) -> float:
+            contribution = driver.get("contribution")
+            return abs(float(contribution)) if isinstance(contribution, (int, float)) else 0.0
+
+        drivers.sort(key=_driver_sort_key, reverse=True)
         driver_breakdown.append(
             {
                 "horizon_months": horizon,
@@ -97,9 +99,9 @@ def _to_compact_response(data: dict, pair: str, bootstrap: int, skip_bis: bool) 
             }
         )
 
-    forecast_rows.sort(key=lambda r: r["horizon_months"])
-    ci_series.sort(key=lambda r: r["horizon"])
-    driver_breakdown.sort(key=lambda r: r["horizon_months"])
+    forecast_rows.sort(key=lambda row: int(row.get("horizon_months", 0)))
+    ci_series.sort(key=lambda row: int(row.get("horizon", 0)))
+    driver_breakdown.sort(key=lambda row: int(row.get("horizon_months", 0)))
 
     return {
         "pair": pair,

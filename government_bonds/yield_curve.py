@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import TypedDict
 
 import pandas as pd
 
@@ -32,7 +32,12 @@ except ImportError:
     Fred = None  # type: ignore[assignment]
 
 
-TENOR_ORDER = [
+class TenorMeta(TypedDict):
+    tenor: str
+    years: float
+
+
+TENOR_ORDER: list[TenorMeta] = [
     {"tenor": "3M", "years": 0.25},
     {"tenor": "6M", "years": 0.50},
     {"tenor": "1Y", "years": 1.00},

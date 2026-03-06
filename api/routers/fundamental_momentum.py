@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -42,7 +44,7 @@ def _resolve_tickers(req: FMRequest) -> list[str]:
 
     key = _UNIVERSE_MAP.get(req.universe) or _SECTOR_PREFIX_MAP.get(req.universe, req.universe)
     try:
-        return get_universe_tickers(key)
+        return cast(list[str], get_universe_tickers(key))
     except Exception:
         return []
 
@@ -50,7 +52,7 @@ def _resolve_tickers(req: FMRequest) -> list[str]:
 def _serialize_fm(data: dict) -> dict:
     import pandas as pd
 
-    result = {}
+    result: dict[str, Any] = {}
     for k, v in data.items():
         if isinstance(v, pd.DataFrame):
             result[k] = serialize_dataframe(v.reset_index())
@@ -73,7 +75,7 @@ def run_fundamental_momentum(req: FMRequest):
         else:
             benchmark = req.benchmark
 
-        result = {"screen_type": req.screen_type}
+        result: dict[str, Any] = {"screen_type": req.screen_type}
 
         if req.screen_type in ("EPS", "Both"):
             from eps_screen import get_data as get_eps

@@ -1,0 +1,562 @@
+[
+  {
+    "id": "ABS",
+    "url": "https://api.data.abs.gov.au",
+    "name": "Australian Bureau of Statistics",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "categoryscheme": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "ABS_JSON",
+    "data_content_type": "JSON",
+    "url": "https://api.data.abs.gov.au",
+    "name": "Australian Bureau of Statistics"
+  },
+  {
+    "id": "AR1",
+    "name": "Argentina",
+    "url": "https://sdds.indec.gob.ar/files/",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "agencyscheme": false,
+      "categorisation": false,
+      "categoryscheme": false,
+      "codelist": false,
+      "conceptscheme": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "dataflow": false,
+      "datastructure": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false
+      }
+  },
+  {
+    "id": "BBK",
+    "url": "https://api.statistiken.bundesbank.de/rest",
+    "name": "German Federal Bank",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "categorisation": false,
+      "categoryscheme": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false,
+      "preview": true
+    }
+  },
+  {
+    "id": "BIS",
+    "name": "Bank for International Settlements",
+    "url": "https://stats.bis.org/api/v1",
+    "supports": {
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structureset": false,
+      "preview": true
+    }
+  },
+  {
+    "id": "COMP",
+    "name": "European Commission Directorate General for Competition",
+    "url": "https://webgate.ec.europa.eu/comp/redisstat/api/dissemination/sdmx/2.1",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "contentconstraint": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "ECB",
+    "url": "https://data-api.ecb.europa.eu/service",
+    "name": "European Central Bank",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "preview": true,
+      "provisionagreement": false
+    }
+  },
+  {
+    "id": "EMPL",
+    "name": "European Commission Directorate General for Employment, Social Affairs, and Inclusion",
+    "url": "https://webgate.ec.europa.eu/empl/redisstat/api/dissemination/sdmx/2.1",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "contentconstraint": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "ESTAT",
+    "url": "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1",
+    "name": "Eurostat",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "ESTAT3",
+    "url": "https://ec.europa.eu/eurostat/api/dissemination/sdmx/3.0",
+    "versions": [
+      "3.0.0"
+    ],
+    "name": "Eurostat (SDMX 3.0)"
+  },
+  {
+    "id": "ESTAT_COMEXT",
+    "name": "Eurostat (Comext and Prodcom datasets)",
+    "url": "https://ec.europa.eu/eurostat/api/comext/dissemination/sdmx/2.1",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "contentconstraint": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "GROW",
+    "name": "European Commission Directorate General for Internal Market, Industry, Entrepreneurship and SMEs",
+    "url": "https://webgate.ec.europa.eu/grow/redisstat/api/dissemination/sdmx/2.1",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "contentconstraint": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "ILO",
+    "name": "International Labor Organization",
+    "url": "https://sdmx.ilo.org/rest",
+    "headers": {
+      "data": {
+        "Accept": "application/vnd.sdmx.structurespecificdata+xml;version=2.1"
+      }
+    },
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "dataconsumerscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "provisionagreement": false,
+      "structure": false
+    }
+  },
+  {
+    "id": "IMF",
+    "url": "https://sdmxcentral.imf.org/ws/public/sdmxapi/rest",
+    "name": "International Monetary Fund",
+    "supports": {
+      "actualconstraint": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "provisionagreement": false
+    }
+  },
+  {
+    "id": "IMF_DATA",
+    "url": "https://api.imf.org/external/sdmx/2.1",
+    "name": "International Monetary Fund",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "registration": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "IMF_DATA3",
+    "url": "https://api.imf.org/external/sdmx/3.0",
+    "name": "International Monetary Fund (SDMX 3.0)",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "registration": false,
+      "structure": false,
+      "structureset": false
+    },
+    "versions": [
+      "3.0.0"
+    ]
+  },
+  {
+    "id": "INEGI",
+    "url": "http://sdmx.snieg.mx/service/rest",
+    "name": "Instituto Nacional de Estadística y Geografía (MX)",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "provisionagreement": false,
+      "structureset": false,
+      "structure-specific data": true
+    }
+  },
+  {
+    "id": "INSEE",
+    "name": "Institut national de la statistique et des études économiques (FR)",
+    "url": "https://www.bdm.insee.fr/series/sdmx",
+    "headers": {
+      "data": {
+        "Accept": "application/vnd.sdmx.genericdata+xml;version=2.1"
+      }
+    },
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "provisionagreement": false
+    }
+  },
+  {
+    "id": "ISTAT",
+    "name": "Instituto Nationale di Statistica (IT)",
+    "url": "https://esploradati.istat.it/SDMXWS/rest",
+    "supports": {
+      "agencyscheme": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "provisionagreement": false,
+      "structureset": false,
+      "structure-specific data": true
+    }
+  },
+  {
+    "id": "LSD",
+    "url": "https://osp-rs.stat.gov.lt/rest_xml",
+    "name": "Statistics Lithuania",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "agencyscheme": false,
+      "categorisation": false,
+      "categoryscheme": false,
+      "codelist": false,
+      "conceptscheme": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "NB",
+    "name": "Norges Bank (NO)",
+    "url": "https://data.norges-bank.no/api",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "categorisation": false,
+      "categoryscheme": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "structureset": false,
+      "structure-specific data": true
+    },
+    "headers": {
+      "data": {
+        "Accept": "application/vnd.sdmx.genericdata+xml;version=2.1"
+      }
+    }
+  },
+  {
+    "id": "NBB",
+    "data_content_type": "JSON",
+    "url": "https://stat.nbb.be/sdmx-json",
+    "name": "National Bank of Belgium"
+  },
+  {
+    "id": "OECD",
+    "url": "https://sdmx.oecd.org/public/rest",
+    "name": "Organisation for Economic Co-operation and Development",
+    "supports": {
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "metadataflow": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "OECD_JSON",
+    "data_content_type": "JSON",
+    "url": "https://stats.oecd.org/SDMX-JSON",
+    "name": "Organisation for Economic Co-operation and Development"
+  },
+  {
+    "id": "SGR",
+    "url": "https://registry.sdmx.org/ws/rest",
+    "name": "SDMX Global Registry",
+    "supports": {
+      "actualconstraint": false,
+      "metadataflow": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "SPC",
+    "name": "Pacific Data Hub DotStat by The Pacific Community (SPC)",
+    "url": "https://stats-nsi-stable.pacificdata.org/rest",
+    "supports": {
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "metadataflow": false,
+      "provisionagreement": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "STAT_EE",
+    "data_content_type": "JSON",
+    "url": "http://andmebaas.stat.ee/sdmx-json",
+    "name": "Statistics Estonia"
+  },
+  {
+    "id": "StatCan",
+    "name": "Statistics Canada",
+    "url": "https://www150.statcan.gc.ca/t1/wds/sdmx/statcan/rest/",
+    "supports": {
+      "actualconstraint": false,
+      "allowedconstraint": false,
+      "agencyscheme": false,
+      "categorisation": false,
+      "categoryscheme": false,
+      "codelist": false,
+      "conceptscheme": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "dataflow": false,
+      "datastructure": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "UNESCO",
+    "name": "UN Educational, Scientific and Cultural Organization",
+    "url": "http://api.uis.unesco.org/sdmx",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "categorisation": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "datastructure": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "structure": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "UNICEF",
+    "name": "UN Children's Fund",
+    "url": "https://sdmx.data.unicef.org/ws/public/sdmxapi/rest",
+    "supports": {
+      "actualconstraint": false,
+      "categorisation": false,
+      "dataconsumerscheme": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "structureset": false,
+      "structure-specific data": true
+    }
+  },
+  {
+    "id": "UNSD",
+    "name": "United Nations Statistics Division",
+    "url": "http://data.un.org/WS/rest",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "provisionagreement": false,
+      "structure": false,
+      "structureset": false,
+      "preview": true
+    }
+  },
+  {
+    "id": "UY110",
+    "name": "Uruguay",
+    "url": "https://sdmx-mtss.simel.mtss.gub.uy/rest",
+    "supports": {
+      "agencyscheme": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "provisionagreement": false,
+      "structureset": false
+    }
+  },
+  {
+    "id": "WB",
+    "name": "World Bank World Integrated Trade Solution",
+    "url": "https://wits.worldbank.org/API/V1/SDMX/V21/rest",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "dataconsumerscheme": false,
+      "dataproviderscheme": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "provisionagreement": false
+    }
+  },
+  {
+    "id": "WB_WDI",
+    "name": "World Bank World Development Indicators",
+    "url": "https://api.worldbank.org/v2/sdmx/rest",
+    "supports": {
+      "actualconstraint": false,
+      "agencyscheme": false,
+      "allowedconstraint": false,
+      "categorisation": false,
+      "categoryscheme": false,
+      "codelist": false,
+      "conceptscheme": false,
+      "contentconstraint": false,
+      "dataconsumerscheme": false,
+      "dataflow": false,
+      "dataproviderscheme": false,
+      "datastructure": false,
+      "hierarchicalcodelist": false,
+      "metadataflow": false,
+      "metadatastructure": false,
+      "organisationscheme": false,
+      "provisionagreement": false,
+      "structure-specific data": true,
+      "structure": false,
+      "structureset": false
+    }
+  }
+]

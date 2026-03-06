@@ -16,7 +16,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +165,7 @@ def _fetch_all_ibkr_news(positions: list[dict[str, str]]) -> dict[str, list[dict
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_run)
-            return future.result(timeout=30)
+            return cast(dict[str, list[dict[str, Any]]], future.result(timeout=30))
     except Exception as e:
         logger.warning("IBKR thread failed (%s: %s), skipping IB news", type(e).__name__, e)
         return {}
