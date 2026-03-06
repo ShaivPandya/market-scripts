@@ -9,3 +9,7 @@
 
 # Ignore temporary directory
 tmp/
+
+# Python
+*.pyc
+.pytest_cache/

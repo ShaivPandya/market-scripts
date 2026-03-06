@@ -220,7 +220,7 @@ def select_benchmark_ticker(ticker: str) -> str:
     try:
         market_cap, sector, is_etf = fetch_ticker_metadata(ticker)
     except Exception as e:
-        LOGGER.warning(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.")
+        LOGGER.warning("Failed to fetch metadata for %s: %s. Defaulting to SPY.", ticker, e)
         return "SPY"
 
     if is_etf:
@@ -255,7 +255,7 @@ def analyze_ticker(
         try:
             ticker_prices, ticker_volume = fetch_prices_yfinance(ticker, years=years)
         except Exception as e:
-            LOGGER.error(f"Error fetching {ticker}: {e}")
+            LOGGER.error("Error fetching %s: %s", ticker, e)
             return None
 
     # Align on common dates
@@ -264,7 +264,7 @@ def analyze_ticker(
     # Need enough data: 63 + 20 = 83 days minimum
     min_points = 63 + 20
     if len(combined) < min_points:
-        LOGGER.warning(f"Not enough data for {ticker}: need at least {min_points} trading days, got {len(combined)}.")
+        LOGGER.warning("Not enough data for %s: need at least %d trading days, got %d.", ticker, min_points, len(combined))
         return None
 
     prices = combined["ticker"]
@@ -403,7 +403,7 @@ def main() -> int:
 
     # Determine tickers to process
     if args.ticker and args.tickers_file:
-        LOGGER.error("Error: specify either a single ticker or --tickers-file, not both")
+        LOGGER.error("Specify either a single ticker or --tickers-file, not both")
         return 1
     elif args.ticker:
         tickers = [args.ticker.strip().upper()]
@@ -413,20 +413,20 @@ def main() -> int:
         # Default to reading from portfolio.csv
         portfolio_path = PORTFOLIO_CSV
         if not portfolio_path.exists():
-            LOGGER.error(f"Error: portfolio.csv not found at {portfolio_path}")
+            LOGGER.error("portfolio.csv not found at %s", portfolio_path)
             return 1
         try:
             portfolio_df = pd.read_csv(portfolio_path)
             if "ticker" not in portfolio_df.columns:
-                LOGGER.error("Error: portfolio.csv must have a 'ticker' column")
+                LOGGER.error("portfolio.csv must have a 'ticker' column")
                 return 1
             tickers = [t.strip().upper() for t in portfolio_df["ticker"].dropna()]
             if not tickers:
-                LOGGER.error("Error: no tickers found in portfolio.csv")
+                LOGGER.error("No tickers found in portfolio.csv")
                 return 1
             print(f"Using {len(tickers)} tickers from portfolio.csv")
         except Exception as e:
-            LOGGER.error(f"Error reading portfolio.csv: {e}")
+            LOGGER.error("Error reading portfolio.csv: %s", e)
             return 1
 
     benchmark_override = args.benchmark.strip().upper() if args.benchmark else None
@@ -452,13 +452,13 @@ def main() -> int:
     for ticker in tickers:
         ticker_prices = prices_map.get(ticker)
         if ticker_prices is None:
-            LOGGER.warning(f"No data for {ticker}")
+            LOGGER.warning("No data for %s", ticker)
             continue
 
         benchmark_ticker = ticker_to_benchmark[ticker]
         benchmark_prices = prices_map.get(benchmark_ticker)
         if benchmark_prices is None:
-            LOGGER.warning(f"No data for benchmark {benchmark_ticker}")
+            LOGGER.warning("No data for benchmark %s", benchmark_ticker)
             continue
 
         result = analyze_ticker(ticker, benchmark_prices, args.years, ticker_prices=ticker_prices, ticker_volume=volumes_map.get(ticker))

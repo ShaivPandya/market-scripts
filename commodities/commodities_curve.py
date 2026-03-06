@@ -23,7 +23,7 @@ from typing import Optional
 import pandas as pd
 import yfinance as yf
 
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 # Month code mapping: 1-based month index -> Yahoo Finance futures month code
 MONTH_CODES = {

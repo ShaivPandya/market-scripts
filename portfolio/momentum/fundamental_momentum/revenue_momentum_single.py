@@ -413,7 +413,7 @@ def main():
         try:
             raws[tk] = fetch_revenue_metrics(tk, growth_years=args.growth_years)
         except Exception as e:
-            LOGGER.warning(f"[WARN] {tk}: failed ({e})")
+            LOGGER.warning("%s: failed (%s)", tk, e)
 
         if i % 25 == 0:
             print(f"  processed {i}/{len(universe)}")
@@ -421,7 +421,7 @@ def main():
     # Check that at least one target was fetched
     failed_targets = [t for t in targets if t not in raws]
     if failed_targets:
-        LOGGER.warning(f"[WARN] Failed to fetch data for: {', '.join(failed_targets)}")
+        LOGGER.warning("Failed to fetch data for: %s", ", ".join(failed_targets))
     valid_targets = [t for t in targets if t in raws]
     if not valid_targets:
         raise SystemExit("Failed to fetch data for any target tickers")

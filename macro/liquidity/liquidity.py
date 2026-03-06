@@ -141,7 +141,7 @@ def fetch_fred_series(fred):
             errors.append(f"{name} ({sid}) error: {exc}")
     if errors:
         for err in errors:
-            LOGGER.error(f"Data fetch error: {err}")
+            LOGGER.error("Data fetch error: %s", err)
         sys.exit(1)
     df = pd.concat(data, axis=1)
     df.index = pd.to_datetime(df.index)
@@ -169,7 +169,7 @@ def fetch_ecb_series():
     try:
         ecb_client = sdmx.Client("ECB")
     except Exception as exc:
-        LOGGER.warning(f"Could not connect to ECB SDMX API: {exc}")
+        LOGGER.warning("Could not connect to ECB SDMX API: %s", exc)
         return None
 
     data = {}
@@ -219,7 +219,7 @@ def fetch_ecb_series():
 
     if errors:
         for err in errors:
-            LOGGER.warning(f"ECB data fetch warning: {err}")
+            LOGGER.warning("ECB data fetch warning: %s", err)
 
     if not data:
         return None

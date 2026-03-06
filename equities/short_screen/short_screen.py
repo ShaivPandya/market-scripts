@@ -14,6 +14,7 @@ Execution is phased:
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
@@ -26,6 +27,8 @@ import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
+
+LOGGER = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import load_universe
@@ -116,7 +119,7 @@ def fetch_yf_data(ticker: str) -> dict:
             if mc_fast is not None:
                 market_cap = float(mc_fast)
         except Exception:
-            pass
+            LOGGER.debug("fast_info.market_cap failed for %s", tk, exc_info=True)
         if np.isnan(market_cap):
             mc_raw = info.get("marketCap")
             if mc_raw is not None:
@@ -219,7 +222,7 @@ def _load_cik_map() -> None:
                 if tk and cik_int:
                     _cik_map[tk] = f"{int(cik_int):010d}"
         except Exception:
-            pass  # _cik_map stays empty; fetch_sec_issuance will return "CIK not found"
+            LOGGER.debug("SEC CIK map load failed", exc_info=True)
         finally:
             _cik_map_loaded = True
 
@@ -245,7 +248,7 @@ def _fetch_edgar_facts(cik_str: str) -> Optional[dict]:
             result = resp.json()
         # 404 → company has no XBRL facts; result stays None
     except Exception:
-        pass
+        LOGGER.debug("EDGAR facts fetch failed for CIK %s", cik_str, exc_info=True)
 
     with _edgar_facts_lock:
         _edgar_facts_cache[cik_str] = result
@@ -412,7 +415,7 @@ def get_data(
     try:
         yf.Ticker(universe[0]).fast_info.last_price
     except Exception:
-        pass
+        LOGGER.debug("yfinance session pre-warm failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Phase 1: Parallel yfinance fetch + P/B + loss filter

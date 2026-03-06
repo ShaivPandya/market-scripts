@@ -184,7 +184,7 @@ def select_benchmark_ticker(ticker: str, asset_type: Optional[str] = None) -> st
     try:
         market_cap, sector, is_etf = fetch_ticker_metadata(ticker)
     except Exception as e:
-        LOGGER.warning(f"Warning: failed to fetch metadata for {ticker}: {e}. Defaulting to SPY.")
+        LOGGER.warning("failed to fetch metadata for %s: %s. Defaulting to SPY.", ticker, e)
         return "SPY"
 
     if is_etf:
@@ -456,7 +456,7 @@ def generate_anchor_normalized_long_equity_signals(
     try:
         prices = fetch_prices(all_tickers, years=years)
     except Exception as e:
-        LOGGER.warning(f"[WARN] Anchor signal pricing failed: {e}")
+        LOGGER.warning("Anchor signal pricing failed: %s", e)
         return pd.DataFrame(), {
             "signal_anchor_mode": mode,
             "signal_anchor_universe_size": anchor_universe_size,
@@ -595,7 +595,7 @@ def generate_composite_signals(
     try:
         prices = fetch_prices(all_tickers, years=years)
     except Exception as e:
-        LOGGER.error(f"[ERROR] Failed to fetch prices: {e}")
+        LOGGER.error("Failed to fetch prices: %s", e)
         empty_df = pd.DataFrame({
             'quality_signal': pd.Series(np.nan, index=tickers),
             'eps_mom_signal': pd.Series(np.nan, index=tickers),
@@ -608,7 +608,7 @@ def generate_composite_signals(
     # Verify all benchmarks exist
     missing_benchmarks = [b for b in unique_benchmarks if b not in prices.columns]
     if missing_benchmarks:
-        LOGGER.error(f"[ERROR] Missing benchmark(s): {missing_benchmarks}")
+        LOGGER.error("Missing benchmark(s): %s", missing_benchmarks)
 
     # 1. Compute price momentum for ALL tickers
     print("\nComputing price momentum...")
@@ -810,7 +810,7 @@ def main() -> int:
     # Validate weights sum to 1.0 (warn if not)
     weight_sum = sum(weights.values())
     if abs(weight_sum - 1.0) > 0.01:
-        LOGGER.warning(f"[WARN] Weights sum to {weight_sum:.3f}, normalizing to 1.0")
+        LOGGER.warning("Weights sum to %.3f, normalizing to 1.0", weight_sum)
         weights = {k: v / weight_sum for k, v in weights.items()}
 
     # Handle --ticker argument (overrides portfolio CSV)
@@ -823,7 +823,7 @@ def main() -> int:
         # Load portfolio
         portfolio_path = Path(args.portfolio)
         if not portfolio_path.exists():
-            LOGGER.error(f"[ERROR] Portfolio file not found: {portfolio_path}")
+            LOGGER.error("Portfolio file not found: %s", portfolio_path)
             return 1
 
         meta = pd.read_csv(portfolio_path)
@@ -838,7 +838,7 @@ def main() -> int:
         direction_map = dict(zip(meta["ticker"], meta["direction"]))
 
         if not active_tickers:
-            LOGGER.error("[ERROR] No active tickers in portfolio")
+            LOGGER.error("No active tickers in portfolio")
             return 1
 
     print(f"Portfolio: {len(active_tickers)} active tickers")

@@ -36,7 +36,7 @@ import pandas as pd
 import requests
 from fredapi import Fred
 
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 _DEFAULT_STATCAN_CPI_CANADA_VECTOR_ID = 41690973
 try:

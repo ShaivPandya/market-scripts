@@ -87,13 +87,13 @@ def main() -> int:
     try:
         prices = fetch_prices_yfinance(ticker, years=args.years)
     except Exception as e:
-        LOGGER.error(f"Error: {e}")
+        LOGGER.error("%s", e)
         return 1
 
     # Need at least 63 + 20 data points to get the latest 20-day average.
     min_points = 63 + 20
     if len(prices) < min_points:
-        LOGGER.warning(f"Not enough data for {ticker}: need at least {min_points} trading days, got {len(prices)}.")
+        LOGGER.warning("Not enough data for %s: need at least %d trading days, got %d.", ticker, min_points, len(prices))
         return 2
 
     roc63 = (prices / prices.shift(63) - 1.0) * 100.0

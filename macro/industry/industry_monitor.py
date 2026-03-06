@@ -387,7 +387,7 @@ def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = 
             return None
         return (exit_price - entry_price) / entry_price * 100
     except Exception as ex:
-        LOGGER.warning(f"[WARN] Price reaction fetch failed for {ticker}: {ex}")
+        LOGGER.warning("Price reaction fetch failed for %s: %s", ticker, ex)
         return None
 
 
@@ -417,7 +417,7 @@ def _fetch_missing_price_reactions(conn: sqlite3.Connection) -> None:
     if not rows:
         return
 
-    LOGGER.info(f"[INFO] Fetching price reactions for {len(rows)} transcript(s)...")
+    LOGGER.info("Fetching price reactions for %d transcript(s)...", len(rows))
     for row in rows:
         row_id = row["id"]
         ticker = row["ticker"]
@@ -533,7 +533,7 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
         try:
             return summarize_with_openai(text, meta)
         except Exception as ex:
-            LOGGER.warning(f"[WARN] OpenAI summarization failed for {meta['ticker']}: {ex}")
+            LOGGER.warning("OpenAI summarization failed for %s: %s", meta['ticker'], ex)
     return _fallback_summary(text, meta)
 
 
@@ -673,19 +673,19 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
             pdf_path = _get_pdf_path(sector, ticker)
 
             if not os.path.isfile(pdf_path):
-                LOGGER.warning(f"[WARN] PDF file not found for {ticker}: {pdf_path}")
+                LOGGER.warning("PDF file not found for %s: %s", ticker, pdf_path)
                 _set_fresh_row(conn, ticker, None)
                 continue
 
             try:
                 transcript_text = _extract_text_from_pdf(pdf_path)
             except Exception as ex:
-                LOGGER.warning(f"[WARN] Failed to extract text from PDF for {ticker}: {ex}")
+                LOGGER.warning("Failed to extract text from PDF for %s: %s", ticker, ex)
                 _set_fresh_row(conn, ticker, None)
                 continue
 
             if not transcript_text.strip():
-                LOGGER.warning(f"[WARN] No text extracted from PDF for {ticker}")
+                LOGGER.warning("No text extracted from PDF for %s", ticker)
                 _set_fresh_row(conn, ticker, None)
                 continue
 
@@ -694,7 +694,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
                     transcript_text, pdf_path
                 )
             except Exception as ex:
-                LOGGER.warning(f"[WARN] Failed to parse period from PDF for {ticker}: {ex}")
+                LOGGER.warning("Failed to parse period from PDF for %s: %s", ticker, ex)
                 _set_fresh_row(conn, ticker, None)
                 continue
 
@@ -753,7 +753,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
             row_id, summary = future.result()
             _set_summary(conn, row_id, summary)
 
-    LOGGER.info(f"[INFO] Industry data fetch and summarization complete — {len(to_summarize)} transcript(s) summarized.")
+    LOGGER.info("Industry data fetch and summarization complete — %d transcript(s) summarized.", len(to_summarize))
 
 
 def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
@@ -834,7 +834,7 @@ def get_data(db_path: str = None, refresh: bool = False) -> dict:
 def run() -> None:
     data = get_data()
     if "error" in data:
-        LOGGER.error(f"ERROR: {data['error']}")
+        LOGGER.error("Error: %s", data['error'])
         return
 
     for sector in SECTORS.keys():

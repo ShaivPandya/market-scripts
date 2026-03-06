@@ -245,9 +245,9 @@ def main():
     )
 
     if "error" in result:
-        LOGGER.error(f"\nError: {result['error']}")
+        LOGGER.error("%s", result["error"])
         if result.get("failed"):
-            LOGGER.error(f"Failed tickers: {', '.join(result['failed'])}")
+            LOGGER.error("Failed tickers: %s", ", ".join(result["failed"]))
         sys.exit(1)
 
     results_df = result["results_df"]

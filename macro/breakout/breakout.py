@@ -413,7 +413,7 @@ def main() -> None:
     result = get_data()
 
     if "error" in result:
-        LOGGER.error(f"Error: {result['error']}")
+        LOGGER.error("Error: %s", result['error'])
         return
 
     latest = result.get("latest", [])

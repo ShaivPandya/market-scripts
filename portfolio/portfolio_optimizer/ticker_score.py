@@ -463,7 +463,7 @@ def main() -> int:
     try:
         prices = fetch_prices(all_price_tickers, years=args.years)
     except Exception as e:
-        LOGGER.error(f"[ERROR] Failed to fetch prices: {e}")
+        LOGGER.error("Failed to fetch prices: %s", e)
         return 1
 
     # Fetch all metrics

@@ -510,7 +510,7 @@ def fetch_market_timeseries(
             continue
         long_col, short_col = group_cols.get(g, (None, None))
         if not long_col or not short_col:
-            LOGGER.warning(f"Warning: Could not detect fields for group '{g}' in this dataset; skipping.")
+            LOGGER.warning("Could not detect fields for group '%s' in this dataset; skipping.", g)
             continue
         select_fields.extend([long_col, short_col])
 
@@ -702,7 +702,7 @@ def fetch_markets_timeseries(
             continue
         long_col, short_col = group_cols.get(g, (None, None))
         if not long_col or not short_col:
-            LOGGER.warning(f"Warning: Could not detect fields for group '{g}' in this dataset; skipping.")
+            LOGGER.warning("Could not detect fields for group '%s' in this dataset; skipping.", g)
             continue
         select_fields.extend([long_col, short_col])
 
@@ -818,7 +818,7 @@ def fetch_multiple_instruments(
         if alias in INSTRUMENTS:
             instrument_list.append(alias)
         else:
-            LOGGER.warning(f"Warning: Unknown instrument '{alias}', skipping.")
+            LOGGER.warning("Unknown instrument '%s', skipping.", alias)
 
     if not instrument_list:
         return []
@@ -866,7 +866,7 @@ def fetch_multiple_instruments(
 
             results.append(row)
         except Exception as e:
-            LOGGER.warning(f"Warning: Failed to summarize {alias}: {e}")
+            LOGGER.warning("Failed to summarize %s: %s", alias, e)
 
     return results
 
@@ -977,8 +977,8 @@ def main() -> int:
             # Validate
             invalid = [i for i in instrument_list if i not in INSTRUMENTS]
             if invalid:
-                LOGGER.error(f"Error: Unknown instruments: {invalid}")
-                LOGGER.warning(f"Use --list-instruments to see available aliases.")
+                LOGGER.error("Unknown instruments: %s", invalid)
+                LOGGER.warning("Use --list-instruments to see available aliases.")
                 return 2
 
         print(f"Fetching positioning for {len(instrument_list)} instruments...")
