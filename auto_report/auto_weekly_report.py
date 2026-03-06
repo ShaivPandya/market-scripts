@@ -858,8 +858,7 @@ def _build_thesis_prompt(thesis_data: dict) -> tuple[str, str]:
         distressed = pos.get("distressed", "false")
 
         section_parts = [
-            f"### {ticker} (direction: {direction}, conviction: {conviction}, "
-            f"asset: {asset}, distressed: {distressed})"
+            f"### {ticker} (direction: {direction}, conviction: {conviction}, asset: {asset}, distressed: {distressed})"
         ]
 
         # Thesis
@@ -897,9 +896,7 @@ def _build_thesis_prompt(thesis_data: dict) -> tuple[str, str]:
                 )
             section_parts.append("\n".join(ta_lines))
         elif isinstance(ticker_ta, dict) and "error" in ticker_ta:
-            section_parts.append(
-                f"\n**Technical Signals:** _Error: {ticker_ta['error']}_"
-            )
+            section_parts.append(f"\n**Technical Signals:** _Error: {ticker_ta['error']}_")
         else:
             section_parts.append("\n**Technical Signals:** _Not available._")
 
@@ -929,8 +926,8 @@ def _build_thesis_prompt(thesis_data: dict) -> tuple[str, str]:
 
     user_msg = f"""Evaluate each portfolio position below against its investment thesis.
 
-**Tickers with thesis files:** {', '.join(tickers_with_theses) or 'None'}
-**Tickers without thesis files:** {', '.join(tickers_without) or 'None'}
+**Tickers with thesis files:** {", ".join(tickers_with_theses) or "None"}
+**Tickers without thesis files:** {", ".join(tickers_without) or "None"}
 
 ---
 
@@ -1004,9 +1001,7 @@ def parse_thesis_response(text: str) -> tuple[str, dict]:
         thesis_md = parts[0].strip()
         json_part = parts[1].strip()
         if json_part.startswith("```"):
-            json_part = (
-                json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
-            )
+            json_part = json_part.split("\n", 1)[1] if "\n" in json_part else json_part[3:]
         if json_part.endswith("```"):
             json_part = json_part[:-3]
         json_part = json_part.strip()
@@ -1182,10 +1177,7 @@ def main():
             fallback = _fallback_thesis_summary()
             fallback["error"] = str(e)
             summary = _merge_thesis_into_summary(summary, fallback)
-            report_md += (
-                f"\n\n---\n\n## Portfolio Thesis Monitoring\n\n"
-                f"**Error**: Thesis monitoring failed — {e}"
-            )
+            report_md += f"\n\n---\n\n## Portfolio Thesis Monitoring\n\n**Error**: Thesis monitoring failed — {e}"
     else:
         log.info("No investment_theses/ directory found — skipping thesis monitoring")
 

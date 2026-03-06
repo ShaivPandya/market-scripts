@@ -11,9 +11,7 @@ def test_load_theses_reads_files(tmp_path, monkeypatch):
     csv_path = tmp_path / "portfolio" / "portfolio.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(
-        "ticker,asset,direction,distressed,conviction\n"
-        "AAA,equity,long,false,3\n"
-        "BBB,equity,short,false,2\n"
+        "ticker,asset,direction,distressed,conviction\nAAA,equity,long,false,3\nBBB,equity,short,false,2\n"
     )
 
     thesis_dir = tmp_path / "investment_theses"
