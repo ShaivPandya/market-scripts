@@ -19,7 +19,7 @@ import { RefreshButton } from "@/components/shared/RefreshButton"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { colorPositiveNegative } from "@/lib/colors"
 
-interface CurvePoint {
+type CurvePoint = {
   ticker: string
   label: string
   month: number
