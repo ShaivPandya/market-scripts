@@ -2,7 +2,7 @@
 Market Sentiment Data Module
 
 Fetches:
-  - CBOE Put/Call Ratio (equity, index, total) via CBOE public CSV
+  - Put/Call Ratio (current snapshot) computed from SPY + QQQ options chains via yfinance
   - AAII Investor Sentiment Survey (bull/bear/neutral %) via stooq.com
   - NAAIM Exposure Index via NAAIM website (HTML scrape → Excel download)
   - Volatility indices (VIX, ^VXN, ^VVIX) via yfinance
@@ -11,6 +11,7 @@ Fetches:
 from __future__ import annotations
 
 import io
+from datetime import date as date_type
 from datetime import timedelta
 
 import pandas as pd
@@ -25,7 +26,10 @@ except ImportError as e:
 # Constants
 # ---------------------------------------------------------------------------
 
-CBOE_PC_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/PC_ratio.csv"
+# Equity P/C proxies: SPY + QQQ options chains
+_PC_EQUITY_TICKERS = ["SPY", "QQQ", "IWM"]
+# Number of near-term expiries to sum over
+_PC_EXPIRIES = 8
 
 STOOQ_AAII_BULL = "https://stooq.com/q/d/l/?s=aaiibull.us&i=w"
 STOOQ_AAII_BEAR = "https://stooq.com/q/d/l/?s=aaiibear.us&i=w"
@@ -43,81 +47,83 @@ _TIMEOUT = 30
 
 
 # ---------------------------------------------------------------------------
-# Put/Call Ratio
+# Put/Call Ratio  (computed from live options chains via yfinance)
 # ---------------------------------------------------------------------------
 
 
-def get_put_call(lookback_days: int = 180) -> list[dict]:
+def _pc_for_ticker(sym: str, max_expiries: int = _PC_EXPIRIES) -> dict | None:
+    """Sum put/call volumes across the nearest N expiries for one ticker."""
+    ticker = yf.Ticker(sym)
+    exps = ticker.options
+    if not exps:
+        return None
+
+    total_calls = total_puts = 0
+    breakdown: list[dict] = []
+
+    for exp in exps[:max_expiries]:
+        try:
+            chain = ticker.option_chain(exp)
+            calls = int(chain.calls["volume"].fillna(0).sum())
+            puts = int(chain.puts["volume"].fillna(0).sum())
+            total_calls += calls
+            total_puts += puts
+            breakdown.append({
+                "expiry": exp,
+                "calls": calls,
+                "puts": puts,
+                "ratio": round(puts / calls, 3) if calls > 0 else None,
+            })
+        except Exception:
+            continue
+
+    if total_calls == 0:
+        return None
+
+    return {
+        "ticker": sym,
+        "calls": total_calls,
+        "puts": total_puts,
+        "ratio": round(total_puts / total_calls, 3),
+        "breakdown": breakdown,
+        "as_of": date_type.today().isoformat(),
+    }
+
+
+def get_put_call(lookback_days: int = 180) -> dict:
     """
-    Fetch CBOE daily Put/Call ratios.
+    Compute current Put/Call ratios from live yfinance options chains.
 
-    Returns a list of dicts:
-      {date, equity_pc, index_pc, total_pc,
-       equity_pc_5d, index_pc_5d, total_pc_5d}
-    where *_5d are 5-day rolling averages.
+    Note: CBOE's CDN (cdn.cboe.com) blocks all programmatic access with HTTP 403.
+    This function computes equivalent ratios from Yahoo Finance options chains:
+      - 'equity': SPY + QQQ + IWM combined (broad equity P/C proxy)
+      - 'spy': SPY only
+      - 'qqq': QQQ only
+      - 'iwm': IWM only
+
+    Returns a dict with keys:
+      equity, spy, qqq, iwm  — each a {ticker, calls, puts, ratio, breakdown, as_of} dict
     """
-    resp = requests.get(CBOE_PC_URL, headers=_HEADERS, timeout=_TIMEOUT)
-    resp.raise_for_status()
+    results: dict = {}
 
-    df = pd.read_csv(io.StringIO(resp.text))
-    df.columns = [c.strip() for c in df.columns]
+    for sym in _PC_EQUITY_TICKERS:
+        pc = _pc_for_ticker(sym)
+        if pc:
+            results[sym.lower()] = pc
 
-    # Normalise column names for reliable lookup
-    col_upper = {c.upper().replace(" ", "_"): c for c in df.columns}
+    # Aggregate equity P/C across SPY + QQQ + IWM
+    agg_calls = sum(results[s.lower()]["calls"] for s in _PC_EQUITY_TICKERS if s.lower() in results)
+    agg_puts = sum(results[s.lower()]["puts"] for s in _PC_EQUITY_TICKERS if s.lower() in results)
+    if agg_calls > 0:
+        results["equity"] = {
+            "ticker": "+".join(_PC_EQUITY_TICKERS),
+            "calls": agg_calls,
+            "puts": agg_puts,
+            "ratio": round(agg_puts / agg_calls, 3),
+            "as_of": date_type.today().isoformat(),
+        }
 
-    date_col = col_upper.get("DATE") or df.columns[0]
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df.dropna(subset=[date_col]).sort_values(date_col)
-
-    cutoff = pd.Timestamp.today() - timedelta(days=lookback_days)
-    df = df[df[date_col] >= cutoff].copy()
-
-    def _ratio(put_key: str, call_key: str) -> pd.Series:
-        pc = col_upper.get(put_key)
-        cc = col_upper.get(call_key)
-        if pc and cc:
-            puts = pd.to_numeric(df[pc], errors="coerce")
-            calls = pd.to_numeric(df[cc], errors="coerce")
-            return (puts / calls.replace(0, float("nan"))).round(3)
-        return pd.Series([None] * len(df), index=df.index)
-
-    def _direct(key: str) -> pd.Series:
-        c = col_upper.get(key)
-        if c:
-            return pd.to_numeric(df[c], errors="coerce").round(3)
-        return pd.Series([None] * len(df), index=df.index)
-
-    # CBOE CSV columns (as of 2024):
-    #   DATE, CALL, PUT, TOTAL, INDEX_CALL, INDEX_PUT, INDEX_TOTAL,
-    #   EQUITY_CALL, EQUITY_PUT, EQUITY_TOTAL
-    # TOTAL / INDEX_TOTAL / EQUITY_TOTAL are pre-computed ratios (put/call).
-    total_s = _direct("TOTAL") if col_upper.get("TOTAL") else _ratio("PUT", "CALL")
-    index_s = _direct("INDEX_TOTAL") if col_upper.get("INDEX_TOTAL") else _ratio("INDEX_PUT", "INDEX_CALL")
-    equity_s = _direct("EQUITY_TOTAL") if col_upper.get("EQUITY_TOTAL") else _ratio("EQUITY_PUT", "EQUITY_CALL")
-
-    df["total_pc"] = total_s.values
-    df["index_pc"] = index_s.values
-    df["equity_pc"] = equity_s.values
-
-    df["total_pc_5d"] = df["total_pc"].rolling(5, min_periods=1).mean().round(3)
-    df["index_pc_5d"] = df["index_pc"].rolling(5, min_periods=1).mean().round(3)
-    df["equity_pc_5d"] = df["equity_pc"].rolling(5, min_periods=1).mean().round(3)
-
-    records = []
-    for _, row in df.iterrows():
-        def _v(x):
-            return None if (x is None or (isinstance(x, float) and (x != x))) else x
-
-        records.append({
-            "date": row[date_col].date().isoformat(),
-            "equity_pc": _v(row["equity_pc"]),
-            "index_pc": _v(row["index_pc"]),
-            "total_pc": _v(row["total_pc"]),
-            "equity_pc_5d": _v(row["equity_pc_5d"]),
-            "index_pc_5d": _v(row["index_pc_5d"]),
-            "total_pc_5d": _v(row["total_pc_5d"]),
-        })
-    return records
+    return results
 
 
 # ---------------------------------------------------------------------------

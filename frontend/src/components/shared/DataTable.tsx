@@ -57,14 +57,14 @@ export function DataTable({ columns, rows, maxHeight = "600px", label }: DataTab
   }, [displayColumns, rows, label])
 
   if (rows.length === 0) {
-    return <p className="text-sm text-gray-400 py-4">No data available.</p>
+    return <p className="py-4 text-sm text-subtle">No data available.</p>
   }
 
   const copyButton = (
     <button
       type="button"
       onClick={handleCopy}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-500 hover:text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+      className="theme-button-secondary inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium"
     >
       {copied ? (
         <>
@@ -83,62 +83,65 @@ export function DataTable({ columns, rows, maxHeight = "600px", label }: DataTab
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        {label ? <h3 className="text-sm font-semibold text-gray-700">{label}</h3> : <span />}
+        {label ? <h3 className="text-sm font-semibold text-app">{label}</h3> : <span />}
         {copyButton}
       </div>
-    <div style={{ maxHeight, overflowY: "auto" }} className="rounded-xl border border-gray-200 overflow-x-auto">
-      <table className="w-full text-sm border-collapse">
-        <thead className="sticky top-0 bg-gray-50 z-10">
-          <tr>
-            {displayColumns.map(col => (
-              <th
-                key={col.key}
-                className="px-3 py-2 text-left font-semibold text-gray-600 border-b border-gray-200 whitespace-nowrap"
-                style={col.width ? { width: col.width } : undefined}
-              >
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr
-              key={ri}
-              className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-            >
-              {displayColumns.map(col => {
-                const raw = row[col.key]
-                const display = col.format ? col.format(raw) : (raw ?? "N/A")
-                const colorStr = col.colorFn ? col.colorFn(raw, row) : ""
-
-                // Parse "color; font-weight: bold" format from colors.ts
-                let color = ""
-                let fontWeight: string | undefined
-                if (colorStr) {
-                  const parts = colorStr.split(";").map(s => s.trim())
-                  color = parts[0] || ""
-                  if (parts.some(p => p.includes("bold"))) fontWeight = "bold"
-                }
-
-                return (
-                  <td
-                    key={col.key}
-                    className="px-3 py-2 whitespace-nowrap"
-                    style={{
-                      color: color || undefined,
-                      fontWeight: fontWeight,
-                    }}
-                  >
-                    {String(display)}
-                  </td>
-                )
-              })}
+      <div
+        style={{ maxHeight, overflowY: "auto" }}
+        className="overflow-x-auto rounded-xl border border-app bg-card"
+      >
+        <table className="w-full border-collapse text-sm">
+          <thead className="sticky top-0 z-10 bg-muted-surface">
+            <tr>
+              {displayColumns.map(col => (
+                <th
+                  key={col.key}
+                  className="whitespace-nowrap border-b border-app px-3 py-2 text-left font-semibold text-muted"
+                  style={col.width ? { width: col.width } : undefined}
+                >
+                  {col.header}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr
+                key={ri}
+                className="border-b border-app transition-colors hover:bg-muted-surface"
+              >
+                {displayColumns.map(col => {
+                  const raw = row[col.key]
+                  const display = col.format ? col.format(raw) : (raw ?? "N/A")
+                  const colorStr = col.colorFn ? col.colorFn(raw, row) : ""
+
+                  // Parse "color; font-weight: bold" format from colors.ts
+                  let color = ""
+                  let fontWeight: string | undefined
+                  if (colorStr) {
+                    const parts = colorStr.split(";").map(s => s.trim())
+                    color = parts[0] || ""
+                    if (parts.some(p => p.includes("bold"))) fontWeight = "bold"
+                  }
+
+                  return (
+                    <td
+                      key={col.key}
+                      className="whitespace-nowrap px-3 py-2"
+                      style={{
+                        color: color || undefined,
+                        fontWeight: fontWeight,
+                      }}
+                    >
+                      {String(display)}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

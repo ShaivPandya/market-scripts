@@ -3,6 +3,7 @@ import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchSentimentPutCall, fetchSentimentSurveys, fetchSentimentVolatility } from "@/lib/api"
 import { TimeSeriesChart } from "@/components/shared/TimeSeriesChart"
 import { MetricCard } from "@/components/shared/MetricCard"
+import { DataTable } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SegmentedControl } from "@/components/shared/FormControls"
@@ -24,6 +25,8 @@ function mkSeries(rows: Record<string, unknown>[], dateKey: string, valueKey: st
 
 // ─── Put/Call Tab ─────────────────────────────────────────────────────────────
 
+type PCEntry = { ticker: string; calls: number; puts: number; ratio: number; as_of: string; breakdown?: { expiry: string; calls: number; puts: number; ratio: number | null }[] }
+
 function PutCallTab() {
   const { data, isLoading, error } = useApiQuery(
     ["sentiment-put-call"],
@@ -31,71 +34,70 @@ function PutCallTab() {
     5 * 60 * 1000,
   )
 
-  if (isLoading) return <LoadingSpinner message="Fetching CBOE Put/Call data..." />
+  if (isLoading) return <LoadingSpinner message="Computing Put/Call ratios from options chains..." />
   if (error || !data) return <ErrorMessage message={String(error)} />
 
-  const rows: Record<string, unknown>[] = Array.isArray(data) ? data : []
-  const latest = rows[rows.length - 1] ?? {}
+  const equity = data?.equity as PCEntry | undefined
+  const spy = data?.spy as PCEntry | undefined
+  const qqq = data?.qqq as PCEntry | undefined
+  const iwm = data?.iwm as PCEntry | undefined
+  const asOf = spy?.as_of ?? equity?.as_of ?? ""
 
-  const equitySeries = mkSeries(rows, "date", "equity_pc")
-  const indexSeries = mkSeries(rows, "date", "index_pc")
-  const totalSeries = mkSeries(rows, "date", "total_pc")
-  const equity5d = mkSeries(rows, "date", "equity_pc_5d")
-  const index5d = mkSeries(rows, "date", "index_pc_5d")
-  const total5d = mkSeries(rows, "date", "total_pc_5d")
+  const breakdownRows: Record<string, unknown>[] = (spy?.breakdown ?? []).map(b => ({
+    expiry: b.expiry,
+    calls: b.calls.toLocaleString(),
+    puts: b.puts.toLocaleString(),
+    ratio: b.ratio != null ? b.ratio.toFixed(3) : "N/A",
+  }))
 
   return (
     <div>
       <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-1">
-        CBOE Put/Call Ratio
+        Put/Call Ratio — Live Snapshot
       </p>
       <p className="text-xs text-gray-400 mb-4">
-        Daily volumes from CBOE. Ratio &gt; 1.0 = more puts than calls (bearish sentiment).
-        5-day MA shown as dashed line.
+        Computed from Yahoo Finance options chains (SPY, QQQ, IWM). Ratio &gt; 1.0 = more
+        puts than calls (bearish tilt). As of: {asOf || "today"}.
       </p>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <MetricCard title="Equity P/C (latest)" value={fmt2(latest["equity_pc"])} />
-        <MetricCard title="Index P/C (latest)" value={fmt2(latest["index_pc"])} />
-        <MetricCard title="Total P/C (latest)" value={fmt2(latest["total_pc"])} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <MetricCard
+          title="Equity Aggregate"
+          value={equity ? equity.ratio.toFixed(3) : "N/A"}
+          subtitle="SPY + QQQ + IWM"
+        />
+        <MetricCard
+          title="SPY P/C"
+          value={spy ? spy.ratio.toFixed(3) : "N/A"}
+          subtitle={spy ? `${(spy.puts / 1000).toFixed(0)}K puts / ${(spy.calls / 1000).toFixed(0)}K calls` : ""}
+        />
+        <MetricCard
+          title="QQQ P/C"
+          value={qqq ? qqq.ratio.toFixed(3) : "N/A"}
+          subtitle={qqq ? `${(qqq.puts / 1000).toFixed(0)}K puts / ${(qqq.calls / 1000).toFixed(0)}K calls` : ""}
+        />
+        <MetricCard
+          title="IWM P/C"
+          value={iwm ? iwm.ratio.toFixed(3) : "N/A"}
+          subtitle={iwm ? `${(iwm.puts / 1000).toFixed(0)}K puts / ${(iwm.calls / 1000).toFixed(0)}K calls` : ""}
+        />
       </div>
 
-      {equitySeries.length > 0 && (
-        <div className="space-y-4">
-          <TimeSeriesChart
-            multiData={rows as Record<string, unknown>[]}
-            series={[
-              { key: "equity_pc", color: "#3b82f6", strokeWidth: 1.5 },
-              { key: "equity_pc_5d", color: "#3b82f6", strokeWidth: 1.5, strokeDasharray: "4 2", opacity: 0.5 },
+      {breakdownRows.length > 0 && (
+        <>
+          <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-2">
+            SPY Breakdown by Expiry
+          </p>
+          <DataTable
+            columns={[
+              { key: "expiry", header: "Expiry" },
+              { key: "calls", header: "Calls Volume" },
+              { key: "puts", header: "Puts Volume" },
+              { key: "ratio", header: "P/C Ratio" },
             ]}
-            height={160}
-            label="Equity Put/Call"
-            zeroLine={false}
-            yFormatter={v => v.toFixed(2)}
+            rows={breakdownRows}
           />
-          <TimeSeriesChart
-            multiData={rows as Record<string, unknown>[]}
-            series={[
-              { key: "index_pc", color: "#8b5cf6", strokeWidth: 1.5 },
-              { key: "index_pc_5d", color: "#8b5cf6", strokeWidth: 1.5, strokeDasharray: "4 2", opacity: 0.5 },
-            ]}
-            height={160}
-            label="Index Put/Call"
-            zeroLine={false}
-            yFormatter={v => v.toFixed(2)}
-          />
-          <TimeSeriesChart
-            multiData={rows as Record<string, unknown>[]}
-            series={[
-              { key: "total_pc", color: "#10b981", strokeWidth: 1.5 },
-              { key: "total_pc_5d", color: "#10b981", strokeWidth: 1.5, strokeDasharray: "4 2", opacity: 0.5 },
-            ]}
-            height={160}
-            label="Total Put/Call"
-            zeroLine={false}
-            yFormatter={v => v.toFixed(2)}
-          />
-        </div>
+        </>
       )}
     </div>
   )

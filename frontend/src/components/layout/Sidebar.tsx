@@ -1,6 +1,8 @@
 import { NavLink, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
+import { useTheme } from "@/contexts/ThemeContext"
+import { Toggle } from "@/components/shared/FormControls"
 
 interface NavSection {
   pages: { label: string; path: string }[]
@@ -39,7 +41,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "🧭 Market Technicals", path: "/market-technicals" },
       { label: "🧩 Sector Metrics", path: "/sector-metrics" },
       { label: "📌 Positioning", path: "/positioning" },
-      { label: "🎯 Sentiment", path: "/sentiment" },
+      { label: "🌡️ Sentiment", path: "/sentiment" },
       { label: "🔔 Breakout", path: "/breakout" },
       { label: "💱 FX Model", path: "/fx-model" },
     ],
@@ -68,6 +70,7 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { logout, mode } = useAuth()
+  const { resolvedTheme, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
   async function handleLogout() {
@@ -89,11 +92,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         "fixed top-0 left-0 h-full w-64 z-30",
         "transition-transform duration-300",
         isOpen ? "translate-x-0" : "-translate-x-full",
-        "border-r border-gray-200 bg-gray-50 flex flex-col",
+        "border-r border-app bg-muted-surface flex flex-col",
       ].join(" ")}
     >
       <div className="px-3 py-4 flex-1 overflow-y-auto">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-subtle">
           Navigation
         </p>
         {NAV_SECTIONS.map((section, si) => (
@@ -116,16 +119,24 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               </NavLink>
             ))}
             {si < NAV_SECTIONS.length - 1 && (
-              <hr className="my-2 border-gray-200" />
+              <hr className="my-2 border-app" />
             )}
           </div>
         ))}
       </div>
 
-      <div className="px-3 py-3 border-t border-gray-200">
+      <div className="space-y-3 border-t border-app px-3 py-3">
+        <div className="rounded-xl border border-app bg-card px-3 py-2.5">
+          <Toggle
+            label="Dark mode"
+            checked={resolvedTheme === "dark"}
+            onChange={toggleTheme}
+            description="Swap surfaces, controls, and charts."
+          />
+        </div>
         <button
           onClick={handleLogout}
-          className="w-full text-left px-2 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+          className="w-full rounded-lg px-2 py-1.5 text-left text-sm text-muted transition-colors hover:bg-[hsl(var(--muted-2))] hover:text-app"
         >
           Sign out
         </button>
