@@ -280,12 +280,12 @@ export function ChartPage() {
   const summaryRows: Record<string, unknown>[] = Array.isArray(singleData?.summary) ? singleData.summary : []
   const summaryCols: ColumnDef[] = summaryRows.length > 0
     ? Object.keys(summaryRows[0]).map(k => ({
-        key: k,
-        header: k,
-        colorFn: k.toLowerCase().includes("bias")
-          ? (v: unknown) => (String(v).toLowerCase() === "bullish" ? "green" : "red")
-          : undefined,
-      }))
+      key: k,
+      header: k,
+      colorFn: k.toLowerCase().includes("bias")
+        ? (v: unknown) => (String(v).toLowerCase() === "bullish" ? "green" : "red")
+        : undefined,
+    }))
     : []
 
   const displayTicker = String(singleData?.ticker ?? ticker).toUpperCase()
@@ -322,12 +322,12 @@ export function ChartPage() {
   const historicalAvg = toNumber(ratioStats.historical_avg) ?? (
     ratioRows.length > 0
       ? (() => {
-          const values = ratioRows
-            .map(r => r.ratio)
-            .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
-          if (values.length === 0) return null
-          return values.reduce((sum, v) => sum + v, 0) / values.length
-        })()
+        const values = ratioRows
+          .map(r => r.ratio)
+          .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        if (values.length === 0) return null
+        return values.reduce((sum, v) => sum + v, 0) / values.length
+      })()
       : null
   )
   const currentRatio = toNumber(ratioStats.end_ratio) ?? (
@@ -551,10 +551,10 @@ export function ChartPage() {
               title="Vs Historical Avg"
               value={formatPercentFromDecimal(currentVsHistoricalPct)}
             />
-            <MetricCard title="Bottom Decile" value={formatRatio(bottomDecile, 4)} />
-            <MetricCard title="Top Decile" value={formatRatio(topDecile, 4)} />
             <MetricCard title="Min Ratio" value={formatRatio(toNumber(ratioStats.min_ratio), 4)} />
             <MetricCard title="Max Ratio" value={formatRatio(toNumber(ratioStats.max_ratio), 4)} />
+            <MetricCard title="Bottom Decile" value={formatRatio(bottomDecile, 4)} />
+            <MetricCard title="Top Decile" value={formatRatio(topDecile, 4)} />
           </div>
 
           <div>
