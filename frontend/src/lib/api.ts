@@ -424,4 +424,10 @@ export const fetchSentimentSurveys = () =>
 export const fetchSentimentVolatility = (lookback_days = 365) =>
   client.get(`/sentiment/volatility?lookback_days=${lookback_days}`).then(r => r.data)
 
+export const analyzeSentiment = (body: {
+  put_call: Record<string, unknown>
+  surveys: Record<string, unknown>
+  volatility: unknown[]
+}) => client.post("/sentiment/analyze", body, { timeout: 180_000 }).then(r => r.data)
+
 export const clearCache = () => client.delete("/cache").then(r => r.data)

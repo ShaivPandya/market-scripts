@@ -1,6 +1,9 @@
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchSentimentPutCall, fetchSentimentSurveys, fetchSentimentVolatility } from "@/lib/api"
+import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
+import { fetchSentimentPutCall, fetchSentimentSurveys, fetchSentimentVolatility, analyzeSentiment } from "@/lib/api"
 import { TimeSeriesChart } from "@/components/shared/TimeSeriesChart"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { DataTable } from "@/components/shared/DataTable"
@@ -17,15 +20,111 @@ function fmt2(v: unknown): string {
   return v != null ? Number(v).toFixed(2) : "N/A"
 }
 
+function toFiniteNumber(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function fmt3(v: unknown): string {
+  const n = toFiniteNumber(v)
+  return n != null ? n.toFixed(3) : "N/A"
+}
+
+function fmtK(puts: unknown, calls: unknown): string {
+  const p = toFiniteNumber(puts)
+  const c = toFiniteNumber(calls)
+  if (p == null || c == null) return ""
+  return `${(p / 1000).toFixed(0)}K puts / ${(c / 1000).toFixed(0)}K calls`
+}
+
 function mkSeries(rows: Record<string, unknown>[], dateKey: string, valueKey: string) {
   return rows
     .filter(r => r[dateKey] && r[valueKey] != null)
     .map(r => ({ date: String(r[dateKey]), value: Number(r[valueKey]) }))
 }
 
+const SURVEYS_CACHE_KEY = "sentiment-surveys-cache-v1"
+
+type SurveysPayload = {
+  aaii: Record<string, unknown>[]
+  naaim: Record<string, unknown>[]
+}
+
+function isSurveysPayload(v: unknown): v is SurveysPayload {
+  if (!v || typeof v !== "object") return false
+  const rec = v as Record<string, unknown>
+  return Array.isArray(rec.aaii) && Array.isArray(rec.naaim)
+}
+
+function loadSurveysCache(): { payload: SurveysPayload; savedAt: string } | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = window.localStorage.getItem(SURVEYS_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { payload?: unknown; savedAt?: unknown }
+    if (!isSurveysPayload(parsed.payload) || typeof parsed.savedAt !== "string") return null
+    return { payload: parsed.payload, savedAt: parsed.savedAt }
+  } catch {
+    return null
+  }
+}
+
+function saveSurveysCache(payload: SurveysPayload) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(
+      SURVEYS_CACHE_KEY,
+      JSON.stringify({ payload, savedAt: new Date().toISOString() }),
+    )
+  } catch {
+    // Ignore localStorage write failures.
+  }
+}
+
+function formatSavedAt(iso: string): string {
+  const dt = new Date(iso)
+  if (Number.isNaN(dt.getTime())) return iso
+  return dt.toLocaleString("en-US")
+}
+
 // ─── Put/Call Tab ─────────────────────────────────────────────────────────────
 
-type PCEntry = { ticker: string; calls: number; puts: number; ratio: number; as_of: string; breakdown?: { expiry: string; calls: number; puts: number; ratio: number | null }[] }
+type PCEntry = { ticker: string; calls: number | null; puts: number | null; ratio: number | null; as_of: string; breakdown: { expiry: string; calls: number; puts: number; ratio: number | null }[] }
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === "object"
+}
+
+function parseBreakdown(v: unknown): PCEntry["breakdown"] {
+  if (!Array.isArray(v)) return []
+  return v
+    .map((row) => {
+      if (!isRecord(row)) return null
+      const expiry = String(row.expiry ?? "")
+      const calls = toFiniteNumber(row.calls)
+      const puts = toFiniteNumber(row.puts)
+      if (!expiry || calls == null || puts == null) return null
+      return {
+        expiry,
+        calls,
+        puts,
+        ratio: toFiniteNumber(row.ratio),
+      }
+    })
+    .filter((row): row is PCEntry["breakdown"][number] => row != null)
+}
+
+function parsePCEntry(v: unknown): PCEntry | null {
+  if (!isRecord(v)) return null
+  return {
+    ticker: String(v.ticker ?? ""),
+    calls: toFiniteNumber(v.calls),
+    puts: toFiniteNumber(v.puts),
+    ratio: toFiniteNumber(v.ratio),
+    as_of: typeof v.as_of === "string" ? v.as_of : "",
+    breakdown: parseBreakdown(v.breakdown),
+  }
+}
 
 function PutCallTab() {
   const { data, isLoading, error } = useApiQuery(
@@ -34,20 +133,65 @@ function PutCallTab() {
     5 * 60 * 1000,
   )
 
+  const payload = isRecord(data) ? data : {}
+  const equity = parsePCEntry(payload.equity)
+  const spy = parsePCEntry(payload.spy)
+  const qqq = parsePCEntry(payload.qqq)
+  const iwm = parsePCEntry(payload.iwm)
+  const asOf = spy?.as_of ?? equity?.as_of ?? ""
+
+  const expiryCurveData = useMemo(() => {
+    const byExpiry = new Map<string, {
+      date: string
+      SPY: number | null
+      QQQ: number | null
+      IWM: number | null
+      Equity: number | null
+      equityCalls: number
+      equityPuts: number
+    }>()
+
+    const ingest = (key: "SPY" | "QQQ" | "IWM", rows: PCEntry["breakdown"]) => {
+      for (const row of rows ?? []) {
+        const current = byExpiry.get(row.expiry) ?? {
+          date: row.expiry,
+          SPY: null,
+          QQQ: null,
+          IWM: null,
+          Equity: null,
+          equityCalls: 0,
+          equityPuts: 0,
+        }
+        current[key] = row.ratio
+        current.equityCalls += row.calls
+        current.equityPuts += row.puts
+        byExpiry.set(row.expiry, current)
+      }
+    }
+
+    ingest("SPY", spy?.breakdown ?? [])
+    ingest("QQQ", qqq?.breakdown ?? [])
+    ingest("IWM", iwm?.breakdown ?? [])
+
+    return Array.from(byExpiry.values())
+      .map((r) => ({
+        date: r.date,
+        SPY: r.SPY,
+        QQQ: r.QQQ,
+        IWM: r.IWM,
+        Equity: r.equityCalls > 0 ? Number((r.equityPuts / r.equityCalls).toFixed(3)) : null,
+      }))
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+  }, [spy?.breakdown, qqq?.breakdown, iwm?.breakdown])
+
   if (isLoading) return <LoadingSpinner message="Computing Put/Call ratios from options chains..." />
   if (error || !data) return <ErrorMessage message={String(error)} />
-
-  const equity = data?.equity as PCEntry | undefined
-  const spy = data?.spy as PCEntry | undefined
-  const qqq = data?.qqq as PCEntry | undefined
-  const iwm = data?.iwm as PCEntry | undefined
-  const asOf = spy?.as_of ?? equity?.as_of ?? ""
 
   const breakdownRows: Record<string, unknown>[] = (spy?.breakdown ?? []).map(b => ({
     expiry: b.expiry,
     calls: b.calls.toLocaleString(),
     puts: b.puts.toLocaleString(),
-    ratio: b.ratio != null ? b.ratio.toFixed(3) : "N/A",
+    ratio: fmt3(b.ratio),
   }))
 
   return (
@@ -63,25 +207,47 @@ function PutCallTab() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <MetricCard
           title="Equity Aggregate"
-          value={equity ? equity.ratio.toFixed(3) : "N/A"}
+          value={fmt3(equity?.ratio)}
           subtitle="SPY + QQQ + IWM"
         />
         <MetricCard
           title="SPY P/C"
-          value={spy ? spy.ratio.toFixed(3) : "N/A"}
-          subtitle={spy ? `${(spy.puts / 1000).toFixed(0)}K puts / ${(spy.calls / 1000).toFixed(0)}K calls` : ""}
+          value={fmt3(spy?.ratio)}
+          subtitle={fmtK(spy?.puts, spy?.calls)}
         />
         <MetricCard
           title="QQQ P/C"
-          value={qqq ? qqq.ratio.toFixed(3) : "N/A"}
-          subtitle={qqq ? `${(qqq.puts / 1000).toFixed(0)}K puts / ${(qqq.calls / 1000).toFixed(0)}K calls` : ""}
+          value={fmt3(qqq?.ratio)}
+          subtitle={fmtK(qqq?.puts, qqq?.calls)}
         />
         <MetricCard
           title="IWM P/C"
-          value={iwm ? iwm.ratio.toFixed(3) : "N/A"}
-          subtitle={iwm ? `${(iwm.puts / 1000).toFixed(0)}K puts / ${(iwm.calls / 1000).toFixed(0)}K calls` : ""}
+          value={fmt3(iwm?.ratio)}
+          subtitle={fmtK(iwm?.puts, iwm?.calls)}
         />
       </div>
+
+      {expiryCurveData.length > 0 && (
+        <div className="mb-6">
+          <TimeSeriesChart
+            multiData={expiryCurveData}
+            series={[
+              { key: "Equity", color: "#111827", strokeWidth: 2 },
+              { key: "SPY", color: "#2563eb", strokeWidth: 1.6 },
+              { key: "QQQ", color: "#16a34a", strokeWidth: 1.6 },
+              { key: "IWM", color: "#f59e0b", strokeWidth: 1.6 },
+            ]}
+            height={200}
+            label="Put/Call Curve by Expiry (Current Snapshot)"
+            zeroLine={false}
+            yFormatter={v => v.toFixed(2)}
+            tooltipFormatter={v => v.toFixed(3)}
+          />
+          <p className="text-[11px] text-gray-400 mt-1">
+            This is a per-expiry curve from today&apos;s options chains.
+          </p>
+        </div>
+      )}
 
       {breakdownRows.length > 0 && (
         <>
@@ -106,17 +272,32 @@ function PutCallTab() {
 // ─── Surveys Tab ─────────────────────────────────────────────────────────────
 
 function SurveysTab() {
+  const cached = useMemo(() => loadSurveysCache(), [])
   const { data, isLoading, error } = useApiQuery(
     ["sentiment-surveys"],
     fetchSentimentSurveys,
     60 * 60 * 1000,
   )
 
-  if (isLoading) return <LoadingSpinner message="Fetching AAII and NAAIM data..." />
-  if (error || !data) return <ErrorMessage message={String(error)} />
+  useEffect(() => {
+    if (isSurveysPayload(data)) {
+      saveSurveysCache(data)
+    }
+  }, [data])
 
-  const aaii: Record<string, unknown>[] = Array.isArray(data?.aaii) ? data.aaii : []
-  const naaim: Record<string, unknown>[] = Array.isArray(data?.naaim) ? data.naaim : []
+  const hasLivePayload = isSurveysPayload(data)
+  const hasCachedPayload = cached?.payload != null
+  const payload: SurveysPayload = hasLivePayload
+    ? data
+    : cached?.payload ?? { aaii: [], naaim: [] }
+  const usingCachedFallback = !hasLivePayload && hasCachedPayload
+
+  if (isLoading && !hasLivePayload && !hasCachedPayload) {
+    return <LoadingSpinner message="Fetching AAII and NAAIM data..." />
+  }
+
+  const aaii: Record<string, unknown>[] = payload.aaii
+  const naaim: Record<string, unknown>[] = payload.naaim
 
   const latestAaii = aaii[aaii.length - 1] ?? {}
   const latestNaaim = naaim[naaim.length - 1] ?? {}
@@ -126,6 +307,15 @@ function SurveysTab() {
 
   return (
     <div className="space-y-8">
+      {(usingCachedFallback || error) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          Live surveys feed is temporarily unavailable.
+          {usingCachedFallback
+            ? ` Showing cached data${cached?.savedAt ? ` (last updated ${formatSavedAt(cached.savedAt)}).` : "."}`
+            : " Data will appear when the endpoint recovers."}
+        </div>
+      )}
+
       {/* AAII */}
       <div>
         <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-1">
@@ -297,6 +487,45 @@ function VolatilityTab() {
 
 export function Sentiment() {
   const [tab, setTab] = useState<Tab>("Put/Call")
+  const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } = useSessionAiOverview("ai-overview:sentiment")
+  const [prepError, setPrepError] = useState<string | null>(null)
+  const [isPreparingOverview, setIsPreparingOverview] = useState(false)
+  const queryClient = useQueryClient()
+
+  const mutation = useMutation({
+    mutationFn: analyzeSentiment,
+    onSuccess: data => {
+      const analysis = typeof data?.analysis === "string" ? data.analysis : null
+      if (analysis) setPersistedAnalysis(analysis)
+    },
+  })
+  const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
+  const analysisText = liveAnalysis ?? persistedAnalysis
+  const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError || isPreparingOverview || prepError)
+
+  async function handleAnalyzeClick() {
+    setIsOpen(true)
+    setPrepError(null)
+    setIsPreparingOverview(true)
+
+    try {
+      const [putCall, surveys, volatility] = await Promise.all([
+        queryClient.fetchQuery({ queryKey: ["sentiment-put-call"], queryFn: () => fetchSentimentPutCall(180), staleTime: 5 * 60 * 1000 }),
+        queryClient.fetchQuery({ queryKey: ["sentiment-surveys"], queryFn: fetchSentimentSurveys, staleTime: 60 * 60 * 1000 }),
+        queryClient.fetchQuery({ queryKey: ["sentiment-volatility"], queryFn: () => fetchSentimentVolatility(365), staleTime: 5 * 60 * 1000 }),
+      ])
+
+      mutation.mutate({
+        put_call: putCall ?? {},
+        surveys: surveys ?? {},
+        volatility: Array.isArray(volatility) ? volatility : [],
+      })
+    } catch (err) {
+      setPrepError(String(err))
+    } finally {
+      setIsPreparingOverview(false)
+    }
+  }
 
   return (
     <div>
@@ -307,8 +536,58 @@ export function Sentiment() {
             Options market, investor surveys, and volatility signals
           </p>
         </div>
-        <RefreshButton />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleAnalyzeClick}
+            disabled={mutation.isPending || isPreparingOverview}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles size={14} />
+            AI Overview
+          </button>
+          <RefreshButton />
+        </div>
       </div>
+
+      {showPanel && (
+        <div className="mb-6 rounded-xl border border-blue-200 bg-white overflow-hidden">
+          <button
+            onClick={() => setIsOpen(o => !o)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-blue-500" />
+              <span className="text-sm font-semibold text-blue-700">AI Overview</span>
+            </div>
+            <ChevronDown
+              size={16}
+              className={`text-blue-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+
+          {isOpen && (
+            <div className="px-4 py-4">
+              {(isPreparingOverview || mutation.isPending) && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  {isPreparingOverview ? "Loading sentiment datasets..." : "Analyzing sentiment data..."}
+                </div>
+              )}
+              {prepError && <p className="text-sm text-red-600">{prepError}</p>}
+              {mutation.isError && (
+                <p className="text-sm text-red-600">
+                  {String(mutation.error) || "Analysis failed. Please try again."}
+                </p>
+              )}
+              {analysisText && (
+                <p className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+                  {analysisText}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mb-6">
         <SegmentedControl
