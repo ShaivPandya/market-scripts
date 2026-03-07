@@ -42,6 +42,7 @@ interface RatioRow {
 const RATIO_PRESETS: RatioPreset[] = [
   { label: "Silver / Gold", symbolA: "SI=F", symbolB: "GC=F" },
   { label: "S&P 500 / S&P Equal Weight", symbolA: "^GSPC", symbolB: "RSP" },
+  { label: "VIX / VVIX", symbolA: "^VIX", symbolB: "^VVIX" },
   { label: "HD / LOW", symbolA: "HD", symbolB: "LOW" },
   { label: "V / MA", symbolA: "V", symbolB: "MA" },
   { label: "Russell 2000 / S&P 600", symbolA: "^RUT", symbolB: "^SP600" },
@@ -137,6 +138,19 @@ function formatPercentFromDecimal(value: number | null): string {
   if (value == null) return "N/A"
   const pct = value * 100
   return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`
+}
+
+function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const rank = (sorted.length - 1) * p
+  const lowerIdx = Math.floor(rank)
+  const upperIdx = Math.ceil(rank)
+  const lower = sorted[lowerIdx]
+  const upper = sorted[upperIdx]
+  if (lowerIdx === upperIdx) return lower
+  const weight = rank - lowerIdx
+  return lower + (upper - lower) * weight
 }
 
 export function ChartPage() {
@@ -266,12 +280,12 @@ export function ChartPage() {
   const summaryRows: Record<string, unknown>[] = Array.isArray(singleData?.summary) ? singleData.summary : []
   const summaryCols: ColumnDef[] = summaryRows.length > 0
     ? Object.keys(summaryRows[0]).map(k => ({
-        key: k,
-        header: k,
-        colorFn: k.toLowerCase().includes("bias")
-          ? (v: unknown) => (String(v).toLowerCase() === "bullish" ? "green" : "red")
-          : undefined,
-      }))
+      key: k,
+      header: k,
+      colorFn: k.toLowerCase().includes("bias")
+        ? (v: unknown) => (String(v).toLowerCase() === "bullish" ? "green" : "red")
+        : undefined,
+    }))
     : []
 
   const displayTicker = String(singleData?.ticker ?? ticker).toUpperCase()
@@ -308,12 +322,12 @@ export function ChartPage() {
   const historicalAvg = toNumber(ratioStats.historical_avg) ?? (
     ratioRows.length > 0
       ? (() => {
-          const values = ratioRows
-            .map(r => r.ratio)
-            .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
-          if (values.length === 0) return null
-          return values.reduce((sum, v) => sum + v, 0) / values.length
-        })()
+        const values = ratioRows
+          .map(r => r.ratio)
+          .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        if (values.length === 0) return null
+        return values.reduce((sum, v) => sum + v, 0) / values.length
+      })()
       : null
   )
   const currentRatio = toNumber(ratioStats.end_ratio) ?? (
@@ -324,9 +338,18 @@ export function ChartPage() {
       ? (currentRatio / historicalAvg) - 1
       : null
   )
+  const ratioValues = useMemo(() => (
+    ratioRows
+      .map(r => r.ratio)
+      .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+  ), [ratioRows])
+  const bottomDecile = useMemo(() => percentile(ratioValues, 0.1), [ratioValues])
+  const topDecile = useMemo(() => percentile(ratioValues, 0.9), [ratioValues])
   const ratioChartSeries: SeriesDef[] = useMemo(() => [
     { key: "Ratio", color: "#0f766e", strokeWidth: 2 },
     { key: "Historical Avg", color: "#f59e0b", strokeWidth: 1.5, opacity: 0.9, strokeDasharray: "6 4" },
+    { key: "Top Decile", color: "#dc2626", strokeWidth: 1.4, opacity: 0.9, strokeDasharray: "4 4" },
+    { key: "Bottom Decile", color: "#2563eb", strokeWidth: 1.4, opacity: 0.9, strokeDasharray: "4 4" },
   ], [])
 
   const ratioMultiChartData = useMemo<Record<string, unknown>[]>(() => (
@@ -334,8 +357,10 @@ export function ChartPage() {
       date: r.date,
       Ratio: r.ratio,
       "Historical Avg": historicalAvg,
+      "Top Decile": topDecile,
+      "Bottom Decile": bottomDecile,
     }))
-  ), [ratioRows, historicalAvg])
+  ), [ratioRows, historicalAvg, topDecile, bottomDecile])
 
   const ratioColumns: ColumnDef[] = useMemo(() => [
     { key: "date", header: "Date" },
@@ -528,13 +553,15 @@ export function ChartPage() {
             />
             <MetricCard title="Min Ratio" value={formatRatio(toNumber(ratioStats.min_ratio), 4)} />
             <MetricCard title="Max Ratio" value={formatRatio(toNumber(ratioStats.max_ratio), 4)} />
+            <MetricCard title="Bottom Decile" value={formatRatio(bottomDecile, 4)} />
+            <MetricCard title="Top Decile" value={formatRatio(topDecile, 4)} />
           </div>
 
           <div>
             <h2 className="text-base font-semibold mb-2">Price Ratio Over Time</h2>
             <TimeSeriesChart multiData={ratioMultiChartData} series={ratioChartSeries} height={300} />
             <p className="text-xs text-gray-500 mt-2">
-              Historical level shown as dashed line ({ratioWindow} average).
+              Dashed references show historical average plus 10th/90th percentile decile bands.
             </p>
           </div>
 

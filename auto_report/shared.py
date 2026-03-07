@@ -63,14 +63,29 @@ _META_START_RES = [
     re.compile(r"^\s*need\s+anything\s+else\b", re.IGNORECASE),
     re.compile(r"^\s*want\s+me\s+to\b", re.IGNORECASE),
 ]
+_LEADING_PREAMBLE_RES = [
+    re.compile(r"^\s*let\s+me\s+\w+", re.IGNORECASE),
+    re.compile(r"^\s*i['']ll\s+\w+", re.IGNORECASE),
+    re.compile(r"^\s*i\s+will\s+\w+", re.IGNORECASE),
+]
 
 
 def strip_llm_meta(report_md: str) -> str:
-    """Strip trailing LLM meta-commentary from a generated report."""
+    """Strip leading preamble and trailing LLM meta-commentary from a generated report."""
     original = (report_md or "").strip()
     if not original:
         return original
     lines = original.splitlines()
+    # Strip leading preamble lines (e.g. "Let me search for...", "I'll look...")
+    while lines:
+        line = lines[0].strip()
+        if line and any(rx.match(line) for rx in _LEADING_PREAMBLE_RES):
+            lines.pop(0)
+        else:
+            break
+    # Strip leading blank lines left after preamble removal
+    while lines and not lines[0].strip():
+        lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
     while lines and _HR_RE.match(lines[-1]):

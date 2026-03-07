@@ -66,12 +66,14 @@ def _pc_for_ticker(sym: str, max_expiries: int = _PC_EXPIRIES) -> dict | None:
             puts = int(chain.puts["volume"].fillna(0).sum())
             total_calls += calls
             total_puts += puts
-            breakdown.append({
-                "expiry": exp,
-                "calls": calls,
-                "puts": puts,
-                "ratio": round(puts / calls, 3) if calls > 0 else None,
-            })
+            breakdown.append(
+                {
+                    "expiry": exp,
+                    "calls": calls,
+                    "puts": puts,
+                    "ratio": round(puts / calls, 3) if calls > 0 else None,
+                }
+            )
         except Exception:
             continue
 
@@ -174,13 +176,15 @@ def get_aaii() -> list[dict]:
         bear = round(bear_val * 100, 2)
         neut = round(neut_val * 100, 2) if isinstance(neut_val, float) else None
 
-        records.append({
-            "date": dt.isoformat(),
-            "bull": bull,
-            "bear": bear,
-            "neutral": neut,
-            "spread": round(bull - bear, 2),
-        })
+        records.append(
+            {
+                "date": dt.isoformat(),
+                "bull": bull,
+                "bear": bear,
+                "neutral": neut,
+                "spread": round(bull - bear, 2),
+            }
+        )
 
     return records
 
@@ -226,12 +230,7 @@ def get_naaim() -> list[dict]:
     df.columns = [str(c).strip() for c in df.columns]
     col_upper = {c.upper(): c for c in df.columns}
 
-    date_col = (
-        col_upper.get("DATE")
-        or col_upper.get("WEEK")
-        or col_upper.get("SURVEY DATE")
-        or df.columns[0]
-    )
+    date_col = col_upper.get("DATE") or col_upper.get("WEEK") or col_upper.get("SURVEY DATE") or df.columns[0]
     exposure_col = next(
         (col_upper[k] for k in col_upper if "EXPOSURE" in k or "NAAIM" in k),
         df.columns[1],
@@ -244,10 +243,12 @@ def get_naaim() -> list[dict]:
     records = []
     for _, row in df.iterrows():
         exp = row[exposure_col]
-        records.append({
-            "date": row[date_col].date().isoformat(),
-            "exposure": round(float(exp), 2) if pd.notna(exp) else None,
-        })
+        records.append(
+            {
+                "date": row[date_col].date().isoformat(),
+                "exposure": round(float(exp), 2) if pd.notna(exp) else None,
+            }
+        )
     return records
 
 
@@ -312,6 +313,7 @@ def get_volatility(lookback_days: int = 365) -> list[dict]:
 
     records = []
     for dt, row in df.iterrows():
+
         def _v(x):
             try:
                 f = float(x)
@@ -319,10 +321,12 @@ def get_volatility(lookback_days: int = 365) -> list[dict]:
             except (TypeError, ValueError):
                 return None
 
-        records.append({
-            "date": dt.date().isoformat() if hasattr(dt, "date") else str(dt)[:10],
-            "vix": _v(row["vix"]),
-            "vxn": _v(row["vxn"]),
-            "vvix": _v(row["vvix"]),
-        })
+        records.append(
+            {
+                "date": dt.date().isoformat() if hasattr(dt, "date") else str(dt)[:10],
+                "vix": _v(row["vix"]),
+                "vxn": _v(row["vxn"]),
+                "vvix": _v(row["vvix"]),
+            }
+        )
     return records

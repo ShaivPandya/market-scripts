@@ -14,6 +14,7 @@ _MODULE_DIRS = [
     PROJECT_ROOT,
     PROJECT_ROOT / "equities" / "market_technicals",
     PROJECT_ROOT / "macro" / "economic_growth",
+    PROJECT_ROOT / "macro" / "labor_market",
     PROJECT_ROOT / "macro" / "liquidity",
     PROJECT_ROOT / "macro" / "breakout",
     PROJECT_ROOT / "macro" / "positioning",

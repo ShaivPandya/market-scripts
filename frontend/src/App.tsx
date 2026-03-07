@@ -26,6 +26,7 @@ import { Positioning } from "@/pages/Positioning"
 import { Breakout } from "@/pages/Breakout"
 import { FXModel } from "@/pages/FXModel"
 import { EconomicGrowth } from "@/pages/EconomicGrowth"
+import { LaborMarket } from "@/pages/LaborMarket"
 import { Liquidity } from "@/pages/Liquidity"
 import { CountryDashboard } from "@/pages/CountryDashboard"
 import { CentralBanks } from "@/pages/CentralBanks"
@@ -90,6 +91,7 @@ function AppRoutes() {
           <Route path="/breakout" element={<Breakout />} />
           <Route path="/fx-model" element={<FXModel />} />
           <Route path="/economic-growth" element={<EconomicGrowth />} />
+          <Route path="/labor-market" element={<LaborMarket />} />
           <Route path="/liquidity" element={<Liquidity />} />
           <Route path="/country-dashboard" element={<CountryDashboard />} />
           <Route path="/central-banks" element={<CentralBanks />} />
