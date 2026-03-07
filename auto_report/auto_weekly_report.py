@@ -72,6 +72,8 @@ DEFAULT_NEWS_SOURCES = [
     "bloomberg.com",
     "cnbc.com",
     "federalreserve.gov",
+    "reuters.com",
+    "wsj.com",
 ]
 
 RULES_TEXT = """
@@ -719,6 +721,27 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
 # call_claude is imported from auto_report.shared
 
 
+def _dedupe_citations(citations: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    seen_urls: set[str] = set()
+    deduped: list[tuple[str, str]] = []
+    for title, url in citations:
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        deduped.append((title, url))
+    return deduped
+
+
+def _append_sources_section(report_md: str, citations: list[tuple[str, str]]) -> str:
+    unique_citations = _dedupe_citations(citations)
+    if not unique_citations:
+        return report_md
+    sources_lines = ["\n\n---\n\n## Sources\n"]
+    for title, url in unique_citations:
+        sources_lines.append(f"- [{title}]({url})")
+    return report_md + "\n".join(sources_lines)
+
+
 def _build_user_message(bundle: dict, perf_md: str, web_search: bool = True) -> str:
     prompt_bundle = _prepare_prompt_bundle(bundle)
     bundle_json = json.dumps(prompt_bundle, indent=2, default=str)
@@ -812,7 +835,7 @@ def parse_response(text: str) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 
 
-def _build_thesis_prompt(thesis_data: dict) -> tuple[str, str]:
+def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[str, str]:
     """Build (system_msg, user_msg) for the thesis monitoring Claude call."""
     system_msg = (
         "You are an investment analyst evaluating portfolio positions against their "
@@ -923,6 +946,14 @@ def _build_thesis_prompt(thesis_data: dict) -> tuple[str, str]:
 
     tickers_with_theses = [t for t, v in theses.items() if v is not None]
     tickers_without = [t for t, v in theses.items() if v is None]
+    search_instruction = ""
+    if web_search:
+        search_instruction = """
+Supplement the ticker-level RSS/IBKR headlines above with web search when needed to find
+material developments from the past week, especially earnings, guidance changes, financings,
+regulatory actions, M&A, or other thesis-relevant company news. Cite sources for any claim
+that depends on web search.
+"""
 
     user_msg = f"""Evaluate each portfolio position below against its investment thesis.
 
@@ -934,6 +965,8 @@ def _build_thesis_prompt(thesis_data: dict) -> tuple[str, str]:
 {"---\n".join(ticker_sections)}
 
 ---
+
+{search_instruction}
 
 For each ticker, provide:
 1. **Thesis Status**: strengthen | neutral | weaken | insufficient-data
@@ -1123,14 +1156,6 @@ def main():
         report_md, summary = parse_response(response_text)
         report_md = _insert_weekly_performance(report_md, perf_md)
         report_md = strip_llm_meta(report_md)
-
-        # Append sources section from web search citations
-        if citations:
-            sources_lines = ["\n\n---\n\n## Sources\n"]
-            for title, url in citations:
-                sources_lines.append(f"- [{title}]({url})")
-            report_md += "\n".join(sources_lines)
-            log.info("Appended %d citation sources to report", len(citations))
     except Exception as e:
         log.error("Claude call failed: %s", e, exc_info=True)
         error_msg = str(e)
@@ -1145,20 +1170,19 @@ def main():
         try:
             t_thesis = time.perf_counter()
             thesis_data = collect_thesis_data()
-            thesis_system, thesis_user = _build_thesis_prompt(thesis_data)
+            thesis_system, thesis_user = _build_thesis_prompt(thesis_data, web_search=use_search)
 
             thesis_text, thesis_citations = call_claude(
                 system_msg=thesis_system,
                 user_msg=thesis_user,
-                allowed_domains=None,
+                allowed_domains=allowed_domains,
                 max_tokens=8192,
             )
             thesis_md, thesis_summary = parse_thesis_response(thesis_text)
             thesis_md = strip_llm_meta(thesis_md)
 
             if thesis_citations:
-                if citations:
-                    citations.extend(thesis_citations)
+                citations.extend(thesis_citations)
 
             # Append thesis section to report
             if thesis_md:
@@ -1180,6 +1204,10 @@ def main():
             report_md += f"\n\n---\n\n## Portfolio Thesis Monitoring\n\n**Error**: Thesis monitoring failed — {e}"
     else:
         log.info("No investment_theses/ directory found — skipping thesis monitoring")
+
+    report_md = _append_sources_section(report_md, citations)
+    if citations:
+        log.info("Appended %d unique citation sources to report", len(_dedupe_citations(citations)))
 
     # 8. Write outputs + archive
     write_outputs(report_md, summary, bundle, OUTPUT_DIR, today_str)

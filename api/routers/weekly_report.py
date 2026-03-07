@@ -13,6 +13,53 @@ from api.exceptions import DataFetchError
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 
+DEFAULT_NEWS_DOMAINS = [
+    "bloomberg.com",
+    "cnbc.com",
+    "federalreserve.gov",
+    "reuters.com",
+    "wsj.com",
+]
+
+
+def _obj_get(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _extract_openai_citations(response: Any) -> list[tuple[str, str]]:
+    seen_urls: set[str] = set()
+    citations: list[tuple[str, str]] = []
+
+    def _add(title: Any, url: Any) -> None:
+        if not isinstance(url, str) or not url or url in seen_urls:
+            return
+        seen_urls.add(url)
+        label = title if isinstance(title, str) and title else url
+        citations.append((label, url))
+
+    for output_item in _obj_get(response, "output", []) or []:
+        if _obj_get(output_item, "type") == "web_search_call":
+            action = _obj_get(output_item, "action")
+            for source in _obj_get(action, "sources", []) or []:
+                _add(_obj_get(source, "title"), _obj_get(source, "url"))
+
+        for content_item in _obj_get(output_item, "content", []) or []:
+            for annotation in _obj_get(content_item, "annotations", []) or []:
+                _add(_obj_get(annotation, "title"), _obj_get(annotation, "url"))
+
+    return citations
+
+
+def _append_sources_section(report_md: str, citations: list[tuple[str, str]]) -> str:
+    if not citations:
+        return report_md
+    source_lines = ["\n\n---\n\n## Sources\n"]
+    for title, url in citations:
+        source_lines.append(f"- [{title}]({url})")
+    return report_md + "\n".join(source_lines)
+
 
 def _format_level(value: float, decimals_if_lt_100: int = 4) -> str:
     try:
@@ -484,6 +531,12 @@ Avoid printing raw, unrounded floating point values or internal column keys with
 
 {data_context}
 
+Before writing the report, use web search to identify the key market-moving news from the
+past week (Fed decisions, economic releases, geopolitical events, major earnings, trade
+policy, credit events) that are relevant to the moves in the data below. Use that news
+context sparingly, only when it helps explain the reported moves, and cite sources for
+news-driven claims.
+
 Output the report in clean Markdown format. Group it into logical sections (e.g., Dashboards, Technicals & Breadth, Sectors & Positioning, Key Ratios).
 Remember: No commentary, no editorializing. Just the facts and explicitly flagged threshold breaches.
 
@@ -496,15 +549,28 @@ End the output immediately after the report content.
 
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         t0 = time.perf_counter()
-        resp = client.responses.create(model="gpt-5-mini", input=prompt)
+        resp = client.responses.create(
+            model="gpt-5-mini",
+            input=prompt,
+            tools=[
+                {
+                    "type": "web_search",
+                    "search_context_size": "medium",
+                    "user_location": {"type": "approximate", "country": "US"},
+                    "filters": {"allowed_domains": DEFAULT_NEWS_DOMAINS},
+                }
+            ],
+        )
         report_md = (resp.output_text or "").strip()
         if not report_md:
             raise ValueError("OpenAI returned empty response")
+        citations = _extract_openai_citations(resp)
         logger.info(
-            "weekly_report LLM done in %.2fs (prompt_chars=%d output_chars=%d)",
+            "weekly_report LLM done in %.2fs (prompt_chars=%d output_chars=%d citations=%d)",
             time.perf_counter() - t0,
             len(prompt),
             len(report_md),
+            len(citations),
         )
     except Exception as exc:
         logger.error("weekly_report LLM generation failed: %s", exc, exc_info=True)
@@ -515,6 +581,7 @@ End the output immediately after the report content.
     if cleaned != report_md:
         logger.info("weekly_report stripped assistant meta text (removed_chars=%d)", len(report_md) - len(cleaned))
     report_md = cleaned
+    report_md = _append_sources_section(report_md, citations)
     result = {"report": report_md}
     # Cache for 1 hour (long_cache) to prevent spamming the LLM
     set_cached(long_cache, key, result)
