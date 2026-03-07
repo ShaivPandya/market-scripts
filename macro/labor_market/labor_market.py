@@ -14,6 +14,9 @@ SERIES_CONFIG = {
     "job_openings": ("JTSJOL", "Job Openings (JOLTS)", "thousands", None),
 }
 
+# FRED claims series are returned as counts, but we display them in "thousands".
+_CLAIMS_SERIES_KEYS = {"initial_claims", "continuing_claims"}
+
 
 def get_data() -> dict:
     from fredapi import Fred
@@ -37,6 +40,8 @@ def get_data() -> dict:
         if transform == "yoy12":
             s = s.pct_change(12) * 100
             s = s.dropna()
+        elif key in _CLAIMS_SERIES_KEYS:
+            s = s / 1000.0
 
         dates = [d.strftime("%Y-%m-%d") for d in s.index]
         values = [round(float(v), 3) for v in s.values]
