@@ -544,6 +544,27 @@ def collect_data() -> dict:
         log.warning("industry monitor fetch failed: %s", e, exc_info=True)
         results["industry"] = {"error": str(e)}
 
+    # 13. Sentiment (AAII, NAAIM, Put/Call, VVIX)
+    try:
+        from sentiment import get_put_call, get_surveys, get_volatility
+
+        t0 = time.perf_counter()
+        surveys = get_surveys()
+        put_call = get_put_call()
+        vol = get_volatility()
+        vvix = [{"date": r["date"], "vvix": r["vvix"]} for r in vol if r.get("vvix") is not None]
+        results["sentiment"] = {
+            "aaii": surveys.get("aaii", []),
+            "naaim": surveys.get("naaim", []),
+            "put_call": put_call,
+            "vvix": vvix,
+            "errors": surveys.get("errors", {}),
+        }
+        log.info("sentiment fetched in %.2fs", time.perf_counter() - t0)
+    except Exception as e:
+        log.warning("sentiment fetch failed: %s", e, exc_info=True)
+        results["sentiment"] = {"error": str(e)}
+
     return results
 
 
@@ -714,6 +735,21 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
                 if isinstance(sector_data, dict):
                     sector_data.pop("companies", None)
         ind.pop("counts", None)
+
+    # --- Slim sentiment: keep last 8 weekly readings, drop put/call breakdowns ---
+    sent = prompt_bundle.get("sentiment")
+    if isinstance(sent, dict) and "error" not in sent:
+        if isinstance(sent.get("aaii"), list):
+            sent["aaii"] = sent["aaii"][-8:]
+        if isinstance(sent.get("naaim"), list):
+            sent["naaim"] = sent["naaim"][-8:]
+        if isinstance(sent.get("vvix"), list):
+            sent["vvix"] = sent["vvix"][-8:]
+        pc = sent.get("put_call")
+        if isinstance(pc, dict):
+            for val in pc.values():
+                if isinstance(val, dict):
+                    val.pop("breakdown", None)
 
     return prompt_bundle
 

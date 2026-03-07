@@ -42,6 +42,7 @@ interface RatioRow {
 const RATIO_PRESETS: RatioPreset[] = [
   { label: "Silver / Gold", symbolA: "SI=F", symbolB: "GC=F" },
   { label: "S&P 500 / S&P Equal Weight", symbolA: "^GSPC", symbolB: "RSP" },
+  { label: "VIX / VVIX", symbolA: "^VIX", symbolB: "^VVIX" },
   { label: "HD / LOW", symbolA: "HD", symbolB: "LOW" },
   { label: "V / MA", symbolA: "V", symbolB: "MA" },
   { label: "Russell 2000 / S&P 600", symbolA: "^RUT", symbolB: "^SP600" },
