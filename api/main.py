@@ -56,6 +56,7 @@ from api.routers import (
     hedging,
     index_dashboard,
     industry,
+    labor_market,
     liquidity,
     market_technicals,
     momentum,
@@ -205,6 +206,7 @@ app.include_router(fx_dashboard.router, prefix=_V1, dependencies=_auth_dep, tags
 app.include_router(commodities.router, prefix=_V1, dependencies=_auth_dep, tags=["commodities"])
 app.include_router(market_technicals.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
 app.include_router(economic_growth.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
+app.include_router(labor_market.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(liquidity.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(country_dashboard.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(positioning.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
