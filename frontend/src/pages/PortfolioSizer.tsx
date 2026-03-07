@@ -437,25 +437,40 @@ export function PortfolioSizer() {
             {rows.map((row, idx) => (
               <div key={row.id} className="grid grid-cols-12 gap-3 items-center">
                 <div className="col-span-2">
-                  {idx === 0 && <p className="text-xs font-medium text-gray-500 mb-1">Ticker</p>}
-                  <span className="inline-block px-2 py-1.5 rounded-lg bg-gray-100 text-sm font-mono text-gray-800 w-full text-center">
+                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Ticker</p>}
+                  <span className="inline-flex w-full items-center justify-center rounded-lg border border-app bg-[hsl(var(--muted-2))] px-2 py-1.5 text-center text-sm font-mono text-app">
                     {row.ticker}
                   </span>
                 </div>
                 <div className="col-span-2">
-                  {idx === 0 && <p className="text-xs font-medium text-gray-500 mb-1">Direction</p>}
-                  <span className={`inline-block px-2 py-1.5 rounded-lg text-xs font-medium w-full text-center ${
-                    row.direction === "long"
-                      ? "bg-emerald-50 text-emerald-700"
-                      : row.direction === "short"
-                        ? "bg-red-50 text-red-700"
-                        : "bg-gray-50 text-gray-500"
-                  }`}>
+                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Direction</p>}
+                  <span
+                    className="inline-flex w-full items-center justify-center rounded-lg border px-2 py-1.5 text-center text-xs font-medium"
+                    style={
+                      row.direction === "long"
+                        ? {
+                            backgroundColor: "hsl(var(--success-soft))",
+                            color: "hsl(var(--success-soft-foreground))",
+                            borderColor: "hsl(var(--success-border))",
+                          }
+                        : row.direction === "short"
+                          ? {
+                              backgroundColor: "hsl(var(--danger-soft))",
+                              color: "hsl(var(--danger-soft-foreground))",
+                              borderColor: "hsl(var(--danger-border))",
+                            }
+                          : {
+                              backgroundColor: "hsl(var(--muted))",
+                              color: "hsl(var(--muted-foreground))",
+                              borderColor: "hsl(var(--border))",
+                            }
+                    }
+                  >
                     {row.direction || "—"}
                   </span>
                 </div>
                 <div className="col-span-6">
-                  {idx === 0 && <p className="text-xs font-medium text-gray-500 mb-1">Conviction</p>}
+                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Conviction</p>}
                   <input
                     type="range"
                     min={1}
@@ -463,12 +478,13 @@ export function PortfolioSizer() {
                     step={1}
                     value={row.conviction}
                     onChange={e => updateConviction(row.id, Number(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[hsl(var(--muted-3))]"
+                    style={{ accentColor: "hsl(var(--accent))" }}
                   />
                 </div>
                 <div className="col-span-2">
-                  {idx === 0 && <p className="text-xs font-medium text-gray-500 mb-1">Level</p>}
-                  <span className="text-sm text-gray-700 font-medium">
+                  {idx === 0 && <p className="mb-1 text-xs font-medium text-muted">Level</p>}
+                  <span className="text-sm font-medium text-app">
                     {row.conviction} — {CONVICTION_LABELS[row.conviction] ?? ""}
                   </span>
                 </div>

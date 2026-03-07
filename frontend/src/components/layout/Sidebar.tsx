@@ -1,8 +1,8 @@
 import { NavLink, useNavigate } from "react-router-dom"
+import { Moon, Sun } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
-import { Toggle } from "@/components/shared/FormControls"
 
 interface NavSection {
   pages: { label: string; path: string }[]
@@ -92,7 +92,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         "fixed top-0 left-0 h-full w-64 z-30",
         "transition-transform duration-300",
         isOpen ? "translate-x-0" : "-translate-x-full",
-        "border-r border-app bg-muted-surface flex flex-col",
+        "border-r border-app bg-card flex flex-col",
       ].join(" ")}
     >
       <div className="px-3 py-4 flex-1 overflow-y-auto">
@@ -126,13 +126,41 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       </div>
 
       <div className="space-y-3 border-t border-app px-3 py-3">
-        <div className="rounded-xl border border-app bg-card px-3 py-2.5">
-          <Toggle
-            label="Dark mode"
-            checked={resolvedTheme === "dark"}
-            onChange={toggleTheme}
-            description="Swap surfaces, controls, and charts."
-          />
+        <div className="flex justify-center">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={resolvedTheme === "dark"}
+            aria-label="Toggle dark mode"
+            onClick={toggleTheme}
+            className="inline-flex items-center gap-2 rounded-full border border-app bg-muted-surface px-2 py-1 transition-colors hover:bg-[hsl(var(--muted-2))]"
+          >
+            <Sun
+              size={14}
+              className={resolvedTheme === "dark" ? "text-subtle" : "text-amber-500"}
+              aria-hidden="true"
+            />
+            <span
+              className="relative inline-flex h-[18px] w-[32px] rounded-full transition-colors duration-200"
+              style={{
+                backgroundColor: resolvedTheme === "dark"
+                  ? "hsl(var(--accent))"
+                  : "hsl(var(--muted-3))",
+              }}
+            >
+              <span
+                className={cn(
+                  "mt-[2px] inline-block h-[14px] w-[14px] rounded-full bg-card shadow-sm transition-transform duration-200",
+                  resolvedTheme === "dark" ? "translate-x-[16px]" : "translate-x-[2px]",
+                )}
+              />
+            </span>
+            <Moon
+              size={14}
+              className={resolvedTheme === "dark" ? "text-blue-400" : "text-subtle"}
+              aria-hidden="true"
+            />
+          </button>
         </div>
         <button
           onClick={handleLogout}
