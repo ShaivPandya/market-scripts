@@ -27,8 +27,7 @@ def _format_put_call(data: dict) -> str:
     for ticker, d in [("SPY", spy), ("QQQ", qqq), ("IWM", iwm)]:
         if d:
             lines.append(
-                f"  {ticker}: ratio={d.get('ratio', 'N/A')}, "
-                f"calls={d.get('calls', 'N/A')}, puts={d.get('puts', 'N/A')}"
+                f"  {ticker}: ratio={d.get('ratio', 'N/A')}, calls={d.get('calls', 'N/A')}, puts={d.get('puts', 'N/A')}"
             )
     if not lines:
         return "No put/call data available"
@@ -53,10 +52,7 @@ def _format_surveys(data: dict) -> str:
                 lines.append(f"  AAII Bull-Bear spread (last 4 weeks): {[round(s, 1) for s in spreads]}")
     if naaim:
         latest = naaim[-1]
-        lines.append(
-            f"  NAAIM Exposure (latest, week of {latest.get('date', '?')}): "
-            f"{latest.get('exposure', 'N/A')}"
-        )
+        lines.append(f"  NAAIM Exposure (latest, week of {latest.get('date', '?')}): {latest.get('exposure', 'N/A')}")
     if not lines:
         return "No survey data available"
     return "\n".join(lines)
