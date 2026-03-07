@@ -6,7 +6,7 @@ export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-app text-app">
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/40 md:hidden"
@@ -16,15 +16,15 @@ export function Layout() {
 
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <main className="flex-1 overflow-auto p-3 md:p-6 bg-white min-w-0">
+      <main className="flex-1 overflow-auto p-3 md:p-6 bg-app min-w-0">
         <button
-          className="mb-3 p-2 rounded-lg border border-gray-200 bg-gray-50 md:hidden"
+          className="theme-button-secondary mb-3 rounded-lg p-2 md:hidden"
           onClick={() => setSidebarOpen(true)}
           aria-label="Open navigation"
         >
-          <div className="w-5 h-0.5 bg-gray-600 mb-1" />
-          <div className="w-5 h-0.5 bg-gray-600 mb-1" />
-          <div className="w-5 h-0.5 bg-gray-600" />
+          <div className="mb-1 h-0.5 w-5 bg-[hsl(var(--muted-foreground))]" />
+          <div className="mb-1 h-0.5 w-5 bg-[hsl(var(--muted-foreground))]" />
+          <div className="h-0.5 w-5 bg-[hsl(var(--muted-foreground))]" />
         </button>
 
         <Outlet />

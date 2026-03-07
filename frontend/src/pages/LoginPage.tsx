@@ -38,10 +38,10 @@ function FeatureShowcase() {
   return (
     <div className="mx-auto w-full max-w-5xl px-6 pb-24">
       <div className="mb-12 text-center">
-        <h2 className="text-2xl font-semibold text-gray-900">
+        <h2 className="text-2xl font-semibold text-app">
           Everything you need to stay on top of the markets
         </h2>
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="mt-2 text-sm text-muted">
           Professional-grade analytics, all in one place.
         </p>
       </div>
@@ -55,11 +55,11 @@ function FeatureShowcase() {
             <img
               src={feature.image}
               alt={feature.title}
-              className="w-full rounded-xl border border-gray-200 shadow-sm md:w-3/5"
+              className="w-full rounded-xl border border-app shadow-sm md:w-3/5"
             />
             <div className="flex flex-col gap-2 md:w-2/5">
-              <h3 className="text-lg font-semibold text-gray-900">{feature.title}</h3>
-              <p className="text-sm leading-relaxed text-gray-500">{feature.description}</p>
+              <h3 className="text-lg font-semibold text-app">{feature.title}</h3>
+              <p className="text-sm leading-relaxed text-muted">{feature.description}</p>
             </div>
           </div>
         ))}
@@ -90,30 +90,30 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-app text-app">
       <div className="flex flex-col items-center pt-24 pb-16">
-        <div className="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
-          <h1 className="mb-1 text-xl font-semibold text-gray-900">Market Dashboard</h1>
+        <div className="theme-surface w-full max-w-sm rounded-xl p-8">
+          <h1 className="mb-1 text-xl font-semibold text-app">Market Dashboard</h1>
 
           {mode === "cloudflare" ? (
             <>
-              <p className="mb-6 text-sm text-gray-500">
+              <p className="mb-6 text-sm text-muted">
                 Sign-in is handled by Cloudflare Access.
               </p>
               <button
                 type="button"
                 onClick={() => login("")}
-                className="w-full rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
+                className="theme-button-primary w-full rounded-lg px-4 py-2 text-sm font-semibold"
               >
                 Continue
               </button>
             </>
           ) : (
             <>
-              <p className="mb-6 text-sm text-gray-500">Enter your password to continue.</p>
+              <p className="mb-6 text-sm text-muted">Enter your password to continue.</p>
               <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <label htmlFor="password" className="text-sm font-medium text-gray-700">
+                  <label htmlFor="password" className="text-sm font-medium text-app">
                     Password
                   </label>
                   <input
@@ -123,7 +123,7 @@ export function LoginPage() {
                     required
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ring-offset-white"
+                    className="theme-input rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
 
@@ -136,7 +136,7 @@ export function LoginPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-600 disabled:opacity-50"
+                  className="theme-button-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
                 >
                   {loading ? "Signing in..." : "Sign in"}
                 </button>

@@ -144,3 +144,39 @@ def test_merge_thesis_into_summary():
     assert merged["confidence"] == "high"
     assert merged["drivers"] == ["x"]
     assert merged["thesis_monitoring"] == thesis
+
+
+def test_build_thesis_prompt_includes_web_search_instruction():
+    thesis_data = {
+        "theses": {"CRWD": "Own the category leader."},
+        "news_7day": {"CRWD": []},
+        "technical_analysis": {},
+        "momentum": {},
+        "portfolio": [
+            {
+                "ticker": "CRWD",
+                "direction": "long",
+                "conviction": "3",
+                "asset": "equity",
+                "distressed": "false",
+            }
+        ],
+    }
+
+    _, user_msg = weekly._build_thesis_prompt(thesis_data, web_search=True)
+
+    assert "Supplement the ticker-level RSS/IBKR headlines above with web search" in user_msg
+
+
+def test_append_sources_section_dedupes_urls():
+    report = "# Weekly Report"
+    citations = [
+        ("Reuters story", "https://www.reuters.com/example"),
+        ("Reuters duplicate", "https://www.reuters.com/example"),
+        ("WSJ story", "https://www.wsj.com/example"),
+    ]
+
+    updated = weekly._append_sources_section(report, citations)
+
+    assert updated.count("https://www.reuters.com/example") == 1
+    assert updated.count("https://www.wsj.com/example") == 1

@@ -25,11 +25,11 @@ export function MetricCard({
   }
 
   return (
-    <div className={cn("rounded-xl border bg-white p-4 shadow-sm", className)}>
-      <p className="text-sm text-gray-500 font-medium truncate">{title}</p>
-      <p className="text-2xl font-bold mt-1 text-gray-900">{value}</p>
+    <div className={cn("theme-surface rounded-xl p-4", className)}>
+      <p className="truncate text-sm font-medium text-muted">{title}</p>
+      <p className="mt-1 text-2xl font-bold text-app">{value}</p>
       {subtitle && (
-        <p className="text-xs text-gray-400 mt-1">{subtitle}</p>
+        <p className="mt-1 text-xs text-subtle">{subtitle}</p>
       )}
       {signal && signalLabel && (
         <div

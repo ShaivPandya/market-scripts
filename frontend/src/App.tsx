@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
+import { ThemeProvider } from "@/contexts/ThemeContext"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { Layout } from "@/components/layout/Layout"
 
@@ -33,6 +34,7 @@ import { YieldCurve } from "@/pages/YieldCurve"
 import { CommoditiesCurve } from "@/pages/CommoditiesCurve"
 import { PortfolioNews } from "@/pages/PortfolioNews"
 import { WeeklyReport } from "@/pages/WeeklyReport"
+import { Sentiment } from "@/pages/Sentiment"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -48,7 +50,7 @@ function LoginRoute() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-gray-400">
+      <div className="flex min-h-screen items-center justify-center bg-app px-4 text-sm text-muted">
         Loading...
       </div>
     )
@@ -84,6 +86,7 @@ function AppRoutes() {
           <Route path="/market-technicals" element={<MarketTechnicals />} />
           <Route path="/sector-metrics" element={<SectorMetrics />} />
           <Route path="/positioning" element={<Positioning />} />
+          <Route path="/sentiment" element={<Sentiment />} />
           <Route path="/breakout" element={<Breakout />} />
           <Route path="/fx-model" element={<FXModel />} />
           <Route path="/economic-growth" element={<EconomicGrowth />} />
@@ -104,11 +107,13 @@ function AppRoutes() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </BrowserRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }

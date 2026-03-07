@@ -1,3 +1,4 @@
+import { type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 /* ─── Segmented Control ─────────────────────────────────────────────────────── */
@@ -16,19 +17,17 @@ export function SegmentedControl<T extends string>({
   size = "md",
 }: SegmentedControlProps<T>) {
   return (
-    <div className="inline-flex items-center rounded-full bg-gray-100 p-0.5">
+    <div className="theme-segmented inline-flex items-center rounded-full p-0.5">
       {options.map(o => (
         <button
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
           className={cn(
-            "rounded-full transition-all duration-150",
+            "theme-segmented-option rounded-full transition-all duration-150",
             size === "sm" ? "px-3 py-1 text-xs" : "px-3.5 py-1.5 text-sm",
-            value === o.value
-              ? "bg-white text-gray-900 font-medium shadow-sm"
-              : "text-gray-500 hover:text-gray-700",
           )}
+          data-active={value === o.value}
         >
           {o.label}
         </button>
@@ -65,9 +64,9 @@ export function SliderInput({
   const display = formatValue ? formatValue(value) : String(value)
   return (
     <div>
-      <label className="flex items-baseline justify-between text-sm text-gray-600 mb-2">
+      <label className="mb-2 flex items-baseline justify-between text-sm text-muted">
         <span>{label}</span>
-        <span className="text-sm font-semibold text-gray-900">{display}</span>
+        <span className="text-sm font-semibold text-app">{display}</span>
       </label>
       <input
         type="range"
@@ -79,7 +78,7 @@ export function SliderInput({
         className="hig-slider w-full"
       />
       {(minLabel || maxLabel) && (
-        <div className="flex justify-between text-[11px] text-gray-400 mt-1">
+        <div className="mt-1 flex justify-between text-[11px] text-subtle">
           <span>{minLabel}</span>
           <span>{maxLabel}</span>
         </div>
@@ -102,12 +101,12 @@ export function SelectInput({ label, value, onChange, options, className }: Sele
   return (
     <div className={className}>
       {label && (
-        <label className="block text-sm text-gray-600 mb-1.5">{label}</label>
+        <label className="mb-1.5 block text-sm text-muted">{label}</label>
       )}
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        className="theme-input w-full appearance-none pr-8"
         style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}
       >
         {options.map(o => (
@@ -133,14 +132,14 @@ export function TextInput({ label, value, onChange, placeholder, className, type
   return (
     <div className={className}>
       {label && (
-        <label className="block text-sm text-gray-600 mb-1.5">{label}</label>
+        <label className="mb-1.5 block text-sm text-muted">{label}</label>
       )}
       <input
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none transition-colors placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        className="theme-input w-full"
       />
     </div>
   )
@@ -163,22 +162,25 @@ export function Toggle({ label, checked, onChange, description }: ToggleProps) {
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={cn(
-          "relative inline-flex h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-200",
-          checked ? "bg-blue-500" : "bg-gray-300",
-        )}
+        className="relative inline-flex h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-200"
+        style={{
+          backgroundColor: checked
+            ? "hsl(var(--accent))"
+            : "hsl(var(--muted-3))",
+        }}
       >
         <span
           className={cn(
-            "pointer-events-none inline-block h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform duration-200",
+            "pointer-events-none inline-block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200",
             checked ? "translate-x-[20px]" : "translate-x-[2px]",
             "mt-[2px]",
           )}
+          style={{ backgroundColor: "hsl(var(--card))" }}
         />
       </button>
       <div>
-        <span className="text-sm text-gray-700">{label}</span>
-        {description && <span className="block text-xs text-gray-400 mt-0.5">{description}</span>}
+        <span className="text-sm text-app">{label}</span>
+        {description && <span className="mt-0.5 block text-xs text-subtle">{description}</span>}
       </div>
     </label>
   )
@@ -192,7 +194,7 @@ interface ActionButtonProps {
   disabled?: boolean
   loading?: boolean
   loadingText?: string
-  children: React.ReactNode
+  children: ReactNode
   className?: string
 }
 
@@ -211,9 +213,8 @@ export function ActionButton({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-150",
-        "bg-blue-500 text-white shadow-sm",
-        "hover:bg-blue-600 active:scale-[0.98]",
+        "theme-button-primary w-full rounded-lg py-2.5 text-sm font-semibold transition-all duration-150",
+        "active:scale-[0.98]",
         "disabled:opacity-50 disabled:pointer-events-none",
         className,
       )}
@@ -226,13 +227,13 @@ export function ActionButton({
 /* ─── Control Panel ─────────────────────────────────────────────────────────── */
 
 interface ControlPanelProps {
-  children: React.ReactNode
+  children: ReactNode
   maxWidth?: string
 }
 
 export function ControlPanel({ children, maxWidth = "max-w-md" }: ControlPanelProps) {
   return (
-    <div className={cn("rounded-xl border border-gray-200/80 bg-white p-5 mb-6 space-y-5", maxWidth)}>
+    <div className={cn("theme-surface mb-6 space-y-5 rounded-xl p-5", maxWidth)}>
       {children}
     </div>
   )

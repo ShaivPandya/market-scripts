@@ -4,8 +4,14 @@ interface LoadingSpinnerProps {
 
 export function LoadingSpinner({ message = "Loading..." }: LoadingSpinnerProps) {
   return (
-    <div className="flex items-center gap-3 py-8 text-gray-500">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-blue-500" />
+    <div className="flex items-center gap-3 py-8 text-muted">
+      <div
+        className="h-5 w-5 animate-spin rounded-full border-2"
+        style={{
+          borderColor: "hsl(var(--muted-3))",
+          borderTopColor: "hsl(var(--accent))",
+        }}
+      />
       <span className="text-sm">{message}</span>
     </div>
   )
