@@ -3,7 +3,14 @@ import sqlite3
 
 import httpx
 
-from macro.central_banks.central_bank import Item, _content_is_current, init_db, resolve_item_url, set_content, upsert_item
+from macro.central_banks.central_bank import (
+    Item,
+    _content_is_current,
+    init_db,
+    resolve_item_url,
+    set_content,
+    upsert_item,
+)
 
 
 def test_resolve_fed_minutes_url_prefers_html_document():
@@ -75,7 +82,9 @@ def test_upsert_item_updates_existing_metadata():
 
 
 def test_content_is_current_requires_matching_content_url():
-    assert not _content_is_current("announcement text", None, "https://www.federalreserve.gov/monetarypolicy/fomcminutes20260128.htm")
+    assert not _content_is_current(
+        "announcement text", None, "https://www.federalreserve.gov/monetarypolicy/fomcminutes20260128.htm"
+    )
     assert not _content_is_current(
         "announcement text",
         "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260218a.htm",

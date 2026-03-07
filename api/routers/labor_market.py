@@ -55,13 +55,7 @@ def _build_snapshot_table(req: LaborMarketAnalyzeRequest) -> str:
         chg = info.get("change")
         date = info.get("date", "N/A")
         chg_str = f"{'+' if chg and chg >= 0 else ''}{_fmt(chg)}" if chg is not None else "N/A"
-        lines.append(
-            f"{str(label)[:32]:<32}  "
-            f"{_fmt(val):>12}  "
-            f"{chg_str:>10}  "
-            f"{unit:<12}  "
-            f"{str(date):<12}"
-        )
+        lines.append(f"{str(label)[:32]:<32}  {_fmt(val):>12}  {chg_str:>10}  {unit:<12}  {str(date):<12}")
     return "\n".join(lines)
 
 
