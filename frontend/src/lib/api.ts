@@ -392,28 +392,58 @@ export const runShortScreen = (body: {
   check_issuance: boolean
 }) => client.post("/short-screen", body).then(r => r.data)
 
-export const runFundamentalMomentum = (body: {
+type FundamentalMomentumRequest = {
   screen_type: string
   universe: string
   tickers: string
   benchmark: string
   input_mode: string
-}) => {
-  const controller = new AbortController()
-  const timeoutMs = 90_000
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-
-  return client
-    .post("/fundamental-momentum", body, { signal: controller.signal, timeout: timeoutMs })
-    .then(r => r.data)
-    .catch(err => {
-      if (axios.isAxiosError(err) && err.code === "ERR_CANCELED") {
-        throw new Error("Timeout: Fundamental momentum exceeded 90s. Try a smaller universe or custom tickers.")
-      }
-      throw err
-    })
-    .finally(() => clearTimeout(timer))
 }
+
+type FundamentalMomentumResponse = {
+  screen_type?: string
+  eps?: { results_df?: Record<string, unknown>[]; [key: string]: unknown }
+  rev?: { results_df?: Record<string, unknown>[]; [key: string]: unknown }
+  [key: string]: unknown
+}
+
+type FundamentalMomentumJobResponse =
+  | { job_id: string; status: "queued" | "running" }
+  | { job_id: string; status: "error"; error?: string }
+  | { job_id: string; status: "done"; result?: FundamentalMomentumResponse }
+
+export const startFundamentalMomentumJob = (body: FundamentalMomentumRequest) =>
+  client.post("/fundamental-momentum/async", body, { timeout: 30_000 }).then(r => r.data as FundamentalMomentumJobResponse)
+
+export const fetchFundamentalMomentumJob = (job_id: string) =>
+  client.get(`/fundamental-momentum/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as FundamentalMomentumJobResponse)
+
+export async function runFundamentalMomentumAsync(body: FundamentalMomentumRequest): Promise<FundamentalMomentumResponse> {
+  const started = await startFundamentalMomentumJob(body)
+  if (started.status === "done" && "result" in started && started.result != null) return started.result
+  if (started.status === "error") throw new Error(started.error || "Fundamental momentum failed")
+
+  const job_id = started.job_id
+  const deadline = Date.now() + 300_000
+
+  for (; ;) {
+    if (Date.now() > deadline) {
+      throw new Error("Timeout: Fundamental momentum is taking too long. Try a smaller universe or custom tickers.")
+    }
+
+    await new Promise(r => setTimeout(r, 2000))
+    const job = await fetchFundamentalMomentumJob(job_id)
+
+    if (job.status === "done") {
+      if ("result" in job && job.result != null) return job.result
+      return "result" in started && started.result != null ? started.result : {}
+    }
+    if (job.status === "error") throw new Error(job.error || "Fundamental momentum failed")
+  }
+}
+
+// Keep existing import call-sites unchanged.
+export const runFundamentalMomentum = runFundamentalMomentumAsync
 
 export const runFinancials = (body: { ticker: string }) =>
   client.post("/financials", body).then(r => r.data)
