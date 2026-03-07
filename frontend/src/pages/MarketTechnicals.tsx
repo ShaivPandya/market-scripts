@@ -163,6 +163,9 @@ function VIXTab() {
   const chartData = recent
     .map((r: Record<string, unknown>) => ({ date: String(r["Date"]), value: r["Ratio"] as number }))
     .filter(d => d.date && d.value != null)
+  const recentTableRows = recent
+    .slice(-10)
+    .sort((a, b) => String(b["Date"]).localeCompare(String(a["Date"])))
 
   const tableCols: ColumnDef[] = [
     { key: "Date", header: "Date" },
@@ -210,7 +213,7 @@ function VIXTab() {
       {recent.length > 0 && (
         <>
           <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-2">Recent ratios</p>
-          <DataTable columns={tableCols} rows={recent.slice(-10)} />
+          <DataTable columns={tableCols} rows={recentTableRows} />
         </>
       )}
 
