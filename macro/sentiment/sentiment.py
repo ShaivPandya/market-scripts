@@ -3,7 +3,7 @@ Market Sentiment Data Module
 
 Fetches:
   - Put/Call Ratio (current snapshot) computed from SPY + QQQ options chains via yfinance
-  - AAII Investor Sentiment Survey (bull/bear/neutral %) via stooq.com
+  - AAII Investor Sentiment Survey (bull/bear/neutral %) via aaii.com XLS download
   - NAAIM Exposure Index via NAAIM website (HTML scrape → Excel download)
   - Volatility indices (VIX, ^VXN, ^VVIX) via yfinance
 """
@@ -31,9 +31,7 @@ _PC_EQUITY_TICKERS = ["SPY", "QQQ", "IWM"]
 # Number of near-term expiries to sum over
 _PC_EXPIRIES = 8
 
-STOOQ_AAII_BULL = "https://stooq.com/q/d/l/?s=aaiibull.us&i=w"
-STOOQ_AAII_BEAR = "https://stooq.com/q/d/l/?s=aaiibear.us&i=w"
-STOOQ_AAII_NEUT = "https://stooq.com/q/d/l/?s=aaiineur.us&i=w"
+AAII_XLS_URL = "https://www.aaii.com/files/surveys/sentiment.xls"
 
 NAAIM_PAGE_URL = "https://www.naaim.org/programs/naaim-exposure-index/"
 
@@ -131,47 +129,59 @@ def get_put_call(lookback_days: int = 180) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_stooq_series(url: str, value_col: str) -> pd.DataFrame:
-    """Fetch a single stooq weekly CSV and return (date, value_col) DataFrame."""
-    resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    df = pd.read_csv(io.StringIO(resp.text))
-    df.columns = [c.strip() for c in df.columns]
-    # stooq returns: Date, Open, High, Low, Close, Volume
-    date_col = df.columns[0]
-    close_col = [c for c in df.columns if c.lower() == "close"]
-    if not close_col:
-        raise ValueError(f"No Close column in stooq response for {url}")
-    df = df[[date_col, close_col[0]]].copy()
-    df.columns = ["date", value_col]
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date"]).sort_values("date")
-    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
-    return df
-
-
 def get_aaii() -> list[dict]:
     """
-    Fetch AAII weekly investor sentiment from stooq.com.
+    Fetch AAII weekly investor sentiment from aaii.com (XLS download).
     Returns list of dicts: {date, bull, bear, neutral, spread}
+
+    Values in the XLS are stored as decimals (0.36 = 36%) — multiplied by 100
+    to return percentage values consistent with the previous stooq feed.
     """
-    bull_df = _fetch_stooq_series(STOOQ_AAII_BULL, "bull")
-    bear_df = _fetch_stooq_series(STOOQ_AAII_BEAR, "bear")
-    neut_df = _fetch_stooq_series(STOOQ_AAII_NEUT, "neutral")
+    try:
+        import xlrd
+    except ImportError as e:
+        raise ImportError("xlrd is required for AAII data: pip install xlrd>=2.0.1") from e
 
-    df = bull_df.merge(bear_df, on="date", how="outer").merge(neut_df, on="date", how="outer")
-    df = df.sort_values("date").dropna(subset=["bull", "bear"])
-    df["spread"] = (df["bull"] - df["bear"]).round(2)
+    resp = requests.get(AAII_XLS_URL, headers=_HEADERS, timeout=_TIMEOUT)
+    resp.raise_for_status()
 
+    wb = xlrd.open_workbook(file_contents=resp.content)
+    sh = wb.sheet_by_index(0)
+
+    # Row 3 (0-indexed) is the header row: Date, Bullish, Neutral, Bearish, ...
+    # Data starts at row 5 (row 4 is blank)
     records = []
-    for _, row in df.iterrows():
+    for i in range(5, sh.nrows):
+        row = sh.row_values(i)
+        date_val = row[0]
+        bull_val = row[1]
+        neut_val = row[2]
+        bear_val = row[3]
+
+        # Date column is an Excel serial number for data rows; skip non-numeric rows
+        if not isinstance(date_val, float) or date_val <= 0:
+            continue
+        # Skip rows where bull/bear are missing
+        if not isinstance(bull_val, float) or not isinstance(bear_val, float):
+            continue
+
+        try:
+            dt = xlrd.xldate_as_datetime(date_val, wb.datemode).date()
+        except Exception:
+            continue
+
+        bull = round(bull_val * 100, 2)
+        bear = round(bear_val * 100, 2)
+        neut = round(neut_val * 100, 2) if isinstance(neut_val, float) else None
+
         records.append({
-            "date": row["date"].date().isoformat(),
-            "bull": round(float(row["bull"]), 2) if pd.notna(row["bull"]) else None,
-            "bear": round(float(row["bear"]), 2) if pd.notna(row["bear"]) else None,
-            "neutral": round(float(row["neutral"]), 2) if pd.notna(row.get("neutral")) else None,
-            "spread": round(float(row["spread"]), 2) if pd.notna(row["spread"]) else None,
+            "date": dt.isoformat(),
+            "bull": bull,
+            "bear": bear,
+            "neutral": neut,
+            "spread": round(bull - bear, 2),
         })
+
     return records
 
 
@@ -244,11 +254,26 @@ def get_naaim() -> list[dict]:
 def get_surveys() -> dict:
     """
     Fetch AAII sentiment + NAAIM exposure.
-    Returns {"aaii": [...], "naaim": [...]}
+    Returns {"aaii": [...], "naaim": [...], "errors": {...}}
+
+    The two feeds are independent. If one source fails, return the other so the
+    API can degrade gracefully instead of blanking the entire surveys view.
     """
-    aaii = get_aaii()
-    naaim = get_naaim()
-    return {"aaii": aaii, "naaim": naaim}
+    aaii: list[dict] = []
+    naaim: list[dict] = []
+    errors: dict[str, str] = {}
+
+    try:
+        aaii = get_aaii()
+    except Exception as exc:
+        errors["aaii"] = str(exc)
+
+    try:
+        naaim = get_naaim()
+    except Exception as exc:
+        errors["naaim"] = str(exc)
+
+    return {"aaii": aaii, "naaim": naaim, "errors": errors}
 
 
 # ---------------------------------------------------------------------------

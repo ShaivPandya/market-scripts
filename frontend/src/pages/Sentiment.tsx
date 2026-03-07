@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend,
+} from "recharts"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
 import { fetchSentimentPutCall, fetchSentimentSurveys, fetchSentimentVolatility, analyzeSentiment } from "@/lib/api"
@@ -48,6 +52,7 @@ const SURVEYS_CACHE_KEY = "sentiment-surveys-cache-v1"
 type SurveysPayload = {
   aaii: Record<string, unknown>[]
   naaim: Record<string, unknown>[]
+  errors?: Record<string, unknown>
 }
 
 function isSurveysPayload(v: unknown): v is SurveysPayload {
@@ -291,6 +296,12 @@ function SurveysTab() {
     ? data
     : cached?.payload ?? { aaii: [], naaim: [] }
   const usingCachedFallback = !hasLivePayload && hasCachedPayload
+  const feedErrors = payload.errors && typeof payload.errors === "object"
+    ? payload.errors as Record<string, unknown>
+    : {}
+  const aaiiError = typeof feedErrors.aaii === "string" ? feedErrors.aaii : null
+  const naaimError = typeof feedErrors.naaim === "string" ? feedErrors.naaim : null
+  const hasSourceError = Boolean(aaiiError || naaimError)
 
   if (isLoading && !hasLivePayload && !hasCachedPayload) {
     return <LoadingSpinner message="Fetching AAII and NAAIM data..." />
@@ -302,17 +313,22 @@ function SurveysTab() {
   const latestAaii = aaii[aaii.length - 1] ?? {}
   const latestNaaim = naaim[naaim.length - 1] ?? {}
 
-  const spreadSeries = mkSeries(aaii, "date", "spread")
+  const spreadSeries = mkSeries(aaii.slice(-52), "date", "spread")
   const naaimSeries = mkSeries(naaim, "date", "exposure")
 
   return (
     <div className="space-y-8">
-      {(usingCachedFallback || error) && (
+      {(usingCachedFallback || error || hasSourceError) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-          Live surveys feed is temporarily unavailable.
+          Surveys data is partially unavailable.
           {usingCachedFallback
             ? ` Showing cached data${cached?.savedAt ? ` (last updated ${formatSavedAt(cached.savedAt)}).` : "."}`
-            : " Data will appear when the endpoint recovers."}
+            : hasSourceError
+              ? ` ${[
+                  aaiiError ? "AAII feed failed" : null,
+                  naaimError ? "NAAIM feed failed" : null,
+                ].filter(Boolean).join("; ")}.`
+              : " Data will appear when the endpoint recovers."}
         </div>
       )}
 
@@ -347,18 +363,45 @@ function SurveysTab() {
               />
             </div>
 
-            <TimeSeriesChart
-              multiData={aaii as Record<string, unknown>[]}
-              series={[
-                { key: "bull", color: "#10b981", strokeWidth: 1.5 },
-                { key: "bear", color: "#ef4444", strokeWidth: 1.5 },
-                { key: "neutral", color: "#9ca3af", strokeWidth: 1.5 },
-              ]}
-              height={180}
-              label="Bull / Bear / Neutral (%)"
-              zeroLine={false}
-              yFormatter={v => `${v.toFixed(0)}%`}
-            />
+            <p className="mb-1 text-xs font-medium text-muted">Bull / Bear / Neutral (%)</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart
+                data={aaii.slice(-52) as Record<string, unknown>[]}
+                margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+                barSize={8}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--chart-grid))" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(d: string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  tick={{ fontSize: 10, fill: "hsl(var(--chart-axis))" }}
+                  tickLine={false}
+                  axisLine={{ stroke: "hsl(var(--chart-grid))" }}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+                  tick={{ fontSize: 10, fill: "hsl(var(--chart-axis))" }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={40}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--chart-tooltip-bg))",
+                    borderColor: "hsl(var(--chart-tooltip-border))",
+                    borderRadius: "0.75rem",
+                    color: "hsl(var(--foreground))",
+                  }}
+                  labelFormatter={(l: unknown) => new Date(String(l)).toLocaleDateString()}
+                  formatter={(v: unknown) => `${Number(v).toFixed(1)}%`}
+                />
+                <Legend wrapperStyle={{ fontSize: 11, color: "hsl(var(--muted-foreground))" }} />
+                <Bar dataKey="bull" stackId="a" fill="#10b981" name="bull" />
+                <Bar dataKey="neutral" stackId="a" fill="#9ca3af" name="neutral" />
+                <Bar dataKey="bear" stackId="a" fill="#ef4444" name="bear" />
+              </BarChart>
+            </ResponsiveContainer>
 
             {spreadSeries.length > 0 && (
               <div className="mt-4">
@@ -373,7 +416,9 @@ function SurveysTab() {
             )}
           </>
         ) : (
-          <p className="text-sm text-gray-400">No AAII data available.</p>
+          <p className="text-sm text-gray-400">
+            {aaiiError ? "AAII feed is currently unavailable." : "No AAII data available."}
+          </p>
         )}
       </div>
 
@@ -409,7 +454,9 @@ function SurveysTab() {
             />
           </>
         ) : (
-          <p className="text-sm text-gray-400">No NAAIM data available.</p>
+          <p className="text-sm text-gray-400">
+            {naaimError ? "NAAIM feed is currently unavailable." : "No NAAIM data available."}
+          </p>
         )}
       </div>
     </div>
