@@ -33,6 +33,7 @@ import { YieldCurve } from "@/pages/YieldCurve"
 import { CommoditiesCurve } from "@/pages/CommoditiesCurve"
 import { PortfolioNews } from "@/pages/PortfolioNews"
 import { WeeklyReport } from "@/pages/WeeklyReport"
+import { Sentiment } from "@/pages/Sentiment"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -84,6 +85,7 @@ function AppRoutes() {
           <Route path="/market-technicals" element={<MarketTechnicals />} />
           <Route path="/sector-metrics" element={<SectorMetrics />} />
           <Route path="/positioning" element={<Positioning />} />
+          <Route path="/sentiment" element={<Sentiment />} />
           <Route path="/breakout" element={<Breakout />} />
           <Route path="/fx-model" element={<FXModel />} />
           <Route path="/economic-growth" element={<EconomicGrowth />} />

@@ -39,6 +39,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "🧭 Market Technicals", path: "/market-technicals" },
       { label: "🧩 Sector Metrics", path: "/sector-metrics" },
       { label: "📌 Positioning", path: "/positioning" },
+      { label: "🎯 Sentiment", path: "/sentiment" },
       { label: "🔔 Breakout", path: "/breakout" },
       { label: "💱 FX Model", path: "/fx-model" },
     ],

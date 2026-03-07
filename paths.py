@@ -35,6 +35,7 @@ _MODULE_DIRS = [
     PROJECT_ROOT / "portfolio" / "momentum" / "fundamental_momentum",
     PROJECT_ROOT / "portfolio" / "portfolio_optimizer",
     PROJECT_ROOT / "government_bonds",
+    PROJECT_ROOT / "macro" / "sentiment",
 ]
 
 _setup_done = False

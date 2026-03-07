@@ -415,4 +415,13 @@ export const runFxModel = (body: {
   horizons: string
 }) => client.post("/fx-model", body).then(r => r.data)
 
+export const fetchSentimentPutCall = (lookback_days = 180) =>
+  client.get(`/sentiment/put-call?lookback_days=${lookback_days}`).then(r => r.data)
+
+export const fetchSentimentSurveys = () =>
+  client.get("/sentiment/surveys").then(r => r.data)
+
+export const fetchSentimentVolatility = (lookback_days = 365) =>
+  client.get(`/sentiment/volatility?lookback_days=${lookback_days}`).then(r => r.data)
+
 export const clearCache = () => client.delete("/cache").then(r => r.data)

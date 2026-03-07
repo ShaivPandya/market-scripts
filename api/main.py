@@ -63,6 +63,7 @@ from api.routers import (
     portfolio_news,
     positioning,
     quality,
+    sentiment,
     sector_metrics,
     short_screen,
     sizer,
@@ -207,6 +208,7 @@ app.include_router(economic_growth.router, prefix=_V1, dependencies=_auth_dep, t
 app.include_router(liquidity.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(country_dashboard.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(positioning.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
+app.include_router(sentiment.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(breakout.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(fx_model.router, prefix=_V1, dependencies=_auth_dep, tags=["fx"])
 app.include_router(central_banks.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
