@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timezone
 from typing import Optional
+from urllib.parse import urljoin
 
 import feedparser
 import httpx
@@ -70,7 +71,7 @@ DEFAULT_SOURCES = ["FED", "ECB", "BOJ", "BOE"]
 # Heuristic classifiers (tune over time)
 CLASSIFIERS = [
     ("FED", "FOMC statement", re.compile(r"\bFOMC statement\b", re.I)),
-    ("FED", "FOMC minutes (press release)", re.compile(r"\bMinutes of the Federal Open Market Committee\b", re.I)),
+    ("FED", "FOMC minutes", re.compile(r"\bMinutes of the Federal Open Market Committee\b", re.I)),
     ("FED", "FOMC Economic Projections (SEP)", re.compile(r"\beconomic projections\b", re.I)),
     ("FED", "Beige Book", re.compile(r"\bBeige Book\b", re.I)),
     ("ECB", "Monetary policy decisions", re.compile(r"\bMonetary policy decisions?\b", re.I)),
@@ -153,30 +154,40 @@ def init_db(conn: sqlite3.Connection) -> None:
             url TEXT NOT NULL,
             published_at TEXT NOT NULL,
             content_sha256 TEXT,
+            content_url TEXT,
             content_text TEXT,
             summary_json TEXT
         )
         """
     )
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    if "content_url" not in existing_columns:
+        conn.execute("ALTER TABLE items ADD COLUMN content_url TEXT")
     conn.commit()
 
 
 def upsert_item(conn: sqlite3.Connection, item: Item) -> None:
     conn.execute(
         """
-        INSERT OR IGNORE INTO items (guid, source, kind, title, url, published_at)
+        INSERT INTO items (guid, source, kind, title, url, published_at)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guid) DO UPDATE SET
+            source=excluded.source,
+            kind=excluded.kind,
+            title=excluded.title,
+            url=excluded.url,
+            published_at=excluded.published_at
         """,
         (item.guid, item.source, item.kind, item.title, item.url, item.published_at.isoformat()),
     )
     conn.commit()
 
 
-def set_content(conn: sqlite3.Connection, guid: str, text: str) -> None:
+def set_content(conn: sqlite3.Connection, guid: str, content_url: str, text: str) -> None:
     sha = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
     conn.execute(
-        "UPDATE items SET content_sha256=?, content_text=? WHERE guid=?",
-        (sha, text, guid),
+        "UPDATE items SET content_sha256=?, content_url=?, content_text=? WHERE guid=?",
+        (sha, content_url, text, guid),
     )
     conn.commit()
 
@@ -221,6 +232,62 @@ def extract_text_from_pdf_url(client: httpx.Client, url: str) -> str:
     r = client.get(url, follow_redirects=True, timeout=60)
     r.raise_for_status()
     return extract_text(BytesIO(r.content)) or ""
+
+
+def _is_fed_minutes_document_url(url: str) -> bool:
+    return bool(re.search(r"/fomcminutes\d{8}\.(?:htm|html|pdf)$", url, re.I))
+
+
+def _resolve_fed_minutes_document_url(press_release_url: str, html: str) -> str | None:
+    soup = BeautifulSoup(html, "lxml")
+    candidates: list[tuple[int, str]] = []
+    for link in soup.find_all("a", href=True):
+        href = urljoin(press_release_url, link["href"].strip())
+        if not _is_fed_minutes_document_url(href):
+            continue
+        label = link.get_text(" ", strip=True).lower()
+        score = 10
+        if href.lower().endswith((".htm", ".html")):
+            score -= 5
+        if "html" in label:
+            score -= 2
+        if "pdf" in label:
+            score += 2
+        candidates.append((score, href))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item[0])[1]
+
+
+def resolve_item_url(client: httpx.Client, item: Item) -> Item:
+    if item.source != "FED" or item.kind != "FOMC minutes" or _is_fed_minutes_document_url(item.url):
+        return item
+
+    try:
+        ctype, body = fetch_url(client, item.url)
+    except Exception as ex:
+        LOGGER.warning("FED minutes resolver failed for %s: %s", item.url, ex)
+        return item
+
+    if "html" not in ctype:
+        return item
+
+    resolved_url = _resolve_fed_minutes_document_url(item.url, body)
+    if not resolved_url or resolved_url == item.url:
+        return item
+
+    return Item(
+        source=item.source,
+        title=item.title,
+        url=resolved_url,
+        published_at=item.published_at,
+        guid=item.guid,
+        kind=item.kind,
+    )
+
+
+def _content_is_current(content_text: str | None, content_url: str | None, item_url: str) -> bool:
+    return bool(content_text) and bool(content_url) and content_url == item_url
 
 
 def extract_full_text(client: httpx.Client, url: str) -> str:
@@ -338,20 +405,27 @@ def _fetch_and_store(conn: sqlite3.Connection, sources: list[str] | None = None)
     # Phase 1: Fetch feeds and extract content (sequential, involves HTTP + DB)
     with httpx.Client(headers=headers) as client:
         for item in iter_feed_items(sources=sources):
+            item = resolve_item_url(client, item)
             upsert_item(conn, item)
             fetched += 1
 
-            row = conn.execute("SELECT content_text, summary_json FROM items WHERE guid=?", (item.guid,)).fetchone()
-            has_content = row and row[0]
+            row = conn.execute(
+                "SELECT content_url, content_text, summary_json FROM items WHERE guid=?",
+                (item.guid,),
+            ).fetchone()
+            content_url = row[0] if row else None
+            content_text = row[1] if row else None
+            summary_json = row[2] if row else None
+            has_current_content = _content_is_current(content_text, content_url, item.url)
             has_proper_summary = False
-            if has_content and row[1]:
+            if has_current_content and summary_json:
                 try:
-                    existing = json.loads(row[1])
+                    existing = json.loads(summary_json)
                     has_proper_summary = bool(existing.get("signals"))
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            if has_content and has_proper_summary:
+            if has_current_content and has_proper_summary:
                 continue
 
             meta = {
@@ -362,13 +436,13 @@ def _fetch_and_store(conn: sqlite3.Connection, sources: list[str] | None = None)
                 "url": item.url,
             }
 
-            if has_content:
-                to_summarize.append((item.guid, row[0], meta))
+            if has_current_content and content_text:
+                to_summarize.append((item.guid, content_text, meta))
             else:
                 try:
                     text = extract_full_text(client, item.url)
                     if text.strip():
-                        set_content(conn, item.guid, text)
+                        set_content(conn, item.guid, item.url, text)
                         to_summarize.append((item.guid, text, meta))
                 except Exception as ex:
                     LOGGER.warning("%s fetch failed: %s -> %s", item.source, item.url, ex)
