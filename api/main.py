@@ -61,6 +61,7 @@ from api.routers import (
     liquidity,
     market_technicals,
     momentum,
+    ontology,
     portfolio,
     portfolio_news,
     positioning,
@@ -220,6 +221,7 @@ app.include_router(industry.router, prefix=_V1, dependencies=_auth_dep, tags=["m
 app.include_router(yield_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["fixed-income"])
 app.include_router(financials.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
 app.include_router(portfolio_news.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(ontology.router, prefix=_V1, dependencies=_auth_dep, tags=["ontology"])
 app.include_router(weekly_report.router, prefix=_V1, dependencies=_auth_dep, tags=["reports"])
 app.include_router(commodities_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["commodities"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])

@@ -181,6 +181,44 @@ TOOL_DEFINITIONS: list[dict] = [
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "type": "function",
+        "name": "query_ontology",
+        "description": (
+            "Run a cross-module ontology query that joins portfolio positions with macro/market "
+            "signals (VIX, breadth, sector stress, liquidity, and other read-only data modules). "
+            "Use this when users ask portfolio risk exposure questions that require linked context."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural-language query, e.g. 'Which positions are in deteriorating macro conditions?'",
+                },
+                "intent": {
+                    "type": "string",
+                    "description": (
+                        "Optional explicit intent. Allowed: "
+                        "portfolio_risk_exposure, positions_in_deteriorating_macro, entity_context."
+                    ),
+                },
+                "filters": {
+                    "type": "object",
+                    "description": "Optional filters: tickers, sectors, assets, max_results, min_risk_score.",
+                },
+                "timeframe": {
+                    "type": "string",
+                    "description": "Timeframe for portfolio-linked data. Options: This Week, Daily, Weekly, Monthly.",
+                },
+                "include_graph": {
+                    "type": "boolean",
+                    "description": "If true, include ontology nodes and edges in output.",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 # Tool name → index lookup
@@ -384,5 +422,42 @@ def _dispatch(name: str, args: dict) -> object:
         result = serialize_value(data)
         set_cached(short_cache, key, result)
         return result
+
+    if name == "query_ontology":
+        from ontology.service import OntologyQueryService
+
+        filters = args.get("filters") if isinstance(args.get("filters"), dict) else {}
+        query = args.get("query")
+        intent = args.get("intent")
+        timeframe = args.get("timeframe", "Daily")
+        include_graph = bool(args.get("include_graph", False))
+
+        cache_token = json.dumps(
+            {
+                "query": query,
+                "intent": intent,
+                "filters": filters,
+                "timeframe": timeframe,
+                "include_graph": include_graph,
+            },
+            sort_keys=True,
+            default=str,
+        )
+        key = f"ontology_query:{cache_token}"
+        cached = get_cached(short_cache, key)
+        if cached is not None:
+            return cached
+
+        service = OntologyQueryService()
+        result = service.query(
+            query=str(query) if isinstance(query, str) else None,
+            intent=str(intent) if isinstance(intent, str) else None,
+            filters=filters,
+            timeframe=str(timeframe) if isinstance(timeframe, str) else "Daily",
+            include_graph=include_graph,
+        )
+        serialized = serialize_value(result)
+        set_cached(short_cache, key, serialized)
+        return serialized
 
     return json.dumps({"error": f"Unknown tool: {name}"})

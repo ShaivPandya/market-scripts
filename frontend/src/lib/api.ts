@@ -114,6 +114,20 @@ export const fetchPriceVolumeSignals = () =>
 export const fetchVixTermStructure = () =>
   client.get("/vix-term-structure").then(r => r.data)
 
+export const queryOntology = (body: {
+  query?: string
+  intent?: "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
+  filters?: {
+    tickers?: string[]
+    sectors?: string[]
+    assets?: string[]
+    max_results?: number
+    min_risk_score?: number
+  }
+  timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
+  include_graph?: boolean
+}) => client.post("/ontology/query", body).then(r => r.data)
+
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)
 

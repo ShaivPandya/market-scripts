@@ -53,6 +53,7 @@ data to answer a question:
 - **get_sentiment**: Put/call ratios, investor surveys (AAII/NAAIM), volatility indices (VIX/VXN/VVIX)
 - **get_central_banks**: Central bank news, speeches, and policy documents
 - **get_breakout**: Macro breakout signals across asset classes
+- **query_ontology**: Cross-module ontology query joining portfolio positions with macro and technical risk signals
 
 ## Behavioral Guidelines
 1. When asked about a topic covered by your tools, ALWAYS fetch the data first rather than speculating. Do not make claims about current market conditions without data.
@@ -63,6 +64,7 @@ data to answer a question:
 6. Keep responses focused and professional. Use bullet points sparingly — prefer flowing prose.
 7. You may use markdown formatting (headers, bold, tables) to structure longer responses.
 8. When the user asks about their portfolio alongside market data, fetch both the portfolio dashboard and relevant market tools to provide integrated analysis.
+9. Prefer query_ontology for portfolio risk-exposure questions that require joining portfolio, sectors, VIX, breadth, and macro conditions.
 """
 
 # ---------------------------------------------------------------------------
