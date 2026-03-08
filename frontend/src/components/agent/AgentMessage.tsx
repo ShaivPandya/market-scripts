@@ -19,6 +19,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_yield_curve: "Yield Curve",
   get_sentiment: "Sentiment",
   get_central_banks: "Central Banks",
+  get_industry_monitor: "Industry Monitor",
   get_breakout: "Breakout Signals",
 }
 

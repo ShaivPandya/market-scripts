@@ -53,6 +53,7 @@ data to answer a question:
 - **get_yield_curve**: Government bond yield curves (US, DE, UK, JP)
 - **get_sentiment**: Put/call ratios, investor surveys (AAII/NAAIM), volatility indices (VIX/VXN/VVIX)
 - **get_central_banks**: Central bank news, speeches, and policy documents
+- **get_industry_monitor**: Industry transcript-based trend and momentum monitor (banks, trucking, retail, housing)
 - **get_breakout**: Macro breakout signals across asset classes
 - **query_ontology**: Cross-module ontology query joining portfolio positions with macro and technical risk signals
 

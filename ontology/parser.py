@@ -40,7 +40,7 @@ def parse_hybrid_query(
     filters: dict[str, Any] | None,
     known_sectors: set[str] | None = None,
 ) -> InterpretedQuery:
-    clean_filters = _coerce_filters(filters or {})
+    clean_filters = _coerce_filters(_as_dict(filters))
 
     if intent in ALLOWED_INTENTS:
         return InterpretedQuery(
@@ -53,7 +53,7 @@ def parse_hybrid_query(
     if query:
         parsed_llm = _parse_with_llm(query)
         if parsed_llm:
-            merged = _merge_filters(parsed_llm.get("filters", {}), clean_filters)
+            merged = _merge_filters(_as_dict(parsed_llm.get("filters")), clean_filters)
             parsed_intent = str(parsed_llm.get("intent") or "portfolio_risk_exposure")
             if parsed_intent not in ALLOWED_INTENTS:
                 parsed_intent = "portfolio_risk_exposure"
@@ -66,7 +66,7 @@ def parse_hybrid_query(
             )
 
         fallback = _deterministic_parse(query, known_sectors=known_sectors)
-        merged = _merge_filters(fallback.get("filters", {}), clean_filters)
+        merged = _merge_filters(_as_dict(fallback.get("filters")), clean_filters)
         return InterpretedQuery(
             intent=fallback["intent"],
             source="deterministic_fallback",
@@ -96,6 +96,10 @@ def _coerce_filters(raw: dict[str, Any]) -> dict[str, Any]:
             out[k] = raw.get(k)
 
     return out
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _merge_filters(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -206,7 +210,7 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
         if not isinstance(intent, str) or intent not in ALLOWED_INTENTS:
             return None
 
-        filters = parsed.get("filters") if isinstance(parsed.get("filters"), dict) else {}
+        filters = _as_dict(parsed.get("filters"))
         entity = parsed.get("entity")
         entity_str = str(entity) if isinstance(entity, (str, int, float)) else None
 

@@ -59,8 +59,8 @@ def ingest_into_repository(
     position_ids: list[str] = []
 
     # Core entity graph: Position -> Asset -> Sector
-    metadata = portfolio.get("metadata") if isinstance(portfolio.get("metadata"), dict) else {}
-    positions = portfolio.get("positions") if isinstance(portfolio.get("positions"), dict) else {}
+    metadata = _as_dict(portfolio.get("metadata"))
+    positions = _as_dict(portfolio.get("positions"))
     portfolio_timestamp = portfolio.get("timestamp")
 
     for ticker, meta_obj in metadata.items():
@@ -283,7 +283,7 @@ def ingest_into_repository(
             },
         ]
 
-        contributions.sort(key=lambda r: float(r.get("contribution") or 0.0), reverse=True)
+        contributions.sort(key=lambda r: _to_float(r.get("contribution")) or 0.0, reverse=True)
         compact = contributions[:4]
 
         # Update position node with scored fields
@@ -447,11 +447,17 @@ def _extract_latest_price(series: Any) -> float | None:
     if isinstance(series, list) and series:
         last = series[-1]
         if isinstance(last, dict):
-            try:
-                return float(last.get("value"))
-            except (TypeError, ValueError):
-                return None
+            return _to_float(last.get("value"))
     return None
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_sector_name_from_edges(

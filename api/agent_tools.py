@@ -200,6 +200,25 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
+        "name": "get_industry_monitor",
+        "description": (
+            "Fetch industry monitor data built from transcript and company-level signals "
+            "across tracked industries (e.g., trucking, banks, retail, housing). Returns "
+            "industry trend and momentum metrics to assess sector-level operating conditions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "refresh": {
+                    "type": "boolean",
+                    "description": "If true, bypass cached data and recompute from source files. Default: false.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
         "name": "get_breakout",
         "description": (
             "Fetch macro breakout signals across asset classes. Returns recent breakouts "
@@ -458,6 +477,20 @@ def _dispatch(name: str, args: dict) -> object:
         from central_bank import get_data
 
         data = get_data()
+        result = serialize_value(data)
+        set_cached(long_cache, key, result)
+        return result
+
+    if name == "get_industry_monitor":
+        refresh = bool(args.get("refresh", False))
+        key = f"industry_monitor:{refresh}"
+        if not refresh:
+            cached = get_cached(long_cache, key)
+            if cached is not None:
+                return cached
+        from industry_monitor import get_data
+
+        data = get_data(refresh=refresh)
         result = serialize_value(data)
         set_cached(long_cache, key, result)
         return result

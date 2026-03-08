@@ -71,7 +71,7 @@ class OntologyQueryService:
         rows = self.repo.fetch_position_asset_sector_rows()
         results = []
         for row in rows:
-            pos = row.get("position_props") if isinstance(row.get("position_props"), dict) else {}
+            pos = _as_dict(row.get("position_props"))
             if str(pos.get("ontology_run_id")) != ingestion.run_id:
                 continue
 
@@ -82,7 +82,7 @@ class OntologyQueryService:
             risk_score = _to_float(pos.get("risk_score")) or 0.0
             risk_level = str(pos.get("risk_level") or _risk_level_from_score(risk_score))
             sector = "Unknown Equity"
-            sector_props = row.get("sector_props") if isinstance(row.get("sector_props"), dict) else {}
+            sector_props = _as_dict(row.get("sector_props"))
             if isinstance(sector_props.get("name"), str):
                 sector = str(sector_props.get("name"))
 
@@ -101,10 +101,10 @@ class OntologyQueryService:
             )
 
         if interpreted.intent == "positions_in_deteriorating_macro":
-            results = [r for r in results if float(r.get("risk_score") or 0.0) >= 0.6]
+            results = [r for r in results if (_to_float(r.get("risk_score")) or 0.0) >= 0.6]
 
         results = _apply_filters(results, effective_filters)
-        results.sort(key=lambda r: float(r.get("risk_score") or 0.0), reverse=True)
+        results.sort(key=lambda r: _to_float(r.get("risk_score")) or 0.0, reverse=True)
         max_results = _to_int(effective_filters.get("max_results"))
         if max_results is not None and max_results > 0:
             results = results[:max_results]
@@ -133,7 +133,7 @@ class OntologyQueryService:
         raw = self.repo.fetch_position_signal_evidence(position_id)
         evidence = []
         for row in raw:
-            edge = row.get("edge_props") if isinstance(row.get("edge_props"), dict) else {}
+            edge = _as_dict(row.get("edge_props"))
             if str(edge.get("ontology_run_id")) != run_id:
                 continue
             evidence.append(
@@ -173,7 +173,7 @@ def _apply_filters(results: list[dict[str, Any]], filters: dict[str, Any]) -> li
 
     min_risk = _to_float(filters.get("min_risk_score"))
     if min_risk is not None:
-        out = [r for r in out if float(r.get("risk_score") or 0.0) >= min_risk]
+        out = [r for r in out if (_to_float(r.get("risk_score")) or 0.0) >= min_risk]
 
     return out
 
@@ -256,6 +256,10 @@ def _to_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _risk_level_from_score(score: float) -> str:
