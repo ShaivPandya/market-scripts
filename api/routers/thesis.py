@@ -116,7 +116,9 @@ def _call_claude_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
     }
     response = client.messages.create(**kwargs)
     while _extract_stop_reason(response) == "pause_turn":
-        assistant_content = response.get("content", []) if isinstance(response, dict) else getattr(response, "content", [])
+        assistant_content = (
+            response.get("content", []) if isinstance(response, dict) else getattr(response, "content", [])
+        )
         messages.append({"role": "assistant", "content": assistant_content})
         messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
         kwargs["messages"] = messages
