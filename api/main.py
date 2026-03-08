@@ -72,6 +72,7 @@ from api.routers import (
     short_screen,
     signal_aggregator,
     sizer,
+    thesis,
     weekly_report,
     yield_curve,
 )
@@ -228,6 +229,7 @@ app.include_router(portfolio_news.router, prefix=_V1, dependencies=_auth_dep, ta
 app.include_router(ontology.router, prefix=_V1, dependencies=_auth_dep, tags=["ontology"])
 app.include_router(weekly_report.router, prefix=_V1, dependencies=_auth_dep, tags=["reports"])
 app.include_router(commodities_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["commodities"])
+app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 
 

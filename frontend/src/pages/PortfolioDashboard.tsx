@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchPortfolioAllTimeframes } from "@/lib/api"
+import { fetchPortfolioAllTimeframes, fetchThesisStatus, type ThesisStatus } from "@/lib/api"
+import { ThesisUpload } from "@/components/ThesisUpload"
 import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -25,6 +26,7 @@ export function PortfolioDashboard() {
     ["portfolio", "all_timeframes"],
     fetchPortfolioAllTimeframes,
   )
+  const { data: thesisStatus } = useApiQuery<Record<string, ThesisStatus>>(["thesis", "status"], fetchThesisStatus)
 
   const timeframeData = data?.timeframes?.[timeframe]
   const positions: Record<string, DataPoint[]> = timeframeData?.positions ?? {}
@@ -42,7 +44,7 @@ export function PortfolioDashboard() {
           >
             Edit Portfolio
           </button>
-          <RefreshButton queryKeys={[["portfolio", "all_timeframes"]]} />
+          <RefreshButton queryKeys={[["portfolio", "all_timeframes"], ["thesis", "status"]]} />
         </div>
       </div>
 
@@ -68,7 +70,10 @@ export function PortfolioDashboard() {
             return (
               <div key={ticker} className="rounded-xl border bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-semibold text-gray-700">{ticker}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-gray-700">{ticker}</p>
+                    <ThesisUpload ticker={ticker} status={thesisStatus?.[ticker] ?? "missing"} />
+                  </div>
                   {ret != null && (
                     <span className={`text-xs font-medium ${ret >= 0 ? "text-green-600" : "text-red-600"}`}>
                       {ret >= 0 ? "+" : ""}{ret.toFixed(2)}%

@@ -105,6 +105,25 @@ export const fetchPortfolioPositions = () =>
 export const savePortfolioPositions = (positions: PortfolioPosition[]) =>
   client.put("/portfolio-positions", { positions }).then(r => r.data)
 
+export type ThesisStatus = "populated" | "empty" | "missing"
+
+export const fetchThesisStatus = () =>
+  client.get("/thesis/status").then(r => r.data as Record<string, ThesisStatus>)
+
+export const fetchThesis = (ticker: string) =>
+  client
+    .get(`/thesis/${encodeURIComponent(ticker)}`)
+    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+
+export const uploadThesisPdf = (ticker: string, file: File) => {
+  const formData = new FormData()
+  formData.append("ticker", ticker)
+  formData.append("file", file)
+  return client
+    .post("/thesis/generate", formData, { timeout: 120_000 })
+    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+}
+
 export const fetchMomentum = () =>
   client.get("/momentum").then(r => r.data)
 
