@@ -232,6 +232,19 @@ def load_last_week_summary(history_dir: Path) -> str | None:
         return None
 
 
+def _build_system_message(last_week_summary: str | None) -> str:
+    """Build weekly system prompt from shared core + weekly overlay."""
+    core_md = load_prompt_file(PROMPTS_DIR / "system.md", "prompts/system.md")
+    weekly_system_md = load_prompt_file(
+        PROMPTS_DIR / "weekly_system.md",
+        "prompts/weekly_system.md",
+    )
+    system_parts = [core_md, weekly_system_md]
+    if last_week_summary:
+        system_parts.append(f"## Last Week's Summary\n\n```json\n{last_week_summary}\n```")
+    return "\n\n---\n\n".join(system_parts)
+
+
 # ---------------------------------------------------------------------------
 # Thesis monitoring helpers
 # ---------------------------------------------------------------------------
@@ -1141,19 +1154,13 @@ def main():
     today_str = datetime.now(ET).strftime("%Y-%m-%d")
     log.info("=== Weekly report run starting (%s) ===", today_str)
 
-    # 1. Load prompts
-    system_md = load_prompt_file(PROMPTS_DIR / "system.md", "prompts/system.md")
-    playbook_md = load_prompt_file(PROMPTS_DIR / "playbook.md", "prompts/playbook.md")
-
     # 2. Load last-week summary
     last_week = load_last_week_summary(HISTORY_DIR)
-    system_parts = [system_md, playbook_md]
     if last_week:
-        system_parts.append(f"## Last Week's Summary\n\n```json\n{last_week}\n```")
         log.info("Loaded last-week summary from history")
     else:
         log.info("No prior summary found in history")
-    system_msg = "\n\n---\n\n".join(system_parts)
+    system_msg = _build_system_message(last_week)
 
     # 3. Collect data
     log.info("Collecting data from all sources...")

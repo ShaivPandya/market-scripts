@@ -73,6 +73,10 @@ def _resolve_benchmark(req: FMRequest) -> str:
         return "sp500"
     if req.benchmark == "Same as Input":
         return "self"
+    if req.benchmark in _UNIVERSE_MAP:
+        return _UNIVERSE_MAP[req.benchmark]
+    if req.benchmark in _SECTOR_PREFIX_MAP:
+        return _SECTOR_PREFIX_MAP[req.benchmark]
     return req.benchmark
 
 

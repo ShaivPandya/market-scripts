@@ -49,7 +49,7 @@ except ImportError:
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import get_sp500_universe, get_universe_tickers, list_universes, load_universe
+from common import get_universe_tickers, list_universes
 from quality_single import RawMetrics, compute_scores, fetch_raw_metrics
 
 # GICS sectors and their SPDR ETF tickers
@@ -108,32 +108,27 @@ def load_screen_universe(name: str) -> tuple[list[str], str]:
     """
     key = name.strip().lower()
 
-    # Built-in index universes
-    if key == "sp500":
-        print("Fetching S&P 500 tickers from Wikipedia...")
-        tickers = get_sp500_universe()
-        return tickers, "S&P 500"
+    # Determine display label
+    _LABELS: dict[str, str] = {
+        "sp500": "S&P 500",
+        "russell2000": "Russell 2000",
+        "sp400": "S&P 400",
+    }
 
-    if key == "russell2000":
-        tickers = load_universe("russell2000")
-        return tickers, "Russell 2000"
-
-    if key == "sp400":
-        tickers = load_universe("sp400")
-        return tickers, "S&P 400"
-
-    # GICS sector ETFs
-    if key in SECTOR_ETFS:
+    if key in _LABELS:
+        label = _LABELS[key]
+    elif key in SECTOR_ETFS:
         etf_ticker, sector_name = SECTOR_ETFS[key]
-        print(f"Fetching all holdings for {etf_ticker} ({sector_name})...")
-        tickers = get_universe_tickers(etf_ticker)
-        if not tickers:
-            raise SystemExit(f"Failed to fetch holdings for {etf_ticker}. Cannot proceed.")
-        return tickers, f"{sector_name} ({etf_ticker})"
+        label = f"{sector_name} ({etf_ticker})"
+    else:
+        label = name
 
-    # Fallback: file path or named universe in universes/
-    tickers = load_universe(name)
-    return tickers, name
+    # Unified resolution via get_universe_tickers (handles sp500, named
+    # universes, sector ETF shortcuts, file paths, etc.)
+    tickers = get_universe_tickers(name)
+    if not tickers:
+        raise SystemExit(f"Failed to resolve tickers for '{name}'. Cannot proceed.")
+    return tickers, label
 
 
 def main():

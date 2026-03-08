@@ -540,10 +540,13 @@ def _fallback_pass1_result() -> dict:
 
 
 def _build_pass1_system_message(last_daily_json: str | None) -> str:
-    """Build system prompt for Pass 1 (market analysis + stance)."""
+    """Build Pass 1 prompt from shared core + weekly overlay."""
     system_md = load_prompt_file(PROMPTS_DIR / "system.md", "prompts/system.md")
-    playbook_md = load_prompt_file(PROMPTS_DIR / "playbook.md", "prompts/playbook.md")
-    parts = [system_md, playbook_md]
+    weekly_system_md = load_prompt_file(
+        PROMPTS_DIR / "weekly_system.md",
+        "prompts/weekly_system.md",
+    )
+    parts = [system_md, weekly_system_md]
     if last_daily_json:
         parts.append(f"## Previous Session's Summary\n\n```json\n{last_daily_json}\n```")
     return "\n\n---\n\n".join(parts)

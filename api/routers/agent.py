@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter
@@ -24,50 +25,27 @@ router = APIRouter()
 logger = logging.getLogger("api.agent")
 
 # ---------------------------------------------------------------------------
-# System prompt
+# Prompt loading
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """\
-You are an expert investment analyst assistant embedded in a market analysis platform. \
-You have access to real-time market data through a set of tools that fetch data from \
-various financial data sources (FRED, Yahoo Finance, CFTC, SEC, central bank feeds, etc.).
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROMPTS_DIR = PROJECT_ROOT / "auto_report" / "prompts"
 
-## Your Role
-You help professional investors analyze markets, assess risks, and understand the \
-current macro and micro environment. You provide data-driven analysis, not investment \
-advice. You cite specific numbers from the data you retrieve.
 
-## Available Data Tools
-You have access to the following data-fetching tools. Call them when you need current \
-data to answer a question:
+def _load_required_prompt_file(filename: str) -> str:
+    path = PROMPTS_DIR / filename
+    if not path.exists():
+        raise ConfigurationError(f"Missing required prompt file: {path}")
+    content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        raise ConfigurationError(f"Prompt file is empty: {path}")
+    return content
 
-- **get_liquidity**: Global liquidity dashboard (composite score, regime, regional scores, components, changes)
-- **get_market_breadth**: S&P 500 market breadth (% above 200/20 DMA, new highs/lows)
-- **get_vix_term_structure**: VIX term structure (VIX, VIX3M, ratio, signal)
-- **get_positioning**: CFTC COT leveraged fund positioning (net %, z-scores, forced flows)
-- **get_signal_aggregator**: Unified cross-module regime dashboard (factor scores, composite regime, history, failures)
-- **get_economic_growth**: Cross-asset returns for growth regime assessment (commodities, equities, FX)
-- **get_labor_market**: US labor market indicators (claims, wages, JOLTS, hours)
-- **get_sector_metrics**: S&P 500 sector weights, changes, relative performance, trend quality
-- **get_portfolio**: User's portfolio positions and P&L
-- **get_yield_curve**: Government bond yield curves (US, DE, UK, JP)
-- **get_sentiment**: Put/call ratios, investor surveys (AAII/NAAIM), volatility indices (VIX/VXN/VVIX)
-- **get_central_banks**: Central bank news, speeches, and policy documents
-- **get_industry_monitor**: Industry transcript-based trend and momentum monitor (banks, trucking, retail, housing)
-- **get_breakout**: Macro breakout signals across asset classes
-- **query_ontology**: Cross-module ontology query joining portfolio positions with macro and technical risk signals
 
-## Behavioral Guidelines
-1. When asked about a topic covered by your tools, ALWAYS fetch the data first rather than speculating. Do not make claims about current market conditions without data.
-2. When answering cross-cutting questions (e.g., "What's the overall risk environment?"), call multiple relevant tools to build a comprehensive picture.
-3. Present analysis in clear, flowing prose. Use numbers and specifics from the data. Avoid vague generalities.
-4. If a tool call fails, tell the user what happened and work with the data you do have.
-5. Never fabricate data points. If you don't have data, say so.
-6. Keep responses focused and professional. Use bullet points sparingly — prefer flowing prose.
-7. You may use markdown formatting (headers, bold, tables) to structure longer responses.
-8. When the user asks about their portfolio alongside market data, fetch both the portfolio dashboard and relevant market tools to provide integrated analysis.
-9. Prefer query_ontology for portfolio risk-exposure questions that require joining portfolio, sectors, VIX, breadth, and macro conditions.
-"""
+def _build_agent_instructions() -> str:
+    core_md = _load_required_prompt_file("system.md")
+    agent_md = _load_required_prompt_file("agent_system.md")
+    return "\n\n---\n\n".join([core_md, agent_md])
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -102,6 +80,7 @@ def agent_chat(req: AgentChatRequest):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ConfigurationError("OPENAI_API_KEY")
+    instructions = _build_agent_instructions()
 
     def generate():  # noqa: C901 — complex but linear control flow
         from openai import OpenAI
@@ -115,7 +94,7 @@ def agent_chat(req: AgentChatRequest):
             # Initial streaming call
             stream = client.responses.create(
                 model="gpt-5.4",
-                instructions=SYSTEM_PROMPT,
+                instructions=instructions,
                 input=input_messages,
                 tools=TOOL_DEFINITIONS,
                 stream=True,
