@@ -25,6 +25,7 @@ _limiter = Limiter(key_func=get_remote_address)
 
 # ── Config (read from .env via load_dotenv() in main.py) ─────────────────────
 _AUTH_MODE = (os.environ.get("AUTH_MODE") or "").strip().lower() or "password"
+_LOGIN_RATE_LIMIT = (os.environ.get("AUTH_LOGIN_RATE_LIMIT") or "").strip() or "5/minute"
 
 
 def _is_cloudflare_mode() -> bool:
@@ -124,7 +125,7 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/auth/login")
-@_limiter.limit("5/minute")
+@_limiter.limit(_LOGIN_RATE_LIMIT)
 def login(request: Request, body: LoginRequest, response: Response):
     if not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
         raise HTTPException(

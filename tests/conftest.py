@@ -11,6 +11,7 @@ os.environ["AUTH_PASSWORD_HASH"] = (
     "$2b$12$43F.9axQmqL0Owf7Hsp4tub0wukaMzCmz8JlTz.UJD8emjTZUVy0C"
 )
 os.environ["AUTH_MODE"] = "password"
+os.environ["AUTH_LOGIN_RATE_LIMIT"] = "1000/minute"
 
 
 @pytest.fixture
