@@ -445,6 +445,109 @@ def _compact_ontology_payload(payload: Any) -> Any:
     return out
 
 
+def _compact_portfolio_payload(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return _compact_generic(payload, max_depth=4, list_limit=25, dict_limit=60)
+
+    if isinstance(payload.get("error"), str):
+        return payload
+
+    raw_positions = payload.get("positions")
+    positions = raw_positions if isinstance(raw_positions, dict) else {}
+    raw_metadata = payload.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+
+    tickers = list(metadata.keys())
+    for ticker in positions.keys():
+        if ticker not in metadata:
+            tickers.append(ticker)
+
+    def _first_valid_point(series_rows: list[dict]) -> dict | None:
+        for row in series_rows:
+            if not isinstance(row, dict):
+                continue
+            value = _to_float(row.get("value"))
+            if value is None:
+                continue
+            return {"date": row.get("date"), "value": value}
+        return None
+
+    def _last_valid_point(series_rows: list[dict]) -> dict | None:
+        for row in reversed(series_rows):
+            if not isinstance(row, dict):
+                continue
+            value = _to_float(row.get("value"))
+            if value is None:
+                continue
+            return {"date": row.get("date"), "value": value}
+        return None
+
+    compact_rows: list[dict[str, Any]] = []
+    for ticker in tickers:
+        meta = metadata.get(ticker) if isinstance(metadata.get(ticker), dict) else {}
+        series = positions.get(ticker)
+        series_rows = series if isinstance(series, list) else []
+        first = _first_valid_point(series_rows)
+        last = _last_valid_point(series_rows)
+        first_val = _to_float(first.get("value")) if isinstance(first, dict) else None
+        last_val = _to_float(last.get("value")) if isinstance(last, dict) else None
+
+        price_change = None
+        price_return_pct = None
+        if first_val is not None and last_val is not None and first_val != 0:
+            price_change = round(last_val - first_val, 6)
+            price_return_pct = round(((last_val - first_val) / first_val) * 100.0, 4)
+
+        direction = str(meta.get("direction") or "").strip().lower()
+        directional_return_pct = None
+        if price_return_pct is not None:
+            directional_return_pct = -price_return_pct if direction == "short" else price_return_pct
+
+        compact_rows.append(
+            {
+                "ticker": ticker,
+                "asset": meta.get("asset"),
+                "direction": meta.get("direction"),
+                "first_date": first.get("date") if isinstance(first, dict) else None,
+                "first_price": first_val,
+                "last_date": last.get("date") if isinstance(last, dict) else None,
+                "last_price": last_val,
+                "price_change": price_change,
+                "price_return_pct": price_return_pct,
+                "directional_return_pct": directional_return_pct,
+                "data_points": len(series_rows),
+            }
+        )
+
+    long_count = sum(1 for row in compact_rows if str(row.get("direction") or "").lower() == "long")
+    short_count = sum(1 for row in compact_rows if str(row.get("direction") or "").lower() == "short")
+    directional_returns = [
+        r for r in (row.get("directional_return_pct") for row in compact_rows) if isinstance(r, (int, float))
+    ]
+    avg_directional_return_pct = (
+        round(sum(float(r) for r in directional_returns) / len(directional_returns), 4) if directional_returns else None
+    )
+
+    compact_rows.sort(key=lambda row: str(row.get("ticker") or ""))
+    extras = {k: v for k, v in payload.items() if k not in {"positions", "metadata", "timeframe", "timestamp"}}
+    out: dict[str, Any] = {
+        "timeframe": payload.get("timeframe"),
+        "timestamp": payload.get("timestamp"),
+        "summary": {
+            "position_count": len(compact_rows),
+            "long_count": long_count,
+            "short_count": short_count,
+            "average_directional_return_pct": avg_directional_return_pct,
+        },
+        "positions": compact_rows,
+    }
+    if metadata:
+        out["metadata"] = _compact_generic(metadata, max_depth=3, list_limit=20, dict_limit=40)
+    if extras:
+        out["extra"] = _compact_generic(extras, max_depth=3, list_limit=20, dict_limit=20)
+    return out
+
+
 def _summarize_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return {"type": "dict", "keys": list(value.keys())[:40], "key_count": len(value)}
@@ -469,6 +572,8 @@ def _compact_tool_output(name: str, payload: Any, max_chars: int = _MAX_TOOL_RES
 
     if name == "query_ontology":
         compacted = _compact_ontology_payload(payload)
+    elif name == "get_portfolio":
+        compacted = _compact_portfolio_payload(payload)
     else:
         compacted = payload
 
