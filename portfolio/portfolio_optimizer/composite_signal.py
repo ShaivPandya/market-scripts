@@ -61,7 +61,13 @@ except ImportError:
 # -----------------------------
 # Configuration
 # -----------------------------
-PORTFOLIO_CSV = Path(__file__).parent.parent / "portfolio.csv"
+try:
+    from portfolio_db import get_positions_df as _get_positions_df
+except ImportError:
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).parent.parent))
+    from portfolio_db import get_positions_df as _get_positions_df
 DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)
@@ -745,8 +751,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Generate multi-factor composite signals for portfolio tickers.")
     ap.add_argument(
         "--portfolio",
-        default=str(PORTFOLIO_CSV),
-        help=f"Path to portfolio CSV (default: {PORTFOLIO_CSV})",
+        default=None,
+        help="Path to portfolio CSV (default: reads from portfolio database)",
     )
     ap.add_argument(
         "--ticker",
@@ -835,12 +841,14 @@ def main() -> int:
         direction_map = {ticker: "long" for ticker in active_tickers}
     else:
         # Load portfolio
-        portfolio_path = Path(args.portfolio)
-        if not portfolio_path.exists():
-            LOGGER.error("Portfolio file not found: %s", portfolio_path)
-            return 1
-
-        meta = pd.read_csv(portfolio_path)
+        if args.portfolio is not None:
+            portfolio_path = Path(args.portfolio)
+            if not portfolio_path.exists():
+                LOGGER.error("Portfolio file not found: %s", portfolio_path)
+                return 1
+            meta = pd.read_csv(portfolio_path)
+        else:
+            meta = _get_positions_df()
         meta["direction"] = meta["direction"].fillna("")
 
         # Build asset map

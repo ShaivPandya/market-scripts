@@ -252,15 +252,13 @@ def _build_system_message(last_week_summary: str | None) -> str:
 
 def load_theses() -> dict[str, str | None]:
     """Load investment thesis markdown files for all portfolio tickers."""
-    import csv
+    from portfolio_db import get_positions
 
-    portfolio_csv = PROJECT_ROOT / "portfolio" / "portfolio.csv"
     tickers: list[str] = []
-    with open(portfolio_csv, newline="") as f:
-        for row in csv.DictReader(f):
-            t = row.get("ticker", "").strip()
-            if t:
-                tickers.append(t)
+    for row in get_positions():
+        t = str(row.get("ticker", "")).strip()
+        if t:
+            tickers.append(t)
 
     theses: dict[str, str | None] = {}
     for ticker in tickers:
@@ -322,9 +320,9 @@ def collect_thesis_data() -> dict:
     results["theses"] = load_theses()
 
     # 2. Load portfolio positions
-    portfolio_csv = PROJECT_ROOT / "portfolio" / "portfolio.csv"
-    with open(portfolio_csv, newline="") as f:
-        results["portfolio"] = [r for r in csv.DictReader(f) if r.get("ticker")]
+    from portfolio_db import get_positions as _get_positions
+
+    results["portfolio"] = [r for r in _get_positions() if r.get("ticker")]
 
     tickers = [p["ticker"] for p in results["portfolio"]]
 

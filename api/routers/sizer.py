@@ -224,12 +224,11 @@ def get_portfolio_sizer_job(job_id: str):
 @router.get("/portfolio-sizer/prefill")
 def get_sizer_prefill():
     try:
-        import pandas as pd
-        from portfolio_optimizer.portfolio_analyzer import PORTFOLIO_CSV
+        from portfolio_db import get_positions_df
 
-        df = pd.read_csv(PORTFOLIO_CSV)
+        df = get_positions_df()
         if "ticker" not in df.columns:
-            raise ValueError("portfolio.csv is missing required 'ticker' column.")
+            raise ValueError("Portfolio database is missing required 'ticker' column.")
 
         tickers = df["ticker"].astype(str).str.strip().str.upper()
         directions = (
@@ -258,7 +257,7 @@ def get_sizer_prefill():
 
         return {
             "positions": deduped_rows,
-            "source": PORTFOLIO_CSV.name,
+            "source": "portfolio.db",
             "count": len(deduped_rows),
         }
     except Exception as e:

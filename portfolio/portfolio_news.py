@@ -36,7 +36,7 @@ PREMIUM_DOMAINS = [
     "theglobeandmail.com",
 ]
 
-PORTFOLIO_CSV = Path(__file__).parent / "portfolio.csv"
+from portfolio_db import get_positions as _get_positions
 
 # ── IBKR settings (via env) ───────────────────────────────────────────────────
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
@@ -89,9 +89,8 @@ _name_cache: dict[str, str] = {}
 
 
 def _read_portfolio() -> list[dict[str, str]]:
-    """Read portfolio.csv and return list of rows."""
-    with open(PORTFOLIO_CSV, newline="") as f:
-        return [r for r in csv.DictReader(f) if r.get("ticker")]
+    """Return portfolio positions as list of dicts."""
+    return [p for p in _get_positions() if p.get("ticker")]
 
 
 def _resolve_name(ticker: str, asset: str) -> str:

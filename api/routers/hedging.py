@@ -210,21 +210,20 @@ def get_hedging_tool_job(job_id: str):
 @router.get("/hedging-tool/prefill")
 def get_hedging_tool_prefill():
     try:
-        import pandas as pd
-        from portfolio_optimizer.portfolio_analyzer import PORTFOLIO_CSV
+        from portfolio_db import get_positions_df
 
-        df = pd.read_csv(PORTFOLIO_CSV)
+        df = get_positions_df()
         if "ticker" not in df.columns:
-            raise ValueError("portfolio.csv is missing required 'ticker' column.")
+            raise ValueError("Portfolio database is missing required 'ticker' column.")
 
         tickers = df["ticker"].astype(str).str.strip().str.upper()
         tickers = [t for t in tickers.tolist() if t]
-        # Preserve CSV order while deduplicating.
+        # Preserve order while deduplicating.
         deduped = list(dict.fromkeys(tickers))
 
         return {
             "positions": [{"ticker": t, "weight": 0.0} for t in deduped],
-            "source": PORTFOLIO_CSV.name,
+            "source": "portfolio.db",
             "count": len(deduped),
         }
     except Exception as e:

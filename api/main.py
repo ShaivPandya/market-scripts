@@ -63,6 +63,7 @@ from api.routers import (
     momentum,
     ontology,
     portfolio,
+    portfolio_edit,
     portfolio_news,
     positioning,
     quality,
@@ -196,6 +197,7 @@ _V1 = "/api/v1"
 
 app.include_router(auth_router.router, prefix=_V1, tags=["auth"])
 app.include_router(portfolio.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(portfolio_edit.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(analyzer.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(hedging.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(sizer.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])

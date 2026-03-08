@@ -9,6 +9,24 @@ from api.serializers import serialize_response
 from llm_utils import MODEL_HAIKU, call_claude_text
 
 router = APIRouter()
+REQUIRED_CURRENCY_PERIODS = ["1-mo", "3-mo", "6-mo", "1-yr"]
+
+
+def _normalize_currency_payload(payload: dict) -> dict:
+    periods = payload.get("currency_periods")
+    normalized_periods = [p for p in periods if isinstance(p, str)] if isinstance(periods, list) else []
+    for period in REQUIRED_CURRENCY_PERIODS:
+        if period not in normalized_periods:
+            normalized_periods.append(period)
+    payload["currency_periods"] = normalized_periods
+
+    currencies = payload.get("currencies")
+    if isinstance(currencies, dict):
+        for returns in currencies.values():
+            if isinstance(returns, dict):
+                for period in normalized_periods:
+                    returns.setdefault(period, None)
+    return payload
 
 
 @router.get("/economic-growth")
@@ -16,14 +34,14 @@ def get_economic_growth():
     key = "economic_growth"
     cached = get_cached(short_cache, key)
     if cached is not None:
-        return cached
+        return _normalize_currency_payload(cached)
     try:
         from economic_growth import get_data
 
         data = get_data()
     except Exception as e:
         raise DataFetchError(source="economic_growth", detail=str(e)) from e
-    result = serialize_response(data)
+    result = _normalize_currency_payload(serialize_response(data))
     set_cached(short_cache, key, result)
     return result
 

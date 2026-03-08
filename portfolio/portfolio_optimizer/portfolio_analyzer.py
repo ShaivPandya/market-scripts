@@ -169,7 +169,13 @@ console = Console()
 # -----------------------------
 # Configuration
 # -----------------------------
-PORTFOLIO_CSV = Path(__file__).parent.parent / "portfolio.csv"
+try:
+    from portfolio_db import get_positions_df as _get_positions_df
+except ImportError:
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).parent.parent))
+    from portfolio_db import get_positions_df as _get_positions_df
 LOOKBACK_DAYS = 730  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
@@ -1158,7 +1164,7 @@ def analyze_portfolio() -> dict:
     from datetime import datetime
 
     try:
-        meta = pd.read_csv(PORTFOLIO_CSV)
+        meta = _get_positions_df()
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
 
@@ -1297,7 +1303,7 @@ def optimize_portfolio(
     from datetime import datetime
 
     try:
-        meta = pd.read_csv(PORTFOLIO_CSV)
+        meta = _get_positions_df()
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
 
@@ -1732,7 +1738,7 @@ def get_data(book: float | None = None, target_leverage: float | None = None, be
 # Main (CLI)
 # -----------------------------
 def main(book: float | None = None, debug_weights: bool = False):
-    meta = pd.read_csv(PORTFOLIO_CSV)
+    meta = _get_positions_df()
     meta["direction"] = meta["direction"].fillna("")
     # realized_vol will be computed from price data, not loaded from CSV
     meta = meta.set_index("ticker")

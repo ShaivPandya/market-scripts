@@ -90,6 +90,21 @@ export const fetchPortfolio = (timeframe: string) =>
 export const fetchPortfolioAllTimeframes = () =>
   client.get("/portfolio?all_timeframes=true").then(r => r.data)
 
+export interface PortfolioPosition {
+  ticker: string
+  asset: "equity" | "commodity" | "fx" | "bond"
+  direction: "long" | "short"
+  distressed: boolean
+  conviction: number
+  cost_basis: number | null
+}
+
+export const fetchPortfolioPositions = () =>
+  client.get("/portfolio-positions").then(r => r.data as { positions: PortfolioPosition[] })
+
+export const savePortfolioPositions = (positions: PortfolioPosition[]) =>
+  client.put("/portfolio-positions", { positions }).then(r => r.data)
+
 export const fetchMomentum = () =>
   client.get("/momentum").then(r => r.data)
 
