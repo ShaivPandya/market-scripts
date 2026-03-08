@@ -105,8 +105,7 @@ def _format_stream_error(exc: Exception) -> str:
 
     if status_code == 401 or "invalid x-api-key" in lowered or "authentication_error" in lowered:
         return (
-            "Agent authentication failed. Set a valid Anthropic API key in ANTHROPIC_API_KEY "
-            "and restart the backend."
+            "Agent authentication failed. Set a valid Anthropic API key in ANTHROPIC_API_KEY and restart the backend."
         )
 
     return raw
