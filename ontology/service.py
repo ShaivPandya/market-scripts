@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ontology.ingestion import ingest_into_repository
@@ -29,6 +30,7 @@ KNOWN_SECTORS = {
     "Other Assets",
     "Unknown Equity",
 }
+SNAPSHOT_REUSE_MAX_AGE = timedelta(minutes=15)
 
 
 class OntologyRunNotFoundError(Exception):
@@ -51,6 +53,7 @@ class OntologyQueryService:
         timeframe: str = "Daily",
         include_graph: bool = False,
         run_id: str | None = None,
+        refresh_snapshot: bool = False,
     ) -> dict[str, Any]:
         tf = timeframe if timeframe in VALID_TIMEFRAMES else "Daily"
 
@@ -70,16 +73,23 @@ class OntologyQueryService:
             source_status = _as_dict(run.get("source_status"))
             required_modules = _as_str_list(run.get("required_modules"))
         else:
-            deep_fetch = include_graph or interpreted.intent == "entity_context"
-            ingestion = ingest_into_repository(
-                repo=self.repo,
-                timeframe=tf,
-                include_deep_modules=deep_fetch,
-            )
-            resolved_run_id = ingestion.run_id
-            as_of = ingestion.as_of
-            source_status = ingestion.source_status
-            required_modules = ingestion.required_modules
+            latest_run = self.repo.get_latest_run() if not refresh_snapshot else None
+            if latest_run is not None and _run_is_fresh(latest_run.get("created_at"), max_age=SNAPSHOT_REUSE_MAX_AGE):
+                resolved_run_id = str(latest_run["run_id"])
+                as_of = str(latest_run["as_of"])
+                source_status = _as_dict(latest_run.get("source_status"))
+                required_modules = _as_str_list(latest_run.get("required_modules"))
+            else:
+                deep_fetch = include_graph or interpreted.intent == "entity_context"
+                ingestion = ingest_into_repository(
+                    repo=self.repo,
+                    timeframe=tf,
+                    include_deep_modules=deep_fetch,
+                )
+                resolved_run_id = ingestion.run_id
+                as_of = ingestion.as_of
+                source_status = ingestion.source_status
+                required_modules = ingestion.required_modules
 
         effective_filters = dict(interpreted.filters)
         if interpreted.intent == "entity_context" and interpreted.entity:
@@ -296,3 +306,27 @@ def _risk_level_from_score(score: float) -> str:
     if score >= 0.5:
         return "medium"
     return "low"
+
+
+def _run_is_fresh(created_at: Any, *, max_age: timedelta) -> bool:
+    created_dt = _parse_run_created_at(created_at)
+    if created_dt is None:
+        return False
+    age = datetime.now(UTC) - created_dt
+    return age <= max_age
+
+
+def _parse_run_created_at(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

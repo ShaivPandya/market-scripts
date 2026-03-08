@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -22,6 +23,8 @@ class _FakeIngestion:
 class _FakeRepo:
     def __init__(self):
         self.run_requests: list[str] = []
+        self.latest_run_requests = 0
+        self.latest_run: dict | None = None
         self.rows_by_run = {
             "run-live": [
                 {
@@ -62,7 +65,12 @@ class _FakeRepo:
             "as_of": "2026-03-08T00:00:00Z",
             "source_status": {"portfolio": {"status": "ok"}},
             "required_modules": ["portfolio"],
+            "created_at": "2026-03-08 00:00:00",
         }
+
+    def get_latest_run(self):
+        self.latest_run_requests += 1
+        return self.latest_run
 
     def fetch_snapshot_position_asset_sector_rows(self, run_id: str):
         return self.rows_by_run.get(run_id, [])
@@ -123,6 +131,123 @@ def test_query_without_run_id_ingests_and_returns_run(monkeypatch):
     assert resp["as_of"] == "2026-03-09T00:00:00Z"
     assert len(resp["results"]) == 1
     assert repo.run_requests == []
+
+
+def test_query_without_run_id_reuses_fresh_latest_snapshot(monkeypatch):
+    repo = _FakeRepo()
+    repo.latest_run = {
+        "run_id": "run-live",
+        "as_of": "2026-03-09T00:00:00Z",
+        "source_status": {"portfolio": {"status": "ok"}},
+        "required_modules": ["portfolio"],
+        "created_at": (datetime.now(UTC) - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    service = OntologyQueryService(repository=repo)
+
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+
+    def _unexpected_ingest(*_args, **_kwargs):
+        raise AssertionError("ingest should not run when a fresh latest run exists")
+
+    monkeypatch.setattr(svc, "ingest_into_repository", _unexpected_ingest)
+
+    resp = service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        timeframe="Daily",
+        include_graph=False,
+        run_id=None,
+        refresh_snapshot=False,
+    )
+
+    assert resp["run_id"] == "run-live"
+    assert repo.latest_run_requests == 1
+
+
+def test_query_without_run_id_ingests_when_latest_is_stale(monkeypatch):
+    repo = _FakeRepo()
+    repo.latest_run = {
+        "run_id": "run-live",
+        "as_of": "2026-03-09T00:00:00Z",
+        "source_status": {"portfolio": {"status": "ok"}},
+        "required_modules": ["portfolio"],
+        "created_at": (datetime.now(UTC) - timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    service = OntologyQueryService(repository=repo)
+
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+
+    called = {"ingested": False}
+
+    def _fake_ingest(*_args, **_kwargs):
+        called["ingested"] = True
+        return _FakeIngestion(
+            run_id="run-historical",
+            as_of="2026-03-10T00:00:00Z",
+            source_status={"portfolio": {"status": "ok"}},
+            required_modules=["portfolio"],
+            optional_modules=[],
+            component_scores={},
+        )
+
+    monkeypatch.setattr(svc, "ingest_into_repository", _fake_ingest)
+
+    resp = service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        timeframe="Daily",
+        include_graph=False,
+        run_id=None,
+        refresh_snapshot=False,
+    )
+
+    assert called["ingested"] is True
+    assert resp["run_id"] == "run-historical"
+
+
+def test_query_with_refresh_snapshot_forces_ingestion(monkeypatch):
+    repo = _FakeRepo()
+    repo.latest_run = {
+        "run_id": "run-live",
+        "as_of": "2026-03-09T00:00:00Z",
+        "source_status": {"portfolio": {"status": "ok"}},
+        "required_modules": ["portfolio"],
+        "created_at": (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    service = OntologyQueryService(repository=repo)
+
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+
+    called = {"ingested": False}
+
+    def _fake_ingest(*_args, **_kwargs):
+        called["ingested"] = True
+        return _FakeIngestion(
+            run_id="run-historical",
+            as_of="2026-03-10T00:00:00Z",
+            source_status={"portfolio": {"status": "ok"}},
+            required_modules=["portfolio"],
+            optional_modules=[],
+            component_scores={},
+        )
+
+    monkeypatch.setattr(svc, "ingest_into_repository", _fake_ingest)
+
+    resp = service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        timeframe="Daily",
+        include_graph=False,
+        run_id=None,
+        refresh_snapshot=True,
+    )
+
+    assert called["ingested"] is True
+    assert resp["run_id"] == "run-historical"
+    assert repo.latest_run_requests == 0
 
 
 def test_query_with_run_id_replays_without_ingestion(monkeypatch):

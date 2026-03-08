@@ -120,7 +120,7 @@ export const fetchPriceVolumeSignals = () =>
 export const fetchVixTermStructure = () =>
   client.get("/vix-term-structure").then(r => r.data)
 
-export const queryOntology = (body: {
+type OntologyQueryBody = {
   query?: string
   intent?: "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
   filters?: {
@@ -133,7 +133,44 @@ export const queryOntology = (body: {
   timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
   include_graph?: boolean
   run_id?: string
-}) => client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data)
+  refresh_snapshot?: boolean
+}
+
+export const queryOntology = (body: OntologyQueryBody) =>
+  client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data)
+
+type OntologyJobResponse =
+  | { job_id: string; status: "queued" | "running" }
+  | { job_id: string; status: "error"; error?: string }
+  | { job_id: string; status: "done"; result?: unknown }
+
+export const startOntologyQueryJob = (body: OntologyQueryBody) =>
+  client.post("/ontology/query/async", body, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
+
+export const fetchOntologyQueryJob = (job_id: string) =>
+  client.get(`/ontology/query/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
+
+export async function runOntologyQueryAsync(body: OntologyQueryBody) {
+  const started = await startOntologyQueryJob(body)
+  if (started.status === "done" && "result" in started && started.result != null) return started.result
+  if (started.status === "error") throw new Error(started.error || "Ontology query failed")
+
+  const job_id = started.job_id
+  const deadline = Date.now() + 180_000
+
+  for (; ;) {
+    if (Date.now() > deadline) throw new Error("Timeout: Ontology query is taking too long. Try again.")
+
+    await new Promise(r => setTimeout(r, 2000))
+    const job = await fetchOntologyQueryJob(job_id)
+
+    if (job.status === "done") {
+      if ("result" in job && job.result != null) return job.result
+      return "result" in started ? started.result : undefined
+    }
+    if (job.status === "error") throw new Error(job.error || "Ontology query failed")
+  }
+}
 
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)

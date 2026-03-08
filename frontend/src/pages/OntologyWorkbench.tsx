@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Info } from "lucide-react"
 import { useMutation } from "@tanstack/react-query"
-import { queryOntology } from "@/lib/api"
+import { runOntologyQueryAsync } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -71,7 +71,7 @@ export function OntologyWorkbench() {
   const [runId, setRunId] = useState("")
 
   const mutation = useMutation({
-    mutationFn: queryOntology,
+    mutationFn: runOntologyQueryAsync,
   })
 
   function handleSubmit() {
@@ -96,6 +96,7 @@ export function OntologyWorkbench() {
       timeframe,
       run_id: runId.trim() || undefined,
       include_graph: false,
+      refresh_snapshot: false,
     })
   }
 

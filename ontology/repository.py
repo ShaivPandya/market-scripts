@@ -319,6 +319,35 @@ class OntologyRepository:
             "created_at": row["created_at"],
         }
 
+    def get_latest_run(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  run_id,
+                  as_of,
+                  source_status_json,
+                  required_modules_json,
+                  optional_modules_json,
+                  component_scores_json,
+                  created_at
+                FROM ontology_runs
+                ORDER BY created_at DESC, run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "run_id": row["run_id"],
+            "as_of": row["as_of"],
+            "source_status": _load_json(row["source_status_json"]),
+            "required_modules": _load_json_list(row["required_modules_json"]),
+            "optional_modules": _load_json_list(row["optional_modules_json"]),
+            "component_scores": _load_json(row["component_scores_json"]),
+            "created_at": row["created_at"],
+        }
+
     def fetch_snapshot_graph(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
         with self._connect() as conn:
             node_rows = conn.execute(
