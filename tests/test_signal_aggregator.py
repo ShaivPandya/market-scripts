@@ -94,7 +94,13 @@ def test_signal_aggregator_endpoint_uses_query_params(auth_client, monkeypatch):
             "factors": [],
             "module_status": {},
             "failed_modules": [],
-            "history": {"frequency": "weekly", "lookback_weeks": lookback_weeks, "coverage": {}, "series": [], "episodes": []},
+            "history": {
+                "frequency": "weekly",
+                "lookback_weeks": lookback_weeks,
+                "coverage": {},
+                "series": [],
+                "episodes": [],
+            },
         }
 
     monkeypatch.setattr(signal_router, "get_cached", lambda *args, **kwargs: None)
@@ -125,7 +131,9 @@ def test_signal_aggregator_endpoint_degraded_payload(auth_client, monkeypatch):
             "as_of": "2026-03-07",
             "regime": {"label": "risk-off", "score": 70.0, "confidence": 0.8, "history_percentile": 92.0},
             "weights": {"configured": {}, "effective": {}},
-            "factors": [{"key": "vix", "status": "ok", "score": 80.0, "weight": 1.0, "contribution": 80.0, "highlights": {}}],
+            "factors": [
+                {"key": "vix", "status": "ok", "score": 80.0, "weight": 1.0, "contribution": 80.0, "highlights": {}}
+            ],
             "module_status": {"liquidity": {"status": "error", "detail": "timeout"}},
             "failed_modules": ["liquidity"],
             "history": {"frequency": "weekly", "lookback_weeks": 156, "coverage": {}, "series": [], "episodes": []},

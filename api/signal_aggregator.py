@@ -433,7 +433,9 @@ def _build_history(lookback_weeks: int, instruments_csv: str, liquidity_raw: dic
         "lookback_weeks": lookback_weeks,
         "coverage": {
             "included_factors": sorted([k for k in HISTORY_CAPABLE_FACTORS if module_status.get(k) == "ok"]),
-            "missing_factors": sorted(MISSING_HISTORY_FACTORS | {k for k in HISTORY_CAPABLE_FACTORS if module_status.get(k) != "ok"}),
+            "missing_factors": sorted(
+                MISSING_HISTORY_FACTORS | {k for k in HISTORY_CAPABLE_FACTORS if module_status.get(k) != "ok"}
+            ),
             "module_status": module_status,
         },
         "series": rows,
@@ -474,7 +476,9 @@ def _fetch_current_modules(positioning_instruments_csv: str) -> tuple[dict[str, 
             raw[key] = None
             module_status[key] = {"status": "error", "detail": str(exc)}
 
-    capture("vix_term_structure", lambda: get_vix_data(start=(date.today() - timedelta(days=540)).isoformat(), tail=320))
+    capture(
+        "vix_term_structure", lambda: get_vix_data(start=(date.today() - timedelta(days=540)).isoformat(), tail=320)
+    )
     capture("market_breadth", get_market_breadth)
     capture("top50_breadth", get_top50_breadth)
     capture("liquidity", get_liquidity_snapshot)
