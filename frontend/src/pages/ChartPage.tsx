@@ -11,7 +11,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 const LOOKBACKS = ["3M", "1Y", "2Y", "5Y"] as const
 
 type ChartMode = "single" | "ratio"
-type RatioWindow = "5Y" | "10Y"
+type RatioWindow = "5Y" | "10Y" | "20Y"
 
 interface RatioPreset {
   label: string
@@ -106,7 +106,7 @@ function isoDateToday() {
 }
 
 function computeWindowStartDate(window: RatioWindow): string {
-  const years = window === "10Y" ? 10 : 5
+  const years = window === "20Y" ? 20 : window === "10Y" ? 10 : 5
   const end = new Date()
   end.setFullYear(end.getFullYear() - years)
   return toDateInputValue(end)
@@ -196,9 +196,21 @@ export function ChartPage() {
     staleTime: Infinity,
   })
 
-  const activeRatioQuery = ratioWindow === "10Y" ? ratioQuery10Y : ratioQuery5Y
+  const ratioQuery20Y = useQuery({
+    queryKey: ["chart", "ratio", submittedRatioBase, "20Y"],
+    queryFn: () => runPriceRatioChart(buildRatioPayload(
+      submittedRatioBase!.symbol_a,
+      submittedRatioBase!.symbol_b,
+      computeWindowStartDate("20Y"),
+      submittedRatioBase!.end_date,
+    )),
+    enabled: Boolean(submittedRatioBase),
+    staleTime: Infinity,
+  })
+
+  const activeRatioQuery = ratioWindow === "20Y" ? ratioQuery20Y : ratioWindow === "10Y" ? ratioQuery10Y : ratioQuery5Y
   const isLoading = mode === "ratio"
-    ? ratioQuery5Y.isFetching || ratioQuery10Y.isFetching
+    ? ratioQuery5Y.isFetching || ratioQuery10Y.isFetching || ratioQuery20Y.isFetching
     : singleQuery.isFetching
   const isError = mode === "ratio" ? activeRatioQuery.isError : singleQuery.isError
   const error = mode === "ratio" ? activeRatioQuery.error : singleQuery.error
@@ -465,6 +477,7 @@ export function ChartPage() {
                   options={[
                     { value: "5Y", label: "5Y" },
                     { value: "10Y", label: "10Y" },
+                    { value: "20Y", label: "20Y" },
                   ]}
                   value={ratioWindow}
                   onChange={handleRatioWindowChange}
