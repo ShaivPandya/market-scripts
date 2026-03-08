@@ -1,9 +1,12 @@
 import { useState } from "react"
 import { Outlet } from "react-router-dom"
+import { MessageCircle } from "lucide-react"
 import { Sidebar } from "./Sidebar"
+import { AgentChat } from "../agent/AgentChat"
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(false)
 
   return (
     <div className="flex min-h-screen bg-app text-app">
@@ -29,6 +32,18 @@ export function Layout() {
 
         <Outlet />
       </main>
+
+      {/* AI Agent floating button */}
+      <button
+        onClick={() => setAgentOpen(true)}
+        className="fixed bottom-6 right-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors hover:scale-105"
+        aria-label="Open AI Agent"
+      >
+        <MessageCircle size={20} />
+      </button>
+
+      {/* AI Agent drawer */}
+      <AgentChat open={agentOpen} onClose={() => setAgentOpen(false)} />
     </div>
   )
 }

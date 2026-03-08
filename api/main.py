@@ -41,6 +41,7 @@ logger = logging.getLogger("api")
 # Import routers AFTER path + env setup
 # ---------------------------------------------------------------------------
 from api.routers import (
+    agent,
     analyzer,
     breakout,
     central_banks,
@@ -221,6 +222,7 @@ app.include_router(financials.router, prefix=_V1, dependencies=_auth_dep, tags=[
 app.include_router(portfolio_news.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(weekly_report.router, prefix=_V1, dependencies=_auth_dep, tags=["reports"])
 app.include_router(commodities_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["commodities"])
+app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 
 
 # ---------------------------------------------------------------------------
