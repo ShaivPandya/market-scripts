@@ -88,6 +88,19 @@ def _install_fake_anthropic(monkeypatch, streams: list[tuple[list[Any], Any]]):
     return fake_client
 
 
+class _RaiseInStreamMessages:
+    def stream(self, **_kwargs):
+        raise RuntimeError(
+            "Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', "
+            "'message': 'invalid x-api-key'}}"
+        )
+
+
+class _RaiseInStreamClient:
+    def __init__(self):
+        self.messages = _RaiseInStreamMessages()
+
+
 def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
@@ -210,3 +223,34 @@ def test_agent_stream_enforces_tool_loop_limit(auth_client, monkeypatch):
     assert any(e == "error" and "loop limit" in str(p.get("message", "")).lower() for e, p in parsed)
     assert any(e == "done" for e, _p in parsed)
     assert fake_client.messages.calls == agent_router.MAX_TOOL_CONTINUATION_ROUNDS
+
+
+def test_agent_stream_auth_error_is_user_friendly(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr("anthropic.Anthropic", lambda *args, **kwargs: _RaiseInStreamClient())
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "test"}]},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    errors = [p for e, p in parsed if e == "error"]
+    assert len(errors) == 1
+    assert "set a valid anthropic api key" in str(errors[0].get("message", "")).lower()
+    assert any(e == "done" for e, _p in parsed)
+
+
+def test_agent_chat_rejects_non_anthropic_key(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-proj-not-anthropic")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "test"}]},
+    )
+
+    assert resp.status_code == 503
+    assert "must be an anthropic key" in str(resp.json()).lower()

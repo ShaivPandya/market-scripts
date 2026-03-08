@@ -86,6 +86,32 @@ ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
 ]
 
 
+def _read_anthropic_api_key() -> str:
+    api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip().strip("\"'")
+    if not api_key:
+        raise ConfigurationError("ANTHROPIC_API_KEY")
+
+    # A common misconfiguration is placing an OpenAI key into ANTHROPIC_API_KEY.
+    if api_key.startswith("sk-proj-") or (api_key.startswith("sk-") and not api_key.startswith("sk-ant-")):
+        raise ConfigurationError("ANTHROPIC_API_KEY (must be an Anthropic key beginning with sk-ant-)")
+
+    return api_key
+
+
+def _format_stream_error(exc: Exception) -> str:
+    status_code = getattr(exc, "status_code", None)
+    raw = str(exc)
+    lowered = raw.lower()
+
+    if status_code == 401 or "invalid x-api-key" in lowered or "authentication_error" in lowered:
+        return (
+            "Agent authentication failed. Set a valid Anthropic API key in ANTHROPIC_API_KEY "
+            "and restart the backend."
+        )
+
+    return raw
+
+
 def _execute_tools_parallel(
     calls: list[dict],
 ) -> list[tuple[dict, str]]:
@@ -152,9 +178,7 @@ def _extract_tool_calls(content_blocks: list[dict]) -> list[dict]:
 
 @router.post("/agent/chat")
 def agent_chat(req: AgentChatRequest):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ConfigurationError("ANTHROPIC_API_KEY")
+    api_key = _read_anthropic_api_key()
     instructions = _build_agent_instructions()
 
     def generate():  # noqa: C901 — complex but linear control flow
@@ -248,7 +272,7 @@ def agent_chat(req: AgentChatRequest):
 
         except Exception as exc:
             logger.exception("Agent stream error")
-            yield _sse("error", {"message": str(exc)})
+            yield _sse("error", {"message": _format_stream_error(exc)})
             yield _sse("done", {"usage": {}})
 
     return StreamingResponse(
