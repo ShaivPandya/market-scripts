@@ -175,6 +175,32 @@ _TOOL_REQUIRED_KEYWORDS = (
     "rate",
     "central bank",
 )
+_PORTFOLIO_CONTEXT_KEYWORDS = ("portfolio", "position", "positions", "holdings", "book")
+_PORTFOLIO_PERFORMANCE_KEYWORDS = (
+    "performance",
+    "performing",
+    "return",
+    "returns",
+    "p&l",
+    "pnl",
+    "gain",
+    "gains",
+    "loss",
+    "losses",
+    "how did",
+    "summarize",
+    "summary",
+)
+_PORTFOLIO_RISK_KEYWORDS = (
+    "risk",
+    "exposure",
+    "hedge",
+    "macro",
+    "ontology",
+    "stress",
+    "deteriorating",
+    "drawdown",
+)
 
 
 def _read_anthropic_api_key() -> str:
@@ -238,13 +264,36 @@ def _tool_defs_for_names(tool_names: list[str]) -> list[dict]:
     return out
 
 
+def _is_portfolio_performance_request(user_text: str) -> bool:
+    text = (user_text or "").strip().lower()
+    if not text:
+        return False
+    has_portfolio_context = any(k in text for k in _PORTFOLIO_CONTEXT_KEYWORDS)
+    has_performance_keyword = any(k in text for k in _PORTFOLIO_PERFORMANCE_KEYWORDS)
+    has_risk_keyword = any(k in text for k in _PORTFOLIO_RISK_KEYWORDS)
+    return has_portfolio_context and has_performance_keyword and not has_risk_keyword
+
+
 def _select_initial_tool_defs(user_text: str) -> tuple[str, list[dict]]:
+    if _is_portfolio_performance_request(user_text):
+        perf_only_tools = _tool_defs_for_names(["get_portfolio"])
+        if perf_only_tools:
+            return "portfolio_performance", perf_only_tools
+
     intent = _classify_intent(user_text)
     bundle = list(_INTENT_TOOL_BUNDLES.get(intent, _INTENT_TOOL_BUNDLES["general"]))
     tool_defs = _tool_defs_for_names(bundle)
     if not tool_defs:
         return intent, ANTHROPIC_TOOL_DEFINITIONS
     return intent, tool_defs
+
+
+def _tool_call_signature(name: str, args: dict) -> str:
+    try:
+        args_key = json.dumps(args, sort_keys=True, default=str, separators=(",", ":"))
+    except Exception:
+        args_key = "{}"
+    return f"{name}::{args_key}"
 
 
 def _dedupe_tool_calls(calls: list[dict]) -> list[dict]:
@@ -378,6 +427,7 @@ def agent_chat(req: AgentChatRequest):
         force_tool_use = should_force_tools
         current_tool_defs = initial_tool_defs
         expanded_toolset = len(current_tool_defs) == len(ANTHROPIC_TOOL_DEFINITIONS)
+        tool_result_cache: dict[str, str] = {}
 
         try:
             while True:
@@ -435,16 +485,41 @@ def agent_chat(req: AgentChatRequest):
 
                     tool_results: list[dict] = []
                     had_tool_error = False
-                    for call_info, result_str, elapsed_ms in _execute_tools_parallel(unique_calls):
+                    turn_cache_hits: set[str] = set()
+                    pending_calls: list[dict] = []
+                    executed_by_signature: dict[str, tuple[str, float]] = {}
+
+                    for call_info in unique_calls:
+                        signature = _tool_call_signature(call_info["name"], call_info["args"])
+                        if signature in tool_result_cache:
+                            turn_cache_hits.add(signature)
+                            continue
+                        pending_calls.append(call_info)
+
+                    if pending_calls:
+                        for call_info, result_str, elapsed_ms in _execute_tools_parallel(pending_calls):
+                            signature = _tool_call_signature(call_info["name"], call_info["args"])
+                            tool_result_cache[signature] = result_str
+                            executed_by_signature[signature] = (result_str, elapsed_ms)
+
+                    for call_info in unique_calls:
+                        signature = _tool_call_signature(call_info["name"], call_info["args"])
+                        if signature in turn_cache_hits:
+                            result_str = tool_result_cache[signature]
+                            elapsed_ms = 0.0
+                        else:
+                            result_str, elapsed_ms = executed_by_signature[signature]
+
                         err_msg = _tool_error_message(result_str)
                         if err_msg:
                             had_tool_error = True
                         meta = _tool_meta(result_str)
+                        cache_status = "turn_hit" if signature in turn_cache_hits else str(meta.get("cache", "unknown"))
                         logger.info(
                             "agent_tool_exec name=%s duration_ms=%.1f cache=%s status=%s quality_ok=%s",
                             call_info["name"],
                             elapsed_ms,
-                            str(meta.get("cache", "unknown")),
+                            cache_status,
                             "error" if err_msg else "ok",
                             str(meta.get("quality_ok", "n/a")),
                         )
