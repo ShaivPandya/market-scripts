@@ -33,16 +33,16 @@ export function Layout() {
         <Outlet />
       </main>
 
-      {/* AI Agent floating button */}
+      {/* Stan floating button */}
       <button
         onClick={() => setAgentOpen(true)}
         className="fixed bottom-6 right-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors hover:scale-105"
-        aria-label="Open AI Agent"
+        aria-label="Open Stan"
       >
         <MessageCircle size={20} />
       </button>
 
-      {/* AI Agent drawer */}
+      {/* Stan drawer */}
       <AgentChat open={agentOpen} onClose={() => setAgentOpen(false)} />
     </div>
   )

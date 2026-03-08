@@ -132,6 +132,7 @@ export const queryOntology = (body: {
   }
   timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
   include_graph?: boolean
+  run_id?: string
 }) => client.post("/ontology/query", body).then(r => r.data)
 
 export const fetchEconomicGrowth = () =>

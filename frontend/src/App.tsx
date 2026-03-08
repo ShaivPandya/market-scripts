@@ -37,6 +37,7 @@ import { PortfolioNews } from "@/pages/PortfolioNews"
 import { WeeklyReport } from "@/pages/WeeklyReport"
 import { Sentiment } from "@/pages/Sentiment"
 import { SignalAggregator } from "@/pages/SignalAggregator"
+import { OntologyWorkbench } from "@/pages/OntologyWorkbench"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -78,6 +79,7 @@ function AppRoutes() {
           <Route path="/sizer" element={<PortfolioSizer />} />
           <Route path="/momentum" element={<Momentum />} />
           <Route path="/signal-aggregator" element={<SignalAggregator />} />
+          <Route path="/ontology" element={<OntologyWorkbench />} />
           <Route path="/chart" element={<ChartPage />} />
           <Route path="/quality" element={<QualityScreen />} />
           <Route path="/short-screen" element={<ShortScreen />} />

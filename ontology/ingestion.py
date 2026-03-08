@@ -18,6 +18,7 @@ from ontology.risk import (
 from ontology.sector_mapper import SectorMapper
 
 ModuleFetcher = Callable[[], dict[str, Any] | list[Any]]
+SNAPSHOT_RETENTION_DAYS = 90
 
 
 @dataclass(slots=True)
@@ -326,21 +327,37 @@ def ingest_into_repository(
                 )
             )
 
-    repo.upsert_graph(list(nodes.values()), list(edges.values()))
+    snapshot_nodes = list(nodes.values())
+    snapshot_edges = list(edges.values())
 
     as_of = str(portfolio_timestamp or datetime.now(UTC).isoformat())
+    required_modules = list(required_fetchers.keys())
+    optional_modules = list(optional_fetchers.keys()) + (list(deep_fetchers.keys()) if include_deep_modules else [])
+    component_scores = {
+        "volatility_cluster": round(volatility_cluster, 4),
+        "breadth_stress": round(breadth_stress, 4),
+        "macro_regime": round(macro_regime, 4),
+    }
+
+    repo.save_snapshot(
+        run_id=run_id,
+        as_of=as_of,
+        source_status=source_status,
+        required_modules=required_modules,
+        optional_modules=optional_modules,
+        component_scores=component_scores,
+        nodes=snapshot_nodes,
+        edges=snapshot_edges,
+    )
+    repo.prune_runs_older_than(days=SNAPSHOT_RETENTION_DAYS)
 
     return IngestionOutput(
         run_id=run_id,
         as_of=as_of,
         source_status=source_status,
-        required_modules=list(required_fetchers.keys()),
-        optional_modules=list(optional_fetchers.keys()) + (list(deep_fetchers.keys()) if include_deep_modules else []),
-        component_scores={
-            "volatility_cluster": round(volatility_cluster, 4),
-            "breadth_stress": round(breadth_stress, 4),
-            "macro_regime": round(macro_regime, 4),
-        },
+        required_modules=required_modules,
+        optional_modules=optional_modules,
+        component_scores=component_scores,
     )
 
 

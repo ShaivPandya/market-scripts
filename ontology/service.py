@@ -31,6 +31,14 @@ KNOWN_SECTORS = {
 }
 
 
+class OntologyRunNotFoundError(Exception):
+    """Raised when a requested ontology snapshot run_id does not exist."""
+
+    def __init__(self, run_id: str):
+        super().__init__(f"Ontology run not found: {run_id}")
+        self.run_id = run_id
+
+
 class OntologyQueryService:
     def __init__(self, repository: OntologyRepository | None = None):
         self.repo = repository or OntologyRepository()
@@ -42,6 +50,7 @@ class OntologyQueryService:
         filters: dict[str, Any] | None,
         timeframe: str = "Daily",
         include_graph: bool = False,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
         tf = timeframe if timeframe in VALID_TIMEFRAMES else "Daily"
 
@@ -52,12 +61,25 @@ class OntologyQueryService:
             known_sectors=KNOWN_SECTORS,
         )
 
-        deep_fetch = include_graph or interpreted.intent == "entity_context"
-        ingestion = ingest_into_repository(
-            repo=self.repo,
-            timeframe=tf,
-            include_deep_modules=deep_fetch,
-        )
+        if run_id:
+            run = self.repo.get_run(run_id)
+            if run is None:
+                raise OntologyRunNotFoundError(run_id)
+            resolved_run_id = str(run["run_id"])
+            as_of = str(run["as_of"])
+            source_status = _as_dict(run.get("source_status"))
+            required_modules = _as_str_list(run.get("required_modules"))
+        else:
+            deep_fetch = include_graph or interpreted.intent == "entity_context"
+            ingestion = ingest_into_repository(
+                repo=self.repo,
+                timeframe=tf,
+                include_deep_modules=deep_fetch,
+            )
+            resolved_run_id = ingestion.run_id
+            as_of = ingestion.as_of
+            source_status = ingestion.source_status
+            required_modules = ingestion.required_modules
 
         effective_filters = dict(interpreted.filters)
         if interpreted.intent == "entity_context" and interpreted.entity:
@@ -68,13 +90,10 @@ class OntologyQueryService:
                 else:
                     effective_filters["sectors"] = [token]
 
-        rows = self.repo.fetch_position_asset_sector_rows()
+        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=resolved_run_id)
         results = []
         for row in rows:
             pos = _as_dict(row.get("position_props"))
-            if str(pos.get("ontology_run_id")) != ingestion.run_id:
-                continue
-
             position_id = str(row.get("position_id") or "")
             ticker = str(pos.get("ticker") or position_id.split(":")[-1])
             asset = str(pos.get("asset") or "unknown")
@@ -86,7 +105,7 @@ class OntologyQueryService:
             if isinstance(sector_props.get("name"), str):
                 sector = str(sector_props.get("name"))
 
-            evidence = self._build_evidence(position_id=position_id, run_id=ingestion.run_id)
+            evidence = self._build_evidence(position_id=position_id, run_id=resolved_run_id)
 
             results.append(
                 {
@@ -109,8 +128,9 @@ class OntologyQueryService:
         if max_results is not None and max_results > 0:
             results = results[:max_results]
 
-        aggregate = _build_aggregate(results, ingestion.source_status, ingestion.required_modules)
+        aggregate = _build_aggregate(results, source_status, required_modules)
         response: dict[str, Any] = {
+            "run_id": resolved_run_id,
             "intent": interpreted.intent,
             "interpreted_query": {
                 "source": interpreted.source,
@@ -118,24 +138,22 @@ class OntologyQueryService:
                 "entity": interpreted.entity,
                 "filters": effective_filters,
             },
-            "as_of": ingestion.as_of,
-            "source_status": ingestion.source_status,
+            "as_of": as_of,
+            "source_status": source_status,
             "results": results,
             "aggregate": aggregate,
         }
 
         if include_graph:
-            response["graph"] = self.repo.fetch_graph()
+            response["graph"] = self.repo.fetch_snapshot_graph(run_id=resolved_run_id)
 
         return response
 
     def _build_evidence(self, position_id: str, run_id: str) -> list[dict[str, Any]]:
-        raw = self.repo.fetch_position_signal_evidence(position_id)
+        raw = self.repo.fetch_snapshot_position_signal_evidence(run_id=run_id, position_id=position_id)
         evidence = []
         for row in raw:
             edge = _as_dict(row.get("edge_props"))
-            if str(edge.get("ontology_run_id")) != run_id:
-                continue
             evidence.append(
                 {
                     "source": edge.get("source"),
@@ -260,6 +278,12 @@ def _to_int(value: Any) -> int | None:
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _as_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(v) for v in value if isinstance(v, (str, int, float))]
 
 
 def _risk_level_from_score(score: float) -> str:
