@@ -124,6 +124,7 @@ def agent_chat(req: AgentChatRequest):
                 instructions=instructions,
                 input=input_messages,
                 tools=TOOL_DEFINITIONS,
+                tool_choice="required",
                 stream=True,
             )
 

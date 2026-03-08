@@ -12,7 +12,7 @@ def test_query_ontology_tool_registered():
 
 
 def test_query_ontology_tool_dispatch(monkeypatch):
-    def fake_query(self, query, intent, filters, timeframe, include_graph, run_id):
+    def fake_query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
         return {
             "run_id": run_id or "run-1",
             "intent": intent or "portfolio_risk_exposure",

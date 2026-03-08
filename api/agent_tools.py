@@ -265,6 +265,10 @@ TOOL_DEFINITIONS: list[dict] = [
                     "type": "string",
                     "description": "Optional ontology snapshot run_id for historical replay.",
                 },
+                "refresh_snapshot": {
+                    "type": "boolean",
+                    "description": "If true, bypass latest snapshot reuse and force a fresh ontology snapshot build.",
+                },
             },
             "required": [],
         },
@@ -527,6 +531,7 @@ def _dispatch(name: str, args: dict) -> object:
         timeframe = args.get("timeframe", "Daily")
         include_graph = bool(args.get("include_graph", False))
         run_id = args.get("run_id")
+        refresh_snapshot = bool(args.get("refresh_snapshot", False))
 
         cache_token = json.dumps(
             {
@@ -536,6 +541,7 @@ def _dispatch(name: str, args: dict) -> object:
                 "timeframe": timeframe,
                 "include_graph": include_graph,
                 "run_id": run_id,
+                "refresh_snapshot": refresh_snapshot,
             },
             sort_keys=True,
             default=str,
@@ -553,6 +559,7 @@ def _dispatch(name: str, args: dict) -> object:
             timeframe=str(timeframe) if isinstance(timeframe, str) else "Daily",
             include_graph=include_graph,
             run_id=str(run_id) if isinstance(run_id, str) and run_id.strip() else None,
+            refresh_snapshot=refresh_snapshot,
         )
         serialized = serialize_value(result)
         set_cached(short_cache, key, serialized)

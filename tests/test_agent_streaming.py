@@ -32,8 +32,10 @@ class _FakeResponses:
     def __init__(self, streams):
         self.streams = streams
         self.calls = 0
+        self.kwargs_history: list[dict] = []
 
     def create(self, **_kwargs):
+        self.kwargs_history.append(dict(_kwargs))
         if self.calls >= len(self.streams):
             raise AssertionError("Unexpected extra responses.create() call")
         out = self.streams[self.calls]
@@ -90,7 +92,7 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
             ),
         ],
     ]
-    _install_fake_openai(monkeypatch, streams)
+    fake_client = _install_fake_openai(monkeypatch, streams)
 
     seen_args: list[dict] = []
 
@@ -106,6 +108,7 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
     )
 
     assert resp.status_code == 200
+    assert fake_client.responses.kwargs_history[0].get("tool_choice") == "required"
     assert seen_args == [{"query": "A"}, {"query": "B"}]
     parsed = _parse_sse(resp.text)
     tool_results = [p for e, p in parsed if e == "tool_result"]

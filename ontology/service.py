@@ -74,7 +74,7 @@ class OntologyQueryService:
             required_modules = _as_str_list(run.get("required_modules"))
         else:
             latest_run = self.repo.get_latest_run() if not refresh_snapshot else None
-            if latest_run is not None and _run_is_fresh(latest_run.get("created_at"), max_age=SNAPSHOT_REUSE_MAX_AGE):
+            if latest_run is not None and self._can_reuse_run(latest_run):
                 resolved_run_id = str(latest_run["run_id"])
                 as_of = str(latest_run["as_of"])
                 source_status = _as_dict(latest_run.get("source_status"))
@@ -159,6 +159,26 @@ class OntologyQueryService:
             response["graph"] = self.repo.fetch_snapshot_graph(run_id=resolved_run_id)
 
         return response
+
+    def _can_reuse_run(self, run: dict[str, Any]) -> bool:
+        if not _run_is_fresh(run.get("created_at"), max_age=SNAPSHOT_REUSE_MAX_AGE):
+            return False
+
+        source_status = _as_dict(run.get("source_status"))
+        required_modules = _as_str_list(run.get("required_modules"))
+
+        # Reuse only healthy required modules; avoid pinning to degraded snapshots.
+        for module in required_modules:
+            state = _as_dict(source_status.get(module))
+            if str(state.get("status") or "error") != "ok":
+                return False
+
+        run_id = str(run.get("run_id") or "")
+        if not run_id:
+            return False
+
+        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id)
+        return len(rows) > 0
 
     def _build_evidence(self, position_id: str, run_id: str) -> list[dict[str, Any]]:
         raw = self.repo.fetch_snapshot_position_signal_evidence(run_id=run_id, position_id=position_id)
