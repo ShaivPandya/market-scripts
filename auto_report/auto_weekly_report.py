@@ -1154,7 +1154,7 @@ def main():
     today_str = datetime.now(ET).strftime("%Y-%m-%d")
     log.info("=== Weekly report run starting (%s) ===", today_str)
 
-    # 2. Load last-week summary
+    # 1. Build system prompt context
     last_week = load_last_week_summary(HISTORY_DIR)
     if last_week:
         log.info("Loaded last-week summary from history")

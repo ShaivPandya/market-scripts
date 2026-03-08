@@ -47,6 +47,7 @@ def _build_agent_instructions() -> str:
     agent_md = _load_required_prompt_file("agent_system.md")
     return "\n\n---\n\n".join([core_md, agent_md])
 
+
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
