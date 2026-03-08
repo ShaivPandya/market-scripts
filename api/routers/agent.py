@@ -176,11 +176,13 @@ def agent_chat(req: AgentChatRequest):
                             args = json.loads(raw_args) if raw_args else {}
                         except json.JSONDecodeError:
                             args = {}
-                        deferred_calls.append({
-                            "name": event.item.name,
-                            "call_id": call_id,
-                            "args": args,
-                        })
+                        deferred_calls.append(
+                            {
+                                "name": event.item.name,
+                                "call_id": call_id,
+                                "args": args,
+                            }
+                        )
 
                 elif event.type == "response.completed":
                     # Execute all tool calls from this round in parallel
@@ -286,11 +288,13 @@ def agent_chat(req: AgentChatRequest):
                                 args = json.loads(raw_args) if raw_args else {}
                             except json.JSONDecodeError:
                                 args = {}
-                            deferred_calls.append({
-                                "name": event.item.name,
-                                "call_id": call_id,
-                                "args": args,
-                            })
+                            deferred_calls.append(
+                                {
+                                    "name": event.item.name,
+                                    "call_id": call_id,
+                                    "args": args,
+                                }
+                            )
 
                     elif event.type == "response.completed":
                         if deferred_calls:
