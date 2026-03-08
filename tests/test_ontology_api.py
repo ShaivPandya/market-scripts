@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+import uuid
+
 from ontology.service import OntologyRunNotFoundError
 
 
@@ -7,7 +10,7 @@ class _FakeService:
     def __init__(self, payload):
         self.payload = payload
 
-    def query(self, query, intent, filters, timeframe, include_graph, run_id):
+    def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
         out = dict(self.payload)
         out.setdefault("run_id", run_id or "run-1")
         out.setdefault("intent", intent or "portfolio_risk_exposure")
@@ -142,7 +145,7 @@ def test_ontology_query_unknown_run_id_returns_404(auth_client, monkeypatch):
     import api.routers.ontology as ontology_router
 
     class _MissingRunService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id):
+        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
             raise OntologyRunNotFoundError(str(run_id))
 
     monkeypatch.setattr(ontology_router, "_service", _MissingRunService())
@@ -162,7 +165,7 @@ def test_ontology_query_passes_run_id(auth_client, monkeypatch):
     captured: dict[str, str | None] = {"run_id": None}
 
     class _CaptureRunService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id):
+        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
             captured["run_id"] = run_id
             return {
                 "run_id": run_id or "run-1",
@@ -190,3 +193,149 @@ def test_ontology_query_passes_run_id(auth_client, monkeypatch):
     assert resp.status_code == 200
     assert captured["run_id"] == "run-abc"
     assert resp.json()["run_id"] == "run-abc"
+
+
+def test_ontology_query_passes_refresh_snapshot(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    captured: dict[str, bool] = {"refresh_snapshot": False}
+
+    class _CaptureRefreshService:
+        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+            captured["refresh_snapshot"] = bool(refresh_snapshot)
+            return {
+                "run_id": "run-1",
+                "intent": "portfolio_risk_exposure",
+                "interpreted_query": {"source": "structured", "query": query, "entity": None, "filters": filters},
+                "as_of": "2026-03-08T00:00:00Z",
+                "source_status": {"portfolio": {"status": "ok"}},
+                "results": [],
+                "aggregate": {
+                    "position_count": 0,
+                    "risk_buckets": {"high": 0, "medium": 0, "low": 0},
+                    "asset_exposure_counts": {},
+                    "average_risk_score": 0.0,
+                    "confidence": 1.0,
+                },
+            }
+
+    monkeypatch.setattr(ontology_router, "_service", _CaptureRefreshService())
+
+    resp = auth_client.post(
+        "/api/v1/ontology/query",
+        json={"intent": "portfolio_risk_exposure", "refresh_snapshot": True},
+    )
+    assert resp.status_code == 200
+    assert captured["refresh_snapshot"] is True
+
+
+def _poll_ontology_job(auth_client, job_id: str, timeout_s: float = 4.0):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        resp = auth_client.get(f"/api/v1/ontology/query/async/{job_id}")
+        assert resp.status_code == 200
+        payload = resp.json()
+        if payload.get("status") in {"done", "error"}:
+            return payload
+        time.sleep(0.05)
+    raise AssertionError(f"job {job_id} did not finish in {timeout_s}s")
+
+
+def test_ontology_query_async_returns_done_result(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    query_text = f"async-run-{uuid.uuid4().hex}"
+
+    class _AsyncService:
+        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+            time.sleep(0.1)
+            return {
+                "run_id": "run-async",
+                "intent": intent or "portfolio_risk_exposure",
+                "interpreted_query": {"source": "structured", "query": query, "entity": None, "filters": filters},
+                "as_of": "2026-03-08T00:00:00Z",
+                "source_status": {"portfolio": {"status": "ok"}},
+                "results": [],
+                "aggregate": {
+                    "position_count": 0,
+                    "risk_buckets": {"high": 0, "medium": 0, "low": 0},
+                    "asset_exposure_counts": {},
+                    "average_risk_score": 0.0,
+                    "confidence": 1.0,
+                },
+            }
+
+    monkeypatch.setattr(ontology_router, "_service", _AsyncService())
+
+    started = auth_client.post("/api/v1/ontology/query/async", json={"query": query_text, "timeframe": "Daily"})
+    assert started.status_code == 200
+    started_payload = started.json()
+    assert started_payload["status"] in {"queued", "running", "done"}
+    job_id = started_payload["job_id"]
+
+    if started_payload["status"] == "done":
+        done = started_payload
+    else:
+        done = _poll_ontology_job(auth_client, job_id)
+    assert done["status"] == "done"
+    assert done["result"]["run_id"] == "run-async"
+
+
+def test_ontology_query_async_dedupes_running_job(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    query_text = f"async-dedupe-{uuid.uuid4().hex}"
+
+    class _SlowService:
+        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+            time.sleep(0.25)
+            return {
+                "run_id": "run-dedupe",
+                "intent": "portfolio_risk_exposure",
+                "interpreted_query": {"source": "structured", "query": query, "entity": None, "filters": filters},
+                "as_of": "2026-03-08T00:00:00Z",
+                "source_status": {"portfolio": {"status": "ok"}},
+                "results": [],
+                "aggregate": {
+                    "position_count": 0,
+                    "risk_buckets": {"high": 0, "medium": 0, "low": 0},
+                    "asset_exposure_counts": {},
+                    "average_risk_score": 0.0,
+                    "confidence": 1.0,
+                },
+            }
+
+    monkeypatch.setattr(ontology_router, "_service", _SlowService())
+
+    req = {"query": query_text, "timeframe": "Daily"}
+    first = auth_client.post("/api/v1/ontology/query/async", json=req)
+    second = auth_client.post("/api/v1/ontology/query/async", json=req)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    p1 = first.json()
+    p2 = second.json()
+    assert p2["job_id"] == p1["job_id"]
+    assert p2["status"] in {"queued", "running", "done"}
+
+    done = _poll_ontology_job(auth_client, p1["job_id"], timeout_s=6.0)
+    assert done["status"] == "done"
+
+
+def test_ontology_query_async_surfaces_worker_error(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    query_text = f"async-error-{uuid.uuid4().hex}"
+
+    class _ErrorService:
+        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(ontology_router, "_service", _ErrorService())
+
+    started = auth_client.post("/api/v1/ontology/query/async", json={"query": query_text})
+    assert started.status_code == 200
+    job_id = started.json()["job_id"]
+
+    result = _poll_ontology_job(auth_client, job_id)
+    assert result["status"] == "error"
+    assert "boom" in str(result.get("error", ""))

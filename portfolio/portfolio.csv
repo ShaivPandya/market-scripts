@@ -3,7 +3,6 @@ DBB,commodity,long,false,2
 UGL,commodity,long,false,4
 MU,equity,long,false,3
 METSO.HE,equity,long,false,3
-EEM,equity,long,false,3
 EWY,equity,long,false,3
 EWZ,equity,long,false,3
 LSEG.L,equity,long,true,4

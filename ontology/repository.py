@@ -22,7 +22,9 @@ def _candidate_db_paths() -> list[Path]:
     if env_path:
         paths.append(Path(env_path).expanduser())
     paths.append(DEFAULT_DB_PATH)
-    paths.append(Path(os.getenv("TMPDIR") or "/tmp") / "market-scripts" / "data_cache" / "ontology" / "ontology.sqlite3")
+    paths.append(
+        Path(os.getenv("TMPDIR") or "/tmp") / "market-scripts" / "data_cache" / "ontology" / "ontology.sqlite3"
+    )
     deduped: list[Path] = []
     for path in paths:
         if path not in deduped:
@@ -306,6 +308,35 @@ class OntologyRepository:
                 WHERE run_id = ?
                 """,
                 (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "run_id": row["run_id"],
+            "as_of": row["as_of"],
+            "source_status": _load_json(row["source_status_json"]),
+            "required_modules": _load_json_list(row["required_modules_json"]),
+            "optional_modules": _load_json_list(row["optional_modules_json"]),
+            "component_scores": _load_json(row["component_scores_json"]),
+            "created_at": row["created_at"],
+        }
+
+    def get_latest_run(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  run_id,
+                  as_of,
+                  source_status_json,
+                  required_modules_json,
+                  optional_modules_json,
+                  component_scores_json,
+                  created_at
+                FROM ontology_runs
+                ORDER BY created_at DESC, run_id DESC
+                LIMIT 1
+                """
             ).fetchone()
         if row is None:
             return None

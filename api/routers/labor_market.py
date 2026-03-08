@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from api.cache import get_cached, set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
+from llm_utils import MODEL_HAIKU, call_claude_text
 
 router = APIRouter()
 
@@ -61,9 +62,9 @@ def _build_snapshot_table(req: LaborMarketAnalyzeRequest) -> str:
 
 @router.post("/labor-market/analyze")
 def analyze_labor_market(req: LaborMarketAnalyzeRequest):
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ConfigurationError("OPENAI_API_KEY")
+        raise ConfigurationError("ANTHROPIC_API_KEY")
     if not req.latest:
         raise HTTPException(status_code=400, detail="No labor market data provided")
 
@@ -94,13 +95,14 @@ Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no he
 Be specific about the numbers."""
 
     try:
-        from openai import OpenAI
-
-        client = OpenAI()
-        resp = client.responses.create(model="gpt-5-mini", input=prompt)
-        analysis = (resp.output_text or "").strip()
+        analysis, _citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_HAIKU,
+            api_key=api_key,
+            max_tokens=4096,
+        )
         if not analysis:
-            raise ValueError("OpenAI returned empty response")
+            raise ValueError("Claude returned empty response")
     except Exception as exc:
         raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 

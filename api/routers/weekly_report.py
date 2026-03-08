@@ -8,7 +8,9 @@ from typing import Any, cast
 from fastapi import APIRouter, HTTPException, Query
 
 from api.cache import delete_cached, get_cached, long_cache, set_cached
-from api.exceptions import DataFetchError
+from api.exceptions import ConfigurationError, DataFetchError
+from llm_utils import MODEL_OPUS, call_claude_text
+from llm_utils import extract_citations as _extract_claude_citations
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -22,34 +24,8 @@ DEFAULT_NEWS_DOMAINS = [
 ]
 
 
-def _obj_get(value: Any, key: str, default: Any = None) -> Any:
-    if isinstance(value, dict):
-        return value.get(key, default)
-    return getattr(value, key, default)
-
-
-def _extract_openai_citations(response: Any) -> list[tuple[str, str]]:
-    seen_urls: set[str] = set()
-    citations: list[tuple[str, str]] = []
-
-    def _add(title: Any, url: Any) -> None:
-        if not isinstance(url, str) or not url or url in seen_urls:
-            return
-        seen_urls.add(url)
-        label = title if isinstance(title, str) and title else url
-        citations.append((label, url))
-
-    for output_item in _obj_get(response, "output", []) or []:
-        if _obj_get(output_item, "type") == "web_search_call":
-            action = _obj_get(output_item, "action")
-            for source in _obj_get(action, "sources", []) or []:
-                _add(_obj_get(source, "title"), _obj_get(source, "url"))
-
-        for content_item in _obj_get(output_item, "content", []) or []:
-            for annotation in _obj_get(content_item, "annotations", []) or []:
-                _add(_obj_get(annotation, "title"), _obj_get(annotation, "url"))
-
-    return citations
+def _extract_citations(response: Any) -> list[tuple[str, str]]:
+    return _extract_claude_citations(response)
 
 
 def _append_sources_section(report_md: str, citations: list[tuple[str, str]]) -> str:
@@ -544,27 +520,21 @@ Hard requirement: Do NOT include any assistant meta text like "If you want, I ca
 End the output immediately after the report content.
 """  # noqa: W291
 
-    try:
-        from openai import OpenAI
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ConfigurationError("ANTHROPIC_API_KEY")
 
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    try:
         t0 = time.perf_counter()
-        resp = client.responses.create(
-            model="gpt-5-mini",
-            input=prompt,
-            tools=[
-                {
-                    "type": "web_search",
-                    "search_context_size": "medium",
-                    "user_location": {"type": "approximate", "country": "US"},
-                    "filters": {"allowed_domains": DEFAULT_NEWS_DOMAINS},
-                }
-            ],
+        report_md, citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_OPUS,
+            api_key=api_key,
+            max_tokens=8192,
+            allowed_domains=DEFAULT_NEWS_DOMAINS,
         )
-        report_md = (resp.output_text or "").strip()
         if not report_md:
-            raise ValueError("OpenAI returned empty response")
-        citations = _extract_openai_citations(resp)
+            raise ValueError("Claude returned empty response")
         logger.info(
             "weekly_report LLM done in %.2fs (prompt_chars=%d output_chars=%d citations=%d)",
             time.perf_counter() - t0,

@@ -1,6 +1,6 @@
 """
 pip install feedparser httpx beautifulsoup4 lxml readability-lxml pdfminer.six python-dotenv
-Optional (OpenAI): pip install openai
+Optional (Claude): pip install anthropic
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from readability import Document
+
+from llm_utils import MODEL_HAIKU, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -302,13 +304,13 @@ def extract_full_text(client: httpx.Client, url: str) -> str:
 # ---------- Summarization ----------
 def summarize_with_llm(text: str, meta: dict) -> dict:
     """
-    Summarize using OpenAI if OPENAI_API_KEY is set, otherwise fall back to naive truncation.
+    Summarize using Claude if ANTHROPIC_API_KEY is set, otherwise fall back to naive truncation.
     """
-    if os.environ.get("OPENAI_API_KEY"):
+    if os.environ.get("ANTHROPIC_API_KEY"):
         try:
-            return summarize_with_openai(text, meta)
+            return summarize_with_claude(text, meta)
         except Exception as ex:
-            LOGGER.warning("OpenAI summarization failed: %s", ex)
+            LOGGER.warning("Claude summarization failed: %s", ex)
     # naive fallback summary if no LLM
     first = " ".join(text.split()[:60])
     return {
@@ -318,15 +320,7 @@ def summarize_with_llm(text: str, meta: dict) -> dict:
     }
 
 
-# Example OpenAI Responses API call (optional).
-# Docs: https://platform.openai.com/docs/api-reference/responses  (use current models per your account)
-def summarize_with_openai(text: str, meta: dict) -> dict:
-    """
-    Requires: pip install openai ; export OPENAI_API_KEY=...
-    """
-    from openai import OpenAI
-
-    client = OpenAI()
+def summarize_with_claude(text: str, meta: dict) -> dict:
 
     # Chunk if needed (very simple chunking)
     max_chars = 40_000
@@ -355,19 +349,18 @@ Text:
 {text_in}
 """.strip()
 
-    resp = client.responses.create(
-        model="gpt-5-mini-mini",
-        input=prompt,
+    out, _citations, _resp = call_claude_text(
+        prompt=prompt,
+        model=MODEL_HAIKU,
+        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        max_tokens=2048,
     )
-
-    out = (resp.output_text or "").strip()
-    # Strip markdown code fences if the model wrapped the JSON
-    if out.startswith("```"):
-        out = re.sub(r"^```(?:json)?\s*", "", out)
-        out = re.sub(r"\s*```$", "", out)
     if not out:
-        raise ValueError("OpenAI returned empty response")
-    return json.loads(out)
+        raise ValueError("Claude returned empty response")
+    parsed = parse_json_text(out)
+    if not isinstance(parsed, dict):
+        raise ValueError("Claude returned invalid JSON")
+    return parsed
 
 
 # ---------- Main ----------

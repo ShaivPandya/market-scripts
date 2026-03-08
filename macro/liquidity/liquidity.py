@@ -141,6 +141,7 @@ CHANGE_WINDOWS = {
 
 Z_WINDOW_WEEKS = 104
 MOMENTUM_WINDOW_WEEKS = 4
+ECB_SDMX_TIMEOUT_SECONDS = 12.0
 
 
 def get_fred_client():
@@ -201,7 +202,7 @@ def fetch_ecb_series():
 
     for name, key in ECB_SERIES.items():
         try:
-            response = ecb_client.data("ILM", key=key)
+            response = ecb_client.data("ILM", key=key, timeout=ECB_SDMX_TIMEOUT_SECONDS)
             series = sdmx.to_pandas(response)
 
             if isinstance(series, pd.DataFrame):

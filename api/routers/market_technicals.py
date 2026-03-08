@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from api.cache import get_cached, set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
+from llm_utils import MODEL_HAIKU, call_claude_text
 
 router = APIRouter()
 
@@ -163,9 +164,9 @@ def _format_price_volume(data: dict) -> str:
 
 @router.post("/market-technicals/analyze")
 def analyze_market_technicals(req: MarketTechnicalsAnalyzeRequest):
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ConfigurationError("OPENAI_API_KEY")
+        raise ConfigurationError("ANTHROPIC_API_KEY")
 
     breadth_text = _format_breadth(req.market_breadth)
     top50_text = _format_top50(req.top50_breadth)
@@ -196,13 +197,14 @@ Write 4-6 flowing paragraphs of plain text (no bullet points, no markdown, no he
 Be specific about the numbers. Write for a professional investor audience."""
 
     try:
-        from openai import OpenAI
-
-        client = OpenAI()
-        resp = client.responses.create(model="gpt-5-mini", input=prompt)
-        analysis = (resp.output_text or "").strip()
+        analysis, _citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_HAIKU,
+            api_key=api_key,
+            max_tokens=4096,
+        )
         if not analysis:
-            raise ValueError("OpenAI returned empty response")
+            raise ValueError("Claude returned empty response")
     except Exception as exc:
         raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 

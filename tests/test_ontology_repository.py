@@ -200,3 +200,40 @@ def test_snapshot_prune_removes_old_runs(tmp_path):
     assert deleted == 1
     assert repo.get_run("old-run") is None
     assert repo.get_run("new-run") is not None
+
+
+def test_get_latest_run_returns_most_recent(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+
+    nodes = [OntologyNode(id="position:MU", type="Position", label="MU", properties={"ticker": "MU"})]
+    edges: list[OntologyEdge] = []
+
+    repo.save_snapshot(
+        run_id="run-old",
+        as_of="2026-03-08T00:00:00Z",
+        source_status={},
+        required_modules=[],
+        optional_modules=[],
+        component_scores={},
+        nodes=nodes,
+        edges=edges,
+    )
+    repo.save_snapshot(
+        run_id="run-new",
+        as_of="2026-03-09T00:00:00Z",
+        source_status={},
+        required_modules=[],
+        optional_modules=[],
+        component_scores={},
+        nodes=nodes,
+        edges=edges,
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE ontology_runs SET created_at = datetime('now', '-20 minutes') WHERE run_id = 'run-old'")
+        conn.execute("UPDATE ontology_runs SET created_at = datetime('now', '-1 minutes') WHERE run_id = 'run-new'")
+
+    latest = repo.get_latest_run()
+    assert latest is not None
+    assert latest["run_id"] == "run-new"

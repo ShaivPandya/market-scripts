@@ -16,7 +16,7 @@ def _patch_common(monkeypatch):
 
 def test_xbrl_both_axes_skips_ai(monkeypatch):
     _patch_common(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(
         fs,
         "_extract_breakdown_for_filing",
@@ -45,7 +45,7 @@ def test_xbrl_both_axes_skips_ai(monkeypatch):
 
 def test_missing_segment_filled_by_ai(monkeypatch):
     _patch_common(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(
         fs,
         "_extract_breakdown_for_filing",
@@ -87,7 +87,7 @@ def test_missing_segment_filled_by_ai(monkeypatch):
 
 def test_missing_segment_not_disclosed(monkeypatch):
     _patch_common(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(
         fs,
         "_extract_breakdown_for_filing",
@@ -125,7 +125,7 @@ def test_missing_segment_not_disclosed(monkeypatch):
 
 def test_missing_segment_ai_invalid_or_failed(monkeypatch):
     _patch_common(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(
         fs,
         "_extract_breakdown_for_filing",
@@ -147,9 +147,9 @@ def test_missing_segment_ai_invalid_or_failed(monkeypatch):
     assert out["extraction_meta"]["ai_fallback_attempted"] is True
 
 
-def test_missing_axis_no_openai_key(monkeypatch):
+def test_missing_axis_no_anthropic_key(monkeypatch):
     _patch_common(monkeypatch)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(
         fs,
         "_extract_breakdown_for_filing",
@@ -164,7 +164,7 @@ def test_missing_axis_no_openai_key(monkeypatch):
     )
 
     def _should_not_run_ai(**kwargs):
-        raise AssertionError("AI fallback should not run without OPENAI_API_KEY")
+        raise AssertionError("AI fallback should not run without ANTHROPIC_API_KEY")
 
     monkeypatch.setattr(fs, "_extract_breakdown_via_nlp", _should_not_run_ai)
 
@@ -178,7 +178,7 @@ def test_missing_axis_no_openai_key(monkeypatch):
 
 def test_missing_axes_filled_by_html(monkeypatch):
     _patch_common(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     # 1. XBRL returns nothing
     monkeypatch.setattr(
@@ -223,7 +223,7 @@ def test_missing_axes_filled_by_html(monkeypatch):
 
 def test_html_fails_falls_back_to_nlp(monkeypatch):
     _patch_common(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     # 1. XBRL returns nothing
     monkeypatch.setattr(
