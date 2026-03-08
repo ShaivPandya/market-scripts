@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from typing import Any
 
@@ -361,26 +362,23 @@ def _build_history(lookback_weeks: int, instruments_csv: str, liquidity_raw: dic
     module_status: dict[str, str] = {}
     factors: dict[str, pd.Series] = {}
 
-    try:
-        factors["vix"] = _build_vix_history_series(lookback_weeks)
-        module_status["vix"] = "ok" if not factors["vix"].empty else "error"
-    except Exception:
-        factors["vix"] = pd.Series(dtype=float)
-        module_status["vix"] = "error"
+    history_tasks = {
+        "vix": lambda: _build_vix_history_series(lookback_weeks),
+        "liquidity": lambda: _build_liquidity_history_series(liquidity_raw, lookback_weeks),
+        "positioning": lambda: _build_positioning_history_series(lookback_weeks, instruments_csv),
+    }
 
-    try:
-        factors["liquidity"] = _build_liquidity_history_series(liquidity_raw, lookback_weeks)
-        module_status["liquidity"] = "ok" if not factors["liquidity"].empty else "error"
-    except Exception:
-        factors["liquidity"] = pd.Series(dtype=float)
-        module_status["liquidity"] = "error"
-
-    try:
-        factors["positioning"] = _build_positioning_history_series(lookback_weeks, instruments_csv)
-        module_status["positioning"] = "ok" if not factors["positioning"].empty else "error"
-    except Exception:
-        factors["positioning"] = pd.Series(dtype=float)
-        module_status["positioning"] = "error"
+    with ThreadPoolExecutor(max_workers=len(history_tasks)) as pool:
+        futures = {pool.submit(fn): name for name, fn in history_tasks.items()}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                result = fut.result()
+                factors[name] = result
+                module_status[name] = "ok" if not result.empty else "error"
+            except Exception:
+                factors[name] = pd.Series(dtype=float)
+                module_status[name] = "error"
 
     available = {k: s for k, s in factors.items() if isinstance(s, pd.Series) and not s.empty}
     if not available:
@@ -468,25 +466,14 @@ def _fetch_current_modules(positioning_instruments_csv: str) -> tuple[dict[str, 
     raw: dict[str, Any] = {}
     module_status: dict[str, dict[str, Any]] = {}
 
-    def capture(key: str, fn):
-        try:
-            raw[key] = fn()
-            module_status[key] = {"status": "ok"}
-        except Exception as exc:
-            raw[key] = None
-            module_status[key] = {"status": "error", "detail": str(exc)}
-
-    capture(
-        "vix_term_structure", lambda: get_vix_data(start=(date.today() - timedelta(days=540)).isoformat(), tail=320)
-    )
-    capture("market_breadth", get_market_breadth)
-    capture("top50_breadth", get_top50_breadth)
-    capture("liquidity", get_liquidity_snapshot)
-    capture("sector_metrics", get_sector_metrics_data)
-    capture("momentum", get_momentum_data)
-
-    def _fetch_positioning():
-        return fetch_multiple_instruments(
+    tasks: dict[str, Any] = {
+        "vix_term_structure": lambda: get_vix_data(start=(date.today() - timedelta(days=540)).isoformat(), tail=320),
+        "market_breadth": get_market_breadth,
+        "top50_breadth": get_top50_breadth,
+        "liquidity": get_liquidity_snapshot,
+        "sector_metrics": get_sector_metrics_data,
+        "momentum": get_momentum_data,
+        "positioning": lambda: fetch_multiple_instruments(
             domain=DEFAULT_DOMAIN,
             dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
             app_token=os.environ.get("SODA_APP_TOKEN") or None,
@@ -496,9 +483,20 @@ def _fetch_current_modules(positioning_instruments_csv: str) -> tuple[dict[str, 
             groups=None,
             z_window=0,
             force_threshold=2.0,
-        )
+        ),
+    }
 
-    capture("positioning", _fetch_positioning)
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = {pool.submit(fn): name for name, fn in tasks.items()}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                raw[name] = fut.result()
+                module_status[name] = {"status": "ok"}
+            except Exception as exc:
+                raw[name] = None
+                module_status[name] = {"status": "error", "detail": str(exc)}
+
     return raw, module_status
 
 

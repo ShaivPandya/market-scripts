@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { Info } from "lucide-react"
 import { useMutation } from "@tanstack/react-query"
 import { queryOntology } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
@@ -58,6 +59,7 @@ function summarizeEvidence(evidence: OntologyEvidence[] | undefined): string {
 }
 
 export function OntologyWorkbench() {
+  const [showInfo, setShowInfo] = useState(false)
   const [query, setQuery] = useState("")
   const [intent, setIntent] = useState<Intent>("auto")
   const [timeframe, setTimeframe] = useState<Timeframe>("Daily")
@@ -132,10 +134,26 @@ export function OntologyWorkbench() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Ontology Workbench</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Ontology Workbench</h1>
+          <button
+            onClick={() => setShowInfo(v => !v)}
+            className="text-gray-300 hover:text-gray-500 transition-colors"
+            title="What is this?"
+          >
+            <Info size={16} />
+          </button>
+        </div>
         <p className="text-sm text-gray-400 mt-0.5">
           Query portfolio-linked risk snapshots with natural language and structured filters.
         </p>
+        {showInfo && (
+          <p className="text-xs text-gray-500 mt-2 max-w-xl leading-relaxed">
+            Links each portfolio position to macro conditions, sector dynamics, and cross-asset signals via a knowledge
+            graph. Filter by ticker, sector, asset class, or risk threshold to see which holdings carry elevated risk
+            and the evidence behind each score. Use snapshot run IDs to compare risk states across time.
+          </p>
+        )}
       </div>
 
       <div className="theme-surface mb-6 grid grid-cols-1 gap-3 rounded-xl p-4 md:grid-cols-3">

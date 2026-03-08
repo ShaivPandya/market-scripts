@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { Info } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchSignalAggregator } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
@@ -77,6 +78,7 @@ function summarizeHighlights(highlights?: Record<string, unknown>): string {
 }
 
 export function SignalAggregator() {
+  const [showInfo, setShowInfo] = useState(false)
   const [lookbackInput, setLookbackInput] = useState("156")
   const [instrumentInput, setInstrumentInput] = useState(DEFAULT_INSTRUMENTS)
   const [appliedLookback, setAppliedLookback] = useState(156)
@@ -183,8 +185,24 @@ export function SignalAggregator() {
     <div>
       <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Signal Aggregator</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Signal Aggregator</h1>
+            <button
+              onClick={() => setShowInfo(v => !v)}
+              className="text-gray-300 hover:text-gray-500 transition-colors"
+              title="What is this?"
+            >
+              <Info size={16} />
+            </button>
+          </div>
           <p className="text-sm text-gray-400 mt-0.5">Unified cross-module regime synthesis</p>
+          {showInfo && (
+            <p className="text-xs text-gray-500 mt-2 max-w-xl leading-relaxed">
+              Combines signals from macro liquidity, positioning, momentum, and other modules into a single composite
+              regime score. The score classifies the current market environment as risk-on, neutral, or risk-off.
+              Use this to monitor the overall regime and see which factors are driving it.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <RefreshButton queryKeys={[["signal-aggregator", appliedLookback, appliedInstruments]]} />

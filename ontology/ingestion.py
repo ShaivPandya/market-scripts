@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -431,17 +432,23 @@ def _build_fetchers(
 
 def _run_fetchers(fetchers: dict[str, ModuleFetcher], source_status: dict[str, dict[str, Any]]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for name, fn in fetchers.items():
-        try:
-            data = fn()
-            out[name] = data
-            if _is_partial(name, data):
-                source_status[name] = {"status": "partial", "detail": "incomplete payload"}
-            else:
-                source_status[name] = {"status": "ok"}
-        except Exception as exc:
-            out[name] = {}
-            source_status[name] = {"status": "error", "detail": str(exc)}
+    if not fetchers:
+        return out
+
+    with ThreadPoolExecutor(max_workers=min(len(fetchers), 10)) as pool:
+        futures = {pool.submit(fn): name for name, fn in fetchers.items()}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                data = fut.result()
+                out[name] = data
+                if _is_partial(name, data):
+                    source_status[name] = {"status": "partial", "detail": "incomplete payload"}
+                else:
+                    source_status[name] = {"status": "ok"}
+            except Exception as exc:
+                out[name] = {}
+                source_status[name] = {"status": "error", "detail": str(exc)}
     return out
 
 

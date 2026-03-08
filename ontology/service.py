@@ -91,6 +91,7 @@ class OntologyQueryService:
                     effective_filters["sectors"] = [token]
 
         rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=resolved_run_id)
+        all_evidence = self.repo.fetch_snapshot_all_position_signal_evidence(run_id=resolved_run_id)
         results = []
         for row in rows:
             pos = _as_dict(row.get("position_props"))
@@ -105,7 +106,7 @@ class OntologyQueryService:
             if isinstance(sector_props.get("name"), str):
                 sector = str(sector_props.get("name"))
 
-            evidence = self._build_evidence(position_id=position_id, run_id=resolved_run_id)
+            evidence = self._build_evidence_from_batch(all_evidence.get(position_id, []))
 
             results.append(
                 {
@@ -151,6 +152,9 @@ class OntologyQueryService:
 
     def _build_evidence(self, position_id: str, run_id: str) -> list[dict[str, Any]]:
         raw = self.repo.fetch_snapshot_position_signal_evidence(run_id=run_id, position_id=position_id)
+        return self._build_evidence_from_batch(raw)
+
+    def _build_evidence_from_batch(self, raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
         evidence = []
         for row in raw:
             edge = _as_dict(row.get("edge_props"))
