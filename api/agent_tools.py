@@ -484,7 +484,8 @@ def _compact_portfolio_payload(payload: Any) -> Any:
 
     compact_rows: list[dict[str, Any]] = []
     for ticker in tickers:
-        meta = metadata.get(ticker) if isinstance(metadata.get(ticker), dict) else {}
+        raw_meta = metadata.get(ticker)
+        meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
         series = positions.get(ticker)
         series_rows = series if isinstance(series, list) else []
         first = _first_valid_point(series_rows)
