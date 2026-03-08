@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
@@ -8,12 +10,45 @@ from typing import Any
 
 from ontology.models import OntologyEdge, OntologyNode
 
-DEFAULT_DB_PATH = Path("data_cache") / "ontology" / "ontology.sqlite3"
+logger = logging.getLogger("uvicorn.error")
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DB_PATH = _REPO_ROOT / "data_cache" / "ontology" / "ontology.sqlite3"
+
+
+def _candidate_db_paths() -> list[Path]:
+    env_path = (os.getenv("ONTOLOGY_DB_PATH") or "").strip()
+    paths: list[Path] = []
+    if env_path:
+        paths.append(Path(env_path).expanduser())
+    paths.append(DEFAULT_DB_PATH)
+    paths.append(Path(os.getenv("TMPDIR") or "/tmp") / "market-scripts" / "data_cache" / "ontology" / "ontology.sqlite3")
+    deduped: list[Path] = []
+    for path in paths:
+        if path not in deduped:
+            deduped.append(path)
+    return deduped
+
+
+def _resolve_default_db_path() -> Path:
+    last_error: Exception | None = None
+    for candidate in _candidate_db_paths():
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            return candidate
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "ontology repository init: failed to create db parent at %s; trying next fallback",
+                str(candidate.parent),
+                exc_info=True,
+            )
+    raise PermissionError("Unable to initialize ontology DB path") from last_error
 
 
 class OntologyRepository:
     def __init__(self, db_path: Path | None = None):
-        self.db_path = Path(db_path or DEFAULT_DB_PATH)
+        self.db_path = Path(db_path) if db_path is not None else _resolve_default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 

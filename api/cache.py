@@ -25,8 +25,43 @@ long_cache: TTLCache = TTLCache(maxsize=32, ttl=3600)
 _lock = threading.Lock()
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_DISK_CACHE_ROOT = Path(os.getenv("API_DISK_CACHE_DIR") or (_REPO_ROOT / "data_cache" / "api_cache"))
 _DISK_CACHE_ENABLED = os.getenv("API_DISK_CACHE_DISABLE", "").strip().lower() not in ("1", "true", "yes")
+
+
+def _candidate_disk_cache_roots() -> list[Path]:
+    env_path = (os.getenv("API_DISK_CACHE_DIR") or "").strip()
+    roots: list[Path] = []
+    if env_path:
+        roots.append(Path(env_path).expanduser())
+    roots.append(_REPO_ROOT / "data_cache" / "api_cache")
+    roots.append(Path(os.getenv("TMPDIR") or "/tmp") / "market-scripts" / "data_cache" / "api_cache")
+    deduped: list[Path] = []
+    for root in roots:
+        if root not in deduped:
+            deduped.append(root)
+    return deduped
+
+
+def _initialize_disk_cache_root(candidates: list[Path]) -> tuple[Path, bool]:
+    for root in candidates:
+        try:
+            (root / "short").mkdir(parents=True, exist_ok=True)
+            (root / "long").mkdir(parents=True, exist_ok=True)
+            return root, True
+        except Exception:
+            logger.warning(
+                "api cache init: failed to create disk cache dirs at %s; trying next fallback",
+                str(root),
+                exc_info=True,
+            )
+    return candidates[0], False
+
+
+_DISK_CACHE_ROOTS = _candidate_disk_cache_roots()
+_DISK_CACHE_ROOT = _DISK_CACHE_ROOTS[0]
+if _DISK_CACHE_ENABLED:
+    _DISK_CACHE_ROOT, _DISK_CACHE_ENABLED = _initialize_disk_cache_root(_DISK_CACHE_ROOTS)
+
 logger.info(
     "api cache init: disk_cache=%s root=%s short_ttl=%ss long_ttl=%ss",
     "enabled" if _DISK_CACHE_ENABLED else "disabled",
@@ -34,18 +69,6 @@ logger.info(
     getattr(short_cache, "ttl", "n/a"),
     getattr(long_cache, "ttl", "n/a"),
 )
-
-if _DISK_CACHE_ENABLED:
-    try:
-        (_DISK_CACHE_ROOT / "short").mkdir(parents=True, exist_ok=True)
-        (_DISK_CACHE_ROOT / "long").mkdir(parents=True, exist_ok=True)
-    except Exception:
-        logger.warning(
-            "api cache init: failed to create disk cache dirs at %s; disabling disk cache",
-            str(_DISK_CACHE_ROOT),
-            exc_info=True,
-        )
-        _DISK_CACHE_ENABLED = False
 
 
 def _disk_cache_path(cache: TTLCache, key: str) -> Path:

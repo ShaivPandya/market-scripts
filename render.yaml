@@ -5,4 +5,8 @@ services:
     dockerfilePath: ./Dockerfile
     autoDeploy: true
     healthCheckPath: /api/health
-
+    envVars:
+      - key: API_DISK_CACHE_DIR
+        value: /tmp/market-scripts/data_cache/api_cache
+      - key: ONTOLOGY_DB_PATH
+        value: /tmp/market-scripts/data_cache/ontology/ontology.sqlite3
