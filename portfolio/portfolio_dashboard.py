@@ -14,29 +14,38 @@ Terminal:
 import logging
 import warnings
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+from portfolio_db import get_positions_df
 
 LOGGER = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
-# -- Load portfolio from CSV ──────────────────────────────────────────────────
-_CSV_PATH = Path(__file__).parent / "portfolio.csv"
-
 
 def _load_portfolio() -> pd.DataFrame:
-    """Read portfolio.csv and return DataFrame with ticker, asset, direction."""
-    return pd.read_csv(_CSV_PATH)
+    """Load portfolio positions from the database."""
+    return get_positions_df()
+
+
+def _build_globals(df: pd.DataFrame) -> tuple[dict, list, dict]:
+    positions = {row.ticker: row.ticker for row in df.itertuples()}
+    order = list(df.ticker)
+    meta = {row.ticker: {"asset": row.asset, "direction": row.direction} for row in df.itertuples()}
+    return positions, order, meta
 
 
 _portfolio_df = _load_portfolio()
+POSITIONS, POSITION_ORDER, POSITION_META = _build_globals(_portfolio_df)
 
-POSITIONS = {row.ticker: row.ticker for row in _portfolio_df.itertuples()}
-POSITION_ORDER = list(_portfolio_df.ticker)
-POSITION_META = {row.ticker: {"asset": row.asset, "direction": row.direction} for row in _portfolio_df.itertuples()}
+
+def reload_portfolio() -> None:
+    """Re-read positions from the database and update module-level globals."""
+    global _portfolio_df, POSITIONS, POSITION_ORDER, POSITION_META
+    _portfolio_df = _load_portfolio()
+    POSITIONS, POSITION_ORDER, POSITION_META = _build_globals(_portfolio_df)
+
 
 # -- Timeframe configs: name -> yfinance (period, interval) ──────────────────
 TIMEFRAMES = {

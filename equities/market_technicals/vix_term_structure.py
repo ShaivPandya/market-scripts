@@ -63,14 +63,43 @@ def download_close(ticker: str, start: str) -> pd.DataFrame:
     df = yf.download(ticker, start=start, auto_adjust=False, progress=False)
     if df.empty:
         return df
+    close_data: pd.Series | pd.DataFrame
+
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.rename(columns=str.title)
-    if "Close" not in df.columns:
-        return pd.DataFrame()
-    out = df[["Close"]].copy()
-    out.columns = [ticker]
-    return out
+        # yfinance may return MultiIndex columns with either (field, ticker)
+        # or (ticker, field), and occasionally duplicate "Close" fields.
+        if "Close" in df.columns.get_level_values(0):
+            close_data = df.xs("Close", axis=1, level=0)
+        elif "Close" in df.columns.get_level_values(-1):
+            close_data = df.xs("Close", axis=1, level=-1)
+        else:
+            return pd.DataFrame()
+    else:
+        close_cols = [c for c in df.columns if str(c).strip().lower() == "close"]
+        if not close_cols:
+            return pd.DataFrame()
+        # Keep all matching columns to handle duplicate "Close" headers.
+        close_data = df.loc[:, close_cols].copy()
+
+    if isinstance(close_data, pd.Series):
+        close_series = pd.to_numeric(close_data, errors="coerce")
+    else:
+        close_frame = close_data.apply(pd.to_numeric, errors="coerce")
+        if close_frame.empty:
+            return pd.DataFrame()
+        if close_frame.shape[1] == 1:
+            close_series = close_frame.iloc[:, 0]
+        else:
+            # Prefer the column with the most observed values.
+            best_pos = int(np.argmax(close_frame.count().to_numpy()))
+            close_series = close_frame.iloc[:, best_pos]
+            if close_series.dropna().empty:
+                close_series = close_frame.bfill(axis=1).iloc[:, 0]
+
+    if isinstance(close_series, pd.DataFrame):
+        close_series = close_series.iloc[:, 0]
+
+    return close_series.to_frame(name=ticker)
 
 
 def load_term_structure(start: str) -> tuple[pd.DataFrame, str]:

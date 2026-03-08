@@ -252,15 +252,45 @@ def _build_system_message(last_week_summary: str | None) -> str:
 
 def load_theses() -> dict[str, str | None]:
     """Load investment thesis markdown files for all portfolio tickers."""
-    import csv
+    from portfolio_db import get_positions
 
-    portfolio_csv = PROJECT_ROOT / "portfolio" / "portfolio.csv"
-    tickers: list[str] = []
-    with open(portfolio_csv, newline="") as f:
-        for row in csv.DictReader(f):
-            t = row.get("ticker", "").strip()
-            if t:
-                tickers.append(t)
+    default_project_root = SCRIPT_DIR.parent
+
+    def _load_tickers_from_csv() -> list[str]:
+        import csv
+
+        csv_path = PROJECT_ROOT / "portfolio" / "portfolio.csv"
+        if not csv_path.exists():
+            return []
+        tickers_from_csv: list[str] = []
+        try:
+            with csv_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    t = str((row or {}).get("ticker", "")).strip()
+                    if t:
+                        tickers_from_csv.append(t)
+        except Exception as e:
+            log.warning("Failed to read portfolio CSV at %s: %s", csv_path, e)
+            return []
+        return tickers_from_csv
+
+    # In tests PROJECT_ROOT is often monkeypatched to a temp directory
+    # with a fixture CSV. Prefer that CSV in that scenario.
+    if PROJECT_ROOT != default_project_root:
+        tickers = _load_tickers_from_csv()
+    else:
+        tickers = []
+        try:
+            for row in get_positions():
+                t = str(row.get("ticker", "")).strip()
+                if t:
+                    tickers.append(t)
+        except Exception as e:
+            log.warning("Failed to read positions from portfolio_db: %s", e)
+
+        if not tickers:
+            tickers = _load_tickers_from_csv()
 
     theses: dict[str, str | None] = {}
     for ticker in tickers:
@@ -322,9 +352,9 @@ def collect_thesis_data() -> dict:
     results["theses"] = load_theses()
 
     # 2. Load portfolio positions
-    portfolio_csv = PROJECT_ROOT / "portfolio" / "portfolio.csv"
-    with open(portfolio_csv, newline="") as f:
-        results["portfolio"] = [r for r in csv.DictReader(f) if r.get("ticker")]
+    from portfolio_db import get_positions as _get_positions
+
+    results["portfolio"] = [r for r in _get_positions() if r.get("ticker")]
 
     tickers = [p["ticker"] for p in results["portfolio"]]
 

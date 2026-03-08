@@ -38,7 +38,6 @@ try:
         LONG_MAX,
         MARKET_TICKER_LONG,
         MARKET_TICKER_SHORT,
-        PORTFOLIO_CSV,
         SEVERE_DD_MAX,
         SHORT_MIN,
         apply_distressed_gating,
@@ -76,7 +75,6 @@ except ImportError:
         LONG_MAX,
         MARKET_TICKER_LONG,
         MARKET_TICKER_SHORT,
-        PORTFOLIO_CSV,
         SEVERE_DD_MAX,
         SHORT_MIN,
         apply_distressed_gating,
@@ -96,6 +94,15 @@ except ImportError:
         solve_joint_hedge_weights,
         to_usd_price,
     )
+
+try:
+    from portfolio_db import get_positions_df as _get_positions_df
+except ImportError:
+    import os as _os
+    import sys as _sys
+
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
+    from portfolio_db import get_positions_df as _get_positions_df
 
 LOGGER = logging.getLogger(__name__)
 
@@ -183,7 +190,7 @@ def size_portfolio(
         convictions = _parse_positions(positions)
 
         # Load portfolio metadata
-        meta = pd.read_csv(PORTFOLIO_CSV)
+        meta = _get_positions_df()
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
 

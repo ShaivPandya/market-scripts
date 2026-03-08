@@ -73,7 +73,7 @@ export function IndustryMonitor() {
         </div>
       </div>
       <p className="text-xs text-gray-400 mb-4">
-        Macro signals from earnings call transcripts — Housing, Trucking, Banks, Retail
+        Macro signals from earnings call transcripts — Housing, Trucking, Banks, Retail, Capital Goods
       </p>
 
       {isLoading && <LoadingSpinner message="Fetching industry data..." />}

@@ -75,7 +75,6 @@ ET = ZoneInfo("America/New_York")
 OUTPUT_DIR = SCRIPT_DIR / "outputs" / "daily"
 HISTORY_DIR = OUTPUT_DIR / "history"
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
-PORTFOLIO_CSV = PROJECT_ROOT / "portfolio" / "portfolio.csv"
 OPEN_POSITIONS_CSV = PROJECT_ROOT / "portfolio" / "open_positions.csv"
 
 # Separators for parsing Claude responses
@@ -160,10 +159,11 @@ def _is_weekday_morning_et() -> bool:
 
 
 def load_portfolio():
-    """Load portfolio.csv and return a pandas DataFrame."""
+    """Load portfolio positions and return a pandas DataFrame."""
     import pandas as pd
+    from portfolio_db import get_positions_df
 
-    df = pd.read_csv(PORTFOLIO_CSV)
+    df = get_positions_df()
     df["ticker"] = df["ticker"].str.strip().str.upper()
     df["direction"] = df["direction"].fillna("").str.strip().str.lower()
     df["conviction"] = df["conviction"].fillna(3).astype(int)

@@ -7,10 +7,13 @@ and builds a hybrid historical regime timeline from modules with native history.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
+import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import wait as cf_wait
 from datetime import date, timedelta
 from typing import Any
 
@@ -30,6 +33,12 @@ CONFIGURED_WEIGHTS: dict[str, float] = {
 
 HISTORY_CAPABLE_FACTORS = {"vix", "liquidity", "positioning"}
 MISSING_HISTORY_FACTORS = {"breadth", "sector", "momentum"}
+
+MODULE_TIMEOUT = 90  # seconds per module in ThreadPoolExecutor
+SP500_CHUNK_SIZE = 50
+SP500_BATCH_DELAY = 1.0  # seconds between yfinance batch downloads
+
+_log = logging.getLogger(__name__)
 
 
 def clamp01(value: float) -> float:
@@ -61,8 +70,38 @@ def _mean(values: Iterable[float]) -> float | None:
     return sum(vals) / len(vals)
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, pd.DataFrame):
+        if value.empty:
+            return []
+        records = value.to_dict(orient="records")
+        if not isinstance(records, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for row in records:
+            if isinstance(row, dict):
+                normalized.append({str(k): v for k, v in row.items()})
+        return normalized
+    if isinstance(value, list):
+        return [{str(k): v for k, v in row.items()} for row in value if isinstance(row, dict)]
+    return []
+
+
+def _first_row(value: Any) -> dict[str, Any]:
+    rows = _as_rows(value)
+    if rows:
+        return rows[0]
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
 def _score_vix(vix_data: dict[str, Any]) -> tuple[float | None, dict[str, Any]]:
-    latest = ((vix_data or {}).get("latest_df") or [{}])[0]
+    latest = _first_row(vix_data.get("latest_df"))
     ratio = _to_float(latest.get("Ratio"))
     spot_vix = _to_float(latest.get("VIX"))
 
@@ -124,8 +163,8 @@ def _score_liquidity(liquidity: dict[str, Any]) -> tuple[float | None, dict[str,
     return score, {"regime": regime, "composite_score": composite}
 
 
-def _score_positioning(rows: list[dict[str, Any]]) -> tuple[float | None, dict[str, Any]]:
-    clean_rows = [r for r in rows if isinstance(r, dict)]
+def _score_positioning(rows: Any) -> tuple[float | None, dict[str, Any]]:
+    clean_rows = _as_rows(rows)
     if not clean_rows:
         return None, {"error": "no positioning rows"}
 
@@ -147,8 +186,8 @@ def _score_positioning(rows: list[dict[str, Any]]) -> tuple[float | None, dict[s
     return score, {"rows": len(clean_rows), "forced_flow_count": forced_count, "avg_abs_z_component": avg_z}
 
 
-def _score_sector(rows: list[dict[str, Any]]) -> tuple[float | None, dict[str, Any]]:
-    clean_rows = [r for r in rows if isinstance(r, dict)]
+def _score_sector(rows: Any) -> tuple[float | None, dict[str, Any]]:
+    clean_rows = _as_rows(rows)
     if not clean_rows:
         return None, {"error": "no sector rows"}
 
@@ -270,11 +309,18 @@ def _normalize_weekly(series: pd.Series, lookback_weeks: int) -> pd.Series:
     return s.tail(lookback_weeks)
 
 
-def _build_vix_history_series(lookback_weeks: int) -> pd.Series:
+def _build_vix_history_series(
+    lookback_weeks: int,
+    preloaded: tuple[pd.DataFrame, str] | None = None,
+) -> pd.Series:
     from vix_term_structure import add_signals, load_term_structure
 
-    start = (date.today() - timedelta(days=max(lookback_weeks * 7 + 45, 400))).isoformat()
-    data, _ = load_term_structure(start)
+    if preloaded is not None:
+        data, _ = preloaded
+    else:
+        start = (date.today() - timedelta(days=max(lookback_weeks * 7 + 45, 400))).isoformat()
+        data, _ = load_term_structure(start)
+
     signals = add_signals(data, low=1.0, high=1.25)
     if signals.empty:
         return pd.Series(dtype=float)
@@ -306,7 +352,11 @@ def _build_liquidity_history_series(liquidity_raw: dict[str, Any], lookback_week
     return _normalize_weekly(series, lookback_weeks)
 
 
-def _build_positioning_history_series(lookback_weeks: int, instruments_csv: str) -> pd.Series:
+def _build_positioning_history_series(
+    lookback_weeks: int,
+    instruments_csv: str,
+    preloaded_df: pd.DataFrame | None = None,
+) -> pd.Series:
     from positioning import DATASETS, DEFAULT_DOMAIN, INSTRUMENTS, fetch_markets_timeseries
 
     aliases = [s.strip().upper() for s in (instruments_csv or "").split(",") if s.strip()]
@@ -315,18 +365,21 @@ def _build_positioning_history_series(lookback_weeks: int, instruments_csv: str)
     if not markets:
         return pd.Series(dtype=float)
 
-    start = (date.today() - timedelta(weeks=lookback_weeks + 12)).isoformat()
-    df = fetch_markets_timeseries(
-        domain=DEFAULT_DOMAIN,
-        dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
-        app_token=os.environ.get("SODA_APP_TOKEN") or None,
-        markets_exact=markets,
-        start=start,
-        end=None,
-        groups=None,
-        z_window=0,
-        force_threshold=2.0,
-    )
+    if preloaded_df is not None:
+        df = preloaded_df
+    else:
+        start = (date.today() - timedelta(weeks=lookback_weeks + 12)).isoformat()
+        df = fetch_markets_timeseries(
+            domain=DEFAULT_DOMAIN,
+            dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
+            app_token=os.environ.get("SODA_APP_TOKEN") or None,
+            markets_exact=markets,
+            start=start,
+            end=None,
+            groups=None,
+            z_window=0,
+            force_threshold=2.0,
+        )
     if df.empty:
         return pd.Series(dtype=float)
 
@@ -358,19 +411,28 @@ def _build_positioning_history_series(lookback_weeks: int, instruments_csv: str)
     return _normalize_weekly(series, lookback_weeks)
 
 
-def _build_history(lookback_weeks: int, instruments_csv: str, liquidity_raw: dict[str, Any]) -> dict[str, Any]:
+def _build_history(
+    lookback_weeks: int,
+    instruments_csv: str,
+    liquidity_raw: dict[str, Any],
+    vix_preloaded: tuple[pd.DataFrame, str] | None = None,
+    positioning_preloaded_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
     module_status: dict[str, str] = {}
     factors: dict[str, pd.Series] = {}
 
     history_tasks = {
-        "vix": lambda: _build_vix_history_series(lookback_weeks),
+        "vix": lambda: _build_vix_history_series(lookback_weeks, preloaded=vix_preloaded),
         "liquidity": lambda: _build_liquidity_history_series(liquidity_raw, lookback_weeks),
-        "positioning": lambda: _build_positioning_history_series(lookback_weeks, instruments_csv),
+        "positioning": lambda: _build_positioning_history_series(
+            lookback_weeks, instruments_csv, preloaded_df=positioning_preloaded_df
+        ),
     }
 
     with ThreadPoolExecutor(max_workers=len(history_tasks)) as pool:
         futures = {pool.submit(fn): name for name, fn in history_tasks.items()}
-        for fut in as_completed(futures):
+        done, not_done = cf_wait(futures.keys(), timeout=MODULE_TIMEOUT)
+        for fut in done:
             name = futures[fut]
             try:
                 result = fut.result()
@@ -379,6 +441,10 @@ def _build_history(lookback_weeks: int, instruments_csv: str, liquidity_raw: dic
             except Exception:
                 factors[name] = pd.Series(dtype=float)
                 module_status[name] = "error"
+        for fut in not_done:
+            name = futures[fut]
+            factors[name] = pd.Series(dtype=float)
+            module_status[name] = "timeout"
 
     available = {k: s for k, s in factors.items() if isinstance(s, pd.Series) and not s.empty}
     if not available:
@@ -454,48 +520,225 @@ def _parse_instrument_csv(instruments_csv: str) -> str:
     return ",".join(keep)
 
 
-def _fetch_current_modules(positioning_instruments_csv: str) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+def _download_sp500_prices() -> pd.DataFrame:
+    """Download S&P 500 constituent prices once for all modules."""
+    import yfinance as yf
+    from market_breadth import get_sp500_tickers
+
+    tickers = get_sp500_tickers()
+    chunks = [tickers[i : i + SP500_CHUNK_SIZE] for i in range(0, len(tickers), SP500_CHUNK_SIZE)]
+    all_data: list[pd.DataFrame] = []
+
+    for idx, chunk in enumerate(chunks, 1):
+        _log.info("S&P 500 shared download batch %d/%d (%d tickers)", idx, len(chunks), len(chunk))
+        try:
+            df = yf.download(
+                tickers=chunk,
+                period="2y",
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+            )
+            if df is not None and not df.empty:
+                all_data.append(df)
+            if idx < len(chunks):
+                time.sleep(SP500_BATCH_DELAY)
+        except Exception:
+            _log.warning("S&P 500 batch %d failed, skipping", idx)
+
+    if not all_data:
+        return pd.DataFrame()
+
+    if len(all_data) == 1:
+        return all_data[0]
+
+    # Merge chunks while preserving MultiIndex structure
+    fields: set[str] = set()
+    for df in all_data:
+        if isinstance(df.columns, pd.MultiIndex):
+            fields.update(df.columns.get_level_values(0).unique().tolist())
+        else:
+            fields.update(df.columns.tolist())
+
+    merged: dict[str, pd.DataFrame] = {}
+    for field in fields:
+        parts: list[pd.DataFrame] = []
+        for df in all_data:
+            if isinstance(df.columns, pd.MultiIndex):
+                if field in df.columns.get_level_values(0):
+                    parts.append(df[field])
+            elif field in df.columns:
+                parts.append(df[[field]])
+        if parts:
+            merged[field] = pd.concat(parts, axis=1)
+
+    if not merged:
+        return pd.DataFrame()
+    return pd.concat(merged, axis=1)
+
+
+def _fetch_current_modules(
+    positioning_instruments_csv: str,
+    lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     from liquidity import get_snapshot as get_liquidity_snapshot
     from market_breadth import get_data as get_market_breadth
     from momentum import get_data as get_momentum_data
-    from positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
+    from positioning import DATASETS, DEFAULT_DOMAIN, INSTRUMENTS, fetch_markets_timeseries
     from sector_metrics import get_data as get_sector_metrics_data
     from top50_breadth import get_data as get_top50_breadth
-    from vix_term_structure import get_data as get_vix_data
+    from vix_term_structure import add_signals, load_term_structure
 
     raw: dict[str, Any] = {}
     module_status: dict[str, dict[str, Any]] = {}
 
-    tasks: dict[str, Any] = {
-        "vix_term_structure": lambda: get_vix_data(start=(date.today() - timedelta(days=540)).isoformat(), tail=320),
-        "market_breadth": get_market_breadth,
-        "top50_breadth": get_top50_breadth,
-        "liquidity": get_liquidity_snapshot,
-        "sector_metrics": get_sector_metrics_data,
-        "momentum": get_momentum_data,
-        "positioning": lambda: fetch_multiple_instruments(
+    # ── Phase 1: Shared S&P 500 price download (serial) ──────────────
+    # This replaces 3 separate concurrent yfinance downloads that caused
+    # rate-limiting and 401 errors.
+    sp500_prices = _download_sp500_prices()
+    prices_arg = sp500_prices if not sp500_prices.empty else None
+    _log.info("Shared S&P 500 download complete (empty=%s)", sp500_prices.empty)
+
+    # ── Pre-compute VIX and positioning parameters ────────────────────
+    # VIX: use wider lookback so the same data serves current + history
+    vix_start = (date.today() - timedelta(days=max(lookback_weeks * 7 + 45, 540))).isoformat()
+
+    # Positioning: resolve instrument aliases once
+    pos_aliases = [s.strip().upper() for s in (positioning_instruments_csv or "").split(",") if s.strip()]
+    pos_aliases = pos_aliases or [s.strip().upper() for s in DEFAULT_POSITIONING_INSTRUMENTS.split(",") if s.strip()]
+    alias_to_market = {a: INSTRUMENTS[a] for a in pos_aliases if a in INSTRUMENTS}
+    pos_markets = list(alias_to_market.values())
+
+    # ── VIX combined task (current + history data in one fetch) ───────
+    def _vix_task() -> dict[str, Any]:
+        data, used_vix3m = load_term_structure(vix_start)
+        signals = add_signals(data, low=1.0, high=1.25)
+        if signals.empty:
+            return {
+                "vix_term_structure": {
+                    "latest_df": pd.DataFrame(),
+                    "recent_df": pd.DataFrame(),
+                    "hits_df": pd.DataFrame(),
+                },
+                "vix_raw_ts": (data, used_vix3m),
+            }
+        latest = signals.iloc[-1]
+        latest_df = pd.DataFrame(
+            [
+                {
+                    "Date": latest.name.date().isoformat(),
+                    "VIX": float(latest["VIX"]),
+                    "VIX3M": float(latest["VIX3M"]),
+                    "Ratio": float(latest["Ratio"]),
+                    "Signal": str(latest["Signal"]),
+                    "UsedTicker": used_vix3m,
+                }
+            ]
+        )
+        recent_df = signals.tail(320).copy()
+        if not recent_df.empty:
+            recent_df = recent_df.reset_index().rename(columns={"index": "Date"})
+            recent_df["Date"] = pd.to_datetime(recent_df["Date"]).dt.date.astype(str)
+            recent_df["UsedTicker"] = used_vix3m
+        hits_df = signals[signals["Signal"] != "Neutral"].copy()
+        if not hits_df.empty:
+            hits_df = hits_df.sort_index(ascending=False).head(20)
+            hits_df = hits_df.reset_index().rename(columns={"index": "Date"})
+            hits_df["Date"] = pd.to_datetime(hits_df["Date"]).dt.date.astype(str)
+            hits_df["UsedTicker"] = used_vix3m
+        return {
+            "vix_term_structure": {"latest_df": latest_df, "recent_df": recent_df, "hits_df": hits_df},
+            "vix_raw_ts": (data, used_vix3m),
+        }
+
+    # ── Positioning combined task (current + history in one fetch) ────
+    def _positioning_task() -> dict[str, Any]:
+        if not pos_markets:
+            return {"positioning": [], "positioning_df": pd.DataFrame()}
+        df_all = fetch_markets_timeseries(
             domain=DEFAULT_DOMAIN,
             dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
             app_token=os.environ.get("SODA_APP_TOKEN") or None,
-            instruments=[s.strip() for s in positioning_instruments_csv.split(",") if s.strip()],
+            markets_exact=pos_markets,
             start="2015-01-01",
             end=None,
             groups=None,
             z_window=0,
             force_threshold=2.0,
-        ),
+        )
+        # Extract latest row per instrument (replicates fetch_multiple_instruments)
+        results: list[dict[str, Any]] = []
+        for alias, market_name in alias_to_market.items():
+            try:
+                mdf = df_all[df_all["market_and_exchange_names"] == market_name]
+                row = mdf.dropna(subset=["report_date"]).iloc[-1]
+                results.append(
+                    {
+                        "instrument": alias,
+                        "report_date": row["report_date"],
+                        "lf_net": row["lf_net"],
+                        "lf_net_pct_oi": row.get("lf_net_pct_oi"),
+                        "lf_z": row.get("lf_z"),
+                        "lf_deleveraging_z": row.get("lf_deleveraging_z"),
+                        "lf_forced": row.get("lf_forced"),
+                    }
+                )
+            except Exception:
+                pass
+        return {"positioning": results, "positioning_df": df_all}
+
+    # ── Phase 2: All modules in parallel ──────────────────────────────
+    tasks: dict[str, Any] = {
+        "vix_combined": _vix_task,
+        "market_breadth": lambda: get_market_breadth(prices_df=prices_arg),
+        "top50_breadth": lambda: get_top50_breadth(prices_df=prices_arg),
+        "liquidity": get_liquidity_snapshot,
+        "sector_metrics": lambda: get_sector_metrics_data(prices_df=prices_arg),
+        "momentum": get_momentum_data,
+        "positioning_combined": _positioning_task,
+    }
+
+    # Map combined task names → canonical module keys
+    _COMBINED_KEYS = {
+        "vix_combined": ("vix_term_structure", "vix_raw_ts"),
+        "positioning_combined": ("positioning", "positioning_df"),
     }
 
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
         futures = {pool.submit(fn): name for name, fn in tasks.items()}
-        for fut in as_completed(futures):
+        done, not_done = cf_wait(futures.keys(), timeout=MODULE_TIMEOUT)
+
+        for fut in done:
             name = futures[fut]
             try:
-                raw[name] = fut.result()
-                module_status[name] = {"status": "ok"}
+                result = fut.result()
+                if name in _COMBINED_KEYS:
+                    key_main, key_extra = _COMBINED_KEYS[name]
+                    raw[key_main] = result[key_main]
+                    raw[key_extra] = result[key_extra]
+                    module_status[key_main] = {"status": "ok"}
+                else:
+                    raw[name] = result
+                    module_status[name] = {"status": "ok"}
             except Exception as exc:
+                if name in _COMBINED_KEYS:
+                    key_main, _ = _COMBINED_KEYS[name]
+                    raw[key_main] = None
+                    module_status[key_main] = {"status": "error", "detail": str(exc)}
+                else:
+                    raw[name] = None
+                    module_status[name] = {"status": "error", "detail": str(exc)}
+
+        for fut in not_done:
+            name = futures[fut]
+            _log.warning("Module %s timed out after %ds", name, MODULE_TIMEOUT)
+            if name in _COMBINED_KEYS:
+                key_main, _ = _COMBINED_KEYS[name]
+                raw[key_main] = None
+                module_status[key_main] = {"status": "error", "detail": "timeout"}
+            else:
                 raw[name] = None
-                module_status[name] = {"status": "error", "detail": str(exc)}
+                module_status[name] = {"status": "error", "detail": "timeout"}
 
     return raw, module_status
 
@@ -508,15 +751,26 @@ def build_signal_aggregator(
     lookback = max(26, min(int(lookback_weeks), 520))
     instruments_csv = _parse_instrument_csv(positioning_instruments)
 
-    raw, module_status = _fetch_current_modules(instruments_csv)
+    raw, module_status = _fetch_current_modules(instruments_csv, lookback_weeks=lookback)
+    vix_data = _as_dict(raw.get("vix_term_structure"))
+    breadth_data = _as_dict(raw.get("market_breadth"))
+    top50_data = _as_dict(raw.get("top50_breadth"))
+    liquidity_data = _as_dict(raw.get("liquidity"))
+    sector_data = _as_dict(raw.get("sector_metrics"))
+    momentum_data = _as_dict(raw.get("momentum"))
+    positioning_rows = raw.get("positioning")
+
+    # Pre-fetched data for history reuse (avoids redundant network calls)
+    vix_preloaded = raw.get("vix_raw_ts")  # tuple[DataFrame, str] | None
+    positioning_preloaded_df = raw.get("positioning_df")  # DataFrame | None
 
     factor_builders = {
-        "vix": lambda: _score_vix(raw.get("vix_term_structure") or {}),
-        "breadth": lambda: _score_breadth(raw.get("market_breadth") or {}, raw.get("top50_breadth") or {}),
-        "liquidity": lambda: _score_liquidity(raw.get("liquidity") or {}),
-        "positioning": lambda: _score_positioning(raw.get("positioning") or []),
-        "sector": lambda: _score_sector((raw.get("sector_metrics") or {}).get("weights_df") or []),
-        "momentum": lambda: _score_momentum(raw.get("momentum") or {}),
+        "vix": lambda: _score_vix(vix_data),
+        "breadth": lambda: _score_breadth(breadth_data, top50_data),
+        "liquidity": lambda: _score_liquidity(liquidity_data),
+        "positioning": lambda: _score_positioning(positioning_rows),
+        "sector": lambda: _score_sector(sector_data.get("weights_df")),
+        "momentum": lambda: _score_momentum(momentum_data),
     }
 
     factors: list[dict[str, Any]] = []
@@ -564,7 +818,13 @@ def build_signal_aggregator(
     label = _regime_label(composite)
     status = "ok" if len(valid_scores) == len(CONFIGURED_WEIGHTS) else "degraded"
 
-    history = _build_history(lookback, instruments_csv, raw.get("liquidity") or {})
+    history = _build_history(
+        lookback,
+        instruments_csv,
+        liquidity_data,
+        vix_preloaded=vix_preloaded,
+        positioning_preloaded_df=positioning_preloaded_df,
+    )
     history_scores = [float(s) for s in history.get("scores", [])]
     history_pct = None
     if history_scores:
@@ -572,20 +832,20 @@ def build_signal_aggregator(
         history_pct = round((below_or_equal / len(history_scores)) * 100.0, 2)
 
     candidate_dates: list[pd.Timestamp] = []
-    vix_latest = ((raw.get("vix_term_structure") or {}).get("latest_df") or [{}])[0]
+    vix_latest = _first_row(vix_data.get("latest_df"))
     vix_date = vix_latest.get("Date")
     if isinstance(vix_date, str):
         candidate_dates.append(pd.to_datetime(vix_date, errors="coerce"))
-    liq_date = (raw.get("liquidity") or {}).get("latest_date")
+    liq_date = liquidity_data.get("latest_date")
     if liq_date is not None:
         candidate_dates.append(pd.to_datetime(liq_date, errors="coerce"))
-    sector_ts = (raw.get("sector_metrics") or {}).get("timestamp")
+    sector_ts = sector_data.get("timestamp")
     if sector_ts is not None:
         candidate_dates.append(pd.to_datetime(sector_ts, errors="coerce"))
 
-    pos_rows = raw.get("positioning") or []
-    if isinstance(pos_rows, list) and pos_rows:
-        dates = [pd.to_datetime((r or {}).get("report_date"), errors="coerce") for r in pos_rows if isinstance(r, dict)]
+    pos_rows = _as_rows(positioning_rows)
+    if pos_rows:
+        dates = [pd.to_datetime(r.get("report_date"), errors="coerce") for r in pos_rows]
         dates = [d for d in dates if not pd.isna(d)]
         if dates:
             candidate_dates.append(max(dates))
@@ -620,8 +880,12 @@ def build_signal_aggregator(
     }
 
     if include_raw_modules:
+        # Exclude internal preloaded keys and large series from raw output
+        _internal_keys = {"vix_raw_ts", "positioning_df"}
         raw_modules = {}
         for key, value in raw.items():
+            if key in _internal_keys:
+                continue
             if key == "liquidity" and isinstance(value, dict):
                 raw_modules[key] = {k: v for k, v in value.items() if k not in ("df_weekly", "composite_series")}
             else:

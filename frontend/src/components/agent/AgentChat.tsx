@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
-import { X, Trash2, Send, Square, MessageCircle } from "lucide-react"
+import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { AgentMessage } from "./AgentMessage"
@@ -28,6 +28,7 @@ interface AgentChatProps {
 export function AgentChat({ open, onClose }: AgentChatProps) {
   const { messages, isStreaming, error, sendMessage, stopStreaming, clearChat } = useAgentChat()
   const [input, setInput] = useState("")
+  const [isWide, setIsWide] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -74,9 +75,12 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
       {/* Drawer panel */}
       <div
         className={cn(
-          "fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-app border-l border-app",
+          "fixed top-0 right-0 z-50 h-full w-full bg-app border-l border-app",
           "flex flex-col shadow-2xl",
-          "transition-transform duration-300 ease-in-out",
+          "transition-[width,transform] duration-300 ease-in-out",
+          isWide
+            ? "sm:w-[min(680px,100vw)] md:w-[calc(100vw-14rem)]"
+            : "sm:w-[500px]",
           open ? "translate-x-0" : "translate-x-full",
         )}
       >
@@ -87,6 +91,14 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
             <span className="text-sm font-semibold text-app">Stan</span>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsWide(v => !v)}
+              className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+              title={isWide ? "Restore default width" : "Widen chat"}
+              aria-label={isWide ? "Restore default width" : "Widen chat"}
+            >
+              {isWide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
             {messages.length > 0 && (
               <button
                 onClick={clearChat}

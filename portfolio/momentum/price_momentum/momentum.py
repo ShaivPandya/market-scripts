@@ -42,7 +42,9 @@ from equities.common import list_universes, load_universe
 RED = "\033[91m"
 GREEN = "\033[38;2;52;199;89m"
 RESET = "\033[0m"
-PORTFOLIO_CSV = Path(__file__).resolve().parents[2] / "portfolio.csv"
+_PORTFOLIO_DB_PATH = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_PORTFOLIO_DB_PATH))
+from portfolio_db import get_positions_df as _get_positions_df  # noqa: E402
 
 
 def colorize(value: float, threshold: float, below_is_red: bool = True) -> str:
@@ -327,12 +329,9 @@ def get_data(universe: str = None, years: int = 5) -> dict:
         if universe:
             tickers = load_universe(universe)
         else:
-            portfolio_path = PORTFOLIO_CSV
-            if not portfolio_path.exists():
-                return {"error": f"portfolio.csv not found at {portfolio_path}"}
-            portfolio_df = pd.read_csv(portfolio_path)
+            portfolio_df = _get_positions_df()
             if "ticker" not in portfolio_df.columns:
-                return {"error": "portfolio.csv must have a 'ticker' column"}
+                return {"error": "Portfolio database has no ticker column"}
             portfolio_df["ticker"] = portfolio_df["ticker"].str.strip().str.upper()
             tickers = list(portfolio_df["ticker"].dropna())
             direction_map = (
@@ -341,7 +340,7 @@ def get_data(universe: str = None, years: int = 5) -> dict:
                 else {}
             )
             if not tickers:
-                return {"error": "No tickers found in portfolio.csv"}
+                return {"error": "No tickers found in portfolio database"}
 
         # Fetch all metadata in parallel to determine benchmarks
         metadata_map = fetch_metadata_batch(tickers)
@@ -412,23 +411,19 @@ def main() -> int:
     elif args.tickers_file:
         tickers = load_universe(args.tickers_file)
     else:
-        # Default to reading from portfolio.csv
-        portfolio_path = PORTFOLIO_CSV
-        if not portfolio_path.exists():
-            LOGGER.error("portfolio.csv not found at %s", portfolio_path)
-            return 1
+        # Default to reading from portfolio database
         try:
-            portfolio_df = pd.read_csv(portfolio_path)
+            portfolio_df = _get_positions_df()
             if "ticker" not in portfolio_df.columns:
-                LOGGER.error("portfolio.csv must have a 'ticker' column")
+                LOGGER.error("Portfolio database has no ticker column")
                 return 1
             tickers = [t.strip().upper() for t in portfolio_df["ticker"].dropna()]
             if not tickers:
-                LOGGER.error("No tickers found in portfolio.csv")
+                LOGGER.error("No tickers found in portfolio database")
                 return 1
-            print(f"Using {len(tickers)} tickers from portfolio.csv")
+            print(f"Using {len(tickers)} tickers from portfolio database")
         except Exception as e:
-            LOGGER.error("Error reading portfolio.csv: %s", e)
+            LOGGER.error("Error reading portfolio database: %s", e)
             return 1
 
     benchmark_override = args.benchmark.strip().upper() if args.benchmark else None

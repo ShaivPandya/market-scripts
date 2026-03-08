@@ -73,10 +73,19 @@ SECTORS = {
             ("TGT", "Target", "Big Box", "BMO"),
         ],
     },
+    "Capital Goods": {
+        "type": "lagging",
+        "companies": [
+            ("CAT", "Caterpillar", "Construction Machinery", "BMO"),
+            ("DE", "Deere", "Agriculture Machinery", "BMO"),
+            ("ETN", "Eaton", "Electrical Equipment", "BMO"),
+            ("CMI", "Cummins", "Engines & Components", "BMO"),
+        ],
+    },
 }
 
 DB_PATH = "industry_transcripts.sqlite3"
-SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", MODEL_SONNET)
+SUMMARY_MODEL = MODEL_SONNET
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
 
 
@@ -127,7 +136,8 @@ _TICKER_FILENAME_MAP = {"ODFL": "ODL"}
 def _get_pdf_path(sector: str, ticker: str) -> str:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     base = _TICKER_FILENAME_MAP.get(ticker, ticker)
-    return os.path.join(script_dir, "files", sector.lower(), f"{base}.pdf")
+    sector_dir = sector.strip().lower().replace(" ", "_")
+    return os.path.join(script_dir, "files", sector_dir, f"{base}.pdf")
 
 
 def _extract_text_from_pdf(pdf_path: str) -> str:

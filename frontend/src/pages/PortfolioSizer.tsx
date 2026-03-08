@@ -404,8 +404,8 @@ export function PortfolioSizer() {
             onChange={setTargetLeverage}
             min={0.5}
             max={4.0}
-            step={0.1}
-            formatValue={v => `${v.toFixed(1)}x`}
+            step={0.05}
+            formatValue={v => `${v.toFixed(2)}x`}
             minLabel="0.5x"
             maxLabel="4.0x"
           />

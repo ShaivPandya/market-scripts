@@ -599,6 +599,7 @@ def get_data(
     max_workers: int = 12,
     cache_path: str | None = DEFAULT_METADATA_CACHE_PATH,
     cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+    prices_df: pd.DataFrame | None = None,
 ) -> dict:
     """
     Return sector metrics as a dict for the frontend.
@@ -608,11 +609,26 @@ def get_data(
                     change columns in pp, relperf columns in pp, 200DMA column in %
       d_1m / d_3m / d_6m — date strings for the lookback snapshots
       timestamp   — datetime when data was fetched
+
+    If *prices_df* is supplied (a MultiIndex DataFrame from yfinance), the
+    constituent price download is skipped and the pre-fetched data is used.
+    Metadata and ETF prices are still fetched independently.
     """
     constituents = get_sp500_constituents()
     tickers = sorted(constituents["Ticker"].unique().tolist())
 
-    prices = download_prices(tickers, period=period, batch_size=batch_size, auto_adjust=True)
+    if prices_df is not None:
+        # Extract Close prices from pre-fetched MultiIndex DataFrame
+        if isinstance(prices_df.columns, pd.MultiIndex):
+            field = "Close" if "Close" in prices_df.columns.get_level_values(0) else "Adj Close"
+            prices = prices_df[field].copy()
+        else:
+            prices = prices_df.copy()
+        # Keep only tickers in our constituents list
+        available = [t for t in tickers if t in prices.columns]
+        prices = prices[available].sort_index()
+    else:
+        prices = download_prices(tickers, period=period, batch_size=batch_size, auto_adjust=True)
     last_prices = prices.ffill().iloc[-1].dropna()
 
     md = fetch_marketcap_and_shares(

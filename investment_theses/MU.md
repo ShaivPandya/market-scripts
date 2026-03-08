@@ -8,6 +8,3 @@
 
 ## Risk Factors
 <!-- What could invalidate the thesis -->
-
-## Price Targets
-<!-- Upside / Downside levels if applicable -->

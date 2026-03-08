@@ -28,7 +28,7 @@ def test_vix_score_formula():
 def test_build_signal_aggregator_degraded_reweights(monkeypatch):
     from api import signal_aggregator as sa
 
-    def fake_fetch(_: str) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    def fake_fetch(_: str, **kwargs: Any) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         raw = {
             "vix_term_structure": {"latest_df": [{"Ratio": 0.92, "VIX": 24.0, "Date": "2026-03-07"}]},
             "market_breadth": None,

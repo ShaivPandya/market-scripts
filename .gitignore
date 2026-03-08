@@ -3,6 +3,7 @@
 **/data_cache/
 **/outputs/
 **/portfolio/open_positions.csv
+**/portfolio/portfolio.db
 
 # Environment variables
 .env

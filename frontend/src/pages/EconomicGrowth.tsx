@@ -27,7 +27,7 @@ export function EconomicGrowth() {
   if (error || !data) return <ErrorMessage message={String(error) || "Failed to load"} />
 
   const periods: string[] = data.equity_periods ?? ["1-mo", "3-mo", "6-mo", "1-yr"]
-  const currencyPeriods: string[] = data.currency_periods ?? ["1-mo", "3-mo", "6-mo"]
+  const currencyPeriods: string[] = data.currency_periods ?? ["1-mo", "3-mo", "6-mo", "1-yr"]
 
   const periodCols = (periods_: string[], colorFn: (v: unknown) => string): ColumnDef[] =>
     periods_.map(p => ({
