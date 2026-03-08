@@ -254,3 +254,134 @@ def test_agent_chat_rejects_non_anthropic_key(auth_client, monkeypatch):
 
     assert resp.status_code == 503
     assert "must be an anthropic key" in str(resp.json()).lower()
+
+
+def test_agent_stream_skips_forced_tools_for_casual_prompt(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+
+    streams = [
+        (
+            [_event_text_delta("hi there")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "hi there"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert resp.status_code == 200
+    assert "tool_choice" not in fake_client.messages.kwargs_history[0]
+    parsed = _parse_sse(resp.text)
+    assert any(e == "done" for e, _p in parsed)
+
+
+def test_agent_stream_dedupes_identical_tool_calls(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+
+    streams = [
+        (
+            [
+                _event_tool_use_start("query_ontology", "call-1"),
+                _event_tool_use_start("query_ontology", "call-2"),
+            ],
+            SimpleNamespace(
+                content=[
+                    {"type": "tool_use", "name": "query_ontology", "id": "call-1", "input": {"query": "A"}},
+                    {"type": "tool_use", "name": "query_ontology", "id": "call-2", "input": {"query": "A"}},
+                ],
+                stop_reason="tool_use",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        (
+            [_event_text_delta("analysis")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "analysis"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+
+    call_count = 0
+
+    def fake_execute_tool(_name: str, _args: dict):
+        nonlocal call_count
+        call_count += 1
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "test"}]},
+    )
+
+    assert resp.status_code == 200
+    assert call_count == 1
+    parsed = _parse_sse(resp.text)
+    tool_results = [p for e, p in parsed if e == "tool_result"]
+    assert len(tool_results) == 2
+    assert all(p["status"] == "ok" for p in tool_results)
+
+
+def test_agent_stream_handles_sentiment_quality_failure_without_tool_error(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+
+    streams = [
+        (
+            [_event_tool_use_start("get_sentiment", "call-1")],
+            SimpleNamespace(
+                content=[{"type": "tool_use", "name": "get_sentiment", "id": "call-1", "input": {}}],
+                stop_reason="tool_use",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        (
+            [_event_text_delta("Sentiment section unavailable due to data quality checks.")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "Sentiment section unavailable due to data quality checks."}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda _name, _args: json.dumps(
+            {
+                "as_of": "2026-03-08",
+                "quality": {
+                    "ok": False,
+                    "mode": "fail_closed",
+                    "allow_sentiment_conclusion": False,
+                    "issues": ["AAII feed stale"],
+                },
+            }
+        ),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "How is sentiment?"}]},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    tool_results = [p for e, p in parsed if e == "tool_result"]
+    assert len(tool_results) == 1
+    assert tool_results[0]["status"] == "ok"
+    assert any(e == "done" for e, _p in parsed)
