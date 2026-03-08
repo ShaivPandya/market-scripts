@@ -202,7 +202,11 @@ def download_with_retry(
     return combined, failed_tickers
 
 
-def calculate_breadth_metrics(tickers: list[str], period: str = "1y") -> dict:
+def calculate_breadth_metrics(
+    tickers: list[str],
+    period: str = "1y",
+    prices_df: pd.DataFrame | None = None,
+) -> dict:
     """
     Calculate market breadth metrics for a list of tickers.
 
@@ -217,10 +221,20 @@ def calculate_breadth_metrics(tickers: list[str], period: str = "1y") -> dict:
       - at_24wk_low: count and percentage at 24-week low
       - total_analyzed: number of stocks with valid data
       - failed_tickers: list of tickers that failed to download
-    """
-    print(f"Downloading price data for {len(tickers)} tickers...")
 
-    df, failed_tickers = download_with_retry(tickers, period)
+    If *prices_df* is supplied (a MultiIndex DataFrame from yfinance), the
+    download step is skipped and the pre-fetched data is used directly.
+    """
+    if prices_df is not None:
+        df = prices_df
+        if isinstance(df.columns, pd.MultiIndex) and "Close" in df.columns.get_level_values(0):
+            available = set(df["Close"].columns.tolist())
+        else:
+            available = set(df.columns.tolist()) if not df.empty else set()
+        failed_tickers = [t for t in tickers if t not in available]
+    else:
+        print(f"Downloading price data for {len(tickers)} tickers...")
+        df, failed_tickers = download_with_retry(tickers, period)
 
     if df.empty:
         raise RuntimeError("No data downloaded")
@@ -472,7 +486,11 @@ def main():
             print(f"\nFailed tickers: {', '.join(sorted(failed)[:20])}{'...' if len(failed) > 20 else ''}")
 
 
-def get_data(universe: str = "sp500", period: str = "1y") -> dict:
+def get_data(
+    universe: str = "sp500",
+    period: str = "1y",
+    prices_df: pd.DataFrame | None = None,
+) -> dict:
     """
     Fetch market breadth data for GUI consumption.
 
@@ -483,9 +501,11 @@ def get_data(universe: str = "sp500", period: str = "1y") -> dict:
       - pct_at_52wk_high, pct_at_52wk_low, pct_at_24wk_high, pct_at_24wk_low: percentages
       - total_analyzed: number of stocks analyzed
       - tickers: list of tickers analyzed
+
+    If *prices_df* is supplied, the yfinance download is skipped.
     """
     tickers = get_tickers(universe)
-    metrics = calculate_breadth_metrics(tickers, period)
+    metrics = calculate_breadth_metrics(tickers, period, prices_df=prices_df)
     metrics["tickers"] = tickers
     return metrics
 

@@ -97,15 +97,22 @@ def _no_data_row(ticker: str, error: str = "no data") -> dict[str, Any]:
     }
 
 
-def compute_metrics(tickers: list[str], period: str = "2y") -> pd.DataFrame:
-    raw = yf.download(
-        tickers=tickers,
-        period=period,
-        interval="1d",
-        auto_adjust=False,
-        threads=True,
-        progress=False,
-    )
+def compute_metrics(
+    tickers: list[str],
+    period: str = "2y",
+    prices_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    if prices_df is not None:
+        raw = prices_df
+    else:
+        raw = yf.download(
+            tickers=tickers,
+            period=period,
+            interval="1d",
+            auto_adjust=False,
+            threads=True,
+            progress=False,
+        )
 
     if raw is None or raw.empty:
         return pd.DataFrame([_no_data_row(t) for t in tickers])
@@ -242,18 +249,42 @@ def get_summary_metrics(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def get_data(period: str = "2y") -> dict[str, Any]:
+def get_data(
+    period: str = "2y",
+    prices_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
     """
     Fetch top50 breadth data for GUI consumption.
 
     Returns dict with summary metrics and raw DataFrame.
+
+    If *prices_df* is supplied (a MultiIndex DataFrame from yfinance with all
+    S&P 500 tickers), the top-50 list is computed from it directly and the
+    yfinance download is skipped entirely.
     """
-    generate_top50()
-    script_dir = Path(__file__).parent
-    csv_path = script_dir / "sp500_top50_6mo.csv"
-    csv_df = pd.read_csv(csv_path)
-    tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
-    df = compute_metrics(tickers, period=period)
+    if prices_df is not None:
+        # Derive top 50 from pre-fetched S&P 500 data (skip generate_top50)
+        if isinstance(prices_df.columns, pd.MultiIndex):
+            close = prices_df["Close"] if "Close" in prices_df.columns.get_level_values(0) else pd.DataFrame()
+        else:
+            close = prices_df
+        # Use ~6 months (126 trading days) of returns to pick top 50
+        close_window = close.tail(126)
+        if close_window.empty or len(close_window) < 2:
+            return get_summary_metrics(pd.DataFrame())
+        first = close_window.iloc[0]
+        last = close_window.iloc[-1]
+        returns = ((last - first) / first).dropna()
+        top50 = returns.sort_values(ascending=False).head(50)
+        tickers = top50.index.tolist()
+        df = compute_metrics(tickers, period=period, prices_df=prices_df)
+    else:
+        generate_top50()
+        script_dir = Path(__file__).parent
+        csv_path = script_dir / "sp500_top50_6mo.csv"
+        csv_df = pd.read_csv(csv_path)
+        tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
+        df = compute_metrics(tickers, period=period)
     return get_summary_metrics(df)
 
 
