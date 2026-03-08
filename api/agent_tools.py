@@ -261,6 +261,10 @@ TOOL_DEFINITIONS: list[dict] = [
                     "type": "boolean",
                     "description": "If true, include ontology nodes and edges in output.",
                 },
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional ontology snapshot run_id for historical replay.",
+                },
             },
             "required": [],
         },
@@ -515,6 +519,7 @@ def _dispatch(name: str, args: dict) -> object:
         intent = args.get("intent")
         timeframe = args.get("timeframe", "Daily")
         include_graph = bool(args.get("include_graph", False))
+        run_id = args.get("run_id")
 
         cache_token = json.dumps(
             {
@@ -523,6 +528,7 @@ def _dispatch(name: str, args: dict) -> object:
                 "filters": filters,
                 "timeframe": timeframe,
                 "include_graph": include_graph,
+                "run_id": run_id,
             },
             sort_keys=True,
             default=str,
@@ -539,6 +545,7 @@ def _dispatch(name: str, args: dict) -> object:
             filters=filters,
             timeframe=str(timeframe) if isinstance(timeframe, str) else "Daily",
             include_graph=include_graph,
+            run_id=str(run_id) if isinstance(run_id, str) and run_id.strip() else None,
         )
         serialized = serialize_value(result)
         set_cached(short_cache, key, serialized)

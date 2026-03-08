@@ -71,6 +71,22 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+MAX_TOOL_CONTINUATION_ROUNDS = 8
+
+
+def _tool_error_message(result_str: str) -> str | None:
+    try:
+        payload = json.loads(result_str)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    err = payload.get("error")
+    if isinstance(err, str) and err.strip():
+        return err.strip()
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -87,12 +103,9 @@ def agent_chat(req: AgentChatRequest):
         from openai import OpenAI
 
         client = OpenAI()
-
-        # Build messages for the first call
         input_messages = [{"role": m.role, "content": m.content} for m in req.messages]
 
         try:
-            # Initial streaming call
             stream = client.responses.create(
                 model="gpt-5.4",
                 instructions=instructions,
@@ -101,64 +114,67 @@ def agent_chat(req: AgentChatRequest):
                 stream=True,
             )
 
-            # Collect output items from the stream
             response_id: str | None = None
-            pending_tool_calls: list[dict] = []
-            current_fn_name: str | None = None
-            current_fn_call_id: str | None = None
-            current_fn_args: str = ""
+            pending_tool_calls: list[dict[str, str]] = []
+            arg_buffers: dict[str, str] = {}
+            item_to_call: dict[str, str] = {}
+            active_call_id: str | None = None
 
             for event in stream:
-                # Capture the response ID for continuations
                 if event.type == "response.created":
                     response_id = event.response.id
 
-                # Text deltas → stream to client
                 elif event.type == "response.output_text.delta":
                     yield _sse("delta", {"text": event.delta})
 
-                # Function call started
                 elif event.type == "response.function_call_arguments.delta":
-                    current_fn_args += event.delta
+                    delta = str(getattr(event, "delta", ""))
+                    call_id = getattr(event, "call_id", None)
+                    if not call_id:
+                        item_id = getattr(event, "item_id", None)
+                        if isinstance(item_id, str):
+                            call_id = item_to_call.get(item_id)
+                    if not call_id:
+                        call_id = active_call_id
+                    if call_id:
+                        arg_buffers[call_id] = arg_buffers.get(call_id, "") + delta
 
                 elif event.type == "response.output_item.added":
                     if event.item.type == "function_call":
-                        current_fn_name = event.item.name
-                        current_fn_call_id = event.item.call_id
-                        current_fn_args = ""
+                        active_call_id = event.item.call_id
+                        arg_buffers.setdefault(event.item.call_id, "")
+                        item_id = getattr(event.item, "id", None)
+                        if isinstance(item_id, str):
+                            item_to_call[item_id] = event.item.call_id
                         yield _sse(
                             "tool_call",
                             {
-                                "name": current_fn_name,
-                                "id": current_fn_call_id,
+                                "name": event.item.name,
+                                "id": event.item.call_id,
                             },
                         )
 
                 elif event.type == "response.output_item.done":
                     if event.item.type == "function_call":
-                        # Execute the tool
+                        call_id = event.item.call_id
+                        raw_args = arg_buffers.pop(call_id, "")
                         try:
-                            args = json.loads(current_fn_args) if current_fn_args else {}
+                            args = json.loads(raw_args) if raw_args else {}
                         except json.JSONDecodeError:
                             args = {}
                         result_str = execute_tool(event.item.name, args)
-                        pending_tool_calls.append(
-                            {
-                                "call_id": event.item.call_id,
-                                "output": result_str,
-                            }
-                        )
-                        yield _sse(
-                            "tool_result",
-                            {
-                                "name": event.item.name,
-                                "id": event.item.call_id,
-                                "status": "ok",
-                            },
-                        )
+                        pending_tool_calls.append({"call_id": call_id, "output": result_str})
+                        err_msg = _tool_error_message(result_str)
+                        payload = {
+                            "name": event.item.name,
+                            "id": call_id,
+                            "status": "error" if err_msg else "ok",
+                        }
+                        if err_msg:
+                            payload["message"] = err_msg
+                        yield _sse("tool_result", payload)
 
                 elif event.type == "response.completed":
-                    # If there were tool calls, we need to continue
                     if not pending_tool_calls:
                         usage = {}
                         if hasattr(event.response, "usage") and event.response.usage:
@@ -168,18 +184,34 @@ def agent_chat(req: AgentChatRequest):
                             }
                         yield _sse("done", {"usage": usage})
 
-            # Tool-call continuation loop
+            if pending_tool_calls and not response_id:
+                yield _sse("error", {"message": "Missing response ID for tool-call continuation."})
+                yield _sse("done", {"usage": {}})
+                return
+
+            continuation_round = 0
             while pending_tool_calls and response_id:
-                tool_outputs = []
-                for tc in pending_tool_calls:
-                    tool_outputs.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": tc["call_id"],
-                            "output": tc["output"],
-                        }
+                continuation_round += 1
+                if continuation_round > MAX_TOOL_CONTINUATION_ROUNDS:
+                    yield _sse(
+                        "error",
+                        {"message": (f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).")},
                     )
+                    yield _sse("done", {"usage": {}})
+                    return
+
+                tool_outputs = [
+                    {
+                        "type": "function_call_output",
+                        "call_id": tc["call_id"],
+                        "output": tc["output"],
+                    }
+                    for tc in pending_tool_calls
+                ]
                 pending_tool_calls = []
+                arg_buffers = {}
+                item_to_call = {}
+                active_call_id = None
 
                 stream = client.responses.create(
                     model="gpt-5.4",
@@ -189,10 +221,6 @@ def agent_chat(req: AgentChatRequest):
                     stream=True,
                 )
 
-                current_fn_name = None
-                current_fn_call_id = None
-                current_fn_args = ""
-
                 for event in stream:
                     if event.type == "response.created":
                         response_id = event.response.id
@@ -201,42 +229,51 @@ def agent_chat(req: AgentChatRequest):
                         yield _sse("delta", {"text": event.delta})
 
                     elif event.type == "response.function_call_arguments.delta":
-                        current_fn_args += event.delta
+                        delta = str(getattr(event, "delta", ""))
+                        call_id = getattr(event, "call_id", None)
+                        if not call_id:
+                            item_id = getattr(event, "item_id", None)
+                            if isinstance(item_id, str):
+                                call_id = item_to_call.get(item_id)
+                        if not call_id:
+                            call_id = active_call_id
+                        if call_id:
+                            arg_buffers[call_id] = arg_buffers.get(call_id, "") + delta
 
                     elif event.type == "response.output_item.added":
                         if event.item.type == "function_call":
-                            current_fn_name = event.item.name
-                            current_fn_call_id = event.item.call_id
-                            current_fn_args = ""
+                            active_call_id = event.item.call_id
+                            arg_buffers.setdefault(event.item.call_id, "")
+                            item_id = getattr(event.item, "id", None)
+                            if isinstance(item_id, str):
+                                item_to_call[item_id] = event.item.call_id
                             yield _sse(
                                 "tool_call",
                                 {
-                                    "name": current_fn_name,
-                                    "id": current_fn_call_id,
+                                    "name": event.item.name,
+                                    "id": event.item.call_id,
                                 },
                             )
 
                     elif event.type == "response.output_item.done":
                         if event.item.type == "function_call":
+                            call_id = event.item.call_id
+                            raw_args = arg_buffers.pop(call_id, "")
                             try:
-                                args = json.loads(current_fn_args) if current_fn_args else {}
+                                args = json.loads(raw_args) if raw_args else {}
                             except json.JSONDecodeError:
                                 args = {}
                             result_str = execute_tool(event.item.name, args)
-                            pending_tool_calls.append(
-                                {
-                                    "call_id": event.item.call_id,
-                                    "output": result_str,
-                                }
-                            )
-                            yield _sse(
-                                "tool_result",
-                                {
-                                    "name": event.item.name,
-                                    "id": event.item.call_id,
-                                    "status": "ok",
-                                },
-                            )
+                            pending_tool_calls.append({"call_id": call_id, "output": result_str})
+                            err_msg = _tool_error_message(result_str)
+                            payload = {
+                                "name": event.item.name,
+                                "id": call_id,
+                                "status": "error" if err_msg else "ok",
+                            }
+                            if err_msg:
+                                payload["message"] = err_msg
+                            yield _sse("tool_result", payload)
 
                     elif event.type == "response.completed":
                         if not pending_tool_calls:

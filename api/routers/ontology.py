@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.exceptions import DataFetchError
-from ontology.service import OntologyQueryService
+from ontology.service import OntologyQueryService, OntologyRunNotFoundError
 
 router = APIRouter()
 _service = OntologyQueryService()
@@ -33,6 +33,7 @@ class OntologyQueryRequest(BaseModel):
     filters: OntologyFilters | None = None
     timeframe: str = "Daily"
     include_graph: bool = False
+    run_id: str | None = None
 
 
 @router.post("/ontology/query")
@@ -45,6 +46,11 @@ def query_ontology(req: OntologyQueryRequest):
             filters=filters,
             timeframe=req.timeframe,
             include_graph=req.include_graph,
+            run_id=req.run_id,
         )
+    except OntologyRunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise DataFetchError(source="ontology", detail=str(exc)) from exc

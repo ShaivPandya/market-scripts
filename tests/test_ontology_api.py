@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from ontology.service import OntologyRunNotFoundError
+
 
 class _FakeService:
     def __init__(self, payload):
         self.payload = payload
 
-    def query(self, query, intent, filters, timeframe, include_graph):
+    def query(self, query, intent, filters, timeframe, include_graph, run_id):
         out = dict(self.payload)
+        out.setdefault("run_id", run_id or "run-1")
         out.setdefault("intent", intent or "portfolio_risk_exposure")
         out.setdefault(
             "interpreted_query",
@@ -73,6 +76,7 @@ def test_ontology_query_structured_returns_schema(auth_client, monkeypatch):
     assert data["interpreted_query"]["source"] == "structured"
     assert isinstance(data["source_status"], dict)
     assert isinstance(data["results"], list)
+    assert data["run_id"] == "run-1"
     assert "aggregate" in data
 
 
@@ -132,3 +136,57 @@ def test_ontology_query_partial_failure_returns_200_with_degraded_confidence(aut
     data = resp.json()
     assert data["aggregate"]["confidence"] < 1.0
     assert data["source_status"]["vix_term_structure"]["status"] in {"error", "partial"}
+
+
+def test_ontology_query_unknown_run_id_returns_404(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    class _MissingRunService:
+        def query(self, query, intent, filters, timeframe, include_graph, run_id):
+            raise OntologyRunNotFoundError(str(run_id))
+
+    monkeypatch.setattr(ontology_router, "_service", _MissingRunService())
+
+    resp = auth_client.post(
+        "/api/v1/ontology/query",
+        json={"intent": "portfolio_risk_exposure", "run_id": "missing-run"},
+    )
+
+    assert resp.status_code == 404
+    assert "Ontology run not found" in str(resp.json().get("detail", ""))
+
+
+def test_ontology_query_passes_run_id(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    captured: dict[str, str | None] = {"run_id": None}
+
+    class _CaptureRunService:
+        def query(self, query, intent, filters, timeframe, include_graph, run_id):
+            captured["run_id"] = run_id
+            return {
+                "run_id": run_id or "run-1",
+                "intent": "portfolio_risk_exposure",
+                "interpreted_query": {"source": "structured", "query": query, "entity": None, "filters": filters},
+                "as_of": "2026-03-08T00:00:00Z",
+                "source_status": {"portfolio": {"status": "ok"}},
+                "results": [],
+                "aggregate": {
+                    "position_count": 0,
+                    "risk_buckets": {"high": 0, "medium": 0, "low": 0},
+                    "asset_exposure_counts": {},
+                    "average_risk_score": 0.0,
+                    "confidence": 1.0,
+                },
+            }
+
+    monkeypatch.setattr(ontology_router, "_service", _CaptureRunService())
+
+    resp = auth_client.post(
+        "/api/v1/ontology/query",
+        json={"intent": "portfolio_risk_exposure", "run_id": "run-abc"},
+    )
+
+    assert resp.status_code == 200
+    assert captured["run_id"] == "run-abc"
+    assert resp.json()["run_id"] == "run-abc"
