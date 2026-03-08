@@ -402,6 +402,36 @@ class OntologyRepository:
             )
         return out
 
+    def fetch_snapshot_all_position_signal_evidence(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        sql = """
+        SELECT
+          ps.source_id AS position_id,
+          s.id AS signal_id,
+          s.properties_json AS signal_props,
+          ps.properties_json AS edge_props
+        FROM snapshot_edges ps
+        JOIN snapshot_nodes s
+          ON s.run_id = ps.run_id
+         AND s.id = ps.target_id
+         AND s.type = 'Signal'
+        WHERE ps.run_id = ?
+          AND ps.relation_type = 'exposed_to_signal'
+        ORDER BY ps.source_id, s.id
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, (run_id,)).fetchall()
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(row["position_id"], []).append(
+                {
+                    "signal_id": row["signal_id"],
+                    "signal_props": _load_json(row["signal_props"]),
+                    "edge_props": _load_json(row["edge_props"]),
+                }
+            )
+        return grouped
+
     def fetch_graph(self) -> dict[str, list[dict[str, Any]]]:
         with self._connect() as conn:
             node_rows = conn.execute(

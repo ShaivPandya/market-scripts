@@ -72,6 +72,12 @@ class _FakeRepo:
             return [{"signal_id": "signal:test", "edge_props": {"name": "signal", "contribution": 0.5}}]
         return [{"signal_id": "signal:test", "edge_props": {"name": "signal", "contribution": 0.2}}]
 
+    def fetch_snapshot_all_position_signal_evidence(self, run_id: str):
+        evidence = self.fetch_snapshot_position_signal_evidence(run_id, "")
+        return {
+            row["position_id"]: list(evidence) for row in (self.rows_by_run.get(run_id) or []) if row.get("position_id")
+        }
+
     def fetch_snapshot_graph(self, run_id: str):
         return {"nodes": [{"id": "position:MU"}], "edges": []}
 
