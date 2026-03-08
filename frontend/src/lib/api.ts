@@ -97,7 +97,7 @@ export const fetchSignalAggregator = (params?: {
   lookback_weeks?: number
   positioning_instruments?: string
   include_raw_modules?: boolean
-}) => client.get("/signal-aggregator", { params }).then(r => r.data)
+}) => client.get("/signal-aggregator", { params, timeout: 180_000 }).then(r => r.data)
 
 export const fetchIndexDashboard = (timeframe: string) =>
   client.get(`/index-dashboard?timeframe=${encodeURIComponent(timeframe)}`).then(r => r.data)
@@ -133,7 +133,7 @@ export const queryOntology = (body: {
   timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
   include_graph?: boolean
   run_id?: string
-}) => client.post("/ontology/query", body).then(r => r.data)
+}) => client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data)
 
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)

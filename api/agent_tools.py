@@ -366,6 +366,7 @@ def _dispatch(name: str, args: dict) -> object:
             app_token=app_token,
             instruments=instrument_list,
             start="2015-01-01",
+            end=None,
         )
         result = serialize_value(data)
         set_cached(long_cache, key, result)
