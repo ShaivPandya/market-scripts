@@ -36,6 +36,7 @@ import { CommoditiesCurve } from "@/pages/CommoditiesCurve"
 import { PortfolioNews } from "@/pages/PortfolioNews"
 import { WeeklyReport } from "@/pages/WeeklyReport"
 import { Sentiment } from "@/pages/Sentiment"
+import { SignalAggregator } from "@/pages/SignalAggregator"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -76,6 +77,7 @@ function AppRoutes() {
           <Route path="/hedging-tool" element={<HedgingTool />} />
           <Route path="/sizer" element={<PortfolioSizer />} />
           <Route path="/momentum" element={<Momentum />} />
+          <Route path="/signal-aggregator" element={<SignalAggregator />} />
           <Route path="/chart" element={<ChartPage />} />
           <Route path="/quality" element={<QualityScreen />} />
           <Route path="/short-screen" element={<ShortScreen />} />

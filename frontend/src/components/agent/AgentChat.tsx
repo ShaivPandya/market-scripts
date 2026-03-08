@@ -13,6 +13,7 @@ const QUICK_PROMPTS = [
   "Summarize my portfolio's performance",
   "How is global liquidity affecting risk assets?",
   "What does positioning data say about crowded trades?",
+  "Given current positioning data, macro liquidity, and my portfolio's sector tilts, what are my top 3 risks?",
 ]
 
 // ---------------------------------------------------------------------------

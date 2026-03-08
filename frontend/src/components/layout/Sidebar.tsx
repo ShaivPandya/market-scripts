@@ -39,6 +39,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     pages: [
       { label: "🧭 Market Technicals", path: "/market-technicals" },
+      { label: "🧠 Signal Aggregator", path: "/signal-aggregator" },
       { label: "🧩 Sector Metrics", path: "/sector-metrics" },
       { label: "📌 Positioning", path: "/positioning" },
       { label: "🌡️ Sentiment", path: "/sentiment" },

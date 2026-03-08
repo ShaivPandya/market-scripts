@@ -45,6 +45,7 @@ data to answer a question:
 - **get_market_breadth**: S&P 500 market breadth (% above 200/20 DMA, new highs/lows)
 - **get_vix_term_structure**: VIX term structure (VIX, VIX3M, ratio, signal)
 - **get_positioning**: CFTC COT leveraged fund positioning (net %, z-scores, forced flows)
+- **get_signal_aggregator**: Unified cross-module regime dashboard (factor scores, composite regime, history, failures)
 - **get_economic_growth**: Cross-asset returns for growth regime assessment (commodities, equities, FX)
 - **get_labor_market**: US labor market indicators (claims, wages, JOLTS, hours)
 - **get_sector_metrics**: S&P 500 sector weights, changes, relative performance, trend quality

@@ -81,6 +81,33 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
+        "name": "get_signal_aggregator",
+        "description": (
+            "Fetch a unified cross-module market signal dashboard that combines VIX term structure, "
+            "market breadth, liquidity, CFTC positioning, sector metrics, and momentum into a deterministic "
+            "regime signal. Returns current regime label (risk-on/transitional/risk-off), factor scores, "
+            "effective weights, failed modules, and historical weekly regime tracking with episodes."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lookback_weeks": {
+                    "type": "integer",
+                    "description": "Weekly history length for regime tracking. Default: 156 (about 3 years).",
+                },
+                "positioning_instruments": {
+                    "type": "string",
+                    "description": (
+                        "Comma-separated CFTC instrument aliases for positioning input. "
+                        "Default: 'SP500,NASDAQ,RUSSELL,US10Y,EUR'."
+                    ),
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
         "name": "get_economic_growth",
         "description": (
             "Fetch cross-asset returns for growth regime assessment. Returns period returns "
@@ -319,6 +346,30 @@ def _dispatch(name: str, args: dict) -> object:
         )
         result = serialize_value(data)
         set_cached(long_cache, key, result)
+        return result
+
+    if name == "get_signal_aggregator":
+        from api.signal_aggregator import (
+            DEFAULT_LOOKBACK_WEEKS,
+            DEFAULT_POSITIONING_INSTRUMENTS,
+            build_signal_aggregator,
+        )
+
+        lookback_weeks = int(args.get("lookback_weeks", DEFAULT_LOOKBACK_WEEKS))
+        lookback_weeks = max(26, min(lookback_weeks, 520))
+        positioning_instruments = str(args.get("positioning_instruments", DEFAULT_POSITIONING_INSTRUMENTS))
+        key = f"signal_aggregator:{lookback_weeks}:{positioning_instruments}:False"
+        cached = get_cached(short_cache, key)
+        if cached is not None:
+            return cached
+
+        data = build_signal_aggregator(
+            lookback_weeks=lookback_weeks,
+            positioning_instruments=positioning_instruments,
+            include_raw_modules=False,
+        )
+        result = serialize_value(data)
+        set_cached(short_cache, key, result)
         return result
 
     if name == "get_economic_growth":

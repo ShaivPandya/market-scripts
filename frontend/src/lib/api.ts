@@ -93,6 +93,12 @@ export const fetchPortfolioAllTimeframes = () =>
 export const fetchMomentum = () =>
   client.get("/momentum").then(r => r.data)
 
+export const fetchSignalAggregator = (params?: {
+  lookback_weeks?: number
+  positioning_instruments?: string
+  include_raw_modules?: boolean
+}) => client.get("/signal-aggregator", { params }).then(r => r.data)
+
 export const fetchIndexDashboard = (timeframe: string) =>
   client.get(`/index-dashboard?timeframe=${encodeURIComponent(timeframe)}`).then(r => r.data)
 

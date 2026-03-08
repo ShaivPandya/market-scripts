@@ -8,6 +8,7 @@ from api.agent_tools import TOOL_DEFINITIONS, execute_tool
 def test_query_ontology_tool_registered():
     names = {tool.get("name") for tool in TOOL_DEFINITIONS}
     assert "query_ontology" in names
+    assert "get_signal_aggregator" in names
 
 
 def test_query_ontology_tool_dispatch(monkeypatch):
@@ -46,3 +47,46 @@ def test_query_ontology_tool_dispatch(monkeypatch):
     assert payload["intent"] == "portfolio_risk_exposure"
     assert "source_status" in payload
     assert "aggregate" in payload
+
+
+def test_signal_aggregator_tool_dispatch(monkeypatch):
+    def fake_build(lookback_weeks, positioning_instruments, include_raw_modules):
+        assert lookback_weeks == 104
+        assert positioning_instruments == "SP500,EUR"
+        assert include_raw_modules is False
+        return {
+            "status": "ok",
+            "as_of": "2026-03-08",
+            "regime": {
+                "label": "transitional",
+                "score": 51.2,
+                "confidence": 1.0,
+                "history_percentile": 58.4,
+            },
+            "weights": {"configured": {}, "effective": {}},
+            "factors": [],
+            "module_status": {},
+            "failed_modules": [],
+            "history": {
+                "frequency": "weekly",
+                "lookback_weeks": 104,
+                "coverage": {},
+                "series": [],
+                "episodes": [],
+            },
+        }
+
+    monkeypatch.setattr("api.signal_aggregator.build_signal_aggregator", fake_build)
+    monkeypatch.setattr("api.agent_tools.get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr("api.agent_tools.set_cached", lambda *args, **kwargs: None)
+
+    raw = execute_tool(
+        "get_signal_aggregator",
+        {
+            "lookback_weeks": 104,
+            "positioning_instruments": "SP500,EUR",
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["status"] == "ok"
+    assert payload["regime"]["label"] == "transitional"

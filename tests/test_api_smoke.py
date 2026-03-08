@@ -32,6 +32,7 @@ _AUTH_GET_ENDPOINTS = [
     f"{_API_PREFIX}/commodities",
     f"{_API_PREFIX}/central-banks",
     f"{_API_PREFIX}/sector-metrics",
+    f"{_API_PREFIX}/signal-aggregator",
     f"{_API_PREFIX}/industry-monitor",
     f"{_API_PREFIX}/yield-curve",
     f"{_API_PREFIX}/country-dashboard",

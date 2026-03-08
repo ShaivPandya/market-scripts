@@ -69,6 +69,7 @@ from api.routers import (
     sector_metrics,
     sentiment,
     short_screen,
+    signal_aggregator,
     sizer,
     weekly_report,
     yield_curve,
@@ -220,6 +221,7 @@ app.include_router(sector_metrics.router, prefix=_V1, dependencies=_auth_dep, ta
 app.include_router(industry.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(yield_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["fixed-income"])
 app.include_router(financials.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
+app.include_router(signal_aggregator.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
 app.include_router(portfolio_news.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(ontology.router, prefix=_V1, dependencies=_auth_dep, tags=["ontology"])
 app.include_router(weekly_report.router, prefix=_V1, dependencies=_auth_dep, tags=["reports"])
