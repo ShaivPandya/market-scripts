@@ -314,8 +314,8 @@ def _dispatch(name: str, args: dict) -> object:
     """Route a tool call to the corresponding data function."""
 
     if name == "get_liquidity":
-        key = "liquidity"
-        cached = get_cached(short_cache, key)
+        key = "agent_liquidity"
+        cached = get_cached(long_cache, key)
         if cached is not None:
             return cached
         from liquidity import get_snapshot
@@ -323,19 +323,19 @@ def _dispatch(name: str, args: dict) -> object:
         data = get_snapshot()
         filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
         result = serialize_value(filtered)
-        set_cached(short_cache, key, result)
+        set_cached(long_cache, key, result)
         return result
 
     if name == "get_market_breadth":
-        key = "market_breadth"
-        cached = get_cached(short_cache, key)
+        key = "agent_market_breadth"
+        cached = get_cached(long_cache, key)
         if cached is not None:
             return cached
         from market_breadth import get_data
 
         data = get_data()
         result = serialize_value(data)
-        set_cached(short_cache, key, result)
+        set_cached(long_cache, key, result)
         return result
 
     if name == "get_vix_term_structure":
@@ -463,13 +463,19 @@ def _dispatch(name: str, args: dict) -> object:
         cached = get_cached(short_cache, key)
         if cached is not None:
             return cached
+        from concurrent.futures import ThreadPoolExecutor
+
         from sentiment import get_put_call, get_surveys, get_volatility
 
-        combined = {
-            "put_call": get_put_call(lookback_days=180),
-            "surveys": get_surveys(),
-            "volatility": get_volatility(lookback_days=365),
-        }
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            f_pc = pool.submit(get_put_call, lookback_days=180)
+            f_sv = pool.submit(get_surveys)
+            f_vl = pool.submit(get_volatility, lookback_days=365)
+            combined = {
+                "put_call": f_pc.result(),
+                "surveys": f_sv.result(),
+                "volatility": f_vl.result(),
+            }
         result = serialize_value(combined)
         set_cached(short_cache, key, result)
         return result

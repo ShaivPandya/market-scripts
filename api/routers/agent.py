@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
@@ -74,6 +75,18 @@ def _sse(event: str, data: dict) -> str:
 MAX_TOOL_CONTINUATION_ROUNDS = 8
 
 
+def _execute_tools_parallel(
+    calls: list[dict],
+) -> list[tuple[dict, str]]:
+    """Execute tool calls in parallel using threads."""
+    if len(calls) == 1:
+        c = calls[0]
+        return [(c, execute_tool(c["name"], c["args"]))]
+    with ThreadPoolExecutor(max_workers=min(len(calls), 8)) as pool:
+        futures = [(c, pool.submit(execute_tool, c["name"], c["args"])) for c in calls]
+        return [(c, f.result()) for c, f in futures]
+
+
 def _tool_error_message(result_str: str) -> str | None:
     try:
         payload = json.loads(result_str)
@@ -116,6 +129,7 @@ def agent_chat(req: AgentChatRequest):
 
             response_id: str | None = None
             pending_tool_calls: list[dict[str, str]] = []
+            deferred_calls: list[dict] = []
             arg_buffers: dict[str, str] = {}
             item_to_call: dict[str, str] = {}
             active_call_id: str | None = None
@@ -162,19 +176,27 @@ def agent_chat(req: AgentChatRequest):
                             args = json.loads(raw_args) if raw_args else {}
                         except json.JSONDecodeError:
                             args = {}
-                        result_str = execute_tool(event.item.name, args)
-                        pending_tool_calls.append({"call_id": call_id, "output": result_str})
-                        err_msg = _tool_error_message(result_str)
-                        payload = {
+                        deferred_calls.append({
                             "name": event.item.name,
-                            "id": call_id,
-                            "status": "error" if err_msg else "ok",
-                        }
-                        if err_msg:
-                            payload["message"] = err_msg
-                        yield _sse("tool_result", payload)
+                            "call_id": call_id,
+                            "args": args,
+                        })
 
                 elif event.type == "response.completed":
+                    # Execute all tool calls from this round in parallel
+                    if deferred_calls:
+                        for call_info, result_str in _execute_tools_parallel(deferred_calls):
+                            pending_tool_calls.append({"call_id": call_info["call_id"], "output": result_str})
+                            err_msg = _tool_error_message(result_str)
+                            payload = {
+                                "name": call_info["name"],
+                                "id": call_info["call_id"],
+                                "status": "error" if err_msg else "ok",
+                            }
+                            if err_msg:
+                                payload["message"] = err_msg
+                            yield _sse("tool_result", payload)
+                        deferred_calls = []
                     if not pending_tool_calls:
                         usage = {}
                         if hasattr(event.response, "usage") and event.response.usage:
@@ -209,6 +231,7 @@ def agent_chat(req: AgentChatRequest):
                     for tc in pending_tool_calls
                 ]
                 pending_tool_calls = []
+                deferred_calls = []
                 arg_buffers = {}
                 item_to_call = {}
                 active_call_id = None
@@ -263,19 +286,26 @@ def agent_chat(req: AgentChatRequest):
                                 args = json.loads(raw_args) if raw_args else {}
                             except json.JSONDecodeError:
                                 args = {}
-                            result_str = execute_tool(event.item.name, args)
-                            pending_tool_calls.append({"call_id": call_id, "output": result_str})
-                            err_msg = _tool_error_message(result_str)
-                            payload = {
+                            deferred_calls.append({
                                 "name": event.item.name,
-                                "id": call_id,
-                                "status": "error" if err_msg else "ok",
-                            }
-                            if err_msg:
-                                payload["message"] = err_msg
-                            yield _sse("tool_result", payload)
+                                "call_id": call_id,
+                                "args": args,
+                            })
 
                     elif event.type == "response.completed":
+                        if deferred_calls:
+                            for call_info, result_str in _execute_tools_parallel(deferred_calls):
+                                pending_tool_calls.append({"call_id": call_info["call_id"], "output": result_str})
+                                err_msg = _tool_error_message(result_str)
+                                payload = {
+                                    "name": call_info["name"],
+                                    "id": call_info["call_id"],
+                                    "status": "error" if err_msg else "ok",
+                                }
+                                if err_msg:
+                                    payload["message"] = err_msg
+                                yield _sse("tool_result", payload)
+                            deferred_calls = []
                         if not pending_tool_calls:
                             usage = {}
                             if hasattr(event.response, "usage") and event.response.usage:
