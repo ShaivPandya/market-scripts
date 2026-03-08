@@ -2,8 +2,8 @@
 Tool registry for the AI agent.
 
 Each tool wraps an existing get_data() / get_snapshot() function from the
-analysis modules.  Tool definitions follow the OpenAI function-calling schema
-so they can be passed directly to the Responses API ``tools`` parameter.
+analysis modules. Tool definitions use a JSON-schema format that can be adapted
+for different LLM tool-calling APIs.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from api.serializers import serialize_value
 logger = logging.getLogger("api.agent")
 
 # ---------------------------------------------------------------------------
-# Tool definitions (OpenAI function-calling schema)
+# Tool definitions (generic function-calling schema)
 # ---------------------------------------------------------------------------
 
 TOOL_DEFINITIONS: list[dict] = [

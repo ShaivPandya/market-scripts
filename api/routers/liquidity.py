@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from api.cache import get_cached, set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
+from llm_utils import MODEL_HAIKU_4_5, call_claude_text
 
 router = APIRouter()
 
@@ -97,9 +98,9 @@ def _build_changes_table(changes: dict) -> str:
 
 @router.post("/liquidity/analyze")
 def analyze_liquidity(req: LiquidityAnalyzeRequest):
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ConfigurationError("OPENAI_API_KEY")
+        raise ConfigurationError("ANTHROPIC_API_KEY")
     if not req.components and not req.changes:
         raise HTTPException(status_code=400, detail="No liquidity data provided")
 
@@ -144,13 +145,14 @@ Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no he
 Be specific about the numbers."""
 
     try:
-        from openai import OpenAI
-
-        client = OpenAI()
-        resp = client.responses.create(model="gpt-5-mini", input=prompt)
-        analysis = (resp.output_text or "").strip()
+        analysis, _citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_HAIKU_4_5,
+            api_key=api_key,
+            max_tokens=4096,
+        )
         if not analysis:
-            raise ValueError("OpenAI returned empty response")
+            raise ValueError("Claude returned empty response")
     except Exception as exc:
         raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 

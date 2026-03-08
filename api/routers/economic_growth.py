@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from api.cache import get_cached, set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
+from llm_utils import MODEL_HAIKU_4_5, call_claude_text
 
 router = APIRouter()
 
@@ -48,9 +49,9 @@ def _format_table(data: dict, periods: list[str]) -> str:
 
 @router.post("/economic-growth/analyze")
 def analyze_economic_growth(req: EconomicGrowthAnalyzeRequest):
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ConfigurationError("OPENAI_API_KEY")
+        raise ConfigurationError("ANTHROPIC_API_KEY")
 
     commodities_table = _format_table(req.commodities, req.equity_periods)
     equities_table = _format_table(req.equities, req.equity_periods)
@@ -100,13 +101,14 @@ Write 4-6 flowing paragraphs of plain text (no bullet points, no markdown, no he
 Be specific about the numbers. Write for a professional investor audience."""
 
     try:
-        from openai import OpenAI
-
-        client = OpenAI()
-        resp = client.responses.create(model="gpt-5-mini", input=prompt)
-        analysis = (resp.output_text or "").strip()
+        analysis, _citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_HAIKU_4_5,
+            api_key=api_key,
+            max_tokens=4096,
+        )
         if not analysis:
-            raise ValueError("OpenAI returned empty response")
+            raise ValueError("Claude returned empty response")
     except Exception as exc:
         raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 

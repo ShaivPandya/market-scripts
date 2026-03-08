@@ -5,6 +5,7 @@ import os
 import re
 from typing import Any
 
+from llm_utils import MODEL_HAIKU_4_5, call_claude_text
 from ontology.models import InterpretedQuery
 
 ALLOWED_INTENTS = {
@@ -180,7 +181,7 @@ def _extract_sectors(query_lower: str, known_sectors: set[str]) -> list[str]:
 
 
 def _parse_with_llm(query: str) -> dict[str, Any] | None:
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
 
@@ -194,11 +195,12 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
     )
 
     try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key)
-        resp = client.responses.create(model="gpt-5-mini", input=prompt)
-        text = (resp.output_text or "").strip()
+        text, _citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_HAIKU_4_5,
+            api_key=api_key,
+            max_tokens=1024,
+        )
         if not text:
             return None
 

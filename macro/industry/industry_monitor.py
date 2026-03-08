@@ -1,7 +1,7 @@
 """
 Industry earnings monitor:
 - Read earnings call transcripts from local PDF files in macro/industry/files/
-- Summarize with OpenAI (optional fallback if key/package is unavailable)
+- Summarize with Claude (optional fallback if key/package is unavailable)
 - Cache transcripts + summaries in SQLite
 - Return structured data for frontend consumption
 """
@@ -19,6 +19,8 @@ from datetime import UTC, datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
+
+from llm_utils import MODEL_HAIKU_4_5, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +76,7 @@ SECTORS = {
 }
 
 DB_PATH = "industry_transcripts.sqlite3"
-SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", "gpt-5-mini")
+SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", MODEL_HAIKU_4_5)
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
 
 
@@ -475,10 +477,7 @@ def _normalize_summary(summary: dict, text: str, meta: dict) -> dict:
     return out
 
 
-def summarize_with_openai(text: str, meta: dict) -> dict:
-    from openai import OpenAI
-
-    client = OpenAI()
+def summarize_with_claude(text: str, meta: dict) -> dict:
     text_in = _budget_text(text)
     prompt = f"""
 You are an analyst extracting macro signals from one earnings call transcript.
@@ -509,25 +508,26 @@ Transcript:
 {text_in}
 """.strip()
 
-    resp = client.responses.create(
+    output_text, _citations, _resp = call_claude_text(
+        prompt=prompt,
         model=SUMMARY_MODEL,
-        input=prompt,
-        text={"format": {"type": "json_object"}},
+        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        max_tokens=2048,
     )
-
-    out = (resp.output_text or "").strip()
-    if not out:
-        raise ValueError("OpenAI returned empty response")
-    parsed = json.loads(out)
+    if not output_text:
+        raise ValueError("Claude returned empty response")
+    parsed = parse_json_text(output_text)
+    if not isinstance(parsed, dict):
+        raise ValueError("Claude returned invalid JSON")
     return _normalize_summary(parsed, text, meta)
 
 
 def summarize_with_llm(text: str, meta: dict) -> dict:
-    if os.environ.get("OPENAI_API_KEY"):
+    if os.environ.get("ANTHROPIC_API_KEY"):
         try:
-            return summarize_with_openai(text, meta)
+            return summarize_with_claude(text, meta)
         except Exception as ex:
-            LOGGER.warning("OpenAI summarization failed for %s: %s", meta["ticker"], ex)
+            LOGGER.warning("Claude summarization failed for %s: %s", meta["ticker"], ex)
     return _fallback_summary(text, meta)
 
 

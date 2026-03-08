@@ -1,7 +1,7 @@
 """
 AI Agent chat endpoint with streaming (SSE) and function calling.
 
-Uses the OpenAI Responses API with GPT-5.4 and the tool definitions from
+Uses Anthropic's Messages API with Claude Sonnet 4.6 and the tool definitions from
 :mod:`api.agent_tools` to answer cross-cutting investment questions by
 fetching live data from the platform's analysis modules.
 """
@@ -73,6 +73,17 @@ def _sse(event: str, data: dict) -> str:
 
 
 MAX_TOOL_CONTINUATION_ROUNDS = 8
+CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MAX_TOKENS = 8_192
+ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
+    {
+        "name": tool["name"],
+        "description": tool.get("description", ""),
+        "input_schema": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
+    }
+    for tool in TOOL_DEFINITIONS
+    if isinstance(tool.get("name"), str)
+]
 
 
 def _execute_tools_parallel(
@@ -100,6 +111,40 @@ def _tool_error_message(result_str: str) -> str | None:
     return None
 
 
+def _serialize_content_blocks(blocks: list[object]) -> list[dict]:
+    serialized: list[dict] = []
+    for block in blocks:
+        if isinstance(block, dict):
+            serialized.append(block)
+            continue
+
+        model_dump = getattr(block, "model_dump", None)
+        if callable(model_dump):
+            serialized.append(model_dump(exclude_none=True))
+            continue
+
+        to_dict = getattr(block, "to_dict", None)
+        if callable(to_dict):
+            serialized.append(to_dict())
+    return serialized
+
+
+def _extract_tool_calls(content_blocks: list[dict]) -> list[dict]:
+    calls: list[dict] = []
+    for block in content_blocks:
+        if block.get("type") != "tool_use":
+            continue
+        name = block.get("name")
+        call_id = block.get("id")
+        args = block.get("input", {})
+        if not isinstance(name, str) or not isinstance(call_id, str):
+            continue
+        if not isinstance(args, dict):
+            args = {}
+        calls.append({"name": name, "call_id": call_id, "args": args})
+    return calls
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -107,117 +152,22 @@ def _tool_error_message(result_str: str) -> str | None:
 
 @router.post("/agent/chat")
 def agent_chat(req: AgentChatRequest):
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ConfigurationError("OPENAI_API_KEY")
+        raise ConfigurationError("ANTHROPIC_API_KEY")
     instructions = _build_agent_instructions()
 
     def generate():  # noqa: C901 — complex but linear control flow
-        from openai import OpenAI
+        from anthropic import Anthropic
 
-        client = OpenAI()
-        input_messages = [{"role": m.role, "content": m.content} for m in req.messages]
+        client = Anthropic(api_key=api_key)
+        conversation: list[dict[str, object]] = [{"role": m.role, "content": m.content} for m in req.messages]
+        continuation_round = 0
+        force_tool_use = True
 
         try:
-            stream = client.responses.create(
-                model="gpt-5.4",
-                instructions=instructions,
-                input=input_messages,
-                tools=TOOL_DEFINITIONS,
-                tool_choice="required",
-                stream=True,
-            )
-
-            response_id: str | None = None
-            pending_tool_calls: list[dict[str, str]] = []
-            deferred_calls: list[dict] = []
-            arg_buffers: dict[str, str] = {}
-            item_to_call: dict[str, str] = {}
-            active_call_id: str | None = None
-
-            for event in stream:
-                if event.type == "response.created":
-                    response_id = event.response.id
-
-                elif event.type == "response.output_text.delta":
-                    yield _sse("delta", {"text": event.delta})
-
-                elif event.type == "response.function_call_arguments.delta":
-                    delta = str(getattr(event, "delta", ""))
-                    call_id = getattr(event, "call_id", None)
-                    if not call_id:
-                        item_id = getattr(event, "item_id", None)
-                        if isinstance(item_id, str):
-                            call_id = item_to_call.get(item_id)
-                    if not call_id:
-                        call_id = active_call_id
-                    if call_id:
-                        arg_buffers[call_id] = arg_buffers.get(call_id, "") + delta
-
-                elif event.type == "response.output_item.added":
-                    if event.item.type == "function_call":
-                        active_call_id = event.item.call_id
-                        arg_buffers.setdefault(event.item.call_id, "")
-                        item_id = getattr(event.item, "id", None)
-                        if isinstance(item_id, str):
-                            item_to_call[item_id] = event.item.call_id
-                        yield _sse(
-                            "tool_call",
-                            {
-                                "name": event.item.name,
-                                "id": event.item.call_id,
-                            },
-                        )
-
-                elif event.type == "response.output_item.done":
-                    if event.item.type == "function_call":
-                        call_id = event.item.call_id
-                        raw_args = arg_buffers.pop(call_id, "")
-                        try:
-                            args = json.loads(raw_args) if raw_args else {}
-                        except json.JSONDecodeError:
-                            args = {}
-                        deferred_calls.append(
-                            {
-                                "name": event.item.name,
-                                "call_id": call_id,
-                                "args": args,
-                            }
-                        )
-
-                elif event.type == "response.completed":
-                    # Execute all tool calls from this round in parallel
-                    if deferred_calls:
-                        for call_info, result_str in _execute_tools_parallel(deferred_calls):
-                            pending_tool_calls.append({"call_id": call_info["call_id"], "output": result_str})
-                            err_msg = _tool_error_message(result_str)
-                            payload = {
-                                "name": call_info["name"],
-                                "id": call_info["call_id"],
-                                "status": "error" if err_msg else "ok",
-                            }
-                            if err_msg:
-                                payload["message"] = err_msg
-                            yield _sse("tool_result", payload)
-                        deferred_calls = []
-                    if not pending_tool_calls:
-                        usage = {}
-                        if hasattr(event.response, "usage") and event.response.usage:
-                            usage = {
-                                "input_tokens": event.response.usage.input_tokens,
-                                "output_tokens": event.response.usage.output_tokens,
-                            }
-                        yield _sse("done", {"usage": usage})
-
-            if pending_tool_calls and not response_id:
-                yield _sse("error", {"message": "Missing response ID for tool-call continuation."})
-                yield _sse("done", {"usage": {}})
-                return
-
-            continuation_round = 0
-            while pending_tool_calls and response_id:
-                continuation_round += 1
-                if continuation_round > MAX_TOOL_CONTINUATION_ROUNDS:
+            while True:
+                if continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS:
                     yield _sse(
                         "error",
                         {"message": (f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).")},
@@ -225,100 +175,76 @@ def agent_chat(req: AgentChatRequest):
                     yield _sse("done", {"usage": {}})
                     return
 
-                tool_outputs = [
-                    {
-                        "type": "function_call_output",
-                        "call_id": tc["call_id"],
-                        "output": tc["output"],
-                    }
-                    for tc in pending_tool_calls
-                ]
-                pending_tool_calls = []
-                deferred_calls = []
-                arg_buffers = {}
-                item_to_call = {}
-                active_call_id = None
-
-                stream = client.responses.create(
-                    model="gpt-5.4",
-                    previous_response_id=response_id,
-                    input=tool_outputs,
-                    tools=TOOL_DEFINITIONS,
-                    stream=True,
+                stream_kwargs: dict[str, object] = dict(
+                    model=CLAUDE_MODEL,
+                    max_tokens=CLAUDE_MAX_TOKENS,
+                    system=instructions,
+                    messages=conversation,
+                    tools=ANTHROPIC_TOOL_DEFINITIONS,
                 )
+                if force_tool_use:
+                    stream_kwargs["tool_choice"] = {"type": "any"}
 
-                for event in stream:
-                    if event.type == "response.created":
-                        response_id = event.response.id
-
-                    elif event.type == "response.output_text.delta":
-                        yield _sse("delta", {"text": event.delta})
-
-                    elif event.type == "response.function_call_arguments.delta":
-                        delta = str(getattr(event, "delta", ""))
-                        call_id = getattr(event, "call_id", None)
-                        if not call_id:
-                            item_id = getattr(event, "item_id", None)
-                            if isinstance(item_id, str):
-                                call_id = item_to_call.get(item_id)
-                        if not call_id:
-                            call_id = active_call_id
-                        if call_id:
-                            arg_buffers[call_id] = arg_buffers.get(call_id, "") + delta
-
-                    elif event.type == "response.output_item.added":
-                        if event.item.type == "function_call":
-                            active_call_id = event.item.call_id
-                            arg_buffers.setdefault(event.item.call_id, "")
-                            item_id = getattr(event.item, "id", None)
-                            if isinstance(item_id, str):
-                                item_to_call[item_id] = event.item.call_id
+                with client.messages.stream(**stream_kwargs) as stream:
+                    for event in stream:
+                        if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                            yield _sse("delta", {"text": event.delta.text})
+                        elif event.type == "content_block_start" and event.content_block.type == "tool_use":
                             yield _sse(
                                 "tool_call",
                                 {
-                                    "name": event.item.name,
-                                    "id": event.item.call_id,
+                                    "name": event.content_block.name,
+                                    "id": event.content_block.id,
                                 },
                             )
+                    final_message = stream.get_final_message()
 
-                    elif event.type == "response.output_item.done":
-                        if event.item.type == "function_call":
-                            call_id = event.item.call_id
-                            raw_args = arg_buffers.pop(call_id, "")
-                            try:
-                                args = json.loads(raw_args) if raw_args else {}
-                            except json.JSONDecodeError:
-                                args = {}
-                            deferred_calls.append(
-                                {
-                                    "name": event.item.name,
-                                    "call_id": call_id,
-                                    "args": args,
-                                }
-                            )
+                assistant_content = _serialize_content_blocks(list(final_message.content))
+                deferred_calls = _extract_tool_calls(assistant_content)
 
-                    elif event.type == "response.completed":
-                        if deferred_calls:
-                            for call_info, result_str in _execute_tools_parallel(deferred_calls):
-                                pending_tool_calls.append({"call_id": call_info["call_id"], "output": result_str})
-                                err_msg = _tool_error_message(result_str)
-                                payload = {
-                                    "name": call_info["name"],
-                                    "id": call_info["call_id"],
-                                    "status": "error" if err_msg else "ok",
-                                }
-                                if err_msg:
-                                    payload["message"] = err_msg
-                                yield _sse("tool_result", payload)
-                            deferred_calls = []
-                        if not pending_tool_calls:
-                            usage = {}
-                            if hasattr(event.response, "usage") and event.response.usage:
-                                usage = {
-                                    "input_tokens": event.response.usage.input_tokens,
-                                    "output_tokens": event.response.usage.output_tokens,
-                                }
-                            yield _sse("done", {"usage": usage})
+                if deferred_calls:
+                    tool_results: list[dict] = []
+                    for call_info, result_str in _execute_tools_parallel(deferred_calls):
+                        err_msg = _tool_error_message(result_str)
+                        payload = {
+                            "name": call_info["name"],
+                            "id": call_info["call_id"],
+                            "status": "error" if err_msg else "ok",
+                        }
+                        if err_msg:
+                            payload["message"] = err_msg
+                        yield _sse("tool_result", payload)
+
+                        result_block: dict[str, object] = {
+                            "type": "tool_result",
+                            "tool_use_id": call_info["call_id"],
+                            "content": result_str,
+                        }
+                        if err_msg:
+                            result_block["is_error"] = True
+                        tool_results.append(result_block)
+
+                    conversation.append({"role": "assistant", "content": assistant_content})
+                    conversation.append({"role": "user", "content": tool_results})
+                    force_tool_use = False
+                    continuation_round += 1
+                    continue
+
+                if final_message.stop_reason == "pause_turn":
+                    conversation.append({"role": "assistant", "content": assistant_content})
+                    conversation.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
+                    force_tool_use = False
+                    continuation_round += 1
+                    continue
+
+                usage = {}
+                if hasattr(final_message, "usage") and final_message.usage:
+                    usage = {
+                        "input_tokens": final_message.usage.input_tokens,
+                        "output_tokens": final_message.usage.output_tokens,
+                    }
+                yield _sse("done", {"usage": usage})
+                return
 
         except Exception as exc:
             logger.exception("Agent stream error")

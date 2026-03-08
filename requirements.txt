@@ -30,7 +30,6 @@ ib_insync>=0.9.86
 nest_asyncio>=1.5.0
 
 # AI/ML
-openai>=1.0.0
 anthropic>=0.40.0
 
 # Rate limiting

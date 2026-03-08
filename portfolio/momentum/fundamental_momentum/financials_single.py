@@ -25,6 +25,8 @@ from edgar_fetcher import (
     get_cik_for_ticker,
 )
 
+from llm_utils import MODEL_HAIKU_4_5, call_claude_text, parse_json_text
+
 LOGGER = logging.getLogger(__name__)
 
 ALLOWED_ANNUAL_FORMS = {"10-K", "10-K/A"}
@@ -1144,7 +1146,7 @@ def _extract_breakdown_via_nlp(
     submissions: dict | None,
     wanted_axes: set[str],
 ) -> dict | None:
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
 
     filing_url = build_filing_url(cik_str, accn, submissions=submissions)
@@ -1193,26 +1195,19 @@ def _extract_breakdown_via_nlp(
     )
 
     try:
-        from openai import OpenAI
-
-        client = OpenAI()
-        out = client.responses.create(model="gpt-5-mini", input=prompt)
-        txt = (out.output_text or "").strip()
+        txt, _citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_HAIKU_4_5,
+            api_key=os.environ.get("ANTHROPIC_API_KEY"),
+            max_tokens=2048,
+        )
         if not txt:
             return None
+        payload = parse_json_text(txt)
     except Exception:
         return None
 
-    # Be resilient to minor wrapper text around JSON.
-    try:
-        import json
-
-        start = txt.find("{")
-        end = txt.rfind("}")
-        if start < 0 or end < 0 or end <= start:
-            return None
-        payload = json.loads(txt[start : end + 1])
-    except Exception:
+    if not isinstance(payload, dict):
         return None
 
     by_segment = _rows_to_value_map(payload.get("by_segment")) if want_segment else {}
@@ -1394,7 +1389,7 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: dict | None) -> d
 
     ai_fallback_attempted = False
     nlp_candidate: dict | None = None
-    if missing_axes and os.environ.get("OPENAI_API_KEY"):
+    if missing_axes and os.environ.get("ANTHROPIC_API_KEY"):
         ai_fallback_attempted = True
         nlp_candidate = _extract_breakdown_via_nlp(
             cik_str=cik_str,
