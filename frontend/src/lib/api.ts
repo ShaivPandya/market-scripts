@@ -423,8 +423,9 @@ export async function runFundamentalMomentumAsync(body: FundamentalMomentumReque
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Fundamental momentum failed")
 
-  const job_id = started.job_id
+  let job_id = started.job_id
   const deadline = Date.now() + 300_000
+  let restartedAfterUnknownJob = false
 
   for (; ;) {
     if (Date.now() > deadline) {
@@ -432,7 +433,26 @@ export async function runFundamentalMomentumAsync(body: FundamentalMomentumReque
     }
 
     await new Promise(r => setTimeout(r, 2000))
-    const job = await fetchFundamentalMomentumJob(job_id)
+    let job: FundamentalMomentumJobResponse
+    try {
+      job = await fetchFundamentalMomentumJob(job_id)
+    } catch (err) {
+      const isUnknownJob =
+        axios.isAxiosError(err) &&
+        err.response?.status === 404 &&
+        typeof err.message === "string" &&
+        err.message.includes("Unknown job_id")
+
+      if (isUnknownJob && !restartedAfterUnknownJob) {
+        restartedAfterUnknownJob = true
+        const restarted = await startFundamentalMomentumJob(body)
+        if (restarted.status === "done" && "result" in restarted && restarted.result != null) return restarted.result
+        if (restarted.status === "error") throw new Error(restarted.error || "Fundamental momentum failed")
+        job_id = restarted.job_id
+        continue
+      }
+      throw err
+    }
 
     if (job.status === "done") {
       if ("result" in job && job.result != null) return job.result

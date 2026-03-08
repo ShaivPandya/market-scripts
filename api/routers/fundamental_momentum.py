@@ -6,7 +6,7 @@ from typing import Any, Literal, TypedDict, cast
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import get_cached, set_cached, short_cache
+from api.cache import delete_cached, get_cached, long_cache, set_cached, short_cache
 from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
@@ -51,9 +51,9 @@ class _Job(TypedDict, total=False):
     error: str
 
 
-_jobs: dict[str, _Job] = {}
-_jobs_lock = threading.Lock()
-_JOB_TTL_S = 60 * 30
+_JOB_STORE = long_cache
+_FM_JOB_NS = "fundamental_momentum:job:"
+_FM_ACTIVE_NS = "fundamental_momentum:active:"
 
 
 def _resolve_tickers(req: FMRequest) -> list[str]:
@@ -109,6 +109,25 @@ def _serialize_fm(data: dict) -> dict:
     return result
 
 
+def _job_store_key(job_id: str) -> str:
+    return f"{_FM_JOB_NS}{job_id}"
+
+
+def _active_job_key(cache_key: str) -> str:
+    return f"{_FM_ACTIVE_NS}{cache_key}"
+
+
+def _read_job(job_id: str) -> _Job | None:
+    raw = get_cached(_JOB_STORE, _job_store_key(job_id))
+    if isinstance(raw, dict):
+        return cast(_Job, raw)
+    return None
+
+
+def _write_job(job_id: str, job: _Job) -> None:
+    set_cached(_JOB_STORE, _job_store_key(job_id), job)
+
+
 def _compute_fundamental_momentum(req: FMRequest) -> dict[str, Any]:
     if req.screen_type not in ("EPS", "Revenue", "Both"):
         raise ValueError("Invalid screen_type. Use one of: EPS, Revenue, Both.")
@@ -135,42 +154,35 @@ def _compute_fundamental_momentum(req: FMRequest) -> dict[str, Any]:
     return result
 
 
-def _job_cleanup_locked(now: float) -> None:
-    to_delete: list[str] = []
-    for job_id, job in _jobs.items():
-        updated_at = float(job.get("updated_at") or job.get("created_at") or 0.0)
-        if updated_at and (now - updated_at) > _JOB_TTL_S:
-            to_delete.append(job_id)
-    for job_id in to_delete:
-        _jobs.pop(job_id, None)
-
-
 def _spawn_fm_job(job_id: str, req: FMRequest, cache_key: str) -> None:
     def _run():
-        with _jobs_lock:
-            job = _jobs.get(job_id)
-            if not job:
-                return
-            job["status"] = "running"
-            job["updated_at"] = time.time()
+        job = _read_job(job_id)
+        if not job:
+            return
+        job["status"] = "running"
+        job["updated_at"] = time.time()
+        _write_job(job_id, job)
+
         try:
             result = _compute_fundamental_momentum(req)
             set_cached(short_cache, cache_key, result)
-            with _jobs_lock:
-                job = _jobs.get(job_id)
-                if not job:
-                    return
-                job["status"] = "done"
-                job["result"] = result
-                job["updated_at"] = time.time()
+            job = _read_job(job_id)
+            if not job:
+                return
+            job["status"] = "done"
+            job["result"] = result
+            job["updated_at"] = time.time()
+            _write_job(job_id, job)
+            delete_cached(_JOB_STORE, _active_job_key(cache_key))
         except Exception as e:
-            with _jobs_lock:
-                job = _jobs.get(job_id)
-                if not job:
-                    return
-                job["status"] = "error"
-                job["error"] = str(e) or "Fundamental momentum failed"
-                job["updated_at"] = time.time()
+            job = _read_job(job_id)
+            if not job:
+                return
+            job["status"] = "error"
+            job["error"] = str(e) or "Fundamental momentum failed"
+            job["updated_at"] = time.time()
+            _write_job(job_id, job)
+            delete_cached(_JOB_STORE, _active_job_key(cache_key))
 
     t = threading.Thread(target=_run, name=f"fundamental-momentum-job-{job_id}", daemon=True)
     t.start()
@@ -210,21 +222,28 @@ def start_fundamental_momentum(req: FMRequest):
         job_id = f"cached:{uuid.uuid4().hex}"
         return {"job_id": job_id, "status": "done", "result": cached}
 
-    now = time.time()
-    with _jobs_lock:
-        _job_cleanup_locked(now)
-        for existing_id, job in _jobs.items():
-            if job.get("cache_key") == key and job.get("status") in ("queued", "running"):
-                return {"job_id": existing_id, "status": job.get("status")}
+    active_raw = get_cached(_JOB_STORE, _active_job_key(key))
+    if isinstance(active_raw, dict):
+        existing_id = str(active_raw.get("job_id") or "")
+        if existing_id:
+            existing_job = _read_job(existing_id)
+            if existing_job and existing_job.get("status") in ("queued", "running"):
+                return {"job_id": existing_id, "status": existing_job.get("status")}
+            delete_cached(_JOB_STORE, _active_job_key(key))
 
-        job_id = uuid.uuid4().hex
-        _jobs[job_id] = {
+    now = time.time()
+    job_id = uuid.uuid4().hex
+    _write_job(
+        job_id,
+        {
             "status": "queued",
             "created_at": now,
             "updated_at": now,
             "cache_key": key,
             "params": req.model_dump(),
-        }
+        },
+    )
+    set_cached(_JOB_STORE, _active_job_key(key), {"job_id": job_id, "updated_at": now})
 
     _spawn_fm_job(job_id, req, key)
     return {"job_id": job_id, "status": "queued"}
@@ -232,20 +251,16 @@ def start_fundamental_momentum(req: FMRequest):
 
 @router.get("/fundamental-momentum/async/{job_id}")
 def get_fundamental_momentum_job(job_id: str):
-    now = time.time()
-
     if job_id.startswith("cached:"):
         return {"job_id": job_id, "status": "done"}
 
-    with _jobs_lock:
-        _job_cleanup_locked(now)
-        job = _jobs.get(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Unknown job_id")
+    job = _read_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job_id")
 
-        status = job.get("status")
-        if status == "done":
-            return {"job_id": job_id, "status": "done", "result": job.get("result")}
-        if status == "error":
-            return {"job_id": job_id, "status": "error", "error": job.get("error") or "Fundamental momentum failed"}
-        return {"job_id": job_id, "status": status}
+    status = job.get("status")
+    if status == "done":
+        return {"job_id": job_id, "status": "done", "result": job.get("result")}
+    if status == "error":
+        return {"job_id": job_id, "status": "error", "error": job.get("error") or "Fundamental momentum failed"}
+    return {"job_id": job_id, "status": status}
