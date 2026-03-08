@@ -20,7 +20,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-from llm_utils import MODEL_HAIKU_4_5, call_claude_text, parse_json_text
+from llm_utils import MODEL_SONNET, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ SECTORS = {
 }
 
 DB_PATH = "industry_transcripts.sqlite3"
-SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", MODEL_HAIKU_4_5)
+SUMMARY_MODEL = os.environ.get("INDUSTRY_SUMMARY_MODEL", MODEL_SONNET)
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
 
 

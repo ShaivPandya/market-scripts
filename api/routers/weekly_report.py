@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.cache import delete_cached, get_cached, long_cache, set_cached
 from api.exceptions import ConfigurationError, DataFetchError
-from llm_utils import MODEL_HAIKU_4_5, call_claude_text
+from llm_utils import MODEL_OPUS, call_claude_text
 from llm_utils import extract_citations as _extract_claude_citations
 
 router = APIRouter()
@@ -528,7 +528,7 @@ End the output immediately after the report content.
         t0 = time.perf_counter()
         report_md, citations, _resp = call_claude_text(
             prompt=prompt,
-            model=MODEL_HAIKU_4_5,
+            model=MODEL_OPUS,
             api_key=api_key,
             max_tokens=8192,
             allowed_domains=DEFAULT_NEWS_DOMAINS,

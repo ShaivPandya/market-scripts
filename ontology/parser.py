@@ -5,7 +5,7 @@ import os
 import re
 from typing import Any
 
-from llm_utils import MODEL_HAIKU_4_5, call_claude_text
+from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text
 from ontology.models import InterpretedQuery
 
 ALLOWED_INTENTS = {
@@ -194,10 +194,10 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
         f"User query: {query}"
     )
 
-    try:
+    def _parse_once(model: str) -> dict[str, Any] | None:
         text, _citations, _resp = call_claude_text(
             prompt=prompt,
-            model=MODEL_HAIKU_4_5,
+            model=model,
             api_key=api_key,
             max_tokens=1024,
         )
@@ -221,6 +221,12 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
             "filters": _coerce_filters(filters),
             "entity": entity_str,
         }
+
+    try:
+        parsed = _parse_once(MODEL_HAIKU)
+        if parsed is None:
+            parsed = _parse_once(MODEL_SONNET)
+        return parsed
     except Exception:
         return None
 

@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-MODEL_HAIKU_4_5 = "claude-haiku-4-5"
-MODEL_SONNET_4_6 = "claude-sonnet-4-6"
+MODEL_HAIKU = "claude-haiku-4-5"
+MODEL_SONNET = "claude-sonnet-4-6"
+MODEL_OPUS = "claude-opus-4-6"
 
 
 def _obj_get(value: Any, key: str, default: Any = None) -> Any:

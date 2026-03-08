@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from readability import Document
 
-from llm_utils import MODEL_HAIKU_4_5, call_claude_text, parse_json_text
+from llm_utils import MODEL_HAIKU, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -351,7 +351,7 @@ Text:
 
     out, _citations, _resp = call_claude_text(
         prompt=prompt,
-        model=MODEL_HAIKU_4_5,
+        model=MODEL_HAIKU,
         api_key=os.environ.get("ANTHROPIC_API_KEY"),
         max_tokens=2048,
     )

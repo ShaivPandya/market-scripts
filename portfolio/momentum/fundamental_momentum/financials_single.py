@@ -25,7 +25,7 @@ from edgar_fetcher import (
     get_cik_for_ticker,
 )
 
-from llm_utils import MODEL_HAIKU_4_5, call_claude_text, parse_json_text
+from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1194,20 +1194,25 @@ def _extract_breakdown_via_nlp(
         f"EXCERPT:\n{context}"
     )
 
-    try:
-        txt, _citations, _resp = call_claude_text(
-            prompt=prompt,
-            model=MODEL_HAIKU_4_5,
-            api_key=os.environ.get("ANTHROPIC_API_KEY"),
-            max_tokens=2048,
-        )
+    payload: dict | None = None
+    for model in (MODEL_HAIKU, MODEL_SONNET):
+        try:
+            txt, _citations, _resp = call_claude_text(
+                prompt=prompt,
+                model=model,
+                api_key=os.environ.get("ANTHROPIC_API_KEY"),
+                max_tokens=2048,
+            )
+        except Exception:
+            continue
         if not txt:
-            return None
-        payload = parse_json_text(txt)
-    except Exception:
-        return None
+            continue
+        parsed = parse_json_text(txt)
+        if isinstance(parsed, dict):
+            payload = parsed
+            break
 
-    if not isinstance(payload, dict):
+    if payload is None:
         return None
 
     by_segment = _rows_to_value_map(payload.get("by_segment")) if want_segment else {}

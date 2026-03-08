@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from api.cache import get_cached, set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
-from llm_utils import MODEL_HAIKU_4_5, call_claude_text
+from llm_utils import MODEL_HAIKU, call_claude_text
 
 router = APIRouter()
 
@@ -199,7 +199,7 @@ Be specific about the numbers. Write for a professional investor audience."""
     try:
         analysis, _citations, _resp = call_claude_text(
             prompt=prompt,
-            model=MODEL_HAIKU_4_5,
+            model=MODEL_HAIKU,
             api_key=api_key,
             max_tokens=4096,
         )
