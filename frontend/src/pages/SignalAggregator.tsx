@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Info } from "lucide-react"
-import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchSignalAggregator } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
@@ -83,15 +83,19 @@ export function SignalAggregator() {
   const [instrumentInput, setInstrumentInput] = useState(DEFAULT_INSTRUMENTS)
   const [appliedLookback, setAppliedLookback] = useState(156)
   const [appliedInstruments, setAppliedInstruments] = useState(DEFAULT_INSTRUMENTS)
+  const [hasAppliedFilters, setHasAppliedFilters] = useState(false)
 
-  const { data, isLoading, error } = useApiQuery<SignalAggregatorResponse>(
-    ["signal-aggregator", appliedLookback, appliedInstruments],
-    () =>
+  const { data, isLoading, error } = useQuery<SignalAggregatorResponse>({
+    queryKey: ["signal-aggregator", appliedLookback, appliedInstruments],
+    queryFn: () =>
       fetchSignalAggregator({
         lookback_weeks: appliedLookback,
         positioning_instruments: appliedInstruments,
       }),
-  )
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+    enabled: hasAppliedFilters,
+  })
 
   const factors = useMemo(() => data?.factors ?? [], [data?.factors])
   const historySeries = useMemo(() => data?.history?.series ?? [], [data?.history?.series])
@@ -179,6 +183,7 @@ export function SignalAggregator() {
     setAppliedLookback(bounded)
     setLookbackInput(String(bounded))
     setAppliedInstruments(instrumentInput.trim() || DEFAULT_INSTRUMENTS)
+    setHasAppliedFilters(true)
   }
 
   return (
@@ -234,6 +239,11 @@ export function SignalAggregator() {
 
       {isLoading && <LoadingSpinner message="Aggregating module signals..." />}
       {!isLoading && error && <ErrorMessage message={String(error)} />}
+      {!hasAppliedFilters && !isLoading && (
+        <div className="rounded-xl border border-app bg-card p-4 text-sm text-gray-500">
+          Choose parameters and press Apply to fetch signal aggregator data.
+        </div>
+      )}
 
       {data && !isLoading && (
         <>

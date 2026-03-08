@@ -78,9 +78,16 @@ def _as_rows(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, pd.DataFrame):
         if value.empty:
             return []
-        return value.to_dict(orient="records")
+        records = value.to_dict(orient="records")
+        if not isinstance(records, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for row in records:
+            if isinstance(row, dict):
+                normalized.append({str(k): v for k, v in row.items()})
+        return normalized
     if isinstance(value, list):
-        return [row for row in value if isinstance(row, dict)]
+        return [{str(k): v for k, v in row.items()} for row in value if isinstance(row, dict)]
     return []
 
 
