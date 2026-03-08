@@ -428,6 +428,7 @@ def agent_chat(req: AgentChatRequest):
         current_tool_defs = initial_tool_defs
         expanded_toolset = len(current_tool_defs) == len(ANTHROPIC_TOOL_DEFINITIONS)
         tool_result_cache: dict[str, str] = {}
+        portfolio_performance_reprompted = False
 
         try:
             while True:
@@ -558,13 +559,36 @@ def agent_chat(req: AgentChatRequest):
                 # If a fact-backed answer was requested but no tool was called from a narrowed bundle,
                 # retry once with full tool access before finalizing.
                 if force_tool_use and not expanded_toolset:
-                    current_tool_defs = ANTHROPIC_TOOL_DEFINITIONS
-                    expanded_toolset = True
-                    continuation_round += 1
-                    logger.warning(
-                        "agent_tool_policy no tools used under intent bundle; expanding to full toolset and retrying"
-                    )
-                    continue
+                    if intent == "portfolio_performance":
+                        # Avoid expanding to expensive macro tools for simple performance prompts.
+                        # First, reprompt once with an explicit instruction to call get_portfolio.
+                        if not portfolio_performance_reprompted:
+                            conversation.append({"role": "assistant", "content": assistant_content})
+                            conversation.append(
+                                {
+                                    "role": "user",
+                                    "content": [{"type": "text", "text": "Call get_portfolio before answering."}],
+                                }
+                            )
+                            portfolio_performance_reprompted = True
+                            continuation_round += 1
+                            logger.warning(
+                                "agent_tool_policy no tools used for portfolio_performance; retrying narrow bundle"
+                            )
+                            continue
+
+                        logger.warning(
+                            "agent_tool_policy no tools used for portfolio_performance; finalizing without bundle expansion"
+                        )
+                        force_tool_use = False
+                    else:
+                        current_tool_defs = ANTHROPIC_TOOL_DEFINITIONS
+                        expanded_toolset = True
+                        continuation_round += 1
+                        logger.warning(
+                            "agent_tool_policy no tools used under intent bundle; expanding to full toolset and retrying"
+                        )
+                        continue
 
                 if final_message.stop_reason == "pause_turn":
                     conversation.append({"role": "assistant", "content": assistant_content})
