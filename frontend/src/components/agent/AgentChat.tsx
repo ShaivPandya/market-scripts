@@ -84,7 +84,7 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
         <div className="flex items-center justify-between px-4 py-3 border-b border-app bg-card">
           <div className="flex items-center gap-2">
             <MessageCircle size={16} className="text-blue-500" />
-            <span className="text-sm font-semibold text-app">AI Agent</span>
+            <span className="text-sm font-semibold text-app">Stan</span>
           </div>
           <div className="flex items-center gap-1">
             {messages.length > 0 && (
@@ -111,10 +111,10 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
           {messages.length === 0 && !isStreaming ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <MessageCircle size={32} className="text-muted mb-3" />
-              <p className="text-sm font-medium text-app mb-1">AI Agent</p>
+              <p className="text-sm font-medium text-app mb-1">Stan</p>
               <p className="text-xs text-muted mb-6 max-w-[280px]">
                 Ask questions about your portfolio, market conditions, or macro environment.
-                The agent can fetch live data from all your dashboards.
+                Stan can fetch live data from all your dashboards.
               </p>
               <div className="flex flex-col gap-2 w-full max-w-[300px]">
                 {QUICK_PROMPTS.map(prompt => (
