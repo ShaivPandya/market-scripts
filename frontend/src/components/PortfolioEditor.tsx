@@ -130,7 +130,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       onOpenChange={onOpenChange}
       title="Edit Portfolio"
       description="Add or remove positions and update their attributes."
-      maxWidth="max-w-5xl"
+      maxWidth="max-w-6xl"
     >
       {isLoading && (
         <p className="text-sm text-gray-500 py-4">Loading positions...</p>
