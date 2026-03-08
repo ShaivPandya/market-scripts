@@ -377,10 +377,10 @@ def _compact_generic(value: Any, *, max_depth: int, list_limit: int, dict_limit:
     if isinstance(value, dict):
         sorted_items = sorted(value.items(), key=lambda kv: str(kv[0]))
         limited_items = sorted_items[:dict_limit]
-        out: dict[str, Any] = {}
+        out_dict: dict[str, Any] = {}
         for key, raw_val in limited_items:
             key_str = str(key)
-            out[key_str] = _compact_generic(
+            out_dict[key_str] = _compact_generic(
                 raw_val,
                 max_depth=max_depth,
                 list_limit=list_limit,
@@ -388,8 +388,8 @@ def _compact_generic(value: Any, *, max_depth: int, list_limit: int, dict_limit:
                 depth=depth + 1,
             )
         if len(sorted_items) > len(limited_items):
-            out["_truncated_keys"] = len(sorted_items) - len(limited_items)
-        return out
+            out_dict["_truncated_keys"] = len(sorted_items) - len(limited_items)
+        return out_dict
 
     return value
 
@@ -415,7 +415,8 @@ def _compact_ontology_payload(payload: Any) -> Any:
     for row in results[:25]:
         if not isinstance(row, dict):
             continue
-        evidence = row.get("evidence") if isinstance(row.get("evidence"), list) else []
+        raw_evidence = row.get("evidence")
+        evidence = raw_evidence if isinstance(raw_evidence, list) else []
         trimmed.append(
             {
                 "ticker": row.get("ticker"),
@@ -431,8 +432,10 @@ def _compact_ontology_payload(payload: Any) -> Any:
 
     graph = payload.get("graph")
     if isinstance(graph, dict):
-        nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
-        edges = graph.get("edges") if isinstance(graph.get("edges"), list) else []
+        raw_nodes = graph.get("nodes")
+        nodes = raw_nodes if isinstance(raw_nodes, list) else []
+        raw_edges = graph.get("edges")
+        edges = raw_edges if isinstance(raw_edges, list) else []
         out["graph"] = {
             "node_count": len(nodes),
             "edge_count": len(edges),
@@ -452,7 +455,8 @@ def _summarize_payload(value: Any) -> dict[str, Any]:
 
 def _attach_meta(payload: Any, meta: dict[str, Any]) -> dict[str, Any]:
     base = payload if isinstance(payload, dict) else {"data": payload}
-    existing = base.get("_meta") if isinstance(base.get("_meta"), dict) else {}
+    raw_meta = base.get("_meta")
+    existing = raw_meta if isinstance(raw_meta, dict) else {}
     merged = dict(existing)
     merged.update(meta)
     base["_meta"] = merged
@@ -604,7 +608,8 @@ def _build_agent_sentiment_snapshot(put_call: dict, surveys: dict, volatility: l
     latest_naaim = _latest_by_date(naaim_rows)
     latest_vol = _latest_by_date(volatility_rows)
 
-    source_errors = surveys.get("errors") if isinstance(surveys.get("errors"), dict) else {}
+    raw_source_errors = surveys.get("errors")
+    source_errors = raw_source_errors if isinstance(raw_source_errors, dict) else {}
     source_errors = {str(k): str(v) for k, v in source_errors.items() if isinstance(v, str) and v.strip()}
     issues: list[str] = []
     feed_status: dict[str, dict[str, Any]] = {}
