@@ -61,8 +61,31 @@ def _mean(values: Iterable[float]) -> float | None:
     return sum(vals) / len(vals)
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, pd.DataFrame):
+        if value.empty:
+            return []
+        return value.to_dict(orient="records")
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _first_row(value: Any) -> dict[str, Any]:
+    rows = _as_rows(value)
+    if rows:
+        return rows[0]
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
 def _score_vix(vix_data: dict[str, Any]) -> tuple[float | None, dict[str, Any]]:
-    latest = ((vix_data or {}).get("latest_df") or [{}])[0]
+    latest = _first_row(vix_data.get("latest_df"))
     ratio = _to_float(latest.get("Ratio"))
     spot_vix = _to_float(latest.get("VIX"))
 
@@ -124,8 +147,8 @@ def _score_liquidity(liquidity: dict[str, Any]) -> tuple[float | None, dict[str,
     return score, {"regime": regime, "composite_score": composite}
 
 
-def _score_positioning(rows: list[dict[str, Any]]) -> tuple[float | None, dict[str, Any]]:
-    clean_rows = [r for r in rows if isinstance(r, dict)]
+def _score_positioning(rows: Any) -> tuple[float | None, dict[str, Any]]:
+    clean_rows = _as_rows(rows)
     if not clean_rows:
         return None, {"error": "no positioning rows"}
 
@@ -147,8 +170,8 @@ def _score_positioning(rows: list[dict[str, Any]]) -> tuple[float | None, dict[s
     return score, {"rows": len(clean_rows), "forced_flow_count": forced_count, "avg_abs_z_component": avg_z}
 
 
-def _score_sector(rows: list[dict[str, Any]]) -> tuple[float | None, dict[str, Any]]:
-    clean_rows = [r for r in rows if isinstance(r, dict)]
+def _score_sector(rows: Any) -> tuple[float | None, dict[str, Any]]:
+    clean_rows = _as_rows(rows)
     if not clean_rows:
         return None, {"error": "no sector rows"}
 
@@ -509,14 +532,21 @@ def build_signal_aggregator(
     instruments_csv = _parse_instrument_csv(positioning_instruments)
 
     raw, module_status = _fetch_current_modules(instruments_csv)
+    vix_data = _as_dict(raw.get("vix_term_structure"))
+    breadth_data = _as_dict(raw.get("market_breadth"))
+    top50_data = _as_dict(raw.get("top50_breadth"))
+    liquidity_data = _as_dict(raw.get("liquidity"))
+    sector_data = _as_dict(raw.get("sector_metrics"))
+    momentum_data = _as_dict(raw.get("momentum"))
+    positioning_rows = raw.get("positioning")
 
     factor_builders = {
-        "vix": lambda: _score_vix(raw.get("vix_term_structure") or {}),
-        "breadth": lambda: _score_breadth(raw.get("market_breadth") or {}, raw.get("top50_breadth") or {}),
-        "liquidity": lambda: _score_liquidity(raw.get("liquidity") or {}),
-        "positioning": lambda: _score_positioning(raw.get("positioning") or []),
-        "sector": lambda: _score_sector((raw.get("sector_metrics") or {}).get("weights_df") or []),
-        "momentum": lambda: _score_momentum(raw.get("momentum") or {}),
+        "vix": lambda: _score_vix(vix_data),
+        "breadth": lambda: _score_breadth(breadth_data, top50_data),
+        "liquidity": lambda: _score_liquidity(liquidity_data),
+        "positioning": lambda: _score_positioning(positioning_rows),
+        "sector": lambda: _score_sector(sector_data.get("weights_df")),
+        "momentum": lambda: _score_momentum(momentum_data),
     }
 
     factors: list[dict[str, Any]] = []
@@ -564,7 +594,7 @@ def build_signal_aggregator(
     label = _regime_label(composite)
     status = "ok" if len(valid_scores) == len(CONFIGURED_WEIGHTS) else "degraded"
 
-    history = _build_history(lookback, instruments_csv, raw.get("liquidity") or {})
+    history = _build_history(lookback, instruments_csv, liquidity_data)
     history_scores = [float(s) for s in history.get("scores", [])]
     history_pct = None
     if history_scores:
@@ -572,20 +602,20 @@ def build_signal_aggregator(
         history_pct = round((below_or_equal / len(history_scores)) * 100.0, 2)
 
     candidate_dates: list[pd.Timestamp] = []
-    vix_latest = ((raw.get("vix_term_structure") or {}).get("latest_df") or [{}])[0]
+    vix_latest = _first_row(vix_data.get("latest_df"))
     vix_date = vix_latest.get("Date")
     if isinstance(vix_date, str):
         candidate_dates.append(pd.to_datetime(vix_date, errors="coerce"))
-    liq_date = (raw.get("liquidity") or {}).get("latest_date")
+    liq_date = liquidity_data.get("latest_date")
     if liq_date is not None:
         candidate_dates.append(pd.to_datetime(liq_date, errors="coerce"))
-    sector_ts = (raw.get("sector_metrics") or {}).get("timestamp")
+    sector_ts = sector_data.get("timestamp")
     if sector_ts is not None:
         candidate_dates.append(pd.to_datetime(sector_ts, errors="coerce"))
 
-    pos_rows = raw.get("positioning") or []
-    if isinstance(pos_rows, list) and pos_rows:
-        dates = [pd.to_datetime((r or {}).get("report_date"), errors="coerce") for r in pos_rows if isinstance(r, dict)]
+    pos_rows = _as_rows(positioning_rows)
+    if pos_rows:
+        dates = [pd.to_datetime(r.get("report_date"), errors="coerce") for r in pos_rows]
         dates = [d for d in dates if not pd.isna(d)]
         if dates:
             candidate_dates.append(max(dates))
