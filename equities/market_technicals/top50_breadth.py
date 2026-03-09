@@ -34,7 +34,7 @@ try:
 except ImportError:
     CONSOLE = None
 
-from get_top50 import main as generate_top50
+from equities.market_technicals.get_top50 import main as generate_top50
 
 
 def print_header() -> None:

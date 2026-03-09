@@ -89,91 +89,10 @@ ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
 ]
 _TOOL_DEF_BY_NAME: dict[str, dict] = {t["name"]: t for t in ANTHROPIC_TOOL_DEFINITIONS}
 
-_INTENT_TOOL_BUNDLES: dict[str, tuple[str, ...]] = {
-    "portfolio": (
-        "get_portfolio",
-        "query_ontology",
-        "get_signal_aggregator",
-        "get_sector_metrics",
-        "get_sentiment",
-        "get_market_breadth",
-        "get_vix_term_structure",
-        "get_liquidity",
-    ),
-    "sentiment": (
-        "get_sentiment",
-        "get_vix_term_structure",
-        "get_market_breadth",
-        "get_positioning",
-        "get_signal_aggregator",
-    ),
-    "technical": (
-        "get_market_breadth",
-        "get_vix_term_structure",
-        "get_sector_metrics",
-        "get_breakout",
-        "get_signal_aggregator",
-    ),
-    "macro": (
-        "get_liquidity",
-        "get_economic_growth",
-        "get_labor_market",
-        "get_yield_curve",
-        "get_positioning",
-        "get_signal_aggregator",
-        "get_sentiment",
-    ),
-    "central_bank": (
-        "get_central_banks",
-        "get_liquidity",
-        "get_yield_curve",
-        "get_signal_aggregator",
-    ),
-    "general": (
-        "get_signal_aggregator",
-        "get_sentiment",
-        "get_market_breadth",
-        "get_vix_term_structure",
-        "get_liquidity",
-        "get_portfolio",
-        "query_ontology",
-    ),
-}
 _HIGH_COST_TOOLS = {"get_sector_metrics", "query_ontology", "get_signal_aggregator"}
 _CASUAL_RX = re.compile(
     r"^\s*(hi|hello|hey|yo|thanks|thank you|cool|ok|okay|who are you|what can you do)[\s!.?]*$",
     flags=re.IGNORECASE,
-)
-_INTENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (
-        "portfolio",
-        ("portfolio", "holding", "position", "book", "exposure", "ticker", "risk exposure", "ontology"),
-    ),
-    ("sentiment", ("sentiment", "bull", "bear", "fear", "put/call", "put call", "naaim", "aaii", "vvix")),
-    (
-        "technical",
-        ("breadth", "technicals", "technical", "vix term", "momentum", "breakout", "distribution day", "sector"),
-    ),
-    (
-        "macro",
-        ("macro", "growth", "inflation", "claims", "labor", "liquidity", "yield curve", "rates", "treasury"),
-    ),
-    ("central_bank", ("fed", "ecb", "boj", "boe", "central bank", "policy rate", "fomc")),
-)
-_TOOL_REQUIRED_KEYWORDS = (
-    "market",
-    "portfolio",
-    "position",
-    "ticker",
-    "sentiment",
-    "breadth",
-    "liquidity",
-    "yield",
-    "macro",
-    "vix",
-    "risk",
-    "rate",
-    "central bank",
 )
 _PORTFOLIO_CONTEXT_KEYWORDS = ("portfolio", "position", "positions", "holdings", "book")
 _PORTFOLIO_PERFORMANCE_KEYWORDS = (
@@ -235,33 +154,9 @@ def _extract_last_user_text(messages: list[ChatMessage]) -> str:
     return ""
 
 
-def _classify_intent(user_text: str) -> str:
-    text = (user_text or "").strip().lower()
-    if not text:
-        return "general"
-    for intent, patterns in _INTENT_PATTERNS:
-        if any(p in text for p in patterns):
-            return intent
-    return "general"
-
-
-def _requires_tool_use(user_text: str) -> bool:
-    text = (user_text or "").strip().lower()
-    if not text or _CASUAL_RX.match(text):
-        return False
-    if any(k in text for k in _TOOL_REQUIRED_KEYWORDS):
-        return True
-    # Default to tool-backed answers unless the prompt is clearly casual/meta.
-    return True
-
-
-def _tool_defs_for_names(tool_names: list[str]) -> list[dict]:
-    out = []
-    for name in tool_names:
-        td = _TOOL_DEF_BY_NAME.get(name)
-        if td is not None:
-            out.append(td)
-    return out
+def _is_casual(user_text: str) -> bool:
+    text = (user_text or "").strip()
+    return not text or bool(_CASUAL_RX.match(text))
 
 
 def _is_portfolio_performance_request(user_text: str) -> bool:
@@ -274,18 +169,19 @@ def _is_portfolio_performance_request(user_text: str) -> bool:
     return has_portfolio_context and has_performance_keyword and not has_risk_keyword
 
 
-def _select_initial_tool_defs(user_text: str) -> tuple[str, list[dict]]:
-    if _is_portfolio_performance_request(user_text):
-        perf_only_tools = _tool_defs_for_names(["get_portfolio"])
-        if perf_only_tools:
-            return "portfolio_performance", perf_only_tools
+def _select_tool_defs(user_text: str) -> tuple[str, list[dict]]:
+    """Select tools for the agent.
 
-    intent = _classify_intent(user_text)
-    bundle = list(_INTENT_TOOL_BUNDLES.get(intent, _INTENT_TOOL_BUNDLES["general"]))
-    tool_defs = _tool_defs_for_names(bundle)
-    if not tool_defs:
-        return intent, ANTHROPIC_TOOL_DEFINITIONS
-    return intent, tool_defs
+    Portfolio performance requests get only get_portfolio to avoid unnecessary
+    expensive calls.  Everything else gets the full toolset — Claude picks
+    the right tools from their descriptions.
+    """
+    if _is_portfolio_performance_request(user_text):
+        td = _TOOL_DEF_BY_NAME.get("get_portfolio")
+        if td is not None:
+            return "portfolio_performance", [td]
+
+    return "all", ANTHROPIC_TOOL_DEFINITIONS
 
 
 def _tool_call_signature(name: str, args: dict) -> str:
@@ -409,13 +305,13 @@ def agent_chat(req: AgentChatRequest):
     api_key = _read_anthropic_api_key()
     instructions = _build_agent_instructions()
     latest_user_text = _extract_last_user_text(req.messages)
-    intent, initial_tool_defs = _select_initial_tool_defs(latest_user_text)
-    should_force_tools = _requires_tool_use(latest_user_text)
+    mode, tool_defs = _select_tool_defs(latest_user_text)
+    casual = _is_casual(latest_user_text)
     logger.info(
-        "agent_tool_policy intent=%s force_tool_use=%s initial_tools=%s",
-        intent,
-        should_force_tools,
-        [t["name"] for t in initial_tool_defs],
+        "agent_tool_policy mode=%s casual=%s tools=%d",
+        mode,
+        casual,
+        len(tool_defs),
     )
 
     def generate():  # noqa: C901 — complex but linear control flow
@@ -424,11 +320,10 @@ def agent_chat(req: AgentChatRequest):
         client = Anthropic(api_key=api_key)
         conversation: list[dict[str, object]] = [{"role": m.role, "content": m.content} for m in req.messages]
         continuation_round = 0
-        force_tool_use = should_force_tools
-        current_tool_defs = initial_tool_defs
-        expanded_toolset = len(current_tool_defs) == len(ANTHROPIC_TOOL_DEFINITIONS)
+        # Force tool use on the first round for non-casual queries so
+        # answers are always grounded in live data.
+        force_tool_use = not casual
         tool_result_cache: dict[str, str] = {}
-        portfolio_performance_reprompted = False
 
         try:
             while True:
@@ -445,7 +340,7 @@ def agent_chat(req: AgentChatRequest):
                     max_tokens=CLAUDE_MAX_TOKENS,
                     system=instructions,
                     messages=conversation,
-                    tools=current_tool_defs,
+                    tools=tool_defs,
                 )
                 if force_tool_use:
                     stream_kwargs["tool_choice"] = {"type": "any"}
@@ -485,7 +380,6 @@ def agent_chat(req: AgentChatRequest):
                     )
 
                     tool_results: list[dict] = []
-                    had_tool_error = False
                     turn_cache_hits: set[str] = set()
                     pending_calls: list[dict] = []
                     executed_by_signature: dict[str, tuple[str, float]] = {}
@@ -512,8 +406,6 @@ def agent_chat(req: AgentChatRequest):
                             result_str, elapsed_ms = executed_by_signature[signature]
 
                         err_msg = _tool_error_message(result_str)
-                        if err_msg:
-                            had_tool_error = True
                         meta = _tool_meta(result_str)
                         cache_status = "turn_hit" if signature in turn_cache_hits else str(meta.get("cache", "unknown"))
                         logger.info(
@@ -546,49 +438,11 @@ def agent_chat(req: AgentChatRequest):
 
                     conversation.append({"role": "assistant", "content": assistant_content})
                     conversation.append({"role": "user", "content": tool_results})
-                    if had_tool_error and not expanded_toolset:
-                        current_tool_defs = ANTHROPIC_TOOL_DEFINITIONS
-                        expanded_toolset = True
-                        force_tool_use = True
-                        logger.warning("agent_tool_policy expanding toolset to full due to tool errors")
-                    else:
-                        force_tool_use = False
+                    # After the first tool round, let Claude decide whether it
+                    # needs more data (tool_choice: auto).
+                    force_tool_use = False
                     continuation_round += 1
                     continue
-
-                # If a fact-backed answer was requested but no tool was called from a narrowed bundle,
-                # retry once with full tool access before finalizing.
-                if force_tool_use and not expanded_toolset:
-                    if intent == "portfolio_performance":
-                        # Avoid expanding to expensive macro tools for simple performance prompts.
-                        # First, reprompt once with an explicit instruction to call get_portfolio.
-                        if not portfolio_performance_reprompted:
-                            conversation.append({"role": "assistant", "content": assistant_content})
-                            conversation.append(
-                                {
-                                    "role": "user",
-                                    "content": [{"type": "text", "text": "Call get_portfolio before answering."}],
-                                }
-                            )
-                            portfolio_performance_reprompted = True
-                            continuation_round += 1
-                            logger.warning(
-                                "agent_tool_policy no tools used for portfolio_performance; retrying narrow bundle"
-                            )
-                            continue
-
-                        logger.warning(
-                            "agent_tool_policy no tools used for portfolio_performance; finalizing without bundle expansion"
-                        )
-                        force_tool_use = False
-                    else:
-                        current_tool_defs = ANTHROPIC_TOOL_DEFINITIONS
-                        expanded_toolset = True
-                        continuation_round += 1
-                        logger.warning(
-                            "agent_tool_policy no tools used under intent bundle; expanding to full toolset and retrying"
-                        )
-                        continue
 
                 if final_message.stop_reason == "pause_turn":
                     conversation.append({"role": "assistant", "content": assistant_content})

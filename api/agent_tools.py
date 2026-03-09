@@ -210,9 +210,13 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "name": "get_industry_monitor",
         "description": (
-            "Fetch industry monitor data built from transcript and company-level signals "
-            "across tracked industries (e.g., trucking, banks, retail, housing). Returns "
-            "industry trend and momentum metrics to assess sector-level operating conditions."
+            "Fetch what businesses and companies are actually saying from their earnings call "
+            "transcripts. Covers leading (housing, trucking), coincident (banks, retail), and "
+            "lagging (capital goods) industry sectors. Returns per-company sentiment (bullish/"
+            "neutral/bearish), demand trends, pricing commentary, guidance outlook, macro quotes, "
+            "and sector-level economic signals (expanding/stable/slowing/contracting). "
+            "Use this when the user asks what businesses, companies, or management teams are "
+            "saying about the economy, demand, or business conditions."
         ),
         "parameters": {
             "type": "object",
