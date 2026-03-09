@@ -220,7 +220,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[hsl(var(--muted-3))]"
                     style={{ accentColor: "hsl(var(--accent))" }}
                   />
-                  <span className="text-xs text-gray-500 whitespace-nowrap w-14 shrink-0">
+                  <span className="text-xs text-gray-500 whitespace-nowrap w-24 shrink-0">
                     {row.conviction} · {CONVICTION_LABELS[row.conviction]}
                   </span>
                 </div>

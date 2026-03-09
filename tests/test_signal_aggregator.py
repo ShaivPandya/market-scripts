@@ -28,13 +28,12 @@ def test_vix_score_formula():
 def test_build_signal_aggregator_degraded_reweights(monkeypatch):
     from api import signal_aggregator as sa
 
-    def fake_fetch(_: str, **kwargs: Any) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    def fake_fetch(**kwargs: Any) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         raw = {
             "vix_term_structure": {"latest_df": [{"Ratio": 0.92, "VIX": 24.0, "Date": "2026-03-07"}]},
             "market_breadth": None,
             "top50_breadth": None,
             "liquidity": None,
-            "positioning": None,
             "sector_metrics": None,
             "momentum": {"results": [{"avg10_rel_roc": -0.2, "rel_roc42": -0.3}]},
         }
@@ -43,7 +42,6 @@ def test_build_signal_aggregator_degraded_reweights(monkeypatch):
             "market_breadth": {"status": "error", "detail": "failed"},
             "top50_breadth": {"status": "error", "detail": "failed"},
             "liquidity": {"status": "error", "detail": "failed"},
-            "positioning": {"status": "error", "detail": "failed"},
             "sector_metrics": {"status": "error", "detail": "failed"},
             "momentum": {"status": "ok"},
         }
@@ -55,8 +53,8 @@ def test_build_signal_aggregator_degraded_reweights(monkeypatch):
             "lookback_weeks": 156,
             "coverage": {
                 "included_factors": ["vix"],
-                "missing_factors": ["liquidity", "positioning", "breadth", "sector", "momentum"],
-                "module_status": {"vix": "ok", "liquidity": "error", "positioning": "error"},
+                "missing_factors": ["liquidity", "breadth", "sector", "momentum"],
+                "module_status": {"vix": "ok", "liquidity": "error"},
             },
             "series": [{"date": "2026-03-07", "score": 50.0, "label": "transitional", "factors": {"vix": 50.0}}],
             "episodes": [],
@@ -70,8 +68,6 @@ def test_build_signal_aggregator_degraded_reweights(monkeypatch):
     assert result["status"] == "degraded"
     assert "breadth" in result["failed_modules"]
     assert "liquidity" in result["failed_modules"]
-    assert "positioning" in result["failed_modules"]
-
     factors = {f["key"]: f for f in result["factors"]}
     # Only vix (20%) + momentum (10%) available -> effective weights 2/3 and 1/3.
     assert round(float(factors["vix"]["weight"]), 4) == round(2 / 3, 4)
