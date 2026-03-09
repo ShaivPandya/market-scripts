@@ -48,6 +48,7 @@ function newRow(): EditorRow {
     distressed: false,
     conviction: 3,
     cost_basis: null,
+    shares: null,
   }
 }
 
@@ -119,6 +120,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       distressed: r.distressed,
       conviction: r.conviction,
       cost_basis: r.cost_basis,
+      shares: r.shares,
     }))
 
     mutation.mutate(positions)
@@ -130,7 +132,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       onOpenChange={onOpenChange}
       title="Edit Portfolio"
       description="Add or remove positions and update their attributes."
-      maxWidth="max-w-5xl"
+      maxWidth="max-w-6xl"
     >
       {isLoading && (
         <p className="text-sm text-gray-500 py-4">Loading positions...</p>
@@ -145,19 +147,20 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       {!isLoading && !loadError && (
         <>
           {/* Column headers */}
-          <div className="grid grid-cols-12 gap-2 mb-2 px-1">
+          <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
             <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
             <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
             <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
             <p className="col-span-2 text-xs font-medium text-gray-500">Conviction</p>
             <p className="col-span-2 text-xs font-medium text-gray-500">Cost Basis</p>
+            <p className="col-span-2 text-xs font-medium text-gray-500">Shares</p>
             <p className="col-span-1 text-xs font-medium text-gray-500">Distressed</p>
             <p className="col-span-1 text-xs font-medium text-gray-500"></p>
           </div>
 
           <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
             {rows.map(row => (
-              <div key={row._id} className="grid grid-cols-12 gap-2 items-center">
+              <div key={row._id} className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
                 {/* Ticker */}
                 <div className="col-span-2">
                   <input
@@ -220,7 +223,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[hsl(var(--muted-3))]"
                     style={{ accentColor: "hsl(var(--accent))" }}
                   />
-                  <span className="text-xs text-gray-500 whitespace-nowrap w-14 shrink-0">
+                  <span className="text-xs text-gray-500 whitespace-nowrap w-24 shrink-0">
                     {row.conviction} · {CONVICTION_LABELS[row.conviction]}
                   </span>
                 </div>
@@ -237,6 +240,22 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     placeholder="Optional"
                     className="theme-input w-full text-sm"
                     step="0.01"
+                    min="0"
+                  />
+                </div>
+
+                {/* Shares */}
+                <div className="col-span-2">
+                  <input
+                    type="number"
+                    value={row.shares ?? ""}
+                    onChange={e => {
+                      const v = e.target.value
+                      updateRow(row._id, { shares: v === "" ? null : Number(v) })
+                    }}
+                    placeholder="Optional"
+                    className="theme-input w-full text-sm"
+                    step="any"
                     min="0"
                   />
                 </div>

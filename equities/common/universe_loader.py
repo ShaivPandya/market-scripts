@@ -10,6 +10,8 @@ from typing import List, Optional  # noqa: UP035
 
 import pandas as pd
 
+from utils.retry import requests_get
+
 UNIVERSES_DIR = Path(__file__).parent.parent / "universes"
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -286,8 +288,6 @@ def fetch_etf_holdings_ssga(etf_ticker: str) -> list[str]:
     This is intended primarily for SPDR Select Sector ETFs (XLB..XLY).
     Returns an empty list on failure.
     """
-    import requests
-
     etf = clean_ticker(etf_ticker)
     lower = etf.lower()
 
@@ -308,7 +308,7 @@ def fetch_etf_holdings_ssga(etf_ticker: str) -> list[str]:
 
     for url in urls:
         try:
-            resp = requests.get(url, headers=headers, timeout=20)
+            resp = requests_get(url, headers=headers, timeout=20)
             if resp.status_code != 200 or not resp.content:
                 continue
 

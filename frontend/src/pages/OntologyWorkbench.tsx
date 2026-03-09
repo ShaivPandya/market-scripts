@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Info } from "lucide-react"
 import { useMutation } from "@tanstack/react-query"
 import { runOntologyQueryAsync } from "@/lib/api"
@@ -58,6 +58,26 @@ function summarizeEvidence(evidence: OntologyEvidence[] | undefined): string {
     .join(" | ")
 }
 
+const RESULT_COLUMNS: ColumnDef[] = [
+  { key: "ticker", header: "Ticker" },
+  { key: "asset", header: "Asset" },
+  { key: "direction", header: "Direction" },
+  { key: "sector", header: "Sector" },
+  { key: "risk_score", header: "Risk Score", format: v => typeof v === "number" ? v.toFixed(3) : "0.000" },
+  { key: "risk_level", header: "Risk Level" },
+  { key: "evidence", header: "Top Evidence", format: v => summarizeEvidence(v as OntologyEvidence[] | undefined) },
+]
+
+const STATUS_COLUMNS: ColumnDef[] = [
+  { key: "module", header: "Module" },
+  {
+    key: "status",
+    header: "Status",
+    colorFn: v => v === "ok" ? "#00c853; font-weight: bold" : "#ff1744; font-weight: bold",
+  },
+  { key: "detail", header: "Detail" },
+]
+
 export function OntologyWorkbench() {
   const [showInfo, setShowInfo] = useState(false)
   const [query, setQuery] = useState("")
@@ -69,12 +89,39 @@ export function OntologyWorkbench() {
   const [minRiskScore, setMinRiskScore] = useState("")
   const [maxResults, setMaxResults] = useState("")
   const [runId, setRunId] = useState("")
+  const [cachedResult, setCachedResult] = useState<OntologyResponse | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const [elapsed, setElapsed] = useState(0)
 
   const mutation = useMutation({
-    mutationFn: runOntologyQueryAsync,
+    mutationFn: (body: Parameters<typeof runOntologyQueryAsync>[0]) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      return runOntologyQueryAsync(body, controller.signal)
+    },
+    onSuccess: result => setCachedResult((result as OntologyResponse) ?? null),
   })
 
-  function handleSubmit() {
+  useEffect(() => {
+    if (!mutation.isPending) {
+      setElapsed(0)
+      return
+    }
+    const start = Date.now()
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [mutation.isPending])
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+  }, [])
+
+  const handleIntentChange = useCallback((v: string) => setIntent(v as Intent), [])
+  const handleTimeframeChange = useCallback((v: string) => setTimeframe(v as Timeframe), [])
+
+  const handleSubmit = useCallback(() => {
     const filters: Record<string, unknown> = {}
     const parsedTickers = parseCsv(tickers)
     const parsedSectors = parseCsv(sectors)
@@ -98,9 +145,9 @@ export function OntologyWorkbench() {
       include_graph: false,
       refresh_snapshot: false,
     })
-  }
+  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, maxResults, runId, mutation])
 
-  const data = mutation.data as OntologyResponse | undefined
+  const data = (mutation.data as OntologyResponse | undefined) ?? cachedResult
   const rows = useMemo(() => (Array.isArray(data?.results) ? data.results : []), [data?.results])
   const statusRows = useMemo(
     () =>
@@ -111,26 +158,6 @@ export function OntologyWorkbench() {
       })),
     [data?.source_status],
   )
-
-  const resultColumns: ColumnDef[] = [
-    { key: "ticker", header: "Ticker" },
-    { key: "asset", header: "Asset" },
-    { key: "direction", header: "Direction" },
-    { key: "sector", header: "Sector" },
-    { key: "risk_score", header: "Risk Score", format: v => typeof v === "number" ? v.toFixed(3) : "0.000" },
-    { key: "risk_level", header: "Risk Level" },
-    { key: "evidence", header: "Top Evidence", format: v => summarizeEvidence(v as OntologyEvidence[] | undefined) },
-  ]
-
-  const statusColumns: ColumnDef[] = [
-    { key: "module", header: "Module" },
-    {
-      key: "status",
-      header: "Status",
-      colorFn: v => v === "ok" ? "#00c853; font-weight: bold" : "#ff1744; font-weight: bold",
-    },
-    { key: "detail", header: "Detail" },
-  ]
 
   return (
     <div>
@@ -168,7 +195,7 @@ export function OntologyWorkbench() {
         <SelectInput
           label="Intent (optional)"
           value={intent}
-          onChange={v => setIntent(v as Intent)}
+          onChange={handleIntentChange}
           options={[
             { value: "auto", label: "Auto (from query)" },
             { value: "portfolio_risk_exposure", label: "Portfolio Risk Exposure" },
@@ -179,7 +206,7 @@ export function OntologyWorkbench() {
         <SelectInput
           label="Timeframe"
           value={timeframe}
-          onChange={v => setTimeframe(v as Timeframe)}
+          onChange={handleTimeframeChange}
           options={[
             { value: "This Week", label: "This Week" },
             { value: "Daily", label: "Daily" },
@@ -237,10 +264,21 @@ export function OntologyWorkbench() {
         </div>
       </div>
 
-      {mutation.isPending && <LoadingSpinner message="Running ontology query..." />}
+      {mutation.isPending && (
+        <div className="flex items-center gap-4">
+          <LoadingSpinner message={`Running ontology query... (${elapsed}s elapsed)`} />
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="theme-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
 
-      {data && !mutation.isPending && (
+      {data && (
         <>
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard title="Snapshot Run" value={data.run_id || "N/A"} />
@@ -260,12 +298,12 @@ export function OntologyWorkbench() {
 
           <section className="mb-8">
             <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Position Results</h2>
-            <DataTable columns={resultColumns} rows={rows as Record<string, unknown>[]} />
+            <DataTable columns={RESULT_COLUMNS} rows={rows as Record<string, unknown>[]} />
           </section>
 
           <section>
             <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Source Status</h2>
-            <DataTable columns={statusColumns} rows={statusRows} />
+            <DataTable columns={STATUS_COLUMNS} rows={statusRows} />
           </section>
         </>
       )}

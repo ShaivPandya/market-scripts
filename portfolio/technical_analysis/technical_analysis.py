@@ -15,7 +15,8 @@ import sys
 from datetime import datetime
 
 import pandas as pd
-import yfinance as yf
+
+from utils.retry import yf_download, yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ LOGGER = logging.getLogger(__name__)
 
 def _fetch_daily(ticker: str, years: int = 9) -> pd.Series:
     """Download daily close prices (enough history for 200-week MA over 5Y)."""
-    raw = yf.download(
+    raw = yf_download(
         ticker,
         period=f"{years}y",
         interval="1d",
@@ -148,7 +149,7 @@ RATIO_METHODS = {RATIO_METHOD_PRICE}
 def _fetch_name(ticker: str) -> str:
     """Return the long name for *ticker*, falling back to the ticker symbol."""
     try:
-        info = yf.Ticker(ticker).info
+        info = yf_ticker_info(ticker)
         return info.get("longName") or info.get("shortName") or ticker.upper()
     except Exception:
         return ticker.upper()
@@ -157,7 +158,7 @@ def _fetch_name(ticker: str) -> str:
 def _fetch_pair_daily(symbol_a: str, symbol_b: str, years: int = 10) -> pd.DataFrame:
     """Download daily close prices for a two-symbol ratio series."""
     symbols = [symbol_a.upper(), symbol_b.upper()]
-    raw = yf.download(
+    raw = yf_download(
         symbols,
         period=f"{years}y",
         interval="1d",

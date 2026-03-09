@@ -21,6 +21,7 @@ class PortfolioPosition(BaseModel):
     distressed: bool = False
     conviction: int = Field(default=3, ge=1, le=5)
     cost_basis: float | None = None
+    shares: float | None = None
 
 
 class PortfolioUpdateRequest(BaseModel):
@@ -30,7 +31,7 @@ class PortfolioUpdateRequest(BaseModel):
 @router.get("/portfolio-positions")
 def get_portfolio_positions():
     try:
-        from portfolio_db import get_positions
+        from portfolio.portfolio_db import get_positions
 
         return {"positions": get_positions()}
     except Exception as e:
@@ -57,7 +58,7 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
         tickers_seen.add(ticker)
 
     try:
-        from portfolio_db import save_positions
+        from portfolio.portfolio_db import save_positions
 
         rows = [
             {
@@ -67,6 +68,7 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
                 "distressed": pos.distressed,
                 "conviction": pos.conviction,
                 "cost_basis": pos.cost_basis,
+                "shares": pos.shares,
             }
             for pos in req.positions
         ]
@@ -75,7 +77,7 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
         raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
 
     try:
-        from portfolio_dashboard import reload_portfolio
+        from portfolio.portfolio_dashboard import reload_portfolio
 
         reload_portfolio()
     except Exception:

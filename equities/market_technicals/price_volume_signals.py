@@ -18,8 +18,12 @@ Run:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
+
+CONSOLE: Any | None = None
 
 try:
     from rich import box
@@ -27,15 +31,15 @@ try:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-except ImportError:
-    Console = None
 
-CONSOLE = Console() if Console else None
+    CONSOLE = Console()
+except ImportError:
+    CONSOLE = None
 
 try:
-    import yfinance as yf
+    from utils.retry import yf_download
 except ImportError as e:
-    raise SystemExit("Missing dependency yfinance. Install with: pip install yfinance") from e
+    raise SystemExit("Missing dependency utils.retry. Ensure utils/retry.py is available.") from e
 
 
 # ANSI color codes
@@ -96,6 +100,8 @@ def format_number(value, fmt: str):
 
 
 def render_latest_table(latest_df: pd.DataFrame) -> None:
+    if CONSOLE is None:
+        return
     table = Table(title="Latest Signals", box=box.ASCII)
     table.add_column("Market", style="bold")
     table.add_column("Date")
@@ -123,6 +129,8 @@ def render_latest_table(latest_df: pd.DataFrame) -> None:
 
 
 def render_hits_tables(hits_df: pd.DataFrame) -> None:
+    if CONSOLE is None:
+        return
     cols = [
         "Date",
         "Close",
@@ -200,7 +208,7 @@ SYMBOLS = {
 
 
 def download_ohlcv(ticker: str, start: str) -> pd.DataFrame:
-    df = yf.download(ticker, start=start, auto_adjust=False, progress=False)
+    df = yf_download(ticker, start=start, auto_adjust=False, progress=False)
     if df.empty:
         return df
     # Flatten MultiIndex columns if present

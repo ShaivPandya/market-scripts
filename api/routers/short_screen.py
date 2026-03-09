@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from api.cache import stamp_fresh
 from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
@@ -16,7 +17,7 @@ class ShortScreenRequest(BaseModel):
 @router.post("/short-screen")
 def run_short_screen(req: ShortScreenRequest):
     try:
-        from short_screen import get_data
+        from equities.short_screen.short_screen import get_data
 
         data = get_data(
             pb_threshold=req.pb_threshold,
@@ -37,4 +38,4 @@ def run_short_screen(req: ShortScreenRequest):
             result[k] = serialize_dataframe(v.reset_index(drop=True))
         else:
             result[k] = serialize_value(v)
-    return result
+    return stamp_fresh(result)

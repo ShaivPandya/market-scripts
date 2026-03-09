@@ -53,10 +53,9 @@ class SectorMapper:
 @lru_cache(maxsize=512)
 def _fetch_sector_from_yfinance(ticker: str) -> str | None:
     try:
-        import yfinance as yf
+        from utils.retry import yf_ticker_info
 
-        obj = yf.Ticker(ticker)
-        info = obj.get_info() or obj.info or {}
+        info = yf_ticker_info(ticker)
         sector = info.get("sector")
         if isinstance(sector, str) and sector.strip():
             return sector.strip()

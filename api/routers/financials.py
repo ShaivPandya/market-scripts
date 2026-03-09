@@ -38,7 +38,7 @@ def run_financials(req: FinancialsRequest):
             break
 
     try:
-        from financials_single import get_data
+        from portfolio.momentum.fundamental_momentum.financials_single import get_data
 
         data = get_data(ticker)
     except ValueError as e:

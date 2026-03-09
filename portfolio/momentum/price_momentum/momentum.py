@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,18 +32,13 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
-# Add project root to path for imports
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
 from equities.common import list_universes, load_universe
 
 # ANSI color codes
 RED = "\033[91m"
 GREEN = "\033[38;2;52;199;89m"
 RESET = "\033[0m"
-_PORTFOLIO_DB_PATH = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_PORTFOLIO_DB_PATH))
-from portfolio_db import get_positions_df as _get_positions_df  # noqa: E402
+from portfolio.portfolio_db import get_positions_df as _get_positions_df
 
 
 def colorize(value: float, threshold: float, below_is_red: bool = True) -> str:
@@ -63,14 +57,14 @@ def fetch_prices_yfinance(ticker: str, years: int = 5) -> tuple[pd.Series, pd.Se
         Tuple of (price_series, volume_series).
     """
     try:
-        import yfinance as yf
+        from utils.retry import yf_download
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
+        raise RuntimeError("Missing dependency: utils.retry. Ensure utils/retry.py is available.")  # noqa: B904
 
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
-    df = yf.download(
+    df = yf_download(
         ticker,
         start=str(start),
         end=str(end),
@@ -104,9 +98,9 @@ def fetch_prices_batch(tickers: list[str], years: int = 5) -> tuple[dict[str, pd
         Tuple of (prices_map, volumes_map) where each maps ticker -> Series.
     """
     try:
-        import yfinance as yf
+        from utils.retry import yf_download
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
+        raise RuntimeError("Missing dependency: utils.retry. Ensure utils/retry.py is available.")  # noqa: B904
 
     if not tickers:
         return {}, {}
@@ -114,7 +108,7 @@ def fetch_prices_batch(tickers: list[str], years: int = 5) -> tuple[dict[str, pd
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
-    df = yf.download(
+    df = yf_download(
         tickers,
         start=str(start),
         end=str(end),
@@ -202,14 +196,11 @@ def determine_benchmark(metadata: tuple[float | None, str | None, bool]) -> str:
 
 def fetch_ticker_metadata(ticker: str) -> tuple[float | None, str | None, bool]:
     try:
-        import yfinance as yf
+        from utils.retry import yf_ticker_info
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
+        raise RuntimeError("Missing dependency: utils.retry. Ensure utils/retry.py is available.")  # noqa: B904
 
-    yf_ticker = yf.Ticker(ticker)
-    info = yf_ticker.get_info()
-    if not info:
-        info = yf_ticker.info
+    info = yf_ticker_info(ticker)
 
     market_cap = info.get("marketCap")
     sector = info.get("sector")
@@ -309,7 +300,7 @@ def analyze_ticker(
     }
 
 
-def get_data(universe: str = None, years: int = 5) -> dict:
+def get_data(universe: str | None = None, years: int = 5) -> dict:
     """Fetch momentum data for GUI consumption.
 
     Args:

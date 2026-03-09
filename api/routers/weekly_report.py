@@ -242,8 +242,8 @@ def get_weekly_report(
     commodity_order = None
     week_start = (datetime.now() - timedelta(days=7)).date().isoformat()
     try:
-        from index_dashboard import INDEX_ORDER
-        from index_dashboard import get_data as get_index_data
+        from equities.index_dashboard.index_dashboard import INDEX_ORDER
+        from equities.index_dashboard.index_dashboard import get_data as get_index_data
 
         index_order = INDEX_ORDER
         t0 = time.perf_counter()
@@ -258,8 +258,8 @@ def get_weekly_report(
         logger.warning("weekly_report indices fetch failed: %s", e, exc_info=True)
 
     try:
-        from fx_dashboard import PAIR_ORDER
-        from fx_dashboard import get_data as get_fx_data
+        from fx.fx_dashboard.fx_dashboard import PAIR_ORDER
+        from fx.fx_dashboard.fx_dashboard import get_data as get_fx_data
 
         pair_order = PAIR_ORDER
         t0 = time.perf_counter()
@@ -274,13 +274,8 @@ def get_weekly_report(
         logger.warning("weekly_report fx fetch failed: %s", e, exc_info=True)
 
     try:
-        import sys
-
-        from commodities_dashboard import COMMODITY_ORDER
-
-        # Commodities isn't easily exposed without sys.path hacks that main.py does,
-        # but the router should have access if it's imported properly.
-        from commodities_dashboard import get_data as get_commodity_data
+        from commodities.commodities_dashboard import COMMODITY_ORDER
+        from commodities.commodities_dashboard import get_data as get_commodity_data
 
         commodity_order = COMMODITY_ORDER
         t0 = time.perf_counter()
@@ -295,7 +290,7 @@ def get_weekly_report(
         logger.warning("weekly_report commodities fetch failed: %s", e, exc_info=True)
 
     try:
-        from market_breadth import get_data as get_breadth_data
+        from equities.market_technicals.market_breadth import get_data as get_breadth_data
 
         t0 = time.perf_counter()
         breadth = get_breadth_data(period="1y")
@@ -305,7 +300,7 @@ def get_weekly_report(
         logger.warning("weekly_report breadth fetch failed: %s", e, exc_info=True)
 
     try:
-        from top50_breadth import get_data as get_top50_data
+        from equities.market_technicals.top50_breadth import get_data as get_top50_data
 
         t0 = time.perf_counter()
         top50 = get_top50_data()
@@ -315,7 +310,7 @@ def get_weekly_report(
         logger.warning("weekly_report top50 breadth fetch failed: %s", e, exc_info=True)
 
     try:
-        from vix_term_structure import get_data as get_vix_data
+        from equities.market_technicals.vix_term_structure import get_data as get_vix_data
 
         t0 = time.perf_counter()
         vix = get_vix_data()
@@ -325,7 +320,7 @@ def get_weekly_report(
         logger.warning("weekly_report vix term structure fetch failed: %s", e, exc_info=True)
 
     try:
-        from sector_metrics import get_data as get_sector_data
+        from equities.sector_metrics.sector_metrics import get_data as get_sector_data
 
         t0 = time.perf_counter()
         sector = get_sector_data()
@@ -350,7 +345,7 @@ def get_weekly_report(
         logger.warning("weekly_report sector metrics fetch failed: %s", e, exc_info=True)
 
     try:
-        from positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
+        from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
 
         # Fetching basic summary for positioning
         t0 = time.perf_counter()
@@ -364,11 +359,11 @@ def get_weekly_report(
         )
         logger.info("weekly_report positioning fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
-        pos = {"error": str(e)}
+        pos = [{"error": str(e)}]
         logger.warning("weekly_report positioning fetch failed: %s", e, exc_info=True)
 
     try:
-        from technical_analysis import get_ratio_data
+        from portfolio.technical_analysis.technical_analysis import get_ratio_data
 
         t0 = time.perf_counter()
         silver_gold = _slim_ratio_result(get_ratio_data("SI=F", "GC=F", start_date=week_start))

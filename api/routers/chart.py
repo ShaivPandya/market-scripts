@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from api.cache import stamp_fresh
 from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
@@ -24,7 +25,7 @@ class RatioChartRequest(BaseModel):
 def run_chart(req: ChartRequest):
     ticker = req.ticker.strip().upper()
     try:
-        from technical_analysis import get_data
+        from portfolio.technical_analysis.technical_analysis import get_data
 
         data = get_data(ticker, lookback=req.lookback)
     except Exception as e:
@@ -41,7 +42,7 @@ def run_chart(req: ChartRequest):
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
-    return result
+    return stamp_fresh(result)
 
 
 @router.post("/chart/ratio")
@@ -52,7 +53,7 @@ def run_chart_ratio(req: RatioChartRequest):
         raise HTTPException(status_code=400, detail="Both symbol_a and symbol_b are required.")
 
     try:
-        from technical_analysis import get_ratio_data
+        from portfolio.technical_analysis.technical_analysis import get_ratio_data
 
         data = get_ratio_data(
             symbol_a=symbol_a,
@@ -75,4 +76,4 @@ def run_chart_ratio(req: RatioChartRequest):
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
-    return result
+    return stamp_fresh(result)

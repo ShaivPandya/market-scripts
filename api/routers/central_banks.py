@@ -15,7 +15,7 @@ def get_central_banks(refresh: bool = False):
         if cached is not None:
             return cached
     try:
-        from central_bank import get_data
+        from macro.central_banks.central_bank import get_data
 
         data = get_data(refresh=refresh)
     except Exception as e:

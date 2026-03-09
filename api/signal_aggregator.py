@@ -3,6 +3,44 @@ Cross-module signal aggregation service.
 
 This module computes a deterministic market regime score from multiple modules
 and builds a hybrid historical regime timeline from modules with native history.
+
+The composite score (0-100) describes current market stress. Higher = more stress.
+
+WEIGHT RATIONALE (validated via 10-year backtest: backtest/signal_backtest.py)
+=============================================================================
+Backtest period: 2016-03 to 2026-03, 523 weekly observations, all 6 factors.
+
+Factor weights:
+  vix        0.20  VIX term structure ratio (VIX3M/VIX). Threshold 18 ≈ 20-yr
+                   median VIX; /12 ≈ 1σ above mean. Strong contrarian signal:
+                   4-week quintile spread -1.74 (high fear → higher fwd returns).
+  breadth    0.20  % of SPX above 200d/20d MA + 20d lows. Strongest contrarian
+                   signal: 4-week spread -1.83. Poor breadth → mean reversion.
+  liquidity  0.35  US-only FRED composite (net liq, reserves, OAS, NFCI, M2/GDP).
+                   ONLY factor with directional predictive power: spread +1.13.
+                   Tight liquidity genuinely predicts lower forward returns.
+                   Weight increased from 0.20 → 0.35 (absorbed positioning's 0.15).
+  sector     0.15  SPDR sector ETF relative perf, 3M change, 200DMA distance.
+                   Weak contrarian signal: spread -0.55.
+  momentum   0.10  SPX constituent relative ROC bullish ratio. Moderate
+                   contrarian signal: spread -1.23.
+
+Regime thresholds:
+  The composite score has mean ~20, median ~18, std ~10 over the backtest
+  period. The thresholds are intentionally set high so that
+  "risk-off" flags are rare and meaningful (genuine stress events like
+  COVID-19 Mar 2020). For a more balanced split, use ~15/28 (≈40th/75th
+  percentile), but this dilutes the signal.
+
+Predictive interpretation:
+  The composite works as a CONTRARIAN indicator. Empirically, "risk-off"
+  periods (high composite) have *higher* subsequent SPX returns — classic
+  "buy the fear" mean reversion. 4-week forward return spread:
+    risk-on: +1.07%  |  transitional: +2.45%  |  risk-off: +10.70%
+  The `forward_outlook` field in the output flips this for predictive use:
+    elevated composite → "opportunity" (higher expected fwd returns)
+    low composite      → "complacent"  (average/lower expected fwd returns)
+=============================================================================
 """
 
 from __future__ import annotations
@@ -25,13 +63,12 @@ DEFAULT_POSITIONING_INSTRUMENTS = "SP500,NASDAQ,RUSSELL,US10Y,EUR"
 CONFIGURED_WEIGHTS: dict[str, float] = {
     "vix": 0.20,
     "breadth": 0.20,
-    "liquidity": 0.20,
-    "positioning": 0.15,
+    "liquidity": 0.35,
     "sector": 0.15,
     "momentum": 0.10,
 }
 
-HISTORY_CAPABLE_FACTORS = {"vix", "liquidity", "positioning"}
+HISTORY_CAPABLE_FACTORS = {"vix", "liquidity"}
 MISSING_HISTORY_FACTORS = {"breadth", "sector", "momentum"}
 
 MODULE_TIMEOUT = 90  # seconds per module in ThreadPoolExecutor
@@ -102,9 +139,14 @@ def _first_row(value: Any) -> dict[str, Any]:
 
 def _score_vix(vix_data: dict[str, Any]) -> tuple[float | None, dict[str, Any]]:
     latest = _first_row(vix_data.get("latest_df"))
-    ratio = _to_float(latest.get("Ratio"))
+    ratio = _to_float(latest.get("Ratio"))  # VIX3M / VIX
     spot_vix = _to_float(latest.get("VIX"))
 
+    # 70% weight on term structure ratio, 30% on spot VIX level.
+    # Ratio < 1.0 = backwardation (near-term fear > longer-term) → score rises.
+    # (1.0 - ratio) / 0.2: ratio of 0.8 → score 1.0, ratio of 1.0 → score 0.0.
+    # Spot VIX offset 18.0 ≈ 20-year median VIX (Cboe); /12.0 ≈ 1σ above mean.
+    # VIX 30 → score 1.0, VIX 18 → score 0.0.
     parts: list[tuple[float, float]] = []
     if ratio is not None:
         parts.append((70.0, clamp01((1.0 - ratio) / 0.2)))
@@ -245,6 +287,11 @@ def _score_momentum(momentum_data: dict[str, Any]) -> tuple[float | None, dict[s
 
 
 def _regime_label(score: float) -> str:
+    # Thresholds set high so "risk-off" flags are rare and meaningful.
+    # At 40/65, ~94% of weeks are risk-on, ~6% transitional, <1% risk-off
+    # over the 2016-2026 backtest. This is intentional: risk-off should only
+    # fire during genuine stress events (e.g. COVID Mar-2020).
+    # For a more balanced split, use ~15/28 (40th/75th percentile).
     if score < 40.0:
         return "risk-on"
     if score < 65.0:
@@ -313,7 +360,7 @@ def _build_vix_history_series(
     lookback_weeks: int,
     preloaded: tuple[pd.DataFrame, str] | None = None,
 ) -> pd.Series:
-    from vix_term_structure import add_signals, load_term_structure
+    from equities.market_technicals.vix_term_structure import add_signals, load_term_structure
 
     if preloaded is not None:
         data, _ = preloaded
@@ -332,7 +379,7 @@ def _build_vix_history_series(
 
 
 def _build_liquidity_history_series(liquidity_raw: dict[str, Any], lookback_weeks: int) -> pd.Series:
-    from liquidity import classify_regime
+    from macro.liquidity.liquidity import classify_regime
 
     composite_series = liquidity_raw.get("composite_series")
     if not isinstance(composite_series, pd.Series):
@@ -357,7 +404,7 @@ def _build_positioning_history_series(
     instruments_csv: str,
     preloaded_df: pd.DataFrame | None = None,
 ) -> pd.Series:
-    from positioning import DATASETS, DEFAULT_DOMAIN, INSTRUMENTS, fetch_markets_timeseries
+    from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, INSTRUMENTS, fetch_markets_timeseries
 
     aliases = [s.strip().upper() for s in (instruments_csv or "").split(",") if s.strip()]
     aliases = aliases or [s.strip() for s in DEFAULT_POSITIONING_INSTRUMENTS.split(",") if s.strip()]
@@ -424,9 +471,6 @@ def _build_history(
     history_tasks = {
         "vix": lambda: _build_vix_history_series(lookback_weeks, preloaded=vix_preloaded),
         "liquidity": lambda: _build_liquidity_history_series(liquidity_raw, lookback_weeks),
-        "positioning": lambda: _build_positioning_history_series(
-            lookback_weeks, instruments_csv, preloaded_df=positioning_preloaded_df
-        ),
     }
 
     with ThreadPoolExecutor(max_workers=len(history_tasks)) as pool:
@@ -470,7 +514,7 @@ def _build_history(
         weighted = 0.0
         total_w = 0.0
         factor_values: dict[str, float] = {}
-        for factor in ("vix", "liquidity", "positioning"):
+        for factor in ("vix", "liquidity"):
             value = _to_float(row.get(factor))
             if value is None:
                 continue
@@ -508,22 +552,10 @@ def _build_history(
     }
 
 
-def _parse_instrument_csv(instruments_csv: str) -> str:
-    from positioning import INSTRUMENTS
-
-    aliases = [s.strip().upper() for s in (instruments_csv or "").split(",") if s.strip()]
-    if not aliases:
-        aliases = [s.strip().upper() for s in DEFAULT_POSITIONING_INSTRUMENTS.split(",") if s.strip()]
-    keep = [a for a in aliases if a in INSTRUMENTS]
-    if not keep:
-        keep = [s.strip().upper() for s in DEFAULT_POSITIONING_INSTRUMENTS.split(",") if s.strip()]
-    return ",".join(keep)
-
-
 def _download_sp500_prices() -> pd.DataFrame:
     """Download S&P 500 constituent prices once for all modules."""
-    import yfinance as yf
-    from market_breadth import get_sp500_tickers
+    from equities.market_technicals.market_breadth import get_sp500_tickers
+    from utils.retry import yf_download
 
     tickers = get_sp500_tickers()
     chunks = [tickers[i : i + SP500_CHUNK_SIZE] for i in range(0, len(tickers), SP500_CHUNK_SIZE)]
@@ -532,7 +564,7 @@ def _download_sp500_prices() -> pd.DataFrame:
     for idx, chunk in enumerate(chunks, 1):
         _log.info("S&P 500 shared download batch %d/%d (%d tickers)", idx, len(chunks), len(chunk))
         try:
-            df = yf.download(
+            df = yf_download(
                 tickers=chunk,
                 period="2y",
                 interval="1d",
@@ -578,16 +610,14 @@ def _download_sp500_prices() -> pd.DataFrame:
 
 
 def _fetch_current_modules(
-    positioning_instruments_csv: str,
     lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    from liquidity import get_snapshot as get_liquidity_snapshot
-    from market_breadth import get_data as get_market_breadth
-    from momentum import get_data as get_momentum_data
-    from positioning import DATASETS, DEFAULT_DOMAIN, INSTRUMENTS, fetch_markets_timeseries
-    from sector_metrics import get_data as get_sector_metrics_data
-    from top50_breadth import get_data as get_top50_breadth
-    from vix_term_structure import add_signals, load_term_structure
+    from equities.market_technicals.market_breadth import get_data as get_market_breadth
+    from equities.market_technicals.top50_breadth import get_data as get_top50_breadth
+    from equities.market_technicals.vix_term_structure import add_signals, load_term_structure
+    from equities.sector_metrics.sector_metrics import get_data as get_sector_metrics_data
+    from macro.liquidity.liquidity import get_snapshot as get_liquidity_snapshot
+    from portfolio.momentum.price_momentum.momentum import get_data as get_momentum_data
 
     raw: dict[str, Any] = {}
     module_status: dict[str, dict[str, Any]] = {}
@@ -599,15 +629,9 @@ def _fetch_current_modules(
     prices_arg = sp500_prices if not sp500_prices.empty else None
     _log.info("Shared S&P 500 download complete (empty=%s)", sp500_prices.empty)
 
-    # ── Pre-compute VIX and positioning parameters ────────────────────
+    # ── Pre-compute VIX parameters ──────────────────────────────────
     # VIX: use wider lookback so the same data serves current + history
     vix_start = (date.today() - timedelta(days=max(lookback_weeks * 7 + 45, 540))).isoformat()
-
-    # Positioning: resolve instrument aliases once
-    pos_aliases = [s.strip().upper() for s in (positioning_instruments_csv or "").split(",") if s.strip()]
-    pos_aliases = pos_aliases or [s.strip().upper() for s in DEFAULT_POSITIONING_INSTRUMENTS.split(",") if s.strip()]
-    alias_to_market = {a: INSTRUMENTS[a] for a in pos_aliases if a in INSTRUMENTS}
-    pos_markets = list(alias_to_market.values())
 
     # ── VIX combined task (current + history data in one fetch) ───────
     def _vix_task() -> dict[str, Any]:
@@ -651,42 +675,6 @@ def _fetch_current_modules(
             "vix_raw_ts": (data, used_vix3m),
         }
 
-    # ── Positioning combined task (current + history in one fetch) ────
-    def _positioning_task() -> dict[str, Any]:
-        if not pos_markets:
-            return {"positioning": [], "positioning_df": pd.DataFrame()}
-        df_all = fetch_markets_timeseries(
-            domain=DEFAULT_DOMAIN,
-            dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
-            app_token=os.environ.get("SODA_APP_TOKEN") or None,
-            markets_exact=pos_markets,
-            start="2015-01-01",
-            end=None,
-            groups=None,
-            z_window=0,
-            force_threshold=2.0,
-        )
-        # Extract latest row per instrument (replicates fetch_multiple_instruments)
-        results: list[dict[str, Any]] = []
-        for alias, market_name in alias_to_market.items():
-            try:
-                mdf = df_all[df_all["market_and_exchange_names"] == market_name]
-                row = mdf.dropna(subset=["report_date"]).iloc[-1]
-                results.append(
-                    {
-                        "instrument": alias,
-                        "report_date": row["report_date"],
-                        "lf_net": row["lf_net"],
-                        "lf_net_pct_oi": row.get("lf_net_pct_oi"),
-                        "lf_z": row.get("lf_z"),
-                        "lf_deleveraging_z": row.get("lf_deleveraging_z"),
-                        "lf_forced": row.get("lf_forced"),
-                    }
-                )
-            except Exception:
-                pass
-        return {"positioning": results, "positioning_df": df_all}
-
     # ── Phase 2: All modules in parallel ──────────────────────────────
     tasks: dict[str, Any] = {
         "vix_combined": _vix_task,
@@ -695,13 +683,11 @@ def _fetch_current_modules(
         "liquidity": get_liquidity_snapshot,
         "sector_metrics": lambda: get_sector_metrics_data(prices_df=prices_arg),
         "momentum": get_momentum_data,
-        "positioning_combined": _positioning_task,
     }
 
     # Map combined task names → canonical module keys
     _COMBINED_KEYS = {
         "vix_combined": ("vix_term_structure", "vix_raw_ts"),
-        "positioning_combined": ("positioning", "positioning_df"),
     }
 
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
@@ -749,29 +735,27 @@ def build_signal_aggregator(
     include_raw_modules: bool = False,
 ) -> dict[str, Any]:
     lookback = max(26, min(int(lookback_weeks), 520))
-    instruments_csv = _parse_instrument_csv(positioning_instruments)
 
-    raw, module_status = _fetch_current_modules(instruments_csv, lookback_weeks=lookback)
+    raw, module_status = _fetch_current_modules(lookback_weeks=lookback)
     vix_data = _as_dict(raw.get("vix_term_structure"))
     breadth_data = _as_dict(raw.get("market_breadth"))
     top50_data = _as_dict(raw.get("top50_breadth"))
     liquidity_data = _as_dict(raw.get("liquidity"))
     sector_data = _as_dict(raw.get("sector_metrics"))
     momentum_data = _as_dict(raw.get("momentum"))
-    positioning_rows = raw.get("positioning")
 
     # Pre-fetched data for history reuse (avoids redundant network calls)
     vix_preloaded = raw.get("vix_raw_ts")  # tuple[DataFrame, str] | None
-    positioning_preloaded_df = raw.get("positioning_df")  # DataFrame | None
 
     factor_builders = {
         "vix": lambda: _score_vix(vix_data),
         "breadth": lambda: _score_breadth(breadth_data, top50_data),
         "liquidity": lambda: _score_liquidity(liquidity_data),
-        "positioning": lambda: _score_positioning(positioning_rows),
         "sector": lambda: _score_sector(sector_data.get("weights_df")),
         "momentum": lambda: _score_momentum(momentum_data),
     }
+    # NOTE: positioning removed — near-zero predictive power (backtest corr=-0.004).
+    # Weight reallocated to liquidity (the only directional predictor).
 
     factors: list[dict[str, Any]] = []
     valid_scores: dict[str, float] = {}
@@ -820,10 +804,9 @@ def build_signal_aggregator(
 
     history = _build_history(
         lookback,
-        instruments_csv,
+        "",
         liquidity_data,
         vix_preloaded=vix_preloaded,
-        positioning_preloaded_df=positioning_preloaded_df,
     )
     history_scores = [float(s) for s in history.get("scores", [])]
     history_pct = None
@@ -843,17 +826,23 @@ def build_signal_aggregator(
     if sector_ts is not None:
         candidate_dates.append(pd.to_datetime(sector_ts, errors="coerce"))
 
-    pos_rows = _as_rows(positioning_rows)
-    if pos_rows:
-        dates = [pd.to_datetime(r.get("report_date"), errors="coerce") for r in pos_rows]
-        dates = [d for d in dates if not pd.isna(d)]
-        if dates:
-            candidate_dates.append(max(dates))
-
     candidate_dates = [d for d in candidate_dates if not pd.isna(d)]
     as_of = max(candidate_dates).date().isoformat() if candidate_dates else date.today().isoformat()
 
     confidence = round(total_configured_available, 4)
+
+    # Contrarian forward outlook (validated by 10-year backtest)
+    # Higher composite → historically higher subsequent SPX returns (mean reversion)
+    if composite >= 35.0:
+        fwd_outlook = "opportunity"
+        fwd_outlook_detail = "Elevated stress historically precedes above-average forward returns"
+    elif composite >= 22.0:
+        fwd_outlook = "neutral"
+        fwd_outlook_detail = "Moderate stress; forward return expectations near baseline"
+    else:
+        fwd_outlook = "complacent"
+        fwd_outlook_detail = "Low stress / complacency; forward returns historically average or below"
+
     response: dict[str, Any] = {
         "status": status,
         "as_of": as_of,
@@ -862,6 +851,11 @@ def build_signal_aggregator(
             "score": round(composite, 2),
             "confidence": confidence,
             "history_percentile": history_pct,
+        },
+        "forward_outlook": {
+            "label": fwd_outlook,
+            "detail": fwd_outlook_detail,
+            "basis": "contrarian (10-year backtest: high stress → higher fwd returns)",
         },
         "weights": {
             "configured": CONFIGURED_WEIGHTS,
@@ -881,7 +875,7 @@ def build_signal_aggregator(
 
     if include_raw_modules:
         # Exclude internal preloaded keys and large series from raw output
-        _internal_keys = {"vix_raw_ts", "positioning_df"}
+        _internal_keys = {"vix_raw_ts"}
         raw_modules = {}
         for key, value in raw.items():
             if key in _internal_keys:

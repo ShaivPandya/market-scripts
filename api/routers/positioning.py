@@ -28,7 +28,7 @@ def get_positioning_summary(
     if cached is not None:
         return cached
     try:
-        from positioning import (
+        from macro.positioning.positioning import (
             DATASETS,
             DEFAULT_DOMAIN,
             INSTRUMENTS,
@@ -71,7 +71,7 @@ def get_positioning_timeseries(
     if cached is not None:
         return cached
     try:
-        from positioning import DATASETS, DEFAULT_DOMAIN, fetch_market_timeseries
+        from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_market_timeseries
 
         df = fetch_market_timeseries(
             domain=DEFAULT_DOMAIN,
@@ -96,7 +96,7 @@ def get_positioning_timeseries(
 def get_positioning_instruments():
     """Return available instrument aliases."""
     try:
-        from positioning import INSTRUMENTS
+        from macro.positioning.positioning import INSTRUMENTS
 
         return {"instruments": INSTRUMENTS}
     except Exception as e:

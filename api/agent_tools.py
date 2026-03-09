@@ -830,7 +830,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "agent_liquidity"
 
         def _load():
-            from liquidity import get_snapshot
+            from macro.liquidity.liquidity import get_snapshot
 
             data = get_snapshot()
             filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
@@ -843,7 +843,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "agent_market_breadth"
 
         def _load():
-            from market_breadth import get_data
+            from equities.market_technicals.market_breadth import get_data
 
             return serialize_value(get_data())
 
@@ -854,7 +854,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "vix_term_structure"
 
         def _load():
-            from vix_term_structure import get_data
+            from equities.market_technicals.vix_term_structure import get_data
 
             return serialize_value(get_data())
 
@@ -867,7 +867,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = f"positioning_summary:{instruments}:2015-01-01:None:None:0:2.0"
 
         def _load():
-            from positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
+            from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
 
             instrument_list = [i.strip() for i in instruments.split(",") if i.strip()]
             data = fetch_multiple_instruments(
@@ -911,7 +911,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "economic_growth"
 
         def _load():
-            from economic_growth import get_data
+            from macro.economic_growth.economic_growth import get_data
 
             return serialize_value(get_data())
 
@@ -922,7 +922,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "labor_market"
 
         def _load():
-            from labor_market import get_data
+            from macro.labor_market.labor_market import get_data
 
             return serialize_value(get_data())
 
@@ -933,7 +933,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "sector_metrics"
 
         def _load():
-            from sector_metrics import get_data
+            from equities.sector_metrics.sector_metrics import get_data
 
             return serialize_value(get_data())
 
@@ -946,7 +946,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = f"portfolio:{timeframe}"
 
         def _load():
-            from portfolio_dashboard import get_data
+            from portfolio.portfolio_dashboard import get_data
 
             return serialize_value(get_data(timeframe=timeframe))
 
@@ -958,7 +958,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = f"yield_curve:{lookback_days}"
 
         def _load():
-            from yield_curve import get_data
+            from government_bonds.yield_curve import get_data
 
             return serialize_value(get_data(lookback_days=lookback_days))
 
@@ -1009,7 +1009,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "central_banks"
 
         def _load():
-            from central_bank import get_data
+            from macro.central_banks.central_bank import get_data
 
             return serialize_value(get_data())
 
@@ -1019,7 +1019,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
     if name == "get_industry_monitor":
         refresh = bool(args.get("refresh", False))
         key = f"industry_monitor:{refresh}"
-        from industry_monitor import get_data
+        from macro.industry.industry_monitor import get_data
 
         if refresh:
             return serialize_value(get_data(refresh=True)), {"cache": "bypass"}
@@ -1034,7 +1034,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "breakout"
 
         def _load():
-            from breakout import get_data
+            from macro.breakout.breakout import get_data
 
             return serialize_value(get_data())
 

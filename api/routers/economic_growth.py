@@ -36,7 +36,7 @@ def get_economic_growth():
     if cached is not None:
         return _normalize_currency_payload(cached)
     try:
-        from economic_growth import get_data
+        from macro.economic_growth.economic_growth import get_data
 
         data = get_data()
     except Exception as e:

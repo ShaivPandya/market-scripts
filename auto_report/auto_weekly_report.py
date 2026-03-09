@@ -25,12 +25,6 @@ from zoneinfo import ZoneInfo
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
 
-# Centralised path setup — replaces inline sys.path block
-sys.path.insert(0, str(PROJECT_ROOT))
-from paths import setup_paths
-
-setup_paths()
-
 from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
@@ -252,7 +246,7 @@ def _build_system_message(last_week_summary: str | None) -> str:
 
 def load_theses() -> dict[str, str | None]:
     """Load investment thesis markdown files for all portfolio tickers."""
-    from portfolio_db import get_positions
+    from portfolio.portfolio_db import get_positions
 
     default_project_root = SCRIPT_DIR.parent
 
@@ -352,7 +346,7 @@ def collect_thesis_data() -> dict:
     results["theses"] = load_theses()
 
     # 2. Load portfolio positions
-    from portfolio_db import get_positions as _get_positions
+    from portfolio.portfolio_db import get_positions as _get_positions
 
     results["portfolio"] = [r for r in _get_positions() if r.get("ticker")]
 
@@ -360,7 +354,7 @@ def collect_thesis_data() -> dict:
 
     # 3. Portfolio news (7-day filtered)
     try:
-        from portfolio_news import get_data as get_news_data
+        from portfolio.portfolio_news import get_data as get_news_data
 
         t0 = time.perf_counter()
         news_data = get_news_data(refresh=False)
@@ -372,7 +366,7 @@ def collect_thesis_data() -> dict:
 
     # 4. Technical analysis (per-ticker summaries)
     try:
-        from technical_analysis import get_data as get_ta_data
+        from portfolio.technical_analysis.technical_analysis import get_data as get_ta_data
 
         t0 = time.perf_counter()
         ta_results: dict = {}
@@ -390,7 +384,7 @@ def collect_thesis_data() -> dict:
 
     # 5. Price momentum (batch)
     try:
-        from momentum import get_data as get_momentum_data
+        from portfolio.momentum.price_momentum.momentum import get_data as get_momentum_data
 
         t0 = time.perf_counter()
         momentum = get_momentum_data()
@@ -414,8 +408,8 @@ def collect_data() -> dict:
 
     # 1. Indices
     try:
-        from index_dashboard import INDEX_ORDER
-        from index_dashboard import get_data as get_index_data
+        from equities.index_dashboard.index_dashboard import INDEX_ORDER
+        from equities.index_dashboard.index_dashboard import get_data as get_index_data
 
         t0 = time.perf_counter()
         indices = get_index_data("This Week")
@@ -427,8 +421,8 @@ def collect_data() -> dict:
 
     # 2. FX
     try:
-        from fx_dashboard import PAIR_ORDER
-        from fx_dashboard import get_data as get_fx_data
+        from fx.fx_dashboard.fx_dashboard import PAIR_ORDER
+        from fx.fx_dashboard.fx_dashboard import get_data as get_fx_data
 
         t0 = time.perf_counter()
         fx = get_fx_data("This Week")
@@ -440,10 +434,10 @@ def collect_data() -> dict:
 
     # 3. Commodities
     try:
-        from commodities_dashboard import (
+        from commodities.commodities_dashboard import (
             COMMODITY_ORDER,
         )
-        from commodities_dashboard import (
+        from commodities.commodities_dashboard import (
             get_data as get_commodity_data,
         )
 
@@ -460,7 +454,7 @@ def collect_data() -> dict:
 
     # 4. Market Breadth
     try:
-        from market_breadth import get_data as get_breadth_data
+        from equities.market_technicals.market_breadth import get_data as get_breadth_data
 
         t0 = time.perf_counter()
         breadth = get_breadth_data(period="1y")
@@ -474,7 +468,7 @@ def collect_data() -> dict:
 
     # 5. Top 50 Breadth
     try:
-        from top50_breadth import get_data as get_top50_data
+        from equities.market_technicals.top50_breadth import get_data as get_top50_data
 
         t0 = time.perf_counter()
         top50 = get_top50_data()
@@ -486,7 +480,7 @@ def collect_data() -> dict:
 
     # 6. VIX Term Structure
     try:
-        from vix_term_structure import get_data as get_vix_data
+        from equities.market_technicals.vix_term_structure import get_data as get_vix_data
 
         t0 = time.perf_counter()
         vix = get_vix_data()
@@ -498,7 +492,7 @@ def collect_data() -> dict:
 
     # 7. Sector Metrics — pre-process weights_df
     try:
-        from sector_metrics import get_data as get_sector_data
+        from equities.sector_metrics.sector_metrics import get_data as get_sector_data
 
         t0 = time.perf_counter()
         sector = get_sector_data()
@@ -521,7 +515,7 @@ def collect_data() -> dict:
 
     # 8. Positioning
     try:
-        from positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
+        from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
 
         t0 = time.perf_counter()
         pos = fetch_multiple_instruments(
@@ -540,7 +534,7 @@ def collect_data() -> dict:
 
     # 9. Ratios
     try:
-        from technical_analysis import get_ratio_data
+        from portfolio.technical_analysis.technical_analysis import get_ratio_data
 
         t0 = time.perf_counter()
         silver_gold = _slim_ratio_result(get_ratio_data("SI=F", "GC=F", start_date=week_start))
@@ -553,7 +547,7 @@ def collect_data() -> dict:
 
     # 10. Economic Growth
     try:
-        from economic_growth import get_data as get_econ_growth_data
+        from macro.economic_growth.economic_growth import get_data as get_econ_growth_data
 
         t0 = time.perf_counter()
         econ_growth = get_econ_growth_data()
@@ -565,7 +559,7 @@ def collect_data() -> dict:
 
     # 11. Liquidity
     try:
-        from liquidity import get_snapshot as get_liquidity_snapshot
+        from macro.liquidity.liquidity import get_snapshot as get_liquidity_snapshot
 
         t0 = time.perf_counter()
         liquidity = get_liquidity_snapshot()
@@ -577,7 +571,7 @@ def collect_data() -> dict:
 
     # 12. Industry Monitor
     try:
-        from industry_monitor import get_data as get_industry_data
+        from macro.industry.industry_monitor import get_data as get_industry_data
 
         t0 = time.perf_counter()
         industry = get_industry_data(refresh=False)
@@ -589,7 +583,7 @@ def collect_data() -> dict:
 
     # 13. Sentiment (AAII, NAAIM, Put/Call, VVIX)
     try:
-        from sentiment import get_put_call, get_surveys, get_volatility
+        from macro.sentiment.sentiment import get_put_call, get_surveys, get_volatility
 
         t0 = time.perf_counter()
         surveys = get_surveys()
@@ -1263,6 +1257,19 @@ def main():
 
             # Merge thesis into summary
             summary = _merge_thesis_into_summary(summary, thesis_summary)
+
+            # Persist evaluations to thesis DB
+            try:
+                from portfolio.thesis_db import save_evaluations, upsert_thesis_meta
+
+                evals = thesis_summary.get("thesis_evaluations", [])
+                if evals:
+                    save_evaluations(today_str, evals)
+                    log.info("Persisted %d thesis evaluations to thesis.db", len(evals))
+                for t in thesis_summary.get("positions_reviewed", []):
+                    upsert_thesis_meta(t)
+            except Exception:
+                log.warning("Failed to persist thesis evaluations", exc_info=True)
 
             log.info(
                 "Thesis pass completed in %.2fs (%d evaluations)",

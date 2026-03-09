@@ -30,10 +30,8 @@ from typing import Dict, List, Optional  # noqa: UP035
 
 import pandas as pd
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import clean_ticker, get_sp500_universe, list_universes, load_universe
-from quality_single import RawMetrics, compute_scores, fetch_raw_metrics
+from equities.common import clean_ticker, get_sp500_universe, list_universes, load_universe
+from equities.quality.quality_single import RawMetrics, compute_scores, fetch_raw_metrics
 
 
 def _build_universe(

@@ -40,6 +40,8 @@ try:
 except ImportError as e:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance") from e
 
+from utils.retry import yf_download
+
 # Set User-Agent to avoid 403 errors from Yahoo Finance / Wikipedia
 opener = urllib.request.build_opener()
 opener.addheaders = [
@@ -117,7 +119,7 @@ def download_prices(
     all_closes: list[pd.DataFrame] = []
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i : i + batch_size]
-        data = yf.download(
+        data = yf_download(
             tickers=" ".join(batch),
             period=period,
             interval="1d",

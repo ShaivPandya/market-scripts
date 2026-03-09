@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -42,8 +43,10 @@ def ingest_into_repository(
 
     required_fetchers, optional_fetchers, deep_fetchers = _build_fetchers(timeframe=timeframe)
 
-    required_data = _run_fetchers(required_fetchers, source_status)
-    optional_data = _run_fetchers(optional_fetchers, source_status)
+    combined_fetchers = {**required_fetchers, **optional_fetchers}
+    all_data = _run_fetchers(combined_fetchers, source_status)
+    required_data = all_data
+    optional_data = all_data
     if include_deep_modules:
         _run_fetchers(deep_fetchers, source_status)
 
@@ -437,18 +440,24 @@ def _run_fetchers(fetchers: dict[str, ModuleFetcher], source_status: dict[str, d
 
     with ThreadPoolExecutor(max_workers=min(len(fetchers), 10)) as pool:
         futures = {pool.submit(fn): name for name, fn in fetchers.items()}
-        for fut in as_completed(futures):
-            name = futures[fut]
-            try:
-                data = fut.result()
-                out[name] = data
-                if _is_partial(name, data):
-                    source_status[name] = {"status": "partial", "detail": "incomplete payload"}
-                else:
-                    source_status[name] = {"status": "ok"}
-            except Exception as exc:
-                out[name] = {}
-                source_status[name] = {"status": "error", "detail": str(exc)}
+        try:
+            for fut in as_completed(futures, timeout=120):
+                name = futures[fut]
+                try:
+                    data = fut.result(timeout=90)
+                    out[name] = data
+                    if _is_partial(name, data):
+                        source_status[name] = {"status": "partial", "detail": "incomplete payload"}
+                    else:
+                        source_status[name] = {"status": "ok"}
+                except Exception as exc:
+                    out[name] = {}
+                    source_status[name] = {"status": "error", "detail": str(exc)}
+        except FuturesTimeoutError:
+            for fut, name in futures.items():
+                if not fut.done():
+                    out[name] = {}
+                    source_status[name] = {"status": "error", "detail": "module timed out"}
     return out
 
 

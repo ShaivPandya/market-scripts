@@ -149,33 +149,23 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from utils.retry import yf_download, yf_ticker_info
+
 LOGGER = logging.getLogger(__name__)
 
-try:
-    from .composite_signal import (
-        DEFAULT_WEIGHTS_SHORT,
-        generate_anchor_normalized_long_equity_signals,
-        generate_composite_signals,
-    )
-except ImportError:
-    from composite_signal import (
-        DEFAULT_WEIGHTS_SHORT,
-        generate_anchor_normalized_long_equity_signals,
-        generate_composite_signals,
-    )
+from portfolio.portfolio_optimizer.composite_signal import (
+    DEFAULT_WEIGHTS_SHORT,
+    generate_anchor_normalized_long_equity_signals,
+    generate_composite_signals,
+)
 
 console = Console()
 
 # -----------------------------
 # Configuration
 # -----------------------------
-try:
-    from portfolio_db import get_positions_df as _get_positions_df
-except ImportError:
-    import sys as _sys
+from portfolio.portfolio_db import get_positions_df as _get_positions_df
 
-    _sys.path.insert(0, str(Path(__file__).parent.parent))
-    from portfolio_db import get_positions_df as _get_positions_df
 LOOKBACK_DAYS = 730  # days of price history to fetch from yfinance
 
 BASE_CCY = "USD"
@@ -255,7 +245,7 @@ def fetch_currencies(tickers: list) -> dict[str, str]:
             return t, yf.Ticker(t).fast_info.currency
         except Exception:
             try:
-                return t, yf.Ticker(t).info.get("currency", BASE_CCY)
+                return t, yf_ticker_info(t).get("currency", BASE_CCY)
             except Exception:
                 return t, BASE_CCY
 
@@ -302,7 +292,7 @@ def download_prices(tickers: list, fx_tickers: list) -> pd.DataFrame:
     end = date.today() + timedelta(days=1)
     start = end - timedelta(days=LOOKBACK_DAYS)
 
-    px = yf.download(
+    px = yf_download(
         tickers=all_tickers, start=start.isoformat(), end=end.isoformat(), auto_adjust=True, progress=False
     )
 
@@ -530,7 +520,7 @@ def ensure_psd(Sigma: np.ndarray, eps: float = 1e-10) -> np.ndarray:
     S = 0.5 * (Sigma + Sigma.T)
     vals, vecs = np.linalg.eigh(S)
     vals = np.maximum(vals, eps)
-    return vecs @ np.diag(vals) @ vecs.T
+    return np.asarray(vecs @ np.diag(vals) @ vecs.T, dtype=float)
 
 
 def fetch_yfinance_betas(tickers: list) -> pd.Series:
@@ -541,7 +531,7 @@ def fetch_yfinance_betas(tickers: list) -> pd.Series:
 
     def _fetch_one(t: str):
         try:
-            info = yf.Ticker(t).info
+            info = yf_ticker_info(t)
             beta = info.get("beta")
             return t, beta if beta is not None else np.nan
         except Exception:
@@ -1113,10 +1103,18 @@ def overlay_anchor_long_equity_signals(
         metadata["reason"] = f"anchor_overlay_exception:{e}"
         return signal_composite_out, sub_out, metadata
 
+    raw_anchor_size = anchor_meta.get("signal_anchor_universe_size", 0)
+    if isinstance(raw_anchor_size, (int, float, str)):
+        try:
+            anchor_size = int(raw_anchor_size)
+        except ValueError:
+            anchor_size = 0
+    else:
+        anchor_size = 0
     metadata.update(
         {
             "signal_anchor_mode": str(anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE)),
-            "signal_anchor_universe_size": int(anchor_meta.get("signal_anchor_universe_size", 0)),
+            "signal_anchor_universe_size": anchor_size,
             "signal_anchor_fallback_used": bool(anchor_meta.get("signal_anchor_fallback_used", True)),
         }
     )

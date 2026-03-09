@@ -19,8 +19,6 @@ from typing import Dict, List, Tuple  # noqa: UP035
 
 import pandas as pd
 
-# Load environment variables from .env file
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from load_env import load_env
 
 load_env()
@@ -31,8 +29,8 @@ try:
     FRED_AVAILABLE = True
 except ImportError:
     FRED_AVAILABLE = False
-    print("Warning: fredapi not installed. Install with: pip install fredapi", file=sys.stderr)
-    print("FRED API key also required. Get one at: https://fred.stlouisfed.org/docs/api/api_key.html", file=sys.stderr)
+
+from utils.retry import fred_get_series
 
 # FRED API configuration
 FRED_API_KEY = os.environ.get("FRED_API_KEY", None)
@@ -85,7 +83,7 @@ def get_fred_data(series_id: str, start_date: datetime, end_date: datetime) -> p
 
     try:
         fred = Fred(api_key=FRED_API_KEY)
-        data = fred.get_series(series_id, observation_start=start_date, observation_end=end_date)
+        data = fred_get_series(fred, series_id, observation_start=start_date, observation_end=end_date)
 
         # Convert to DataFrame format similar to yfinance
         df = pd.DataFrame({"Close": data})
@@ -237,7 +235,7 @@ def get_current_yield_fred(series_id: str) -> float:
     try:
         fred = Fred(api_key=FRED_API_KEY)
         # Get the most recent observation
-        data = fred.get_series(series_id)
+        data = fred_get_series(fred, series_id)
         if not data.empty:
             return data.iloc[-1]
         return None

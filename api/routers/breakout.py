@@ -14,7 +14,7 @@ def get_breakout():
     if cached is not None:
         return cached
     try:
-        from breakout import get_data
+        from macro.breakout.breakout import get_data
 
         data = get_data()
     except Exception as e:

@@ -144,13 +144,13 @@ def _compute_fundamental_momentum(req: FMRequest) -> dict[str, Any]:
     result: dict[str, Any] = {"screen_type": req.screen_type}
 
     if req.screen_type in ("EPS", "Both"):
-        from eps_screen import get_data as get_eps
+        from portfolio.momentum.fundamental_momentum.eps_screen import get_data as get_eps
 
         eps_data = get_eps(tickers=tickers, benchmark=benchmark)
         result["eps"] = _serialize_fm(eps_data)
 
     if req.screen_type in ("Revenue", "Both"):
-        from revenue_screen import get_data as get_rev
+        from portfolio.momentum.fundamental_momentum.revenue_screen import get_data as get_rev
 
         rev_data = get_rev(tickers=tickers, benchmark=benchmark)
         result["rev"] = _serialize_fm(rev_data)

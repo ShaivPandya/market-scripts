@@ -16,7 +16,7 @@ import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timezone
-from typing import Optional
+from typing import Optional, TypedDict, cast
 
 from dotenv import load_dotenv
 
@@ -27,7 +27,15 @@ LOGGER = logging.getLogger(__name__)
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
 
 # ---------- Config ----------
-SECTORS = {
+CompanyDef = tuple[str, str, str, str]
+
+
+class SectorConfig(TypedDict):
+    type: str
+    companies: list[CompanyDef]
+
+
+SECTORS: dict[str, SectorConfig] = {
     "Housing": {
         "type": "leading",
         "companies": [
@@ -253,19 +261,22 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def _get_row_by_id(conn: sqlite3.Connection, row_id: str) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM transcripts WHERE id=?", (row_id,)).fetchone()
+    return cast(sqlite3.Row | None, conn.execute("SELECT * FROM transcripts WHERE id=?", (row_id,)).fetchone())
 
 
 def _get_latest_row_for_ticker(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | None:
-    return conn.execute(
-        """
+    return cast(
+        sqlite3.Row | None,
+        conn.execute(
+            """
         SELECT * FROM transcripts
         WHERE ticker=?
         ORDER BY year DESC, quarter DESC
         LIMIT 1
         """,
-        (ticker,),
-    ).fetchone()
+            (ticker,),
+        ).fetchone(),
+    )
 
 
 def _set_fresh_row(conn: sqlite3.Connection, ticker: str, fresh_row_id: str | None) -> None:
@@ -356,14 +367,14 @@ def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = 
     """
     from datetime import timedelta
 
-    import yfinance as yf
+    from utils.retry import yf_download
 
     try:
         dt = datetime.strptime(transcript_date, "%Y-%m-%d")
         start = (dt - timedelta(days=10)).strftime("%Y-%m-%d")
         end = (dt + timedelta(days=10)).strftime("%Y-%m-%d")
 
-        data = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
+        data = yf_download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
         if data.empty:
             return None
 
@@ -802,7 +813,7 @@ def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
     return by_sector, sectors, counts
 
 
-def get_data(db_path: str = None, refresh: bool = False) -> dict:
+def get_data(db_path: str | None = None, refresh: bool = False) -> dict:
     db_path = _resolve_db_path(db_path)
     conn = None
     try:

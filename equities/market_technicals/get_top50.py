@@ -22,8 +22,8 @@ from typing import List  # noqa: UP035
 
 import numpy as np
 import pandas as pd
-import requests
-import yfinance as yf
+
+from utils.retry import requests_get, yf_download
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
@@ -36,7 +36,7 @@ def get_sp500_tickers():
             "Chrome/120.0.0.0 Safari/537.36"
         )
     }
-    r = requests.get(WIKI_SP500_URL, headers=headers, timeout=30)
+    r = requests_get(WIKI_SP500_URL, headers=headers, timeout=30)
     r.raise_for_status()
 
     df = pd.read_html(StringIO(r.text))[0]
@@ -58,7 +58,7 @@ def download_close_prices(
     closes = []
 
     for chunk in chunked(tickers, chunk_size):
-        df = yf.download(
+        df = yf_download(
             tickers=chunk,
             period=period,
             interval=interval,

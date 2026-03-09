@@ -97,6 +97,7 @@ export interface PortfolioPosition {
   distressed: boolean
   conviction: number
   cost_basis: number | null
+  shares: number | null
 }
 
 export const fetchPortfolioPositions = () =>
@@ -123,6 +124,63 @@ export const uploadThesisPdf = (ticker: string, file: File) => {
     .post("/thesis/generate", formData, { timeout: 120_000 })
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 }
+
+// --- Thesis metadata types ---
+
+export type ThesisStatusValue = "active" | "under_review" | "invalidated"
+
+export interface ThesisEvaluation {
+  id: number
+  ticker: string
+  evaluated_at: string
+  thesis_status: string
+  technical_read: string
+  fundamental_read: string
+  action: string
+  confidence: string
+  key_developments: string[]
+  earnings_note: string | null
+  risk_flag: string | null
+}
+
+export interface ThesisMeta {
+  ticker: string
+  status: ThesisStatusValue
+  created_at: string
+  updated_at: string
+  latest_evaluation?: ThesisEvaluation | null
+}
+
+export interface ThesisDetail {
+  meta: ThesisMeta
+  content: string | null
+  status_history: Array<{
+    id: number
+    ticker: string
+    old_status: string | null
+    new_status: string
+    reason: string | null
+    changed_at: string
+  }>
+  evaluations: ThesisEvaluation[]
+}
+
+export const fetchThesisMeta = () =>
+  client.get("/thesis/meta").then(r => r.data as ThesisMeta[])
+
+export const fetchThesisDetail = (ticker: string) =>
+  client
+    .get(`/thesis/${encodeURIComponent(ticker)}/detail`)
+    .then(r => r.data as ThesisDetail)
+
+export const updateThesisStatus = (
+  ticker: string,
+  status: ThesisStatusValue,
+  reason: string,
+) =>
+  client
+    .put(`/thesis/${encodeURIComponent(ticker)}/status`, { status, reason })
+    .then(r => r.data)
 
 export const fetchMomentum = () =>
   client.get("/momentum").then(r => r.data)
@@ -184,7 +242,7 @@ export const startOntologyQueryJob = (body: OntologyQueryBody) =>
 export const fetchOntologyQueryJob = (job_id: string) =>
   client.get(`/ontology/query/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
 
-export async function runOntologyQueryAsync(body: OntologyQueryBody) {
+export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: AbortSignal) {
   const started = await startOntologyQueryJob(body)
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Ontology query failed")
@@ -193,6 +251,7 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody) {
   const deadline = Date.now() + 180_000
 
   for (; ;) {
+    if (signal?.aborted) throw new DOMException("Query cancelled", "AbortError")
     if (Date.now() > deadline) throw new Error("Timeout: Ontology query is taking too long. Try again.")
 
     await new Promise(r => setTimeout(r, 2000))

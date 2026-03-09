@@ -1,9 +1,5 @@
 """Smoke test for weekly report generation."""
 
-from paths import setup_paths
-
-setup_paths()
-
 from api.cache import long_cache, set_cached
 from api.routers.weekly_report import (
     _append_sources_section,

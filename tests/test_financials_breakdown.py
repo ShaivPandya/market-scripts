@@ -1,4 +1,4 @@
-import financials_single as fs
+import portfolio.momentum.fundamental_momentum.financials_single as fs
 
 
 def _patch_common(monkeypatch):

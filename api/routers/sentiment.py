@@ -123,7 +123,7 @@ def get_put_call(lookback_days: int = 180):
     if cached is not None:
         return cached
     try:
-        from sentiment import get_put_call
+        from macro.sentiment.sentiment import get_put_call
 
         data = get_put_call(lookback_days=lookback_days)
     except Exception as e:
@@ -140,7 +140,7 @@ def get_surveys():
     if cached is not None:
         return cached
     try:
-        from sentiment import get_surveys
+        from macro.sentiment.sentiment import get_surveys
 
         data = get_surveys()
     except Exception as e:
@@ -157,7 +157,7 @@ def get_volatility(lookback_days: int = 365):
     if cached is not None:
         return cached
     try:
-        from sentiment import get_volatility
+        from macro.sentiment.sentiment import get_volatility
 
         data = get_volatility(lookback_days=lookback_days)
     except Exception as e:

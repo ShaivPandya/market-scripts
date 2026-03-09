@@ -14,7 +14,8 @@ import warnings
 from datetime import datetime
 
 import pandas as pd
-import yfinance as yf
+
+from utils.retry import yf_download
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
@@ -59,7 +60,7 @@ def fetch_index_data(timeframe: str = "Daily") -> dict:
     tickers = list(INDICES.values())
 
     try:
-        raw = yf.download(
+        raw = yf_download(
             tickers=tickers,
             period=tf["period"],
             interval=tf["interval"],

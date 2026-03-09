@@ -53,10 +53,8 @@ try:
 except ImportError as e:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance") from e
 
-# Add equities/ to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from common import clean_ticker, get_sp500_universe, list_universes, load_universe
-from edgar_fetcher import fetch_quarterly_eps_edgar
+from equities.common import clean_ticker, get_sp500_universe, list_universes, load_universe
+from portfolio.momentum.fundamental_momentum.edgar_fetcher import fetch_quarterly_eps_edgar
 
 # -------------------------
 # Utilities
@@ -253,11 +251,13 @@ def compute_eps_from_stmt(stmt_col: pd.Series, fallback_shares: float | None = N
 
 def fetch_eps_metrics(ticker: str, growth_years: int = 3, use_edgar: bool = True) -> EPSMetrics:
     """Fetch quarterly YoY EPS change, annual EPS CAGR, and EPS growth acceleration for a ticker."""
+    from utils.retry import yf_ticker_info
+
     t = yf.Ticker(ticker)
 
     shares_out = np.nan
     try:
-        info = t.info or {}
+        info = yf_ticker_info(ticker)
         shares_out = float(info.get("sharesOutstanding", np.nan))
     except Exception:
         shares_out = np.nan

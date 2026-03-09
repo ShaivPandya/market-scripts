@@ -14,7 +14,7 @@ def test_thesis_status(auth_client, monkeypatch, tmp_path):
 
     monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
 
-    import portfolio_db
+    import portfolio.portfolio_db as portfolio_db
 
     monkeypatch.setattr(
         portfolio_db,

@@ -24,20 +24,23 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import time
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import List  # noqa: UP035
+from typing import Any, List, cast  # noqa: UP035
 
 import pandas as pd
-import requests
-import yfinance as yf
+
+from utils.retry import requests_get, yf_download
 
 # Download configuration
 CHUNK_SIZE = 50  # Tickers per batch
-MAX_RETRIES = 3  # Retry attempts for failed tickers
-RETRY_DELAY = 2.0  # Base seconds between retries (exponential backoff)
 BATCH_DELAY = 1.0  # Seconds between successful batches
+
+CONSOLE: Any | None = None
 
 try:
     from rich import box
@@ -45,13 +48,18 @@ try:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-except ImportError:
-    Console = None
 
-CONSOLE = Console() if Console else None
+    CONSOLE = Console()
+except ImportError:
+    CONSOLE = None
 
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CACHE_DIR = _REPO_ROOT / "data_cache" / "market_technicals"
+_CACHE_TTL_SECONDS = 24 * 60 * 60
+_CACHE_VERSION = 1
+_CLOSE_PROBE_TICKER = "SPY"
 
 
 def print_header() -> None:
@@ -69,8 +77,9 @@ def print_header() -> None:
 def format_pct(value: float, highlight: bool):
     if value is None or pd.isna(value):
         return Text("N/A", style="dim")
-    style = "green" if highlight else None
-    return Text(f"{value:.1f}%", style=style)
+    if highlight:
+        return Text(f"{value:.1f}%", style="green")
+    return Text(f"{value:.1f}%")
 
 
 def get_sp500_tickers() -> list[str]:
@@ -82,12 +91,12 @@ def get_sp500_tickers() -> list[str]:
             "Chrome/120.0.0.0 Safari/537.36"
         )
     }
-    r = requests.get(WIKI_SP500_URL, headers=headers, timeout=30)
+    r = requests_get(WIKI_SP500_URL, headers=headers, timeout=30)
     r.raise_for_status()
 
     df = pd.read_html(StringIO(r.text))[0]
     tickers = df["Symbol"].astype(str).str.strip().str.replace(".", "-", regex=False)
-    return pd.unique(tickers).tolist()
+    return cast(list[str], pd.unique(tickers).tolist())
 
 
 def load_tickers_from_file(filepath: str) -> list[str]:
@@ -96,7 +105,7 @@ def load_tickers_from_file(filepath: str) -> list[str]:
     if p.suffix.lower() == ".csv":
         df = pd.read_csv(p)
         col = df.columns[0]
-        return df[col].astype(str).str.strip().str.replace(".", "-", regex=False).tolist()
+        return cast(list[str], df[col].astype(str).str.strip().str.replace(".", "-", regex=False).tolist())
     else:
         with open(p) as f:
             return [line.strip().upper().replace(".", "-") for line in f if line.strip()]
@@ -112,21 +121,101 @@ def get_tickers(universe: str) -> list[str]:
         return load_tickers_from_file(universe)
 
 
+def _safe_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value).strip())
+    return token[:80] or "default"
+
+
+def _breadth_cache_path(universe: str, period: str) -> Path:
+    filename = f"market_breadth_{_safe_token(universe)}_{_safe_token(period)}.json"
+    return _CACHE_DIR / filename
+
+
+def _load_breadth_cache(path: Path) -> dict | None:
+    try:
+        if not path.exists():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return None
+        if raw.get("version") != _CACHE_VERSION:
+            return None
+        payload = raw.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        fetched_at = raw.get("fetched_at")
+        if not isinstance(fetched_at, str):
+            return None
+        datetime.fromisoformat(fetched_at)
+        return raw
+    except Exception:
+        return None
+
+
+def _write_breadth_cache(
+    path: Path,
+    payload: dict,
+    universe: str,
+    period: str,
+    as_of_date: str | None,
+    fetched_at: str | None = None,
+) -> None:
+    record = {
+        "version": _CACHE_VERSION,
+        "fetched_at": fetched_at or datetime.now().isoformat(),
+        "as_of_date": as_of_date,
+        "universe": universe,
+        "period": period,
+        "payload": payload,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        # Cache writes are best-effort and should not break data fetch.
+        return
+
+
+def _latest_market_close_date() -> str | None:
+    try:
+        probe = yf_download(
+            tickers=_CLOSE_PROBE_TICKER,
+            period="10d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+        if probe is None or probe.empty:
+            return None
+        idx = pd.to_datetime(probe.index, errors="coerce")
+        idx = idx.dropna()
+        if idx.empty:
+            return None
+        return cast(str, idx[-1].date().isoformat())
+    except Exception:
+        return None
+
+
 def download_with_retry(
     tickers: list[str],
     period: str = "1y",
     chunk_size: int = CHUNK_SIZE,
-    max_retries: int = MAX_RETRIES,
     batch_delay: float = BATCH_DELAY,
+    **kwargs,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Download price data in chunks with retry logic for reliability.
+
+    Retry logic is handled by yf_download (from utils.retry).
 
     Returns:
         tuple of (combined DataFrame, list of failed tickers)
     """
     all_data = []
-    failed_tickers = []
+    failed_tickers: list[str] = []
 
     # Split into chunks
     chunks = [tickers[i : i + chunk_size] for i in range(0, len(tickers), chunk_size)]
@@ -135,42 +224,35 @@ def download_with_retry(
     for idx, chunk in enumerate(chunks, 1):
         print(f"  Downloading batch {idx}/{total_chunks} ({len(chunk)} tickers)...")
 
-        for attempt in range(max_retries + 1):
-            try:
-                df = yf.download(
-                    tickers=chunk,
-                    period=period,
-                    interval="1d",
-                    auto_adjust=True,
-                    progress=False,
-                )
+        try:
+            df = yf_download(
+                tickers=chunk,
+                period=period,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+            )
 
-                if df is not None and not df.empty:
-                    all_data.append(df)
+            if df is not None and not df.empty:
+                all_data.append(df)
 
-                    # Check which tickers actually returned data
-                    if isinstance(df.columns, pd.MultiIndex):
-                        returned = set(df["Close"].columns.tolist())
-                    else:
-                        returned = set(chunk[:1])
-
-                    missing = set(chunk) - returned
-                    if missing:
-                        failed_tickers.extend(missing)
-
-                    if idx < total_chunks:
-                        time.sleep(batch_delay)
-                    break
-                elif attempt < max_retries:
-                    time.sleep(RETRY_DELAY * (2**attempt))
+                # Check which tickers actually returned data
+                if isinstance(df.columns, pd.MultiIndex):
+                    returned = set(df["Close"].columns.tolist())
                 else:
-                    failed_tickers.extend(chunk)
-            except Exception as e:
-                if attempt < max_retries:
-                    time.sleep(RETRY_DELAY * (2**attempt))
-                else:
-                    print(f"    Batch {idx} failed after {max_retries + 1} attempts: {e}")
-                    failed_tickers.extend(chunk)
+                    returned = set(chunk[:1])
+
+                missing = set(chunk) - returned
+                if missing:
+                    failed_tickers.extend(missing)
+
+                if idx < total_chunks:
+                    time.sleep(batch_delay)
+            else:
+                failed_tickers.extend(chunk)
+        except Exception as e:
+            print(f"    Batch {idx} failed: {e}")
+            failed_tickers.extend(chunk)
 
     if not all_data:
         return pd.DataFrame(), failed_tickers
@@ -180,7 +262,7 @@ def download_with_retry(
         combined = all_data[0]
     else:
         # Merge DataFrames along columns
-        combined_parts = {"Close": [], "High": [], "Low": []}
+        combined_parts: dict[str, list[pd.DataFrame]] = {"Close": [], "High": [], "Low": []}
         for df in all_data:
             if isinstance(df.columns, pd.MultiIndex):
                 for col in combined_parts:
@@ -256,6 +338,9 @@ def calculate_breadth_metrics(
         low = df[["Low"]]
         low.columns = tickers[:1]
 
+    idx = pd.to_datetime(close.index, errors="coerce").dropna()
+    as_of_date = idx[-1].date().isoformat() if not idx.empty else None
+
     # Vectorized calculations for performance
     # Get the latest values
     current_close = close.iloc[-1]
@@ -325,6 +410,7 @@ def calculate_breadth_metrics(
         "pct_at_52wk_low": (at_52wk_low / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_at_24wk_high": (at_24wk_high / total_analyzed * 100) if total_analyzed > 0 else 0,
         "pct_at_24wk_low": (at_24wk_low / total_analyzed * 100) if total_analyzed > 0 else 0,
+        "as_of_date": as_of_date,
         "failed_tickers": failed_tickers,
     }
 
@@ -504,9 +590,53 @@ def get_data(
 
     If *prices_df* is supplied, the yfinance download is skipped.
     """
-    tickers = get_tickers(universe)
-    metrics = calculate_breadth_metrics(tickers, period, prices_df=prices_df)
-    metrics["tickers"] = tickers
+    cache_enabled = prices_df is None and universe.lower() == "sp500"
+    cache_path = _breadth_cache_path(universe, period) if cache_enabled else None
+    cached_record = _load_breadth_cache(cache_path) if cache_path else None
+    cached_payload = cached_record.get("payload") if cached_record else None
+
+    if cached_record and isinstance(cached_payload, dict):
+        try:
+            fetched_at = datetime.fromisoformat(str(cached_record["fetched_at"]))
+            age_seconds = (datetime.now() - fetched_at).total_seconds()
+        except Exception:
+            age_seconds = _CACHE_TTL_SECONDS + 1
+
+        if age_seconds < _CACHE_TTL_SECONDS:
+            return cached_payload
+
+        cached_as_of = cached_record.get("as_of_date")
+        latest_close = _latest_market_close_date()
+        if isinstance(cached_as_of, str) and latest_close is not None and latest_close <= cached_as_of:
+            assert cache_path is not None
+            _write_breadth_cache(
+                path=cache_path,
+                payload=cached_payload,
+                universe=universe,
+                period=period,
+                as_of_date=cached_as_of,
+                fetched_at=datetime.now().isoformat(),
+            )
+            return cached_payload
+
+    try:
+        tickers = get_tickers(universe)
+        metrics = calculate_breadth_metrics(tickers, period, prices_df=prices_df)
+        metrics["tickers"] = tickers
+    except Exception:
+        if isinstance(cached_payload, dict):
+            return cached_payload
+        raise
+
+    if cache_path:
+        _write_breadth_cache(
+            path=cache_path,
+            payload=metrics,
+            universe=universe,
+            period=period,
+            as_of_date=metrics.get("as_of_date") if isinstance(metrics.get("as_of_date"), str) else None,
+        )
+
     return metrics
 
 

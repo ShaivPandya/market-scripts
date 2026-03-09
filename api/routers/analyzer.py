@@ -44,12 +44,12 @@ _JOB_TTL_S = 60 * 30
 
 def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
     try:
-        from portfolio_optimizer.portfolio_analyzer import get_data
+        from portfolio.portfolio_optimizer.portfolio_analyzer import get_data
 
         data = get_data(
             book=req.book,
             target_leverage=req.target_leverage,
-            beta_neutral=req.beta_neutral,
+            beta_neutral=True if req.beta_neutral is None else req.beta_neutral,
         )
     except Exception as e:
         raise RuntimeError(str(e)) from e

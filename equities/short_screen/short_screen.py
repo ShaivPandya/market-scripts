@@ -25,13 +25,13 @@ from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
-import requests
 import yfinance as yf
+
+from utils.retry import requests_get, yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import load_universe
+from equities.common import load_universe
 
 # ---------------------------------------------------------------------------
 # Module-level SEC caches
@@ -93,7 +93,7 @@ def fetch_yf_data(ticker: str) -> dict:
 
         info: dict = {}
         try:
-            info = t.info or {}
+            info = yf_ticker_info(ticker)
         except Exception:
             info = {}
 
@@ -218,7 +218,7 @@ def _load_cik_map() -> None:
         if _cik_map_loaded:
             return
         try:
-            resp = requests.get(
+            resp = requests_get(
                 "https://www.sec.gov/files/company_tickers.json",
                 headers=SEC_HEADERS,
                 timeout=30,
@@ -252,7 +252,7 @@ def _fetch_edgar_facts(cik_str: str) -> dict | None:
     result: dict | None = None
     try:
         url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik_str}.json"
-        resp = requests.get(url, headers=SEC_HEADERS, timeout=20)
+        resp = requests_get(url, headers=SEC_HEADERS, timeout=20)
         if resp.status_code == 200:
             result = resp.json()
         # 404 → company has no XBRL facts; result stays None

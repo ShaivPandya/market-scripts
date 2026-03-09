@@ -53,10 +53,8 @@ try:
 except ImportError as e:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance") from e
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from common import clean_ticker, get_sp500_universe, list_universes, load_universe
-from edgar_fetcher import fetch_quarterly_revenue_edgar
+from equities.common import clean_ticker, get_sp500_universe, list_universes, load_universe
+from portfolio.momentum.fundamental_momentum.edgar_fetcher import fetch_quarterly_revenue_edgar
 
 # -------------------------
 # Utilities

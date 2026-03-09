@@ -17,9 +17,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 import numpy as np
 import pandas as pd
+
+CONSOLE: Any | None = None
 
 try:
     from rich import box
@@ -27,15 +30,15 @@ try:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-except ImportError:
-    Console = None
 
-CONSOLE = Console() if Console else None
+    CONSOLE = Console()
+except ImportError:
+    CONSOLE = None
 
 try:
-    import yfinance as yf
+    from utils.retry import yf_download
 except ImportError as e:
-    raise SystemExit("Missing dependency yfinance. Install with: pip install yfinance") from e
+    raise SystemExit("Missing dependency utils.retry. Ensure utils/retry.py is available.") from e
 
 
 VIX_TICKER = "^VIX"
@@ -60,7 +63,7 @@ def print_header() -> None:
 
 
 def download_close(ticker: str, start: str) -> pd.DataFrame:
-    df = yf.download(ticker, start=start, auto_adjust=False, progress=False)
+    df = yf_download(ticker, start=start, auto_adjust=False, progress=False)
     if df.empty:
         return df
     close_data: pd.Series | pd.DataFrame
@@ -142,6 +145,8 @@ def format_signal_text(value: str) -> Text:
 
 
 def render_latest(latest: pd.Series, used_vix3m: str) -> None:
+    if CONSOLE is None:
+        return
     table = Table(title="Latest Snapshot", box=box.ASCII)
     table.add_column("Date")
     table.add_column("VIX", justify="right")
@@ -161,6 +166,8 @@ def render_latest(latest: pd.Series, used_vix3m: str) -> None:
 
 
 def render_recent(data: pd.DataFrame, used_vix3m: str, title: str) -> None:
+    if CONSOLE is None:
+        return
     table = Table(title=title, box=box.ASCII)
     table.add_column("Date")
     table.add_column("VIX", justify="right")

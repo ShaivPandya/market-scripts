@@ -33,21 +33,18 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
-# Ensure repo modules (equities/common) are importable when running as a script.
-_ROOT = Path(__file__).resolve().parents[3]
-for _p in (_ROOT / "equities", _ROOT):
-    _p_str = str(_p)
-    if _p_str not in sys.path:
-        sys.path.insert(0, _p_str)
-
-from common import (
+from equities.common import (
     clean_ticker,
     get_sp500_universe,
     get_universe_tickers,
     list_universes,
     load_universe,
 )
-from eps_momentum_single import EPSMetrics, compute_universe_scores, fetch_eps_metrics
+from portfolio.momentum.fundamental_momentum.eps_momentum_single import (
+    EPSMetrics,
+    compute_universe_scores,
+    fetch_eps_metrics,
+)
 
 
 def _build_universe(

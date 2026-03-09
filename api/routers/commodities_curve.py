@@ -28,7 +28,7 @@ def get_commodities_curve(commodity: str = "CL", lookback_days: int = 30):
         return cached
 
     try:
-        from commodities_curve import get_data
+        from commodities.commodities_curve import get_data
 
         data = get_data(commodity=commodity, lookback_days=lookback_days)
     except Exception as exc:

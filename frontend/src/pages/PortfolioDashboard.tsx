@@ -1,7 +1,7 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchPortfolioAllTimeframes, fetchThesisStatus, type ThesisStatus } from "@/lib/api"
-import { ThesisUpload } from "@/components/ThesisUpload"
+import { fetchPortfolioAllTimeframes } from "@/lib/api"
 import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -26,8 +26,6 @@ export function PortfolioDashboard() {
     ["portfolio", "all_timeframes"],
     fetchPortfolioAllTimeframes,
   )
-  const { data: thesisStatus } = useApiQuery<Record<string, ThesisStatus>>(["thesis", "status"], fetchThesisStatus)
-
   const timeframeData = data?.timeframes?.[timeframe]
   const positions: Record<string, DataPoint[]> = timeframeData?.positions ?? {}
   const order: string[] = timeframeData?.position_order ?? Object.keys(positions)
@@ -71,8 +69,7 @@ export function PortfolioDashboard() {
               <div key={ticker} className="rounded-xl border bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-gray-700">{ticker}</p>
-                    <ThesisUpload ticker={ticker} status={thesisStatus?.[ticker] ?? "missing"} />
+                    <Link to={`/theses?ticker=${ticker}`} className="text-sm font-semibold text-blue-600 hover:underline">{ticker}</Link>
                   </div>
                   {ret != null && (
                     <span className={`text-xs font-medium ${ret >= 0 ? "text-green-600" : "text-red-600"}`}>

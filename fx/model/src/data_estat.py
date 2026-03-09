@@ -5,7 +5,8 @@ import re
 from pathlib import Path
 
 import pandas as pd
-import requests
+
+from utils.retry import requests_get
 
 ESTAT_CPI_STATS_DATA_ID = "0003427113"
 _ESTAT_BASE_URL = "https://api.e-stat.go.jp/rest/3.0/app/json"
@@ -106,7 +107,7 @@ def fetch_estat_cpi(
         return series[series.index >= pd.Timestamp(start)]
 
     # ── Step 1: fetch metadata to resolve classification codes ────────────────
-    meta_resp = requests.get(
+    meta_resp = requests_get(
         f"{_ESTAT_BASE_URL}/getStatsData",
         params={
             "appId": app_id,
@@ -201,7 +202,7 @@ def fetch_estat_cpi(
     if cd_time_from:
         params["cdTimeFrom"] = cd_time_from
 
-    data_resp = requests.get(f"{_ESTAT_BASE_URL}/getStatsData", params=params, timeout=timeout)
+    data_resp = requests_get(f"{_ESTAT_BASE_URL}/getStatsData", params=params, timeout=timeout)
     data_resp.raise_for_status()
     data = data_resp.json()
     _check_status(data, "GET_STATS_DATA")

@@ -38,6 +38,7 @@ import { WeeklyReport } from "@/pages/WeeklyReport"
 import { Sentiment } from "@/pages/Sentiment"
 import { SignalAggregator } from "@/pages/SignalAggregator"
 import { OntologyWorkbench } from "@/pages/OntologyWorkbench"
+import { ThesisManager } from "@/pages/ThesisManager"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -73,6 +74,7 @@ function AppRoutes() {
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/portfolio" replace />} />
           <Route path="/portfolio" element={<PortfolioDashboard />} />
+          <Route path="/theses" element={<ThesisManager />} />
           <Route path="/analyzer" element={<PortfolioAnalyzer />} />
           <Route path="/optimizer" element={<Navigate to="/analyzer" replace />} />
           <Route path="/hedging-tool" element={<HedgingTool />} />

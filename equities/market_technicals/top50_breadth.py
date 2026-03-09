@@ -18,7 +18,10 @@ from pathlib import Path
 from typing import Any, Dict, List  # noqa: UP035
 
 import pandas as pd
-import yfinance as yf
+
+from utils.retry import yf_download
+
+CONSOLE: Any | None = None
 
 try:
     from rich import box
@@ -26,10 +29,10 @@ try:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-except ImportError:
-    Console = None
 
-CONSOLE = Console() if Console else None
+    CONSOLE = Console()
+except ImportError:
+    CONSOLE = None
 
 from get_top50 import main as generate_top50
 
@@ -105,7 +108,7 @@ def compute_metrics(
     if prices_df is not None:
         raw = prices_df
     else:
-        raw = yf.download(
+        raw = yf_download(
             tickers=tickers,
             period=period,
             interval="1d",

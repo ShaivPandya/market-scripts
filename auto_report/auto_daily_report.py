@@ -28,12 +28,6 @@ if TYPE_CHECKING:
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
 
-# Centralised path setup — replaces inline sys.path block
-sys.path.insert(0, str(PROJECT_ROOT))
-from paths import setup_paths
-
-setup_paths()
-
 from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
@@ -161,7 +155,8 @@ def _is_weekday_morning_et() -> bool:
 def load_portfolio():
     """Load portfolio positions and return a pandas DataFrame."""
     import pandas as pd
-    from portfolio_db import get_positions_df
+
+    from portfolio.portfolio_db import get_positions_df
 
     df = get_positions_df()
     df["ticker"] = df["ticker"].str.strip().str.upper()
@@ -197,7 +192,7 @@ def collect_risk_data(portfolio_df) -> dict:
 
     # 1. Technical analysis (per-ticker MA signals + ROC)
     try:
-        from technical_analysis import get_data as get_ta_data
+        from portfolio.technical_analysis.technical_analysis import get_data as get_ta_data
 
         t0 = time.perf_counter()
         ta_results = {}
@@ -215,7 +210,7 @@ def collect_risk_data(portfolio_df) -> dict:
 
     # 2. Price momentum (batch — uses portfolio.csv)
     try:
-        from momentum import get_data as get_momentum_data
+        from portfolio.momentum.price_momentum.momentum import get_data as get_momentum_data
 
         t0 = time.perf_counter()
         momentum = get_momentum_data()
@@ -227,7 +222,7 @@ def collect_risk_data(portfolio_df) -> dict:
 
     # 3. Portfolio risk metrics (volatility, drawdown, beta)
     try:
-        from portfolio_analyzer import (
+        from portfolio.portfolio_optimizer.portfolio_analyzer import (
             MARKET_TICKER_LONG,
             MARKET_TICKER_SHORT,
             compute_beta_frame,

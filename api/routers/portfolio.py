@@ -25,7 +25,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
         return cached
 
     try:
-        from portfolio_dashboard import get_data
+        from portfolio.portfolio_dashboard import get_data
 
         data = get_data(timeframe=timeframe, all_timeframes=all_timeframes)
     except Exception as e:
@@ -36,7 +36,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
 
     # Include ordering / display name lists if the module exposes them
     try:
-        from portfolio_dashboard import POSITION_ORDER
+        from portfolio.portfolio_dashboard import POSITION_ORDER
 
         position_order = POSITION_ORDER
     except ImportError:
@@ -48,6 +48,8 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
             "timeframes": {},
             "timestamp": data["timestamp"].isoformat() if data.get("timestamp") else None,
         }
+
+        result["analytics"] = serialize_value(data.get("analytics", {}))
 
         for tf_name, tf_data in timeframes.items():
             positions_raw = tf_data.get("positions", {})
@@ -67,6 +69,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
             "timeframe": timeframe,
             "timestamp": data["timestamp"].isoformat() if data.get("timestamp") else None,
             "position_order": position_order or list(positions_raw.keys()),
+            "analytics": serialize_value(data.get("analytics", {})),
         }
 
     set_cached(short_cache, key, result)

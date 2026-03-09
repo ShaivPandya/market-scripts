@@ -20,89 +20,43 @@ import cvxpy as cp
 import numpy as np
 import pandas as pd
 
-try:
-    from .portfolio_analyzer import (
-        BASE_CCY,
-        BETA_EWMA_HALFLIFE_DAYS,
-        BETA_FALLBACK,
-        BETA_METHOD,
-        BETA_MIN_OBS,
-        BETA_SHRINK_TO_ONE,
-        BOND_10YR_EQUIV_MAX,
-        CMDTY_GROSS_MAX,
-        DURATION_OF_TICKER,
-        EQ_NET_MAX,
-        EQ_NET_MIN,
-        FX_GROSS_MAX,
-        GROSS_MAX,
-        LONG_MAX,
-        MARKET_TICKER_LONG,
-        MARKET_TICKER_SHORT,
-        SEVERE_DD_MAX,
-        SHORT_MIN,
-        apply_distressed_gating,
-        apply_hedges_with_gross_cap,
-        apply_net_neutral,
-        compute_10yr_equivalent,
-        compute_beta_frame,
-        compute_defense_volatility,
-        compute_severe_drawdown_flags,
-        download_prices,
-        ensure_psd,
-        exposures_by_class,
-        fetch_currencies,
-        get_required_fx_tickers,
-        identify_binding_constraint,
-        max_scale_to_respect_linear_caps,
-        solve_joint_hedge_weights,
-        to_usd_price,
-    )
-except ImportError:
-    from portfolio_analyzer import (
-        BASE_CCY,
-        BETA_EWMA_HALFLIFE_DAYS,
-        BETA_FALLBACK,
-        BETA_METHOD,
-        BETA_MIN_OBS,
-        BETA_SHRINK_TO_ONE,
-        BOND_10YR_EQUIV_MAX,
-        CMDTY_GROSS_MAX,
-        DURATION_OF_TICKER,
-        EQ_NET_MAX,
-        EQ_NET_MIN,
-        FX_GROSS_MAX,
-        GROSS_MAX,
-        LONG_MAX,
-        MARKET_TICKER_LONG,
-        MARKET_TICKER_SHORT,
-        SEVERE_DD_MAX,
-        SHORT_MIN,
-        apply_distressed_gating,
-        apply_hedges_with_gross_cap,
-        apply_net_neutral,
-        compute_10yr_equivalent,
-        compute_beta_frame,
-        compute_defense_volatility,
-        compute_severe_drawdown_flags,
-        download_prices,
-        ensure_psd,
-        exposures_by_class,
-        fetch_currencies,
-        get_required_fx_tickers,
-        identify_binding_constraint,
-        max_scale_to_respect_linear_caps,
-        solve_joint_hedge_weights,
-        to_usd_price,
-    )
-
-try:
-    from portfolio_db import get_positions_df as _get_positions_df
-except ImportError:
-    import os as _os
-    import sys as _sys
-
-    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-    from portfolio_db import get_positions_df as _get_positions_df
+from portfolio.portfolio_db import get_positions_df as _get_positions_df
+from portfolio.portfolio_optimizer.portfolio_analyzer import (
+    BASE_CCY,
+    BETA_EWMA_HALFLIFE_DAYS,
+    BETA_FALLBACK,
+    BETA_METHOD,
+    BETA_MIN_OBS,
+    BETA_SHRINK_TO_ONE,
+    BOND_10YR_EQUIV_MAX,
+    CMDTY_GROSS_MAX,
+    DURATION_OF_TICKER,
+    EQ_NET_MAX,
+    EQ_NET_MIN,
+    FX_GROSS_MAX,
+    GROSS_MAX,
+    LONG_MAX,
+    MARKET_TICKER_LONG,
+    MARKET_TICKER_SHORT,
+    SEVERE_DD_MAX,
+    SHORT_MIN,
+    apply_distressed_gating,
+    apply_hedges_with_gross_cap,
+    apply_net_neutral,
+    compute_10yr_equivalent,
+    compute_beta_frame,
+    compute_defense_volatility,
+    compute_severe_drawdown_flags,
+    download_prices,
+    ensure_psd,
+    exposures_by_class,
+    fetch_currencies,
+    get_required_fx_tickers,
+    identify_binding_constraint,
+    max_scale_to_respect_linear_caps,
+    solve_joint_hedge_weights,
+    to_usd_price,
+)
 
 LOGGER = logging.getLogger(__name__)
 

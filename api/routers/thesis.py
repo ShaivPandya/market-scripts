@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_SONNET, extract_text
@@ -165,12 +166,34 @@ async def generate_thesis(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write thesis file: {e}") from e
 
+    from portfolio.thesis_db import upsert_thesis_meta
+
+    upsert_thesis_meta(normalized_ticker, status="active")
+
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
+
+
+@router.get("/thesis/meta")
+def get_thesis_meta_all():
+    from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
+
+    meta = get_all_thesis_meta()
+    latest = {e["ticker"]: e for e in get_latest_evaluations()}
+    for m in meta:
+        m["latest_evaluation"] = latest.get(m["ticker"])
+    return meta
+
+
+@router.get("/thesis/evaluations/latest")
+def get_latest_evaluations_endpoint():
+    from portfolio.thesis_db import get_latest_evaluations
+
+    return get_latest_evaluations()
 
 
 @router.get("/thesis/status")
 def get_thesis_status() -> dict[str, Literal["populated", "empty", "missing"]]:
-    from portfolio_db import get_positions
+    from portfolio.portfolio_db import get_positions
 
     statuses: dict[str, Literal["populated", "empty", "missing"]] = {}
     for row in get_positions():
@@ -190,6 +213,57 @@ def get_thesis_status() -> dict[str, Literal["populated", "empty", "missing"]]:
         except Exception:
             statuses[ticker] = "missing"
     return statuses
+
+
+@router.get("/thesis/{ticker}/detail")
+def get_thesis_detail(ticker: str):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+
+    from portfolio.thesis_db import get_evaluations, get_status_history, get_thesis_meta
+
+    meta = get_thesis_meta(normalized_ticker)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"No thesis metadata for '{normalized_ticker}'.")
+
+    content = None
+    thesis_path = THESES_DIR / f"{normalized_ticker}.md"
+    if thesis_path.exists():
+        try:
+            content = thesis_path.read_text(encoding="utf-8")
+        except Exception:
+            content = None
+
+    return {
+        "meta": meta,
+        "content": content,
+        "status_history": get_status_history(normalized_ticker),
+        "evaluations": get_evaluations(normalized_ticker, limit=52),
+    }
+
+
+class StatusChangeRequest(BaseModel):
+    status: str
+    reason: str = ""
+
+
+@router.put("/thesis/{ticker}/status")
+def change_thesis_status(ticker: str, body: StatusChangeRequest):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+
+    new_status = body.status.strip().lower()
+    if new_status not in ("active", "under_review", "invalidated"):
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status: '{new_status}'. Must be active, under_review, or invalidated."
+        )
+
+    from portfolio.thesis_db import update_thesis_status
+
+    try:
+        return update_thesis_status(normalized_ticker, new_status, body.reason.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.get("/thesis/{ticker}")

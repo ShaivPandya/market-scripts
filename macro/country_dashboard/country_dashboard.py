@@ -16,7 +16,6 @@ Terminal:
 import logging
 import os
 import re
-import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -24,14 +23,14 @@ from typing import Any, Dict, List  # noqa: UP035
 
 LOGGER = logging.getLogger(__name__)
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from load_env import load_env
 
 load_env()
 
 import pandas as pd
-import requests
 from fredapi import Fred
+
+from utils.retry import fred_get_series, requests_get, requests_post
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
@@ -77,7 +76,7 @@ ESTAT_CPI_STATS_DATA_ID = os.environ.get("ESTAT_CPI_STATS_DATA_ID", _DEFAULT_EST
 
 # ── Country definitions: display_name -> FRED series IDs per metric ──────────
 # For inflation, we prefer direct YoY series and keep fallbacks where needed.
-COUNTRIES = {
+COUNTRIES: dict[str, dict[str, Any]] = {
     "US": {
         "inflation": [
             # Match FRED's "Percent Change from Year Ago" view exactly.
@@ -308,7 +307,7 @@ _DEFAULT_MAX_AGE_DAYS = {
 # ── Data fetching ────────────────────────────────────────────────────────────
 
 
-def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
+def _statcan_wds_post(method: str, payload: dict[str, Any] | list[dict[str, int]], timeout: int = 20) -> dict[str, Any]:
     """
     Minimal Statistics Canada Web Data Service (WDS) client.
 
@@ -320,9 +319,9 @@ def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
     ).rstrip("/")
     url = f"{base_url}/{method}"
 
-    resp = requests.post(url, json=payload, timeout=timeout)
+    resp = requests_post(url, json=payload, timeout=timeout)
     resp.raise_for_status()
-    data = resp.json()
+    data: Any = resp.json()
     if isinstance(data, list):
         if not data:
             raise RuntimeError("Statistics Canada WDS returned an empty list response")
@@ -339,6 +338,9 @@ def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
             data = data[0]
         else:
             data = {"status": "SUCCESS", "object": [item.get("object") for item in data]}
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Statistics Canada WDS returned an unexpected response type")
 
     status = data.get("status")
     if status and status != "SUCCESS":
@@ -444,7 +446,7 @@ def _fetch_ons_timeseries(
     topic = (url_path or "/economy/inflationandpriceindices").rstrip("/")
     url = f"{base_url}{topic}/timeseries/{series_id}/{dataset_id}/data"
 
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -526,7 +528,7 @@ def _fetch_eurostat_hicp(
     ).rstrip("/")
     url = f"{base_url}/data/{dataset}?format=JSON&geo={geo}&unit=I15&coicop=CP00"
 
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -588,7 +590,7 @@ def _fetch_eurostat_series(
     qs = "&".join(f"{k}={v}" for k, v in query_params.items())
     url = f"{base_url}/data/{dataset}?format=JSON&geo={geo}&{qs}"
 
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -650,7 +652,7 @@ def _fetch_snb_series(
 
     from_date = observation_start.strftime("%Y-%m")
     url = f"https://data.snb.ch/api/cube/{cube}/data/csv/en?dimSel={dim_sel}&fromDate={from_date}"
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
 
     lines = resp.text.strip().splitlines()
@@ -704,7 +706,7 @@ def _fetch_oecd_series(
     else:
         start_str = observation_start.strftime("%Y-%m")
 
-    resp = requests.get(url, params={"startTime": start_str}, timeout=timeout)
+    resp = requests_get(url, params={"startTime": start_str}, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -858,7 +860,7 @@ def _fetch_abs_indicator(
     else:
         start_str = observation_start.strftime("%Y-%m")
 
-    resp = requests.get(
+    resp = requests_get(
         url,
         params={"startPeriod": start_str, "detail": "dataonly"},
         timeout=timeout,
@@ -940,7 +942,7 @@ def _fetch_estat_cpi(
     # ── Step 1: single getStatsData call with metaGetFlg=Y, limit=1 ──────────
     # This is the cheapest way to get CLASS_INF (which getMetaInfo doesn't expose
     # for this dataset) without downloading the full data payload.
-    meta_resp = requests.get(
+    meta_resp = requests_get(
         f"{base_url}/getStatsData",
         params={
             "appId": app_id,
@@ -1033,9 +1035,9 @@ def _fetch_estat_cpi(
         if m2:
             year = int(m2.group(1))
             key = m2.group(2)[:3].lower()
-            month = months.get(key)
-            if month:
-                return pd.Timestamp(year=year, month=month, day=1)
+            month_num = months.get(key)
+            if month_num is not None:
+                return pd.Timestamp(year=year, month=month_num, day=1)
 
         return None
 
@@ -1103,7 +1105,7 @@ def _fetch_estat_cpi(
                 cd_time_from = code
                 break
 
-    data_resp = requests.get(
+    data_resp = requests_get(
         f"{base_url}/getStatsData",
         params={
             "appId": app_id,
@@ -1190,19 +1192,19 @@ def _infer_series_frequency(series: pd.Series) -> str | None:
     return None
 
 
-def _metric_candidates(metric_key: str, config: dict) -> list[dict[str, object]]:
+def _metric_candidates(metric_key: str, config: dict[str, Any]) -> list[dict[str, Any]]:
     metric_config = config[metric_key]
 
     if isinstance(metric_config, str):
         transform = "yoy4" if metric_key == "gdp" else "none"
         return [{"source": "fred", "id": metric_config, "transform": transform, "params": {}}]
 
-    candidates: list[dict[str, object]] = []
+    candidates: list[dict[str, Any]] = []
     for item in metric_config:
         if isinstance(item, str):
             candidates.append({"source": "fred", "id": item, "transform": "none", "params": {}})
         else:
-            candidate: dict[str, object] = {
+            candidate: dict[str, Any] = {
                 "source": item.get("source", "fred"),
                 "id": item["id"],
                 "transform": item.get("transform", "none"),
@@ -1331,7 +1333,8 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     )
                     series = series[series.index >= observation_start]
                 else:
-                    series = fred.get_series(
+                    series = fred_get_series(
+                        fred,
                         series_id,
                         observation_start=observation_start,
                         **params,
