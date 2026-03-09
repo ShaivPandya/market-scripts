@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
-import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2, History, ArrowLeft, Zap, ChevronDown } from "lucide-react"
+import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2, History, ArrowLeft, Zap, ChevronDown, SquarePen } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAgentChat, fetchSessionHistory, deleteSession, type SessionSummary } from "@/hooks/useAgentChat"
 import { AgentMessage } from "./AgentMessage"
@@ -189,13 +189,14 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
             >
               {isWide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
-            {messages.length > 0 && !showHistory && (
+            {!showHistory && (
               <button
                 onClick={clearChat}
-                className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+                disabled={messages.length === 0}
+                className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 title="New chat"
               >
-                <Trash2 size={14} />
+                <SquarePen size={14} />
               </button>
             )}
             <button

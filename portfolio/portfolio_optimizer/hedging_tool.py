@@ -255,5 +255,89 @@ def compute_hedge(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_
     }
 
 
+def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float]:
+    """Derive signed hedging weights from portfolio DB positions.
+
+    Returns (positions, metadata, suggested_book) where:
+    - positions: [{ticker, weight}] ready for compute_hedge
+    - metadata: [{ticker, direction, conviction, shares, cost_basis, weight}]
+    - suggested_book: total gross dollar value if computable, else *book*
+    """
+    from portfolio.portfolio_db import get_positions_df
+
+    df = get_positions_df()
+    if df.empty:
+        raise ValueError("No positions found in portfolio database.")
+
+    if "asset" in df.columns:
+        equity_df = df[df["asset"] == "equity"].copy()
+    else:
+        equity_df = df.copy()
+
+    if equity_df.empty:
+        raise ValueError("No equity positions found in portfolio database.")
+
+    records: list[dict[str, Any]] = []
+    for _, row in equity_df.iterrows():
+        ticker = str(row["ticker"]).strip().upper()
+        if not ticker:
+            continue
+        direction = str(row.get("direction", "long")).strip().lower()
+        sign = 1.0 if direction == "long" else -1.0
+
+        shares_val = row.get("shares")
+        cost_val = row.get("cost_basis")
+        try:
+            conviction = max(1, min(5, int(row.get("conviction", 3))))
+        except (TypeError, ValueError):
+            conviction = 3
+
+        has_dollar = pd.notna(shares_val) and pd.notna(cost_val) and float(shares_val) > 0 and float(cost_val) > 0
+
+        records.append(
+            {
+                "ticker": ticker,
+                "direction": direction,
+                "sign": sign,
+                "shares": float(shares_val) if pd.notna(shares_val) else None,
+                "cost_basis": float(cost_val) if pd.notna(cost_val) else None,
+                "conviction": conviction,
+                "has_dollar": has_dollar,
+                "dollar_value": float(shares_val) * float(cost_val) if has_dollar else None,
+            }
+        )
+
+    if not records:
+        raise ValueError("No valid equity positions to hedge.")
+
+    all_have_dollars = all(r["has_dollar"] for r in records)
+    suggested_book = book
+
+    if all_have_dollars:
+        total_gross = sum(r["dollar_value"] for r in records)
+        suggested_book = total_gross if total_gross > 0 else book
+        for r in records:
+            r["weight"] = r["sign"] * r["dollar_value"] / suggested_book
+    else:
+        total_conviction = sum(r["conviction"] for r in records)
+        for r in records:
+            r["weight"] = r["sign"] * (r["conviction"] / total_conviction)
+
+    positions = [{"ticker": r["ticker"], "weight": r["weight"]} for r in records]
+    metadata = [
+        {
+            "ticker": r["ticker"],
+            "direction": r["direction"],
+            "conviction": r["conviction"],
+            "shares": r["shares"],
+            "cost_basis": r["cost_basis"],
+            "weight": r["weight"],
+        }
+        for r in records
+    ]
+
+    return positions, metadata, suggested_book
+
+
 def get_data(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_BOOK) -> dict:
     return compute_hedge(positions=positions, book=book)

@@ -381,6 +381,19 @@ export const fetchFxModelPairs = () =>
 export const fetchHedgingToolPrefill = () =>
   client.get("/hedging-tool/prefill").then(r => r.data)
 
+export const fetchHedgingPortfolioWeights = (book?: number) =>
+  client
+    .get("/hedging-tool/portfolio-weights", { params: book ? { book } : undefined })
+    .then(r => r.data as {
+      positions: { ticker: string; weight: number }[]
+      metadata: { ticker: string; direction: string; conviction: number; shares: number | null; cost_basis: number | null; weight: number }[]
+      book: number
+      source: string
+    })
+
+export const fetchHedgingRecommendations = (body: Record<string, unknown>) =>
+  client.post("/hedging-tool/recommend", body, { timeout: 180_000 }).then(r => r.data as { analysis: string })
+
 export const fetchSizerPrefill = () =>
   client.get("/portfolio-sizer/prefill").then(r => r.data)
 
