@@ -25,6 +25,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from api.exceptions import AppError
 from api.logging_config import configure_logging, generate_request_id, request_id_var
+from api.safe_import import get_degraded_modules, safe_import_router
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -38,45 +39,57 @@ logger = logging.getLogger("api")
 # ---------------------------------------------------------------------------
 # Import routers AFTER path + env setup
 # ---------------------------------------------------------------------------
+# Core routers (must succeed)
 from api.routers import (
     agent,
-    analyzer,
-    breakout,
-    central_banks,
-    chart,
-    commodities,
-    commodities_curve,
-    country_dashboard,
-    economic_growth,
-    financials,
-    fundamental_momentum,
-    fx_dashboard,
-    fx_model,
-    hedging,
-    index_dashboard,
-    industry,
-    labor_market,
-    liquidity,
-    market_technicals,
     memory,
-    momentum,
-    ontology,
     portfolio,
     portfolio_edit,
-    portfolio_news,
-    positioning,
-    quality,
-    sector_metrics,
-    sentiment,
-    short_screen,
-    signal_aggregator,
-    sizer,
     thesis,
-    weekly_report,
-    yield_curve,
 )
 from api.routers import auth as auth_router
 from api.routers.auth import require_auth
+
+# Optional routers — gracefully degrade if dependencies fail
+_optional_routers: dict[str, tuple] = {}
+
+_OPTIONAL_MODULES = [
+    ("api.routers.analyzer", "analyzer", "portfolio"),
+    ("api.routers.hedging", "hedging", "portfolio"),
+    ("api.routers.sizer", "sizer", "portfolio"),
+    ("api.routers.momentum", "momentum", "portfolio"),
+    ("api.routers.chart", "chart", "technical"),
+    ("api.routers.quality", "quality", "equities"),
+    ("api.routers.short_screen", "short_screen", "equities"),
+    ("api.routers.fundamental_momentum", "fundamental_momentum", "equities"),
+    ("api.routers.index_dashboard", "index_dashboard", "equities"),
+    ("api.routers.fx_dashboard", "fx_dashboard", "fx"),
+    ("api.routers.fx_model", "fx_model", "fx"),
+    ("api.routers.commodities", "commodities", "commodities"),
+    ("api.routers.commodities_curve", "commodities_curve", "commodities"),
+    ("api.routers.market_technicals", "market_technicals", "equities"),
+    ("api.routers.economic_growth", "economic_growth", "macro"),
+    ("api.routers.labor_market", "labor_market", "macro"),
+    ("api.routers.housing", "housing", "macro"),
+    ("api.routers.liquidity", "liquidity", "macro"),
+    ("api.routers.country_dashboard", "country_dashboard", "macro"),
+    ("api.routers.positioning", "positioning", "macro"),
+    ("api.routers.sentiment", "sentiment", "macro"),
+    ("api.routers.breakout", "breakout", "macro"),
+    ("api.routers.central_banks", "central_banks", "macro"),
+    ("api.routers.sector_metrics", "sector_metrics", "equities"),
+    ("api.routers.industry", "industry", "macro"),
+    ("api.routers.yield_curve", "yield_curve", "fixed-income"),
+    ("api.routers.financials", "financials", "equities"),
+    ("api.routers.signal_aggregator", "signal_aggregator", "macro"),
+    ("api.routers.portfolio_news", "portfolio_news", "portfolio"),
+    ("api.routers.ontology", "ontology", "ontology"),
+    ("api.routers.weekly_report", "weekly_report", "reports"),
+]
+
+for module_path, name, tag in _OPTIONAL_MODULES:
+    router, healthy = safe_import_router(module_path)
+    _optional_routers[name] = (router, tag, healthy)
 
 # ---------------------------------------------------------------------------
 # App
@@ -195,42 +208,38 @@ app.add_middleware(
 _auth_dep = [Depends(require_auth)]
 _V1 = "/api/v1"
 
+# Core routers (always available)
 app.include_router(auth_router.router, prefix=_V1, tags=["auth"])
 app.include_router(portfolio.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(portfolio_edit.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(analyzer.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(hedging.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(sizer.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(momentum.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(chart.router, prefix=_V1, dependencies=_auth_dep, tags=["technical"])
-app.include_router(quality.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
-app.include_router(short_screen.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
-app.include_router(fundamental_momentum.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
-app.include_router(index_dashboard.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
-app.include_router(fx_dashboard.router, prefix=_V1, dependencies=_auth_dep, tags=["fx"])
-app.include_router(commodities.router, prefix=_V1, dependencies=_auth_dep, tags=["commodities"])
-app.include_router(market_technicals.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
-app.include_router(economic_growth.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(labor_market.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(liquidity.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(country_dashboard.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(positioning.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(sentiment.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(breakout.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(fx_model.router, prefix=_V1, dependencies=_auth_dep, tags=["fx"])
-app.include_router(central_banks.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(sector_metrics.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
-app.include_router(industry.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(yield_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["fixed-income"])
-app.include_router(financials.router, prefix=_V1, dependencies=_auth_dep, tags=["equities"])
-app.include_router(signal_aggregator.router, prefix=_V1, dependencies=_auth_dep, tags=["macro"])
-app.include_router(portfolio_news.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
-app.include_router(ontology.router, prefix=_V1, dependencies=_auth_dep, tags=["ontology"])
-app.include_router(weekly_report.router, prefix=_V1, dependencies=_auth_dep, tags=["reports"])
-app.include_router(commodities_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["commodities"])
 app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(memory.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
+
+# Investing OS routers (core_db entities + aggregates)
+from api.routers import (
+    action_items,
+    approvals,
+    dossier,
+    process_entities,
+    research_notes,
+    triggers,
+    workflow_runs,
+    workspace,
+)
+
+app.include_router(workspace.router, prefix=_V1, dependencies=_auth_dep, tags=["workspace"])
+app.include_router(dossier.router, prefix=_V1, dependencies=_auth_dep, tags=["workspace"])
+app.include_router(approvals.router, prefix=_V1, dependencies=_auth_dep, tags=["approvals"])
+app.include_router(action_items.router, prefix=_V1, dependencies=_auth_dep, tags=["actions"])
+app.include_router(triggers.router, prefix=_V1, dependencies=_auth_dep, tags=["triggers"])
+app.include_router(process_entities.router, prefix=_V1, dependencies=_auth_dep, tags=["process"])
+app.include_router(research_notes.router, prefix=_V1, dependencies=_auth_dep, tags=["research"])
+app.include_router(workflow_runs.router, prefix=_V1, dependencies=_auth_dep, tags=["workflows"])
+
+# Optional routers (gracefully degraded if import failed)
+for _name, (_router, _tag, _healthy) in _optional_routers.items():
+    app.include_router(_router, prefix=_V1, dependencies=_auth_dep, tags=[_tag])
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +310,16 @@ def health():
     except Exception as exc:
         checks["thesis_db"] = f"error: {exc}"
 
+    # Check core DB connectivity
+    try:
+        from portfolio.core_db import _get_conn as _core_conn
+
+        conn = _core_conn()
+        conn.execute("SELECT COUNT(*) FROM catalysts")
+        checks["core_db"] = "ok"
+    except Exception as exc:
+        checks["core_db"] = f"error: {exc}"
+
     # Check FRED API reachability
     fred_key = os.environ.get("FRED_API_KEY")
     if fred_key:
@@ -315,10 +334,15 @@ def health():
     else:
         checks["fred_api"] = "no_api_key"
 
-    db_ok = checks.get("portfolio_db") == "ok" and checks.get("thesis_db") == "ok"
-    all_ok = all(v == "ok" for v in checks.values())
+    # Track degraded optional modules
+    degraded = get_degraded_modules()
+    if degraded:
+        checks["degraded_modules"] = list(degraded.keys())
 
-    if all_ok:
+    db_ok = checks.get("portfolio_db") == "ok" and checks.get("thesis_db") == "ok" and checks.get("core_db") == "ok"
+    all_ok = all(v == "ok" for v in checks.values() if isinstance(v, str))
+
+    if all_ok and not degraded:
         status = "ok"
     elif db_ok:
         status = "degraded"

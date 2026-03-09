@@ -6,9 +6,10 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
+from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_SONNET, extract_text
 from paths import PROJECT_ROOT
@@ -44,12 +45,9 @@ def _normalize_ticker(raw_ticker: str) -> str:
 
 def _validate_ticker(ticker: str) -> None:
     if not ticker:
-        raise HTTPException(status_code=400, detail="Ticker cannot be empty.")
+        raise ValidationError("Ticker cannot be empty.")
     if not _TICKER_RE.match(ticker):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.",
-        )
+        raise ValidationError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
 
 
 def _extract_stop_reason(response: Any) -> str | None:
@@ -127,7 +125,7 @@ def _call_claude_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
 
     generated = extract_text(response)
     if not generated:
-        raise HTTPException(status_code=502, detail="Claude returned empty thesis output.")
+        raise DataFetchError(source="claude", detail="Claude returned empty thesis output.")
     return _normalize_output_markdown(ticker, generated)
 
 
@@ -141,30 +139,32 @@ async def generate_thesis(
 
     pdf_bytes = await file.read()
     if not pdf_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        raise ValidationError("Uploaded file is empty.")
     if len(pdf_bytes) > MAX_PDF_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="PDF exceeds 30MB limit.")
+        raise ValidationError("PDF exceeds 30MB limit.")
 
     content_type = (file.content_type or "").lower()
     filename = (file.filename or "").lower()
     has_pdf_type = content_type == "application/pdf" or filename.endswith(".pdf")
     has_pdf_signature = pdf_bytes.startswith(b"%PDF-")
     if not (has_pdf_type and has_pdf_signature):
-        raise HTTPException(status_code=400, detail="File must be a valid PDF.")
+        raise ValidationError("File must be a valid PDF.")
 
     try:
         content = _call_claude_pdf(ticker=normalized_ticker, pdf_bytes=pdf_bytes)
-    except HTTPException:
+    except (ValidationError, DataFetchError):
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to generate thesis via Claude: {e}") from e
+        raise DataFetchError(source="claude", detail=f"Failed to generate thesis: {e}") from e
 
     THESES_DIR.mkdir(parents=True, exist_ok=True)
     thesis_path = THESES_DIR / f"{normalized_ticker}.md"
     try:
         thesis_path.write_text(content, encoding="utf-8")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write thesis file: {e}") from e
+        from api.exceptions import AppError
+
+        raise AppError(f"Failed to write thesis file: {e}") from e
 
     from portfolio.thesis_db import upsert_thesis_meta
 
@@ -183,6 +183,14 @@ async def generate_thesis(
         )
     except Exception:
         pass  # Don't block thesis save if indexing fails
+
+    # Sync catalysts/kill conditions from the new thesis content
+    try:
+        from portfolio.thesis_sync import sync_entities_from_markdown
+
+        sync_entities_from_markdown(normalized_ticker)
+    except Exception:
+        pass  # Don't block thesis save if sync fails
 
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
 
@@ -238,7 +246,7 @@ def get_thesis_detail(ticker: str):
 
     meta = get_thesis_meta(normalized_ticker)
     if not meta:
-        raise HTTPException(status_code=404, detail=f"No thesis metadata for '{normalized_ticker}'.")
+        raise NotFoundError("Thesis metadata", normalized_ticker)
 
     content = None
     thesis_path = THESES_DIR / f"{normalized_ticker}.md"
@@ -268,16 +276,65 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
 
     new_status = body.status.strip().lower()
     if new_status not in ("active", "under_review", "invalidated"):
-        raise HTTPException(
-            status_code=400, detail=f"Invalid status: '{new_status}'. Must be active, under_review, or invalidated."
-        )
+        raise ValidationError(f"Invalid status: '{new_status}'. Must be active, under_review, or invalidated.")
 
     from portfolio.thesis_db import update_thesis_status
 
     try:
         return update_thesis_status(normalized_ticker, new_status, body.reason.strip())
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise NotFoundError("Thesis", normalized_ticker) from e
+
+
+class SaveThesisRequest(BaseModel):
+    content: str
+
+
+@router.put("/thesis/{ticker}")
+def save_thesis(ticker: str, body: SaveThesisRequest):
+    """Save thesis markdown content directly."""
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+
+    content = body.content.strip()
+    if not content:
+        raise ValidationError("Thesis content cannot be empty.")
+
+    THESES_DIR.mkdir(parents=True, exist_ok=True)
+    thesis_path = THESES_DIR / f"{normalized_ticker}.md"
+    try:
+        thesis_path.write_text(content + "\n", encoding="utf-8")
+    except Exception as e:
+        from api.exceptions import AppError
+
+        raise AppError(f"Failed to write thesis file: {e}") from e
+
+    from portfolio.thesis_db import upsert_thesis_meta
+
+    upsert_thesis_meta(normalized_ticker, status="active")
+
+    try:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="thesis",
+            content=content,
+            ticker=normalized_ticker,
+            source_path=str(thesis_path),
+            doc_id=f"thesis-{normalized_ticker}",
+        )
+    except Exception:
+        pass
+
+    # Sync catalysts/kill conditions from the updated thesis content
+    try:
+        from portfolio.thesis_sync import sync_entities_from_markdown
+
+        sync_entities_from_markdown(normalized_ticker)
+    except Exception:
+        pass
+
+    return {"status": "ok", "ticker": normalized_ticker, "content": content}
 
 
 @router.get("/thesis/{ticker}")
@@ -287,9 +344,11 @@ def get_thesis(ticker: str):
 
     thesis_path = THESES_DIR / f"{normalized_ticker}.md"
     if not thesis_path.exists():
-        raise HTTPException(status_code=404, detail=f"No thesis found for ticker '{normalized_ticker}'.")
+        raise NotFoundError("Thesis", normalized_ticker)
     try:
         content = thesis_path.read_text(encoding="utf-8")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read thesis file: {e}") from e
+        from api.exceptions import AppError
+
+        raise AppError(f"Failed to read thesis file: {e}") from e
     return {"status": "ok", "ticker": normalized_ticker, "content": content}

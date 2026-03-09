@@ -11,7 +11,8 @@ For the overall repo architecture (API + UI), see the repo root `README.md`.
 - Calculates yield changes over: 1 month, 3 months, 6 months, and 1 year
 - Optional CSV export functionality
 - Uses FRED API for reliable US Treasury data
-- Uses local CSV files for UK, Germany, and Japan bond data
+- Uses Deutsche Bundesbank API for Germany bond data
+- Uses local CSV files for UK and Japan bond data
 
 ## Installation
 
@@ -66,23 +67,23 @@ This will create a `government_bond_yields.csv` file with all the data.
 ## Data Sources
 
 - **United States**: FRED (Federal Reserve Economic Data) - Most reliable and accurate source for US Treasury yields
-- **Other Countries**: Local CSV files in the `data/` directory
+- **Germany**: Deutsche Bundesbank API (term-structure series)
+- **United Kingdom / Japan**: Local CSV files in the `data/` directory
 
 ## Data File Requirements
 
-For UK, Germany, and Japan, place CSV files in the `data/` directory with the following naming convention:
+For UK and Japan, place CSV files in the `data/` directory with the following naming convention:
 
 ```
 Download Data - BOND_BX_XTUP_TMBMK{COUNTRY_CODE}-{MATURITY}.csv
 ```
 
 Where:
-- **Country Codes**: GB (United Kingdom), DE (Germany), JP (Japan)
+- **Country Codes**: GB (United Kingdom), JP (Japan)
 - **Maturities**: 02Y (2-year), 10Y (10-year)
 
 Example filenames:
 - `Download Data - BOND_BX_XTUP_TMBMKGB-02Y.csv` (UK 2-year)
-- `Download Data - BOND_BX_XTUP_TMBMKDE-10Y.csv` (Germany 10-year)
 - `Download Data - BOND_BX_XTUP_TMBMKJP-02Y.csv` (Japan 2-year)
 
 ### CSV File Format
@@ -101,8 +102,9 @@ See `government_bonds/data/README.md` for the expected filenames and an example.
 - Yields are expressed as percentages
 - Changes are expressed in basis points (bps)
 - US Treasury data from FRED is highly reliable and updated daily
+- Germany data is fetched live from Deutsche Bundesbank
 - Without a FRED API key, US Treasury data will not be available
-- Make sure to place the required CSV files in the `data/` directory before running
+- Make sure the UK/JP CSV files are present in the `data/` directory before running
 
 ## Data Series Used
 
@@ -111,7 +113,10 @@ See `government_bonds/data/README.md` for the expected filenames and an example.
 - **10-Year**: DGS10 (10-Year Treasury Constant Maturity Rate)
 - **30-Year**: DGS30 (30-Year Treasury Constant Maturity Rate)
 
+### Germany (Bundesbank):
+- **2-Year**: `BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R02XX.R.A.A._Z._Z.A`
+- **10-Year**: `BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A`
+
 ### Other Countries (Local CSV Files):
 - **United Kingdom**: 2-Year and 10-Year
-- **Germany**: 2-Year and 10-Year
 - **Japan**: 2-Year and 10-Year

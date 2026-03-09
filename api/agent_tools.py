@@ -137,6 +137,16 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
+        "name": "get_housing",
+        "description": (
+            "Fetch US housing market indicators. Returns time series and latest values for "
+            "housing starts, building permits, NAHB housing market index, and existing home sales. "
+            "Use this to assess the residential construction cycle, builder sentiment, and housing demand."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
         "name": "get_sector_metrics",
         "description": (
             "Fetch S&P 500 sector metrics. Returns sector weights, weight changes over "
@@ -394,6 +404,185 @@ TOOL_DEFINITIONS: list[dict] = [
                 },
             },
             "required": [],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Investing OS tools — read
+    # -----------------------------------------------------------------------
+    {
+        "type": "function",
+        "name": "get_catalysts",
+        "description": (
+            "Fetch tracked catalysts for a given ticker. Returns a list of catalysts with "
+            "their status (pending/played_out/failed/superseded), category, target date, and evidence."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol (e.g. 'AAPL')"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_kill_conditions",
+        "description": (
+            "Fetch kill conditions for a given ticker. Returns conditions that would invalidate "
+            "the thesis, with status (active/triggered/retired), metric, and threshold."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol (e.g. 'AAPL')"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_action_items",
+        "description": (
+            "Fetch open action items, optionally filtered by ticker. Returns tasks with "
+            "urgency (low/normal/high/urgent), action type, and status."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Optional ticker filter"},
+                "status": {"type": "string", "description": "Filter by status. Default: 'open'"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_watch_triggers",
+        "description": (
+            "Fetch active watch triggers, optionally filtered by ticker. Returns conditions "
+            "the system is monitoring with trigger type and status."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Optional ticker filter"},
+                "status": {"type": "string", "description": "Filter by status. Default: 'active'"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_pending_approvals",
+        "description": (
+            "Fetch pending approval items. These are proposed changes from workflows or agent "
+            "that require user approval before being applied."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Optional ticker filter"},
+                "status": {"type": "string", "description": "Filter by status. Default: 'pending'"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_dossier",
+        "description": (
+            "Fetch the complete position dossier for a ticker. Returns thesis, catalysts, "
+            "kill conditions, evaluations, ontology risk, workflow runs, action items, "
+            "triggers, research notes, and pending approvals — all in one call."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol (e.g. 'MU')"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_workflow_history",
+        "description": ("Fetch recent workflow run history, optionally filtered by workflow name or ticker."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Optional ticker filter"},
+                "workflow_name": {"type": "string", "description": "Optional workflow name filter"},
+                "limit": {"type": "integer", "description": "Max results (default 10)"},
+            },
+            "required": [],
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Investing OS tools — propose (approval-gated writes)
+    # -----------------------------------------------------------------------
+    {
+        "type": "function",
+        "name": "propose_thesis_status_change",
+        "description": (
+            "Propose a thesis status change for a ticker. This creates a pending approval "
+            "that the user must approve before the status is actually changed. "
+            "Use this instead of directly modifying thesis status."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol"},
+                "new_status": {
+                    "type": "string",
+                    "description": "Proposed new status: active|under_review|suspended|closed",
+                },
+                "reason": {"type": "string", "description": "Explanation for the proposed change"},
+            },
+            "required": ["ticker", "new_status", "reason"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "propose_action_item",
+        "description": (
+            "Propose a new action item. This creates a pending approval that the user must "
+            "approve before the action item is created. Use this for recommending trades, "
+            "research tasks, or position adjustments."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol (optional for non-ticker-specific actions)"},
+                "description": {"type": "string", "description": "What needs to be done"},
+                "action_type": {"type": "string", "description": "Type: review|resize|research|exit|enter|hedge|other"},
+                "urgency": {"type": "string", "description": "Urgency: low|normal|high|urgent"},
+                "reason": {"type": "string", "description": "Why this action is recommended"},
+            },
+            "required": ["description", "action_type", "reason"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "propose_watch_trigger",
+        "description": (
+            "Propose a new watch trigger. This creates a pending approval that the user must "
+            "approve before the trigger is activated. Use this to set up monitoring conditions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol (optional)"},
+                "condition": {
+                    "type": "string",
+                    "description": "The condition to watch for (e.g. 'AAPL breaks below $180')",
+                },
+                "trigger_type": {
+                    "type": "string",
+                    "description": "Type: price_level|technical|fundamental|event|macro|custom",
+                },
+                "reason": {"type": "string", "description": "Why this trigger matters"},
+            },
+            "required": ["condition", "trigger_type", "reason"],
         },
     },
 ]
@@ -1037,7 +1226,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         return data, meta
 
     if name == "get_vix_term_structure":
-        key = "vix_term_structure"
+        key = "agent_vix_term_structure:default"
 
         def _load():
             from equities.market_technicals.vix_term_structure import get_data
@@ -1109,6 +1298,17 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
         def _load():
             from macro.labor_market.labor_market import get_data
+
+            return serialize_value(get_data())
+
+        data, meta = _fetch_with_cache(short_cache, key, _load)
+        return data, meta
+
+    if name == "get_housing":
+        key = "housing"
+
+        def _load():
+            from macro.housing.housing import get_data
 
             return serialize_value(get_data())
 
@@ -1345,5 +1545,120 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             return serialize_value(diff), {"cache": "n/a"}
         except Exception as exc:
             return {"error": f"Ontology diff failed: {exc}"}, {"cache": "n/a"}
+
+    # -------------------------------------------------------------------
+    # Investing OS — read tools
+    # -------------------------------------------------------------------
+    if name == "get_catalysts":
+        from portfolio.core_db import get_catalysts
+
+        ticker = args.get("ticker", "").strip().upper()
+        return get_catalysts(ticker), {"cache": "n/a"}
+
+    if name == "get_kill_conditions":
+        from portfolio.core_db import get_kill_conditions
+
+        ticker = args.get("ticker", "").strip().upper()
+        return get_kill_conditions(ticker), {"cache": "n/a"}
+
+    if name == "get_action_items":
+        from portfolio.core_db import get_action_items
+
+        return get_action_items(
+            ticker=args.get("ticker"),
+            status=args.get("status", "open"),
+        ), {"cache": "n/a"}
+
+    if name == "get_watch_triggers":
+        from portfolio.core_db import get_watch_triggers
+
+        return get_watch_triggers(
+            ticker=args.get("ticker"),
+            status=args.get("status", "active"),
+        ), {"cache": "n/a"}
+
+    if name == "get_pending_approvals":
+        from portfolio.core_db import get_pending_approvals
+
+        return get_pending_approvals(
+            ticker=args.get("ticker"),
+            status=args.get("status", "pending"),
+        ), {"cache": "n/a"}
+
+    if name == "get_dossier":
+        from api.routers.dossier import get_dossier as _get_dossier
+
+        ticker = args.get("ticker", "").strip().upper()
+        return _get_dossier(ticker), {"cache": "n/a"}
+
+    if name == "get_workflow_history":
+        from portfolio.core_db import get_workflow_runs
+
+        return get_workflow_runs(
+            ticker=args.get("ticker"),
+            workflow_name=args.get("workflow_name"),
+            limit=int(args.get("limit", 10)),
+        ), {"cache": "n/a"}
+
+    # -------------------------------------------------------------------
+    # Investing OS — propose tools (approval-gated writes)
+    # -------------------------------------------------------------------
+    if name == "propose_thesis_status_change":
+        from portfolio.core_db import create_pending_approval
+
+        ticker = args["ticker"].strip().upper()
+        approval = create_pending_approval(
+            entity_type="thesis_status",
+            ticker=ticker,
+            proposed_change={"new_status": args["new_status"], "reason": args["reason"]},
+            reason=args["reason"],
+            source_type="agent",
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "message": f"Proposed thesis status change for {ticker} to '{args['new_status']}'. User must approve in Workspace.",
+        }, {"cache": "n/a"}
+
+    if name == "propose_action_item":
+        from portfolio.core_db import create_pending_approval
+
+        ticker = (args.get("ticker") or "").strip().upper() or None
+        approval = create_pending_approval(
+            entity_type="action_item",
+            ticker=ticker,
+            proposed_change={
+                "description": args["description"],
+                "action_type": args["action_type"],
+                "urgency": args.get("urgency", "normal"),
+            },
+            reason=args["reason"],
+            source_type="agent",
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "message": f"Proposed action item{f' for {ticker}' if ticker else ''}. User must approve in Workspace.",
+        }, {"cache": "n/a"}
+
+    if name == "propose_watch_trigger":
+        from portfolio.core_db import create_pending_approval
+
+        ticker = (args.get("ticker") or "").strip().upper() or None
+        approval = create_pending_approval(
+            entity_type="watch_trigger",
+            ticker=ticker,
+            proposed_change={
+                "condition": args["condition"],
+                "trigger_type": args["trigger_type"],
+            },
+            reason=args["reason"],
+            source_type="agent",
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "message": f"Proposed watch trigger{f' for {ticker}' if ticker else ''}. User must approve in Workspace.",
+        }, {"cache": "n/a"}
 
     raise ValueError(f"Unknown tool: {name}")

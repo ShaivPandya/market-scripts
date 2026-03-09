@@ -156,7 +156,10 @@ def test_ontology_query_unknown_run_id_returns_404(auth_client, monkeypatch):
     )
 
     assert resp.status_code == 404
-    assert "Ontology run not found" in str(resp.json().get("detail", ""))
+    body = resp.json()
+    # AppError returns {"error": ..., "type": ...} instead of {"detail": ...}
+    msg = str(body.get("error", body.get("detail", "")))
+    assert "Ontology run" in msg
 
 
 def test_ontology_query_passes_run_id(auth_client, monkeypatch):

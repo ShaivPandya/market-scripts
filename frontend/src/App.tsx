@@ -27,6 +27,7 @@ import { Breakout } from "@/pages/Breakout"
 import { FXModel } from "@/pages/FXModel"
 import { EconomicGrowth } from "@/pages/EconomicGrowth"
 import { LaborMarket } from "@/pages/LaborMarket"
+import { Housing } from "@/pages/Housing"
 import { Liquidity } from "@/pages/Liquidity"
 import { CountryDashboard } from "@/pages/CountryDashboard"
 import { CentralBanks } from "@/pages/CentralBanks"
@@ -39,6 +40,8 @@ import { Sentiment } from "@/pages/Sentiment"
 import { SignalAggregator } from "@/pages/SignalAggregator"
 import { OntologyWorkbench } from "@/pages/OntologyWorkbench"
 import { ThesisManager } from "@/pages/ThesisManager"
+import { Workspace } from "@/pages/Workspace"
+import { PositionDossier } from "@/pages/PositionDossier"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,7 +63,7 @@ function LoginRoute() {
     )
   }
 
-  return isAuthenticated ? <Navigate to="/portfolio" replace /> : <LoginPage />
+  return isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />
 }
 
 function AppRoutes() {
@@ -72,8 +75,9 @@ function AppRoutes() {
       {/* Protected — all existing routes */}
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
-          <Route index element={<Navigate to="/portfolio" replace />} />
+          <Route index element={<Workspace />} />
           <Route path="/portfolio" element={<PortfolioDashboard />} />
+          <Route path="/dossier/:ticker" element={<PositionDossier />} />
           <Route path="/theses" element={<ThesisManager />} />
           <Route path="/analyzer" element={<PortfolioAnalyzer />} />
           <Route path="/optimizer" element={<Navigate to="/analyzer" replace />} />
@@ -98,6 +102,7 @@ function AppRoutes() {
           <Route path="/fx-model" element={<FXModel />} />
           <Route path="/economic-growth" element={<EconomicGrowth />} />
           <Route path="/labor-market" element={<LaborMarket />} />
+          <Route path="/housing" element={<Housing />} />
           <Route path="/liquidity" element={<Liquidity />} />
           <Route path="/country-dashboard" element={<CountryDashboard />} />
           <Route path="/central-banks" element={<CentralBanks />} />

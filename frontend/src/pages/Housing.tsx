@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
-import { fetchLaborMarket, analyzeLaborMarket } from "@/lib/api"
+import { fetchHousing, analyzeHousing } from "@/lib/api"
 import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -19,12 +19,10 @@ const TIMEFRAME_DAYS: Record<Timeframe, number | null> = {
 }
 
 const SERIES_ORDER = [
-  "initial_claims",
-  "continuing_claims",
-  "median_weeks_unemployed",
-  "weekly_hours",
-  "wage_growth",
-  "job_openings",
+  "housing_starts",
+  "housing_permits",
+  "nahb_index",
+  "existing_home_sales",
 ] as const
 
 function filterByTimeframe(dates: string[], values: number[], days: number | null): DataPoint[] {
@@ -40,54 +38,51 @@ function filterByTimeframe(dates: string[], values: number[], days: number | nul
 
 function fmtValue(value: number | null, unit: string): string {
   if (value == null) return "N/A"
-  if (unit === "%") return `${value.toFixed(1)}%`
-  if (unit === "hours") return `${value.toFixed(1)}h`
-  if (unit === "weeks") return `${value.toFixed(1)} wks`
   if (unit === "thousands") {
     if (value >= 1000) return `${(value / 1000).toFixed(1)}M`
     return `${Math.round(value)}K`
   }
+  if (unit === "millions") return `${value.toFixed(2)}M`
+  if (unit === "index") return `${value.toFixed(0)}`
   return value.toFixed(2)
 }
 
 function fmtChange(change: number | null, unit: string): string | null {
   if (change == null) return null
   const sign = change >= 0 ? "+" : ""
-  if (unit === "%") return `${sign}${change.toFixed(2)}pp`
-  if (unit === "hours") return `${sign}${change.toFixed(2)}h`
-  if (unit === "weeks") return `${sign}${change.toFixed(2)} wks`
   if (unit === "thousands") return `${sign}${Math.round(change)}K`
+  if (unit === "millions") return `${sign}${change.toFixed(2)}M`
+  if (unit === "index") return `${sign}${change.toFixed(0)}`
   return `${sign}${change.toFixed(2)}`
 }
 
 function yFormatter(unit: string) {
   return (v: number) => {
-    if (unit === "%") return `${v.toFixed(1)}%`
-    if (unit === "hours") return `${v.toFixed(1)}`
-    if (unit === "weeks") return `${v.toFixed(1)}`
     if (unit === "thousands") {
       if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1)}M`
       return `${Math.round(v)}K`
     }
+    if (unit === "millions") return `${v.toFixed(1)}M`
+    if (unit === "index") return `${Math.round(v)}`
     return v.toFixed(1)
   }
 }
 
-export function LaborMarket() {
+export function Housing() {
   const [timeframe, setTimeframe] = useState<Timeframe>("3Y")
 
   const { analysis: persistedAnalysis, isOpen, setIsOpen, setAnalysis: setPersistedAnalysis } =
-    useSessionAiOverview("ai-overview:labor-market")
+    useSessionAiOverview("ai-overview:housing")
 
   const mutation = useMutation({
-    mutationFn: analyzeLaborMarket,
+    mutationFn: analyzeHousing,
     onSuccess: data => {
       const analysis = typeof data?.analysis === "string" ? data.analysis : null
       if (analysis) setPersistedAnalysis(analysis)
     },
   })
 
-  const { data, isLoading, error } = useApiQuery(["labor-market"], () => fetchLaborMarket())
+  const { data, isLoading, error } = useApiQuery(["housing"], () => fetchHousing())
 
   const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
   const analysisText = liveAnalysis ?? persistedAnalysis
@@ -109,7 +104,7 @@ export function LaborMarket() {
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Labor Market</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Housing</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
@@ -134,7 +129,7 @@ export function LaborMarket() {
             <Sparkles size={14} />
             AI Overview
           </button>
-          <RefreshButton queryKeys={[["labor-market"]]} />
+          <RefreshButton queryKeys={[["housing"]]} />
         </div>
       </div>
 
@@ -159,7 +154,7 @@ export function LaborMarket() {
               {mutation.isPending && (
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  Analyzing labor market data...
+                  Analyzing housing market data...
                 </div>
               )}
               {mutation.isError && (
@@ -177,13 +172,13 @@ export function LaborMarket() {
         </div>
       )}
 
-      {isLoading && <LoadingSpinner message="Fetching labor market data..." />}
+      {isLoading && <LoadingSpinner message="Fetching housing market data..." />}
       {!isLoading && (error || !data) && <ErrorMessage message={String(error) || "Failed to load"} />}
 
       {data && !isLoading && (
         <>
           {/* Metric cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
             {SERIES_ORDER.map(key => {
               const latest = (data.latest ?? {})[key] as { value: number | null; date: string; change: number | null } | undefined
               const series = (data.series ?? {})[key] as { label: string; unit: string } | undefined
@@ -236,7 +231,6 @@ export function LaborMarket() {
                     height={200}
                     yFormatter={yFormatter(unit)}
                     tooltipFormatter={yFormatter(unit)}
-                    zeroLine={unit === "%"}
                     timeframe="Monthly"
                   />
                 </div>

@@ -38,3 +38,22 @@ class AnalysisError(AppError):
 
     def __init__(self, message: str = "Analysis computation failed"):
         super().__init__(message, status_code=500)
+
+
+class NotFoundError(AppError):
+    """A requested resource does not exist."""
+
+    def __init__(self, resource: str, identifier: str = ""):
+        detail = f"{resource} not found"
+        if identifier:
+            detail = f"{resource} '{identifier}' not found"
+        super().__init__(detail, status_code=404)
+        self.resource = resource
+        self.identifier = identifier
+
+
+class ValidationError(AppError):
+    """Request data failed validation."""
+
+    def __init__(self, message: str = "Validation failed"):
+        super().__init__(message, status_code=422)

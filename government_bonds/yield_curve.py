@@ -3,18 +3,23 @@ Yield curve data snapshot for the web dashboard.
 
 Provides current and historical (N days lookback) curve points for:
 - United States (FRED)
-- United Kingdom (local CSV fallback)
-- Germany (local CSV fallback)
-- Japan (local CSV fallback)
+- United Kingdom (Bank of England yield curve)
+- Germany (Deutsche Bundesbank)
+- Japan (MOF)
 """
 
 from __future__ import annotations
 
+import io
+import json
 import os
+import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
 
 import pandas as pd
+import requests  # type: ignore[import-untyped]
 
 from load_env import load_env
 
@@ -28,7 +33,7 @@ except ImportError:
     FRED_AVAILABLE = False
     Fred = None  # type: ignore[assignment]
 
-from utils.retry import fred_get_series
+from utils.retry import fred_get_series, yf_download
 
 
 class TenorMeta(TypedDict):
@@ -67,22 +72,123 @@ FRED_SERIES = {
     }
 }
 
-CSV_SERIES = {
-    "UK": {
-        "2Y": "Download Data - BOND_BX_XTUP_TMBMKGB-02Y.csv",
-        "10Y": "Download Data - BOND_BX_XTUP_TMBMKGB-10Y.csv",
-    },
-    "DE": {
-        "2Y": "Download Data - BOND_BX_XTUP_TMBMKDE-02Y.csv",
-        "10Y": "Download Data - BOND_BX_XTUP_TMBMKDE-10Y.csv",
-    },
-    "JP": {
-        "2Y": "Download Data - BOND_BX_XTUP_TMBMKJP-02Y.csv",
-        "10Y": "Download Data - BOND_BX_XTUP_TMBMKJP-10Y.csv",
-    },
+# ---------------------------------------------------------------------------
+# Japan - Ministry of Finance
+# ---------------------------------------------------------------------------
+MOF_JGB_URL = "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"
+
+_MOF_COLUMN_MAP: dict[str, str] = {
+    "1Y": "1Y",
+    "2Y": "2Y",
+    "5Y": "5Y",
+    "10Y": "10Y",
+    "30Y": "30Y",
 }
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
+# ---------------------------------------------------------------------------
+# United Kingdom - Bank of England GLC nominal yield curve (monthly ZIP)
+# ---------------------------------------------------------------------------
+BOE_GLC_URL = "https://www.bankofengland.co.uk/-/media/boe/files/statistics/yield-curves/glcnominalmonthedata.zip"
+
+_BOE_MATURITY_MAP: dict[float, str] = {
+    0.5: "6M",
+    1.0: "1Y",
+    2.0: "2Y",
+    5.0: "5Y",
+    10.0: "10Y",
+    30.0: "30Y",
+}
+
+# ---------------------------------------------------------------------------
+# Germany - Deutsche Bundesbank SDMX API
+# ---------------------------------------------------------------------------
+BUNDESBANK_BASE_URL = "https://api.statistiken.bundesbank.de/rest/data"
+
+_BUNDESBANK_DE_SERIES: dict[str, str] = {
+    # Daily yields derived from term structure on listed Federal securities.
+    "1Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R01XX.R.A.A._Z._Z.A",
+    "2Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R02XX.R.A.A._Z._Z.A",
+    "5Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R05XX.R.A.A._Z._Z.A",
+    "10Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A",
+    "30Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R30XX.R.A.A._Z._Z.A",
+}
+
+# ---------------------------------------------------------------------------
+# File-based cache (same pattern as market_breadth.py)
+# ---------------------------------------------------------------------------
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CACHE_DIR = _REPO_ROOT / "data_cache" / "yield_curve"
+_CACHE_TTL_SECONDS = 24 * 60 * 60
+_CACHE_VERSION = 1
+_CLOSE_PROBE_TICKER = "SPY"
+
+
+def _cache_path(lookback_days: int) -> Path:
+    return _CACHE_DIR / f"yield_curve_{lookback_days}d.json"
+
+
+def _load_cache(path: Path) -> dict | None:
+    try:
+        if not path.exists():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return None
+        if raw.get("version") != _CACHE_VERSION:
+            return None
+        payload = raw.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        fetched_at = raw.get("fetched_at")
+        if not isinstance(fetched_at, str):
+            return None
+        datetime.fromisoformat(fetched_at)
+        return raw
+    except Exception:
+        return None
+
+
+def _write_cache(
+    path: Path,
+    payload: dict,
+    lookback_days: int,
+    as_of_date: str | None,
+    fetched_at: str | None = None,
+) -> None:
+    record = {
+        "version": _CACHE_VERSION,
+        "fetched_at": fetched_at or datetime.now().isoformat(),
+        "as_of_date": as_of_date,
+        "lookback_days": lookback_days,
+        "payload": payload,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        return
+
+
+def _latest_market_close_date() -> str | None:
+    try:
+        probe = yf_download(
+            tickers=_CLOSE_PROBE_TICKER,
+            period="10d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+        if probe is None or probe.empty:
+            return None
+        idx = pd.to_datetime(probe.index, errors="coerce").dropna()
+        if idx.empty:
+            return None
+        return str(idx[-1].date().isoformat())
+    except Exception:
+        return None
 
 
 def _dedupe(seq: list[str]) -> list[str]:
@@ -93,23 +199,6 @@ def _dedupe(seq: list[str]) -> list[str]:
             seen.add(item)
             out.append(item)
     return out
-
-
-def _to_float_percent(value) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        cleaned = value.strip().replace("%", "").replace(",", "")
-        if cleaned == "":
-            return None
-        try:
-            return float(cleaned)
-        except ValueError:
-            return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _normalize_series(series: pd.Series) -> pd.Series:
@@ -145,28 +234,195 @@ def _fetch_fred_series(fred: Fred, series_id: str) -> pd.Series | None:
     return normalized if not normalized.empty else None
 
 
-def _load_csv_series(filename: str) -> pd.Series | None:
-    path = DATA_DIR / filename
-    if not path.exists():
-        return None
+# ---------------------------------------------------------------------------
+# Bulk fetchers - one HTTP call returns multiple tenors
+# ---------------------------------------------------------------------------
 
+
+def _fetch_mof_japan() -> dict[str, pd.Series]:
+    """Download JGB yields from Japan Ministry of Finance."""
     try:
-        df = pd.read_csv(path)
+        resp = requests.get(MOF_JGB_URL, timeout=30)
+        resp.raise_for_status()
     except Exception:
+        return {}
+    text = None
+    for enc in ("utf-8", "shift_jis", "latin-1"):
+        try:
+            text = resp.content.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return {}
+    try:
+        df = pd.read_csv(io.StringIO(text), header=1)
+    except Exception:
+        return {}
+    if df.empty:
+        return {}
+    date_col = df.columns[0]
+    dates = pd.to_datetime(df[date_col], format="%Y/%m/%d", errors="coerce")
+    result: dict[str, pd.Series] = {}
+    for col in df.columns:
+        tenor = _MOF_COLUMN_MAP.get(str(col).strip())
+        if tenor is None:
+            continue
+        s = pd.Series(pd.to_numeric(df[col], errors="coerce").values, index=dates)
+        ns = _normalize_series(s)
+        if not ns.empty:
+            result[tenor] = ns
+    return result
+
+
+def _fetch_boe_gilts() -> dict[str, pd.Series]:
+    """Download UK gilt spot yields from BoE nominal yield curve ZIP."""
+    try:
+        resp = requests.get(
+            BOE_GLC_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return {}
+    try:
+        z = zipfile.ZipFile(io.BytesIO(resp.content))
+    except Exception:
+        return {}
+    result: dict[str, pd.Series] = {}
+    for name in sorted(z.namelist()):
+        if not name.endswith(".xlsx"):
+            continue
+        try:
+            with z.open(name) as f:
+                _parse_boe_spot_curve(f, result)
+        except Exception:
+            continue
+    return result
+
+
+def _parse_bundesbank_csv(text: str) -> pd.Series | None:
+    """Parse Bundesbank SDMX/BBK CSV payload into a normalized time series."""
+    if not text.strip():
         return None
 
-    if "Date" not in df.columns:
+    # Bundesbank CSV payloads are typically ';' delimited with metadata rows.
+    df: pd.DataFrame | None = None
+    for sep in (";", ","):
+        try:
+            parsed = pd.read_csv(io.StringIO(text), sep=sep, comment="#", engine="python")
+        except Exception:
+            continue
+        if parsed.empty:
+            continue
+        df = parsed
+        break
+    if df is None or df.empty:
         return None
 
-    value_col = "Close" if "Close" in df.columns else "Yield" if "Yield" in df.columns else None
+    cols = {str(c).strip().lower(): c for c in df.columns}
+    date_col = None
+    value_col = None
+
+    for candidate in ("time_period", "date", "time", "zeitraum"):
+        if candidate in cols:
+            date_col = cols[candidate]
+            break
+    for candidate in ("obs_value", "value", "wert"):
+        if candidate in cols:
+            value_col = cols[candidate]
+            break
+
+    if date_col is None:
+        return None
+
+    if value_col is None:
+        # Fallback to the right-most column that parses to numeric values.
+        for col in reversed(list(df.columns)):
+            values = pd.to_numeric(df[col], errors="coerce")
+            if values.notna().any():
+                value_col = col
+                break
     if value_col is None:
         return None
 
-    dates = pd.to_datetime(df["Date"], errors="coerce")
-    values = df[value_col].map(_to_float_percent)
-    series = pd.Series(values.values, index=dates)
-    normalized = _normalize_series(series)
-    return normalized if not normalized.empty else None
+    dates = pd.to_datetime(df[date_col], errors="coerce")
+    values = pd.to_numeric(df[value_col], errors="coerce")
+    if values.notna().sum() == 0:
+        values = pd.to_numeric(df[value_col].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    out = _normalize_series(pd.Series(values.values, index=dates.values))
+    return out if not out.empty else None
+
+
+def _fetch_bundesbank_series(ts_id: str) -> pd.Series | None:
+    """Fetch one Bundesbank time series via /data/{flowRef}/{key}."""
+    if "." not in ts_id:
+        return None
+    flow_ref, key = ts_id.split(".", 1)
+    url = f"{BUNDESBANK_BASE_URL}/{flow_ref}/{key}"
+    try:
+        resp = requests.get(
+            url,
+            headers={"Accept": "text/csv, application/vnd.sdmx.data+csv;version=1.0.0"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return None
+    return _parse_bundesbank_csv(resp.text)
+
+
+def _fetch_bundesbank_germany() -> dict[str, pd.Series]:
+    """Download Germany sovereign curve points from Bundesbank."""
+    result: dict[str, pd.Series] = {}
+    for tenor, ts_id in _BUNDESBANK_DE_SERIES.items():
+        series = _fetch_bundesbank_series(ts_id)
+        if series is not None and not series.empty:
+            result[tenor] = series
+    return result
+
+
+def _parse_boe_spot_curve(f, result: dict[str, pd.Series]) -> None:
+    """Parse a single BoE GLC nominal Excel file, appending to *result*."""
+    df = pd.read_excel(f, sheet_name="4. spot curve", header=None)
+
+    # Find the row starting with "years:"
+    mat_row_idx: int | None = None
+    for i in range(min(10, len(df))):
+        if str(df.iloc[i, 0]).strip().lower() == "years:":
+            mat_row_idx = i
+            break
+    if mat_row_idx is None:
+        return
+
+    # Build column -> tenor mapping from the maturity row
+    maturities = df.iloc[mat_row_idx, 1:]
+    col_to_tenor: dict[int, str] = {}
+    for offset, val in enumerate(maturities):
+        try:
+            years = float(val)
+        except (ValueError, TypeError):
+            continue
+        tenor = _BOE_MATURITY_MAP.get(years)
+        if tenor is not None:
+            col_to_tenor[offset + 1] = tenor  # +1 for date column
+
+    # Extract data rows
+    data = df.iloc[mat_row_idx + 1 :]
+    dates = pd.to_datetime(data.iloc[:, 0], errors="coerce")
+    for col_idx, tenor in col_to_tenor.items():
+        values = pd.to_numeric(data.iloc[:, col_idx], errors="coerce")
+        s = pd.Series(values.values, index=dates.values)
+        ns = _normalize_series(s)
+        if ns.empty:
+            continue
+        if tenor in result:
+            result[tenor] = pd.concat([result[tenor], ns])
+            result[tenor] = result[tenor][~result[tenor].index.duplicated(keep="last")]
+            result[tenor] = result[tenor].sort_index()
+        else:
+            result[tenor] = ns
 
 
 def _value_on_or_before(series: pd.Series, target: pd.Timestamp) -> tuple[float | None, str | None]:
@@ -192,7 +448,30 @@ def _build_country_curve(
     series_map: dict[str, tuple[pd.Series, str]] = {}
 
     fred_map = FRED_SERIES.get(country_code, {})
-    csv_map = CSV_SERIES.get(country_code, {})
+
+    # Fetch bulk data for non-FRED sources
+    bulk_data: dict[str, pd.Series] = {}
+    bulk_label = ""
+    bulk_configured: set[str] = set()
+
+    if country_code == "JP":
+        bulk_data = _fetch_mof_japan()
+        bulk_label = "mof"
+        bulk_configured = set(_MOF_COLUMN_MAP.values())
+        if not bulk_data:
+            warnings.append("MOF Japan: could not fetch JGB yields.")
+    elif country_code == "UK":
+        bulk_data = _fetch_boe_gilts()
+        bulk_label = "boe"
+        bulk_configured = set(_BOE_MATURITY_MAP.values())
+        if not bulk_data:
+            warnings.append("BoE: could not fetch gilt yields.")
+    elif country_code == "DE":
+        bulk_data = _fetch_bundesbank_germany()
+        bulk_label = "bundesbank"
+        bulk_configured = set(_BUNDESBANK_DE_SERIES.keys())
+        if not bulk_data:
+            warnings.append("Bundesbank: could not fetch German sovereign yields.")
 
     for tenor_meta in TENOR_ORDER:
         tenor = str(tenor_meta["tenor"])
@@ -200,6 +479,7 @@ def _build_country_curve(
         series: pd.Series | None = None
         source: str | None = None
 
+        # FRED (US)
         fred_series_id = fred_map.get(tenor)
         if fred_series_id is not None:
             if fred_client is None:
@@ -213,21 +493,20 @@ def _build_country_curve(
                 else:
                     warnings.append(f"{tenor}: FRED series {fred_series_id} returned no usable data.")
 
-        if series is None:
-            csv_file = csv_map.get(tenor)
-            if csv_file is not None:
-                fallback = _load_csv_series(csv_file)
-                if fallback is not None:
-                    series = fallback
-                    source = f"csv:{csv_file}"
-                else:
-                    warnings.append(f"{tenor}: CSV fallback {csv_file} unavailable or invalid.")
+        # Bulk source (MOF / BoE / Bundesbank)
+        if series is None and bulk_configured:
+            bulk_series = bulk_data.get(tenor)
+            if bulk_series is not None:
+                series = bulk_series
+                source = f"{bulk_label}:{tenor}"
+            elif tenor in bulk_configured:
+                warnings.append(f"{tenor}: {bulk_label.upper()} returned no usable data.")
 
         if series is not None and source is not None:
             series_map[tenor] = (series, source)
             continue
 
-        if tenor not in fred_map and tenor not in csv_map:
+        if tenor not in fred_map and tenor not in bulk_configured:
             missing_unconfigured.append(tenor)
 
     if missing_unconfigured:
@@ -310,26 +589,77 @@ def get_data(lookback_days: int = 90) -> dict:
     if lookback_days < 1:
         raise ValueError("lookback_days must be >= 1")
 
-    fred_client, fred_warn = _build_fred_client()
+    # --- cache check ---
+    cache_p = _cache_path(lookback_days)
+    cached_record = _load_cache(cache_p)
+    cached_payload = cached_record.get("payload") if cached_record else None
 
-    countries: list[dict] = []
-    for code, name in COUNTRIES:
-        countries.append(
-            _build_country_curve(
-                country_code=code,
-                country_name=name,
+    if cached_record and isinstance(cached_payload, dict):
+        try:
+            fetched_at = datetime.fromisoformat(str(cached_record["fetched_at"]))
+            age_seconds = (datetime.now() - fetched_at).total_seconds()
+        except Exception:
+            age_seconds = _CACHE_TTL_SECONDS + 1
+
+        if age_seconds < _CACHE_TTL_SECONDS:
+            return cached_payload
+
+        # TTL expired — check if market has actually closed with new data
+        cached_as_of = cached_record.get("as_of_date")
+        latest_close = _latest_market_close_date()
+        if isinstance(cached_as_of, str) and latest_close is not None and latest_close <= cached_as_of:
+            # No new close since cache was built; refresh TTL
+            _write_cache(
+                path=cache_p,
+                payload=cached_payload,
                 lookback_days=lookback_days,
-                fred_client=fred_client,
-                fred_unavailable_warning=fred_warn,
+                as_of_date=cached_as_of,
+                fetched_at=datetime.now().isoformat(),
             )
-        )
+            return cached_payload
 
-    return {
-        "timestamp": pd.Timestamp.utcnow().isoformat(),
-        "lookback_days": lookback_days,
-        "tenor_order": TENOR_ORDER,
-        "countries": countries,
-    }
+    # --- fetch live ---
+    try:
+        fred_client, fred_warn = _build_fred_client()
+
+        countries: list[dict] = []
+        for code, name in COUNTRIES:
+            countries.append(
+                _build_country_curve(
+                    country_code=code,
+                    country_name=name,
+                    lookback_days=lookback_days,
+                    fred_client=fred_client,
+                    fred_unavailable_warning=fred_warn,
+                )
+            )
+
+        result = {
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
+            "lookback_days": lookback_days,
+            "tenor_order": TENOR_ORDER,
+            "countries": countries,
+        }
+    except Exception:
+        if isinstance(cached_payload, dict):
+            return cached_payload
+        raise
+
+    # Determine as_of_date from country curves (latest across all)
+    as_of_date = None
+    for country in result["countries"]:
+        d = country.get("as_of_date")
+        if isinstance(d, str) and (as_of_date is None or d > as_of_date):
+            as_of_date = d
+
+    _write_cache(
+        path=cache_p,
+        payload=result,
+        lookback_days=lookback_days,
+        as_of_date=as_of_date,
+    )
+
+    return result
 
 
 if __name__ == "__main__":

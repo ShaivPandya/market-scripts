@@ -87,6 +87,19 @@ export function calcReturn(data: DataPoint[]): number | null {
   return (vals[vals.length - 1] - vals[0]) / vals[0] * 100
 }
 
+function getMonthTicks(data: DataPoint[]): string[] {
+  const seen = new Set<string>()
+  const ticks: string[] = []
+  for (const pt of data) {
+    const month = pt.date.substring(0, 7)
+    if (!seen.has(month)) {
+      seen.add(month)
+      ticks.push(pt.date)
+    }
+  }
+  return ticks
+}
+
 function getYearTicks(data: DataPoint[]): string[] {
   const seen = new Set<string>()
   const ticks: string[] = []
@@ -135,11 +148,16 @@ export function TimeSeriesChart({
           <XAxis
             dataKey="date"
             tickFormatter={timeframe === "Monthly" ? shortYear : timeframe === "Weekly" ? shortMonth : shortDate}
-            ticks={timeframe === "This Week" ? getThisWeekTicks(data) : timeframe === "Monthly" ? getYearTicks(data) : undefined}
+            ticks={
+              timeframe === "This Week" ? getThisWeekTicks(data) :
+              timeframe === "Monthly" ? getYearTicks(data) :
+              timeframe === "Daily" ? getMonthTicks(data) :
+              undefined
+            }
             tick={{ fontSize: 10, fill: "hsl(var(--chart-axis))" }}
             tickLine={false}
             axisLine={{ stroke: "hsl(var(--chart-grid))" }}
-            interval={timeframe === "This Week" || timeframe === "Monthly" ? 0 : "preserveStartEnd"}
+            minTickGap={30}
           />
           <YAxis
             domain={zeroLine ? [(dataMin: number) => Math.min(0, dataMin), "auto"] : ["auto", "auto"]}

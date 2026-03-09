@@ -116,6 +116,11 @@ export const fetchThesis = (ticker: string) =>
     .get(`/thesis/${encodeURIComponent(ticker)}`)
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 
+export const saveThesisContent = (ticker: string, content: string) =>
+  client
+    .put(`/thesis/${encodeURIComponent(ticker)}`, { content })
+    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+
 export const uploadThesisPdf = (ticker: string, file: File) => {
   const formData = new FormData()
   formData.append("ticker", ticker)
@@ -319,6 +324,16 @@ export const analyzeLaborMarket = (body: {
   series_units: Record<string, string>
   timestamp?: string | null
 }) => client.post("/labor-market/analyze", body, { timeout: 180_000 }).then(r => r.data)
+
+export const fetchHousing = () =>
+  client.get("/housing").then(r => r.data)
+
+export const analyzeHousing = (body: {
+  latest: Record<string, { value: number | null; date: string | null; change: number | null }>
+  series_labels: Record<string, string>
+  series_units: Record<string, string>
+  timestamp?: string | null
+}) => client.post("/housing/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
 export const fetchLiquidity = () =>
   client.get("/liquidity").then(r => r.data)
@@ -667,3 +682,74 @@ export const analyzeSentiment = (body: {
 }) => client.post("/sentiment/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
 export const clearCache = () => client.delete("/cache").then(r => r.data)
+
+// ---------------------------------------------------------------------------
+// Investing OS APIs
+// ---------------------------------------------------------------------------
+
+// Workspace
+export const fetchWorkspace = () => client.get("/workspace").then(r => r.data)
+
+// Dossier
+export const fetchDossier = (ticker: string) =>
+  client.get(`/dossier/${encodeURIComponent(ticker)}`).then(r => r.data)
+
+// Approvals
+export const fetchApprovals = (status?: string) =>
+  client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
+export const approveItem = (id: number, note?: string) =>
+  client.post(`/approvals/${id}/approve`, note ? { note } : {}).then(r => r.data)
+export const rejectItem = (id: number, note?: string) =>
+  client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data)
+export const bulkApprove = (ids: number[], note?: string) =>
+  client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
+export const bulkReject = (ids: number[], note?: string) =>
+  client.post("/approvals/bulk-reject", { ids, note }).then(r => r.data)
+
+// Action Items
+export const fetchActions = (params?: { status?: string; ticker?: string }) =>
+  client.get("/actions", { params }).then(r => r.data)
+export const createAction = (body: { description: string; action_type?: string; ticker?: string; urgency?: string }) =>
+  client.post("/actions", body).then(r => r.data)
+export const completeAction = (id: number, resolution_note?: string) =>
+  client.put(`/actions/${id}/complete`, { resolution_note: resolution_note ?? "" }).then(r => r.data)
+export const dismissAction = (id: number) =>
+  client.put(`/actions/${id}/dismiss`).then(r => r.data)
+
+// Watch Triggers
+export const fetchTriggers = (params?: { status?: string; ticker?: string }) =>
+  client.get("/triggers", { params }).then(r => r.data)
+export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string }) =>
+  client.post("/triggers", body).then(r => r.data)
+export const fireTrigger = (id: number) =>
+  client.put(`/triggers/${id}/fire`).then(r => r.data)
+export const cancelTrigger = (id: number) =>
+  client.put(`/triggers/${id}/cancel`).then(r => r.data)
+
+// Catalysts
+export const fetchCatalysts = (ticker: string) =>
+  client.get("/catalysts", { params: { ticker } }).then(r => r.data)
+export const createCatalyst = (body: { ticker: string; description: string; category?: string; target_date?: string }) =>
+  client.post("/catalysts", body).then(r => r.data)
+export const updateCatalystStatus = (id: number, status: string, evidence?: string) =>
+  client.put(`/catalysts/${id}/status`, { status, evidence }).then(r => r.data)
+
+// Kill Conditions
+export const fetchKillConditions = (ticker: string) =>
+  client.get("/kill-conditions", { params: { ticker } }).then(r => r.data)
+export const createKillCondition = (body: { ticker: string; condition: string; metric?: string; threshold?: string }) =>
+  client.post("/kill-conditions", body).then(r => r.data)
+export const updateKillConditionStatus = (id: number, status: string) =>
+  client.put(`/kill-conditions/${id}/status`, { status }).then(r => r.data)
+
+// Research Notes
+export const fetchResearchNotes = (params?: { ticker?: string; limit?: number }) =>
+  client.get("/research-notes", { params }).then(r => r.data)
+export const createResearchNote = (body: { title: string; content: string; ticker?: string; note_type?: string }) =>
+  client.post("/research-notes", body).then(r => r.data)
+
+// Workflow Runs
+export const fetchWorkflowRuns = (params?: { workflow_name?: string; ticker?: string; limit?: number }) =>
+  client.get("/workflow-runs", { params }).then(r => r.data)
+export const fetchWorkflowRun = (runId: string) =>
+  client.get(`/workflow-runs/${runId}`).then(r => r.data)
