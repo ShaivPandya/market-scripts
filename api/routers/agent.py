@@ -410,8 +410,14 @@ def agent_chat(req: AgentChatRequest):
                         break
                     except Exception as retry_exc:
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
-                            delay = RETRY_BASE_DELAY * (2 ** attempt)
-                            logger.warning("Retryable API error (attempt %d/%d), retrying in %.1fs: %s", attempt + 1, MAX_API_RETRIES, delay, retry_exc)
+                            delay = RETRY_BASE_DELAY * (2**attempt)
+                            logger.warning(
+                                "Retryable API error (attempt %d/%d), retrying in %.1fs: %s",
+                                attempt + 1,
+                                MAX_API_RETRIES,
+                                delay,
+                                retry_exc,
+                            )
                             time.sleep(delay)
                             continue
                         raise
@@ -477,8 +483,14 @@ def agent_chat(req: AgentChatRequest):
                         break
                     except Exception as retry_exc:
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
-                            delay = RETRY_BASE_DELAY * (2 ** attempt)
-                            logger.warning("Retryable API error (attempt %d/%d), retrying in %.1fs: %s", attempt + 1, MAX_API_RETRIES, delay, retry_exc)
+                            delay = RETRY_BASE_DELAY * (2**attempt)
+                            logger.warning(
+                                "Retryable API error (attempt %d/%d), retrying in %.1fs: %s",
+                                attempt + 1,
+                                MAX_API_RETRIES,
+                                delay,
+                                retry_exc,
+                            )
                             time.sleep(delay)
                             continue
                         raise
