@@ -178,20 +178,35 @@ def _read_anthropic_api_key() -> str:
 
 
 _anthropic_client = None
+_anthropic_client_api_key: str | None = None
+_anthropic_client_factory = None
 _client_lock = threading.Lock()
 
 
 def _get_anthropic_client(api_key: str):
     """Return a cached Anthropic client, creating one on first call."""
-    global _anthropic_client
-    if _anthropic_client is not None:
+    global _anthropic_client, _anthropic_client_api_key, _anthropic_client_factory
+    from anthropic import Anthropic
+
+    if (
+        _anthropic_client is not None
+        and _anthropic_client_api_key == api_key
+        and _anthropic_client_factory is Anthropic
+    ):
         return _anthropic_client
     with _client_lock:
-        if _anthropic_client is not None:
-            return _anthropic_client
         from anthropic import Anthropic
 
+        if (
+            _anthropic_client is not None
+            and _anthropic_client_api_key == api_key
+            and _anthropic_client_factory is Anthropic
+        ):
+            return _anthropic_client
+
         _anthropic_client = Anthropic(api_key=api_key)
+        _anthropic_client_api_key = api_key
+        _anthropic_client_factory = Anthropic
         return _anthropic_client
 
 
