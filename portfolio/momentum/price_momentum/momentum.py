@@ -300,7 +300,7 @@ def analyze_ticker(
     }
 
 
-def get_data(universe: str = None, years: int = 5) -> dict:
+def get_data(universe: str | None = None, years: int = 5) -> dict:
     """Fetch momentum data for GUI consumption.
 
     Args:

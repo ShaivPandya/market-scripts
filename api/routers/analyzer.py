@@ -49,7 +49,7 @@ def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
         data = get_data(
             book=req.book,
             target_leverage=req.target_leverage,
-            beta_neutral=req.beta_neutral,
+            beta_neutral=True if req.beta_neutral is None else req.beta_neutral,
         )
     except Exception as e:
         raise RuntimeError(str(e)) from e

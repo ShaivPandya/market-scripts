@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import date
-from typing import Dict, List, Optional, Set, Tuple  # noqa: UP035
+from typing import Any, Dict, List, Optional, Set, Tuple  # noqa: UP035
 
 from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text, parse_json_text
 from portfolio.momentum.fundamental_momentum.edgar_fetcher import (
@@ -50,6 +50,8 @@ QUARTERLY_YOY_STEP = 4
 
 
 def _as_float(v: object) -> float | None:
+    if not isinstance(v, (int, float, str)):
+        return None
     try:
         x = float(v)
     except Exception:
@@ -598,7 +600,7 @@ def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -> tu
 
 def _calc_cagr(rows: list[dict], years: int = 3, *, abs_fallback: bool = False) -> float | None:
     values = [_as_float(r.get("value")) for r in rows]
-    clean = [v for v in values if v is not None]
+    clean: list[float] = [v for v in values if v is not None]
     if len(clean) < 2:
         return None
     n = min(years, len(clean) - 1)
@@ -607,13 +609,13 @@ def _calc_cagr(rows: list[dict], years: int = 3, *, abs_fallback: bool = False) 
     latest = clean[0]
     prior = clean[n]
     if latest > 0 and prior > 0:
-        return (latest / prior) ** (1.0 / n) - 1.0
+        return float((latest / prior) ** (1.0 / n) - 1.0)
 
     # EPS can cross zero (loss to profit), where strict CAGR is undefined.
     # Fallback to CAGR on absolute magnitude so the card remains informative.
     if not abs_fallback or latest == 0 or prior == 0:
         return None
-    return (abs(latest) / abs(prior)) ** (1.0 / n) - 1.0
+    return float((abs(latest) / abs(prior)) ** (1.0 / n) - 1.0)
 
 
 def _calc_avg_3q_yoy(rows: list[dict], denom_abs: bool) -> float | None:
@@ -652,10 +654,10 @@ def _iter_segment_pairs(segment_obj: object) -> list[tuple[str, str]]:
                     out.extend(_iter_segment_pairs(item))
         return out
     if isinstance(segment_obj, list):
-        out: list[tuple[str, str]] = []
+        out_list: list[tuple[str, str]] = []
         for item in segment_obj:
-            out.extend(_iter_segment_pairs(item))
-        return out
+            out_list.extend(_iter_segment_pairs(item))
+        return out_list
     return []
 
 
@@ -772,8 +774,8 @@ def _pct_rows(values_by_label: dict[str, float], total: float | None) -> list[di
     rows = []
     for label, value in sorted(values_by_label.items(), key=lambda kv: kv[1], reverse=True):
         pct = None
-        if total not in (None, 0):
-            pct = value / float(total)
+        if total is not None and total != 0:
+            pct = value / total
         rows.append({"label": label, "value": value, "pct_of_total": pct})
     return rows
 
@@ -1044,9 +1046,12 @@ def _extract_breakdown_from_html(
         heading_parts: list[str] = []
         node = table
         for _ in range(15):  # look at up to 15 preceding siblings/parents
-            node = node.find_previous(["p", "div", "span", "b", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "td"])
-            if node is None:
+            prev_node = node.find_previous(
+                ["p", "div", "span", "b", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "td"]
+            )
+            if prev_node is None:
                 break
+            node = prev_node
             txt = " ".join(node.get_text(" ", strip=True).split())
             if txt:
                 heading_parts.append(txt)
@@ -1081,7 +1086,7 @@ def _extract_breakdown_from_html(
         if not rows:
             continue
 
-        values: dict[str, float] = {}
+        value_map: dict[str, float] = {}
         for row in rows:
             cells = row.find_all(["td", "th"])
             if len(cells) < 2:
@@ -1109,12 +1114,12 @@ def _extract_breakdown_from_html(
 
             if val is not None:
                 val *= table_scale
-                prev = values.get(label)
+                prev = value_map.get(label)
                 if prev is None or abs(val) > abs(prev):
-                    values[label] = val
+                    value_map[label] = val
 
-        if values:
-            breakdowns[kind] = values
+        if value_map:
+            breakdowns[kind] = value_map
 
     if not breakdowns:
         return None

@@ -5,9 +5,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   fetchThesisMeta,
   fetchThesisDetail,
+  fetchThesisStatus,
   updateThesisStatus,
   type ThesisMeta,
   type ThesisDetail,
+  type ThesisStatus,
   type ThesisStatusValue,
   type ThesisEvaluation,
 } from "@/lib/api"
@@ -18,6 +20,7 @@ import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { Dialog } from "@/components/shared/Dialog"
 import { renderMarkdownLite } from "@/components/shared/MarkdownRenderer"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
+import { ThesisUpload } from "@/components/ThesisUpload"
 
 // ---------------------------------------------------------------------------
 // Status badge
@@ -135,26 +138,8 @@ function ThesisList({ onSelect }: { onSelect: (ticker: string) => void }) {
           columns={LIST_COLUMNS}
           rows={rows}
           label="Investment Theses"
+          onRowClick={row => onSelect(String(row.ticker))}
         />
-        {/* Clickable overlay rows */}
-        {rows.length > 0 && (
-          <div className="mt-2 text-xs text-muted">
-            Click a ticker below to view details.
-          </div>
-        )}
-        <div className="mt-2 grid grid-cols-1 gap-1">
-          {rows.map(r => (
-            <button
-              key={r.ticker}
-              type="button"
-              onClick={() => onSelect(r.ticker)}
-              className="text-left px-3 py-1.5 rounded-lg text-sm hover:bg-blue-50 hover:text-blue-700 transition-colors"
-            >
-              {r.ticker} — {r.status_label}
-              {r.eval_direction !== "-" && ` / ${r.eval_direction}`}
-            </button>
-          ))}
-        </div>
       </section>
     </>
   )
@@ -186,6 +171,11 @@ function ThesisDetailView({ ticker, onBack }: { ticker: string; onBack: () => vo
   const { data, isLoading, error } = useApiQuery<ThesisDetail>(
     ["thesis", "detail", ticker],
     () => fetchThesisDetail(ticker),
+  )
+
+  const { data: thesisStatus } = useApiQuery<Record<string, string>>(
+    ["thesis", "status"],
+    fetchThesisStatus,
   )
 
   const statusMutation = useMutation({
@@ -227,6 +217,7 @@ function ThesisDetailView({ ticker, onBack }: { ticker: string; onBack: () => vo
           </button>
           <h2 className="text-xl font-semibold text-gray-900">{ticker}</h2>
           <StatusBadge status={meta.status} />
+          <ThesisUpload ticker={ticker} status={(thesisStatus?.[ticker] ?? "missing") as ThesisStatus} />
         </div>
         <button
           type="button"

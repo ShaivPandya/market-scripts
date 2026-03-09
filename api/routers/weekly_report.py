@@ -359,7 +359,7 @@ def get_weekly_report(
         )
         logger.info("weekly_report positioning fetched in %.2fs", time.perf_counter() - t0)
     except Exception as e:
-        pos = {"error": str(e)}
+        pos = [{"error": str(e)}]
         logger.warning("weekly_report positioning fetch failed: %s", e, exc_info=True)
 
     try:

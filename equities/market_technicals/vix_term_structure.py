@@ -17,9 +17,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 import numpy as np
 import pandas as pd
+
+CONSOLE: Any | None = None
 
 try:
     from rich import box
@@ -27,10 +30,10 @@ try:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-except ImportError:
-    Console = None
 
-CONSOLE = Console() if Console else None
+    CONSOLE = Console()
+except ImportError:
+    CONSOLE = None
 
 try:
     from utils.retry import yf_download
@@ -142,6 +145,8 @@ def format_signal_text(value: str) -> Text:
 
 
 def render_latest(latest: pd.Series, used_vix3m: str) -> None:
+    if CONSOLE is None:
+        return
     table = Table(title="Latest Snapshot", box=box.ASCII)
     table.add_column("Date")
     table.add_column("VIX", justify="right")
@@ -161,6 +166,8 @@ def render_latest(latest: pd.Series, used_vix3m: str) -> None:
 
 
 def render_recent(data: pd.DataFrame, used_vix3m: str, title: str) -> None:
+    if CONSOLE is None:
+        return
     table = Table(title=title, box=box.ASCII)
     table.add_column("Date")
     table.add_column("VIX", justify="right")

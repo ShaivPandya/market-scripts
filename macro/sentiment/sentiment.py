@@ -209,7 +209,13 @@ def _fetch_naaim_excel(page_url: str) -> pd.DataFrame:
     # Find the Excel download link
     xlsx_url = None
     for a in soup.find_all("a", href=True):
-        href = a["href"]
+        href_raw = a.get("href")
+        if isinstance(href_raw, list):
+            href = str(href_raw[0]) if href_raw else ""
+        else:
+            href = str(href_raw or "")
+        if not href:
+            continue
         if any(ext in href.lower() for ext in (".xlsx", ".xls")):
             xlsx_url = href if href.startswith("http") else "https://www.naaim.org" + href
             break

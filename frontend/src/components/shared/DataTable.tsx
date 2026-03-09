@@ -14,9 +14,10 @@ interface DataTableProps {
   rows: Record<string, unknown>[]
   maxHeight?: string
   label?: string
+  onRowClick?: (row: Record<string, unknown>) => void
 }
 
-export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "600px", label }: DataTableProps) {
+export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "600px", label, onRowClick }: DataTableProps) {
   const [copied, setCopied] = useState(false)
 
   const displayColumns = useMemo(
@@ -108,7 +109,8 @@ export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "6
             {rows.map((row, ri) => (
               <tr
                 key={ri}
-                className="border-b border-app transition-colors hover:bg-muted-surface"
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={`border-b border-app transition-colors hover:bg-muted-surface${onRowClick ? " cursor-pointer" : ""}`}
               >
                 {displayColumns.map(col => {
                   const raw = row[col.key]

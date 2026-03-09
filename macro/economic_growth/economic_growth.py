@@ -489,7 +489,7 @@ def main():
     console.print()
 
 
-def get_data(crb_file: str = None) -> dict:
+def get_data(crb_file: str | None = None) -> dict:
     """
     Fetch market dashboard data for GUI consumption.
 

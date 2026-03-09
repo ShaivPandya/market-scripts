@@ -17,7 +17,7 @@ import time
 from datetime import date
 from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from utils.retry import requests_get
 

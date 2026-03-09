@@ -39,8 +39,10 @@ try:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
+
+    RICH_AVAILABLE = True
 except ImportError:
-    Console = None
+    RICH_AVAILABLE = False
 
 SERIES = {
     # H.4.1 plumbing
@@ -571,7 +573,7 @@ def build_changes_table(changes, latest_date):
 
 
 def render_dashboard(df, composite, regional_scores, z_scores, contributions):
-    if Console is None:
+    if not RICH_AVAILABLE:
         LOGGER.warning("rich is not installed. Install with: pip install rich")
         sys.exit(1)
 

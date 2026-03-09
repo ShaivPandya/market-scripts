@@ -20,11 +20,11 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     BETA_METHOD,
     BETA_MIN_OBS,
     BETA_SHRINK_TO_ONE,
-    CURRENCY_OF_TICKER,
     MARKET_TICKER_LONG,
     MARKET_TICKER_SHORT,
     compute_beta_frame,
     download_prices,
+    fetch_currencies,
     get_required_fx_tickers,
     solve_joint_hedge_weights,
     to_usd_price,
@@ -66,7 +66,7 @@ def _normalize_positions(positions: Sequence[Mapping[str, Any]]) -> tuple[pd.Ser
             raise ValueError(f"Position at index {idx} has an empty ticker.")
 
         try:
-            weight = float(weight_raw)
+            weight = float(weight_text)
         except (TypeError, ValueError):
             raise ValueError(f"Position '{ticker}' has an invalid numeric weight: {weight_raw!r}.") from None
 
@@ -153,10 +153,11 @@ def compute_hedge(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_
 
     weights, input_count = _normalize_positions(positions)
     tickers = weights.index.tolist()
-
-    fx_tickers = get_required_fx_tickers(tickers)
     market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
     all_tickers_to_fetch = sorted(set(tickers + market_tickers))
+
+    ticker_currencies = fetch_currencies(all_tickers_to_fetch)
+    fx_tickers = get_required_fx_tickers(ticker_currencies)
     prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
     missing_tickers = [t for t in tickers if t not in prices_all.columns]
@@ -170,7 +171,7 @@ def compute_hedge(positions: Sequence[Mapping[str, Any]], book: float = DEFAULT_
     usd_prices = pd.DataFrame(index=prices_all.index)
     for ticker in all_tickers_to_fetch:
         local_px = prices_all[ticker]
-        ccy = CURRENCY_OF_TICKER.get(ticker, BASE_CCY)
+        ccy = ticker_currencies.get(ticker, BASE_CCY)
         usd_prices[ticker] = to_usd_price(local_px, ccy, prices_all)
 
     usd_prices = usd_prices.ffill()

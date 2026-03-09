@@ -76,7 +76,7 @@ ESTAT_CPI_STATS_DATA_ID = os.environ.get("ESTAT_CPI_STATS_DATA_ID", _DEFAULT_EST
 
 # ── Country definitions: display_name -> FRED series IDs per metric ──────────
 # For inflation, we prefer direct YoY series and keep fallbacks where needed.
-COUNTRIES = {
+COUNTRIES: dict[str, dict[str, Any]] = {
     "US": {
         "inflation": [
             # Match FRED's "Percent Change from Year Ago" view exactly.
@@ -307,7 +307,7 @@ _DEFAULT_MAX_AGE_DAYS = {
 # ── Data fetching ────────────────────────────────────────────────────────────
 
 
-def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
+def _statcan_wds_post(method: str, payload: dict[str, Any] | list[dict[str, int]], timeout: int = 20) -> dict[str, Any]:
     """
     Minimal Statistics Canada Web Data Service (WDS) client.
 
@@ -321,7 +321,7 @@ def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
 
     resp = requests_post(url, json=payload, timeout=timeout)
     resp.raise_for_status()
-    data = resp.json()
+    data: Any = resp.json()
     if isinstance(data, list):
         if not data:
             raise RuntimeError("Statistics Canada WDS returned an empty list response")
@@ -338,6 +338,9 @@ def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
             data = data[0]
         else:
             data = {"status": "SUCCESS", "object": [item.get("object") for item in data]}
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Statistics Canada WDS returned an unexpected response type")
 
     status = data.get("status")
     if status and status != "SUCCESS":
@@ -1032,9 +1035,9 @@ def _fetch_estat_cpi(
         if m2:
             year = int(m2.group(1))
             key = m2.group(2)[:3].lower()
-            month = months.get(key)
-            if month:
-                return pd.Timestamp(year=year, month=month, day=1)
+            month_num = months.get(key)
+            if month_num is not None:
+                return pd.Timestamp(year=year, month=month_num, day=1)
 
         return None
 
@@ -1189,19 +1192,19 @@ def _infer_series_frequency(series: pd.Series) -> str | None:
     return None
 
 
-def _metric_candidates(metric_key: str, config: dict) -> list[dict[str, object]]:
+def _metric_candidates(metric_key: str, config: dict[str, Any]) -> list[dict[str, Any]]:
     metric_config = config[metric_key]
 
     if isinstance(metric_config, str):
         transform = "yoy4" if metric_key == "gdp" else "none"
         return [{"source": "fred", "id": metric_config, "transform": transform, "params": {}}]
 
-    candidates: list[dict[str, object]] = []
+    candidates: list[dict[str, Any]] = []
     for item in metric_config:
         if isinstance(item, str):
             candidates.append({"source": "fred", "id": item, "transform": "none", "params": {}})
         else:
-            candidate: dict[str, object] = {
+            candidate: dict[str, Any] = {
                 "source": item.get("source", "fred"),
                 "id": item["id"],
                 "transform": item.get("transform", "none"),

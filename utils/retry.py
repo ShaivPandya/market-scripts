@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
-import requests as _requests
+import requests as _requests  # type: ignore[import-untyped]
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ def yf_ticker_info(
         try:
             info = yf.Ticker(ticker).info
             if info:
-                return info
+                return cast(dict[str, Any], info)
             if attempt < max_retries:
                 logger.warning(
                     "yf.Ticker(%s).info returned empty (attempt %d/%d), retrying",

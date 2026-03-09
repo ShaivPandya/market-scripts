@@ -133,7 +133,8 @@ def _to_dt(entry) -> datetime:
     t = entry.get("published_parsed") or entry.get("updated_parsed")
     if not t:
         return datetime.now(UTC)
-    return datetime(*t[:6], tzinfo=UTC)
+    year, month, day, hour, minute, second = t[:6]
+    return datetime(int(year), int(month), int(day), int(hour), int(minute), int(second), tzinfo=UTC)
 
 
 def classify(source: str, title: str, url: str) -> str | None:
@@ -244,7 +245,14 @@ def _resolve_fed_minutes_document_url(press_release_url: str, html: str) -> str 
     soup = BeautifulSoup(html, "lxml")
     candidates: list[tuple[int, str]] = []
     for link in soup.find_all("a", href=True):
-        href = urljoin(press_release_url, link["href"].strip())
+        href_raw = link.get("href")
+        if isinstance(href_raw, list):
+            href_token = str(href_raw[0]).strip() if href_raw else ""
+        else:
+            href_token = str(href_raw or "").strip()
+        if not href_token:
+            continue
+        href = urljoin(press_release_url, href_token)
         if not _is_fed_minutes_document_url(href):
             continue
         label = link.get_text(" ", strip=True).lower()
@@ -509,7 +517,7 @@ def _query_items(conn: sqlite3.Connection, sources: list[str] | None = None) -> 
     return items
 
 
-def get_data(db_path: str = None, refresh: bool = False, sources: list[str] | None = None) -> dict:
+def get_data(db_path: str | None = None, refresh: bool = False, sources: list[str] | None = None) -> dict:
     """
     Return structured data for GUI consumption.
 

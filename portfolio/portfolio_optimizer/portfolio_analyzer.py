@@ -520,7 +520,7 @@ def ensure_psd(Sigma: np.ndarray, eps: float = 1e-10) -> np.ndarray:
     S = 0.5 * (Sigma + Sigma.T)
     vals, vecs = np.linalg.eigh(S)
     vals = np.maximum(vals, eps)
-    return vecs @ np.diag(vals) @ vecs.T
+    return np.asarray(vecs @ np.diag(vals) @ vecs.T, dtype=float)
 
 
 def fetch_yfinance_betas(tickers: list) -> pd.Series:
@@ -1103,10 +1103,18 @@ def overlay_anchor_long_equity_signals(
         metadata["reason"] = f"anchor_overlay_exception:{e}"
         return signal_composite_out, sub_out, metadata
 
+    raw_anchor_size = anchor_meta.get("signal_anchor_universe_size", 0)
+    if isinstance(raw_anchor_size, (int, float, str)):
+        try:
+            anchor_size = int(raw_anchor_size)
+        except ValueError:
+            anchor_size = 0
+    else:
+        anchor_size = 0
     metadata.update(
         {
             "signal_anchor_mode": str(anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE)),
-            "signal_anchor_universe_size": int(anchor_meta.get("signal_anchor_universe_size", 0)),
+            "signal_anchor_universe_size": anchor_size,
             "signal_anchor_fallback_used": bool(anchor_meta.get("signal_anchor_fallback_used", True)),
         }
     )

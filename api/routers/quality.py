@@ -31,7 +31,6 @@ _SECTOR_PREFIX_MAP = {
 
 _BENCHMARK_MAP = {
     "S&P 500": "sp500",
-    "Same as Input": None,  # resolved in handler
 }
 
 

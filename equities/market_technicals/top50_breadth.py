@@ -21,16 +21,18 @@ import pandas as pd
 
 from utils.retry import yf_download
 
+CONSOLE: Any | None = None
+
 try:
     from rich import box
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-except ImportError:
-    Console = None
 
-CONSOLE = Console() if Console else None
+    CONSOLE = Console()
+except ImportError:
+    CONSOLE = None
 
 from get_top50 import main as generate_top50
 

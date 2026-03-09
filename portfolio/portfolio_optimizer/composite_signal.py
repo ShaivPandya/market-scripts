@@ -417,7 +417,14 @@ def generate_anchor_normalized_long_equity_signals(
         top_n=anchor_top_n,
         min_unique=anchor_min_unique,
     )
-    anchor_universe_size = int(anchor_meta.get("anchor_universe_size", 0))
+    raw_anchor_size = anchor_meta.get("anchor_universe_size", 0)
+    if isinstance(raw_anchor_size, (int, float, str)):
+        try:
+            anchor_universe_size = int(raw_anchor_size)
+        except ValueError:
+            anchor_universe_size = 0
+    else:
+        anchor_universe_size = 0
     if not anchor_universe:
         return pd.DataFrame(), {
             "signal_anchor_mode": mode,
@@ -511,7 +518,7 @@ def generate_composite_signals(
     tickers: list[str],
     asset_map: dict[str, str],
     benchmark_override: str | None = None,
-    weights: dict[str, float] = None,
+    weights: dict[str, float] | None = None,
     weights_short: dict[str, float] | None = None,
     direction_map: dict[str, str] | None = None,
     years: int = DEFAULT_YEARS,

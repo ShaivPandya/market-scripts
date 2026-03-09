@@ -30,7 +30,7 @@ import time
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import List  # noqa: UP035
+from typing import Any, List, cast  # noqa: UP035
 
 import pandas as pd
 
@@ -40,16 +40,18 @@ from utils.retry import requests_get, yf_download
 CHUNK_SIZE = 50  # Tickers per batch
 BATCH_DELAY = 1.0  # Seconds between successful batches
 
+CONSOLE: Any | None = None
+
 try:
     from rich import box
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-except ImportError:
-    Console = None
 
-CONSOLE = Console() if Console else None
+    CONSOLE = Console()
+except ImportError:
+    CONSOLE = None
 
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -75,8 +77,9 @@ def print_header() -> None:
 def format_pct(value: float, highlight: bool):
     if value is None or pd.isna(value):
         return Text("N/A", style="dim")
-    style = "green" if highlight else None
-    return Text(f"{value:.1f}%", style=style)
+    if highlight:
+        return Text(f"{value:.1f}%", style="green")
+    return Text(f"{value:.1f}%")
 
 
 def get_sp500_tickers() -> list[str]:
@@ -93,7 +96,7 @@ def get_sp500_tickers() -> list[str]:
 
     df = pd.read_html(StringIO(r.text))[0]
     tickers = df["Symbol"].astype(str).str.strip().str.replace(".", "-", regex=False)
-    return pd.unique(tickers).tolist()
+    return cast(list[str], pd.unique(tickers).tolist())
 
 
 def load_tickers_from_file(filepath: str) -> list[str]:
@@ -102,7 +105,7 @@ def load_tickers_from_file(filepath: str) -> list[str]:
     if p.suffix.lower() == ".csv":
         df = pd.read_csv(p)
         col = df.columns[0]
-        return df[col].astype(str).str.strip().str.replace(".", "-", regex=False).tolist()
+        return cast(list[str], df[col].astype(str).str.strip().str.replace(".", "-", regex=False).tolist())
     else:
         with open(p) as f:
             return [line.strip().upper().replace(".", "-") for line in f if line.strip()]
@@ -191,7 +194,7 @@ def _latest_market_close_date() -> str | None:
         idx = idx.dropna()
         if idx.empty:
             return None
-        return idx[-1].date().isoformat()
+        return cast(str, idx[-1].date().isoformat())
     except Exception:
         return None
 
@@ -212,7 +215,7 @@ def download_with_retry(
         tuple of (combined DataFrame, list of failed tickers)
     """
     all_data = []
-    failed_tickers = []
+    failed_tickers: list[str] = []
 
     # Split into chunks
     chunks = [tickers[i : i + chunk_size] for i in range(0, len(tickers), chunk_size)]
@@ -259,7 +262,7 @@ def download_with_retry(
         combined = all_data[0]
     else:
         # Merge DataFrames along columns
-        combined_parts = {"Close": [], "High": [], "Low": []}
+        combined_parts: dict[str, list[pd.DataFrame]] = {"Close": [], "High": [], "Low": []}
         for df in all_data:
             if isinstance(df.columns, pd.MultiIndex):
                 for col in combined_parts:
@@ -605,6 +608,7 @@ def get_data(
         cached_as_of = cached_record.get("as_of_date")
         latest_close = _latest_market_close_date()
         if isinstance(cached_as_of, str) and latest_close is not None and latest_close <= cached_as_of:
+            assert cache_path is not None
             _write_breadth_cache(
                 path=cache_path,
                 payload=cached_payload,

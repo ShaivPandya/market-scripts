@@ -38,7 +38,7 @@ from typing import Any, Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
-import requests
+import requests  # type: ignore[import-untyped]
 
 LOGGER = logging.getLogger(__name__)
 
@@ -168,6 +168,8 @@ def get_dataset_metadata(domain: str, dataset_id: str, app_token: str | None) ->
         return cached
 
     meta = _http_get_json(url, headers=headers)
+    if not isinstance(meta, dict):
+        raise RuntimeError("Unexpected metadata payload type")
     with _META_CACHE_LOCK:
         _META_CACHE[cache_key] = meta
     return meta
