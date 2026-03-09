@@ -2,7 +2,7 @@ import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { CheckCircle, AlertTriangle, Eye, Play, Clock } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchWorkspace, approveItem, rejectItem } from "@/lib/api"
+import { fetchWorkspace, approveItem, rejectItem, completeAction, dismissAction } from "@/lib/api"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -108,6 +108,11 @@ export function Workspace() {
   )
 
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
+  function toggleExpanded(key: string) {
+    setExpandedIds(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
 
   async function handleApproval(id: number, action: "approve" | "reject") {
     setProcessingIds(prev => new Set(prev).add(id))
@@ -124,6 +129,17 @@ export function Workspace() {
         next.delete(id)
         return next
       })
+    }
+  }
+
+  async function handleActionItem(id: number, action: "complete" | "dismiss") {
+    setProcessingIds(prev => new Set(prev).add(id))
+    try {
+      if (action === "complete") await completeAction(id)
+      else await dismissAction(id)
+      qc.invalidateQueries({ queryKey: ["workspace"] })
+    } finally {
+      setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
     }
   }
 
@@ -212,41 +228,51 @@ export function Workspace() {
               Pending Approvals
               <span className="ml-auto text-xs text-subtle">{data.pending_approvals.count} total</span>
             </h2>
-            <div className="space-y-2">
-              {data.pending_approvals.items.map(a => (
-                <div
-                  key={a.id}
-                  className="flex items-center justify-between rounded-lg px-3 py-2 text-sm border border-app"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      {a.ticker && (
-                        <Link to={`/dossier/${a.ticker}`} className="font-semibold text-app hover:underline">
-                          {a.ticker}
-                        </Link>
-                      )}
-                      <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              {data.pending_approvals.items.map(a => {
+                const key = `approval-${a.id}`
+                const expanded = expandedIds.has(key)
+                return (
+                  <div
+                    key={a.id}
+                    className="rounded-lg px-3 py-2 text-sm border border-app"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          {a.ticker && (
+                            <Link to={`/dossier/${a.ticker}`} className="font-semibold text-app hover:underline">
+                              {a.ticker}
+                            </Link>
+                          )}
+                          <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+                        </div>
+                        {a.reason && (
+                          <p onClick={() => toggleExpanded(key)} className={cn("text-xs text-muted mt-0.5 cursor-pointer", !expanded && "line-clamp-1")}>
+                            {a.reason}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => handleApproval(a.id, "approve")}
+                          disabled={processingIds.has(a.id)}
+                          className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleApproval(a.id, "reject")}
+                          disabled={processingIds.has(a.id)}
+                          className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
                     </div>
-                    {a.reason && <p className="text-xs text-muted truncate mt-0.5">{a.reason}</p>}
                   </div>
-                  <div className="flex items-center gap-1 ml-3 shrink-0">
-                    <button
-                      onClick={() => handleApproval(a.id, "approve")}
-                      disabled={processingIds.has(a.id)}
-                      className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 disabled:opacity-50"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => handleApproval(a.id, "reject")}
-                      disabled={processingIds.has(a.id)}
-                      className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </section>
         )}
@@ -259,20 +285,44 @@ export function Workspace() {
               Open Actions
               <span className="ml-auto text-xs text-subtle">{data.open_actions.count} total</span>
             </h2>
-            <div className="space-y-2">
-              {data.open_actions.items.map(a => (
-                <div key={a.id} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm">
-                  <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium", URGENCY_COLORS[a.urgency] ?? URGENCY_COLORS.normal)}>
-                    {a.urgency}
-                  </span>
-                  {a.ticker && (
-                    <Link to={`/dossier/${a.ticker}`} className="font-semibold text-app hover:underline shrink-0">
-                      {a.ticker}
-                    </Link>
-                  )}
-                  <span className="text-muted truncate">{a.description}</span>
-                </div>
-              ))}
+            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              {data.open_actions.items.map(a => {
+                const key = `action-${a.id}`
+                const expanded = expandedIds.has(key)
+                return (
+                  <div key={a.id} className="rounded-lg border border-app px-3 py-2">
+                    <div className="flex items-start gap-3 text-sm">
+                      <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium shrink-0 mt-0.5", URGENCY_COLORS[a.urgency] ?? URGENCY_COLORS.normal)}>
+                        {a.urgency}
+                      </span>
+                      {a.ticker && (
+                        <Link to={`/dossier/${a.ticker}`} className="font-semibold text-app hover:underline shrink-0">
+                          {a.ticker}
+                        </Link>
+                      )}
+                      <p onClick={() => toggleExpanded(key)} className={cn("text-muted cursor-pointer", !expanded && "line-clamp-1")}>
+                        {a.description}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 mt-2">
+                      <button
+                        onClick={() => handleActionItem(a.id, "complete")}
+                        disabled={processingIds.has(a.id)}
+                        className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
+                      >
+                        Complete
+                      </button>
+                      <button
+                        onClick={() => handleActionItem(a.id, "dismiss")}
+                        disabled={processingIds.has(a.id)}
+                        className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </section>
         )}

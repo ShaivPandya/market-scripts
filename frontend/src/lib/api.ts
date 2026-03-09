@@ -116,6 +116,11 @@ export const fetchThesis = (ticker: string) =>
     .get(`/thesis/${encodeURIComponent(ticker)}`)
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 
+export const saveThesisContent = (ticker: string, content: string) =>
+  client
+    .put(`/thesis/${encodeURIComponent(ticker)}`, { content })
+    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+
 export const uploadThesisPdf = (ticker: string, file: File) => {
   const formData = new FormData()
   formData.append("ticker", ticker)

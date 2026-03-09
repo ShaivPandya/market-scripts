@@ -1,11 +1,14 @@
 import { useState } from "react"
-import { useParams, Link } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
+import { useParams, useNavigate, useLocation } from "react-router-dom"
+import { useQueryClient, useMutation } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchDossier, approveItem, rejectItem } from "@/lib/api"
+import { fetchDossier, approveItem, rejectItem, updateThesisStatus, fetchThesisStatus, saveThesisContent, completeAction, dismissAction, type ThesisStatus, type ThesisStatusValue } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
+import { Dialog } from "@/components/shared/Dialog"
+import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
+import { ThesisUpload } from "@/components/ThesisUpload"
 import { cn } from "@/lib/utils"
 
 interface DossierData {
@@ -30,8 +33,6 @@ interface DossierData {
 interface ThesisMeta {
   ticker: string
   status: string
-  direction: string
-  timeframe: string
   last_evaluated: string | null
 }
 
@@ -81,9 +82,16 @@ function formatTime(iso: string): string {
 
 export function PositionDossier() {
   const { ticker } = useParams<{ ticker: string }>()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const cameFromTheses = (location.state as { from?: string })?.from === "theses"
   const [tab, setTab] = useState<Tab>("Thesis")
   const qc = useQueryClient()
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false)
+  const [newStatus, setNewStatus] = useState<ThesisStatusValue>("under_review")
+  const [statusReason, setStatusReason] = useState("")
 
   const { data, isLoading, error } = useApiQuery<DossierData>(
     ["dossier", ticker],
@@ -91,11 +99,41 @@ export function PositionDossier() {
     60_000,
   )
 
+  const { data: thesisStatus } = useApiQuery<Record<string, string>>(
+    ["thesis", "status"],
+    fetchThesisStatus,
+  )
+
+  const statusMutation = useMutation({
+    mutationFn: () => updateThesisStatus(ticker!, newStatus, statusReason),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      qc.invalidateQueries({ queryKey: ["thesis"] })
+      setStatusDialogOpen(false)
+      setStatusReason("")
+    },
+  })
+
+  function toggleExpanded(key: string) {
+    setExpandedIds(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
+
   async function handleApproval(id: number, action: "approve" | "reject") {
     setProcessingIds(prev => new Set(prev).add(id))
     try {
       if (action === "approve") await approveItem(id)
       else await rejectItem(id)
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+    } finally {
+      setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
+    }
+  }
+
+  async function handleActionItem(id: number, action: "complete" | "dismiss") {
+    setProcessingIds(prev => new Set(prev).add(id))
+    try {
+      if (action === "complete") await completeAction(id)
+      else await dismissAction(id)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -115,16 +153,31 @@ export function PositionDossier() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
-          <Link to="/" className="text-sm text-muted hover:text-app">&larr; Workspace</Link>
+          <button type="button" onClick={() => navigate(cameFromTheses ? "/theses" : "/")} className="text-sm text-muted hover:text-app">&larr; {cameFromTheses ? "Theses" : "Workspace"}</button>
           <h1 className="text-2xl font-bold text-app">{data.ticker}</h1>
           {meta?.status && (
             <span className={cn("text-xs px-2 py-0.5 rounded font-medium", STATUS_COLORS[meta.status] ?? STATUS_COLORS.active)}>
               {meta.status.replace(/_/g, " ")}
             </span>
           )}
-          {meta?.direction && <span className="text-sm text-muted">{meta.direction}</span>}
+          {data.position?.direction != null && <span className="text-sm text-muted">{String(data.position.direction)}</span>}
+          <ThesisUpload ticker={ticker!} status={(thesisStatus?.[ticker!] ?? "missing") as ThesisStatus} />
         </div>
-        <RefreshButton queryKeys={[["dossier", ticker]]} />
+        <div className="flex items-center gap-2">
+          {meta && (
+            <button
+              type="button"
+              onClick={() => {
+                setNewStatus(meta.status === "active" ? "under_review" : "active")
+                setStatusDialogOpen(true)
+              }}
+              className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors"
+            >
+              Change Status
+            </button>
+          )}
+          <RefreshButton queryKeys={[["dossier", ticker]]} />
+        </div>
       </div>
 
       {/* Position summary bar */}
@@ -168,7 +221,7 @@ export function PositionDossier() {
 
       {/* Tab content */}
       <div className="theme-surface rounded-xl p-4">
-        {tab === "Thesis" && <ThesisTab thesis={data.thesis} />}
+        {tab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
         {tab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} />}
         {tab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} />}
         {tab === "Evaluations" && <EvaluationsTab evaluations={data.evaluations} />}
@@ -183,31 +236,41 @@ export function PositionDossier() {
           <h2 className="text-sm font-semibold text-app mb-3">
             Pending Approvals ({data.pending_approvals.length})
           </h2>
-          <div className="space-y-2">
-            {data.pending_approvals.map(a => (
-              <div key={a.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm border border-app">
-                <div className="min-w-0 flex-1">
-                  <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
-                  {a.reason && <p className="text-xs text-muted truncate mt-0.5">{a.reason}</p>}
+          <div className="space-y-2 max-h-[400px] overflow-y-auto">
+            {data.pending_approvals.map(a => {
+              const key = `approval-${a.id}`
+              const expanded = expandedIds.has(key)
+              return (
+                <div key={a.id} className="rounded-lg px-3 py-2 text-sm border border-app">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+                      {a.reason && (
+                        <p onClick={() => toggleExpanded(key)} className={cn("text-xs text-muted mt-0.5 cursor-pointer", !expanded && "line-clamp-1")}>
+                          {a.reason}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleApproval(a.id, "approve")}
+                        disabled={processingIds.has(a.id)}
+                        className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => handleApproval(a.id, "reject")}
+                        disabled={processingIds.has(a.id)}
+                        className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 ml-3 shrink-0">
-                  <button
-                    onClick={() => handleApproval(a.id, "approve")}
-                    disabled={processingIds.has(a.id)}
-                    className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleApproval(a.id, "reject")}
-                    disabled={processingIds.has(a.id)}
-                    className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </section>
       )}
@@ -218,17 +281,41 @@ export function PositionDossier() {
           {data.action_items.length > 0 && (
             <section className="theme-surface rounded-xl p-4">
               <h2 className="text-sm font-semibold text-app mb-3">Action Items</h2>
-              <div className="space-y-2">
-                {data.action_items.map(a => (
-                  <div key={a.id} className="flex items-center gap-2 text-sm px-2 py-1.5">
-                    <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium shrink-0",
-                      a.urgency === "urgent" ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950" :
-                      a.urgency === "high" ? "text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-950" :
-                      "text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950"
-                    )}>{a.urgency}</span>
-                    <span className="text-muted truncate">{a.description}</span>
-                  </div>
-                ))}
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {data.action_items.map(a => {
+                  const key = `action-${a.id}`
+                  const expanded = expandedIds.has(key)
+                  return (
+                    <div key={a.id} className="rounded-lg border border-app px-3 py-2">
+                      <div className="flex items-start gap-2 text-sm">
+                        <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium shrink-0 mt-0.5",
+                          a.urgency === "urgent" ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950" :
+                          a.urgency === "high" ? "text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-950" :
+                          "text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950"
+                        )}>{a.urgency}</span>
+                        <p onClick={() => toggleExpanded(key)} className={cn("text-muted cursor-pointer", !expanded && "line-clamp-1")}>
+                          {a.description}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 mt-2">
+                        <button
+                          onClick={() => handleActionItem(a.id, "complete")}
+                          disabled={processingIds.has(a.id)}
+                          className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
+                        >
+                          Complete
+                        </button>
+                        <button
+                          onClick={() => handleActionItem(a.id, "dismiss")}
+                          disabled={processingIds.has(a.id)}
+                          className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </section>
           )}
@@ -247,29 +334,129 @@ export function PositionDossier() {
           )}
         </div>
       )}
+
+      {/* Status change dialog */}
+      <Dialog
+        open={statusDialogOpen}
+        onOpenChange={setStatusDialogOpen}
+        title="Change Thesis Status"
+        description={`Update the status for ${ticker}`}
+      >
+        <div className="space-y-4">
+          <SelectInput
+            label="New Status"
+            value={newStatus}
+            onChange={v => setNewStatus(v as ThesisStatusValue)}
+            options={[
+              { value: "active", label: "Active" },
+              { value: "under_review", label: "Under Review" },
+              { value: "invalidated", label: "Invalidated" },
+            ]}
+          />
+          <TextInput
+            label="Reason"
+            value={statusReason}
+            onChange={setStatusReason}
+            placeholder="Why is the status changing?"
+          />
+          {statusMutation.isError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {String(statusMutation.error)}
+            </div>
+          )}
+          <ActionButton
+            onClick={() => statusMutation.mutate()}
+            loading={statusMutation.isPending}
+            loadingText="Updating..."
+          >
+            Update Status
+          </ActionButton>
+        </div>
+      </Dialog>
     </div>
   )
 }
 
 /* ---------- Sub-tab components ---------- */
 
-function ThesisTab({ thesis }: { thesis: DossierData["thesis"] }) {
-  if (!thesis.content && !thesis.meta) {
-    return <p className="text-sm text-muted">No thesis on file for this position.</p>
+function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]; ticker: string; position: Record<string, unknown> | null }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState("")
+  const qc = useQueryClient()
+  const saveMutation = useMutation({
+    mutationFn: () => saveThesisContent(ticker, draft),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      qc.invalidateQueries({ queryKey: ["thesis"] })
+      setEditing(false)
+    },
+  })
+
+  const startEdit = () => {
+    setDraft(thesis.content ?? "")
+    setEditing(true)
   }
+
+  if (!thesis.content && !thesis.meta) {
+    return (
+      <div>
+        <p className="text-sm text-muted mb-3">No thesis on file for this position.</p>
+        <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
+          Write Thesis
+        </button>
+        {editing && (
+          <div className="mt-3">
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              className="w-full min-h-[300px] rounded-lg border border-app bg-transparent p-3 text-sm text-app font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="# TICKER&#10;## Thesis&#10;## Key Catalysts&#10;## Risk Factors"
+            />
+            {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
+            <div className="flex gap-2 mt-2">
+              <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+              <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div>
-      {thesis.meta && (
+      {(position || thesis.meta) && (
         <div className="flex flex-wrap gap-4 text-sm mb-4 pb-4 border-b border-app">
-          <div><span className="text-subtle">Direction:</span> <span className="font-medium text-app">{thesis.meta.direction}</span></div>
-          <div><span className="text-subtle">Timeframe:</span> <span className="font-medium text-app">{thesis.meta.timeframe}</span></div>
-          {thesis.meta.last_evaluated && <div><span className="text-subtle">Last Evaluated:</span> <span className="font-medium text-app">{formatTime(thesis.meta.last_evaluated)}</span></div>}
+          {position?.direction != null && <div><span className="text-subtle">Direction:</span> <span className="font-medium text-app">{String(position.direction)}</span></div>}
+          {thesis.meta?.last_evaluated && <div><span className="text-subtle">Last Evaluated:</span> <span className="font-medium text-app">{formatTime(thesis.meta.last_evaluated)}</span></div>}
         </div>
       )}
-      {thesis.content && (
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          <MarkdownRenderer content={thesis.content} />
+      {editing ? (
+        <div>
+          <textarea
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            className="w-full min-h-[400px] rounded-lg border border-app bg-transparent p-3 text-sm text-app font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
+          <div className="flex gap-2 mt-2">
+            <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+            <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
+          </div>
         </div>
+      ) : (
+        <>
+          <div className="flex justify-end mb-2">
+            <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
+              Edit
+            </button>
+          </div>
+          {thesis.content && (
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              <MarkdownRenderer content={thesis.content} />
+            </div>
+          )}
+        </>
       )}
       {thesis.status_history.length > 0 && (
         <div className="mt-4 pt-4 border-t border-app">

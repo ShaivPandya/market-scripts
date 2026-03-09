@@ -184,6 +184,14 @@ async def generate_thesis(
     except Exception:
         pass  # Don't block thesis save if indexing fails
 
+    # Sync catalysts/kill conditions from the new thesis content
+    try:
+        from portfolio.thesis_sync import sync_entities_from_markdown
+
+        sync_entities_from_markdown(normalized_ticker)
+    except Exception:
+        pass  # Don't block thesis save if sync fails
+
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
 
 
@@ -276,6 +284,57 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
         return update_thesis_status(normalized_ticker, new_status, body.reason.strip())
     except ValueError as e:
         raise NotFoundError("Thesis", normalized_ticker) from e
+
+
+class SaveThesisRequest(BaseModel):
+    content: str
+
+
+@router.put("/thesis/{ticker}")
+def save_thesis(ticker: str, body: SaveThesisRequest):
+    """Save thesis markdown content directly."""
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+
+    content = body.content.strip()
+    if not content:
+        raise ValidationError("Thesis content cannot be empty.")
+
+    THESES_DIR.mkdir(parents=True, exist_ok=True)
+    thesis_path = THESES_DIR / f"{normalized_ticker}.md"
+    try:
+        thesis_path.write_text(content + "\n", encoding="utf-8")
+    except Exception as e:
+        from api.exceptions import AppError
+
+        raise AppError(f"Failed to write thesis file: {e}") from e
+
+    from portfolio.thesis_db import upsert_thesis_meta
+
+    upsert_thesis_meta(normalized_ticker, status="active")
+
+    try:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="thesis",
+            content=content,
+            ticker=normalized_ticker,
+            source_path=str(thesis_path),
+            doc_id=f"thesis-{normalized_ticker}",
+        )
+    except Exception:
+        pass
+
+    # Sync catalysts/kill conditions from the updated thesis content
+    try:
+        from portfolio.thesis_sync import sync_entities_from_markdown
+
+        sync_entities_from_markdown(normalized_ticker)
+    except Exception:
+        pass
+
+    return {"status": "ok", "ticker": normalized_ticker, "content": content}
 
 
 @router.get("/thesis/{ticker}")

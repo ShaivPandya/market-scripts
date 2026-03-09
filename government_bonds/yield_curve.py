@@ -11,8 +11,11 @@ Provides current and historical (N days lookback) curve points for:
 from __future__ import annotations
 
 import io
+import json
 import os
 import zipfile
+from datetime import datetime
+from pathlib import Path
 from typing import TypedDict
 
 import pandas as pd
@@ -30,7 +33,7 @@ except ImportError:
     FRED_AVAILABLE = False
     Fred = None  # type: ignore[assignment]
 
-from utils.retry import fred_get_series
+from utils.retry import fred_get_series, yf_download
 
 
 class TenorMeta(TypedDict):
@@ -95,6 +98,83 @@ _BOE_MATURITY_MAP: dict[float, str] = {
     10.0: "10Y",
     30.0: "30Y",
 }
+
+# ---------------------------------------------------------------------------
+# File-based cache (same pattern as market_breadth.py)
+# ---------------------------------------------------------------------------
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CACHE_DIR = _REPO_ROOT / "data_cache" / "yield_curve"
+_CACHE_TTL_SECONDS = 24 * 60 * 60
+_CACHE_VERSION = 1
+_CLOSE_PROBE_TICKER = "SPY"
+
+
+def _cache_path(lookback_days: int) -> Path:
+    return _CACHE_DIR / f"yield_curve_{lookback_days}d.json"
+
+
+def _load_cache(path: Path) -> dict | None:
+    try:
+        if not path.exists():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return None
+        if raw.get("version") != _CACHE_VERSION:
+            return None
+        payload = raw.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        fetched_at = raw.get("fetched_at")
+        if not isinstance(fetched_at, str):
+            return None
+        datetime.fromisoformat(fetched_at)
+        return raw
+    except Exception:
+        return None
+
+
+def _write_cache(
+    path: Path,
+    payload: dict,
+    lookback_days: int,
+    as_of_date: str | None,
+    fetched_at: str | None = None,
+) -> None:
+    record = {
+        "version": _CACHE_VERSION,
+        "fetched_at": fetched_at or datetime.now().isoformat(),
+        "as_of_date": as_of_date,
+        "lookback_days": lookback_days,
+        "payload": payload,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        return
+
+
+def _latest_market_close_date() -> str | None:
+    try:
+        probe = yf_download(
+            tickers=_CLOSE_PROBE_TICKER,
+            period="10d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+        if probe is None or probe.empty:
+            return None
+        idx = pd.to_datetime(probe.index, errors="coerce").dropna()
+        if idx.empty:
+            return None
+        return str(idx[-1].date().isoformat())
+    except Exception:
+        return None
 
 
 def _dedupe(seq: list[str]) -> list[str]:
@@ -408,26 +488,77 @@ def get_data(lookback_days: int = 90) -> dict:
     if lookback_days < 1:
         raise ValueError("lookback_days must be >= 1")
 
-    fred_client, fred_warn = _build_fred_client()
+    # --- cache check ---
+    cache_p = _cache_path(lookback_days)
+    cached_record = _load_cache(cache_p)
+    cached_payload = cached_record.get("payload") if cached_record else None
 
-    countries: list[dict] = []
-    for code, name in COUNTRIES:
-        countries.append(
-            _build_country_curve(
-                country_code=code,
-                country_name=name,
+    if cached_record and isinstance(cached_payload, dict):
+        try:
+            fetched_at = datetime.fromisoformat(str(cached_record["fetched_at"]))
+            age_seconds = (datetime.now() - fetched_at).total_seconds()
+        except Exception:
+            age_seconds = _CACHE_TTL_SECONDS + 1
+
+        if age_seconds < _CACHE_TTL_SECONDS:
+            return cached_payload
+
+        # TTL expired — check if market has actually closed with new data
+        cached_as_of = cached_record.get("as_of_date")
+        latest_close = _latest_market_close_date()
+        if isinstance(cached_as_of, str) and latest_close is not None and latest_close <= cached_as_of:
+            # No new close since cache was built; refresh TTL
+            _write_cache(
+                path=cache_p,
+                payload=cached_payload,
                 lookback_days=lookback_days,
-                fred_client=fred_client,
-                fred_unavailable_warning=fred_warn,
+                as_of_date=cached_as_of,
+                fetched_at=datetime.now().isoformat(),
             )
-        )
+            return cached_payload
 
-    return {
-        "timestamp": pd.Timestamp.utcnow().isoformat(),
-        "lookback_days": lookback_days,
-        "tenor_order": TENOR_ORDER,
-        "countries": countries,
-    }
+    # --- fetch live ---
+    try:
+        fred_client, fred_warn = _build_fred_client()
+
+        countries: list[dict] = []
+        for code, name in COUNTRIES:
+            countries.append(
+                _build_country_curve(
+                    country_code=code,
+                    country_name=name,
+                    lookback_days=lookback_days,
+                    fred_client=fred_client,
+                    fred_unavailable_warning=fred_warn,
+                )
+            )
+
+        result = {
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
+            "lookback_days": lookback_days,
+            "tenor_order": TENOR_ORDER,
+            "countries": countries,
+        }
+    except Exception:
+        if isinstance(cached_payload, dict):
+            return cached_payload
+        raise
+
+    # Determine as_of_date from country curves (latest across all)
+    as_of_date = None
+    for country in result["countries"]:
+        d = country.get("as_of_date")
+        if isinstance(d, str) and (as_of_date is None or d > as_of_date):
+            as_of_date = d
+
+    _write_cache(
+        path=cache_p,
+        payload=result,
+        lookback_days=lookback_days,
+        as_of_date=as_of_date,
+    )
+
+    return result
 
 
 if __name__ == "__main__":

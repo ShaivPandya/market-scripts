@@ -84,7 +84,7 @@ def get_dossier(ticker: str):
     catalysts = get_catalysts(ticker)
     kill_conditions = get_kill_conditions(ticker)
     workflow_runs = get_workflow_runs(ticker=ticker, limit=10)
-    action_items = get_action_items(ticker=ticker)
+    action_items = get_action_items(ticker=ticker, status="open")
     watch_triggers = get_watch_triggers(ticker=ticker)
     research_notes = get_research_notes(ticker=ticker, limit=20)
     pending_approvals = get_pending_approvals(ticker=ticker)

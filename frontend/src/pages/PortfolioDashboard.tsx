@@ -69,7 +69,7 @@ export function PortfolioDashboard() {
               <div key={ticker} className="rounded-xl border bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <Link to={`/theses?ticker=${ticker}`} className="text-sm font-semibold text-app hover:underline">{ticker}</Link>
+                    <Link to={`/dossier/${ticker}`} className="text-sm font-semibold text-app hover:underline">{ticker}</Link>
                   </div>
                   {ret != null && (
                     <span className={`text-xs font-medium ${ret >= 0 ? "text-green-600" : "text-red-600"}`}>

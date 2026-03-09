@@ -401,6 +401,36 @@ def update_kill_condition_status(kc_id: int, status: str) -> dict:
     return dict(updated)
 
 
+def delete_catalysts_by_ticker(ticker: str, *, created_by: str | None = None) -> int:
+    """Delete catalysts for a ticker. Optionally filter by created_by."""
+    conn = _get_conn()
+    with _lock:
+        if created_by:
+            cur = conn.execute(
+                "DELETE FROM catalysts WHERE ticker = ? AND created_by = ?",
+                (ticker.upper(), created_by),
+            )
+        else:
+            cur = conn.execute("DELETE FROM catalysts WHERE ticker = ?", (ticker.upper(),))
+        conn.commit()
+    return cur.rowcount
+
+
+def delete_kill_conditions_by_ticker(ticker: str, *, created_by: str | None = None) -> int:
+    """Delete kill conditions for a ticker. Optionally filter by created_by."""
+    conn = _get_conn()
+    with _lock:
+        if created_by:
+            cur = conn.execute(
+                "DELETE FROM kill_conditions WHERE ticker = ? AND created_by = ?",
+                (ticker.upper(), created_by),
+            )
+        else:
+            cur = conn.execute("DELETE FROM kill_conditions WHERE ticker = ?", (ticker.upper(),))
+        conn.commit()
+    return cur.rowcount
+
+
 # ---------------------------------------------------------------------------
 # Workflow Runs
 # ---------------------------------------------------------------------------
