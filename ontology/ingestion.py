@@ -437,10 +437,10 @@ def _run_fetchers(fetchers: dict[str, ModuleFetcher], source_status: dict[str, d
 
     with ThreadPoolExecutor(max_workers=min(len(fetchers), 10)) as pool:
         futures = {pool.submit(fn): name for name, fn in fetchers.items()}
-        for fut in as_completed(futures):
+        for fut in as_completed(futures, timeout=120):
             name = futures[fut]
             try:
-                data = fut.result()
+                data = fut.result(timeout=90)
                 out[name] = data
                 if _is_partial(name, data):
                     source_status[name] = {"status": "partial", "detail": "incomplete payload"}

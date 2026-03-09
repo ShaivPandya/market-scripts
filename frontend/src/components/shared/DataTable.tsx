@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { memo, useCallback, useMemo, useState } from "react"
 
 export interface ColumnDef {
   key: string
@@ -16,7 +16,7 @@ interface DataTableProps {
   label?: string
 }
 
-export function DataTable({ columns, rows, maxHeight = "600px", label }: DataTableProps) {
+export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "600px", label }: DataTableProps) {
   const [copied, setCopied] = useState(false)
 
   const displayColumns = useMemo(
@@ -144,4 +144,4 @@ export function DataTable({ columns, rows, maxHeight = "600px", label }: DataTab
       </div>
     </div>
   )
-}
+})

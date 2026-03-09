@@ -184,7 +184,7 @@ export const startOntologyQueryJob = (body: OntologyQueryBody) =>
 export const fetchOntologyQueryJob = (job_id: string) =>
   client.get(`/ontology/query/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
 
-export async function runOntologyQueryAsync(body: OntologyQueryBody) {
+export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: AbortSignal) {
   const started = await startOntologyQueryJob(body)
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Ontology query failed")
@@ -193,6 +193,7 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody) {
   const deadline = Date.now() + 180_000
 
   for (; ;) {
+    if (signal?.aborted) throw new DOMException("Query cancelled", "AbortError")
     if (Date.now() > deadline) throw new Error("Timeout: Ontology query is taking too long. Try again.")
 
     await new Promise(r => setTimeout(r, 2000))
