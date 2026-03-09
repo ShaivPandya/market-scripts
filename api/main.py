@@ -70,6 +70,7 @@ _OPTIONAL_MODULES = [
     ("api.routers.market_technicals", "market_technicals", "equities"),
     ("api.routers.economic_growth", "economic_growth", "macro"),
     ("api.routers.labor_market", "labor_market", "macro"),
+    ("api.routers.housing", "housing", "macro"),
     ("api.routers.liquidity", "liquidity", "macro"),
     ("api.routers.country_dashboard", "country_dashboard", "macro"),
     ("api.routers.positioning", "positioning", "macro"),

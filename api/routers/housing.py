@@ -1,0 +1,107 @@
+import os
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from api.cache import get_cached, set_cached, short_cache
+from api.exceptions import ConfigurationError, DataFetchError
+from api.serializers import serialize_response
+from llm_utils import MODEL_HAIKU, call_claude_text
+
+router = APIRouter()
+
+
+@router.get("/housing")
+def get_housing():
+    key = "housing"
+    cached = get_cached(short_cache, key)
+    if cached is not None:
+        return cached
+    try:
+        from macro.housing.housing import get_data
+
+        data = get_data()
+    except Exception as e:
+        raise DataFetchError(source="housing", detail=str(e)) from e
+
+    result = serialize_response(data)
+    set_cached(short_cache, key, result)
+    return result
+
+
+class HousingAnalyzeRequest(BaseModel):
+    latest: dict = Field(default_factory=dict)
+    series_labels: dict = Field(default_factory=dict)
+    series_units: dict = Field(default_factory=dict)
+    timestamp: str | None = None
+
+
+def _fmt(v, fmt=".2f", suffix=""):
+    if v is None:
+        return "N/A"
+    try:
+        return f"{float(v):{fmt}}{suffix}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _build_snapshot_table(req: HousingAnalyzeRequest) -> str:
+    header = f"{'Indicator':<32}  {'Latest':>12}  {'Change':>10}  {'Unit':<12}  {'As of':<12}"
+    divider = "-" * len(header)
+    lines = [header, divider]
+    for key, info in (req.latest or {}).items():
+        label = req.series_labels.get(key, key)
+        unit = req.series_units.get(key, "")
+        val = info.get("value")
+        chg = info.get("change")
+        date = info.get("date", "N/A")
+        chg_str = f"{'+' if chg and chg >= 0 else ''}{_fmt(chg)}" if chg is not None else "N/A"
+        lines.append(f"{str(label)[:32]:<32}  {_fmt(val):>12}  {chg_str:>10}  {unit:<12}  {str(date):<12}")
+    return "\n".join(lines)
+
+
+@router.post("/housing/analyze")
+def analyze_housing(req: HousingAnalyzeRequest):
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ConfigurationError("ANTHROPIC_API_KEY")
+    if not req.latest:
+        raise HTTPException(status_code=400, detail="No housing data provided")
+
+    snapshot_table = _build_snapshot_table(req)
+
+    prompt = f"""You are an experienced macro strategist. Analyze the following US housing market dashboard snapshot and provide a concise but insightful interpretation for a professional investor audience.
+
+As of: {req.timestamp or "N/A"}
+
+Housing market indicators:
+{snapshot_table}
+
+Indicator guide:
+- Housing Starts (HOUST): new residential construction projects begun (thousands, SAAR). Rising = expanding supply pipeline.
+- Building Permits (PERMIT): authorized new housing units (thousands, SAAR). Leading indicator of future starts.
+- NAHB Housing Market Index (NAHBHMI): builder confidence survey (0-100). Above 50 = more builders view conditions as good. Below 50 = pessimistic.
+- Existing Home Sales (EXHOSLUSM495S): completed sales of existing homes (millions, SAAR). Reflects demand and affordability conditions.
+
+Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
+1. Overall characterization of the housing market cycle (expanding/contracting/transitioning)
+2. What starts and permits signal about the residential construction pipeline and builder sentiment
+3. What the NAHB index reveals about builder confidence and forward-looking supply expectations
+4. What existing home sales indicate about demand, affordability, and inventory dynamics
+5. Key macro risks or pivots to watch (rates, affordability, inventory) and a clear bottom-line assessment for risk assets
+
+Be specific about the numbers."""
+
+    try:
+        analysis, _citations, _resp = call_claude_text(
+            prompt=prompt,
+            model=MODEL_HAIKU,
+            api_key=api_key,
+            max_tokens=4096,
+        )
+        if not analysis:
+            raise ValueError("Claude returned empty response")
+    except Exception as exc:
+        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
+
+    return {"analysis": analysis}

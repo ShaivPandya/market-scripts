@@ -325,6 +325,16 @@ export const analyzeLaborMarket = (body: {
   timestamp?: string | null
 }) => client.post("/labor-market/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
+export const fetchHousing = () =>
+  client.get("/housing").then(r => r.data)
+
+export const analyzeHousing = (body: {
+  latest: Record<string, { value: number | null; date: string | null; change: number | null }>
+  series_labels: Record<string, string>
+  series_units: Record<string, string>
+  timestamp?: string | null
+}) => client.post("/housing/analyze", body, { timeout: 180_000 }).then(r => r.data)
+
 export const fetchLiquidity = () =>
   client.get("/liquidity").then(r => r.data)
 

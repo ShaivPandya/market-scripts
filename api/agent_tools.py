@@ -137,6 +137,16 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
+        "name": "get_housing",
+        "description": (
+            "Fetch US housing market indicators. Returns time series and latest values for "
+            "housing starts, building permits, NAHB housing market index, and existing home sales. "
+            "Use this to assess the residential construction cycle, builder sentiment, and housing demand."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
         "name": "get_sector_metrics",
         "description": (
             "Fetch S&P 500 sector metrics. Returns sector weights, weight changes over "
@@ -1288,6 +1298,17 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
         def _load():
             from macro.labor_market.labor_market import get_data
+
+            return serialize_value(get_data())
+
+        data, meta = _fetch_with_cache(short_cache, key, _load)
+        return data, meta
+
+    if name == "get_housing":
+        key = "housing"
+
+        def _load():
+            from macro.housing.housing import get_data
 
             return serialize_value(get_data())
 
