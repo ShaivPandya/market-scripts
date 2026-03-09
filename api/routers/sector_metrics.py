@@ -18,7 +18,7 @@ def get_sector_metrics():
     if cached is not None:
         return cached
     try:
-        from sector_metrics import get_data
+        from equities.sector_metrics.sector_metrics import get_data
 
         data = get_data()
     except Exception as e:

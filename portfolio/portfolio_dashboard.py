@@ -16,9 +16,10 @@ import warnings
 from datetime import datetime
 
 import pandas as pd
-import yfinance as yf
-from portfolio_analytics import compute_analytics
-from portfolio_db import get_positions, get_positions_df
+
+from portfolio.portfolio_analytics import compute_analytics
+from portfolio.portfolio_db import get_positions, get_positions_df
+from utils.retry import yf_download
 
 LOGGER = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     tickers = list(POSITIONS.values())
 
     try:
-        raw = yf.download(
+        raw = yf_download(
             tickers=tickers,
             period=tf["period"],
             interval=tf["interval"],

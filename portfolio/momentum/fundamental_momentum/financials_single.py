@@ -17,15 +17,14 @@ from collections.abc import Callable, Iterable
 from datetime import date
 from typing import Dict, List, Optional, Set, Tuple  # noqa: UP035
 
-import requests
-from edgar_fetcher import (
+from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text, parse_json_text
+from portfolio.momentum.fundamental_momentum.edgar_fetcher import (
     build_filing_url,
     fetch_companyfacts_by_cik,
     fetch_submissions_by_cik,
     get_cik_for_ticker,
 )
-
-from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text, parse_json_text
+from utils.retry import requests_get
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1002,14 +1001,14 @@ def _extract_breakdown_from_html(
 
     Returns a dict with by_segment/by_region lists, or None on failure.
     """
-    from edgar_fetcher import build_filing_url
+    from portfolio.momentum.fundamental_momentum.edgar_fetcher import build_filing_url
 
     filing_url = build_filing_url(cik_str, accn, submissions=submissions)
     if not filing_url:
         return None
 
     try:
-        resp = requests.get(
+        resp = requests_get(
             filing_url,
             headers={"User-Agent": "market-scripts research@example.com"},
             timeout=25,
@@ -1154,7 +1153,7 @@ def _extract_breakdown_via_nlp(
         return None
 
     try:
-        resp = requests.get(
+        resp = requests_get(
             filing_url,
             headers={"User-Agent": "market-scripts research@example.com"},
             timeout=25,

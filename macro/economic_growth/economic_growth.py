@@ -18,12 +18,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-import yfinance as yf
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
+
+from utils.retry import yf_download
 
 LOGGER = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ def download_close_series(ticker_dict, period=DEFAULT_YF_PERIOD):
 
     tickers = list(valid_tickers.values())
     try:
-        raw = yf.download(
+        raw = yf_download(
             tickers=tickers if len(tickers) > 1 else tickers[0],
             period=period,
             auto_adjust=False,

@@ -257,7 +257,7 @@ def _detect_repo() -> str | None:
 
 
 def create_github_issue(title: str, body: str) -> str | None:
-    import requests
+    from utils.retry import requests_post
 
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -277,7 +277,7 @@ def create_github_issue(title: str, body: str) -> str | None:
     if len(body) > 60000:
         body = body[:60000] + "\n\n... (truncated)"
 
-    resp = requests.post(url, headers=headers, json={"title": title, "body": body}, timeout=30)
+    resp = requests_post(url, headers=headers, json={"title": title, "body": body}, timeout=30)
     if resp.status_code == 201:
         issue_url = resp.json().get("html_url", "")
         log.info("Created GitHub Issue: %s", issue_url)

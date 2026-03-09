@@ -18,7 +18,7 @@ def get_liquidity():
     if cached is not None:
         return cached
     try:
-        from liquidity import get_snapshot
+        from macro.liquidity.liquidity import get_snapshot
 
         data = get_snapshot()
     except Exception as e:

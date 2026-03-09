@@ -15,12 +15,15 @@ from datetime import date as date_type
 from datetime import timedelta
 
 import pandas as pd
-import requests
+
+from utils.retry import requests_get
 
 try:
     import yfinance as yf
 except ImportError as e:
     raise SystemExit("Missing dependency: yfinance") from e
+
+from utils.retry import yf_download
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -144,7 +147,7 @@ def get_aaii() -> list[dict]:
     except ImportError as e:
         raise ImportError("xlrd is required for AAII data: pip install xlrd>=2.0.1") from e
 
-    resp = requests.get(AAII_XLS_URL, headers=_HEADERS, timeout=_TIMEOUT)
+    resp = requests_get(AAII_XLS_URL, headers=_HEADERS, timeout=_TIMEOUT)
     resp.raise_for_status()
 
     wb = xlrd.open_workbook(file_contents=resp.content)
@@ -199,7 +202,7 @@ def _fetch_naaim_excel(page_url: str) -> pd.DataFrame:
     except ImportError as e:
         raise ImportError("beautifulsoup4 is required for NAAIM scraping") from e
 
-    page = requests.get(page_url, headers=_HEADERS, timeout=_TIMEOUT)
+    page = requests_get(page_url, headers=_HEADERS, timeout=_TIMEOUT)
     page.raise_for_status()
     soup = BeautifulSoup(page.content, "lxml")
 
@@ -214,7 +217,7 @@ def _fetch_naaim_excel(page_url: str) -> pd.DataFrame:
     if not xlsx_url:
         raise ValueError("Could not find NAAIM Excel download link on page")
 
-    resp = requests.get(xlsx_url, headers=_HEADERS, timeout=_TIMEOUT)
+    resp = requests_get(xlsx_url, headers=_HEADERS, timeout=_TIMEOUT)
     resp.raise_for_status()
     return pd.read_excel(io.BytesIO(resp.content))
 
@@ -283,7 +286,7 @@ def get_surveys() -> dict:
 
 
 def _download_close(ticker: str, start: str) -> pd.Series:
-    df = yf.download(ticker, start=start, auto_adjust=False, progress=False)
+    df = yf_download(ticker, start=start, auto_adjust=False, progress=False)
     if df.empty:
         return pd.Series(dtype=float, name=ticker)
     if isinstance(df.columns, pd.MultiIndex):

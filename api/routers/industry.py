@@ -15,7 +15,7 @@ def get_industry_monitor(refresh: bool = False):
         if cached is not None:
             return cached
     try:
-        from industry_monitor import get_data
+        from macro.industry.industry_monitor import get_data
 
         data = get_data(refresh=refresh)
     except Exception as e:

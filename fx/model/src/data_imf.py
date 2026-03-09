@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import pandas as pd
-import requests
+
+from utils.retry import requests_get
 
 IMF_BASE = "https://www.imf.org/external/datamapper/api/v1"
 
@@ -19,7 +20,7 @@ def fetch_imf_datamapper_indicator(indicator: str, iso3: str, cache_dir: Path, r
         return pd.Series(s.values, index=df["date"], name=f"{indicator}_{iso3}").sort_index()
 
     url = f"{IMF_BASE}/{indicator}/{iso3}"
-    r = requests.get(url, timeout=60)
+    r = requests_get(url, timeout=60)
     if r.status_code != 200:
         raise ImfError(f"IMF DataMapper request failed ({r.status_code}): {r.text[:2000]}")
 

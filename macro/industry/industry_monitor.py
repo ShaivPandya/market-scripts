@@ -356,14 +356,14 @@ def _fetch_price_reaction(ticker: str, transcript_date: str, report_time: str = 
     """
     from datetime import timedelta
 
-    import yfinance as yf
+    from utils.retry import yf_download
 
     try:
         dt = datetime.strptime(transcript_date, "%Y-%m-%d")
         start = (dt - timedelta(days=10)).strftime("%Y-%m-%d")
         end = (dt + timedelta(days=10)).strftime("%Y-%m-%d")
 
-        data = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
+        data = yf_download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
         if data.empty:
             return None
 

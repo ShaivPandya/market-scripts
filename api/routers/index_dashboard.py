@@ -18,7 +18,7 @@ def get_index_dashboard(timeframe: str = "Daily"):
     if cached is not None:
         return cached
     try:
-        from index_dashboard import get_data
+        from equities.index_dashboard.index_dashboard import get_data
 
         data = get_data(timeframe=timeframe)
     except Exception as e:
@@ -35,7 +35,7 @@ def get_index_dashboard(timeframe: str = "Daily"):
     }
 
     try:
-        from index_dashboard import INDEX_ORDER
+        from equities.index_dashboard.index_dashboard import INDEX_ORDER
 
         result["index_order"] = INDEX_ORDER
     except ImportError:

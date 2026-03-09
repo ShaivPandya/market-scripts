@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-import requests
+
+from utils.retry import requests_get
 
 
 class EurostatError(RuntimeError):
@@ -31,7 +32,7 @@ def _fetch_eurostat_jsonstat_series(
     qs = "&".join(f"{k}={v}" for k, v in query_params.items())
     url = f"{base_url}/data/{dataset}?format=JSON&{qs}"
 
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     if resp.status_code != 200:
         raise EurostatError(f"Eurostat request failed ({resp.status_code}): {resp.text[:2000]}")
     data = resp.json()

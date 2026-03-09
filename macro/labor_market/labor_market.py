@@ -5,6 +5,8 @@ from load_env import load_env
 
 load_env()
 
+from utils.retry import fred_get_series
+
 SERIES_CONFIG = {
     "initial_claims": ("ICSA", "Initial Jobless Claims", "thousands", None),
     "continuing_claims": ("CCSA", "Continuing Claims", "thousands", None),
@@ -32,7 +34,7 @@ def get_data() -> dict:
 
     for key, (fred_id, label, unit, transform) in SERIES_CONFIG.items():
         try:
-            s = fred.get_series(fred_id, observation_start=start).dropna()
+            s = fred_get_series(fred, fred_id, observation_start=start).dropna()
         except Exception as exc:
             result["series"][key] = {"dates": [], "values": [], "label": label, "unit": unit, "error": str(exc)}
             continue

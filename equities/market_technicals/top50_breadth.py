@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List  # noqa: UP035
 
 import pandas as pd
-import yfinance as yf
+
+from utils.retry import yf_download
 
 try:
     from rich import box
@@ -105,7 +106,7 @@ def compute_metrics(
     if prices_df is not None:
         raw = prices_df
     else:
-        raw = yf.download(
+        raw = yf_download(
             tickers=tickers,
             period=period,
             interval="1d",

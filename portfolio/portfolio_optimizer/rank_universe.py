@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -25,14 +24,8 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
-try:
-    import yfinance as yf
-except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
-from signal_fetchers import (
+from equities.common import get_sp500_universe, list_universes, load_universe
+from portfolio.portfolio_optimizer.signal_fetchers import (
     compute_lookthrough_raw_metrics,
     fetch_eps_momentum_batch,
     fetch_etf_top_holdings_batch,
@@ -40,8 +33,7 @@ from signal_fetchers import (
     fetch_quality_batch,
     fetch_revenue_momentum_batch,
 )
-
-from equities.common import get_sp500_universe, list_universes, load_universe
+from utils.retry import yf_download
 
 # -----------------------------
 # Configuration
@@ -116,7 +108,7 @@ def fetch_prices_batch(tickers: list[str], years: int = 5, batch_size: int = 100
         print(f"  Batch {batch_num}/{num_batches}: Downloading {len(batch)} tickers...")
 
         try:
-            df = yf.download(
+            df = yf_download(
                 batch,
                 start=str(start),
                 end=str(end),
@@ -168,7 +160,7 @@ def fetch_prices(tickers: list[str], years: int = 5) -> pd.DataFrame:
         end = datetime.now(UTC).date() + timedelta(days=1)
         start = end - timedelta(days=365 * years)
 
-        df = yf.download(
+        df = yf_download(
             tickers,
             start=str(start),
             end=str(end),

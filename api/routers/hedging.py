@@ -65,7 +65,7 @@ _JOB_TTL_S = 60 * 30
 
 def _compute_hedging_result(req: HedgingRequest) -> dict[str, Any]:
     try:
-        from portfolio_optimizer.hedging_tool import get_data
+        from portfolio.portfolio_optimizer.hedging_tool import get_data
 
         payload = [row.model_dump() for row in req.positions]
         data = get_data(positions=payload, book=float(req.book))
@@ -210,7 +210,7 @@ def get_hedging_tool_job(job_id: str):
 @router.get("/hedging-tool/prefill")
 def get_hedging_tool_prefill():
     try:
-        from portfolio_db import get_positions_df
+        from portfolio.portfolio_db import get_positions_df
 
         df = get_positions_df()
         if "ticker" not in df.columns:

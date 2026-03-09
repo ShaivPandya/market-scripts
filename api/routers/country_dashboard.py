@@ -18,7 +18,7 @@ def get_country_dashboard(metric: str = "Inflation"):
     if cached is not None:
         return cached
     try:
-        from country_dashboard import COUNTRY_ORDER, get_data
+        from macro.country_dashboard.country_dashboard import COUNTRY_ORDER, get_data
 
         data = get_data(metric=metric)
     except Exception as e:

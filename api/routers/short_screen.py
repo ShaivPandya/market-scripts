@@ -17,7 +17,7 @@ class ShortScreenRequest(BaseModel):
 @router.post("/short-screen")
 def run_short_screen(req: ShortScreenRequest):
     try:
-        from short_screen import get_data
+        from equities.short_screen.short_screen import get_data
 
         data = get_data(
             pb_threshold=req.pb_threshold,

@@ -31,7 +31,7 @@ class PortfolioUpdateRequest(BaseModel):
 @router.get("/portfolio-positions")
 def get_portfolio_positions():
     try:
-        from portfolio_db import get_positions
+        from portfolio.portfolio_db import get_positions
 
         return {"positions": get_positions()}
     except Exception as e:
@@ -58,7 +58,7 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
         tickers_seen.add(ticker)
 
     try:
-        from portfolio_db import save_positions
+        from portfolio.portfolio_db import save_positions
 
         rows = [
             {
@@ -77,7 +77,7 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
         raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
 
     try:
-        from portfolio_dashboard import reload_portfolio
+        from portfolio.portfolio_dashboard import reload_portfolio
 
         reload_portfolio()
     except Exception:

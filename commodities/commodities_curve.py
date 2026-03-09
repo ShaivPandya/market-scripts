@@ -21,7 +21,8 @@ from datetime import date
 from typing import Optional
 
 import pandas as pd
-import yfinance as yf
+
+from utils.retry import yf_download
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
@@ -131,7 +132,7 @@ def _fetch_curve_prices(
 
     fetch_days = lookback_days + 14  # buffer for weekends/holidays
     try:
-        raw = yf.download(
+        raw = yf_download(
             tickers=tickers,
             period=f"{fetch_days}d",
             interval="1d",

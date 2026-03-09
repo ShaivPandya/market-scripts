@@ -40,9 +40,8 @@ try:
 except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import get_sp500_universe, list_universes, load_universe
+from equities.common import get_sp500_universe, list_universes, load_universe
+from utils.retry import yf_download, yf_ticker_info
 
 # ----------------------------
 # Utilities
@@ -120,7 +119,7 @@ def _get_market_prices(market: str, window_years: float) -> pd.Series:
         if cache_key in _market_cache:
             return _market_cache[cache_key]
 
-    hist = yf.download(market, period=f"{int(window_years * 365)}d", interval="1d", auto_adjust=True, progress=False)
+    hist = yf_download(market, period=f"{int(window_years * 365)}d", interval="1d", auto_adjust=True, progress=False)
     if hist is None or hist.empty:
         return pd.Series(dtype="float64")
 
@@ -141,7 +140,7 @@ def compute_beta(stock: str, market: str = "SPY", window_years: float = 3.0) -> 
         return np.nan
 
     # Download only the stock
-    hist = yf.download(stock, period=f"{int(window_years * 365)}d", interval="1d", auto_adjust=True, progress=False)
+    hist = yf_download(stock, period=f"{int(window_years * 365)}d", interval="1d", auto_adjust=True, progress=False)
     if hist is None or hist.empty:
         return np.nan
 
@@ -376,7 +375,7 @@ def fetch_raw_metrics(ticker: str, market: str, growth_years: int, beta_years: f
     # Altman Z-score needs market value of equity; approximate from current price and shares outstanding
     info = {}
     try:
-        info = t.info or {}
+        info = yf_ticker_info(ticker)
     except Exception:
         info = {}
     shares_out = info.get("sharesOutstanding", np.nan)

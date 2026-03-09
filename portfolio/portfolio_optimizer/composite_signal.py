@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple  # noqa: UP035
@@ -34,40 +33,20 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
-try:
-    import yfinance as yf
-except ImportError:
-    raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
-
-try:
-    from .signal_fetchers import (
-        fetch_eps_momentum_batch,
-        fetch_etf_lookthrough_fundamentals_batch,
-        fetch_price_momentum_batch,
-        fetch_quality_batch,
-        fetch_revenue_momentum_batch,
-        fetch_spdr_sector_anchor_universe,
-    )
-except ImportError:
-    from signal_fetchers import (
-        fetch_eps_momentum_batch,
-        fetch_etf_lookthrough_fundamentals_batch,
-        fetch_price_momentum_batch,
-        fetch_quality_batch,
-        fetch_revenue_momentum_batch,
-        fetch_spdr_sector_anchor_universe,
-    )
-
 # -----------------------------
 # Configuration
 # -----------------------------
-try:
-    from portfolio_db import get_positions_df as _get_positions_df
-except ImportError:
-    import sys as _sys
+from portfolio.portfolio_db import get_positions_df as _get_positions_df
+from portfolio.portfolio_optimizer.signal_fetchers import (
+    fetch_eps_momentum_batch,
+    fetch_etf_lookthrough_fundamentals_batch,
+    fetch_price_momentum_batch,
+    fetch_quality_batch,
+    fetch_revenue_momentum_batch,
+    fetch_spdr_sector_anchor_universe,
+)
+from utils.retry import yf_download, yf_ticker_info
 
-    _sys.path.insert(0, str(Path(__file__).parent.parent))
-    from portfolio_db import get_positions_df as _get_positions_df
 DEFAULT_BENCHMARK = "SPY"
 DEFAULT_YEARS = 5
 CLIP_BOUNDS = (-3.0, 3.0)
@@ -129,7 +108,7 @@ def fetch_prices(tickers: list[str], years: int = 5) -> pd.DataFrame:
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
-    df = yf.download(
+    df = yf_download(
         tickers,
         start=str(start),
         end=str(end),
@@ -160,10 +139,7 @@ def fetch_ticker_metadata(ticker: str) -> tuple[float | None, str | None, bool]:
     """
     Fetch market cap, sector, and ETF status from yfinance.
     """
-    yf_ticker = yf.Ticker(ticker)
-    info = yf_ticker.get_info()
-    if not info:
-        info = yf_ticker.info
+    info = yf_ticker_info(ticker)
 
     market_cap = info.get("marketCap")
     sector = info.get("sector")

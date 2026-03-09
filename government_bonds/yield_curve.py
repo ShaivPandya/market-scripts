@@ -11,14 +11,11 @@ Provides current and historical (N days lookback) curve points for:
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import TypedDict
 
 import pandas as pd
 
-# Load environment variables from .env file when run standalone.
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from load_env import load_env
 
 load_env()
@@ -30,6 +27,8 @@ try:
 except ImportError:
     FRED_AVAILABLE = False
     Fred = None  # type: ignore[assignment]
+
+from utils.retry import fred_get_series
 
 
 class TenorMeta(TypedDict):
@@ -137,7 +136,7 @@ def _build_fred_client() -> tuple[Fred | None, str | None]:
 
 def _fetch_fred_series(fred: Fred, series_id: str) -> pd.Series | None:
     try:
-        raw = fred.get_series(series_id)
+        raw = fred_get_series(fred, series_id)
     except Exception:
         return None
     if raw is None or raw.empty:

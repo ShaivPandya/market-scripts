@@ -19,6 +19,8 @@ from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import requests
 
+from utils.retry import requests_get
+
 LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -52,7 +54,7 @@ def _rate_limited_get(url: str, timeout: int = 20) -> requests.Response | None:
     with _edgar_request_lock:
         time.sleep(_SEC_DELAY)
         try:
-            resp = requests.get(url, headers=SEC_HEADERS, timeout=timeout)
+            resp = requests_get(url, headers=SEC_HEADERS, timeout=timeout)
             return resp
         except Exception:
             return None

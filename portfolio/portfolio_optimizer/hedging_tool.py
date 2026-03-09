@@ -13,40 +13,22 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-try:
-    from .portfolio_analyzer import (
-        BASE_CCY,
-        BETA_EWMA_HALFLIFE_DAYS,
-        BETA_FALLBACK,
-        BETA_METHOD,
-        BETA_MIN_OBS,
-        BETA_SHRINK_TO_ONE,
-        CURRENCY_OF_TICKER,
-        MARKET_TICKER_LONG,
-        MARKET_TICKER_SHORT,
-        compute_beta_frame,
-        download_prices,
-        get_required_fx_tickers,
-        solve_joint_hedge_weights,
-        to_usd_price,
-    )
-except ImportError:
-    from portfolio_analyzer import (
-        BASE_CCY,
-        BETA_EWMA_HALFLIFE_DAYS,
-        BETA_FALLBACK,
-        BETA_METHOD,
-        BETA_MIN_OBS,
-        BETA_SHRINK_TO_ONE,
-        CURRENCY_OF_TICKER,
-        MARKET_TICKER_LONG,
-        MARKET_TICKER_SHORT,
-        compute_beta_frame,
-        download_prices,
-        get_required_fx_tickers,
-        solve_joint_hedge_weights,
-        to_usd_price,
-    )
+from portfolio.portfolio_optimizer.portfolio_analyzer import (
+    BASE_CCY,
+    BETA_EWMA_HALFLIFE_DAYS,
+    BETA_FALLBACK,
+    BETA_METHOD,
+    BETA_MIN_OBS,
+    BETA_SHRINK_TO_ONE,
+    CURRENCY_OF_TICKER,
+    MARKET_TICKER_LONG,
+    MARKET_TICKER_SHORT,
+    compute_beta_frame,
+    download_prices,
+    get_required_fx_tickers,
+    solve_joint_hedge_weights,
+    to_usd_price,
+)
 
 DEFAULT_BOOK = 100_000.0
 

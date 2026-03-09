@@ -15,18 +15,17 @@ import argparse
 import logging
 import os
 import sys
-from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
-# Load environment variables from .env file
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from load_env import load_env
 
 load_env()
 
 import pandas as pd
 from fredapi import Fred
+
+from utils.retry import fred_get_series
 
 try:
     import sdmx
@@ -157,7 +156,7 @@ def fetch_fred_series(fred):
     errors = []
     for name, sid in SERIES.items():
         try:
-            series = fred.get_series(sid)
+            series = fred_get_series(fred, sid)
             if series is None or series.empty:
                 errors.append(f"{name} ({sid}) returned empty series")
                 continue

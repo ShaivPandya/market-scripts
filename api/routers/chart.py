@@ -25,7 +25,7 @@ class RatioChartRequest(BaseModel):
 def run_chart(req: ChartRequest):
     ticker = req.ticker.strip().upper()
     try:
-        from technical_analysis import get_data
+        from portfolio.technical_analysis.technical_analysis import get_data
 
         data = get_data(ticker, lookback=req.lookback)
     except Exception as e:
@@ -53,7 +53,7 @@ def run_chart_ratio(req: RatioChartRequest):
         raise HTTPException(status_code=400, detail="Both symbol_a and symbol_b are required.")
 
     try:
-        from technical_analysis import get_ratio_data
+        from portfolio.technical_analysis.technical_analysis import get_ratio_data
 
         data = get_ratio_data(
             symbol_a=symbol_a,

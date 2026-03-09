@@ -16,12 +16,10 @@ from __future__ import annotations
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
 DB_PATH = Path(__file__).parent / "portfolio.db"
-_CSV_PATH = Path(__file__).parent / "portfolio.csv"
 
 _ASSET_CLASSES = {"equity", "commodity", "fx", "bond"}
 _DIRECTIONS = {"long", "short"}
@@ -47,10 +45,20 @@ _conn: sqlite3.Connection | None = None
 
 def _get_conn() -> sqlite3.Connection:
     global _conn
+    if _conn is not None:
+        try:
+            _conn.execute("SELECT 1")
+        except Exception:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+            _conn = None
     if _conn is None:
         with _lock:
             if _conn is None:
                 _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+                _conn.execute("PRAGMA journal_mode=WAL")
                 _conn.row_factory = sqlite3.Row
                 _init_db(_conn)
     return _conn
@@ -63,49 +71,6 @@ def _init_db(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(positions)").fetchall()}
     if "shares" not in cols:
         conn.execute("ALTER TABLE positions ADD COLUMN shares REAL")
-        conn.commit()
-    count = conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
-    if count == 0 and _CSV_PATH.exists():
-        _migrate_from_csv(conn)
-
-
-def _migrate_from_csv(conn: sqlite3.Connection) -> None:
-    df = pd.read_csv(_CSV_PATH)
-    df.columns = [c.strip().lower() for c in df.columns]
-    rows: list[tuple[Any, ...]] = []
-    for _, row in df.iterrows():
-        ticker = str(row.get("ticker", "")).strip().upper()
-        if not ticker:
-            continue
-        asset = str(row.get("asset", "equity")).strip().lower()
-        if asset not in _ASSET_CLASSES:
-            asset = "equity"
-        direction = str(row.get("direction", "long")).strip().lower()
-        if direction not in _DIRECTIONS:
-            direction = "long"
-        distressed_raw = row.get("distressed", False)
-        if isinstance(distressed_raw, str):
-            distressed = 1 if distressed_raw.strip().lower() in ("true", "1", "yes") else 0
-        else:
-            distressed = 1 if distressed_raw else 0
-        try:
-            conviction = int(row.get("conviction", 3))
-            conviction = max(1, min(5, conviction))
-        except (ValueError, TypeError):
-            conviction = 3
-        cost_basis_raw = row.get("cost_basis", None)
-        try:
-            cost_basis = (
-                float(cost_basis_raw) if cost_basis_raw is not None and str(cost_basis_raw).strip() != "" else None
-            )
-        except (ValueError, TypeError):
-            cost_basis = None
-        rows.append((ticker, asset, direction, distressed, conviction, cost_basis))
-    if rows:
-        conn.executemany(
-            "INSERT OR REPLACE INTO positions (ticker, asset, direction, distressed, conviction, cost_basis) VALUES (?,?,?,?,?,?)",
-            rows,
-        )
         conn.commit()
 
 

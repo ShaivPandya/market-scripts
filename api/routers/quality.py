@@ -81,7 +81,7 @@ def run_quality_screen(req: QualityRequest):
         else:
             benchmark = _BENCHMARK_MAP.get(benchmark_label, benchmark_label)
 
-        from quality import get_data
+        from equities.quality.quality import get_data
 
         data = get_data(tickers=tickers, benchmark=benchmark)
     except HTTPException:

@@ -6,10 +6,10 @@ Usage:
   python3 market_technicals.py
 """
 
-from market_breadth import main as run_market_breadth
-from price_volume_signals import main as run_price_volume_signals
-from top50_breadth import main as run_top50_breadth
-from vix_term_structure import main as run_vix_term_structure
+from equities.market_technicals.market_breadth import main as run_market_breadth
+from equities.market_technicals.price_volume_signals import main as run_price_volume_signals
+from equities.market_technicals.top50_breadth import main as run_top50_breadth
+from equities.market_technicals.vix_term_structure import main as run_vix_term_structure
 
 try:
     from rich import box

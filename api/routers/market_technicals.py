@@ -19,7 +19,7 @@ def get_market_breadth():
     if cached is not None:
         return cached
     try:
-        from market_breadth import get_data
+        from equities.market_technicals.market_breadth import get_data
 
         data = get_data()
     except Exception as e:
@@ -36,7 +36,7 @@ def get_top50_breadth():
     if cached is not None:
         return cached
     try:
-        from top50_breadth import get_data
+        from equities.market_technicals.top50_breadth import get_data
 
         data = get_data()
     except Exception as e:
@@ -53,7 +53,7 @@ def get_price_volume_signals():
     if cached is not None:
         return cached
     try:
-        from price_volume_signals import get_data
+        from equities.market_technicals.price_volume_signals import get_data
 
         data = get_data()
     except Exception as e:
@@ -70,7 +70,7 @@ def get_vix_term_structure():
     if cached is not None:
         return cached
     try:
-        from vix_term_structure import get_data
+        from equities.market_technicals.vix_term_structure import get_data
 
         start = (date.today() - timedelta(days=400)).isoformat()
         data = get_data(tail=252, signals_count=20, start=start)

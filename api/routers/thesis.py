@@ -193,7 +193,7 @@ def get_latest_evaluations_endpoint():
 
 @router.get("/thesis/status")
 def get_thesis_status() -> dict[str, Literal["populated", "empty", "missing"]]:
-    from portfolio_db import get_positions
+    from portfolio.portfolio_db import get_positions
 
     statuses: dict[str, Literal["populated", "empty", "missing"]] = {}
     for row in get_positions():

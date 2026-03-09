@@ -14,7 +14,7 @@ def get_momentum():
     if cached is not None:
         return cached
     try:
-        from momentum import get_data
+        from portfolio.momentum.price_momentum.momentum import get_data
 
         data = get_data()
     except Exception as e:

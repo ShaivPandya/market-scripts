@@ -2,7 +2,8 @@ import os
 from pathlib import Path
 
 import pandas as pd
-import requests
+
+from utils.retry import requests_get
 
 FRED_ENDPOINT = "https://api.stlouisfed.org/fred/series/observations"
 
@@ -32,7 +33,7 @@ def fetch_fred_series(series_id: str, start: str, cache_dir: Path, refresh: bool
         "file_type": "json",
         "observation_start": start,
     }
-    r = requests.get(FRED_ENDPOINT, params=params, timeout=60)
+    r = requests_get(FRED_ENDPOINT, params=params, timeout=60)
     if r.status_code != 200:
         raise FredError(f"FRED request failed ({r.status_code}): {r.text[:2000]}")
 

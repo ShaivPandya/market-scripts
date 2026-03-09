@@ -47,10 +47,8 @@ try:
 except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import get_universe_tickers, list_universes
-from quality_single import RawMetrics, compute_scores, fetch_raw_metrics
+from equities.common import get_universe_tickers, list_universes
+from equities.quality.quality_single import RawMetrics, compute_scores, fetch_raw_metrics
 
 # GICS sectors and their SPDR ETF tickers
 SECTOR_ETFS: dict[str, tuple] = {

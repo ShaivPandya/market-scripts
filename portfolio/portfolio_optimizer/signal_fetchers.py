@@ -14,9 +14,7 @@ All functions return DataFrames with tickers as index and metrics as columns.
 from __future__ import annotations
 
 import logging
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import numpy as np
@@ -30,14 +28,10 @@ except ImportError:
     raise SystemExit("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
 
 # Import from existing single-ticker scripts
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "equities" / "quality"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "momentum" / "fundamental_momentum"))
-
-from eps_momentum_single import EPSMetrics, fetch_eps_metrics
-from quality_single import RawMetrics
-from quality_single import fetch_raw_metrics as fetch_quality_raw_metrics
-from revenue_momentum_single import RevenueMetrics, fetch_revenue_metrics
+from equities.quality.quality_single import RawMetrics
+from equities.quality.quality_single import fetch_raw_metrics as fetch_quality_raw_metrics
+from portfolio.momentum.fundamental_momentum.eps_momentum_single import EPSMetrics, fetch_eps_metrics
+from portfolio.momentum.fundamental_momentum.revenue_momentum_single import RevenueMetrics, fetch_revenue_metrics
 
 # -------------------------
 # Price Momentum Utilities

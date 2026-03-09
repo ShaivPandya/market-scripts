@@ -16,7 +16,6 @@ Terminal:
 import logging
 import os
 import re
-import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -24,14 +23,14 @@ from typing import Any, Dict, List  # noqa: UP035
 
 LOGGER = logging.getLogger(__name__)
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from load_env import load_env
 
 load_env()
 
 import pandas as pd
-import requests
 from fredapi import Fred
+
+from utils.retry import fred_get_series, requests_get, requests_post
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
@@ -320,7 +319,7 @@ def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
     ).rstrip("/")
     url = f"{base_url}/{method}"
 
-    resp = requests.post(url, json=payload, timeout=timeout)
+    resp = requests_post(url, json=payload, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, list):
@@ -444,7 +443,7 @@ def _fetch_ons_timeseries(
     topic = (url_path or "/economy/inflationandpriceindices").rstrip("/")
     url = f"{base_url}{topic}/timeseries/{series_id}/{dataset_id}/data"
 
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -526,7 +525,7 @@ def _fetch_eurostat_hicp(
     ).rstrip("/")
     url = f"{base_url}/data/{dataset}?format=JSON&geo={geo}&unit=I15&coicop=CP00"
 
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -588,7 +587,7 @@ def _fetch_eurostat_series(
     qs = "&".join(f"{k}={v}" for k, v in query_params.items())
     url = f"{base_url}/data/{dataset}?format=JSON&geo={geo}&{qs}"
 
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -650,7 +649,7 @@ def _fetch_snb_series(
 
     from_date = observation_start.strftime("%Y-%m")
     url = f"https://data.snb.ch/api/cube/{cube}/data/csv/en?dimSel={dim_sel}&fromDate={from_date}"
-    resp = requests.get(url, timeout=timeout)
+    resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
 
     lines = resp.text.strip().splitlines()
@@ -704,7 +703,7 @@ def _fetch_oecd_series(
     else:
         start_str = observation_start.strftime("%Y-%m")
 
-    resp = requests.get(url, params={"startTime": start_str}, timeout=timeout)
+    resp = requests_get(url, params={"startTime": start_str}, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -858,7 +857,7 @@ def _fetch_abs_indicator(
     else:
         start_str = observation_start.strftime("%Y-%m")
 
-    resp = requests.get(
+    resp = requests_get(
         url,
         params={"startPeriod": start_str, "detail": "dataonly"},
         timeout=timeout,
@@ -940,7 +939,7 @@ def _fetch_estat_cpi(
     # ── Step 1: single getStatsData call with metaGetFlg=Y, limit=1 ──────────
     # This is the cheapest way to get CLASS_INF (which getMetaInfo doesn't expose
     # for this dataset) without downloading the full data payload.
-    meta_resp = requests.get(
+    meta_resp = requests_get(
         f"{base_url}/getStatsData",
         params={
             "appId": app_id,
@@ -1103,7 +1102,7 @@ def _fetch_estat_cpi(
                 cd_time_from = code
                 break
 
-    data_resp = requests.get(
+    data_resp = requests_get(
         f"{base_url}/getStatsData",
         params={
             "appId": app_id,
@@ -1331,7 +1330,8 @@ def fetch_country_data(metric: str = "Inflation") -> dict:
                     )
                     series = series[series.index >= observation_start]
                 else:
-                    series = fred.get_series(
+                    series = fred_get_series(
+                        fred,
                         series_id,
                         observation_start=observation_start,
                         **params,

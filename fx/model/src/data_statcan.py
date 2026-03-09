@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import pandas as pd
-import requests
+
+from utils.retry import requests_post
 
 
 class StatCanError(RuntimeError):
@@ -11,7 +12,7 @@ class StatCanError(RuntimeError):
 def _statcan_wds_post(method: str, payload: dict, timeout: int = 20) -> dict:
     """Minimal Statistics Canada Web Data Service (WDS) client."""
     url = f"https://www150.statcan.gc.ca/t1/wds/rest/{method}"
-    resp = requests.post(url, json=payload, timeout=timeout)
+    resp = requests_post(url, json=payload, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 

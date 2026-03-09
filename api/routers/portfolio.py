@@ -25,7 +25,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
         return cached
 
     try:
-        from portfolio_dashboard import get_data
+        from portfolio.portfolio_dashboard import get_data
 
         data = get_data(timeframe=timeframe, all_timeframes=all_timeframes)
     except Exception as e:
@@ -36,7 +36,7 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
 
     # Include ordering / display name lists if the module exposes them
     try:
-        from portfolio_dashboard import POSITION_ORDER
+        from portfolio.portfolio_dashboard import POSITION_ORDER
 
         position_order = POSITION_ORDER
     except ImportError:

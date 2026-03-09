@@ -33,14 +33,14 @@ LOGGER = logging.getLogger(__name__)
 
 def fetch_prices_yfinance(ticker: str, years: int = 5) -> pd.Series:
     try:
-        import yfinance as yf
+        from utils.retry import yf_download
     except ImportError:
-        raise RuntimeError("Missing dependency: yfinance. Install with: pip install yfinance")  # noqa: B904
+        raise RuntimeError("Missing dependency: utils.retry. Ensure utils/retry.py is available.")  # noqa: B904
 
     end = datetime.now(UTC).date() + timedelta(days=1)
     start = end - timedelta(days=365 * years)
 
-    df = yf.download(
+    df = yf_download(
         ticker,
         start=str(start),
         end=str(end),

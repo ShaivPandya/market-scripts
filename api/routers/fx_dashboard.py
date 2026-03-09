@@ -18,7 +18,7 @@ def get_fx_dashboard(timeframe: str = "Daily"):
     if cached is not None:
         return cached
     try:
-        from fx_dashboard import get_data
+        from fx.fx_dashboard.fx_dashboard import get_data
 
         data = get_data(timeframe=timeframe)
     except Exception as e:
@@ -35,7 +35,7 @@ def get_fx_dashboard(timeframe: str = "Daily"):
     }
 
     try:
-        from fx_dashboard import PAIR_ORDER
+        from fx.fx_dashboard.fx_dashboard import PAIR_ORDER
 
         result["pair_order"] = PAIR_ORDER
     except ImportError:

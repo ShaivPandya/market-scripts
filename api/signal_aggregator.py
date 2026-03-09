@@ -360,7 +360,7 @@ def _build_vix_history_series(
     lookback_weeks: int,
     preloaded: tuple[pd.DataFrame, str] | None = None,
 ) -> pd.Series:
-    from vix_term_structure import add_signals, load_term_structure
+    from equities.market_technicals.vix_term_structure import add_signals, load_term_structure
 
     if preloaded is not None:
         data, _ = preloaded
@@ -379,7 +379,7 @@ def _build_vix_history_series(
 
 
 def _build_liquidity_history_series(liquidity_raw: dict[str, Any], lookback_weeks: int) -> pd.Series:
-    from liquidity import classify_regime
+    from macro.liquidity.liquidity import classify_regime
 
     composite_series = liquidity_raw.get("composite_series")
     if not isinstance(composite_series, pd.Series):
@@ -404,7 +404,7 @@ def _build_positioning_history_series(
     instruments_csv: str,
     preloaded_df: pd.DataFrame | None = None,
 ) -> pd.Series:
-    from positioning import DATASETS, DEFAULT_DOMAIN, INSTRUMENTS, fetch_markets_timeseries
+    from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, INSTRUMENTS, fetch_markets_timeseries
 
     aliases = [s.strip().upper() for s in (instruments_csv or "").split(",") if s.strip()]
     aliases = aliases or [s.strip() for s in DEFAULT_POSITIONING_INSTRUMENTS.split(",") if s.strip()]
@@ -554,8 +554,8 @@ def _build_history(
 
 def _download_sp500_prices() -> pd.DataFrame:
     """Download S&P 500 constituent prices once for all modules."""
-    import yfinance as yf
-    from market_breadth import get_sp500_tickers
+    from equities.market_technicals.market_breadth import get_sp500_tickers
+    from utils.retry import yf_download
 
     tickers = get_sp500_tickers()
     chunks = [tickers[i : i + SP500_CHUNK_SIZE] for i in range(0, len(tickers), SP500_CHUNK_SIZE)]
@@ -564,7 +564,7 @@ def _download_sp500_prices() -> pd.DataFrame:
     for idx, chunk in enumerate(chunks, 1):
         _log.info("S&P 500 shared download batch %d/%d (%d tickers)", idx, len(chunks), len(chunk))
         try:
-            df = yf.download(
+            df = yf_download(
                 tickers=chunk,
                 period="2y",
                 interval="1d",
@@ -612,12 +612,12 @@ def _download_sp500_prices() -> pd.DataFrame:
 def _fetch_current_modules(
     lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    from liquidity import get_snapshot as get_liquidity_snapshot
-    from market_breadth import get_data as get_market_breadth
-    from momentum import get_data as get_momentum_data
-    from sector_metrics import get_data as get_sector_metrics_data
-    from top50_breadth import get_data as get_top50_breadth
-    from vix_term_structure import add_signals, load_term_structure
+    from equities.market_technicals.market_breadth import get_data as get_market_breadth
+    from equities.market_technicals.top50_breadth import get_data as get_top50_breadth
+    from equities.market_technicals.vix_term_structure import add_signals, load_term_structure
+    from equities.sector_metrics.sector_metrics import get_data as get_sector_metrics_data
+    from macro.liquidity.liquidity import get_snapshot as get_liquidity_snapshot
+    from portfolio.momentum.price_momentum.momentum import get_data as get_momentum_data
 
     raw: dict[str, Any] = {}
     module_status: dict[str, dict[str, Any]] = {}

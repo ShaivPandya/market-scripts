@@ -9,10 +9,6 @@ import logging
 import os
 import time
 
-from paths import setup_paths
-
-setup_paths()  # must happen before any project module imports
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -246,8 +242,51 @@ def clear_cache():
 
 @app.get("/api/health", tags=["admin"])
 def health():
-    checks = {
-        "fred_api_key": bool(os.environ.get("FRED_API_KEY")),
-    }
-    status = "ok" if all(v for v in checks.values()) else "degraded"
-    return {"status": status, "checks": checks}
+    checks: dict[str, str] = {}
+
+    # Check portfolio DB connectivity
+    try:
+        from portfolio.portfolio_db import _get_conn as _portfolio_conn
+
+        conn = _portfolio_conn()
+        conn.execute("SELECT COUNT(*) FROM positions")
+        checks["portfolio_db"] = "ok"
+    except Exception as exc:
+        checks["portfolio_db"] = f"error: {exc}"
+
+    # Check thesis DB connectivity
+    try:
+        from portfolio.thesis_db import _get_conn as _thesis_conn
+
+        conn = _thesis_conn()
+        conn.execute("SELECT COUNT(*) FROM thesis_meta")
+        checks["thesis_db"] = "ok"
+    except Exception as exc:
+        checks["thesis_db"] = f"error: {exc}"
+
+    # Check FRED API reachability
+    fred_key = os.environ.get("FRED_API_KEY")
+    if fred_key:
+        try:
+            from fredapi import Fred
+
+            fred = Fred(api_key=fred_key)
+            fred.get_series("DGS10", limit=1)
+            checks["fred_api"] = "ok"
+        except Exception as exc:
+            checks["fred_api"] = f"error: {exc}"
+    else:
+        checks["fred_api"] = "no_api_key"
+
+    db_ok = checks.get("portfolio_db") == "ok" and checks.get("thesis_db") == "ok"
+    all_ok = all(v == "ok" for v in checks.values())
+
+    if all_ok:
+        status = "ok"
+    elif db_ok:
+        status = "degraded"
+    else:
+        status = "unhealthy"
+
+    status_code = 200 if status != "unhealthy" else 503
+    return JSONResponse({"status": status, "checks": checks}, status_code=status_code)

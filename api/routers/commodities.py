@@ -18,7 +18,7 @@ def get_commodities(timeframe: str = "Daily"):
     if cached is not None:
         return cached
     try:
-        from commodities_dashboard import get_data
+        from commodities.commodities_dashboard import get_data
 
         data = get_data(timeframe=timeframe)
     except Exception as e:
@@ -35,7 +35,7 @@ def get_commodities(timeframe: str = "Daily"):
     }
 
     try:
-        from commodities_dashboard import COMMODITY_ORDER
+        from commodities.commodities_dashboard import COMMODITY_ORDER
 
         result["commodity_order"] = COMMODITY_ORDER
     except ImportError:

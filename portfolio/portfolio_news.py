@@ -36,7 +36,7 @@ PREMIUM_DOMAINS = [
     "theglobeandmail.com",
 ]
 
-from portfolio_db import get_positions as _get_positions
+from portfolio.portfolio_db import get_positions as _get_positions
 
 # ── IBKR settings (via env) ───────────────────────────────────────────────────
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
@@ -104,9 +104,9 @@ def _resolve_name(ticker: str, asset: str) -> str:
     name = ticker  # fallback
     if asset == "equity":
         try:
-            import yfinance as yf
+            from utils.retry import yf_ticker_info
 
-            info = yf.Ticker(ticker).info
+            info = yf_ticker_info(ticker)
             name = info.get("shortName") or info.get("longName") or ticker
         except Exception:
             logger.debug("yfinance lookup failed for %s, using ticker", ticker)

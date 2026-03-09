@@ -32,7 +32,8 @@ from typing import Any, Dict, List, Tuple  # noqa: UP035
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+
+from utils.retry import yf_download
 
 LOGGER = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ def compute_features(df: pd.DataFrame, p: Params) -> pd.DataFrame:
 
 
 def download_daily(tickers: list[str], period: str = "3y") -> dict[str, pd.DataFrame]:
-    raw = yf.download(
+    raw = yf_download(
         tickers=tickers,
         period=period,
         interval="1d",

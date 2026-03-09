@@ -21,8 +21,8 @@ from cachetools import TTLCache
 
 logger = logging.getLogger("uvicorn.error")
 
-short_cache: TTLCache = TTLCache(maxsize=32, ttl=300)
-long_cache: TTLCache = TTLCache(maxsize=32, ttl=3600)
+short_cache: TTLCache = TTLCache(maxsize=128, ttl=300)
+long_cache: TTLCache = TTLCache(maxsize=128, ttl=3600)
 _lock = threading.Lock()
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]

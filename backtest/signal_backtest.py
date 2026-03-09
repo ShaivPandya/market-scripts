@@ -26,7 +26,6 @@ import argparse
 import logging
 import math
 import os
-import sys
 import time
 from datetime import date
 from pathlib import Path
@@ -34,9 +33,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ── Project bootstrap ──────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 from load_env import load_env
 
 load_env()
@@ -178,7 +174,7 @@ def _get_sp500_tickers() -> list[str]:
         return sorted(pd.unique(tickers).tolist())
     except Exception as e:
         log.warning("Wikipedia SP500 fetch failed: %s", e)
-        raise RuntimeError("Cannot get S&P 500 ticker list")
+        raise RuntimeError("Cannot get S&P 500 ticker list") from e
 
 
 def _download_spx_constituents(start: str) -> pd.DataFrame:

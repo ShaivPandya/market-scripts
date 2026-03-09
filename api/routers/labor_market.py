@@ -18,7 +18,7 @@ def get_labor_market():
     if cached is not None:
         return cached
     try:
-        from labor_market import get_data
+        from macro.labor_market.labor_market import get_data
 
         data = get_data()
     except Exception as e:

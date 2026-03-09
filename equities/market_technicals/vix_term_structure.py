@@ -33,9 +33,9 @@ except ImportError:
 CONSOLE = Console() if Console else None
 
 try:
-    import yfinance as yf
+    from utils.retry import yf_download
 except ImportError as e:
-    raise SystemExit("Missing dependency yfinance. Install with: pip install yfinance") from e
+    raise SystemExit("Missing dependency utils.retry. Ensure utils/retry.py is available.") from e
 
 
 VIX_TICKER = "^VIX"
@@ -60,7 +60,7 @@ def print_header() -> None:
 
 
 def download_close(ticker: str, start: str) -> pd.DataFrame:
-    df = yf.download(ticker, start=start, auto_adjust=False, progress=False)
+    df = yf_download(ticker, start=start, auto_adjust=False, progress=False)
     if df.empty:
         return df
     close_data: pd.Series | pd.DataFrame
