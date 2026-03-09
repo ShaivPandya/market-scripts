@@ -4,7 +4,7 @@ Yield curve data snapshot for the web dashboard.
 Provides current and historical (N days lookback) curve points for:
 - United States (FRED)
 - United Kingdom (Bank of England yield curve)
-- Germany (no live source configured)
+- Germany (Deutsche Bundesbank)
 - Japan (MOF)
 """
 
@@ -97,6 +97,20 @@ _BOE_MATURITY_MAP: dict[float, str] = {
     5.0: "5Y",
     10.0: "10Y",
     30.0: "30Y",
+}
+
+# ---------------------------------------------------------------------------
+# Germany - Deutsche Bundesbank SDMX API
+# ---------------------------------------------------------------------------
+BUNDESBANK_BASE_URL = "https://api.statistiken.bundesbank.de/rest/data"
+
+_BUNDESBANK_DE_SERIES: dict[str, str] = {
+    # Daily yields derived from term structure on listed Federal securities.
+    "1Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R01XX.R.A.A._Z._Z.A",
+    "2Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R02XX.R.A.A._Z._Z.A",
+    "5Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R05XX.R.A.A._Z._Z.A",
+    "10Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A",
+    "30Y": "BBSIS.D.I.ZAR.ZI.EUR.S1311.B.A604.R30XX.R.A.A._Z._Z.A",
 }
 
 # ---------------------------------------------------------------------------
@@ -288,6 +302,87 @@ def _fetch_boe_gilts() -> dict[str, pd.Series]:
     return result
 
 
+def _parse_bundesbank_csv(text: str) -> pd.Series | None:
+    """Parse Bundesbank SDMX/BBK CSV payload into a normalized time series."""
+    if not text.strip():
+        return None
+
+    # Bundesbank CSV payloads are typically ';' delimited with metadata rows.
+    df: pd.DataFrame | None = None
+    for sep in (";", ","):
+        try:
+            parsed = pd.read_csv(io.StringIO(text), sep=sep, comment="#", engine="python")
+        except Exception:
+            continue
+        if parsed.empty:
+            continue
+        df = parsed
+        break
+    if df is None or df.empty:
+        return None
+
+    cols = {str(c).strip().lower(): c for c in df.columns}
+    date_col = None
+    value_col = None
+
+    for candidate in ("time_period", "date", "time", "zeitraum"):
+        if candidate in cols:
+            date_col = cols[candidate]
+            break
+    for candidate in ("obs_value", "value", "wert"):
+        if candidate in cols:
+            value_col = cols[candidate]
+            break
+
+    if date_col is None:
+        return None
+
+    if value_col is None:
+        # Fallback to the right-most column that parses to numeric values.
+        for col in reversed(list(df.columns)):
+            values = pd.to_numeric(df[col], errors="coerce")
+            if values.notna().any():
+                value_col = col
+                break
+    if value_col is None:
+        return None
+
+    dates = pd.to_datetime(df[date_col], errors="coerce")
+    values = pd.to_numeric(df[value_col], errors="coerce")
+    if values.notna().sum() == 0:
+        values = pd.to_numeric(df[value_col].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    out = _normalize_series(pd.Series(values.values, index=dates.values))
+    return out if not out.empty else None
+
+
+def _fetch_bundesbank_series(ts_id: str) -> pd.Series | None:
+    """Fetch one Bundesbank time series via /data/{flowRef}/{key}."""
+    if "." not in ts_id:
+        return None
+    flow_ref, key = ts_id.split(".", 1)
+    url = f"{BUNDESBANK_BASE_URL}/{flow_ref}/{key}"
+    try:
+        resp = requests.get(
+            url,
+            headers={"Accept": "text/csv, application/vnd.sdmx.data+csv;version=1.0.0"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return None
+    return _parse_bundesbank_csv(resp.text)
+
+
+def _fetch_bundesbank_germany() -> dict[str, pd.Series]:
+    """Download Germany sovereign curve points from Bundesbank."""
+    result: dict[str, pd.Series] = {}
+    for tenor, ts_id in _BUNDESBANK_DE_SERIES.items():
+        series = _fetch_bundesbank_series(ts_id)
+        if series is not None and not series.empty:
+            result[tenor] = series
+    return result
+
+
 def _parse_boe_spot_curve(f, result: dict[str, pd.Series]) -> None:
     """Parse a single BoE GLC nominal Excel file, appending to *result*."""
     df = pd.read_excel(f, sheet_name="4. spot curve", header=None)
@@ -371,6 +466,12 @@ def _build_country_curve(
         bulk_configured = set(_BOE_MATURITY_MAP.values())
         if not bulk_data:
             warnings.append("BoE: could not fetch gilt yields.")
+    elif country_code == "DE":
+        bulk_data = _fetch_bundesbank_germany()
+        bulk_label = "bundesbank"
+        bulk_configured = set(_BUNDESBANK_DE_SERIES.keys())
+        if not bulk_data:
+            warnings.append("Bundesbank: could not fetch German sovereign yields.")
 
     for tenor_meta in TENOR_ORDER:
         tenor = str(tenor_meta["tenor"])
@@ -392,7 +493,7 @@ def _build_country_curve(
                 else:
                     warnings.append(f"{tenor}: FRED series {fred_series_id} returned no usable data.")
 
-        # Bulk source (MOF / BoE)
+        # Bulk source (MOF / BoE / Bundesbank)
         if series is None and bulk_configured:
             bulk_series = bulk_data.get(tenor)
             if bulk_series is not None:

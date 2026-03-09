@@ -14,11 +14,10 @@ Countries covered:
 import os
 import sys
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Tuple  # noqa: UP035
 
 import pandas as pd
 
+from government_bonds.yield_curve import _fetch_bundesbank_germany
 from load_env import load_env
 
 load_env()
@@ -44,21 +43,23 @@ FRED_SERIES = {
     }
 }
 
-# Data files for other countries (stored locally)
+# Data files for countries still using local CSVs
 # File format: "Download Data - BOND_BX_XTUP_TMBMK{COUNTRY_CODE}-{MATURITY}.csv"
 BOND_DATA_FILES = {
     "United Kingdom": {
         "2-Year": "Download Data - BOND_BX_XTUP_TMBMKGB-02Y.csv",
         "10-Year": "Download Data - BOND_BX_XTUP_TMBMKGB-10Y.csv",
     },
-    "Germany": {
-        "2-Year": "Download Data - BOND_BX_XTUP_TMBMKDE-02Y.csv",
-        "10-Year": "Download Data - BOND_BX_XTUP_TMBMKDE-10Y.csv",
-    },
     "Japan": {
         "2-Year": "Download Data - BOND_BX_XTUP_TMBMKJP-02Y.csv",
         "10-Year": "Download Data - BOND_BX_XTUP_TMBMKJP-10Y.csv",
     },
+}
+
+# Germany (Bundesbank) tenors mapped to this script's maturity labels
+GERMANY_MATURITY_TO_TENOR = {
+    "2-Year": "2Y",
+    "10-Year": "10Y",
 }
 
 # Data directory path
@@ -244,6 +245,35 @@ def get_current_yield_fred(series_id: str) -> float:
         return None
 
 
+def get_germany_bundesbank_data(end_date: datetime) -> dict[str, pd.DataFrame]:
+    """
+    Fetch Germany yields from Bundesbank and return per-maturity DataFrames.
+
+    Returns:
+        Mapping of maturity label ("2-Year"/"10-Year") -> DataFrame with Close column
+    """
+    result: dict[str, pd.DataFrame] = {}
+    try:
+        tenor_series = _fetch_bundesbank_germany()
+    except Exception as e:
+        print(f"Error fetching Bundesbank Germany data: {str(e)}", file=sys.stderr)
+        return result
+
+    end_ts = pd.Timestamp(end_date)
+    for maturity, tenor in GERMANY_MATURITY_TO_TENOR.items():
+        series = tenor_series.get(tenor)
+        if series is None or series.empty:
+            result[maturity] = pd.DataFrame()
+            continue
+        s = pd.to_numeric(series, errors="coerce")
+        s.index = pd.to_datetime(s.index, errors="coerce")
+        s = s[(s.index.notna()) & (s.index <= end_ts)].dropna()
+        s = s.sort_index()
+        result[maturity] = pd.DataFrame({"Close": s})
+
+    return result
+
+
 def format_yield_change(change: float) -> str:
     """Format yield change with appropriate sign and color coding.
 
@@ -328,7 +358,7 @@ def main():
 
         print()
 
-    # Process other countries (using local CSV files)
+    # Process countries using local CSV files (UK, JP)
     for country, bonds in BOND_DATA_FILES.items():
         print(f"\n{'=' * 100}")
         print(f"{country.upper()}")
@@ -365,13 +395,46 @@ def main():
 
         print()
 
+    # Process Germany (Bundesbank live data)
+    print(f"\n{'=' * 100}")
+    print("GERMANY")
+    print(f"{'=' * 100}")
+
+    germany_data = get_germany_bundesbank_data(end_date)
+    for maturity, tenor in GERMANY_MATURITY_TO_TENOR.items():
+        print(f"\n{maturity} Bond (Bundesbank {tenor}):")
+        print("-" * 100)
+
+        historical_data = germany_data.get(maturity, pd.DataFrame())
+        if historical_data.empty:
+            print("  Current Yield: N/A (Data not available)")
+            continue
+
+        current_yield = historical_data.iloc[-1]["Close"]
+        print(f"  Current Yield: {current_yield:.4f}%")
+
+        changes = calculate_yield_changes(current_yield, historical_data, periods)
+
+        print("\n  Changes:")
+        for period_name, _ in periods:
+            change = changes.get(period_name)
+            formatted_change = format_yield_change(change)
+            print(
+                f"    {period_name:12s}: {formatted_change:>10s} bps"
+                if change is not None
+                else f"    {period_name:12s}: N/A"
+            )
+
+    print()
+
     print("=" * 100)
     print("\nNotes:")
     print("- Yields are expressed as percentages")
     print("- Changes are expressed in basis points (bps)")
     print("- US data source: FRED (Federal Reserve Economic Data)")
-    print("- Other countries data source: Local CSV files in the data/ directory")
-    print("- CSV files should have 'Date' and 'Yield' columns")
+    print("- Germany data source: Deutsche Bundesbank API (live)")
+    print("- UK/JP data source: Local CSV files in the data/ directory")
+    print("- Local CSV files should have 'Date' and 'Yield' (or 'Close') columns")
     print("=" * 100)
 
 
@@ -412,7 +475,7 @@ def export_to_csv(filename: str = "government_bond_yields.csv"):
             }
             results.append(row)
 
-    # Export other countries from local CSV files
+    # Export countries backed by local CSV files
     for country, bonds in BOND_DATA_FILES.items():
         for maturity, filename in bonds.items():
             current_yield = get_current_yield_from_csv(filename)
@@ -434,6 +497,28 @@ def export_to_csv(filename: str = "government_bond_yields.csv"):
                 "1 Year Change (bps)": changes.get("1 Year"),
             }
             results.append(row)
+
+    # Export Germany from Bundesbank live data
+    germany_data = get_germany_bundesbank_data(end_date)
+    for maturity, tenor in GERMANY_MATURITY_TO_TENOR.items():
+        historical_data = germany_data.get(maturity, pd.DataFrame())
+        if historical_data.empty:
+            continue
+
+        current_yield = historical_data.iloc[-1]["Close"]
+        changes = calculate_yield_changes(current_yield, historical_data, periods)
+
+        row = {
+            "Country": "Germany",
+            "Maturity": maturity,
+            "Ticker": f"bundesbank:{tenor}",
+            "Current Yield (%)": f"{current_yield:.4f}",
+            "1 Month Change (bps)": changes.get("1 Month"),
+            "3 Months Change (bps)": changes.get("3 Months"),
+            "6 Months Change (bps)": changes.get("6 Months"),
+            "1 Year Change (bps)": changes.get("1 Year"),
+        }
+        results.append(row)
 
     df = pd.DataFrame(results)
     df.to_csv(filename, index=False)

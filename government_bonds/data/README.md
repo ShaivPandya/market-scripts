@@ -1,6 +1,6 @@
 # Bond Data Files
 
-This directory contains the CSV files with historical government bond yield data for UK, Germany, and Japan.
+This directory contains the CSV files with historical government bond yield data for UK and Japan.
 
 These files are read by `government_bonds/government_bond_yields.py`.
 
@@ -11,10 +11,6 @@ Place the following CSV files in this directory:
 ### United Kingdom
 - `Download Data - BOND_BX_XTUP_TMBMKGB-02Y.csv` (2-year bond)
 - `Download Data - BOND_BX_XTUP_TMBMKGB-10Y.csv` (10-year bond)
-
-### Germany
-- `Download Data - BOND_BX_XTUP_TMBMKDE-02Y.csv` (2-year bond)
-- `Download Data - BOND_BX_XTUP_TMBMKDE-10Y.csv` (10-year bond)
 
 ### Japan
 - `Download Data - BOND_BX_XTUP_TMBMKJP-02Y.csv` (2-year bond)
@@ -39,6 +35,7 @@ Date,Open,High,Low,Close
 ## Data Sources
 
 These files typically come from a MarketWatch “Download Data” export.
+Germany is fetched live from Deutsche Bundesbank and does not require local CSV files.
 
 ## Notes
 

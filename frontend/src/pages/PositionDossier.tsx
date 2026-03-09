@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import { useQueryClient, useMutation } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchDossier, approveItem, rejectItem, updateThesisStatus, fetchThesisStatus, saveThesisContent, completeAction, dismissAction, type ThesisStatus, type ThesisStatusValue } from "@/lib/api"
+import { fetchDossier, approveItem, rejectItem, updateThesisStatus, fetchThesisStatus, saveThesisContent, completeAction, dismissAction, updateCatalystStatus, updateKillConditionStatus, type ThesisStatus, type ThesisStatusValue } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
@@ -70,6 +70,7 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
   triggered: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
   retired: "text-gray-500 bg-gray-50 dark:text-gray-400 dark:bg-gray-800",
+  superseded: "text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-800",
 }
 
 function formatTime(iso: string): string {
@@ -222,8 +223,8 @@ export function PositionDossier() {
       {/* Tab content */}
       <div className="theme-surface rounded-xl p-4">
         {tab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
-        {tab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} />}
-        {tab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} />}
+        {tab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} ticker={ticker!} />}
+        {tab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} ticker={ticker!} />}
         {tab === "Evaluations" && <EvaluationsTab evaluations={data.evaluations} />}
         {tab === "Risk" && <RiskTab ontology={data.ontology_risk} />}
         {tab === "Research" && <ResearchTab notes={data.research_notes} />}
@@ -476,16 +477,48 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
   )
 }
 
-function CatalystsTab({ catalysts }: { catalysts: Catalyst[] }) {
+function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: string }) {
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const qc = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) => updateCatalystStatus(id, status),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      setOpenMenuId(null)
+    },
+  })
+
   if (!catalysts.length) return <p className="text-sm text-muted">No catalysts tracked.</p>
+  const statusOptions = ["pending", "played_out", "failed", "superseded"]
   return (
     <div className="space-y-3">
       {catalysts.map(c => (
         <div key={c.id} className="rounded-lg border border-app px-4 py-3">
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-medium text-app">{c.description}</span>
-            <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[c.status] ?? "")}>{c.status}</span>
+            <button
+              type="button"
+              onClick={() => setOpenMenuId(openMenuId === c.id ? null : c.id)}
+              className={cn("text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:ring-1 hover:ring-blue-300", STATUS_COLORS[c.status] ?? "")}
+            >
+              {c.status.replace(/_/g, " ")}
+            </button>
           </div>
+          {openMenuId === c.id && (
+            <div className="flex flex-wrap gap-1.5 mt-2 mb-1">
+              {statusOptions.filter(s => s !== c.status).map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => mutation.mutate({ id: c.id, status: s })}
+                  disabled={mutation.isPending}
+                  className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
+                >
+                  {s.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex gap-3 text-xs text-subtle">
             <span>{c.category}</span>
             {c.target_date && <span>Target: {c.target_date}</span>}
@@ -497,16 +530,48 @@ function CatalystsTab({ catalysts }: { catalysts: Catalyst[] }) {
   )
 }
 
-function KillConditionsTab({ conditions }: { conditions: KillCondition[] }) {
+function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]; ticker: string }) {
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const qc = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) => updateKillConditionStatus(id, status),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      setOpenMenuId(null)
+    },
+  })
+
   if (!conditions.length) return <p className="text-sm text-muted">No kill conditions defined.</p>
+  const statusOptions = ["active", "triggered", "retired"]
   return (
     <div className="space-y-3">
       {conditions.map(k => (
         <div key={k.id} className={cn("rounded-lg border px-4 py-3", k.status === "triggered" ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30" : "border-app")}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-medium text-app">{k.condition}</span>
-            <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[k.status] ?? "")}>{k.status}</span>
+            <button
+              type="button"
+              onClick={() => setOpenMenuId(openMenuId === k.id ? null : k.id)}
+              className={cn("text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:ring-1 hover:ring-blue-300", STATUS_COLORS[k.status] ?? "")}
+            >
+              {k.status}
+            </button>
           </div>
+          {openMenuId === k.id && (
+            <div className="flex flex-wrap gap-1.5 mt-2 mb-1">
+              {statusOptions.filter(s => s !== k.status).map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => mutation.mutate({ id: k.id, status: s })}
+                  disabled={mutation.isPending}
+                  className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex gap-3 text-xs text-subtle">
             {k.metric && <span>Metric: {k.metric}</span>}
             {k.threshold && <span>Threshold: {k.threshold}</span>}

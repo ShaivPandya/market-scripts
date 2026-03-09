@@ -176,16 +176,8 @@ def sync_markdown_from_entities(ticker: str) -> bool:
     catalysts = get_catalysts(ticker)
     kill_conditions = get_kill_conditions(ticker)
 
-    cat_bullets = [
-        _format_entity_bullet(c["description"])
-        for c in catalysts
-        if c.get("status") == "pending"
-    ]
-    kc_bullets = [
-        _format_entity_bullet(k["condition"])
-        for k in kill_conditions
-        if k.get("status") == "active"
-    ]
+    cat_bullets = [_format_entity_bullet(c["description"]) for c in catalysts if c.get("status") == "pending"]
+    kc_bullets = [_format_entity_bullet(k["condition"]) for k in kill_conditions if k.get("status") == "active"]
 
     updated = _replace_section(content, "Key Catalysts", cat_bullets)
     updated = _replace_section(updated, "Risk Factors", kc_bullets)

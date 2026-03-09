@@ -39,13 +39,20 @@ def list_catalysts(ticker: str):
 def create_catalyst(body: CreateCatalystRequest):
     from portfolio.core_db import create_catalyst
 
-    return create_catalyst(
+    result = create_catalyst(
         ticker=body.ticker,
         description=body.description,
         category=body.category,
         target_date=body.target_date,
         created_by="user",
     )
+    try:
+        from portfolio.thesis_sync import sync_markdown_from_entities
+
+        sync_markdown_from_entities(body.ticker)
+    except Exception:
+        pass
+    return result
 
 
 @router.put("/catalysts/{catalyst_id}/status")
@@ -53,9 +60,16 @@ def update_catalyst_status(catalyst_id: int, body: UpdateCatalystStatusRequest):
     from portfolio.core_db import update_catalyst_status
 
     try:
-        return update_catalyst_status(catalyst_id, body.status, body.evidence)
+        result = update_catalyst_status(catalyst_id, body.status, body.evidence)
     except ValueError as e:
         raise NotFoundError("Catalyst", str(catalyst_id)) from e
+    try:
+        from portfolio.thesis_sync import sync_markdown_from_entities
+
+        sync_markdown_from_entities(result["ticker"])
+    except Exception:
+        pass
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -86,13 +100,20 @@ def list_kill_conditions(ticker: str):
 def create_kill_condition(body: CreateKillConditionRequest):
     from portfolio.core_db import create_kill_condition
 
-    return create_kill_condition(
+    result = create_kill_condition(
         ticker=body.ticker,
         condition=body.condition,
         metric=body.metric,
         threshold=body.threshold,
         created_by="user",
     )
+    try:
+        from portfolio.thesis_sync import sync_markdown_from_entities
+
+        sync_markdown_from_entities(body.ticker)
+    except Exception:
+        pass
+    return result
 
 
 @router.put("/kill-conditions/{kc_id}/status")
@@ -100,6 +121,13 @@ def update_kill_condition_status(kc_id: int, body: UpdateKillConditionStatusRequ
     from portfolio.core_db import update_kill_condition_status
 
     try:
-        return update_kill_condition_status(kc_id, body.status)
+        result = update_kill_condition_status(kc_id, body.status)
     except ValueError as e:
         raise NotFoundError("Kill condition", str(kc_id)) from e
+    try:
+        from portfolio.thesis_sync import sync_markdown_from_entities
+
+        sync_markdown_from_entities(result["ticker"])
+    except Exception:
+        pass
+    return result
