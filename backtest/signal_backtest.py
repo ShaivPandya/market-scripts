@@ -4,7 +4,7 @@ Signal Aggregator Backtest
 Validates regime thresholds and factor weights against 10 years of historical data.
 
 Replicates the exact scoring formulas from api/signal_aggregator.py using raw
-data from FRED, yfinance, and CFTC SODA API.
+data from FRED and yfinance. Five factors: VIX, Breadth, Liquidity, Sector, Momentum.
 
 Usage:
     python backtest/signal_backtest.py
@@ -47,21 +47,12 @@ log = logging.getLogger(__name__)
 CONFIGURED_WEIGHTS: dict[str, float] = {
     "vix": 0.20,
     "breadth": 0.20,
-    "liquidity": 0.20,
-    "positioning": 0.15,
+    "liquidity": 0.35,
     "sector": 0.15,
     "momentum": 0.10,
 }
 
 DEFAULT_LO, DEFAULT_HI = 40.0, 65.0
-
-CFTC_INSTRUMENTS = {
-    "SP500": "S&P 500 Consolidated - CHICAGO MERCANTILE EXCHANGE",
-    "NASDAQ": "NASDAQ-100 Consolidated - CHICAGO MERCANTILE EXCHANGE",
-    "RUSSELL": "RUSSELL E-MINI - CHICAGO MERCANTILE EXCHANGE",
-    "US10Y": "UST 10Y NOTE - CHICAGO BOARD OF TRADE",
-    "EUR": "EURO FX - CHICAGO MERCANTILE EXCHANGE",
-}
 
 FRED_LIQUIDITY = {
     "fed_assets": "WALCL",
@@ -262,60 +253,6 @@ def _download_fred(start: str) -> pd.DataFrame:
     return df
 
 
-def _download_cftc(start: str) -> pd.DataFrame:
-    import httpx
-
-    domain = "publicreportinghub.cftc.gov"
-    dataset_id = "gpe5-46if"  # TFF Futures Only
-    app_token = os.environ.get("SODA_APP_TOKEN")
-
-    all_rows: list[dict] = []
-    for alias, market_name in CFTC_INSTRUMENTS.items():
-        url = f"https://{domain}/resource/{dataset_id}.json"
-        where = f'market_and_exchange_names = "{market_name}"'
-        if start:
-            where += f' AND report_date_as_yyyy_mm_dd >= "{start}"'
-        params = {
-            "$where": where,
-            "$order": "report_date_as_yyyy_mm_dd ASC",
-            "$limit": 50000,
-        }
-        if app_token:
-            params["$$app_token"] = app_token
-
-        try:
-            resp = httpx.get(url, params=params, timeout=60)
-            resp.raise_for_status()
-            rows = resp.json()
-            for row in rows:
-                row["_alias"] = alias
-            all_rows.extend(rows)
-            log.info("  CFTC %s: %d rows", alias, len(rows))
-        except Exception as e:
-            log.warning("  CFTC %s failed: %s", alias, e)
-
-    if not all_rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(all_rows)
-    df["report_date"] = pd.to_datetime(df.get("report_date_as_yyyy_mm_dd"), errors="coerce")
-    # Column names vary: sometimes "_all" suffix, sometimes not
-    long_col = (
-        "lev_money_positions_long_all" if "lev_money_positions_long_all" in df.columns else "lev_money_positions_long"
-    )
-    short_col = (
-        "lev_money_positions_short_all"
-        if "lev_money_positions_short_all" in df.columns
-        else "lev_money_positions_short"
-    )
-    for col in [long_col, short_col, "open_interest_all"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    if long_col in df.columns and short_col in df.columns:
-        df["lf_net"] = df[long_col] - df[short_col]
-    return df
-
-
 # ── Factor Scoring (vectorised where possible) ────────────────────────
 
 
@@ -405,53 +342,6 @@ def score_liquidity_series(fred_df: pd.DataFrame) -> pd.Series:
         return max(0.0, min(100.0, base + (-c * 10.0)))
 
     return us_composite.apply(_to_score)
-
-
-def score_positioning_series(cftc_df: pd.DataFrame) -> pd.Series:
-    """Positioning risk score: higher = more extreme positioning (risk-off)."""
-    if cftc_df.empty or "lf_net" not in cftc_df.columns:
-        return pd.Series(dtype=float)
-
-    df = cftc_df.dropna(subset=["report_date", "lf_net"]).copy()
-    per_alias: list[pd.DataFrame] = []
-
-    for alias in df["_alias"].unique():
-        mdf = df[df["_alias"] == alias].sort_values("report_date").copy()
-        net = mdf["lf_net"].astype(float)
-
-        # Expanding z-score (z_window=0 in signal_aggregator)
-        mu = net.expanding().mean()
-        std = net.expanding().std()
-        std = std.replace(0, np.nan)
-        mdf["lf_z"] = (net - mu) / std
-
-        # Forced flow: deleveraging_z >= 2.0
-        d_net = net.diff()
-        deleveraging = (-np.sign(net)) * d_net
-        dlv_mu = deleveraging.expanding().mean()
-        dlv_std = deleveraging.expanding().std()
-        dlv_std = dlv_std.replace(0, np.nan)
-        dlv_z = (deleveraging - dlv_mu) / dlv_std
-        mdf["lf_forced"] = ""
-        mdf.loc[(net > 0) & (dlv_z >= 2.0), "lf_forced"] = "long_liquidation"
-        mdf.loc[(net < 0) & (dlv_z >= 2.0), "lf_forced"] = "short_covering"
-
-        per_alias.append(mdf[["report_date", "lf_z", "lf_forced"]])
-
-    if not per_alias:
-        return pd.Series(dtype=float)
-
-    all_data = pd.concat(per_alias)
-    result: dict[pd.Timestamp, float] = {}
-    for dt, group in all_data.groupby("report_date"):
-        n = len(group)
-        z_vals = group["lf_z"].dropna().abs()
-        z_comp = float(((z_vals - 1.0) / 2.0).clip(0.0, 1.0).mean()) if not z_vals.empty else 0.0
-        forced_count = int((group["lf_forced"].str.strip() != "").sum())
-        forced_ratio = forced_count / n if n > 0 else 0.0
-        result[pd.Timestamp(dt)] = 60.0 * z_comp + 40.0 * forced_ratio
-
-    return pd.Series(result).sort_index()
 
 
 def score_sector_series(etf_prices: pd.DataFrame) -> pd.Series:
@@ -566,14 +456,10 @@ def run_backtest(
     spx_df = _load_or_download("spx_constituents", lambda: _download_spx_constituents(data_start), force_download)
     etfs_df = _load_or_download("sector_etfs", lambda: _download_sector_etfs(data_start), force_download)
     fred_df = _load_or_download("fred_liquidity", lambda: _download_fred(data_start), force_download)
-    cftc_df = _load_or_download("cftc_positioning", lambda: _download_cftc("2013-01-01"), force_download)
 
     print(f"\n  SPX constituents: {spx_df.shape[1]} tickers, {len(spx_df)} days")
     print(f"  VIX:  {len(vix_df)} days")
     print(f"  FRED: {len(fred_df)} rows, {list(fred_df.columns)}")
-    print(
-        f"  CFTC: {len(cftc_df)} rows, {sorted(cftc_df['_alias'].unique()) if '_alias' in cftc_df.columns else 'empty'}"
-    )
 
     # ── Compute factor score series ────────────────────────────────────
     print("\n── Computing Factor Scores ──")
@@ -590,9 +476,6 @@ def run_backtest(
 
     print("  Liquidity (US-only FRED) …")
     liq_scores = score_liquidity_series(fred_df)
-
-    print("  Positioning (CFTC COT) …")
-    pos_scores = score_positioning_series(cftc_df)
 
     print("  Sector (ETFs vs SPY) …")
     sect_scores = score_sector_series(etfs_df)
@@ -614,7 +497,6 @@ def run_backtest(
         row["vix"] = _safe_asof(vix_scores, fri)
         row["breadth"] = _safe_asof(breadth_scores, fri)
         row["liquidity"] = _safe_asof(liq_scores, fri)
-        row["positioning"] = _safe_asof(pos_scores, fri)
         row["sector"] = _safe_asof(sect_scores, fri)
         row["momentum"] = _safe_asof(mom_scores, fri)
 
