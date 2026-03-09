@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SliderInput, TextInput } from "@/components/shared/FormControls"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
+import { renderMarkdownLite } from "@/components/shared/MarkdownRenderer"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { colorPositiveNegative } from "@/lib/colors"
 import { fetchHedgingPortfolioWeights, fetchHedgingRecommendations, fetchHedgingToolPrefill, runHedgingToolAsync } from "@/lib/api"
@@ -335,6 +336,10 @@ export function HedgingTool() {
     grossInput: firstNumber(data?.gross_input),
     netInput: firstNumber(data?.net_input),
   }), [data])
+  const renderedRecommendations = useMemo(() => {
+    if (!recommendations) return null
+    return renderMarkdownLite(recommendations)
+  }, [recommendations])
 
   return (
     <div>
@@ -475,8 +480,8 @@ export function HedgingTool() {
             {recommendLoading && <LoadingSpinner message="Generating recommendations..." />}
             {recommendError && <ErrorMessage message={recommendError} />}
             {recommendations && !recommendLoading && (
-              <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap leading-relaxed">
-                {recommendations}
+              <div className="max-w-none break-words">
+                {renderedRecommendations ?? <p>{recommendations}</p>}
               </div>
             )}
             {!recommendations && !recommendLoading && !recommendError && (
