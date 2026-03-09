@@ -8,10 +8,12 @@ fetching live data from the platform's analysis modules.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +39,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROMPTS_DIR = PROJECT_ROOT / "auto_report" / "prompts"
 
 
+@functools.lru_cache(maxsize=4)
 def _load_required_prompt_file(filename: str) -> str:
     path = PROMPTS_DIR / filename
     if not path.exists():
@@ -59,13 +62,23 @@ def _build_agent_instructions() -> str:
     return base
 
 
+_memory_cache: tuple[float, str] | None = None
+_MEMORY_CACHE_TTL = 60.0
+
+
 def _build_memory_context() -> str:
     """Build a Recent Research Context section from past session summaries."""
+    global _memory_cache
+    now = time.monotonic()
+    if _memory_cache is not None and now - _memory_cache[0] < _MEMORY_CACHE_TTL:
+        return _memory_cache[1]
+
     try:
         from api.memory_db import get_recent_summaries
 
         summaries = get_recent_summaries(limit=5)
         if not summaries:
+            _memory_cache = (now, "")
             return ""
 
         lines = ["## Recent Research Context\n"]
@@ -80,7 +93,9 @@ def _build_memory_context() -> str:
                 header += f" ({', '.join(tickers[:5])})"
             lines.append(f"{header} {summary}")
 
-        return "\n".join(lines) if len(lines) > 1 else ""
+        result = "\n".join(lines) if len(lines) > 1 else ""
+        _memory_cache = (now, result)
+        return result
     except Exception:
         logger.debug("Failed to load memory context", exc_info=True)
         return ""
@@ -146,6 +161,24 @@ def _read_anthropic_api_key() -> str:
         raise ConfigurationError("ANTHROPIC_API_KEY (must be an Anthropic key beginning with sk-ant-)")
 
     return api_key
+
+
+_anthropic_client = None
+_client_lock = threading.Lock()
+
+
+def _get_anthropic_client(api_key: str):
+    """Return a cached Anthropic client, creating one on first call."""
+    global _anthropic_client
+    if _anthropic_client is not None:
+        return _anthropic_client
+    with _client_lock:
+        if _anthropic_client is not None:
+            return _anthropic_client
+        from anthropic import Anthropic
+
+        _anthropic_client = Anthropic(api_key=api_key)
+        return _anthropic_client
 
 
 def _format_stream_error(exc: Exception) -> str:
@@ -370,9 +403,7 @@ def agent_chat(req: AgentChatRequest):
     )
 
     def generate():  # noqa: C901 — complex but linear control flow
-        from anthropic import Anthropic
-
-        client = Anthropic(api_key=api_key)
+        client = _get_anthropic_client(api_key)
 
         # --- Workflow path: deterministic tool execution → single synthesis ---
         if workflow_name:
