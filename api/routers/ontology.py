@@ -6,10 +6,10 @@ import time
 import uuid
 from typing import Any, Literal, TypedDict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-from api.exceptions import DataFetchError
+from api.exceptions import DataFetchError, NotFoundError
 from ontology.service import OntologyQueryService, OntologyRunNotFoundError
 
 router = APIRouter()
@@ -64,8 +64,6 @@ def list_ontology_runs(limit: int = 100):
     try:
         runs = _service.list_runs(limit=safe_limit)
         return {"runs": runs}
-    except HTTPException:
-        raise
     except Exception as exc:
         raise DataFetchError(source="ontology", detail=str(exc)) from exc
 
@@ -75,9 +73,7 @@ def query_ontology(req: OntologyQueryRequest):
     try:
         return _execute_query(req)
     except OntologyRunNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except HTTPException:
-        raise
+        raise NotFoundError("Ontology run", str(exc)) from exc
     except Exception as exc:
         raise DataFetchError(source="ontology", detail=str(exc)) from exc
 
@@ -179,7 +175,7 @@ def get_query_ontology_async(job_id: str):
         _job_cleanup_locked(now)
         job = _jobs.get(job_id)
         if not job:
-            raise HTTPException(status_code=404, detail="Unknown job_id")
+            raise NotFoundError("Ontology job", job_id)
         status = str(job.get("status") or "queued")
         if status == "done":
             return {"job_id": job_id, "status": "done", "result": job.get("result")}

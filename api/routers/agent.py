@@ -8,7 +8,6 @@ fetching live data from the platform's analysis modules.
 
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import os
@@ -39,21 +38,36 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROMPTS_DIR = PROJECT_ROOT / "auto_report" / "prompts"
 
 
-@functools.lru_cache(maxsize=4)
+_prompt_cache: dict[str, tuple[float, str]] = {}
+
+
 def _load_required_prompt_file(filename: str) -> str:
     path = PROMPTS_DIR / filename
     if not path.exists():
         raise ConfigurationError(f"Missing required prompt file: {path}")
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    cached = _prompt_cache.get(filename)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
     content = path.read_text(encoding="utf-8").strip()
     if not content:
         raise ConfigurationError(f"Prompt file is empty: {path}")
+    _prompt_cache[filename] = (mtime, content)
     return content
 
 
 def _build_agent_instructions() -> str:
     core_md = _load_required_prompt_file("system.md")
-    agent_md = _load_required_prompt_file("agent_system.md")
-    base = "\n\n---\n\n".join([core_md, agent_md])
+    try:
+        agent_md = _load_required_prompt_file("agent_system.md")
+    except (ConfigurationError, OSError):
+        logger.warning("Failed to load agent_system.md, using core prompt only")
+        agent_md = None
+    parts = [core_md] + ([agent_md] if agent_md else [])
+    base = "\n\n---\n\n".join(parts)
 
     memory_section = _build_memory_context()
     if memory_section:
@@ -223,6 +237,12 @@ _WORKFLOW_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bthesis\s+review\b", re.IGNORECASE), "thesis_review"),
     (re.compile(r"\bpre[- ]?earnings?\s+(?:prep|brief|analysis)\b", re.IGNORECASE), "pre_earnings"),
     (re.compile(r"\bearnings?\s+prep\b", re.IGNORECASE), "pre_earnings"),
+    (re.compile(r"\bpost[- ]?earnings?\s+(?:review|debrief)\b", re.IGNORECASE), "post_earnings_review"),
+    (re.compile(r"\bearnings?\s+(?:review|debrief)\b", re.IGNORECASE), "post_earnings_review"),
+    (re.compile(r"\bweekly\s+(?:portfolio\s+)?review\b", re.IGNORECASE), "weekly_portfolio_review"),
+    (re.compile(r"\bportfolio\s+review\b", re.IGNORECASE), "weekly_portfolio_review"),
+    (re.compile(r"\b(?:thesis\s+)?invalidation\s+check\b", re.IGNORECASE), "thesis_invalidation_check"),
+    (re.compile(r"\bkill\s+condition\s+check\b", re.IGNORECASE), "thesis_invalidation_check"),
 ]
 
 _TICKER_RX = re.compile(r"\b([A-Z]{1,5})\b")
@@ -420,12 +440,13 @@ def agent_chat(req: AgentChatRequest):
                     return
 
                 # Emit tool calls as they execute
-                synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker)
+                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker)
                 for section in sections:
                     yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
 
                 # Single synthesis call — no tools, just Claude reasoning over the data
+                synthesis_chunks: list[str] = []
                 for attempt in range(MAX_API_RETRIES):
                     try:
                         with client.messages.stream(
@@ -436,6 +457,7 @@ def agent_chat(req: AgentChatRequest):
                         ) as stream:
                             for event in stream:
                                 if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                                    synthesis_chunks.append(event.delta.text)
                                     yield _sse("delta", {"text": event.delta.text})
                             final_message = stream.get_final_message()
                         break
@@ -453,17 +475,36 @@ def agent_chat(req: AgentChatRequest):
                             continue
                         raise
 
+                # Persist the completed workflow run
+                synthesis_text = "".join(synthesis_chunks)
+                try:
+                    from api.workflow_artifacts import extract_artifacts, persist_artifacts
+                    from portfolio.core_db import complete_workflow_run
+
+                    artifacts = extract_artifacts(synthesis_text, workflow_name)
+                    complete_workflow_run(run_id, synthesis_text, artifacts, sections)
+                    if artifacts:
+                        persist_artifacts(run_id, workflow_ticker, artifacts)
+                except Exception:
+                    logger.debug("Failed to persist workflow run %s", run_id, exc_info=True)
+
                 usage = {}
                 if hasattr(final_message, "usage") and final_message.usage:
                     usage = {
                         "input_tokens": final_message.usage.input_tokens,
                         "output_tokens": final_message.usage.output_tokens,
                     }
-                yield _sse("done", {"usage": usage})
+                yield _sse("done", {"usage": usage, "workflow_run_id": run_id})
                 return
 
             except Exception as exc:
                 logger.exception("Workflow %s failed", workflow_name)
+                try:
+                    from portfolio.core_db import fail_workflow_run
+
+                    fail_workflow_run(run_id, str(exc))
+                except Exception:
+                    pass
                 yield _sse("error", {"message": f"Workflow failed: {exc}"})
                 yield _sse("done", {"usage": {}})
                 return

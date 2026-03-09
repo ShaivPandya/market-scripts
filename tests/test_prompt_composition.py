@@ -60,18 +60,20 @@ def test_agent_instructions_compose_core_and_overlay(tmp_path, monkeypatch):
     assert instructions == "core philosophy\n\n---\n\nagent overlay"
 
 
-def test_agent_instructions_missing_overlay_raises(tmp_path, monkeypatch):
+def test_agent_instructions_missing_overlay_degrades(tmp_path, monkeypatch):
+    """When agent_system.md is missing, _build_agent_instructions degrades gracefully."""
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
     (prompts_dir / "system.md").write_text("core philosophy", encoding="utf-8")
 
     monkeypatch.setattr(agent_router, "PROMPTS_DIR", prompts_dir)
 
-    with pytest.raises(ConfigurationError, match="agent_system.md"):
-        agent_router._build_agent_instructions()
+    instructions = agent_router._build_agent_instructions()
+    assert instructions == "core philosophy"
 
 
-def test_agent_instructions_empty_overlay_raises(tmp_path, monkeypatch):
+def test_agent_instructions_empty_overlay_degrades(tmp_path, monkeypatch):
+    """When agent_system.md is empty, _build_agent_instructions degrades gracefully."""
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
     (prompts_dir / "system.md").write_text("core philosophy", encoding="utf-8")
@@ -79,5 +81,5 @@ def test_agent_instructions_empty_overlay_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(agent_router, "PROMPTS_DIR", prompts_dir)
 
-    with pytest.raises(ConfigurationError, match="agent_system.md"):
-        agent_router._build_agent_instructions()
+    instructions = agent_router._build_agent_instructions()
+    assert instructions == "core philosophy"

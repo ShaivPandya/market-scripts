@@ -5,64 +5,67 @@ import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 
 interface NavSection {
+  label?: string
   pages: { label: string; path: string }[]
 }
 
 const NAV_SECTIONS: NavSection[] = [
   {
+    label: "Core",
     pages: [
-      { label: "💼 Portfolio Dashboard", path: "/portfolio" },
-      { label: "📋 Investment Theses", path: "/theses" },
-      { label: "📈 Portfolio Analyzer", path: "/analyzer" },
-      { label: "🎯 Portfolio Sizer", path: "/sizer" },
-      { label: "🛡️ Hedging Tool", path: "/hedging-tool" },
-      { label: "🚀 Momentum", path: "/momentum" },
-      { label: "📰 Portfolio News", path: "/portfolio-news" },
-      { label: "📅 Weekly Report", path: "/weekly-report" },
+      { label: "Workspace", path: "/" },
+      { label: "Portfolio Dashboard", path: "/portfolio" },
+      { label: "Investment Theses", path: "/theses" },
+      { label: "Weekly Report", path: "/weekly-report" },
     ],
   },
   {
+    label: "Monitors",
     pages: [
-      { label: "📐 Chart", path: "/chart" },
-      { label: "🏅 Quality Screen", path: "/quality" },
-      { label: "📉 Short Screen", path: "/short-screen" },
-      { label: "📈 Fundamental Momentum", path: "/fundamental-momentum" },
-      { label: "🧾 Financials", path: "/financials" },
+      { label: "Signal Aggregator", path: "/signal-aggregator" },
+      { label: "Ontology Workbench", path: "/ontology" },
+      { label: "Market Technicals", path: "/market-technicals" },
+      { label: "Portfolio News", path: "/portfolio-news" },
+      { label: "Breakout", path: "/breakout" },
+      { label: "Sentiment", path: "/sentiment" },
+      { label: "Positioning", path: "/positioning" },
+      { label: "Central Bank Monitor", path: "/central-banks" },
+      { label: "Industry Monitor", path: "/industry-monitor" },
+      { label: "Sector Metrics", path: "/sector-metrics" },
     ],
   },
   {
+    label: "Labs",
     pages: [
-      { label: "📊 Index Dashboard", path: "/index-dashboard" },
-      { label: "💵 FX Dashboard", path: "/fx-dashboard" },
-      { label: "🛢️ Commodity Dashboard", path: "/commodities" },
+      { label: "Portfolio Analyzer", path: "/analyzer" },
+      { label: "Portfolio Sizer", path: "/sizer" },
+      { label: "Hedging Tool", path: "/hedging-tool" },
+      { label: "Chart", path: "/chart" },
+      { label: "Quality Screen", path: "/quality" },
+      { label: "Short Screen", path: "/short-screen" },
+      { label: "Fundamental Momentum", path: "/fundamental-momentum" },
+      { label: "Financials", path: "/financials" },
+      { label: "FX Model", path: "/fx-model" },
+      { label: "Momentum", path: "/momentum" },
     ],
   },
   {
+    label: "Macro",
     pages: [
-      { label: "🧭 Market Technicals", path: "/market-technicals" },
-      { label: "🧠 Signal Aggregator", path: "/signal-aggregator" },
-      { label: "🧬 Ontology Workbench", path: "/ontology" },
-      { label: "🧩 Sector Metrics", path: "/sector-metrics" },
-      { label: "📌 Positioning", path: "/positioning" },
-      { label: "🌡️ Sentiment", path: "/sentiment" },
-      { label: "🔔 Breakout", path: "/breakout" },
-      { label: "💱 FX Model", path: "/fx-model" },
+      { label: "Economic Growth", path: "/economic-growth" },
+      { label: "Labor Market", path: "/labor-market" },
+      { label: "Liquidity", path: "/liquidity" },
+      { label: "Yield Curve", path: "/yield-curve" },
+      { label: "Country Dashboard", path: "/country-dashboard" },
     ],
   },
   {
+    label: "Assets",
     pages: [
-      { label: "👷 Labor Market", path: "/labor-market" },
-      { label: "📊 Economic Growth", path: "/economic-growth" },
-      { label: "💧 Liquidity", path: "/liquidity" },
-      { label: "〰️ Yield Curve", path: "/yield-curve" },
-      { label: "📈 Commodities Curve", path: "/commodities-curve" },
-      { label: "🌍 Country Dashboard", path: "/country-dashboard" },
-    ],
-  },
-  {
-    pages: [
-      { label: "🏦 Central Bank Monitor", path: "/central-banks" },
-      { label: "🏭 Industry Monitor", path: "/industry-monitor" },
+      { label: "Index Dashboard", path: "/index-dashboard" },
+      { label: "FX Dashboard", path: "/fx-dashboard" },
+      { label: "Commodity Dashboard", path: "/commodities" },
+      { label: "Commodities Curve", path: "/commodities-curve" },
     ],
   },
 ]
@@ -100,22 +103,25 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       ].join(" ")}
     >
       <div className="px-3 py-4 flex-1 overflow-y-auto">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-subtle">
-          Navigation
-        </p>
         {NAV_SECTIONS.map((section, si) => (
           <div key={si}>
+            {section.label && (
+              <p className="mt-3 mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-subtle">
+                {section.label}
+              </p>
+            )}
             {section.pages.map(page => (
               <NavLink
                 key={page.path}
                 to={page.path}
+                end={page.path === "/"}
                 onClick={onClose}
                 className={({ isActive }) =>
                   cn(
                     "block w-full text-left px-2 py-1.5 rounded-lg text-sm mb-0.5 transition-colors truncate",
                     isActive
-                      ? "bg-blue-50 text-blue-600 font-medium"
-                      : "text-gray-700 hover:bg-gray-100",
+                      ? "bg-blue-50 text-blue-600 font-medium dark:bg-blue-950 dark:text-blue-400"
+                      : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800",
                   )
                 }
               >
