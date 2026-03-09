@@ -1216,7 +1216,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         return data, meta
 
     if name == "get_vix_term_structure":
-        key = "vix_term_structure"
+        key = "agent_vix_term_structure:default"
 
         def _load():
             from equities.market_technicals.vix_term_structure import get_data

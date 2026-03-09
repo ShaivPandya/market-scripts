@@ -65,7 +65,8 @@ def get_price_volume_signals():
 
 @router.get("/vix-term-structure")
 def get_vix_term_structure():
-    key = "vix_term_structure"
+    # Keep this cache key distinct from agent-tool caches with different defaults (e.g., tail=10).
+    key = "vix_term_structure:ui:tail252:start400:signals20"
     cached = get_cached(short_cache, key)
     if cached is not None:
         return cached
