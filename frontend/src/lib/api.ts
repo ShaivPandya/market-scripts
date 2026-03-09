@@ -228,6 +228,18 @@ type OntologyQueryBody = {
   refresh_snapshot?: boolean
 }
 
+export interface OntologyRunSummary {
+  run_id: string
+  as_of: string
+  created_at: string
+  required_modules_ok: boolean
+}
+
+export const fetchOntologyRuns = (limit = 100) =>
+  client
+    .get("/ontology/runs", { params: { limit } })
+    .then(r => r.data as { runs: OntologyRunSummary[] })
+
 export const queryOntology = (body: OntologyQueryBody) =>
   client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data)
 

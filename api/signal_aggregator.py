@@ -45,14 +45,17 @@ Predictive interpretation:
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
+import pickle
 import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import wait as cf_wait
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -76,6 +79,95 @@ SP500_CHUNK_SIZE = 50
 SP500_BATCH_DELAY = 1.0  # seconds between yfinance batch downloads
 
 _log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Smart staleness cache for S&P 500 prices
+# ---------------------------------------------------------------------------
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SP500_CACHE_DIR = _REPO_ROOT / "data_cache" / "signal_aggregator"
+_SP500_CACHE_DATA = _SP500_CACHE_DIR / "sp500_prices.pkl"
+_SP500_CACHE_META = _SP500_CACHE_DIR / "sp500_prices_meta.json"
+_SP500_CACHE_TTL_SECONDS = 24 * 60 * 60
+_CLOSE_PROBE_TICKER = "SPY"
+
+
+def _load_sp500_cache() -> tuple[pd.DataFrame | None, dict[str, Any] | None]:
+    """Load cached S&P 500 prices + metadata from disk."""
+    try:
+        if not _SP500_CACHE_DATA.exists() or not _SP500_CACHE_META.exists():
+            return None, None
+        meta = json.loads(_SP500_CACHE_META.read_text(encoding="utf-8"))
+        if not isinstance(meta, dict) or not isinstance(meta.get("fetched_at"), str):
+            return None, None
+        with open(_SP500_CACHE_DATA, "rb") as f:
+            df = pickle.load(f)  # noqa: S301
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return None, None
+        return df, meta
+    except Exception:
+        return None, None
+
+
+def _save_sp500_cache(df: pd.DataFrame, as_of_date: str | None) -> None:
+    """Persist S&P 500 prices + metadata to disk."""
+    try:
+        _SP500_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_data = _SP500_CACHE_DATA.with_suffix(".tmp")
+        tmp_meta = _SP500_CACHE_META.with_suffix(".tmp")
+        with open(tmp_data, "wb") as f:
+            pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL)
+        meta = {
+            "fetched_at": datetime.now().isoformat(),
+            "as_of_date": as_of_date,
+            "rows": len(df),
+        }
+        tmp_meta.write_text(json.dumps(meta), encoding="utf-8")
+        tmp_data.replace(_SP500_CACHE_DATA)
+        tmp_meta.replace(_SP500_CACHE_META)
+    except Exception:
+        _log.warning("Failed to write S&P 500 price cache", exc_info=True)
+
+
+def _touch_sp500_cache_meta(meta: dict[str, Any]) -> None:
+    """Refresh the fetched_at timestamp without re-downloading."""
+    try:
+        meta["fetched_at"] = datetime.now().isoformat()
+        _SP500_CACHE_META.write_text(json.dumps(meta), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _latest_market_close_date() -> str | None:
+    """Probe the latest available close date via a lightweight SPY download."""
+    from utils.retry import yf_download
+
+    try:
+        probe = yf_download(
+            tickers=[_CLOSE_PROBE_TICKER],
+            period="10d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+        )
+        if probe is None or probe.empty:
+            return None
+        idx = pd.to_datetime(probe.index, errors="coerce").dropna()
+        if idx.empty:
+            return None
+        return str(idx[-1].date().isoformat())
+    except Exception:
+        return None
+
+
+def _sp500_cache_as_of_date(df: pd.DataFrame) -> str | None:
+    """Extract the latest date from a price DataFrame's index."""
+    try:
+        idx = pd.to_datetime(df.index, errors="coerce").dropna()
+        if idx.empty:
+            return None
+        return str(idx[-1].date().isoformat())
+    except Exception:
+        return None
 
 
 def clamp01(value: float) -> float:
@@ -552,8 +644,8 @@ def _build_history(
     }
 
 
-def _download_sp500_prices() -> pd.DataFrame:
-    """Download S&P 500 constituent prices once for all modules."""
+def _download_sp500_prices_uncached() -> pd.DataFrame:
+    """Download S&P 500 constituent prices from yfinance (no cache)."""
     from equities.market_technicals.market_breadth import get_sp500_tickers
     from utils.retry import yf_download
 
@@ -607,6 +699,57 @@ def _download_sp500_prices() -> pd.DataFrame:
     if not merged:
         return pd.DataFrame()
     return pd.concat(merged, axis=1)
+
+
+def _download_sp500_prices() -> pd.DataFrame:
+    """Download S&P 500 prices with smart staleness caching.
+
+    Cache strategy (mirrors market_breadth.py pattern):
+    1. If disk cache exists and is within TTL → return cached
+    2. If disk cache expired but market hasn't updated since cached as_of_date
+       → refresh TTL and return cached (avoids re-downloading on weekends/holidays)
+    3. On fresh download failure → fall back to cached data (graceful degradation)
+    4. On success → write new cache to disk
+    """
+    cached_df, cached_meta = _load_sp500_cache()
+
+    if cached_df is not None and cached_meta is not None:
+        try:
+            fetched_at = datetime.fromisoformat(str(cached_meta["fetched_at"]))
+            age_seconds = (datetime.now() - fetched_at).total_seconds()
+        except Exception:
+            age_seconds = _SP500_CACHE_TTL_SECONDS + 1
+
+        if age_seconds < _SP500_CACHE_TTL_SECONDS:
+            _log.info("S&P 500 prices: serving from disk cache (age=%.0fs)", age_seconds)
+            return cached_df
+
+        # Cache expired — check if market has actually updated
+        cached_as_of = cached_meta.get("as_of_date")
+        latest_close = _latest_market_close_date()
+        if isinstance(cached_as_of, str) and latest_close is not None and latest_close <= cached_as_of:
+            _log.info(
+                "S&P 500 prices: cache expired but market unchanged (cached=%s, latest=%s), reusing",
+                cached_as_of,
+                latest_close,
+            )
+            _touch_sp500_cache_meta(cached_meta)
+            return cached_df
+
+        _log.info("S&P 500 prices: cache stale (cached=%s, latest=%s), re-downloading", cached_as_of, latest_close)
+
+    # Fresh download
+    df = _download_sp500_prices_uncached()
+    if df.empty:
+        if cached_df is not None:
+            _log.warning("S&P 500 prices: fresh download failed, falling back to stale cache")
+            return cached_df
+        return df
+
+    as_of = _sp500_cache_as_of_date(df)
+    _save_sp500_cache(df, as_of)
+    _log.info("S&P 500 prices: fresh download complete (rows=%d, as_of=%s)", len(df), as_of)
+    return df
 
 
 def _fetch_current_modules(

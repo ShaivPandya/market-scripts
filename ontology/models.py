@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-EntityType = Literal["Asset", "Sector", "MacroIndicator", "Signal", "Position"]
+EntityType = Literal["Asset", "Sector", "MacroIndicator", "Signal", "Position", "Thesis", "Evaluation", "Catalyst"]
 ParserSource = Literal["structured", "llm", "deterministic_fallback"]
 
 

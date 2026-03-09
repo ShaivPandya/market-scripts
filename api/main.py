@@ -7,6 +7,7 @@ Run from project root:
 
 import logging
 import os
+import threading
 import time
 
 from dotenv import load_dotenv
@@ -56,6 +57,7 @@ from api.routers import (
     labor_market,
     liquidity,
     market_technicals,
+    memory,
     momentum,
     ontology,
     portfolio,
@@ -226,7 +228,41 @@ app.include_router(ontology.router, prefix=_V1, dependencies=_auth_dep, tags=["o
 app.include_router(weekly_report.router, prefix=_V1, dependencies=_auth_dep, tags=["reports"])
 app.include_router(commodities_curve.router, prefix=_V1, dependencies=_auth_dep, tags=["commodities"])
 app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(memory.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
+
+
+# ---------------------------------------------------------------------------
+# Cache warming on startup
+# ---------------------------------------------------------------------------
+_WARM_TOOLS = [
+    ("get_portfolio", {}),
+    ("get_market_breadth", {}),
+    ("get_vix_term_structure", {}),
+    ("get_liquidity", {}),
+]
+
+
+def _warm_caches() -> None:
+    """Pre-fetch frequently used tool results into the in-memory TTL caches.
+
+    Runs in a background thread so it does not delay server startup.
+    """
+    from api.agent_tools import execute_tool
+
+    for tool_name, args in _WARM_TOOLS:
+        try:
+            execute_tool(tool_name, args)
+            logger.info("cache_warm tool=%s status=ok", tool_name)
+        except Exception:
+            logger.warning("cache_warm tool=%s status=error", tool_name, exc_info=True)
+
+
+@app.on_event("startup")
+def _startup_warm_caches():
+    thread = threading.Thread(target=_warm_caches, daemon=True, name="cache-warm")
+    thread.start()
+    logger.info("Cache warming started in background thread")
 
 
 # ---------------------------------------------------------------------------

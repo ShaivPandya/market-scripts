@@ -45,6 +45,9 @@ class OntologyQueryService:
     def __init__(self, repository: OntologyRepository | None = None):
         self.repo = repository or OntologyRepository()
 
+    def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.repo.list_runs(limit=limit)
+
     def query(
         self,
         query: str | None,
@@ -133,6 +136,28 @@ class OntologyQueryService:
         if interpreted.intent == "positions_in_deteriorating_macro":
             results = [r for r in results if (_to_float(r.get("risk_score")) or 0.0) >= 0.6]
 
+        if interpreted.intent == "thesis_review":
+            results = _enrich_with_thesis(results, resolved_run_id, self.repo)
+
+        if interpreted.intent == "temporal_comparison":
+            diff = self._auto_temporal_diff(resolved_run_id)
+            if diff:
+                return {
+                    "run_id": resolved_run_id,
+                    "intent": "temporal_comparison",
+                    "interpreted_query": {
+                        "source": interpreted.source,
+                        "query": interpreted.original_query,
+                        "entity": interpreted.entity,
+                        "filters": effective_filters,
+                    },
+                    "as_of": as_of,
+                    "source_status": source_status,
+                    "diff": diff,
+                    "results": results,
+                    "aggregate": _build_aggregate(results, source_status, required_modules),
+                }
+
         results = _apply_filters(results, effective_filters)
         results.sort(key=lambda r: _to_float(r.get("risk_score")) or 0.0, reverse=True)
         max_results = _to_int(effective_filters.get("max_results"))
@@ -179,6 +204,121 @@ class OntologyQueryService:
 
         rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id)
         return len(rows) > 0
+
+    def compare_snapshots(self, run_id_a: str, run_id_b: str) -> dict[str, Any]:
+        """Diff two ontology snapshots. Returns position changes, risk score deltas, and signal transitions."""
+        run_a = self.repo.get_run(run_id_a)
+        run_b = self.repo.get_run(run_id_b)
+        if run_a is None:
+            raise OntologyRunNotFoundError(run_id_a)
+        if run_b is None:
+            raise OntologyRunNotFoundError(run_id_b)
+
+        rows_a = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id_a)
+        rows_b = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id_b)
+
+        def _positions_map(rows: list[dict]) -> dict[str, dict[str, Any]]:
+            out: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                pos = _as_dict(row.get("position_props"))
+                ticker = str(pos.get("ticker") or "").upper()
+                if ticker:
+                    out[ticker] = pos
+            return out
+
+        positions_a = _positions_map(rows_a)
+        positions_b = _positions_map(rows_b)
+
+        added = sorted(set(positions_b) - set(positions_a))
+        removed = sorted(set(positions_a) - set(positions_b))
+        common = sorted(set(positions_a) & set(positions_b))
+
+        risk_changes: list[dict[str, Any]] = []
+        signal_transitions: list[dict[str, Any]] = []
+
+        for ticker in common:
+            pa = positions_a[ticker]
+            pb = positions_b[ticker]
+            score_a = _to_float(pa.get("risk_score")) or 0.0
+            score_b = _to_float(pb.get("risk_score")) or 0.0
+            delta = round(score_b - score_a, 4)
+
+            if abs(delta) >= 0.02:
+                risk_changes.append(
+                    {
+                        "ticker": ticker,
+                        "risk_score_before": round(score_a, 4),
+                        "risk_score_after": round(score_b, 4),
+                        "delta": delta,
+                        "level_before": str(pa.get("risk_level") or _risk_level_from_score(score_a)),
+                        "level_after": str(pb.get("risk_level") or _risk_level_from_score(score_b)),
+                    }
+                )
+
+            # Check component-level transitions
+            for component in ("volatility_cluster", "breadth_stress", "sector_stress", "macro_regime"):
+                va = _to_float(pa.get(component))
+                vb = _to_float(pb.get(component))
+                if va is not None and vb is not None:
+                    cd = round(vb - va, 4)
+                    if abs(cd) >= 0.05:
+                        dir_a = "deteriorating" if va >= 0.6 else "stable"
+                        dir_b = "deteriorating" if vb >= 0.6 else "stable"
+                        if dir_a != dir_b:
+                            signal_transitions.append(
+                                {
+                                    "ticker": ticker,
+                                    "component": component,
+                                    "before": round(va, 4),
+                                    "after": round(vb, 4),
+                                    "transition": f"{dir_a} -> {dir_b}",
+                                }
+                            )
+
+        risk_changes.sort(key=lambda r: abs(r.get("delta", 0)), reverse=True)
+
+        # Component score diffs
+        scores_a = _as_dict(run_a.get("component_scores"))
+        scores_b = _as_dict(run_b.get("component_scores"))
+        component_diffs: dict[str, dict[str, float]] = {}
+        for key in set(list(scores_a.keys()) + list(scores_b.keys())):
+            va = _to_float(scores_a.get(key))
+            vb = _to_float(scores_b.get(key))
+            if va is not None and vb is not None:
+                component_diffs[key] = {
+                    "before": round(va, 4),
+                    "after": round(vb, 4),
+                    "delta": round(vb - va, 4),
+                }
+
+        return {
+            "run_id_before": run_id_a,
+            "run_id_after": run_id_b,
+            "as_of_before": str(run_a.get("as_of", "")),
+            "as_of_after": str(run_b.get("as_of", "")),
+            "positions_added": added,
+            "positions_removed": removed,
+            "risk_changes": risk_changes[:20],
+            "signal_transitions": signal_transitions[:20],
+            "component_diffs": component_diffs,
+            "total_positions": {"before": len(positions_a), "after": len(positions_b)},
+        }
+
+    def _auto_temporal_diff(self, current_run_id: str) -> dict[str, Any] | None:
+        """Find the most recent prior run and diff against it."""
+        runs = self.repo.list_runs(limit=10)
+        prior_run_id: str | None = None
+        for run in runs:
+            rid = str(run.get("run_id", ""))
+            if rid and rid != current_run_id:
+                prior_run_id = rid
+                break
+        if not prior_run_id:
+            return None
+        try:
+            return self.compare_snapshots(prior_run_id, current_run_id)
+        except Exception:
+            return None
 
     def _build_evidence(self, position_id: str, run_id: str) -> list[dict[str, Any]]:
         raw = self.repo.fetch_snapshot_position_signal_evidence(run_id=run_id, position_id=position_id)
@@ -326,6 +466,64 @@ def _risk_level_from_score(score: float) -> str:
     if score >= 0.5:
         return "medium"
     return "low"
+
+
+def _enrich_with_thesis(
+    results: list[dict[str, Any]],
+    run_id: str,
+    repo: OntologyRepository,
+) -> list[dict[str, Any]]:
+    """Enrich position results with thesis metadata from the ontology snapshot."""
+    graph = repo.fetch_snapshot_graph(run_id=run_id)
+    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
+    edges = graph.get("edges", []) if isinstance(graph, dict) else []
+
+    # Build lookup: position_id -> thesis node properties
+    thesis_by_position: dict[str, dict[str, Any]] = {}
+    eval_by_thesis: dict[str, dict[str, Any]] = {}
+
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        if edge.get("relation_type") == "has_thesis":
+            thesis_by_position[edge["source_id"]] = edge["target_id"]
+        if edge.get("relation_type") == "evaluated_by":
+            eval_by_thesis[edge["source_id"]] = edge["target_id"]
+
+    node_props: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        if isinstance(node, dict):
+            node_props[node.get("id", "")] = node.get("properties", {})
+
+    for result in results:
+        ticker = str(result.get("ticker") or "").upper()
+        position_id = f"position:{ticker}"
+        thesis_id = thesis_by_position.get(position_id)
+
+        if thesis_id and isinstance(thesis_id, str):
+            t_props = _as_dict(node_props.get(thesis_id))
+            result["thesis"] = {
+                "status": t_props.get("status"),
+                "created_at": t_props.get("created_at"),
+                "updated_at": t_props.get("updated_at"),
+            }
+            eval_id = eval_by_thesis.get(thesis_id)
+            if eval_id and isinstance(eval_id, str):
+                e_props = _as_dict(node_props.get(eval_id))
+                result["latest_evaluation"] = {
+                    "evaluated_at": e_props.get("evaluated_at"),
+                    "thesis_status": e_props.get("thesis_status"),
+                    "technical_read": e_props.get("technical_read"),
+                    "fundamental_read": e_props.get("fundamental_read"),
+                    "action": e_props.get("action"),
+                    "confidence": e_props.get("confidence"),
+                    "risk_flag": e_props.get("risk_flag"),
+                }
+        else:
+            result["thesis"] = None
+            result["latest_evaluation"] = None
+
+    return results
 
 
 def _run_is_fresh(created_at: Any, *, max_age: timedelta) -> bool:

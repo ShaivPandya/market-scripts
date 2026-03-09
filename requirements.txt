@@ -32,6 +32,7 @@ nest_asyncio>=1.5.0
 
 # AI/ML
 anthropic>=0.40.0
+sentence-transformers>=2.2.0
 
 # Rate limiting
 slowapi>=0.1.9

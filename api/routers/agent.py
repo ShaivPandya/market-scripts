@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from api.agent_tools import TOOL_DEFINITIONS, execute_tool
 from api.exceptions import ConfigurationError
+from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 
 router = APIRouter()
 logger = logging.getLogger("api.agent")
@@ -49,7 +50,40 @@ def _load_required_prompt_file(filename: str) -> str:
 def _build_agent_instructions() -> str:
     core_md = _load_required_prompt_file("system.md")
     agent_md = _load_required_prompt_file("agent_system.md")
-    return "\n\n---\n\n".join([core_md, agent_md])
+    base = "\n\n---\n\n".join([core_md, agent_md])
+
+    memory_section = _build_memory_context()
+    if memory_section:
+        base += "\n\n---\n\n" + memory_section
+
+    return base
+
+
+def _build_memory_context() -> str:
+    """Build a Recent Research Context section from past session summaries."""
+    try:
+        from api.memory_db import get_recent_summaries
+
+        summaries = get_recent_summaries(limit=5)
+        if not summaries:
+            return ""
+
+        lines = ["## Recent Research Context\n"]
+        for s in summaries:
+            ended = str(s.get("ended_at") or s.get("started_at") or "")[:10]
+            summary = str(s.get("summary") or "").strip()
+            tickers = s.get("key_tickers")
+            if not summary:
+                continue
+            header = f"[{ended}]"
+            if isinstance(tickers, list) and tickers:
+                header += f" ({', '.join(tickers[:5])})"
+            lines.append(f"{header} {summary}")
+
+        return "\n".join(lines) if len(lines) > 1 else ""
+    except Exception:
+        logger.debug("Failed to load memory context", exc_info=True)
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +98,12 @@ class ChatMessage(BaseModel):
 
 class AgentChatRequest(BaseModel):
     messages: list[ChatMessage]
+
+
+@router.get("/agent/workflows")
+def list_workflows():
+    """List available deterministic workflows."""
+    return [{"name": name, **info} for name, info in AVAILABLE_WORKFLOWS.items()]
 
 
 # ---------------------------------------------------------------------------
@@ -87,38 +127,10 @@ ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
     for tool in TOOL_DEFINITIONS
     if isinstance(tool.get("name"), str)
 ]
-_TOOL_DEF_BY_NAME: dict[str, dict] = {t["name"]: t for t in ANTHROPIC_TOOL_DEFINITIONS}
-
 _HIGH_COST_TOOLS = {"get_sector_metrics", "query_ontology", "get_signal_aggregator"}
 _CASUAL_RX = re.compile(
     r"^\s*(hi|hello|hey|yo|thanks|thank you|cool|ok|okay|who are you|what can you do)[\s!.?]*$",
     flags=re.IGNORECASE,
-)
-_PORTFOLIO_CONTEXT_KEYWORDS = ("portfolio", "position", "positions", "holdings", "book")
-_PORTFOLIO_PERFORMANCE_KEYWORDS = (
-    "performance",
-    "performing",
-    "return",
-    "returns",
-    "p&l",
-    "pnl",
-    "gain",
-    "gains",
-    "loss",
-    "losses",
-    "how did",
-    "summarize",
-    "summary",
-)
-_PORTFOLIO_RISK_KEYWORDS = (
-    "risk",
-    "exposure",
-    "hedge",
-    "macro",
-    "ontology",
-    "stress",
-    "deteriorating",
-    "drawdown",
 )
 
 
@@ -159,29 +171,53 @@ def _is_casual(user_text: str) -> bool:
     return not text or bool(_CASUAL_RX.match(text))
 
 
-def _is_portfolio_performance_request(user_text: str) -> bool:
-    text = (user_text or "").strip().lower()
-    if not text:
-        return False
-    has_portfolio_context = any(k in text for k in _PORTFOLIO_CONTEXT_KEYWORDS)
-    has_performance_keyword = any(k in text for k in _PORTFOLIO_PERFORMANCE_KEYWORDS)
-    has_risk_keyword = any(k in text for k in _PORTFOLIO_RISK_KEYWORDS)
-    return has_portfolio_context and has_performance_keyword and not has_risk_keyword
+# ---------------------------------------------------------------------------
+# Workflow detection
+# ---------------------------------------------------------------------------
+
+_WORKFLOW_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bmorning\s+brief\b", re.IGNORECASE), "morning_brief"),
+    (re.compile(r"\bdaily\s+brief\b", re.IGNORECASE), "morning_brief"),
+    (re.compile(r"\breview\s+(?:my\s+|the\s+)?(?:thesis|investment\s+thesis)\b", re.IGNORECASE), "thesis_review"),
+    (re.compile(r"\bthesis\s+review\b", re.IGNORECASE), "thesis_review"),
+    (re.compile(r"\bpre[- ]?earnings?\s+(?:prep|brief|analysis)\b", re.IGNORECASE), "pre_earnings"),
+    (re.compile(r"\bearnings?\s+prep\b", re.IGNORECASE), "pre_earnings"),
+]
+
+_TICKER_RX = re.compile(r"\b([A-Z]{1,5})\b")
 
 
-def _select_tool_defs(user_text: str) -> tuple[str, list[dict]]:
-    """Select tools for the agent.
+def _detect_workflow(user_text: str) -> tuple[str | None, str | None]:
+    """Detect if a user message triggers a workflow.
 
-    Portfolio performance requests get only get_portfolio to avoid unnecessary
-    expensive calls.  Everything else gets the full toolset — Claude picks
-    the right tools from their descriptions.
+    Returns (workflow_name, ticker) or (None, None).
     """
-    if _is_portfolio_performance_request(user_text):
-        td = _TOOL_DEF_BY_NAME.get("get_portfolio")
-        if td is not None:
-            return "portfolio_performance", [td]
+    text = (user_text or "").strip()
+    if not text:
+        return None, None
 
-    return "all", ANTHROPIC_TOOL_DEFINITIONS
+    # Check for explicit workflow trigger (from frontend buttons)
+    if text.startswith("/workflow:"):
+        parts = text.split(":", 2)
+        wf_name = parts[1].strip() if len(parts) > 1 else ""
+        ticker = parts[2].strip().upper() if len(parts) > 2 and parts[2].strip() else None
+        if wf_name in AVAILABLE_WORKFLOWS:
+            return wf_name, ticker
+        return None, None
+
+    # Check natural language patterns
+    for pattern, wf_name in _WORKFLOW_PATTERNS:
+        if pattern.search(text):
+            ticker = None
+            wf_def = AVAILABLE_WORKFLOWS[wf_name]
+            if wf_def["requires_ticker"]:
+                # Try to extract a ticker from the message
+                # Filter out common English words that match ticker pattern
+                stop = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO"}
+                candidates = [m for m in _TICKER_RX.findall(text) if m not in stop and len(m) >= 2]
+                ticker = candidates[0] if candidates else None
+            return wf_name, ticker
+    return None, None
 
 
 def _tool_call_signature(name: str, args: dict) -> str:
@@ -305,12 +341,14 @@ def agent_chat(req: AgentChatRequest):
     api_key = _read_anthropic_api_key()
     instructions = _build_agent_instructions()
     latest_user_text = _extract_last_user_text(req.messages)
-    mode, tool_defs = _select_tool_defs(latest_user_text)
     casual = _is_casual(latest_user_text)
+    workflow_name, workflow_ticker = _detect_workflow(latest_user_text)
+    tool_defs = ANTHROPIC_TOOL_DEFINITIONS
     logger.info(
-        "agent_tool_policy mode=%s casual=%s tools=%d",
-        mode,
+        "agent_tool_policy casual=%s workflow=%s ticker=%s tools=%d",
         casual,
+        workflow_name,
+        workflow_ticker,
         len(tool_defs),
     )
 
@@ -318,6 +356,55 @@ def agent_chat(req: AgentChatRequest):
         from anthropic import Anthropic
 
         client = Anthropic(api_key=api_key)
+
+        # --- Workflow path: deterministic tool execution → single synthesis ---
+        if workflow_name:
+            try:
+                wf_def = AVAILABLE_WORKFLOWS.get(workflow_name, {})
+                if wf_def.get("requires_ticker") and not workflow_ticker:
+                    yield _sse(
+                        "delta",
+                        {
+                            "text": f"I need a ticker to run the **{wf_def.get('label', workflow_name)}** workflow. Which position would you like me to review?"
+                        },
+                    )
+                    yield _sse("done", {"usage": {}})
+                    return
+
+                # Emit tool calls as they execute
+                synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker)
+                for section in sections:
+                    yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
+                    yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
+
+                # Single synthesis call — no tools, just Claude reasoning over the data
+                with client.messages.stream(
+                    model=CLAUDE_MODEL,
+                    max_tokens=CLAUDE_MAX_TOKENS,
+                    system=instructions,
+                    messages=[{"role": "user", "content": synthesis_prompt}],
+                ) as stream:
+                    for event in stream:
+                        if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                            yield _sse("delta", {"text": event.delta.text})
+                    final_message = stream.get_final_message()
+
+                usage = {}
+                if hasattr(final_message, "usage") and final_message.usage:
+                    usage = {
+                        "input_tokens": final_message.usage.input_tokens,
+                        "output_tokens": final_message.usage.output_tokens,
+                    }
+                yield _sse("done", {"usage": usage})
+                return
+
+            except Exception as exc:
+                logger.exception("Workflow %s failed", workflow_name)
+                yield _sse("error", {"message": f"Workflow failed: {exc}"})
+                yield _sse("done", {"usage": {}})
+                return
+
+        # --- Normal tool-calling path ---
         conversation: list[dict[str, object]] = [{"role": m.role, "content": m.content} for m in req.messages]
         continuation_round = 0
         # Force tool use on the first round for non-casual queries so

@@ -351,6 +351,45 @@ class OntologyRepository:
             "created_at": row["created_at"],
         }
 
+    def list_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 500))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                  run_id,
+                  as_of,
+                  source_status_json,
+                  required_modules_json,
+                  created_at
+                FROM ontology_runs
+                ORDER BY created_at DESC, run_id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            source_status = _load_json(row["source_status_json"])
+            required_modules = _load_json_list(row["required_modules_json"])
+            required_ok = True
+            for module in required_modules:
+                state = source_status.get(module) if isinstance(source_status, dict) else {}
+                status = state.get("status") if isinstance(state, dict) else "error"
+                if str(status or "error") != "ok":
+                    required_ok = False
+                    break
+            out.append(
+                {
+                    "run_id": row["run_id"],
+                    "as_of": row["as_of"],
+                    "created_at": row["created_at"],
+                    "required_modules_ok": required_ok,
+                }
+            )
+        return out
+
     def fetch_snapshot_graph(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
         with self._connect() as conn:
             node_rows = conn.execute(

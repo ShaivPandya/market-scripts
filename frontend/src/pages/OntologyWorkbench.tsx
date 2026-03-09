@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Info } from "lucide-react"
 import { useMutation } from "@tanstack/react-query"
-import { runOntologyQueryAsync } from "@/lib/api"
+import { useApiQuery } from "@/hooks/useApiQuery"
+import { fetchOntologyRuns, runOntologyQueryAsync, type OntologyRunSummary } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -66,6 +67,13 @@ function formatTimestampLabel(rawValue: string | undefined): string {
   })
 }
 
+function formatRunOptionLabel(run: OntologyRunSummary): string {
+  const asOf = formatTimestampLabel(run.as_of)
+  const created = formatTimestampLabel(run.created_at)
+  const health = run.required_modules_ok ? "healthy" : "degraded"
+  return `${asOf} | created ${created} | ${health}`
+}
+
 function parseCsv(text: string): string[] | undefined {
   const vals = text
     .split(",")
@@ -120,6 +128,13 @@ export function OntologyWorkbench() {
   const [cachedResult, setCachedResult] = useState<OntologyResponse | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const runsListId = "ontology-run-id-suggestions"
+
+  const {
+    data: runsData,
+    isLoading: runsLoading,
+    error: runsError,
+  } = useApiQuery(["ontology-runs"], () => fetchOntologyRuns(150), 60 * 1000)
 
   const mutation = useMutation({
     mutationFn: (body: Parameters<typeof runOntologyQueryAsync>[0]) => {
@@ -177,6 +192,10 @@ export function OntologyWorkbench() {
 
   const data = (mutation.data as OntologyResponse | undefined) ?? cachedResult
   const rows = useMemo(() => (Array.isArray(data?.results) ? data.results : []), [data?.results])
+  const runOptions = useMemo(() => {
+    const items = runsData?.runs
+    return Array.isArray(items) ? items : []
+  }, [runsData?.runs])
   const statusRows = useMemo(
     () =>
       Object.entries(data?.source_status ?? {}).map(([module, state]) => ({
@@ -242,12 +261,29 @@ export function OntologyWorkbench() {
             { value: "Monthly", label: "Monthly" },
           ]}
         />
-        <TextInput
-          label="Snapshot Run ID (optional)"
-          value={runId}
-          onChange={setRunId}
-          placeholder="2026-03-08T14:30:12.123456+00:00"
-        />
+        <div>
+          <label className="mb-1.5 block text-sm text-muted">Snapshot Run ID (optional)</label>
+          <input
+            type="text"
+            value={runId}
+            onChange={e => setRunId(e.target.value)}
+            placeholder="Type to search runs..."
+            list={runsListId}
+            className="theme-input w-full"
+          />
+          <datalist id={runsListId}>
+            {runOptions.map(run => (
+              <option key={run.run_id} value={run.run_id}>
+                {formatRunOptionLabel(run)}
+              </option>
+            ))}
+          </datalist>
+          <p className="mt-1 text-[11px] text-subtle">
+            {runsLoading && "Loading recent snapshots..."}
+            {!runsLoading && !runsError && `Type to search ${runOptions.length} recent snapshot run IDs.`}
+            {!runsLoading && runsError && "Could not load run suggestions. Manual run ID entry still works."}
+          </p>
+        </div>
         <TextInput
           label="Tickers (CSV)"
           value={tickers}

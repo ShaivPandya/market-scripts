@@ -870,6 +870,19 @@ def write_daily_outputs(
         adjustments_df.to_csv(output_dir / "adjustments.csv", index=False)
     log.info("Wrote daily outputs to %s", output_dir)
 
+    # Index report for semantic search (best-effort)
+    try:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="daily_report",
+            content=report_md,
+            source_path=str(output_dir / "report.md"),
+            doc_id=f"daily-{today}",
+        )
+    except Exception:
+        log.debug("Failed to index daily report for retrieval", exc_info=True)
+
     # Archive
     archive_dir = output_dir / "history" / today
     archive_dir.mkdir(parents=True, exist_ok=True)

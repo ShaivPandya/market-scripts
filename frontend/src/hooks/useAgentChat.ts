@@ -19,10 +19,21 @@ export interface AgentMessage {
   isStreaming?: boolean
 }
 
+export interface SessionSummary {
+  session_id: string
+  started_at: string | null
+  ended_at: string | null
+  message_count: number
+  key_tickers: string[] | null
+  key_topics: string[] | null
+  summary: string | null
+}
+
 interface AgentChatState {
   messages: AgentMessage[]
   isStreaming: boolean
   error: string | null
+  sessionId: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -34,21 +45,102 @@ const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/
 
 function loadState(): AgentChatState {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as { messages?: AgentMessage[] }
+      const parsed = JSON.parse(raw) as { messages?: AgentMessage[]; sessionId?: string }
       if (Array.isArray(parsed.messages)) {
         return {
           messages: parsed.messages.map(m => ({ ...m, isStreaming: false })),
           isStreaming: false,
           error: null,
+          sessionId: parsed.sessionId ?? null,
         }
       }
     }
   } catch {
     /* ignore */
   }
-  return { messages: [], isStreaming: false, error: null }
+  return { messages: [], isStreaming: false, error: null, sessionId: null }
+}
+
+async function saveSessionToServer(messages: AgentMessage[], sessionId: string | null): Promise<string | null> {
+  if (messages.length === 0) return null
+  try {
+    const body: Record<string, unknown> = {
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp,
+      })),
+    }
+    if (sessionId) body.session_id = sessionId
+    const resp = await fetch(`${BASE_URL}/memory/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(body),
+    })
+    if (!resp.ok) return null
+    const data = await resp.json()
+    return data.session_id ?? null
+  } catch {
+    return null
+  }
+}
+
+async function summarizeSession(sessionId: string): Promise<void> {
+  try {
+    await fetch(`${BASE_URL}/memory/sessions/${sessionId}/summarize`, {
+      method: "POST",
+      credentials: "include",
+    })
+  } catch {
+    /* best-effort */
+  }
+}
+
+export async function fetchSessionHistory(limit = 20): Promise<SessionSummary[]> {
+  try {
+    const resp = await fetch(`${BASE_URL}/memory/sessions?limit=${limit}`, {
+      credentials: "include",
+    })
+    if (!resp.ok) return []
+    return await resp.json()
+  } catch {
+    return []
+  }
+}
+
+export async function fetchSession(sessionId: string): Promise<{ transcript: AgentMessage[] } | null> {
+  try {
+    const resp = await fetch(`${BASE_URL}/memory/sessions/${sessionId}`, {
+      credentials: "include",
+    })
+    if (!resp.ok) return null
+    const data = await resp.json()
+    const transcript: AgentMessage[] = (data.transcript ?? []).map((m: Record<string, unknown>, i: number) => ({
+      id: (m.id as string) ?? `restored-${i}`,
+      role: m.role as "user" | "assistant",
+      content: (m.content as string) ?? "",
+      timestamp: (m.timestamp as number) ?? Date.now(),
+      isStreaming: false,
+    }))
+    return { transcript }
+  } catch {
+    return null
+  }
+}
+
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${BASE_URL}/memory/sessions/${sessionId}`, {
+      method: "DELETE",
+      credentials: "include",
+    })
+    return resp.ok
+  } catch {
+    return false
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -59,11 +151,14 @@ export function useAgentChat() {
   const [state, setState] = useState<AgentChatState>(loadState)
   const abortRef = useRef<AbortController | null>(null)
 
-  // Persist messages to sessionStorage
+  // Persist messages to localStorage
   useEffect(() => {
     const toSave = state.messages.filter(m => !m.isStreaming || m.content.length > 0)
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ messages: toSave }))
-  }, [state.messages])
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ messages: toSave, sessionId: state.sessionId }),
+    )
+  }, [state.messages, state.sessionId])
 
   // ------ sendMessage ------
   const sendMessage = useCallback(async (content: string) => {
@@ -84,6 +179,7 @@ export function useAgentChat() {
     }
 
     setState(prev => ({
+      ...prev,
       messages: [...prev.messages, userMsg, assistantMsg],
       isStreaming: true,
       error: null,
@@ -225,6 +321,17 @@ export function useAgentChat() {
           ),
         }
       })
+
+      // After stream completes, persist to server
+      setState(prev => {
+        const allMsgs = prev.messages.filter(m => m.content.length > 0)
+        saveSessionToServer(allMsgs, prev.sessionId).then(newId => {
+          if (newId) {
+            setState(p => ({ ...p, sessionId: newId }))
+          }
+        })
+        return prev
+      })
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         setState(prev => ({
@@ -245,7 +352,7 @@ export function useAgentChat() {
         ),
       }))
     }
-  }, [state.messages])
+  }, [state.messages, state.sessionId])
 
   // ------ stopStreaming ------
   const stopStreaming = useCallback(() => {
@@ -255,15 +362,34 @@ export function useAgentChat() {
   // ------ clearChat ------
   const clearChat = useCallback(() => {
     abortRef.current?.abort()
-    setState({ messages: [], isStreaming: false, error: null })
+    // Summarize the ending session before clearing
+    if (state.sessionId) {
+      summarizeSession(state.sessionId)
+    }
+    setState({ messages: [], isStreaming: false, error: null, sessionId: null })
+  }, [state.sessionId])
+
+  // ------ loadSession ------
+  const loadSession = useCallback(async (sessionId: string) => {
+    const data = await fetchSession(sessionId)
+    if (data && data.transcript.length > 0) {
+      setState({
+        messages: data.transcript,
+        isStreaming: false,
+        error: null,
+        sessionId,
+      })
+    }
   }, [])
 
   return {
     messages: state.messages,
     isStreaming: state.isStreaming,
     error: state.error,
+    sessionId: state.sessionId,
     sendMessage,
     stopStreaming,
     clearChat,
+    loadSession,
   }
 }

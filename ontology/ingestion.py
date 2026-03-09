@@ -140,6 +140,9 @@ def ingest_into_repository(
         )
         position_ids.append(position_id)
 
+    # Thesis + Evaluation entities: Position -> has_thesis -> Thesis
+    _ingest_thesis_entities(add_node, add_edge, run_id, position_ids)
+
     # Compute global component scores from module outputs
     vix_data = _as_dict(required_data.get("vix_term_structure"))
     breadth_data = _as_dict(required_data.get("market_breadth"))
@@ -474,6 +477,183 @@ def _is_partial(name: str, data: Any) -> bool:
     if isinstance(errors, dict) and errors:
         return True
     return False
+
+
+def _ingest_thesis_entities(
+    add_node: Callable[[OntologyNode], None],
+    add_edge: Callable[[OntologyEdge], None],
+    run_id: str,
+    position_ids: list[str],
+) -> None:
+    """Create Thesis and Evaluation nodes linked to existing Position nodes."""
+    import logging
+
+    from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
+
+    log = logging.getLogger(__name__)
+
+    try:
+        all_meta = get_all_thesis_meta()
+        latest_evals = get_latest_evaluations()
+    except Exception:
+        log.warning("Could not load thesis data for ontology ingestion", exc_info=True)
+        return
+
+    meta_by_ticker = {str(m["ticker"]).upper(): m for m in all_meta}
+    eval_by_ticker = {str(e["ticker"]).upper(): e for e in latest_evals}
+    position_tickers = {pid.split(":")[-1].upper() for pid in position_ids}
+
+    for ticker in position_tickers:
+        meta = meta_by_ticker.get(ticker)
+        if meta is None:
+            continue
+
+        position_id = f"position:{ticker}"
+        thesis_id = f"thesis:{ticker}"
+
+        add_node(
+            OntologyNode(
+                id=thesis_id,
+                type="Thesis",
+                label=f"Thesis: {ticker}",
+                properties={
+                    "ticker": ticker,
+                    "status": meta.get("status"),
+                    "created_at": meta.get("created_at"),
+                    "updated_at": meta.get("updated_at"),
+                    "ontology_run_id": run_id,
+                },
+            )
+        )
+        add_edge(
+            OntologyEdge(
+                source_id=position_id,
+                target_id=thesis_id,
+                relation_type="has_thesis",
+                properties={"ontology_run_id": run_id},
+            )
+        )
+
+        evaluation = eval_by_ticker.get(ticker)
+        if evaluation:
+            eval_id = f"evaluation:{ticker}:{evaluation.get('evaluated_at', 'latest')}"
+            add_node(
+                OntologyNode(
+                    id=eval_id,
+                    type="Evaluation",
+                    label=f"Eval: {ticker}",
+                    properties={
+                        "ticker": ticker,
+                        "evaluated_at": evaluation.get("evaluated_at"),
+                        "thesis_status": evaluation.get("thesis_status"),
+                        "technical_read": evaluation.get("technical_read"),
+                        "fundamental_read": evaluation.get("fundamental_read"),
+                        "action": evaluation.get("action"),
+                        "confidence": evaluation.get("confidence"),
+                        "risk_flag": evaluation.get("risk_flag"),
+                        "ontology_run_id": run_id,
+                    },
+                )
+            )
+            add_edge(
+                OntologyEdge(
+                    source_id=thesis_id,
+                    target_id=eval_id,
+                    relation_type="evaluated_by",
+                    properties={"ontology_run_id": run_id},
+                )
+            )
+
+        # Parse catalyst nodes from thesis markdown
+        catalysts = _parse_catalysts_from_thesis(ticker)
+        for i, catalyst in enumerate(catalysts):
+            catalyst_id = f"catalyst:{ticker}:{i}"
+            add_node(
+                OntologyNode(
+                    id=catalyst_id,
+                    type="Catalyst",
+                    label=catalyst["name"],
+                    properties={
+                        "ticker": ticker,
+                        "name": catalyst["name"],
+                        "description": catalyst["description"],
+                        "ontology_run_id": run_id,
+                    },
+                )
+            )
+            add_edge(
+                OntologyEdge(
+                    source_id=thesis_id,
+                    target_id=catalyst_id,
+                    relation_type="has_catalyst",
+                    properties={"ontology_run_id": run_id},
+                )
+            )
+
+
+def _parse_catalysts_from_thesis(ticker: str) -> list[dict[str, str]]:
+    """Extract catalyst bullet points from a thesis markdown file."""
+    import re
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    theses_dir = repo_root / "investment_theses"
+
+    # Try exact match, then case-insensitive
+    thesis_path = theses_dir / f"{ticker}.md"
+    if not thesis_path.exists():
+        for p in theses_dir.glob("*.md"):
+            if p.stem.upper() == ticker.upper():
+                thesis_path = p
+                break
+    if not thesis_path.exists():
+        return []
+
+    try:
+        content = thesis_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    # Find ## Key Catalysts section
+    catalyst_match = re.search(
+        r"##\s+Key\s+Catalysts\s*\n(.*?)(?=\n##|\Z)",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not catalyst_match:
+        return []
+
+    section = catalyst_match.group(1)
+    catalysts: list[dict[str, str]] = []
+
+    # Parse bullet points: - **Name**: Description  or  - Name: Description
+    for line in section.split("\n"):
+        line = line.strip()
+        if not line.startswith("- "):
+            continue
+        line = line[2:].strip()
+        if not line or line.startswith("<!--"):
+            continue
+
+        # Try **bold**: description format
+        bold_match = re.match(r"\*\*(.+?)\*\*[:\s]*(.*)$", line)
+        if bold_match:
+            catalysts.append(
+                {
+                    "name": bold_match.group(1).strip(),
+                    "description": bold_match.group(2).strip(),
+                }
+            )
+        else:
+            # Plain text bullet
+            catalysts.append(
+                {
+                    "name": line[:80],
+                    "description": line,
+                }
+            )
+
+    return catalysts
 
 
 def _extract_latest_price(series: Any) -> float | None:
