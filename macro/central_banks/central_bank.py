@@ -28,7 +28,7 @@ from llm_utils import MODEL_HAIKU, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 # ---------- Config ----------
 FEEDS = {
