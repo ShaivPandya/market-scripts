@@ -25,6 +25,8 @@ interface Company {
   sentiment: string
   quarter: number
   year: number
+  call_date: string
+  transcript_date: string
   summary_headline: string
   demand_trends: string
   pricing_commentary: string
@@ -46,6 +48,19 @@ interface Sector {
   type: string
   sector_summary: SectorSummary
   companies: Company[]
+}
+
+function formatCallDate(isoDate: string) {
+  const raw = String(isoDate ?? "").trim()
+  if (!raw) return "Date unavailable"
+  const d = new Date(`${raw}T12:00:00Z`)
+  if (Number.isNaN(d.getTime())) return "Date unavailable"
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  })
 }
 
 export function IndustryMonitor() {
@@ -144,6 +159,7 @@ function SectorCard({ name, data }: { name: string; data: Sector }) {
 function CompanyRow({ company }: { company: Company }) {
   const [expanded, setExpanded] = useState(false)
   const sentClass = SENTIMENT_CLASSES[company.sentiment] ?? "bg-gray-100 text-gray-600"
+  const callDateLabel = formatCallDate(company.call_date || company.transcript_date)
 
   return (
     <div className="py-3 border-t border-gray-100 first:border-t-0">
@@ -159,7 +175,7 @@ function CompanyRow({ company }: { company: Company }) {
           )}
         </div>
         <div className="text-xs text-gray-400">
-          Q{company.quarter} {company.year}
+          {callDateLabel}
           {company.price_reaction_2d != null && (
             <span className={`ml-2 ${colorSentiment(company.price_reaction_2d > 0 ? "bullish" : "bearish")}`}>
               {company.price_reaction_2d >= 0 ? "+" : ""}{company.price_reaction_2d.toFixed(1)}%

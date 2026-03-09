@@ -523,7 +523,7 @@ Rules:
 Company: {meta["company_name"]} ({meta["ticker"]})
 Sector: {meta["sector"]} ({meta["sector_type"]})
 Sub-sector: {meta["sub_sector"]}
-Quarter: Q{meta["quarter"]} {meta["year"]}
+Call Date: {meta.get("transcript_date") or "Unknown"}
 
 Transcript:
 {text_in}
@@ -619,6 +619,7 @@ def _company_from_row(
             "sub_sector": sub_sector,
             "quarter": None,
             "year": None,
+            "call_date": "",
             "transcript_date": "",
             "summary_headline": "No transcript cached yet.",
             "sentiment": "neutral",
@@ -641,6 +642,7 @@ def _company_from_row(
         "sub_sector": sub_sector,
         "quarter": row["quarter"],
         "year": row["year"],
+        "transcript_date": row["transcript_date"] or "",
     }
     raw_summary = {}
     if row["summary_json"]:
@@ -658,6 +660,7 @@ def _company_from_row(
         "sub_sector": sub_sector,
         "quarter": row["quarter"],
         "year": row["year"],
+        "call_date": row["transcript_date"] or "",
         "transcript_date": row["transcript_date"] or "",
         "summary_headline": summary["summary_headline"],
         "sentiment": summary["sentiment"],
@@ -741,6 +744,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
                 "sub_sector": sub_sector,
                 "quarter": quarter,
                 "year": year,
+                "transcript_date": transcript_date,
             }
             to_summarize.append((row_id, transcript_text, meta))
 
