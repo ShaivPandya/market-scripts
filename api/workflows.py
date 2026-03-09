@@ -339,7 +339,7 @@ After your analysis, output a structured JSON block fenced with ```artifacts
 
 def run_weekly_portfolio_review() -> tuple[str, list[dict[str, Any]]]:
     """Execute weekly portfolio review workflow."""
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_portfolio", {}),
         ("get_signal_aggregator", {}),
         ("query_ontology", {}),

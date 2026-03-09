@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import pandas as pd
-import requests
+import requests  # type: ignore[import-untyped]
 
 from load_env import load_env
 
