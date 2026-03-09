@@ -346,3 +346,7 @@ export function renderMarkdownLite(markdown: string) {
 
     return blocks.length ? blocks : <p>{markdown}</p>
 }
+
+export function MarkdownRenderer({ content }: { content: string }) {
+    return <div>{renderMarkdownLite(content)}</div>
+}
