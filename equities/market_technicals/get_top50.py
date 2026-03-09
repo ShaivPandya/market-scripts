@@ -100,7 +100,7 @@ def total_return_from_prices(close: pd.DataFrame) -> pd.Series:
         s2 = s.dropna()
         if len(s2) < 2:
             return np.nan
-        return (s2.iloc[-1] / s2.iloc[0]) - 1.0
+        return float((s2.iloc[-1] / s2.iloc[0]) - 1.0)
 
     return close.apply(one_ticker_return, axis=0)
 

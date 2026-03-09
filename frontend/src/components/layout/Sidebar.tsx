@@ -129,15 +129,21 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         ))}
       </div>
 
-      <div className="space-y-3 border-t border-app px-3 py-3">
-        <div className="flex justify-center">
+      <div className="border-t border-app px-3 py-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleLogout}
+            className="flex-1 rounded-lg px-2 py-1.5 text-left text-sm text-muted transition-colors hover:bg-[hsl(var(--muted-2))] hover:text-app"
+          >
+            Sign out
+          </button>
           <button
             type="button"
             role="switch"
             aria-checked={resolvedTheme === "dark"}
             aria-label="Toggle dark mode"
             onClick={toggleTheme}
-            className="inline-flex items-center gap-2 rounded-full border border-app bg-muted-surface px-2 py-1 transition-colors hover:bg-[hsl(var(--muted-2))]"
+            className="inline-flex shrink-0 items-center gap-2 rounded-full border border-app bg-muted-surface px-2 py-1 transition-colors hover:bg-[hsl(var(--muted-2))]"
           >
             <Sun
               size={14}
@@ -166,12 +172,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             />
           </button>
         </div>
-        <button
-          onClick={handleLogout}
-          className="w-full rounded-lg px-2 py-1.5 text-left text-sm text-muted transition-colors hover:bg-[hsl(var(--muted-2))] hover:text-app"
-        >
-          Sign out
-        </button>
       </div>
     </nav>
   )

@@ -170,6 +170,20 @@ async def generate_thesis(
 
     upsert_thesis_meta(normalized_ticker, status="active")
 
+    # Index thesis for semantic search (best-effort, non-blocking)
+    try:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="thesis",
+            content=content,
+            ticker=normalized_ticker,
+            source_path=str(thesis_path),
+            doc_id=f"thesis-{normalized_ticker}",
+        )
+    except Exception:
+        pass  # Don't block thesis save if indexing fails
+
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
 
 

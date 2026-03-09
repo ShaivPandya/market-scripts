@@ -12,6 +12,8 @@ ALLOWED_INTENTS = {
     "portfolio_risk_exposure",
     "positions_in_deteriorating_macro",
     "entity_context",
+    "thesis_review",
+    "temporal_comparison",
 }
 
 _TICKER_RE = re.compile(r"\b[A-Z][A-Z0-9.\-=]{1,9}\b")
@@ -114,7 +116,23 @@ def _deterministic_parse(query: str, known_sectors: set[str] | None = None) -> d
     text = query.strip()
     lower = text.lower()
 
-    if any(term in lower for term in ("deteriorating", "macro conditions", "macro deterioration")):
+    if any(
+        term in lower
+        for term in (
+            "what changed",
+            "how has.*changed",
+            "diff",
+            "compare snapshot",
+            "since last week",
+            "risk profile changed",
+        )
+    ):
+        intent = "temporal_comparison"
+    elif any(
+        term in lower for term in ("thesis", "investment reasoning", "why do i own", "kill condition", "catalyst")
+    ):
+        intent = "thesis_review"
+    elif any(term in lower for term in ("deteriorating", "macro conditions", "macro deterioration")):
         intent = "positions_in_deteriorating_macro"
     elif any(term in lower for term in ("risk exposure", "vix", "breadth", "fear signal")):
         intent = "portfolio_risk_exposure"
@@ -187,7 +205,7 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
 
     prompt = (
         "Extract a portfolio-ontology query intent and optional filters as strict JSON. "
-        "Allowed intents: portfolio_risk_exposure, positions_in_deteriorating_macro, entity_context. "
+        "Allowed intents: portfolio_risk_exposure, positions_in_deteriorating_macro, entity_context, thesis_review, temporal_comparison. "
         "Return JSON object with keys: intent, filters, entity. "
         "filters may include tickers (array), sectors (array), assets (array), max_results (int), min_risk_score (float). "
         "No markdown.\n\n"

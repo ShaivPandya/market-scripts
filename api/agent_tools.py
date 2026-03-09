@@ -17,6 +17,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 from api.cache import get_cached, long_cache, set_cached, short_cache
@@ -151,7 +152,8 @@ TOOL_DEFINITIONS: list[dict] = [
         "description": (
             "Fetch the user's portfolio dashboard. Returns current positions with their "
             "P&L, metadata (asset class, direction), and price data. "
-            "Use this when the user asks about their portfolio, holdings, or performance."
+            "Use this when the user asks about their portfolio, holdings, performance, "
+            "or any specific position. Pair with get_thesis for investment reasoning context."
         ),
         "parameters": {
             "type": "object",
@@ -245,7 +247,9 @@ TOOL_DEFINITIONS: list[dict] = [
         "description": (
             "Run a cross-module ontology query that joins portfolio positions with macro/market "
             "signals (VIX, breadth, sector stress, liquidity, and other read-only data modules). "
-            "Use this when users ask portfolio risk exposure questions that require linked context."
+            "Returns per-position risk scores with evidence. Use this when users ask about "
+            "portfolio risk exposure, positions in deteriorating conditions, or entity-level "
+            "context. Pair with get_thesis for the investment reasoning behind positions."
         ),
         "parameters": {
             "type": "object",
@@ -280,6 +284,113 @@ TOOL_DEFINITIONS: list[dict] = [
                 "refresh_snapshot": {
                     "type": "boolean",
                     "description": "If true, bypass latest snapshot reuse and force a fresh ontology snapshot build.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_thesis",
+        "description": (
+            "Fetch the investment thesis for a specific ticker. Returns the thesis markdown "
+            "content (thesis statement, key catalysts, risk factors) and metadata (status, "
+            "creation date, last update). Use this when the user asks about a position's "
+            "investment reasoning, thesis, catalysts, kill conditions, or why they own "
+            "something. Also useful for thesis pressure-tests and reviews."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Ticker symbol (e.g. 'CRWD', 'AAPL'). Case-insensitive.",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_thesis_evaluations",
+        "description": (
+            "Fetch the monitoring evaluation history for a specific ticker's thesis. Returns "
+            "weekly evaluations (thesis status, technical read, fundamental read, recommended "
+            "action, confidence, key developments, earnings notes, risk flags) and status "
+            "change history. Use this to understand how a thesis has evolved over time, "
+            "whether conviction has increased or decreased, and what developments have "
+            "occurred since the thesis was written."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Ticker symbol (e.g. 'CRWD', 'AAPL'). Case-insensitive.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of evaluations to return (most recent first). Default: 10.",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "search_knowledge_base",
+        "description": (
+            "Search across all indexed research documents — investment theses, weekly reports, "
+            "daily reports, and past conversation summaries — using semantic similarity. "
+            "Use this when the user asks what they wrote about a topic, references past research, "
+            "wants to find previous analysis on a ticker or theme, or asks 'what did I say about X'. "
+            "Returns ranked snippets with source attribution."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query (e.g. 'cloud security thesis for CRWD', 'liquidity tightening analysis').",
+                },
+                "doc_types": {
+                    "type": "string",
+                    "description": (
+                        "Comma-separated document types to search. Options: thesis, weekly_report, "
+                        "daily_report, conversation_summary. Leave empty to search all."
+                    ),
+                },
+                "tickers": {
+                    "type": "string",
+                    "description": "Comma-separated ticker filter (e.g. 'CRWD,AAPL'). Leave empty for all.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Number of results to return. Default: 5.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_ontology_diff",
+        "description": (
+            "Compare two ontology snapshots to show what changed in the portfolio's risk profile. "
+            "Returns new/removed positions, risk score deltas, signal transitions (stable→deteriorating), "
+            "and component score changes. Use this when the user asks 'what changed', 'how has my risk "
+            "changed', 'what's different since last week', or any temporal comparison of portfolio risk."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "run_id_before": {
+                    "type": "string",
+                    "description": "The older snapshot run_id to compare from. Leave empty to auto-select the most recent prior snapshot.",
+                },
+                "run_id_after": {
+                    "type": "string",
+                    "description": "The newer snapshot run_id to compare to. Leave empty to use the latest/current snapshot.",
                 },
             },
             "required": [],
@@ -654,6 +765,77 @@ def _cached_singleflight(cache, key: str, loader: Callable[[], Any]) -> tuple[An
 def _fetch_with_cache(cache, key: str, loader: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
     value, cache_status = _cached_singleflight(cache, key, loader)
     return value, {"cache": cache_status}
+
+
+# ---------------------------------------------------------------------------
+# Thesis helpers
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_THESES_DIR = _PROJECT_ROOT / "investment_theses"
+_MAX_THESIS_CONTENT_CHARS = 8_000
+
+
+def _find_thesis_file(ticker: str) -> Path | None:
+    """Case-insensitive glob for a thesis markdown file."""
+    ticker_upper = ticker.strip().upper()
+    if not ticker_upper:
+        return None
+    for path in _THESES_DIR.glob("*.md"):
+        if path.stem.upper() == ticker_upper:
+            return path
+    return None
+
+
+def _fetch_thesis(ticker: str) -> dict[str, Any]:
+    from portfolio.thesis_db import get_thesis_meta
+
+    meta = get_thesis_meta(ticker)
+    thesis_path = _find_thesis_file(ticker)
+    content: str | None = None
+    truncated = False
+
+    if thesis_path and thesis_path.is_file():
+        raw = thesis_path.read_text(encoding="utf-8").strip()
+        if len(raw) > _MAX_THESIS_CONTENT_CHARS:
+            content = raw[:_MAX_THESIS_CONTENT_CHARS]
+            truncated = True
+        else:
+            content = raw
+
+    if meta is None and content is None:
+        return {"error": f"No thesis found for ticker '{ticker}'", "ticker": ticker}
+
+    return {
+        "ticker": ticker,
+        "meta": meta,
+        "content": content,
+        "content_truncated": truncated,
+        "source_file": str(thesis_path) if thesis_path else None,
+    }
+
+
+def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
+    from portfolio.thesis_db import get_evaluations, get_status_history, get_thesis_meta
+
+    meta = get_thesis_meta(ticker)
+    evaluations = get_evaluations(ticker, limit=limit)
+    status_history = get_status_history(ticker)
+
+    if meta is None and not evaluations:
+        return {
+            "error": f"No thesis or evaluations found for ticker '{ticker}'",
+            "ticker": ticker,
+        }
+
+    return {
+        "ticker": ticker,
+        "current_status": meta.get("status") if meta else None,
+        "meta": meta,
+        "evaluations": evaluations,
+        "evaluation_count": len(evaluations),
+        "status_history": status_history,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1087,5 +1269,81 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         data, meta = _fetch_with_cache(short_cache, key, _load)
         meta["high_cost"] = True
         return data, meta
+
+    if name == "get_thesis":
+        ticker_raw = str(args.get("ticker") or "").strip().upper()
+        if not ticker_raw:
+            return {"error": "Missing required parameter: ticker"}, {"cache": "n/a"}
+        key = f"thesis:{ticker_raw}"
+
+        def _load():
+            return _fetch_thesis(ticker_raw)
+
+        data, meta = _fetch_with_cache(long_cache, key, _load)
+        return data, meta
+
+    if name == "get_thesis_evaluations":
+        ticker_raw = str(args.get("ticker") or "").strip().upper()
+        if not ticker_raw:
+            return {"error": "Missing required parameter: ticker"}, {"cache": "n/a"}
+        limit = int(args.get("limit", 10))
+        limit = max(1, min(limit, 50))
+        key = f"thesis_evaluations:{ticker_raw}:{limit}"
+
+        def _load():
+            return _fetch_thesis_evaluations(ticker_raw, limit)
+
+        data, meta = _fetch_with_cache(long_cache, key, _load)
+        return data, meta
+
+    if name == "search_knowledge_base":
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return {"error": "Missing required parameter: query"}, {"cache": "n/a"}
+        doc_types_raw = str(args.get("doc_types") or "").strip()
+        tickers_raw = str(args.get("tickers") or "").strip()
+        top_k = int(args.get("top_k", 5))
+        top_k = max(1, min(top_k, 20))
+
+        doc_types = [t.strip() for t in doc_types_raw.split(",") if t.strip()] or None
+        tickers = [t.strip().upper() for t in tickers_raw.split(",") if t.strip()] or None
+
+        try:
+            from api.retrieval import search
+
+            results = search(query=query, doc_types=doc_types, tickers=tickers, top_k=top_k)
+            return {"results": results, "query": query, "count": len(results)}, {"cache": "n/a"}
+        except ImportError:
+            return {
+                "error": "Knowledge base search unavailable (sentence-transformers not installed)",
+            }, {"cache": "n/a"}
+        except Exception as exc:
+            return {"error": f"Search failed: {exc}"}, {"cache": "n/a"}
+
+    if name == "get_ontology_diff":
+        run_id_before = str(args.get("run_id_before") or "").strip() or None
+        run_id_after = str(args.get("run_id_after") or "").strip() or None
+
+        try:
+            from ontology.service import OntologyQueryService
+
+            svc = OntologyQueryService()
+
+            if run_id_before and run_id_after:
+                diff = svc.compare_snapshots(run_id_before, run_id_after)
+            else:
+                # Auto-select: get latest two runs
+                runs = svc.list_runs(limit=5)
+                if len(runs) < 2:
+                    return {"error": f"Need at least 2 ontology snapshots to compare. Only found {len(runs)}."}, {
+                        "cache": "n/a"
+                    }
+                rid_after = run_id_after or str(runs[0].get("run_id", ""))
+                rid_before = run_id_before or str(runs[1].get("run_id", ""))
+                diff = svc.compare_snapshots(rid_before, rid_after)
+
+            return serialize_value(diff), {"cache": "n/a"}
+        except Exception as exc:
+            return {"error": f"Ontology diff failed: {exc}"}, {"cache": "n/a"}
 
     raise ValueError(f"Unknown tool: {name}")

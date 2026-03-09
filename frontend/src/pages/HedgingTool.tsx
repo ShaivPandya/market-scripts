@@ -4,9 +4,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SliderInput, TextInput } from "@/components/shared/FormControls"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
+import { renderMarkdownLite } from "@/components/shared/MarkdownRenderer"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { colorPositiveNegative } from "@/lib/colors"
-import { fetchHedgingToolPrefill, runHedgingToolAsync } from "@/lib/api"
+import { fetchHedgingPortfolioWeights, fetchHedgingRecommendations, fetchHedgingToolPrefill, runHedgingToolAsync } from "@/lib/api"
 
 interface HedgingResult {
   input_count?: number
@@ -172,6 +173,10 @@ export function HedgingTool() {
   const [rows, setRows] = useState<PositionRow[]>(cachedState?.rows && cachedState.rows.length > 0 ? cachedState.rows : [makeRow()])
   const [validationError, setValidationError] = useState<string | null>(null)
   const [cachedResult, setCachedResult] = useState<HedgingResult | null>(cachedState?.result ?? null)
+  const [portfolioLoading, setPortfolioLoading] = useState(false)
+  const [recommendations, setRecommendations] = useState<string | null>(null)
+  const [recommendLoading, setRecommendLoading] = useState(false)
+  const [recommendError, setRecommendError] = useState<string | null>(null)
 
   useEffect(() => {
     if (cachedState?.rows && cachedState.rows.length > 0) return
@@ -251,6 +256,72 @@ export function HedgingTool() {
     mutation.mutate({ book: effectiveBook, positions })
   }
 
+  async function handleLoadFromPortfolio() {
+    setPortfolioLoading(true)
+    setValidationError(null)
+    setRecommendations(null)
+    setRecommendError(null)
+    try {
+      const result = await fetchHedgingPortfolioWeights(bookSize)
+      const newRows = result.positions
+        .filter(p => p.ticker)
+        .map(p => makeRow(p.ticker, String((p.weight * 100).toFixed(4))))
+      if (newRows.length === 0) {
+        setValidationError("No equity positions found in portfolio database.")
+        return
+      }
+      setRows(newRows)
+      if (result.book > 0) {
+        const clamped = clampBookSize(result.book)
+        setBookSize(clamped)
+        setBookSizeInput(String(clamped))
+      }
+      // Auto-run with loaded positions
+      const positions = newRows.map(r => ({
+        ticker: r.ticker.trim().toUpperCase(),
+        weight: parseFloat(r.weight) / 100,
+      })).filter(p => p.ticker && Number.isFinite(p.weight))
+      if (positions.length > 0) {
+        const effectiveBook = result.book > 0 ? clampBookSize(result.book) : bookSize
+        mutation.mutate({ book: effectiveBook, positions })
+      }
+    } catch (err) {
+      setValidationError(err instanceof Error ? err.message : "Failed to load portfolio.")
+    } finally {
+      setPortfolioLoading(false)
+    }
+  }
+
+  async function handleGetRecommendations() {
+    if (!data) return
+    setRecommendLoading(true)
+    setRecommendError(null)
+    setRecommendations(null)
+    try {
+      const body = {
+        net_beta_spy: data.net_beta_spy,
+        net_beta_iwm: data.net_beta_iwm,
+        post_hedge_beta_spy: data.post_hedge_beta_spy,
+        post_hedge_beta_iwm: data.post_hedge_beta_iwm,
+        gross_input: data.gross_input,
+        net_input: data.net_input,
+        gross_after_hedging: data.gross_after_hedging,
+        volatility_after_hedging: data.volatility_after_hedging,
+        hedge_spy_weight: data.hedge_spy_weight,
+        hedge_iwm_weight: data.hedge_iwm_weight,
+        positions_df: toRows(data.positions_df),
+        hedges_df: toRows(data.hedges_df),
+        book_size: bookSize,
+      }
+      const result = await fetchHedgingRecommendations(body)
+      setRecommendations(result.analysis)
+    } catch (err) {
+      setRecommendError(err instanceof Error ? err.message : "Failed to generate recommendations.")
+    } finally {
+      setRecommendLoading(false)
+    }
+  }
+
   const data = (mutation.data as HedgingResult | undefined) ?? cachedResult
   const positionsRows = toRows(data?.positions_df)
   const hedgesRows = toRows(data?.hedges_df)
@@ -265,6 +336,10 @@ export function HedgingTool() {
     grossInput: firstNumber(data?.gross_input),
     netInput: firstNumber(data?.net_input),
   }), [data])
+  const renderedRecommendations = useMemo(() => {
+    if (!recommendations) return null
+    return renderMarkdownLite(recommendations)
+  }, [recommendations])
 
   return (
     <div>
@@ -346,9 +421,19 @@ export function HedgingTool() {
           </div>
         </div>
 
-        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Computing hedge...">
-          Compute Hedge
-        </ActionButton>
+        <div className="flex gap-3">
+          <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Computing hedge...">
+            Compute Hedge
+          </ActionButton>
+          <button
+            type="button"
+            onClick={handleLoadFromPortfolio}
+            disabled={portfolioLoading || mutation.isPending}
+            className="px-5 py-2.5 rounded-lg border border-indigo-200 bg-indigo-50 text-sm font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {portfolioLoading ? "Loading Portfolio..." : "Load & Run from Portfolio"}
+          </button>
+        </div>
       </div>
 
       {validationError && <ErrorMessage message={validationError} />}
@@ -379,6 +464,30 @@ export function HedgingTool() {
           {positionsRows.length === 0 && hedgesRows.length === 0 && (
             <p className="text-gray-400 text-sm">No positions or hedge rows returned.</p>
           )}
+
+          <div className="rounded-xl border border-gray-200/80 bg-white p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-gray-900">AI Recommendations</h2>
+              <button
+                type="button"
+                onClick={handleGetRecommendations}
+                disabled={recommendLoading}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {recommendLoading ? "Analyzing..." : recommendations ? "Refresh" : "Get Recommendations"}
+              </button>
+            </div>
+            {recommendLoading && <LoadingSpinner message="Generating recommendations..." />}
+            {recommendError && <ErrorMessage message={recommendError} />}
+            {recommendations && !recommendLoading && (
+              <div className="max-w-none break-words">
+                {renderedRecommendations ?? <p>{recommendations}</p>}
+              </div>
+            )}
+            {!recommendations && !recommendLoading && !recommendError && (
+              <p className="text-gray-400 text-sm">Click "Get Recommendations" for AI-powered adjustment suggestions.</p>
+            )}
+          </div>
         </div>
       )}
 

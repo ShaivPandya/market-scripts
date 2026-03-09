@@ -228,6 +228,18 @@ type OntologyQueryBody = {
   refresh_snapshot?: boolean
 }
 
+export interface OntologyRunSummary {
+  run_id: string
+  as_of: string
+  created_at: string
+  required_modules_ok: boolean
+}
+
+export const fetchOntologyRuns = (limit = 100) =>
+  client
+    .get("/ontology/runs", { params: { limit } })
+    .then(r => r.data as { runs: OntologyRunSummary[] })
+
 export const queryOntology = (body: OntologyQueryBody) =>
   client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data)
 
@@ -368,6 +380,19 @@ export const fetchFxModelPairs = () =>
 
 export const fetchHedgingToolPrefill = () =>
   client.get("/hedging-tool/prefill").then(r => r.data)
+
+export const fetchHedgingPortfolioWeights = (book?: number) =>
+  client
+    .get("/hedging-tool/portfolio-weights", { params: book ? { book } : undefined })
+    .then(r => r.data as {
+      positions: { ticker: string; weight: number }[]
+      metadata: { ticker: string; direction: string; conviction: number; shares: number | null; cost_basis: number | null; weight: number }[]
+      book: number
+      source: string
+    })
+
+export const fetchHedgingRecommendations = (body: Record<string, unknown>) =>
+  client.post("/hedging-tool/recommend", body, { timeout: 180_000 }).then(r => r.data as { analysis: string })
 
 export const fetchSizerPrefill = () =>
   client.get("/portfolio-sizer/prefill").then(r => r.data)

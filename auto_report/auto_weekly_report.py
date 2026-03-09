@@ -1142,6 +1142,19 @@ def write_outputs(report_md: str, summary: dict, bundle: dict, output_dir: Path,
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     log.info("Wrote report.md and summary.json to %s", output_dir)
 
+    # Index report for semantic search (best-effort)
+    try:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="weekly_report",
+            content=report_md,
+            source_path=str(output_dir / "report.md"),
+            doc_id=f"weekly-{today}",
+        )
+    except Exception:
+        log.debug("Failed to index weekly report for retrieval", exc_info=True)
+
     # Archive
     archive_dir = output_dir / "history" / today
     archive_dir.mkdir(parents=True, exist_ok=True)

@@ -12,6 +12,14 @@ import { SelectInput, TextInput } from "@/components/shared/FormControls"
 const DEFAULT_INSTRUMENTS = "SP500,NASDAQ,RUSSELL,US10Y,EUR"
 const LOOKBACK_OPTIONS = [52, 104, 156, 260]
 
+const FACTOR_DIRECTION: Record<string, "Contrarian" | "Same-Dir"> = {
+  vix: "Contrarian",
+  breadth: "Contrarian",
+  sector: "Contrarian",
+  momentum: "Contrarian",
+  liquidity: "Same-Dir",
+}
+
 interface RegimeSummary {
   label: string
   score: number
@@ -43,10 +51,17 @@ interface HistoryEpisode {
   avg_score: number
 }
 
+interface ForwardOutlook {
+  label: string
+  detail: string
+  basis: string
+}
+
 interface SignalAggregatorResponse {
   status: string
   as_of: string
   regime: RegimeSummary
+  forward_outlook?: ForwardOutlook
   factors: FactorRow[]
   failed_modules: string[]
   module_status: Record<string, { status?: string; detail?: string }>
@@ -106,6 +121,15 @@ export function SignalAggregator() {
   const factorColumns: ColumnDef[] = [
     { key: "factor", header: "Factor" },
     {
+      key: "direction",
+      header: "Direction",
+      colorFn: v => {
+        if (v === "Contrarian") return "#7c3aed; font-weight: bold"
+        if (v === "Same-Dir") return "#0284c7; font-weight: bold"
+        return ""
+      },
+    },
+    {
       key: "status",
       header: "Status",
       colorFn: v => {
@@ -151,6 +175,7 @@ export function SignalAggregator() {
 
   const factorRows = factors.map(f => ({
     factor: String(f.key).toUpperCase(),
+    direction: FACTOR_DIRECTION[f.key] ?? "—",
     status: f.status,
     score: f.score,
     weight: f.weight,
@@ -158,8 +183,17 @@ export function SignalAggregator() {
     highlights: summarizeHighlights(f.highlights),
   }))
 
+  const MODULE_LABELS: Record<string, string> = {
+    vix_term_structure: "VIX Term Structure",
+    market_breadth: "Market Breadth",
+    top50_breadth: "Top 50 Breadth",
+    sector_metrics: "Sector Metrics",
+    momentum: "Momentum",
+    liquidity: "Liquidity",
+  }
+
   const moduleRows = Object.entries(data?.module_status ?? {}).map(([module, state]) => ({
-    module,
+    module: MODULE_LABELS[module] ?? module.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
     status: state?.status || "error",
     detail: state?.detail || "—",
   }))
@@ -203,9 +237,11 @@ export function SignalAggregator() {
           <p className="text-sm text-gray-400 mt-0.5">Unified cross-module regime synthesis</p>
           {showInfo && (
             <p className="text-xs text-gray-500 mt-2 max-w-xl leading-relaxed">
-              Combines signals from macro liquidity, positioning, momentum, and other modules into a single composite
-              regime score. The score classifies the current market environment as risk-on, neutral, or risk-off.
-              Use this to monitor the overall regime and see which factors are driving it.
+              Combines signals from VIX term structure, market breadth, sector rotation, momentum, and macro
+              liquidity into a single composite regime score. Most factors are <strong>contrarian</strong> — elevated
+              stress historically precedes higher forward returns (mean reversion). Liquidity is the
+              exception: it is <strong>same-direction</strong>, where tight conditions genuinely predict lower returns.
+              The Forward Outlook translates the composite into a predictive label based on 10-year backtested spreads.
             </p>
           )}
         </div>
@@ -273,6 +309,27 @@ export function SignalAggregator() {
             />
           </div>
 
+          {data.forward_outlook && (
+            <div
+              className={`mb-5 rounded-xl border px-4 py-3 text-sm ${
+                data.forward_outlook.label === "opportunity"
+                  ? "border-green-200 bg-green-50 text-green-800"
+                  : data.forward_outlook.label === "complacent"
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-blue-200 bg-blue-50 text-blue-800"
+              }`}
+            >
+              <span className="font-semibold">
+                Forward Outlook: {data.forward_outlook.label.toUpperCase()}
+              </span>
+              {" — "}
+              {data.forward_outlook.detail}
+              <span className="ml-2 text-xs opacity-70">
+                ({data.forward_outlook.basis})
+              </span>
+            </div>
+          )}
+
           {topFactors.length > 0 && (
             <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-3">
               {topFactors.map(f => (
@@ -280,7 +337,7 @@ export function SignalAggregator() {
                   key={f.key}
                   title={`Top Contribution: ${String(f.key).toUpperCase()}`}
                   value={`${(f.contribution || 0).toFixed(2)}`}
-                  subtitle={`Score ${typeof f.score === "number" ? f.score.toFixed(2) : "N/A"} · W ${(f.weight * 100).toFixed(1)}%`}
+                  subtitle={`Score ${typeof f.score === "number" ? f.score.toFixed(2) : "N/A"} · W ${(f.weight * 100).toFixed(1)}% · ${FACTOR_DIRECTION[f.key] ?? "—"}`}
                 />
               ))}
             </div>

@@ -58,6 +58,18 @@ def _execute_query(req: OntologyQueryRequest) -> dict[str, Any]:
     )
 
 
+@router.get("/ontology/runs")
+def list_ontology_runs(limit: int = 100):
+    safe_limit = max(1, min(int(limit), 500))
+    try:
+        runs = _service.list_runs(limit=safe_limit)
+        return {"runs": runs}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise DataFetchError(source="ontology", detail=str(exc)) from exc
+
+
 @router.post("/ontology/query")
 def query_ontology(req: OntologyQueryRequest):
     try:
