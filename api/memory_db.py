@@ -93,7 +93,7 @@ def save_session(
     sid = session_id or str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
 
-    timestamps = [m.get("timestamp") for m in messages if m.get("timestamp")]
+    timestamps: list[float] = [m["timestamp"] for m in messages if m.get("timestamp") is not None]
     started_at = datetime.fromtimestamp(min(timestamps) / 1000, tz=UTC).isoformat() if timestamps else now
 
     transcript_json = json.dumps(messages, default=str)

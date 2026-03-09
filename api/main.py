@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 import time
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -235,7 +236,7 @@ app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agen
 # ---------------------------------------------------------------------------
 # Cache warming on startup
 # ---------------------------------------------------------------------------
-_WARM_TOOLS = [
+_WARM_TOOLS: list[tuple[str, dict[str, Any]]] = [
     ("get_portfolio", {}),
     ("get_market_breadth", {}),
     ("get_vix_term_structure", {}),

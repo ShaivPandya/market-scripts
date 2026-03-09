@@ -100,7 +100,7 @@ def run_morning_brief() -> tuple[str, list[dict[str, Any]]]:
 
     Returns (synthesis_prompt, tool_data_sections).
     """
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_signal_aggregator", {}),
         ("get_portfolio", {}),
         ("get_breakout", {}),
