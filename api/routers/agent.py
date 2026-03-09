@@ -116,6 +116,8 @@ def _sse(event: str, data: dict) -> str:
 
 
 MAX_TOOL_CONTINUATION_ROUNDS = 8
+MAX_API_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds
 CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_MAX_TOKENS = 8_192
 ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
@@ -155,6 +157,12 @@ def _format_stream_error(exc: Exception) -> str:
         return (
             "Agent authentication failed. Set a valid Anthropic API key in ANTHROPIC_API_KEY and restart the backend."
         )
+
+    if status_code == 529 or "overloaded" in lowered:
+        return "The AI model is temporarily overloaded. Please try again in a few seconds."
+
+    if status_code == 429 or "rate_limit" in lowered:
+        return "Rate limit reached. Please wait a moment before sending another message."
 
     return raw
 
@@ -297,6 +305,15 @@ def _tool_meta(result_str: str) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
+def _is_retryable_error(exc: Exception) -> bool:
+    """Check if an API error is transient and worth retrying."""
+    status_code = getattr(exc, "status_code", None)
+    if status_code in (429, 529):
+        return True
+    lowered = str(exc).lower()
+    return "overloaded" in lowered or "rate_limit" in lowered
+
+
 def _serialize_content_blocks(blocks: list[object]) -> list[dict]:
     serialized: list[dict] = []
     for block in blocks:
@@ -378,16 +395,26 @@ def agent_chat(req: AgentChatRequest):
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
 
                 # Single synthesis call — no tools, just Claude reasoning over the data
-                with client.messages.stream(
-                    model=CLAUDE_MODEL,
-                    max_tokens=CLAUDE_MAX_TOKENS,
-                    system=instructions,
-                    messages=[{"role": "user", "content": synthesis_prompt}],
-                ) as stream:
-                    for event in stream:
-                        if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                            yield _sse("delta", {"text": event.delta.text})
-                    final_message = stream.get_final_message()
+                for attempt in range(MAX_API_RETRIES):
+                    try:
+                        with client.messages.stream(
+                            model=CLAUDE_MODEL,
+                            max_tokens=CLAUDE_MAX_TOKENS,
+                            system=instructions,
+                            messages=[{"role": "user", "content": synthesis_prompt}],
+                        ) as stream:
+                            for event in stream:
+                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                                    yield _sse("delta", {"text": event.delta.text})
+                            final_message = stream.get_final_message()
+                        break
+                    except Exception as retry_exc:
+                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                            delay = RETRY_BASE_DELAY * (2 ** attempt)
+                            logger.warning("Retryable API error (attempt %d/%d), retrying in %.1fs: %s", attempt + 1, MAX_API_RETRIES, delay, retry_exc)
+                            time.sleep(delay)
+                            continue
+                        raise
 
                 usage = {}
                 if hasattr(final_message, "usage") and final_message.usage:
@@ -432,19 +459,29 @@ def agent_chat(req: AgentChatRequest):
                 if force_tool_use:
                     stream_kwargs["tool_choice"] = {"type": "any"}
 
-                with client.messages.stream(**stream_kwargs) as stream:
-                    for event in stream:
-                        if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                            yield _sse("delta", {"text": event.delta.text})
-                        elif event.type == "content_block_start" and event.content_block.type == "tool_use":
-                            yield _sse(
-                                "tool_call",
-                                {
-                                    "name": event.content_block.name,
-                                    "id": event.content_block.id,
-                                },
-                            )
-                    final_message = stream.get_final_message()
+                for attempt in range(MAX_API_RETRIES):
+                    try:
+                        with client.messages.stream(**stream_kwargs) as stream:
+                            for event in stream:
+                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                                    yield _sse("delta", {"text": event.delta.text})
+                                elif event.type == "content_block_start" and event.content_block.type == "tool_use":
+                                    yield _sse(
+                                        "tool_call",
+                                        {
+                                            "name": event.content_block.name,
+                                            "id": event.content_block.id,
+                                        },
+                                    )
+                            final_message = stream.get_final_message()
+                        break
+                    except Exception as retry_exc:
+                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                            delay = RETRY_BASE_DELAY * (2 ** attempt)
+                            logger.warning("Retryable API error (attempt %d/%d), retrying in %.1fs: %s", attempt + 1, MAX_API_RETRIES, delay, retry_exc)
+                            time.sleep(delay)
+                            continue
+                        raise
 
                 assistant_content = _serialize_content_blocks(list(final_message.content))
                 deferred_calls = _extract_tool_calls(assistant_content)
