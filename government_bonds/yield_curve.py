@@ -3,18 +3,20 @@ Yield curve data snapshot for the web dashboard.
 
 Provides current and historical (N days lookback) curve points for:
 - United States (FRED)
-- United Kingdom (local CSV fallback)
-- Germany (local CSV fallback)
-- Japan (local CSV fallback)
+- United Kingdom (Bank of England yield curve)
+- Germany (no live source configured)
+- Japan (MOF)
 """
 
 from __future__ import annotations
 
+import io
 import os
-from pathlib import Path
+import zipfile
 from typing import TypedDict
 
 import pandas as pd
+import requests
 
 from load_env import load_env
 
@@ -67,22 +69,32 @@ FRED_SERIES = {
     }
 }
 
-CSV_SERIES = {
-    "UK": {
-        "2Y": "Download Data - BOND_BX_XTUP_TMBMKGB-02Y.csv",
-        "10Y": "Download Data - BOND_BX_XTUP_TMBMKGB-10Y.csv",
-    },
-    "DE": {
-        "2Y": "Download Data - BOND_BX_XTUP_TMBMKDE-02Y.csv",
-        "10Y": "Download Data - BOND_BX_XTUP_TMBMKDE-10Y.csv",
-    },
-    "JP": {
-        "2Y": "Download Data - BOND_BX_XTUP_TMBMKJP-02Y.csv",
-        "10Y": "Download Data - BOND_BX_XTUP_TMBMKJP-10Y.csv",
-    },
+# ---------------------------------------------------------------------------
+# Japan - Ministry of Finance
+# ---------------------------------------------------------------------------
+MOF_JGB_URL = "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"
+
+_MOF_COLUMN_MAP: dict[str, str] = {
+    "1Y": "1Y",
+    "2Y": "2Y",
+    "5Y": "5Y",
+    "10Y": "10Y",
+    "30Y": "30Y",
 }
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
+# ---------------------------------------------------------------------------
+# United Kingdom - Bank of England GLC nominal yield curve (monthly ZIP)
+# ---------------------------------------------------------------------------
+BOE_GLC_URL = "https://www.bankofengland.co.uk/-/media/boe/files/statistics/yield-curves/glcnominalmonthedata.zip"
+
+_BOE_MATURITY_MAP: dict[float, str] = {
+    0.5: "6M",
+    1.0: "1Y",
+    2.0: "2Y",
+    5.0: "5Y",
+    10.0: "10Y",
+    30.0: "30Y",
+}
 
 
 def _dedupe(seq: list[str]) -> list[str]:
@@ -93,23 +105,6 @@ def _dedupe(seq: list[str]) -> list[str]:
             seen.add(item)
             out.append(item)
     return out
-
-
-def _to_float_percent(value) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        cleaned = value.strip().replace("%", "").replace(",", "")
-        if cleaned == "":
-            return None
-        try:
-            return float(cleaned)
-        except ValueError:
-            return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _normalize_series(series: pd.Series) -> pd.Series:
@@ -145,28 +140,114 @@ def _fetch_fred_series(fred: Fred, series_id: str) -> pd.Series | None:
     return normalized if not normalized.empty else None
 
 
-def _load_csv_series(filename: str) -> pd.Series | None:
-    path = DATA_DIR / filename
-    if not path.exists():
-        return None
+# ---------------------------------------------------------------------------
+# Bulk fetchers - one HTTP call returns multiple tenors
+# ---------------------------------------------------------------------------
 
+
+def _fetch_mof_japan() -> dict[str, pd.Series]:
+    """Download JGB yields from Japan Ministry of Finance."""
     try:
-        df = pd.read_csv(path)
+        resp = requests.get(MOF_JGB_URL, timeout=30)
+        resp.raise_for_status()
     except Exception:
-        return None
+        return {}
+    text = None
+    for enc in ("utf-8", "shift_jis", "latin-1"):
+        try:
+            text = resp.content.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return {}
+    try:
+        df = pd.read_csv(io.StringIO(text), header=1)
+    except Exception:
+        return {}
+    if df.empty:
+        return {}
+    date_col = df.columns[0]
+    dates = pd.to_datetime(df[date_col], format="%Y/%m/%d", errors="coerce")
+    result: dict[str, pd.Series] = {}
+    for col in df.columns:
+        tenor = _MOF_COLUMN_MAP.get(str(col).strip())
+        if tenor is None:
+            continue
+        s = pd.Series(pd.to_numeric(df[col], errors="coerce").values, index=dates)
+        ns = _normalize_series(s)
+        if not ns.empty:
+            result[tenor] = ns
+    return result
 
-    if "Date" not in df.columns:
-        return None
 
-    value_col = "Close" if "Close" in df.columns else "Yield" if "Yield" in df.columns else None
-    if value_col is None:
-        return None
+def _fetch_boe_gilts() -> dict[str, pd.Series]:
+    """Download UK gilt spot yields from BoE nominal yield curve ZIP."""
+    try:
+        resp = requests.get(
+            BOE_GLC_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return {}
+    try:
+        z = zipfile.ZipFile(io.BytesIO(resp.content))
+    except Exception:
+        return {}
+    result: dict[str, pd.Series] = {}
+    for name in sorted(z.namelist()):
+        if not name.endswith(".xlsx"):
+            continue
+        try:
+            with z.open(name) as f:
+                _parse_boe_spot_curve(f, result)
+        except Exception:
+            continue
+    return result
 
-    dates = pd.to_datetime(df["Date"], errors="coerce")
-    values = df[value_col].map(_to_float_percent)
-    series = pd.Series(values.values, index=dates)
-    normalized = _normalize_series(series)
-    return normalized if not normalized.empty else None
+
+def _parse_boe_spot_curve(f, result: dict[str, pd.Series]) -> None:
+    """Parse a single BoE GLC nominal Excel file, appending to *result*."""
+    df = pd.read_excel(f, sheet_name="4. spot curve", header=None)
+
+    # Find the row starting with "years:"
+    mat_row_idx: int | None = None
+    for i in range(min(10, len(df))):
+        if str(df.iloc[i, 0]).strip().lower() == "years:":
+            mat_row_idx = i
+            break
+    if mat_row_idx is None:
+        return
+
+    # Build column -> tenor mapping from the maturity row
+    maturities = df.iloc[mat_row_idx, 1:]
+    col_to_tenor: dict[int, str] = {}
+    for offset, val in enumerate(maturities):
+        try:
+            years = float(val)
+        except (ValueError, TypeError):
+            continue
+        tenor = _BOE_MATURITY_MAP.get(years)
+        if tenor is not None:
+            col_to_tenor[offset + 1] = tenor  # +1 for date column
+
+    # Extract data rows
+    data = df.iloc[mat_row_idx + 1 :]
+    dates = pd.to_datetime(data.iloc[:, 0], errors="coerce")
+    for col_idx, tenor in col_to_tenor.items():
+        values = pd.to_numeric(data.iloc[:, col_idx], errors="coerce")
+        s = pd.Series(values.values, index=dates.values)
+        ns = _normalize_series(s)
+        if ns.empty:
+            continue
+        if tenor in result:
+            result[tenor] = pd.concat([result[tenor], ns])
+            result[tenor] = result[tenor][~result[tenor].index.duplicated(keep="last")]
+            result[tenor] = result[tenor].sort_index()
+        else:
+            result[tenor] = ns
 
 
 def _value_on_or_before(series: pd.Series, target: pd.Timestamp) -> tuple[float | None, str | None]:
@@ -192,7 +273,24 @@ def _build_country_curve(
     series_map: dict[str, tuple[pd.Series, str]] = {}
 
     fred_map = FRED_SERIES.get(country_code, {})
-    csv_map = CSV_SERIES.get(country_code, {})
+
+    # Fetch bulk data for non-FRED sources
+    bulk_data: dict[str, pd.Series] = {}
+    bulk_label = ""
+    bulk_configured: set[str] = set()
+
+    if country_code == "JP":
+        bulk_data = _fetch_mof_japan()
+        bulk_label = "mof"
+        bulk_configured = set(_MOF_COLUMN_MAP.values())
+        if not bulk_data:
+            warnings.append("MOF Japan: could not fetch JGB yields.")
+    elif country_code == "UK":
+        bulk_data = _fetch_boe_gilts()
+        bulk_label = "boe"
+        bulk_configured = set(_BOE_MATURITY_MAP.values())
+        if not bulk_data:
+            warnings.append("BoE: could not fetch gilt yields.")
 
     for tenor_meta in TENOR_ORDER:
         tenor = str(tenor_meta["tenor"])
@@ -200,6 +298,7 @@ def _build_country_curve(
         series: pd.Series | None = None
         source: str | None = None
 
+        # FRED (US)
         fred_series_id = fred_map.get(tenor)
         if fred_series_id is not None:
             if fred_client is None:
@@ -213,21 +312,20 @@ def _build_country_curve(
                 else:
                     warnings.append(f"{tenor}: FRED series {fred_series_id} returned no usable data.")
 
-        if series is None:
-            csv_file = csv_map.get(tenor)
-            if csv_file is not None:
-                fallback = _load_csv_series(csv_file)
-                if fallback is not None:
-                    series = fallback
-                    source = f"csv:{csv_file}"
-                else:
-                    warnings.append(f"{tenor}: CSV fallback {csv_file} unavailable or invalid.")
+        # Bulk source (MOF / BoE)
+        if series is None and bulk_configured:
+            bulk_series = bulk_data.get(tenor)
+            if bulk_series is not None:
+                series = bulk_series
+                source = f"{bulk_label}:{tenor}"
+            elif tenor in bulk_configured:
+                warnings.append(f"{tenor}: {bulk_label.upper()} returned no usable data.")
 
         if series is not None and source is not None:
             series_map[tenor] = (series, source)
             continue
 
-        if tenor not in fred_map and tenor not in csv_map:
+        if tenor not in fred_map and tenor not in bulk_configured:
             missing_unconfigured.append(tenor)
 
     if missing_unconfigured:

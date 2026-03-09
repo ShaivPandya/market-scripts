@@ -61,10 +61,23 @@ def get_workspace():
     # Regime summary
     regime_summary = None
     if isinstance(regime_data, dict):
+        regime_val = regime_data.get("regime")
+        composite_score = regime_data.get("composite_score")
+        signal = regime_data.get("signal")
+
+        # The signal aggregator may return regime as a nested object
+        # e.g. {"label": "risk-on", "score": 32.55, ...} instead of a string.
+        if isinstance(regime_val, dict):
+            if composite_score is None:
+                composite_score = regime_val.get("score")
+            if signal is None:
+                signal = regime_val.get("label")
+            regime_val = regime_val.get("label", str(regime_val))
+
         regime_summary = {
-            "regime": regime_data.get("regime"),
-            "composite_score": regime_data.get("composite_score"),
-            "signal": regime_data.get("signal"),
+            "regime": regime_val,
+            "composite_score": composite_score,
+            "signal": signal,
         }
 
     # Portfolio summary

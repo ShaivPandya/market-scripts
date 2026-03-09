@@ -101,7 +101,7 @@ function formatTime(iso: string): string {
 
 export function Workspace() {
   const qc = useQueryClient()
-  const { data, isLoading, error } = useApiQuery<WorkspaceData>(
+  const { data, isPending, error } = useApiQuery<WorkspaceData>(
     ["workspace"],
     fetchWorkspace,
     60_000,
@@ -127,7 +127,7 @@ export function Workspace() {
     }
   }
 
-  if (isLoading) return <LoadingSpinner message="Loading workspace..." />
+  if (isPending) return <LoadingSpinner message="Loading workspace..." />
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
