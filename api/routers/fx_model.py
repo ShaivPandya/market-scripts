@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from api.cache import stamp_fresh
 from api.exceptions import DataFetchError
 from api.serializers import serialize_value
 
@@ -167,7 +168,7 @@ def run_fx_model(req: FXModelRequest):
         bootstrap=req.bootstrap,
         skip_bis=req.skip_bis,
     )
-    return serialize_value(compact)
+    return stamp_fresh(serialize_value(compact))
 
 
 @router.get("/fx-model/pairs")

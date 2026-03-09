@@ -21,6 +21,7 @@ class PortfolioPosition(BaseModel):
     distressed: bool = False
     conviction: int = Field(default=3, ge=1, le=5)
     cost_basis: float | None = None
+    shares: float | None = None
 
 
 class PortfolioUpdateRequest(BaseModel):
@@ -67,6 +68,7 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
                 "distressed": pos.distressed,
                 "conviction": pos.conviction,
                 "cost_basis": pos.cost_basis,
+                "shares": pos.shares,
             }
             for pos in req.positions
         ]

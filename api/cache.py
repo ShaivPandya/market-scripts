@@ -14,6 +14,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from cachetools import TTLCache
@@ -111,21 +112,57 @@ def _disk_set(cache: TTLCache, key: str, value) -> None:
         return
 
 
+def _stamp_age(v, cache: TTLCache) -> None:
+    """Compute data_age_seconds and stale flag from _meta.fetched_at."""
+    if not isinstance(v, dict):
+        return
+    meta = v.get("_meta")
+    if not meta or "fetched_at" not in meta:
+        return
+    try:
+        age = (datetime.now() - datetime.fromisoformat(meta["fetched_at"])).total_seconds()
+        meta["data_age_seconds"] = round(age)
+        ttl = meta.get("cache_ttl") or getattr(cache, "ttl", 600)
+        meta["stale"] = age > 2 * ttl
+    except Exception:
+        pass
+
+
 def get_cached(cache: TTLCache, key: str):
     with _lock:
         v = cache.get(key)
         if v is not None:
+            _stamp_age(v, cache)
             return v
         # Disk cache is a read-through fallback only — do NOT reload into
         # the in-memory TTLCache.  Re-populating the in-memory cache after
         # TTL eviction defeats eviction and causes unbounded memory growth.
-        return _disk_get(cache, key)
+        v = _disk_get(cache, key)
+        if v is not None:
+            _stamp_age(v, cache)
+        return v
 
 
 def set_cached(cache: TTLCache, key: str, value) -> None:
+    if isinstance(value, dict):
+        value["_meta"] = {
+            "fetched_at": datetime.now().isoformat(),
+            "cache_ttl": getattr(cache, "ttl", None),
+        }
     with _lock:
         cache[key] = value
         _disk_set(cache, key, value)
+
+
+def stamp_fresh(result: dict) -> dict:
+    """Add _meta to uncached endpoint responses (always fresh)."""
+    result["_meta"] = {
+        "fetched_at": datetime.now().isoformat(),
+        "cache_ttl": None,
+        "data_age_seconds": 0,
+        "stale": False,
+    }
+    return result
 
 
 def delete_cached(cache: TTLCache, key: str) -> None:

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from api.cache import stamp_fresh
 from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
@@ -41,7 +42,7 @@ def run_chart(req: ChartRequest):
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
-    return result
+    return stamp_fresh(result)
 
 
 @router.post("/chart/ratio")
@@ -75,4 +76,4 @@ def run_chart_ratio(req: RatioChartRequest):
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
-    return result
+    return stamp_fresh(result)

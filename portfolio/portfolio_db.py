@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS positions (
     distressed  INTEGER NOT NULL DEFAULT 0,
     conviction  INTEGER NOT NULL DEFAULT 3
                         CHECK (conviction BETWEEN 1 AND 5),
-    cost_basis  REAL
+    cost_basis  REAL,
+    shares      REAL
 )
 """
 
@@ -58,6 +59,11 @@ def _get_conn() -> sqlite3.Connection:
 def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(_CREATE_TABLE)
     conn.commit()
+    # Migrate: add shares column if missing (added after initial schema)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(positions)").fetchall()}
+    if "shares" not in cols:
+        conn.execute("ALTER TABLE positions ADD COLUMN shares REAL")
+        conn.commit()
     count = conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
     if count == 0 and _CSV_PATH.exists():
         _migrate_from_csv(conn)
@@ -108,7 +114,7 @@ def get_positions() -> list[dict]:
     conn = _get_conn()
     with _lock:
         rows = conn.execute(
-            "SELECT ticker, asset, direction, distressed, conviction, cost_basis FROM positions ORDER BY rowid"
+            "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares FROM positions ORDER BY rowid"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -121,7 +127,7 @@ def get_positions_df() -> pd.DataFrame:
     """
     positions = get_positions()
     if not positions:
-        return pd.DataFrame(columns=["ticker", "asset", "direction", "distressed", "conviction", "cost_basis"])
+        return pd.DataFrame(columns=["ticker", "asset", "direction", "distressed", "conviction", "cost_basis", "shares"])
     df = pd.DataFrame(positions)
     df["distressed"] = df["distressed"].astype(bool)
     return df
@@ -146,11 +152,16 @@ def save_positions(positions: list[dict]) -> None:
             cost_basis = float(cost_basis_raw) if cost_basis_raw is not None else None
         except (ValueError, TypeError):
             cost_basis = None
-        rows.append((ticker, asset, direction, distressed, conviction, cost_basis))
+        shares_raw = p.get("shares")
+        try:
+            shares = float(shares_raw) if shares_raw is not None else None
+        except (ValueError, TypeError):
+            shares = None
+        rows.append((ticker, asset, direction, distressed, conviction, cost_basis, shares))
     with _lock:
         conn.execute("DELETE FROM positions")
         conn.executemany(
-            "INSERT INTO positions (ticker, asset, direction, distressed, conviction, cost_basis) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO positions (ticker, asset, direction, distressed, conviction, cost_basis, shares) VALUES (?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()

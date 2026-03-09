@@ -97,6 +97,7 @@ export interface PortfolioPosition {
   distressed: boolean
   conviction: number
   cost_basis: number | null
+  shares: number | null
 }
 
 export const fetchPortfolioPositions = () =>

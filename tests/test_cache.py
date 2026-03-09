@@ -12,7 +12,11 @@ def test_set_and_get_cached():
     key = f"test_key_{time.time()}"
     set_cached(short_cache, key, {"data": 42})
     result = get_cached(short_cache, key)
-    assert result == {"data": 42}
+    assert result["data"] == 42
+    assert "_meta" in result
+    assert "fetched_at" in result["_meta"]
+    assert result["_meta"]["cache_ttl"] == 300
+    assert result["_meta"]["stale"] is False
 
 
 def test_get_missing_key_returns_none():
@@ -61,4 +65,7 @@ def test_cache_stores_complex_data():
     }
     set_cached(short_cache, key, data)
     result = get_cached(short_cache, key)
-    assert result == data
+    assert result["nested"] == {"list": [1, 2, 3]}
+    assert result["string"] == "hello"
+    assert result["number"] == 42.5
+    assert "_meta" in result
