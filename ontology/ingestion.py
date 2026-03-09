@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any

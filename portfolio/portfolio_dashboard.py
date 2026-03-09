@@ -222,8 +222,7 @@ def print_terminal():
             dir_style = "green" if direction == "LONG" else "red"
 
             if series is None or series.empty:
-                table.add_row(ticker, f"[{dir_style}]{direction}[/{dir_style}]", asset,
-                              "N/A", "", "", "", "", "")
+                table.add_row(ticker, f"[{dir_style}]{direction}[/{dir_style}]", asset, "N/A", "", "", "", "", "")
                 continue
 
             latest = series.iloc[-1]
@@ -244,7 +243,10 @@ def print_terminal():
                 asset,
                 format_price(latest),
                 format_price(cb) if cb is not None else "—",
-                pnl_str, dd_str, wk_str, attr_str,
+                pnl_str,
+                dd_str,
+                wk_str,
+                attr_str,
             )
 
         # Summary row

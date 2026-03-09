@@ -1264,6 +1264,19 @@ def main():
             # Merge thesis into summary
             summary = _merge_thesis_into_summary(summary, thesis_summary)
 
+            # Persist evaluations to thesis DB
+            try:
+                from portfolio.thesis_db import save_evaluations, upsert_thesis_meta
+
+                evals = thesis_summary.get("thesis_evaluations", [])
+                if evals:
+                    save_evaluations(today_str, evals)
+                    log.info("Persisted %d thesis evaluations to thesis.db", len(evals))
+                for t in thesis_summary.get("positions_reviewed", []):
+                    upsert_thesis_meta(t)
+            except Exception:
+                log.warning("Failed to persist thesis evaluations", exc_info=True)
+
             log.info(
                 "Thesis pass completed in %.2fs (%d evaluations)",
                 time.perf_counter() - t_thesis,

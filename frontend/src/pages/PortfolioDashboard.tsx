@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchPortfolioAllTimeframes, fetchThesisStatus, type ThesisStatus } from "@/lib/api"
 import { ThesisUpload } from "@/components/ThesisUpload"
@@ -71,7 +72,7 @@ export function PortfolioDashboard() {
               <div key={ticker} className="rounded-xl border bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-gray-700">{ticker}</p>
+                    <Link to={`/theses?ticker=${ticker}`} className="text-sm font-semibold text-blue-600 hover:underline">{ticker}</Link>
                     <ThesisUpload ticker={ticker} status={thesisStatus?.[ticker] ?? "missing"} />
                   </div>
                   {ret != null && (

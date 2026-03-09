@@ -127,7 +127,9 @@ def get_positions_df() -> pd.DataFrame:
     """
     positions = get_positions()
     if not positions:
-        return pd.DataFrame(columns=["ticker", "asset", "direction", "distressed", "conviction", "cost_basis", "shares"])
+        return pd.DataFrame(
+            columns=["ticker", "asset", "direction", "distressed", "conviction", "cost_basis", "shares"]
+        )
     df = pd.DataFrame(positions)
     df["distressed"] = df["distressed"].astype(bool)
     return df

@@ -14,7 +14,9 @@ import pandas as pd
 
 
 def _position_pnl(
-    cost_basis: float | None, current_price: float, direction: str,
+    cost_basis: float | None,
+    current_price: float,
+    direction: str,
 ) -> tuple[float | None, float | None]:
     """Unrealized PnL % and $ (per-share, direction-adjusted)."""
     if cost_basis is None or cost_basis == 0:
@@ -28,7 +30,8 @@ def _position_pnl(
 
 
 def _drawdown_52w(
-    price_series: pd.Series, direction: str,
+    price_series: pd.Series,
+    direction: str,
 ) -> tuple[float | None, float | None]:
     """52-week peak and drawdown from it.
 
@@ -59,7 +62,9 @@ def _drawdown_52w(
 
 
 def _period_return(
-    price_series: pd.Series, calendar_days: int, direction: str,
+    price_series: pd.Series,
+    calendar_days: int,
+    direction: str,
 ) -> float | None:
     """Return over the last N calendar days (direction-adjusted)."""
     if price_series.empty or len(price_series) < 2:
