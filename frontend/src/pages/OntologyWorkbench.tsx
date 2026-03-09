@@ -38,6 +38,34 @@ interface OntologyResponse {
   }
 }
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+function formatTimestampLabel(rawValue: string | undefined): string {
+  const raw = String(rawValue ?? "").trim()
+  if (!raw) return "N/A"
+
+  const isoMatch = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:(Z)|([+-]\d{2}:\d{2}))?$/,
+  )
+  if (isoMatch) {
+    const [, year, month, day, hour, minute, second, zulu, offset] = isoMatch
+    const monthName = MONTH_NAMES[Math.max(0, Number(month) - 1)] ?? month
+    const tzLabel = zulu ? " UTC" : offset ? ` UTC${offset}` : ""
+    return `${monthName} ${Number(day)}, ${year} ${hour}:${minute}:${second}${tzLabel}`
+  }
+
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return raw
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
 function parseCsv(text: string): string[] | undefined {
   const vals = text
     .split(",")
@@ -281,8 +309,8 @@ export function OntologyWorkbench() {
       {data && (
         <>
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard title="Snapshot Run" value={data.run_id || "N/A"} />
-            <MetricCard title="As Of" value={data.as_of || "N/A"} />
+            <MetricCard title="Snapshot Run" value={formatTimestampLabel(data.run_id)} />
+            <MetricCard title="As Of" value={formatTimestampLabel(data.as_of)} />
             <MetricCard
               title="Confidence"
               value={typeof data.aggregate?.confidence === "number" ? `${(data.aggregate.confidence * 100).toFixed(1)}%` : "N/A"}
