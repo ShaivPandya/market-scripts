@@ -443,9 +443,7 @@ def size_portfolio(
 
         # Load existing hedge positions for delta computation
         existing_hedges = {h["ticker"]: h for h in _get_hedge_positions()}
-        hedges_df["current_shares"] = hedges_df["ticker"].map(
-            lambda t: existing_hedges.get(t, {}).get("shares") or 0
-        )
+        hedges_df["current_shares"] = hedges_df["ticker"].map(lambda t: existing_hedges.get(t, {}).get("shares") or 0)
         hedges_df["current_cost_basis"] = hedges_df["ticker"].map(
             lambda t: existing_hedges.get(t, {}).get("cost_basis")
         )
