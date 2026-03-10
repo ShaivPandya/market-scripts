@@ -188,12 +188,10 @@ VIX TERM STRUCTURE (3M / 1M):
 PRICE/VOLUME SIGNALS:
 {pv_text}
 
-Write 4-6 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. What the breadth readings (% above 200-DMA, 20-DMA, new highs vs new lows) say about overall market participation and health
-2. What the top 50 leadership breadth signals (distribution days, breaks of 20-day lows, % below 50-DMA) suggest about trend durability and whether market leaders are holding up
-3. What the VIX term structure ratio and signal imply about volatility expectations and investor sentiment
-4. What the price/volume signals (downside record volume, high-volume churn, new high/low volume) indicate about institutional distribution or accumulation
-5. An overall technical assessment and what to watch for
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. What breadth readings and leadership signals say about market participation, trend durability, and whether leaders are holding up
+2. What VIX term structure and price/volume signals imply about volatility expectations and institutional distribution or accumulation
+3. An overall technical assessment and what to watch for
 
 Be specific about the numbers. Write for a professional investor audience."""
 
@@ -202,7 +200,7 @@ Be specific about the numbers. Write for a professional investor audience."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")

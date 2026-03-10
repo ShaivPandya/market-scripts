@@ -109,12 +109,10 @@ Key context:
 BULLISH GROWTH SIGNALS: Small-caps outperforming S&P 500, banks outperforming benchmarks, copper and CRB rising, transports strong, Korea outperforming, staples/utilities underperforming, AUD/JPY and CAD/JPY rising.
 BEARISH/DEFENSIVE SIGNALS: Small-caps underperforming, banks underperforming, commodities falling, staples/utilities outperforming S&P 500, Korea underperforming, currency pairs falling (yen strength).
 
-Write 4-6 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. What commodity moves (Copper, GSCI index, CRB Industrial) signal about industrial demand and inflation pressures
-2. What equity breadth signals (small caps, retail, transport, banks, staples, utilities vs large-cap S&P 500) indicate about growth depth, credit conditions, defensive positioning, and risk appetite
-3. What European and EM signals (STOXX 600, Europe Banks, MSCI Korea) suggest about global growth synchronization
-4. What the currency pairs imply about risk sentiment and commodity demand
-5. An overall conclusion about where we are in the growth cycle and what to watch
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. What commodity moves and equity breadth signals indicate about industrial demand, growth depth, and risk appetite
+2. What European/EM signals and currency pairs imply about global growth synchronization and risk sentiment
+3. An overall conclusion about where we are in the growth cycle and what to watch
 
 Be specific about the numbers. Write for a professional investor audience."""
 
@@ -123,7 +121,7 @@ Be specific about the numbers. Write for a professional investor audience."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")

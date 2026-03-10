@@ -100,12 +100,10 @@ def analyze_sector_metrics(req: SectorMetricsAnalyzeRequest):
 
 {table}
 
-Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. Which sectors currently dominate index weight and whether concentration is rising or broadening
-2. Which sectors are gaining or losing weight over 1M/3M/6M and what that implies about rotating risk appetite
-3. Where relative performance is strongest/weakest across cyclical vs defensive groups
-4. What the % above 200DMA readings imply about trend persistence and internal health
-5. An overall regime takeaway and what to watch next
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. Which sectors dominate weight and whether concentration is rising or broadening, plus what weight shifts imply about rotating risk appetite
+2. Where relative performance is strongest/weakest across cyclical vs defensive groups and what trend indicators suggest
+3. An overall regime takeaway and what to watch next
 
 Be specific about the numbers. Write for a professional investor audience."""
 
@@ -114,7 +112,7 @@ Be specific about the numbers. Write for a professional investor audience."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")
