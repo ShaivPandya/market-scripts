@@ -20,21 +20,6 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    label: "Monitors",
-    pages: [
-      { label: "Signal Aggregator", path: "/signal-aggregator" },
-      { label: "Ontology Workbench", path: "/ontology" },
-      { label: "Market Technicals", path: "/market-technicals" },
-      { label: "Portfolio News", path: "/portfolio-news" },
-      { label: "Breakout", path: "/breakout" },
-      { label: "Sentiment", path: "/sentiment" },
-      { label: "Positioning", path: "/positioning" },
-      { label: "Central Bank Monitor", path: "/central-banks" },
-      { label: "Industry Monitor", path: "/industry-monitor" },
-      { label: "Sector Metrics", path: "/sector-metrics" },
-    ],
-  },
-  {
     label: "Labs",
     pages: [
       { label: "Portfolio Analyzer", path: "/analyzer" },
@@ -47,6 +32,21 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Financials", path: "/financials" },
       { label: "FX Model", path: "/fx-model" },
       { label: "Momentum", path: "/momentum" },
+    ],
+  },
+  {
+    label: "Monitors",
+    pages: [
+      { label: "Signal Aggregator", path: "/signal-aggregator" },
+      { label: "Ontology Workbench", path: "/ontology" },
+      { label: "Market Technicals", path: "/market-technicals" },
+      { label: "Portfolio News", path: "/portfolio-news" },
+      { label: "Breakout", path: "/breakout" },
+      { label: "Sentiment", path: "/sentiment" },
+      { label: "Positioning", path: "/positioning" },
+      { label: "Central Bank Monitor", path: "/central-banks" },
+      { label: "Industry Monitor", path: "/industry-monitor" },
+      { label: "Sector Metrics", path: "/sector-metrics" },
     ],
   },
   {

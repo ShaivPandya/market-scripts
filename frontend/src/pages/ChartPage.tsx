@@ -84,6 +84,11 @@ function toNumber(value: unknown): number | null {
   return null
 }
 
+function toDateSortKey(value: string): number | null {
+  const ts = Date.parse(value)
+  return Number.isFinite(ts) ? ts : null
+}
+
 function lookbackCutoff(lookback: string): Date {
   const now = new Date()
   switch (lookback) {
@@ -321,6 +326,14 @@ export function ChartPage() {
         ratio: toNumber(r["Ratio"]),
       }))
       .filter(r => r.date.length > 0)
+      .sort((a, b) => {
+        const aTs = toDateSortKey(a.date)
+        const bTs = toDateSortKey(b.date)
+        if (aTs != null && bTs != null) return aTs - bTs
+        if (aTs != null) return -1
+        if (bTs != null) return 1
+        return a.date.localeCompare(b.date)
+      })
   }, [ratioData])
 
   const ratioStats = (ratioData?.stats && typeof ratioData.stats === "object")
@@ -400,7 +413,7 @@ export function ChartPage() {
   ], [activeRatioSymbolA, activeRatioSymbolB])
 
   const ratioRecentRows = useMemo<Record<string, unknown>[]>(() => (
-    ratioRows.slice(-250).map(r => ({
+    [...ratioRows.slice(-250)].reverse().map(r => ({
       date: r.date,
       priceA: r.priceA,
       priceB: r.priceB,
@@ -579,7 +592,7 @@ export function ChartPage() {
           </div>
 
           <DataTable
-            label="Recent Ratio Data (last 250 rows)"
+            label="Recent Ratio Data (last 250 rows, newest first)"
             columns={ratioColumns}
             rows={ratioRecentRows}
             maxHeight="460px"
