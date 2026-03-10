@@ -100,14 +100,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         "fixed top-0 left-0 h-full w-64 z-30",
         "transition-transform duration-300",
         isOpen ? "translate-x-0" : "-translate-x-full",
-        "border-r border-app bg-card flex flex-col",
+        "theme-sidebar border-r border-strong flex flex-col",
       ].join(" ")}
     >
       <div className="px-3 py-4 flex-1 overflow-y-auto">
         {NAV_SECTIONS.map((section, si) => (
           <div key={si}>
             {section.label && (
-              <p className="mt-3 mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-subtle">
+              <p className="mt-3 mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
                 {section.label}
               </p>
             )}
@@ -119,10 +119,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 onClick={onClose}
                 className={({ isActive }) =>
                   cn(
-                    "block w-full text-left px-2 py-1.5 rounded-lg text-sm mb-0.5 transition-colors truncate",
-                    isActive
-                      ? "bg-blue-50 text-blue-600 font-medium dark:bg-blue-950 dark:text-blue-400"
-                      : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800",
+                    "theme-sidebar-link block w-full rounded-lg px-2.5 py-1.5 text-left text-sm mb-0.5 truncate",
+                    isActive && "theme-sidebar-link-active font-medium",
                   )
                 }
               >
