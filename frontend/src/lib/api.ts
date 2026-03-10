@@ -389,6 +389,9 @@ export const fetchIndustryMonitor = (refresh = false) =>
 export const fetchYieldCurve = (lookback_days = 90) =>
   client.get(`/yield-curve?lookback_days=${lookback_days}`).then(r => r.data)
 
+export const fetchBondDashboard = () =>
+  client.get("/bond-dashboard").then(r => r.data)
+
 export const fetchCommoditiesCurve = (commodity = "CL", lookback_days = 30) =>
   client
     .get(`/commodities-curve?commodity=${encodeURIComponent(commodity)}&lookback_days=${lookback_days}`)

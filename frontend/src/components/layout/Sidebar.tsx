@@ -57,6 +57,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Housing", path: "/housing" },
       { label: "Liquidity", path: "/liquidity" },
       { label: "Yield Curve", path: "/yield-curve" },
+      { label: "Bond Dashboard", path: "/bond-dashboard" },
       { label: "Country Dashboard", path: "/country-dashboard" },
     ],
   },
