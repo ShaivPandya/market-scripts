@@ -83,12 +83,10 @@ Indicator guide:
 - NAHB Housing Market Index (NAHBHMI): builder confidence survey (0-100). Above 50 = more builders view conditions as good. Below 50 = pessimistic.
 - Existing Home Sales (EXHOSLUSM495S): completed sales of existing homes (millions, SAAR). Reflects demand and affordability conditions.
 
-Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. Overall characterization of the housing market cycle (expanding/contracting/transitioning)
-2. What starts and permits signal about the residential construction pipeline and builder sentiment
-3. What the NAHB index reveals about builder confidence and forward-looking supply expectations
-4. What existing home sales indicate about demand, affordability, and inventory dynamics
-5. Key macro risks or pivots to watch (rates, affordability, inventory) and a clear bottom-line assessment for risk assets
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. Overall characterization of the housing cycle and what starts, permits, and builder confidence signal about the construction pipeline
+2. What existing home sales indicate about demand and affordability, plus key macro risks to watch
+3. A clear bottom-line assessment for risk assets
 
 Be specific about the numbers."""
 
@@ -97,7 +95,7 @@ Be specific about the numbers."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")

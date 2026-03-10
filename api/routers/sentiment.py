@@ -92,12 +92,10 @@ INVESTOR SURVEYS (AAII & NAAIM):
 VOLATILITY INDICES (VIX, VXN, VVIX):
 {vol_text}
 
-Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. What the put/call ratios indicate about options market positioning and hedging demand (ratio > 1.0 signals more puts than calls, bearish tilt)
-2. What the AAII bull/bear spread and recent trend say about retail investor sentiment (spread > +30 signals elevated bullishness; < -10 signals elevated fear)
-3. What the NAAIM exposure reading indicates about active manager positioning (above 100 = leveraged long; below 0 = net short)
-4. What the VIX, VXN, and VVIX levels imply about near-term fear, complacency, or tail-risk hedging
-5. An overall sentiment assessment synthesizing all three data sources — whether the market appears fearful, complacent, or neutral, and what contrarian signals if any are present
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. What put/call ratios and volatility indices indicate about hedging demand and near-term fear or complacency
+2. What AAII sentiment and NAAIM exposure say about retail and institutional positioning
+3. An overall sentiment assessment — whether the market appears fearful, complacent, or neutral, and any contrarian signals
 
 Be specific about the numbers. Write for a professional investor audience."""
 
@@ -106,7 +104,7 @@ Be specific about the numbers. Write for a professional investor audience."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")

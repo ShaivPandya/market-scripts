@@ -20,6 +20,7 @@ import cvxpy as cp
 import numpy as np
 import pandas as pd
 
+from portfolio.portfolio_db import get_hedge_positions as _get_hedge_positions
 from portfolio.portfolio_db import get_positions_df as _get_positions_df
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
     BASE_CCY,
@@ -439,6 +440,15 @@ def size_portfolio(
                 int(round(hedge_iwm_weight * book / iwm_price)),
             ]
         hedges_df = pd.DataFrame(hedges_data)
+
+        # Load existing hedge positions for delta computation
+        existing_hedges = {h["ticker"]: h for h in _get_hedge_positions()}
+        hedges_df["current_shares"] = hedges_df["ticker"].map(lambda t: existing_hedges.get(t, {}).get("shares") or 0)
+        hedges_df["current_cost_basis"] = hedges_df["ticker"].map(
+            lambda t: existing_hedges.get(t, {}).get("cost_basis")
+        )
+        if "shares" in hedges_df.columns:
+            hedges_df["delta_shares"] = hedges_df["shares"] - hedges_df["current_shares"]
 
         # Max scaled version
         k_max = max_scale_to_respect_linear_caps(w_final, meta, include_position_limits=False)

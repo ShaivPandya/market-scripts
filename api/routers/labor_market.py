@@ -85,12 +85,10 @@ Indicator guide:
 - Wage Growth YoY (AHETPI): year-over-year % change in average hourly earnings. High = inflationary pressure; low = cooling.
 - Job Openings JOLTS (JTSJOL): total unfilled job openings (thousands). High = strong labor demand; falling = tightening.
 
-Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. Overall characterization of current labor market conditions (tight/loose/transitioning)
-2. What the claims data (initial + continuing) signals about near-term layoff momentum
-3. What wage growth and hours worked suggest about inflationary pressure and employer cost management
-4. What job openings and median unemployment duration reveal about structural labor market dynamics
-5. Key macro risks or pivots to watch and a clear bottom-line assessment for risk assets
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. Overall characterization of labor market conditions and what claims data signals about near-term layoff momentum
+2. What wages, hours worked, and job openings reveal about inflationary pressure and structural dynamics
+3. Key macro risks to watch and a clear bottom-line assessment for risk assets
 
 Be specific about the numbers."""
 
@@ -99,7 +97,7 @@ Be specific about the numbers."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")

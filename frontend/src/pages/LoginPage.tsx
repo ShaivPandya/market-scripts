@@ -2,10 +2,14 @@ import { type FormEvent, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 
-import portfolioImg from "@/assets/portfolio.png"
-import centralBankImg from "@/assets/central-bank-monitor.png"
+import centralBankImg from "@/assets/central-bank-monitor.jpg"
+import countryDashboardImg from "@/assets/country-dashboard.jpg"
 import economicGrowthImg from "@/assets/economic-growth.jpg"
-import industryImg from "@/assets/industry.png"
+import industryImg from "@/assets/industry.jpg"
+import laborMarketImg from "@/assets/labor-market.jpg"
+import marketTechnicalsImg from "@/assets/market-technicals.jpg"
+import portfolioImg from "@/assets/portfolio.jpg"
+import sentimentImg from "@/assets/sentiment.jpg"
 
 const features = [
   {
@@ -15,10 +19,22 @@ const features = [
     image: portfolioImg,
   },
   {
+    title: "Market Technicals",
+    description:
+      "Analyze market breadth, price-volume signals, and technical indicators to identify emerging trends, divergences, and inflection points across major indices.",
+    image: marketTechnicalsImg,
+  },
+  {
     title: "Economic Growth Dashboard",
     description:
       "Monitor the macro cycle in real time — commodity trends, regional growth signals, leading indicators, and cross-asset momentum to gauge where the economy is heading.",
     image: economicGrowthImg,
+  },
+  {
+    title: "Central Bank Monitor",
+    description:
+      "Stay ahead of monetary policy — AI-generated summaries of central bank decisions, rate changes, and GDP forecasts from the Fed, ECB, and more.",
+    image: centralBankImg,
   },
   {
     title: "Industry Monitor",
@@ -27,10 +43,22 @@ const features = [
     image: industryImg,
   },
   {
-    title: "Central Bank Monitor",
+    title: "Country Dashboard",
     description:
-      "Stay ahead of monetary policy — AI-generated summaries of central bank decisions, rate changes, and GDP forecasts from the Fed, ECB, and more.",
-    image: centralBankImg,
+      "Compare economies side by side — GDP growth, inflation, rates, and trade balances across developed and emerging markets with historical context.",
+    image: countryDashboardImg,
+  },
+  {
+    title: "Labor Market",
+    description:
+      "Track employment trends, jobless claims, wage growth, and labor force participation to assess the health of the consumer and the broader economy.",
+    image: laborMarketImg,
+  },
+  {
+    title: "Sentiment",
+    description:
+      "Gauge investor positioning and mood through put/call ratios, volatility term structure, and survey data to spot crowded trades and contrarian opportunities.",
+    image: sentimentImg,
   },
 ]
 

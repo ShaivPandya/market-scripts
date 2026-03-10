@@ -98,13 +98,29 @@ export interface PortfolioPosition {
   conviction: number
   cost_basis: number | null
   shares: number | null
+  role?: "position" | "hedge"
 }
 
-export const fetchPortfolioPositions = () =>
-  client.get("/portfolio-positions").then(r => r.data as { positions: PortfolioPosition[] })
+export const fetchPortfolioPositions = (includeHedges = false) =>
+  client
+    .get("/portfolio-positions", { params: includeHedges ? { include_hedges: true } : undefined })
+    .then(r => r.data as { positions: PortfolioPosition[] })
 
 export const savePortfolioPositions = (positions: PortfolioPosition[]) =>
   client.put("/portfolio-positions", { positions }).then(r => r.data)
+
+export interface HedgePosition {
+  ticker: string
+  direction: "long" | "short"
+  cost_basis: number | null
+  shares: number | null
+}
+
+export const fetchHedgePositions = () =>
+  client.get("/hedge-positions").then(r => r.data as { positions: HedgePosition[] })
+
+export const saveHedgePositions = (positions: HedgePosition[]) =>
+  client.put("/hedge-positions", { positions }).then(r => r.data)
 
 export type ThesisStatus = "populated" | "empty" | "missing"
 

@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS positions (
     conviction  INTEGER NOT NULL DEFAULT 3
                         CHECK (conviction BETWEEN 1 AND 5),
     cost_basis  REAL,
-    shares      REAL
+    shares      REAL,
+    role        TEXT    NOT NULL DEFAULT 'position'
+                        CHECK (role IN ('position','hedge'))
 )
 """
 
@@ -72,36 +74,67 @@ def _init_db(conn: sqlite3.Connection) -> None:
     if "shares" not in cols:
         conn.execute("ALTER TABLE positions ADD COLUMN shares REAL")
         conn.commit()
+    if "role" not in cols:
+        conn.execute("ALTER TABLE positions ADD COLUMN role TEXT NOT NULL DEFAULT 'position'")
+        conn.commit()
 
 
-def get_positions() -> list[dict]:
-    """Return all positions as a list of plain dicts, ordered by insertion rowid."""
+def get_positions(include_hedges: bool = False) -> list[dict]:
+    """Return positions as a list of plain dicts, ordered by insertion rowid.
+
+    By default only ``role='position'`` rows are returned.  Pass
+    ``include_hedges=True`` to also include ``role='hedge'`` rows.
+    """
+    conn = _get_conn()
+    with _lock:
+        if include_hedges:
+            rows = conn.execute(
+                "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares, role "
+                "FROM positions ORDER BY rowid"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares, role "
+                "FROM positions WHERE role = 'position' ORDER BY rowid"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_hedge_positions() -> list[dict]:
+    """Return only hedge positions."""
     conn = _get_conn()
     with _lock:
         rows = conn.execute(
-            "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares FROM positions ORDER BY rowid"
+            "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares, role "
+            "FROM positions WHERE role = 'hedge' ORDER BY rowid"
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_positions_df() -> pd.DataFrame:
+def get_positions_df(include_hedges: bool = False) -> pd.DataFrame:
     """Return positions as a DataFrame — drop-in replacement for pd.read_csv(portfolio.csv).
 
-    Columns: ticker, asset, direction, distressed, conviction, cost_basis
+    Columns: ticker, asset, direction, distressed, conviction, cost_basis, shares, role
     distressed is returned as bool for convenience.
     """
-    positions = get_positions()
+    positions = get_positions(include_hedges=include_hedges)
     if not positions:
         return pd.DataFrame(
-            columns=["ticker", "asset", "direction", "distressed", "conviction", "cost_basis", "shares"]
+            columns=["ticker", "asset", "direction", "distressed", "conviction", "cost_basis", "shares", "role"]
         )
     df = pd.DataFrame(positions)
     df["distressed"] = df["distressed"].astype(bool)
     return df
 
 
-def save_positions(positions: list[dict]) -> None:
-    """Replace all positions in a single atomic transaction."""
+def save_positions(positions: list[dict], role: str = "position") -> None:
+    """Replace all positions of the given *role* in a single atomic transaction.
+
+    When ``role='position'`` (default) only regular position rows are deleted
+    and re-inserted — hedge rows are left untouched, and vice-versa.
+    """
+    if role not in ("position", "hedge"):
+        raise ValueError(f"Invalid role: {role!r}")
     conn = _get_conn()
     rows = []
     for p in positions:
@@ -124,11 +157,11 @@ def save_positions(positions: list[dict]) -> None:
             shares = float(shares_raw) if shares_raw is not None else None
         except (ValueError, TypeError):
             shares = None
-        rows.append((ticker, asset, direction, distressed, conviction, cost_basis, shares))
+        rows.append((ticker, asset, direction, distressed, conviction, cost_basis, shares, role))
     with _lock:
-        conn.execute("DELETE FROM positions")
+        conn.execute("DELETE FROM positions WHERE role = ?", (role,))
         conn.executemany(
-            "INSERT INTO positions (ticker, asset, direction, distressed, conviction, cost_basis, shares) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO positions (ticker, asset, direction, distressed, conviction, cost_basis, shares, role) VALUES (?,?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()

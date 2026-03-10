@@ -157,12 +157,10 @@ LEVERAGED FUND POSITIONING SUMMARY (sorted by most extreme z-score first):
 
 {table}
 
-Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. The most crowded positions — which instruments have extreme z-scores (positive = very net long, negative = very net short) and what this historically implies for tail risk
-2. Any active forced-flow signals — which instruments are experiencing long liquidation or short covering, what is driving it, and how large the deleveraging z-score is
-3. Cross-asset read — compare equity index positioning (SP500, NASDAQ, RUSSELL) vs bond (US10Y) vs currencies (EUR, JPY, AUD, CAD, GBP) to characterize the aggregate risk-on/risk-off tilt
-4. Potential positioning risks — if crowded longs/shorts unwind, what is the likely market impact and which instruments are most vulnerable to a squeeze or cascade
-5. Overall positioning conclusion — where are leveraged funds leaning, and what does this imply for near-term market dynamics
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. The most crowded positions and forced-flow signals — which instruments have extreme z-scores or active long liquidation/short covering, and what this implies for tail risk
+2. Cross-asset read — compare equity, bond, and currency positioning to characterize the aggregate risk-on/risk-off tilt and squeeze vulnerabilities
+3. Overall positioning conclusion and what to watch for near-term dynamics
 
 Be specific about the numbers. Write for a professional investor audience."""
 
@@ -171,7 +169,7 @@ Be specific about the numbers. Write for a professional investor audience."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")

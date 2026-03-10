@@ -135,12 +135,10 @@ Interpretation guide:
 - Weight indicates each component's impact in the composite score.
 - For change rows, polarity=1 means positive changes are supportive; polarity=-1 means negative changes are supportive.
 
-Write 4-5 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Cover:
-1. What the composite and regional scores imply about the current global liquidity backdrop
-2. Which components are driving conditions most (supportive or tightening) and why that matters for risk assets
-3. What 1W/1M/3M changes suggest about short-term momentum versus medium-term trend
-4. Key macro risks or reversal triggers to monitor
-5. A clear bottom-line regime assessment
+Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no headers). Be concise. Cover:
+1. What composite and regional scores imply about liquidity conditions and which components are driving them
+2. What recent changes suggest about momentum versus trend, plus key reversal triggers to monitor
+3. A clear bottom-line regime assessment
 
 Be specific about the numbers."""
 
@@ -149,7 +147,7 @@ Be specific about the numbers."""
             prompt=prompt,
             model=MODEL_HAIKU,
             api_key=api_key,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         if not analysis:
             raise ValueError("Claude returned empty response")
