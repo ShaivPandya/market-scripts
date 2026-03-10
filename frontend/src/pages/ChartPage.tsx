@@ -89,6 +89,13 @@ function toDateSortKey(value: string): number | null {
   return Number.isFinite(ts) ? ts : null
 }
 
+function toDateOnly(value: unknown): string {
+  const raw = String(value ?? "").trim()
+  if (!raw) return ""
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
+  return raw
+}
+
 function lookbackCutoff(lookback: string): Date {
   const now = new Date()
   switch (lookback) {
@@ -320,7 +327,7 @@ export function ChartPage() {
     const rows = Array.isArray(ratioData?.ratio_data) ? ratioData.ratio_data : []
     return rows
       .map((r: Record<string, unknown>) => ({
-        date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+        date: toDateOnly(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
         priceA: toNumber(r["Price A"]),
         priceB: toNumber(r["Price B"]),
         ratio: toNumber(r["Ratio"]),
@@ -592,7 +599,7 @@ export function ChartPage() {
           </div>
 
           <DataTable
-            label="Recent Ratio Data (last 250 rows, newest first)"
+            label="Recent Ratio Data (last 250 rows)"
             columns={ratioColumns}
             rows={ratioRecentRows}
             maxHeight="460px"
