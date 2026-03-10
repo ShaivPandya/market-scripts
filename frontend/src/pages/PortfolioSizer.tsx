@@ -6,7 +6,7 @@ import { ActionButton, SegmentedControl, SliderInput, TextInput } from "@/compon
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { colorPositiveNegative } from "@/lib/colors"
-import { fetchSizerPrefill, runPortfolioSizerAsync } from "@/lib/api"
+import { fetchPortfolioPositions, fetchSizerPrefill, runPortfolioSizerAsync } from "@/lib/api"
 
 type SizerTab = "Weights" | "Exposures" | "Constraints" | "Max Scaled"
 type ExposureAssetClass = "equity" | "fx" | "commodity" | "bond"
@@ -264,6 +264,7 @@ export function PortfolioSizer() {
   const [cachedResult, setCachedResult] = useState<SizerResponse | null>(cachedState?.result ?? null)
   const [tab, setTab] = useState<SizerTab>("Weights")
   const [weightsViewMode, setWeightsViewMode] = useState<WeightsViewMode>("basic")
+  const [currentHoldings, setCurrentHoldings] = useState<Record<string, number>>({})
 
   useEffect(() => {
     if (cachedState?.rows && cachedState.rows.length > 0) return
@@ -291,7 +292,18 @@ export function PortfolioSizer() {
 
   const mutation = useMutation({
     mutationFn: runPortfolioSizerAsync,
-    onSuccess: result => setCachedResult((result as SizerResponse) ?? null),
+    onSuccess: result => {
+      setCachedResult((result as SizerResponse) ?? null)
+      fetchPortfolioPositions(true)
+        .then(({ positions }) => {
+          const map: Record<string, number> = {}
+          for (const p of positions) {
+            if (p.shares != null) map[p.ticker.toUpperCase()] = p.shares
+          }
+          setCurrentHoldings(map)
+        })
+        .catch(() => {})
+    },
   })
 
   useEffect(() => {
@@ -376,6 +388,51 @@ export function PortfolioSizer() {
     postHedgeBetaSpy,
     postHedgeBetaIwm,
   ].some(v => v != null)
+
+  const trades = useMemo(() => {
+    if (!data) return []
+    const allRows = [...weightsRows, ...hedgesRows]
+    if (allRows.length === 0) return []
+
+    const tradeList: {
+      ticker: string
+      type: string
+      direction: string
+      currentShares: number
+      targetShares: number
+      delta: number
+      price: number
+      notional: number
+    }[] = []
+
+    for (const row of allRows) {
+      const ticker = String(row.ticker ?? "").trim().toUpperCase()
+      if (!ticker) continue
+      const targetShares = toNumber(row.shares) ?? 0
+      const price = toNumber(row.price) ?? 0
+      const currentShares = currentHoldings[ticker] ?? 0
+      const delta = targetShares - currentShares
+      const type = row.type === "hedge" ? "Hedge" : "Position"
+      const direction = String(row.direction ?? "")
+
+      tradeList.push({
+        ticker,
+        type,
+        direction,
+        currentShares: Math.round(currentShares),
+        targetShares: Math.round(targetShares),
+        delta: Math.round(delta),
+        price,
+        notional: Math.round(delta) * price,
+      })
+    }
+
+    return tradeList.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+  }, [data, weightsRows, hedgesRows, currentHoldings])
+
+  const totalNotional = trades.reduce((sum, t) => sum + Math.abs(t.notional), 0)
+  const totalBuys = trades.filter(t => t.delta > 0).reduce((sum, t) => sum + t.notional, 0)
+  const totalSells = trades.filter(t => t.delta < 0).reduce((sum, t) => sum + t.notional, 0)
 
   return (
     <div>
@@ -724,6 +781,76 @@ export function PortfolioSizer() {
               ) : (
                 <p className="text-gray-400 text-sm">No max scaled data available.</p>
               )}
+            </div>
+          )}
+
+          {trades.length > 0 && (
+            <div className="space-y-4">
+              <h2 className="text-base font-semibold text-gray-900">Buy / Sell Summary</h2>
+
+              <div className="grid grid-cols-3 gap-4">
+                <MetricCard title="Total Buys" value={currencyFormatter.format(totalBuys)} />
+                <MetricCard title="Total Sells" value={currencyFormatter.format(totalSells)} />
+                <MetricCard title="Total Turnover" value={currencyFormatter.format(totalNotional)} />
+              </div>
+
+              <div className="rounded-xl border border-gray-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50/60">
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Ticker</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Type</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Direction</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Current</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Target</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Delta</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Action</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Price</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Notional</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trades.map(t => {
+                      const action =
+                        t.delta > 0 ? "BUY" : t.delta < 0 ? "SELL" : "HOLD"
+                      const actionColor =
+                        action === "BUY"
+                          ? "text-emerald-700 bg-emerald-50"
+                          : action === "SELL"
+                            ? "text-red-700 bg-red-50"
+                            : "text-gray-500 bg-gray-50"
+
+                      return (
+                        <tr key={t.ticker} className="border-b border-gray-50 last:border-0">
+                          <td className="px-3 py-2 font-mono font-medium text-gray-900">{t.ticker}</td>
+                          <td className="px-3 py-2 text-gray-500">{t.type}</td>
+                          <td className="px-3 py-2 text-gray-500 capitalize">{t.direction}</td>
+                          <td className="px-3 py-2 text-right font-mono text-gray-600">
+                            {t.currentShares.toLocaleString("en-US")}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-gray-600">
+                            {t.targetShares.toLocaleString("en-US")}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-medium" style={{ color: colorPositiveNegative(t.delta) }}>
+                            {t.delta >= 0 ? "+" : ""}{t.delta.toLocaleString("en-US")}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-semibold ${actionColor}`}>
+                              {action}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-gray-600">
+                            {priceFormatter.format(t.price)}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-medium" style={{ color: colorPositiveNegative(t.notional) }}>
+                            {t.notional >= 0 ? "+" : ""}{currencyFormatter.format(t.notional)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
