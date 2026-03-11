@@ -84,6 +84,18 @@ function toNumber(value: unknown): number | null {
   return null
 }
 
+function toDateSortKey(value: string): number | null {
+  const ts = Date.parse(value)
+  return Number.isFinite(ts) ? ts : null
+}
+
+function toDateOnly(value: unknown): string {
+  const raw = String(value ?? "").trim()
+  if (!raw) return ""
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10)
+  return raw
+}
+
 function lookbackCutoff(lookback: string): Date {
   const now = new Date()
   switch (lookback) {
@@ -315,12 +327,20 @@ export function ChartPage() {
     const rows = Array.isArray(ratioData?.ratio_data) ? ratioData.ratio_data : []
     return rows
       .map((r: Record<string, unknown>) => ({
-        date: String(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
+        date: toDateOnly(r["Date"] ?? r["date"] ?? r["index"] ?? ""),
         priceA: toNumber(r["Price A"]),
         priceB: toNumber(r["Price B"]),
         ratio: toNumber(r["Ratio"]),
       }))
       .filter(r => r.date.length > 0)
+      .sort((a, b) => {
+        const aTs = toDateSortKey(a.date)
+        const bTs = toDateSortKey(b.date)
+        if (aTs != null && bTs != null) return aTs - bTs
+        if (aTs != null) return -1
+        if (bTs != null) return 1
+        return a.date.localeCompare(b.date)
+      })
   }, [ratioData])
 
   const ratioStats = (ratioData?.stats && typeof ratioData.stats === "object")
@@ -400,7 +420,7 @@ export function ChartPage() {
   ], [activeRatioSymbolA, activeRatioSymbolB])
 
   const ratioRecentRows = useMemo<Record<string, unknown>[]>(() => (
-    ratioRows.slice(-250).map(r => ({
+    [...ratioRows.slice(-250)].reverse().map(r => ({
       date: r.date,
       priceA: r.priceA,
       priceB: r.priceB,

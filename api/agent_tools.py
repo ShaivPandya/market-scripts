@@ -198,9 +198,29 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
+        "name": "get_bond_dashboard",
+        "description": (
+            "Fetch government bond yield time-series for 2Y, 10Y, and 30Y tenors across "
+            "US, UK, Germany, and Japan. Returns the past year of daily yields, latest values, "
+            "and year-over-year changes in basis points per country and tenor. Use this to "
+            "compare sovereign yield levels and trends across major economies."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tenor": {
+                    "type": "string",
+                    "description": "Filter to a single tenor: '2Y', '10Y', or '30Y'. Default: return all tenors.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
         "name": "get_sentiment",
         "description": (
-            "Fetch market sentiment indicators. Returns put/call ratios (equity aggregate, "
+            "Fetch market sentiment indicators. Returns put/call ratios (equity aggregate,"
             "SPY, QQQ, IWM), investor surveys (AAII bull/bear spread, NAAIM exposure index), "
             "and volatility indices (VIX, VXN, VVIX). Includes quality checks and latest-date "
             "validation metadata. If quality.ok is false, do not draw directional sentiment "
@@ -1347,6 +1367,23 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             from government_bonds.yield_curve import get_data
 
             return serialize_value(get_data(lookback_days=lookback_days))
+
+        data, meta = _fetch_with_cache(short_cache, key, _load)
+        return data, meta
+
+    if name == "get_bond_dashboard":
+        tenor = args.get("tenor")
+        key = f"bond_dashboard:{tenor or 'all'}"
+
+        def _load():
+            from government_bonds.bond_dashboard import get_data
+
+            data = get_data()
+            if tenor and tenor in ("2Y", "10Y", "30Y"):
+                for country in data.get("countries", {}).values():
+                    tenors = country.get("tenors", {})
+                    country["tenors"] = {t: v for t, v in tenors.items() if t == tenor}
+            return serialize_value(data)
 
         data, meta = _fetch_with_cache(short_cache, key, _load)
         return data, meta

@@ -116,9 +116,6 @@ def get_hedge_positions_endpoint():
 
 @router.put("/hedge-positions")
 def update_hedge_positions(req: HedgeUpdateRequest):
-    if not req.positions:
-        raise HTTPException(status_code=400, detail="At least one hedge position is required.")
-
     # Validate tickers
     tickers_seen: set[str] = set()
     for pos in req.positions:
@@ -169,5 +166,14 @@ def update_hedge_positions(req: HedgeUpdateRequest):
         save_positions(rows, role="hedge")
     except Exception as e:
         raise DataFetchError(source="hedge_positions", detail=str(e)) from e
+
+    try:
+        from portfolio.portfolio_dashboard import reload_portfolio
+
+        reload_portfolio()
+    except Exception:
+        pass
+
+    invalidate_all()
 
     return {"status": "ok", "count": len(req.positions)}

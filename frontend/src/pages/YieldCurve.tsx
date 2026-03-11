@@ -34,6 +34,10 @@ interface CurvePoint {
   historical_date: string | null
   source_current: string | null
   source_historical: string | null
+  historical_1y: number | null
+  change_bps_1y: number | null
+  historical_date_1y: string | null
+  source_historical_1y: string | null
 }
 
 interface CountryCurve {
@@ -41,6 +45,7 @@ interface CountryCurve {
   name: string
   as_of_date: string | null
   historical_target_date: string | null
+  historical_target_date_1y: string | null
   points: CurvePoint[]
   warnings: string[]
 }
@@ -65,7 +70,7 @@ function fmtBps(v: unknown): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)} bps`
 }
 
-function slope2s10sBps(points: CurvePoint[], side: "current" | "historical"): number | null {
+function slope2s10sBps(points: CurvePoint[], side: "current" | "historical" | "historical_1y"): number | null {
   const y2 = points.find(p => p.tenor === "2Y")?.[side] ?? null
   const y10 = points.find(p => p.tenor === "10Y")?.[side] ?? null
   if (y2 == null || y10 == null) return null
@@ -114,6 +119,7 @@ export function YieldCurve() {
       tenor: t.tenor,
       current: p?.current ?? null,
       historical: p?.historical ?? null,
+      historical_1y: p?.historical_1y ?? null,
     }
   })
 
@@ -131,6 +137,8 @@ export function YieldCurve() {
       current: p?.current ?? null,
       historical: p?.historical ?? null,
       change_bps: p?.change_bps ?? null,
+      historical_1y: p?.historical_1y ?? null,
+      change_bps_1y: p?.change_bps_1y ?? null,
       current_date: p?.current_date ?? "N/A",
       historical_date: p?.historical_date ?? "N/A",
       source,
@@ -142,13 +150,18 @@ export function YieldCurve() {
   const slopeHistorical = slope2s10sBps(selectedCountry.points, "historical")
   const slopeDelta =
     slopeCurrent != null && slopeHistorical != null ? slopeCurrent - slopeHistorical : null
-  const hasAnyChartData = chartRows.some(r => r.current != null || r.historical != null)
+  const slope1y = slope2s10sBps(selectedCountry.points, "historical_1y")
+  const slopeDelta1y =
+    slopeCurrent != null && slope1y != null ? slopeCurrent - slope1y : null
+  const hasAnyChartData = chartRows.some(r => r.current != null || r.historical != null || r.historical_1y != null)
 
   const columns: ColumnDef[] = [
     { key: "tenor", header: "Tenor" },
     { key: "current", header: "Current", format: fmtYield },
     { key: "historical", header: lookbackLabel, format: fmtYield },
     { key: "change_bps", header: "Change", format: fmtBps, colorFn: colorPositiveNegative },
+    { key: "historical_1y", header: "1Y ago", format: fmtYield },
+    { key: "change_bps_1y", header: "1Y Change", format: fmtBps, colorFn: colorPositiveNegative },
     { key: "current_date", header: "Current Date" },
     { key: "historical_date", header: `${lookbackLabel} Date` },
     { key: "source", header: "Source" },
@@ -182,7 +195,7 @@ export function YieldCurve() {
           className="w-full sm:w-64"
         />
         <div className="text-xs text-gray-400 sm:pb-2">
-          As of {selectedCountry.as_of_date ?? "N/A"} · Compare target {selectedCountry.historical_target_date ?? "N/A"}
+          As of {selectedCountry.as_of_date ?? "N/A"} · {lookbackLabel} target {selectedCountry.historical_target_date ?? "N/A"} · 1Y target {selectedCountry.historical_target_date_1y ?? "N/A"}
         </div>
       </div>
 
@@ -201,7 +214,7 @@ export function YieldCurve() {
         </div>
       )}
 
-      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <MetricCard title="Tenors Available" value={`${availableCurrent}/${tenorOrder.length}`} />
         <MetricCard
           title="2s10s (Current)"
@@ -215,7 +228,14 @@ export function YieldCurve() {
           signal={slopeSignal(slopeHistorical)}
           signalLabel={slopeHistorical != null && slopeHistorical < 0 ? "Inverted" : "Normal"}
         />
-        <MetricCard title="2s10s Delta" value={fmtSlope(slopeDelta)} subtitle="Current minus historical" />
+        <MetricCard title={`2s10s ${lookbackLabel} Delta`} value={fmtSlope(slopeDelta)} subtitle="Current minus historical" />
+        <MetricCard
+          title="2s10s (1Y ago)"
+          value={fmtSlope(slope1y)}
+          signal={slopeSignal(slope1y)}
+          signalLabel={slope1y != null && slope1y < 0 ? "Inverted" : "Normal"}
+        />
+        <MetricCard title="2s10s 1Y Delta" value={fmtSlope(slopeDelta1y)} subtitle="Current minus 1Y ago" />
       </div>
 
       <section className="mb-8">
@@ -254,6 +274,16 @@ export function YieldCurve() {
                 stroke="#6b7280"
                 strokeWidth={1.8}
                 strokeDasharray="6 4"
+                dot={{ r: 2 }}
+                connectNulls={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="historical_1y"
+                name={`1Y ago (${selectedCountry.historical_target_date_1y ?? "N/A"})`}
+                stroke="#d97706"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
                 dot={{ r: 2 }}
                 connectNulls={false}
               />

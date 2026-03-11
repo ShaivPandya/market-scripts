@@ -198,6 +198,10 @@ def size_portfolio(
         # Distressed gating
         meta = apply_distressed_gating(meta, prices_all)
 
+        # Allow unconfirmed distressed positions at 1/3 weight
+        _gated_mask = meta["distressed"] & ~meta["distressed_eligible"] & meta["direction_intended"].ne("")
+        meta.loc[_gated_mask, "direction"] = meta.loc[_gated_mask, "direction_intended"]
+
         # Defense volatility
         defense_vol = compute_defense_volatility(usd_prices, tickers)
         meta["realized_vol"] = defense_vol
@@ -223,6 +227,12 @@ def size_portfolio(
 
         # Build conviction-driven raw weights
         w_raw = _build_conviction_weights(meta, convictions).reindex(tickers).fillna(0.0)
+
+        # Scale unconfirmed distressed positions to 1/3
+        for t in tickers:
+            if meta.loc[t, "distressed"] and not meta.loc[t, "distressed_eligible"]:
+                w_raw[t] *= 1.0 / 3.0
+
         w_raw_vec = w_raw.values
 
         # Masks

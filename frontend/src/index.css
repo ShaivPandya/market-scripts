@@ -184,6 +184,31 @@
   .theme-segmented-option[data-active="false"]:hover {
     color: hsl(var(--foreground));
   }
+
+  .theme-sidebar {
+    background:
+      linear-gradient(180deg, hsl(var(--card)) 0%, hsl(var(--muted) / 0.65) 100%);
+  }
+
+  .theme-sidebar-link {
+    color: hsl(var(--foreground) / 0.84);
+    transition:
+      background-color 150ms ease,
+      color 150ms ease,
+      border-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+
+  .theme-sidebar-link:hover {
+    background-color: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .theme-sidebar-link-active {
+    background-color: hsl(var(--accent-soft));
+    color: hsl(var(--accent-soft-foreground));
+    box-shadow: 0 1px 2px hsl(var(--shadow-color) / 0.08);
+  }
 }
 
 @layer utilities {
