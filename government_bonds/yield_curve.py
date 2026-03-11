@@ -527,12 +527,7 @@ def _build_country_curve(
         years = TENOR_TO_YEARS[tenor]
         series_pair = series_map.get(tenor)
 
-        if (
-            series_pair is None
-            or as_of is None
-            or historical_target is None
-            or historical_target_1y is None
-        ):
+        if series_pair is None or as_of is None or historical_target is None or historical_target_1y is None:
             points.append(
                 {
                     "tenor": tenor,
