@@ -119,7 +119,7 @@ _BUNDESBANK_DE_SERIES: dict[str, str] = {
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CACHE_DIR = _REPO_ROOT / "data_cache" / "yield_curve"
 _CACHE_TTL_SECONDS = 24 * 60 * 60
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 _CLOSE_PROBE_TICKER = "SPY"
 
 
@@ -519,6 +519,7 @@ def _build_country_curve(
             as_of = last_date
 
     historical_target = as_of - pd.Timedelta(days=lookback_days) if as_of is not None else None
+    historical_target_1y = as_of - pd.Timedelta(days=365) if as_of is not None else None
 
     points: list[dict] = []
     for tenor_meta in TENOR_ORDER:
@@ -538,6 +539,10 @@ def _build_country_curve(
                     "historical_date": None,
                     "source_current": None,
                     "source_historical": None,
+                    "historical_1y": None,
+                    "change_bps_1y": None,
+                    "historical_date_1y": None,
+                    "source_historical_1y": None,
                 }
             )
             continue
@@ -545,15 +550,24 @@ def _build_country_curve(
         series, source = series_pair
         current_val, current_date = _value_on_or_before(series, as_of)
         historical_val, historical_date = _value_on_or_before(series, historical_target)
+        historical_1y_val, historical_1y_date = _value_on_or_before(series, historical_target_1y)
 
         if current_val is None:
             warnings.append(f"{tenor}: no observation found on or before as-of date.")
         if historical_val is None:
             warnings.append(f"{tenor}: no observation found on or before {historical_target.date().isoformat()}.")
+        if historical_1y_val is None:
+            warnings.append(
+                f"{tenor}: no observation found on or before {historical_target_1y.date().isoformat()} (1Y)."
+            )
 
         change_bps = None
         if current_val is not None and historical_val is not None:
             change_bps = round((current_val - historical_val) * 100.0, 1)
+
+        change_bps_1y = None
+        if current_val is not None and historical_1y_val is not None:
+            change_bps_1y = round((current_val - historical_1y_val) * 100.0, 1)
 
         points.append(
             {
@@ -566,6 +580,10 @@ def _build_country_curve(
                 "historical_date": historical_date,
                 "source_current": source if current_val is not None else None,
                 "source_historical": source if historical_val is not None else None,
+                "historical_1y": round(historical_1y_val, 4) if historical_1y_val is not None else None,
+                "change_bps_1y": change_bps_1y,
+                "historical_date_1y": historical_1y_date,
+                "source_historical_1y": source if historical_1y_val is not None else None,
             }
         )
 
@@ -574,6 +592,9 @@ def _build_country_curve(
         "name": country_name,
         "as_of_date": as_of.date().isoformat() if as_of is not None else None,
         "historical_target_date": (historical_target.date().isoformat() if historical_target is not None else None),
+        "historical_target_date_1y": (
+            historical_target_1y.date().isoformat() if historical_target_1y is not None else None
+        ),
         "points": points,
         "warnings": _dedupe(warnings),
     }
