@@ -343,11 +343,154 @@ def fetch_sec_issuance(ticker: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3: Price-based filters (batch yf_download)
+# ---------------------------------------------------------------------------
+
+
+def _apply_price_filters(
+    passers: list[dict],
+    *,
+    check_52w_positive: bool,
+    check_min_drawdown: bool,
+    min_drawdown_pct: float,
+    check_max_drawdown: bool,
+    max_drawdown_pct: float,
+    check_3m_neg_momentum: bool,
+    check_2m_neg_rel_momentum: bool,
+    benchmark_ticker: str,
+) -> tuple[list[dict], dict[str, dict]]:
+    """
+    Apply optional price-based filters to Phase 1/2 passers.
+
+    Uses a single batch yf_download for all passers + benchmark.
+
+    Returns:
+        (filtered_passers, price_metrics)
+        price_metrics maps ticker -> {return_52w, drawdown_pct, return_3m, rel_return_2m}
+    """
+    from utils.retry import yf_download
+
+    passer_tickers = [d["ticker"] for d in passers]
+
+    # Build download list: passers + benchmark (if needed for relative momentum)
+    download_tickers = list(passer_tickers)
+    need_benchmark = check_2m_neg_rel_momentum and benchmark_ticker
+    if need_benchmark and benchmark_ticker not in download_tickers:
+        download_tickers.append(benchmark_ticker)
+
+    # Single batch download — 1 year of daily prices
+    try:
+        raw = yf_download(
+            download_tickers,
+            period="1y",
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+        )
+    except Exception:
+        LOGGER.warning("Price filter batch download failed; skipping price filters", exc_info=True)
+        return passers, {}
+
+    # Extract close prices per ticker
+    def _get_close(df: pd.DataFrame, ticker: str) -> pd.Series | None:
+        if df is None or df.empty:
+            return None
+        try:
+            if isinstance(df.columns, pd.MultiIndex):
+                if ticker in df.columns.get_level_values(1):
+                    s = df[("Close", ticker)].dropna()
+                else:
+                    return None
+            else:
+                s = df["Close"].dropna()
+            return s if len(s) > 0 else None
+        except (KeyError, TypeError):
+            return None
+
+    # Pre-extract benchmark close if needed
+    bench_close: pd.Series | None = None
+    if need_benchmark:
+        bench_close = _get_close(raw, benchmark_ticker)
+
+    filtered: list[dict] = []
+    metrics: dict[str, dict] = {}
+
+    for data in passers:
+        tk = data["ticker"]
+        close = _get_close(raw, tk)
+        if close is None or len(close) < 10:
+            continue  # Insufficient data — exclude
+
+        current = float(close.iloc[-1])
+        m: dict[str, float | None] = {}
+
+        # 52-week return
+        ret_52w: float | None = None
+        if len(close) >= 200:  # need ~1 year of data
+            price_52w = float(close.iloc[0])
+            ret_52w = (current / price_52w - 1) * 100
+        m["return_52w"] = ret_52w
+
+        # Drawdown from 52-week high
+        peak = float(close.max())
+        dd_pct = (current - peak) / peak * 100 if peak > 0 else None
+        m["drawdown_pct"] = dd_pct
+
+        # 3-month return (~63 trading days)
+        ret_3m: float | None = None
+        if len(close) >= 63:
+            price_3m = float(close.iloc[-63])
+            ret_3m = (current / price_3m - 1) * 100
+        m["return_3m"] = ret_3m
+
+        # 2-month relative return (~42 trading days)
+        rel_ret_2m: float | None = None
+        if len(close) >= 42 and bench_close is not None and len(bench_close) >= 42:
+            price_2m = float(close.iloc[-42])
+            stock_ret = (current / price_2m - 1) * 100
+            bench_current = float(bench_close.iloc[-1])
+            bench_2m = float(bench_close.iloc[-42])
+            bench_ret = (bench_current / bench_2m - 1) * 100
+            rel_ret_2m = stock_ret - bench_ret
+        m["rel_return_2m"] = rel_ret_2m
+
+        # Apply filters — stock must pass ALL enabled filters
+        passes = True
+
+        if check_52w_positive:
+            if ret_52w is None or ret_52w <= 0:
+                passes = False
+
+        if check_min_drawdown and passes:
+            if dd_pct is None or abs(dd_pct) < min_drawdown_pct:
+                passes = False
+
+        if check_max_drawdown and passes:
+            if dd_pct is None or abs(dd_pct) > max_drawdown_pct:
+                passes = False
+
+        if check_3m_neg_momentum and passes:
+            if ret_3m is None or ret_3m >= 0:
+                passes = False
+
+        if check_2m_neg_rel_momentum and passes:
+            if rel_ret_2m is None or rel_ret_2m >= 0:
+                passes = False
+
+        if passes:
+            filtered.append(data)
+            metrics[tk] = m
+
+    return filtered, metrics
+
+
+# ---------------------------------------------------------------------------
 # Result row builder
 # ---------------------------------------------------------------------------
 
 
-def _build_result_row(data: dict) -> dict:
+def _build_result_row(data: dict, price_metrics: dict | None = None) -> dict:
     """Convert raw yfinance data dict to a display-ready row (values in $M)."""
 
     def to_m(val) -> float | None:
@@ -360,7 +503,12 @@ def _build_result_row(data: dict) -> dict:
             return None
         return round(float(val), 2)
 
-    return {
+    def fmt_pct(val) -> float | None:
+        if val is None:
+            return None
+        return round(float(val), 1)
+
+    row: dict = {
         "Ticker": data["ticker"],
         "Company": data.get("company_name") or "",
         "P/B Ratio": fmt_pb(data.get("price_to_book")),
@@ -368,6 +516,16 @@ def _build_result_row(data: dict) -> dict:
         "Operating Income ($M)": to_m(data.get("operating_income")),
         "Market Cap ($M)": to_m(data.get("market_cap")),
     }
+    if price_metrics:
+        if price_metrics.get("return_52w") is not None:
+            row["52w Return (%)"] = fmt_pct(price_metrics["return_52w"])
+        if price_metrics.get("drawdown_pct") is not None:
+            row["Drawdown (%)"] = fmt_pct(price_metrics["drawdown_pct"])
+        if price_metrics.get("return_3m") is not None:
+            row["3m Return (%)"] = fmt_pct(price_metrics["return_3m"])
+        if price_metrics.get("rel_return_2m") is not None:
+            row["2m Rel Return (%)"] = fmt_pct(price_metrics["rel_return_2m"])
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -376,18 +534,36 @@ def _build_result_row(data: dict) -> dict:
 
 
 def get_data(
+    tickers: list[str],
     pb_threshold: float = 3.0,
     loss_type: str = "Gross Loss",
     check_issuance: bool = False,
+    check_52w_positive: bool = False,
+    check_min_drawdown: bool = False,
+    min_drawdown_pct: float = 25.0,
+    check_max_drawdown: bool = False,
+    max_drawdown_pct: float = 60.0,
+    check_3m_neg_momentum: bool = False,
+    check_2m_neg_rel_momentum: bool = False,
+    benchmark_ticker: str = "IWM",
     progress_callback=None,
 ) -> dict:
     """
-    Run the short screen over the Russell 2000 universe.
+    Run the short screen over the provided ticker universe.
 
     Args:
+        tickers:            List of ticker symbols to screen
         pb_threshold:       P/B ratio must exceed this value (3.0 – 5.0)
         loss_type:          "Gross Loss" | "Operating Loss"
         check_issuance:     If True, keep only the top quartile by net equity issuance (SEC EDGAR)
+        check_52w_positive: If True, keep only stocks with positive 52-week return
+        check_min_drawdown: If True, keep only stocks at least min_drawdown_pct% below 52w high
+        min_drawdown_pct:   Minimum drawdown threshold (e.g. 25 means 25% off highs)
+        check_max_drawdown: If True, exclude stocks more than max_drawdown_pct% below 52w high
+        max_drawdown_pct:   Maximum drawdown threshold (e.g. 60 means 60% off highs)
+        check_3m_neg_momentum:    If True, keep only stocks with negative 3-month return
+        check_2m_neg_rel_momentum: If True, keep only stocks underperforming benchmark over 2 months
+        benchmark_ticker:   Benchmark for relative momentum (e.g. "IWM", "SPY", "QQQ")
         progress_callback:  Optional callable(done: int, total: int)
 
     Returns on success:
@@ -396,19 +572,17 @@ def get_data(
             "failed_tickers":      List[str]     — tickers that errored in Phase 1
             "phase1_count":        int           — universe size
             "phase1_pass_count":   int           — tickers passing Phase 1
+            "phase3_pass_count":   int           — tickers passing price filters (if any enabled)
             "final_count":         int           — rows in results_df
         }
 
     Returns on hard failure:
         {"error": str}
     """
-    try:
-        universe = load_universe("russell2000")
-    except Exception as e:
-        return {"error": f"Failed to load Russell 2000 universe: {e}"}
+    universe = tickers
 
     if not universe:
-        return {"error": "Russell 2000 universe is empty"}
+        return {"error": "No tickers provided"}
 
     total = len(universe)
 
@@ -463,18 +637,17 @@ def get_data(
     # Keeps only stocks in the top quartile of net equity issuance
     # among the Phase 1 passers that have valid SEC data.
     # ------------------------------------------------------------------
-    final_rows: list[dict] = []
+    issuance_info: dict[str, dict] = {}  # ticker -> {net, pct}
 
     if not check_issuance:
-        for data in phase1_pass_data:
-            final_rows.append(_build_result_row(data))
+        phase2_pass_data = list(phase1_pass_data)
     else:
-        # Step 1: fetch issuance data for all Phase 1 passers
+        phase2_pass_data = []
         issuance_records: list[dict] = []
         for data in phase1_pass_data:
             sec = fetch_sec_issuance(data["ticker"])
             if "error" in sec:
-                continue  # SEC data unavailable — exclude (conservative)
+                continue
 
             net = sec.get("net_issuance", np.nan)
             mktcap = data.get("market_cap", np.nan)
@@ -484,41 +657,78 @@ def get_data(
                 or (isinstance(mktcap, float) and np.isnan(mktcap))
                 or mktcap <= 0
             ):
-                continue  # Cannot compute issuance; exclude
+                continue
 
-            issuance_records.append(
-                {
-                    "data": data,
-                    "net": net,
-                    "pct": net / mktcap,
-                }
-            )
+            issuance_records.append({"data": data, "net": net, "pct": net / mktcap})
 
         if issuance_records:
-            # Step 2: top-quartile cutoff (75th percentile of net issuance)
             net_values = [r["net"] for r in issuance_records]
             cutoff = float(np.percentile(net_values, 75))
-
-            # Step 3: keep only stocks at or above the cutoff
             for rec in issuance_records:
                 if rec["net"] >= cutoff:
-                    row = _build_result_row(rec["data"])
-                    row["Net Issuance ($M)"] = round(rec["net"] / 1e6, 1)
-                    row["Issuance % Mkt Cap"] = round(rec["pct"] * 100, 1)
-                    final_rows.append(row)
+                    phase2_pass_data.append(rec["data"])
+                    issuance_info[rec["data"]["ticker"]] = {
+                        "net": rec["net"],
+                        "pct": rec["pct"],
+                    }
+
+    # ------------------------------------------------------------------
+    # Phase 3 (optional): Price-based filters
+    # Runs only when at least one price filter is enabled.
+    # ------------------------------------------------------------------
+    any_price_filter = (
+        check_52w_positive
+        or check_min_drawdown
+        or check_max_drawdown
+        or check_3m_neg_momentum
+        or check_2m_neg_rel_momentum
+    )
+
+    price_metrics: dict[str, dict] = {}
+    phase3_pass_count: int | None = None
+
+    if any_price_filter and phase2_pass_data:
+        phase2_pass_data, price_metrics = _apply_price_filters(
+            phase2_pass_data,
+            check_52w_positive=check_52w_positive,
+            check_min_drawdown=check_min_drawdown,
+            min_drawdown_pct=min_drawdown_pct,
+            check_max_drawdown=check_max_drawdown,
+            max_drawdown_pct=max_drawdown_pct,
+            check_3m_neg_momentum=check_3m_neg_momentum,
+            check_2m_neg_rel_momentum=check_2m_neg_rel_momentum,
+            benchmark_ticker=benchmark_ticker,
+        )
+        phase3_pass_count = len(phase2_pass_data)
+
+    # ------------------------------------------------------------------
+    # Build final result rows
+    # ------------------------------------------------------------------
+    final_rows: list[dict] = []
+    for data in phase2_pass_data:
+        tk = data["ticker"]
+        pm = price_metrics.get(tk) if any_price_filter else None
+        row = _build_result_row(data, price_metrics=pm)
+        if tk in issuance_info:
+            row["Net Issuance ($M)"] = round(issuance_info[tk]["net"] / 1e6, 1)
+            row["Issuance % Mkt Cap"] = round(issuance_info[tk]["pct"] * 100, 1)
+        final_rows.append(row)
 
     results_df = pd.DataFrame(final_rows)
 
     if not results_df.empty:
         results_df = results_df.sort_values("P/B Ratio", ascending=False).reset_index(drop=True)
 
-    return {
+    result = {
         "results_df": results_df,
         "failed_tickers": failed_tickers,
         "phase1_count": total,
         "phase1_pass_count": phase1_pass_count,
         "final_count": len(results_df),
     }
+    if phase3_pass_count is not None:
+        result["phase3_pass_count"] = phase3_pass_count
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +739,10 @@ def get_data(
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Short Screen — Russell 2000")
+    parser = argparse.ArgumentParser(description="Short Screen")
+    parser.add_argument(
+        "universe", nargs="?", default="russell2000", help="Universe: sp500, russell2000, sp400, xlk, etc."
+    )
     parser.add_argument("--pb", type=float, default=3.0, help="P/B threshold (default 3.0)")
     parser.add_argument(
         "--loss", choices=["gross", "operating"], default="gross", help="Loss type: gross (default) or operating"
@@ -541,14 +754,23 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    tickers = load_universe(args.universe)
+    if not tickers:
+        print(f"ERROR: Failed to load universe '{args.universe}'")
+        return
+
     loss_type = "Gross Loss" if args.loss == "gross" else "Operating Loss"
 
     def cb(done, total):
         print(f"\rPhase 1: {done}/{total}", end="", flush=True)
 
-    print(f"Running short screen: P/B > {args.pb}, {loss_type}" + (", heavy issuance" if args.issuance else ""))
+    print(
+        f"Running short screen: {args.universe} ({len(tickers)} tickers), P/B > {args.pb}, {loss_type}"
+        + (", heavy issuance" if args.issuance else "")
+    )
 
     result = get_data(
+        tickers=tickers,
         pb_threshold=args.pb,
         loss_type=loss_type,
         check_issuance=args.issuance,
@@ -562,6 +784,8 @@ def main() -> None:
 
     print(f"\nUniverse: {result['phase1_count']} tickers")
     print(f"Phase 1 pass: {result['phase1_pass_count']}")
+    if "phase3_pass_count" in result:
+        print(f"Phase 3 pass: {result['phase3_pass_count']}")
     print(f"Final candidates: {result['final_count']}")
     print(f"Data errors: {len(result['failed_tickers'])}")
 

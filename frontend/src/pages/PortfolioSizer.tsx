@@ -427,7 +427,7 @@ export function PortfolioSizer() {
       })
     }
 
-    return tradeList.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    return tradeList.sort((a, b) => Math.abs(b.notional) - Math.abs(a.notional))
   }, [data, weightsRows, hedgesRows, currentHoldings])
 
   const totalNotional = trades.reduce((sum, t) => sum + Math.abs(t.notional), 0)

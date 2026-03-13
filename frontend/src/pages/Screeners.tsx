@@ -167,33 +167,106 @@ function QualityPanel() {
 
 /* ─── Short Screen ─── */
 
-const SHORT_COLUMNS: ColumnDef[] = [
+const SHORT_REL_BENCHMARK_OPTIONS = ["IWM", "SPY", "QQQ", "Same as Input"]
+
+const SHORT_BASE_COLUMNS: ColumnDef[] = [
   { key: "Ticker", header: "Ticker" },
   { key: "Company", header: "Company" },
   { key: "P/B Ratio", header: "P/B Ratio", format: v => v != null ? Number(v).toFixed(1) : "N/A" },
   { key: "Gross Profit ($M)", header: "Gross Profit ($M)", format: v => v != null ? Number(v).toFixed(1) : "N/A" },
   { key: "Operating Income ($M)", header: "Op. Income ($M)", format: v => v != null ? Number(v).toFixed(1) : "N/A" },
   { key: "Market Cap ($M)", header: "Mkt Cap ($M)", format: v => v != null ? Number(v).toFixed(0) : "N/A" },
-  { key: "Net Issuance ($M)", header: "Net Issuance ($M)", format: v => v != null ? Number(v).toFixed(1) : "N/A" },
-  { key: "Issuance % Mkt Cap", header: "Issuance % MktCap", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A" },
 ]
 
+const SHORT_EXTRA_COLUMNS: Record<string, ColumnDef> = {
+  "Net Issuance ($M)": { key: "Net Issuance ($M)", header: "Net Issuance ($M)", format: v => v != null ? Number(v).toFixed(1) : "N/A" },
+  "Issuance % Mkt Cap": { key: "Issuance % Mkt Cap", header: "Issuance % MktCap", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A" },
+  "52w Return (%)": { key: "52w Return (%)", header: "52w Ret (%)", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "Drawdown (%)": { key: "Drawdown (%)", header: "DD from High (%)", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "3m Return (%)": { key: "3m Return (%)", header: "3m Ret (%)", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "2m Rel Return (%)": { key: "2m Rel Return (%)", header: "2m Rel (%)", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+}
+
+function buildShortColumns(rows: Record<string, unknown>[]): ColumnDef[] {
+  if (rows.length === 0) return SHORT_BASE_COLUMNS
+  const firstRow = rows[0]
+  const cols = [...SHORT_BASE_COLUMNS]
+  for (const [key, col] of Object.entries(SHORT_EXTRA_COLUMNS)) {
+    if (key in firstRow) cols.push(col)
+  }
+  return cols
+}
+
 function ShortPanel() {
+  const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
+  const [universe, setUniverse] = useState("Russell 2000")
+  const [tickers, setTickers] = useState("")
   const [pbThreshold, setPbThreshold] = useState(3.0)
   const [lossType, setLossType] = useState<"Gross Loss" | "Operating Loss">("Gross Loss")
   const [checkIssuance, setCheckIssuance] = useState(false)
 
+  // Price filters
+  const [check52wPositive, setCheck52wPositive] = useState(false)
+  const [checkMinDrawdown, setCheckMinDrawdown] = useState(false)
+  const [minDrawdownPct, setMinDrawdownPct] = useState(25)
+  const [checkMaxDrawdown, setCheckMaxDrawdown] = useState(false)
+  const [maxDrawdownPct, setMaxDrawdownPct] = useState(60)
+  const [check3mNegMomentum, setCheck3mNegMomentum] = useState(false)
+  const [check2mNegRelMomentum, setCheck2mNegRelMomentum] = useState(false)
+  const [relMomentumBenchmark, setRelMomentumBenchmark] = useState("IWM")
+
   const mutation = useMutation({ mutationFn: runShortScreen })
 
   function handleRun() {
-    mutation.mutate({ pb_threshold: pbThreshold, loss_type: lossType, check_issuance: checkIssuance })
+    mutation.mutate({
+      input_mode: inputMode,
+      universe,
+      tickers,
+      pb_threshold: pbThreshold,
+      loss_type: lossType,
+      check_issuance: checkIssuance,
+      check_52w_positive: check52wPositive,
+      check_min_drawdown: checkMinDrawdown,
+      min_drawdown_pct: minDrawdownPct,
+      check_max_drawdown: checkMaxDrawdown,
+      max_drawdown_pct: maxDrawdownPct,
+      check_3m_neg_momentum: check3mNegMomentum,
+      check_2m_neg_rel_momentum: check2mNegRelMomentum,
+      rel_momentum_benchmark: relMomentumBenchmark,
+    })
   }
 
   const rows: Record<string, unknown>[] = mutation.data?.results_df ?? []
+  const columns = buildShortColumns(rows)
 
   return (
     <>
       <ControlPanel>
+        <SegmentedControl
+          options={[
+            { value: "Universe" as const, label: "Universe" },
+            { value: "Custom Tickers" as const, label: "Custom Tickers" },
+          ]}
+          value={inputMode}
+          onChange={setInputMode}
+        />
+
+        {inputMode === "Universe" ? (
+          <SelectInput
+            label="Universe"
+            value={universe}
+            onChange={setUniverse}
+            options={UNIVERSE_OPTIONS.map(o => ({ value: o, label: o }))}
+          />
+        ) : (
+          <TextInput
+            label="Tickers"
+            value={tickers}
+            onChange={setTickers}
+            placeholder="AAPL, MSFT, GOOG"
+          />
+        )}
+
         <SliderInput
           label="P/B Threshold"
           value={pbThreshold}
@@ -225,23 +298,96 @@ function ShortPanel() {
           description="Adds time — uses SEC EDGAR"
         />
 
-        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Screening...">
+        <div className="pt-2 border-t border-gray-100">
+          <h3 className="text-sm font-medium text-gray-600 mb-3">Price Filters</h3>
+
+          <div className="space-y-3">
+            <Toggle
+              label="52-week return is positive"
+              checked={check52wPositive}
+              onChange={setCheck52wPositive}
+            />
+
+            <Toggle
+              label="Minimum drawdown from 52w high"
+              checked={checkMinDrawdown}
+              onChange={setCheckMinDrawdown}
+            />
+            {checkMinDrawdown && (
+              <SliderInput
+                label="Min Drawdown (%)"
+                value={minDrawdownPct}
+                onChange={setMinDrawdownPct}
+                min={5}
+                max={80}
+                step={5}
+                formatValue={v => `${v}%`}
+                minLabel="5%"
+                maxLabel="80%"
+              />
+            )}
+
+            <Toggle
+              label="Maximum drawdown from 52w high"
+              checked={checkMaxDrawdown}
+              onChange={setCheckMaxDrawdown}
+            />
+            {checkMaxDrawdown && (
+              <SliderInput
+                label="Max Drawdown (%)"
+                value={maxDrawdownPct}
+                onChange={setMaxDrawdownPct}
+                min={10}
+                max={90}
+                step={5}
+                formatValue={v => `${v}%`}
+                minLabel="10%"
+                maxLabel="90%"
+              />
+            )}
+
+            <Toggle
+              label="3-month negative momentum"
+              checked={check3mNegMomentum}
+              onChange={setCheck3mNegMomentum}
+            />
+
+            <Toggle
+              label="2-month negative relative momentum"
+              checked={check2mNegRelMomentum}
+              onChange={setCheck2mNegRelMomentum}
+            />
+            {check2mNegRelMomentum && (
+              <SelectInput
+                label="Relative Benchmark"
+                value={relMomentumBenchmark}
+                onChange={setRelMomentumBenchmark}
+                options={SHORT_REL_BENCHMARK_OPTIONS.map(o => ({ value: o, label: o }))}
+              />
+            )}
+          </div>
+        </div>
+
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText={`Screening ${inputMode === "Custom Tickers" ? "custom tickers" : universe}...`}>
           Run Screen
         </ActionButton>
       </ControlPanel>
 
-      {mutation.isPending && <LoadingSpinner message="Screening Russell 2000 (this may take several minutes)..." />}
+      {mutation.isPending && <LoadingSpinner message={`Screening ${inputMode === "Custom Tickers" ? "custom tickers" : universe} (this may take several minutes)...`} />}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (
         <>
-          <div className="flex gap-6 text-sm text-gray-600 mb-4">
+          <div className="flex flex-wrap gap-6 text-sm text-gray-600 mb-4">
             <span>Universe: <strong>{mutation.data.phase1_count ?? "—"}</strong></span>
             <span>Pass P/B + Loss: <strong>{mutation.data.phase1_pass_count ?? "—"}</strong></span>
+            {mutation.data.phase3_pass_count != null && (
+              <span>Pass price filters: <strong>{mutation.data.phase3_pass_count}</strong></span>
+            )}
             <span>Final candidates: <strong>{mutation.data.final_count ?? rows.length}</strong></span>
           </div>
           {rows.length > 0 ? (
-            <DataTable columns={SHORT_COLUMNS} rows={rows} />
+            <DataTable columns={columns} rows={rows} />
           ) : (
             <p className="text-gray-400">No candidates matching criteria.</p>
           )}
