@@ -13,9 +13,7 @@ import { HedgingTool } from "@/pages/HedgingTool"
 import { PortfolioSizer } from "@/pages/PortfolioSizer"
 import { Momentum } from "@/pages/Momentum"
 import { ChartPage } from "@/pages/ChartPage"
-import { QualityScreen } from "@/pages/QualityScreen"
-import { ShortScreen } from "@/pages/ShortScreen"
-import { FundamentalMomentum } from "@/pages/FundamentalMomentum"
+import { Screeners } from "@/pages/Screeners"
 import { Financials } from "@/pages/Financials"
 import { IndexDashboard } from "@/pages/IndexDashboard"
 import { FXDashboard } from "@/pages/FXDashboard"
@@ -88,9 +86,10 @@ function AppRoutes() {
           <Route path="/signal-aggregator" element={<SignalAggregator />} />
           <Route path="/ontology" element={<OntologyWorkbench />} />
           <Route path="/chart" element={<ChartPage />} />
-          <Route path="/quality" element={<QualityScreen />} />
-          <Route path="/short-screen" element={<ShortScreen />} />
-          <Route path="/fundamental-momentum" element={<FundamentalMomentum />} />
+          <Route path="/screeners" element={<Screeners />} />
+          <Route path="/quality" element={<Navigate to="/screeners" replace />} />
+          <Route path="/short-screen" element={<Navigate to="/screeners" replace />} />
+          <Route path="/fundamental-momentum" element={<Navigate to="/screeners" replace />} />
           <Route path="/financials" element={<Financials />} />
           <Route path="/index-dashboard" element={<IndexDashboard />} />
           <Route path="/fx-dashboard" element={<FXDashboard />} />

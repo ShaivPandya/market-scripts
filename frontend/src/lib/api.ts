@@ -597,10 +597,21 @@ export const runQualityScreen = (body: {
 }
 
 export const runShortScreen = (body: {
-  pb_threshold: number
-  loss_type: string
+  input_mode: string
+  universe: string
+  tickers: string
+  pb_threshold: number | null
+  loss_type: string | null
   check_issuance: boolean
-}) => client.post("/short-screen", body).then(r => r.data)
+  check_52w_positive: boolean
+  check_min_drawdown: boolean
+  min_drawdown_pct: number
+  check_max_drawdown: boolean
+  max_drawdown_pct: number
+  check_3m_neg_momentum: boolean
+  check_2m_neg_rel_momentum: boolean
+  rel_momentum_benchmark: string
+}) => client.post("/short-screen", body, { timeout: 300_000 }).then(r => r.data)
 
 type FundamentalMomentumRequest = {
   screen_type: string
