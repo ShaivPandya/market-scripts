@@ -176,7 +176,7 @@ def fetch_yf_data(ticker: str) -> dict:
         return {"ticker": ticker, "error": str(e)}
 
 
-def screen_ticker(ticker: str, pb_threshold: float, loss_type: str) -> tuple[bool, dict]:
+def screen_ticker(ticker: str, pb_threshold: float | None, loss_type: str | None) -> tuple[bool, dict]:
     """
     Apply Phase 1 criteria (P/B + loss type) using yfinance data.
 
@@ -193,9 +193,14 @@ def screen_ticker(ticker: str, pb_threshold: float, loss_type: str) -> tuple[boo
     gross = data.get("gross_profit", np.nan)
     operating = data.get("operating_income", np.nan)
 
-    pb_ok = (not (isinstance(pb, float) and np.isnan(pb))) and (pb > pb_threshold)
+    if pb_threshold is not None:
+        pb_ok = (not (isinstance(pb, float) and np.isnan(pb))) and (pb > pb_threshold)
+    else:
+        pb_ok = True
 
-    if loss_type == "Gross Loss":
+    if loss_type is None:
+        loss_ok = True
+    elif loss_type == "Gross Loss":
         loss_ok = (not (isinstance(gross, float) and np.isnan(gross))) and (gross < 0)
     else:
         loss_ok = (not (isinstance(operating, float) and np.isnan(operating))) and (operating < 0)
@@ -535,8 +540,8 @@ def _build_result_row(data: dict, price_metrics: dict | None = None) -> dict:
 
 def get_data(
     tickers: list[str],
-    pb_threshold: float = 3.0,
-    loss_type: str = "Gross Loss",
+    pb_threshold: float | None = 3.0,
+    loss_type: str | None = "Gross Loss",
     check_issuance: bool = False,
     check_52w_positive: bool = False,
     check_min_drawdown: bool = False,

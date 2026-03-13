@@ -40,8 +40,8 @@ class ShortScreenRequest(BaseModel):
     input_mode: str = "Universe"
     universe: str = "Russell 2000"
     tickers: str = ""
-    pb_threshold: float = 3.0
-    loss_type: str = "Gross Loss"
+    pb_threshold: float | None = 3.0
+    loss_type: str | None = "Gross Loss"
     check_issuance: bool = False
     check_52w_positive: bool = False
     check_min_drawdown: bool = False

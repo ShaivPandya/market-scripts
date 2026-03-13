@@ -600,8 +600,8 @@ export const runShortScreen = (body: {
   input_mode: string
   universe: string
   tickers: string
-  pb_threshold: number
-  loss_type: string
+  pb_threshold: number | null
+  loss_type: string | null
   check_issuance: boolean
   check_52w_positive: boolean
   check_min_drawdown: boolean

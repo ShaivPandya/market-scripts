@@ -201,7 +201,9 @@ function ShortPanel() {
   const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
   const [universe, setUniverse] = useState("Russell 2000")
   const [tickers, setTickers] = useState("")
+  const [checkPb, setCheckPb] = useState(true)
   const [pbThreshold, setPbThreshold] = useState(3.0)
+  const [checkLoss, setCheckLoss] = useState(true)
   const [lossType, setLossType] = useState<"Gross Loss" | "Operating Loss">("Gross Loss")
   const [checkIssuance, setCheckIssuance] = useState(false)
 
@@ -222,8 +224,8 @@ function ShortPanel() {
       input_mode: inputMode,
       universe,
       tickers,
-      pb_threshold: pbThreshold,
-      loss_type: lossType,
+      pb_threshold: checkPb ? pbThreshold : null,
+      loss_type: checkLoss ? lossType : null,
       check_issuance: checkIssuance,
       check_52w_positive: check52wPositive,
       check_min_drawdown: checkMinDrawdown,
@@ -267,29 +269,42 @@ function ShortPanel() {
           />
         )}
 
-        <SliderInput
+        <Toggle
           label="P/B Threshold"
-          value={pbThreshold}
-          onChange={setPbThreshold}
-          min={3.0}
-          max={5.0}
-          step={0.1}
-          formatValue={v => v.toFixed(1)}
-          minLabel="3.0"
-          maxLabel="5.0"
+          checked={checkPb}
+          onChange={setCheckPb}
         />
-
-        <div>
-          <label className="block text-sm text-gray-600 mb-1.5">Loss Type</label>
-          <SegmentedControl
-            options={[
-              { value: "Gross Loss" as const, label: "Gross Loss" },
-              { value: "Operating Loss" as const, label: "Operating Loss" },
-            ]}
-            value={lossType}
-            onChange={setLossType}
+        {checkPb && (
+          <SliderInput
+            label="P/B Min"
+            value={pbThreshold}
+            onChange={setPbThreshold}
+            min={3.0}
+            max={5.0}
+            step={0.1}
+            formatValue={v => v.toFixed(1)}
+            minLabel="3.0"
+            maxLabel="5.0"
           />
-        </div>
+        )}
+
+        <Toggle
+          label="Loss Type Filter"
+          checked={checkLoss}
+          onChange={setCheckLoss}
+        />
+        {checkLoss && (
+          <div>
+            <SegmentedControl
+              options={[
+                { value: "Gross Loss" as const, label: "Gross Loss" },
+                { value: "Operating Loss" as const, label: "Operating Loss" },
+              ]}
+              value={lossType}
+              onChange={setLossType}
+            />
+          </div>
+        )}
 
         <Toggle
           label="High Net Equity Issuance (top quartile)"
