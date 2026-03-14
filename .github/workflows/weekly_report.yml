@@ -32,11 +32,13 @@ jobs:
           ny_hour="$(TZ=America/New_York date +%H)"
           ny_minute="$(TZ=America/New_York date +%M)"
 
-          if [ "$ny_day" = "5" ] && [ "$ny_hour" = "16" ] && [ "$ny_minute" = "05" ]; then
+          # GitHub's scheduled workflows can start several minutes late.
+          # Accept any run that lands during the 16:00 ET hour on Friday.
+          if [ "$ny_day" = "5" ] && [ "$ny_hour" = "16" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping run outside Friday 16:05 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
+            echo "Skipping run outside Friday 16:00-16:59 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
           fi
 
       - name: Checkout

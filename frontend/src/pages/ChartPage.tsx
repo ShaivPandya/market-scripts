@@ -11,7 +11,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 const LOOKBACKS = ["3M", "1Y", "2Y", "5Y"] as const
 
 type ChartMode = "single" | "ratio"
-type RatioWindow = "5Y" | "10Y" | "20Y"
+type RatioWindow = "5Y" | "10Y"
 
 interface RatioPreset {
   label: string
@@ -118,7 +118,7 @@ function isoDateToday() {
 }
 
 function computeWindowStartDate(window: RatioWindow): string {
-  const years = window === "20Y" ? 20 : window === "10Y" ? 10 : 5
+  const years = window === "10Y" ? 10 : 5
   const end = new Date()
   end.setFullYear(end.getFullYear() - years)
   return toDateInputValue(end)
@@ -208,21 +208,9 @@ export function ChartPage() {
     staleTime: Infinity,
   })
 
-  const ratioQuery20Y = useQuery({
-    queryKey: ["chart", "ratio", submittedRatioBase, "20Y"],
-    queryFn: () => runPriceRatioChart(buildRatioPayload(
-      submittedRatioBase!.symbol_a,
-      submittedRatioBase!.symbol_b,
-      computeWindowStartDate("20Y"),
-      submittedRatioBase!.end_date,
-    )),
-    enabled: Boolean(submittedRatioBase),
-    staleTime: Infinity,
-  })
-
-  const activeRatioQuery = ratioWindow === "20Y" ? ratioQuery20Y : ratioWindow === "10Y" ? ratioQuery10Y : ratioQuery5Y
+  const activeRatioQuery = ratioWindow === "10Y" ? ratioQuery10Y : ratioQuery5Y
   const isLoading = mode === "ratio"
-    ? ratioQuery5Y.isFetching || ratioQuery10Y.isFetching || ratioQuery20Y.isFetching
+    ? ratioQuery5Y.isFetching || ratioQuery10Y.isFetching
     : singleQuery.isFetching
   const isError = mode === "ratio" ? activeRatioQuery.isError : singleQuery.isError
   const error = mode === "ratio" ? activeRatioQuery.error : singleQuery.error
@@ -375,13 +363,17 @@ export function ChartPage() {
       .map(r => r.ratio)
       .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
   ), [ratioRows])
+  const bottom5Pct = useMemo(() => percentile(ratioValues, 0.05), [ratioValues])
   const bottomDecile = useMemo(() => percentile(ratioValues, 0.1), [ratioValues])
   const topDecile = useMemo(() => percentile(ratioValues, 0.9), [ratioValues])
+  const top5Pct = useMemo(() => percentile(ratioValues, 0.95), [ratioValues])
   const ratioChartSeries: SeriesDef[] = useMemo(() => [
     { key: "Ratio", color: "#0f766e", strokeWidth: 2 },
     { key: "Historical Avg", color: "#f59e0b", strokeWidth: 1.5, opacity: 0.9, strokeDasharray: "6 4" },
+    { key: "Top 5%", color: "#991b1b", strokeWidth: 1.2, opacity: 0.8, strokeDasharray: "2 3" },
     { key: "Top Decile", color: "#dc2626", strokeWidth: 1.4, opacity: 0.9, strokeDasharray: "4 4" },
     { key: "Bottom Decile", color: "#2563eb", strokeWidth: 1.4, opacity: 0.9, strokeDasharray: "4 4" },
+    { key: "Bottom 5%", color: "#1e3a8a", strokeWidth: 1.2, opacity: 0.8, strokeDasharray: "2 3" },
   ], [])
 
   const ratioMultiChartData = useMemo<Record<string, unknown>[]>(() => (
@@ -389,8 +381,10 @@ export function ChartPage() {
       date: r.date,
       Ratio: r.ratio,
       "Historical Avg": historicalAvg,
+      "Top 5%": top5Pct,
       "Top Decile": topDecile,
       "Bottom Decile": bottomDecile,
+      "Bottom 5%": bottom5Pct,
     }))
   ), [ratioRows, historicalAvg, topDecile, bottomDecile])
 
@@ -497,7 +491,6 @@ export function ChartPage() {
                   options={[
                     { value: "5Y", label: "5Y" },
                     { value: "10Y", label: "10Y" },
-                    { value: "20Y", label: "20Y" },
                   ]}
                   value={ratioWindow}
                   onChange={handleRatioWindowChange}
@@ -586,15 +579,17 @@ export function ChartPage() {
             />
             <MetricCard title="Min Ratio" value={formatRatio(toNumber(ratioStats.min_ratio), 4)} />
             <MetricCard title="Max Ratio" value={formatRatio(toNumber(ratioStats.max_ratio), 4)} />
+            <MetricCard title="Bottom 5%" value={formatRatio(bottom5Pct, 4)} />
             <MetricCard title="Bottom Decile" value={formatRatio(bottomDecile, 4)} />
             <MetricCard title="Top Decile" value={formatRatio(topDecile, 4)} />
+            <MetricCard title="Top 5%" value={formatRatio(top5Pct, 4)} />
           </div>
 
           <div>
             <h2 className="text-base font-semibold mb-2">Price Ratio Over Time</h2>
             <TimeSeriesChart multiData={ratioMultiChartData} series={ratioChartSeries} height={300} />
             <p className="text-xs text-gray-500 mt-2">
-              Dashed references show historical average plus 10th/90th percentile decile bands.
+              Dashed references show historical average, 5th/95th percentile bands, and 10th/90th percentile decile bands.
             </p>
           </div>
 
