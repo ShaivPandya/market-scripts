@@ -46,8 +46,9 @@ _edgar_facts_lock = threading.Lock()
 SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
 SEC_RATE_LIMIT_DELAY = 0.12  # comfortably under SEC's 10 requests/second limit
 
-PRICE_CHUNK_SIZE = 50  # tickers per yf_download batch
-PRICE_BATCH_DELAY = 1.0  # seconds between batches
+YF_CHUNK_SIZE = 100     # tickers per batch (Phase 1 and Phase 3)
+YF_BATCH_DELAY = 0.5    # seconds between batches
+PHASE1_WORKERS = 6      # concurrent yfinance threads in Phase 1
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +388,7 @@ def _apply_price_filters(
         download_tickers.append(benchmark_ticker)
 
     # Chunked download with pauses to avoid rate limits
-    chunks = [download_tickers[i : i + PRICE_CHUNK_SIZE] for i in range(0, len(download_tickers), PRICE_CHUNK_SIZE)]
+    chunks = [download_tickers[i : i + YF_CHUNK_SIZE] for i in range(0, len(download_tickers), YF_CHUNK_SIZE)]
     all_dfs: list[pd.DataFrame] = []
     for i, chunk in enumerate(chunks):
         try:
@@ -404,7 +405,7 @@ def _apply_price_filters(
         except Exception:
             LOGGER.warning("Price filter batch %d/%d failed", i + 1, len(chunks), exc_info=True)
         if i < len(chunks) - 1:
-            time.sleep(PRICE_BATCH_DELAY)
+            time.sleep(YF_BATCH_DELAY)
 
     if not all_dfs:
         LOGGER.warning("All price filter downloads failed; skipping price filters")
@@ -619,7 +620,7 @@ def get_data(
 
     # ------------------------------------------------------------------
     # Pre-warm yfinance session so the authentication crumb is fresh
-    # before spawning 8 parallel threads.  A stale/missing crumb causes
+    # before spawning parallel threads.  A stale/missing crumb causes
     # t.info to silently return {} for every ticker, producing 0 results.
     # ------------------------------------------------------------------
     try:
@@ -628,28 +629,34 @@ def get_data(
         LOGGER.debug("yfinance session pre-warm failed", exc_info=True)
 
     # ------------------------------------------------------------------
-    # Phase 1: Parallel yfinance fetch + P/B + loss filter
+    # Phase 1: Batched parallel yfinance fetch + P/B + loss filter
+    # Process in chunks with pauses between batches to avoid rate limits.
     # ------------------------------------------------------------------
     phase1_pass_data: list[dict] = []
     failed_tickers: list[str] = []
     done_count = 0
+    batches = [universe[i:i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(screen_ticker, tk, pb_threshold, loss_type): tk for tk in universe}
-        for future in as_completed(futures):
-            tk = futures[future]
-            try:
-                passes, data = future.result()
-                if passes:
-                    phase1_pass_data.append(data)
-                elif "error" in data:
+    with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
+        for batch_idx, batch in enumerate(batches):
+            futures = {pool.submit(screen_ticker, tk, pb_threshold, loss_type): tk for tk in batch}
+            for future in as_completed(futures):
+                tk = futures[future]
+                try:
+                    passes, data = future.result()
+                    if passes:
+                        phase1_pass_data.append(data)
+                    elif "error" in data:
+                        failed_tickers.append(tk)
+                except Exception:
                     failed_tickers.append(tk)
-            except Exception:
-                failed_tickers.append(tk)
 
-            done_count += 1
-            if progress_callback and (done_count % 25 == 0 or done_count == total):
-                progress_callback(done_count, total)
+                done_count += 1
+                if progress_callback and (done_count % 25 == 0 or done_count == total):
+                    progress_callback(done_count, total)
+
+            if batch_idx < len(batches) - 1:
+                time.sleep(YF_BATCH_DELAY)
 
     phase1_pass_count = len(phase1_pass_data)
 
