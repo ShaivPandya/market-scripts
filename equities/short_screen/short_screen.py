@@ -46,9 +46,9 @@ _edgar_facts_lock = threading.Lock()
 SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
 SEC_RATE_LIMIT_DELAY = 0.12  # comfortably under SEC's 10 requests/second limit
 
-YF_CHUNK_SIZE = 100     # tickers per batch (Phase 1 and Phase 3)
-YF_BATCH_DELAY = 0.5    # seconds between batches
-PHASE1_WORKERS = 6      # concurrent yfinance threads in Phase 1
+YF_CHUNK_SIZE = 100  # tickers per batch (Phase 1 and Phase 3)
+YF_BATCH_DELAY = 0.5  # seconds between batches
+PHASE1_WORKERS = 6  # concurrent yfinance threads in Phase 1
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +635,7 @@ def get_data(
     phase1_pass_data: list[dict] = []
     failed_tickers: list[str] = []
     done_count = 0
-    batches = [universe[i:i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
+    batches = [universe[i : i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
 
     with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
         for batch_idx, batch in enumerate(batches):
