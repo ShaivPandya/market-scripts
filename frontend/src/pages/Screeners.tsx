@@ -215,7 +215,7 @@ function ShortPanel() {
   const [maxDrawdownPct, setMaxDrawdownPct] = useState(60)
   const [check3mNegMomentum, setCheck3mNegMomentum] = useState(false)
   const [check2mNegRelMomentum, setCheck2mNegRelMomentum] = useState(false)
-  const [relMomentumBenchmark, setRelMomentumBenchmark] = useState("IWM")
+  const [relMomentumBenchmark, setRelMomentumBenchmark] = useState("Same as Input")
 
   const mutation = useMutation({ mutationFn: runShortScreen })
 
