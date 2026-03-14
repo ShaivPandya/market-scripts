@@ -33,6 +33,7 @@ COMMODITIES = {
     "WTI Crude Oil": "CL=F",
     "Brent Crude Oil": "BZ=F",
     "Natural Gas": "NG=F",
+    "Dutch TTF Gas": "TTF=F",
 }
 
 COMMODITY_ORDER = list(COMMODITIES.keys())

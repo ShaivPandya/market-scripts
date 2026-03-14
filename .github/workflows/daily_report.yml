@@ -32,11 +32,13 @@ jobs:
           ny_hour="$(TZ=America/New_York date +%H)"
           ny_minute="$(TZ=America/New_York date +%M)"
 
-          if [ "$ny_day" -ge 1 ] && [ "$ny_day" -le 5 ] && [ "$ny_hour" = "09" ] && [ "$ny_minute" = "15" ]; then
+          # GitHub's scheduled workflows can start several minutes late.
+          # Accept any weekday run that lands during the 09:00 ET hour.
+          if [ "$ny_day" -ge 1 ] && [ "$ny_day" -le 5 ] && [ "$ny_hour" = "09" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping run outside weekday 09:15 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
+            echo "Skipping run outside weekday 09:00-09:59 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
           fi
 
       - name: Checkout
@@ -74,7 +76,7 @@ jobs:
           SODA_APP_TOKEN: ${{ secrets.SODA_APP_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RUN: "1"
-        run: python auto_report/auto_daily_report.py
+        run: python -m auto_report.auto_daily_report
 
       - name: Upload outputs
         if: always() && steps.ny_gate.outputs.should_run == 'true'

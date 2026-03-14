@@ -6,7 +6,7 @@ from api.serializers import serialize_response
 
 router = APIRouter()
 
-VALID_COMMODITIES = {"CL", "BZ", "NG"}
+VALID_COMMODITIES = {"CL", "BZ", "NG", "TTF"}
 
 
 @router.get("/commodities-curve")

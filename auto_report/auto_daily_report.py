@@ -6,7 +6,7 @@ Pass 1: Market analysis using all 12 data sources + news search → stance + lev
 Pass 2: Portfolio risk analysis with stance-driven target leverage.
 
 Run:
-    python auto_report/auto_daily_report.py --force   # bypass weekday-morning gate
+    python -m auto_report.auto_daily_report --force   # bypass weekday-morning gate
 """
 
 from __future__ import annotations
@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
 
