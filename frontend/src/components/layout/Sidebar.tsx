@@ -13,8 +13,8 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: "Core",
     pages: [
-      { label: "Workspace", path: "/" },
-      { label: "Portfolio Dashboard", path: "/portfolio" },
+      { label: "Portfolio Dashboard", path: "/" },
+      { label: "Workspace", path: "/workspace" },
       { label: "Investment Theses", path: "/theses" },
       { label: "Weekly Report", path: "/weekly-report" },
     ],

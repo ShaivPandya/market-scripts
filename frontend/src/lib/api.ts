@@ -611,7 +611,7 @@ export const runShortScreen = (body: {
   check_3m_neg_momentum: boolean
   check_2m_neg_rel_momentum: boolean
   rel_momentum_benchmark: string
-}) => client.post("/short-screen", body, { timeout: 300_000 }).then(r => r.data)
+}) => client.post("/short-screen", body, { timeout: 600_000 }).then(r => r.data)
 
 type FundamentalMomentumRequest = {
   screen_type: string

@@ -74,8 +74,9 @@ function AppRoutes() {
       {/* Protected — all existing routes */}
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
-          <Route index element={<Workspace />} />
-          <Route path="/portfolio" element={<PortfolioDashboard />} />
+          <Route index element={<PortfolioDashboard />} />
+          <Route path="/portfolio" element={<Navigate to="/" replace />} />
+          <Route path="/workspace" element={<Workspace />} />
           <Route path="/dossier/:ticker" element={<PositionDossier />} />
           <Route path="/theses" element={<ThesisManager />} />
           <Route path="/analyzer" element={<PortfolioAnalyzer />} />

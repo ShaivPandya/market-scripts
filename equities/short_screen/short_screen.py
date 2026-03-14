@@ -46,6 +46,10 @@ _edgar_facts_lock = threading.Lock()
 SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
 SEC_RATE_LIMIT_DELAY = 0.12  # comfortably under SEC's 10 requests/second limit
 
+YF_CHUNK_SIZE = 100  # tickers per batch (Phase 1 and Phase 3)
+YF_BATCH_DELAY = 0.5  # seconds between batches
+PHASE1_WORKERS = 6  # concurrent yfinance threads in Phase 1
+
 
 # ---------------------------------------------------------------------------
 # yfinance helpers (pattern from equities/quality/quality_single.py)
@@ -383,19 +387,42 @@ def _apply_price_filters(
     if need_benchmark and benchmark_ticker not in download_tickers:
         download_tickers.append(benchmark_ticker)
 
-    # Single batch download — 1 year of daily prices
-    try:
-        raw = yf_download(
-            download_tickers,
-            period="1y",
-            interval="1d",
-            auto_adjust=False,
-            progress=False,
-            threads=True,
-        )
-    except Exception:
-        LOGGER.warning("Price filter batch download failed; skipping price filters", exc_info=True)
+    # Chunked download with pauses to avoid rate limits
+    chunks = [download_tickers[i : i + YF_CHUNK_SIZE] for i in range(0, len(download_tickers), YF_CHUNK_SIZE)]
+    all_dfs: list[pd.DataFrame] = []
+    for i, chunk in enumerate(chunks):
+        try:
+            df = yf_download(
+                chunk,
+                period="1y",
+                interval="1d",
+                auto_adjust=False,
+                progress=False,
+                threads=True,
+            )
+            if df is not None and not df.empty:
+                all_dfs.append(df)
+        except Exception:
+            LOGGER.warning("Price filter batch %d/%d failed", i + 1, len(chunks), exc_info=True)
+        if i < len(chunks) - 1:
+            time.sleep(YF_BATCH_DELAY)
+
+    if not all_dfs:
+        LOGGER.warning("All price filter downloads failed; skipping price filters")
         return passers, {}
+
+    if len(all_dfs) == 1:
+        raw = all_dfs[0]
+    else:
+        parts: dict[str, list[pd.DataFrame]] = {}
+        for df in all_dfs:
+            if isinstance(df.columns, pd.MultiIndex):
+                for level in df.columns.get_level_values(0).unique():
+                    parts.setdefault(str(level), []).append(df[level])
+            else:
+                for col in df.columns:
+                    parts.setdefault(str(col), []).append(df[[col]])
+        raw = pd.concat({k: pd.concat(v, axis=1) for k, v in parts.items() if v}, axis=1)
 
     # Extract close prices per ticker
     def _get_close(df: pd.DataFrame, ticker: str) -> pd.Series | None:
@@ -593,7 +620,7 @@ def get_data(
 
     # ------------------------------------------------------------------
     # Pre-warm yfinance session so the authentication crumb is fresh
-    # before spawning 8 parallel threads.  A stale/missing crumb causes
+    # before spawning parallel threads.  A stale/missing crumb causes
     # t.info to silently return {} for every ticker, producing 0 results.
     # ------------------------------------------------------------------
     try:
@@ -602,28 +629,34 @@ def get_data(
         LOGGER.debug("yfinance session pre-warm failed", exc_info=True)
 
     # ------------------------------------------------------------------
-    # Phase 1: Parallel yfinance fetch + P/B + loss filter
+    # Phase 1: Batched parallel yfinance fetch + P/B + loss filter
+    # Process in chunks with pauses between batches to avoid rate limits.
     # ------------------------------------------------------------------
     phase1_pass_data: list[dict] = []
     failed_tickers: list[str] = []
     done_count = 0
+    batches = [universe[i : i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(screen_ticker, tk, pb_threshold, loss_type): tk for tk in universe}
-        for future in as_completed(futures):
-            tk = futures[future]
-            try:
-                passes, data = future.result()
-                if passes:
-                    phase1_pass_data.append(data)
-                elif "error" in data:
+    with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
+        for batch_idx, batch in enumerate(batches):
+            futures = {pool.submit(screen_ticker, tk, pb_threshold, loss_type): tk for tk in batch}
+            for future in as_completed(futures):
+                tk = futures[future]
+                try:
+                    passes, data = future.result()
+                    if passes:
+                        phase1_pass_data.append(data)
+                    elif "error" in data:
+                        failed_tickers.append(tk)
+                except Exception:
                     failed_tickers.append(tk)
-            except Exception:
-                failed_tickers.append(tk)
 
-            done_count += 1
-            if progress_callback and (done_count % 25 == 0 or done_count == total):
-                progress_callback(done_count, total)
+                done_count += 1
+                if progress_callback and (done_count % 25 == 0 or done_count == total):
+                    progress_callback(done_count, total)
+
+            if batch_idx < len(batches) - 1:
+                time.sleep(YF_BATCH_DELAY)
 
     phase1_pass_count = len(phase1_pass_data)
 
