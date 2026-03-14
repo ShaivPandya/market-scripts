@@ -69,8 +69,6 @@ DEFAULT_NEWS_SOURCES = [
     "bloomberg.com",
     "cnbc.com",
     "federalreserve.gov",
-    "reuters.com",
-    "wsj.com",
 ]
 
 RULES_TEXT = """
