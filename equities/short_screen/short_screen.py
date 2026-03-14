@@ -46,6 +46,9 @@ _edgar_facts_lock = threading.Lock()
 SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
 SEC_RATE_LIMIT_DELAY = 0.12  # comfortably under SEC's 10 requests/second limit
 
+PRICE_CHUNK_SIZE = 50  # tickers per yf_download batch
+PRICE_BATCH_DELAY = 1.0  # seconds between batches
+
 
 # ---------------------------------------------------------------------------
 # yfinance helpers (pattern from equities/quality/quality_single.py)
@@ -383,19 +386,42 @@ def _apply_price_filters(
     if need_benchmark and benchmark_ticker not in download_tickers:
         download_tickers.append(benchmark_ticker)
 
-    # Single batch download — 1 year of daily prices
-    try:
-        raw = yf_download(
-            download_tickers,
-            period="1y",
-            interval="1d",
-            auto_adjust=False,
-            progress=False,
-            threads=True,
-        )
-    except Exception:
-        LOGGER.warning("Price filter batch download failed; skipping price filters", exc_info=True)
+    # Chunked download with pauses to avoid rate limits
+    chunks = [download_tickers[i : i + PRICE_CHUNK_SIZE] for i in range(0, len(download_tickers), PRICE_CHUNK_SIZE)]
+    all_dfs: list[pd.DataFrame] = []
+    for i, chunk in enumerate(chunks):
+        try:
+            df = yf_download(
+                chunk,
+                period="1y",
+                interval="1d",
+                auto_adjust=False,
+                progress=False,
+                threads=True,
+            )
+            if df is not None and not df.empty:
+                all_dfs.append(df)
+        except Exception:
+            LOGGER.warning("Price filter batch %d/%d failed", i + 1, len(chunks), exc_info=True)
+        if i < len(chunks) - 1:
+            time.sleep(PRICE_BATCH_DELAY)
+
+    if not all_dfs:
+        LOGGER.warning("All price filter downloads failed; skipping price filters")
         return passers, {}
+
+    if len(all_dfs) == 1:
+        raw = all_dfs[0]
+    else:
+        parts: dict[str, list[pd.DataFrame]] = {}
+        for df in all_dfs:
+            if isinstance(df.columns, pd.MultiIndex):
+                for level in df.columns.get_level_values(0).unique():
+                    parts.setdefault(str(level), []).append(df[level])
+            else:
+                for col in df.columns:
+                    parts.setdefault(str(col), []).append(df[[col]])
+        raw = pd.concat({k: pd.concat(v, axis=1) for k, v in parts.items() if v}, axis=1)
 
     # Extract close prices per ticker
     def _get_close(df: pd.DataFrame, ticker: str) -> pd.Series | None:
