@@ -6,7 +6,7 @@ Orchestrates data collection from existing modules, calls Claude to generate
 a Markdown report, writes outputs, archives to history, and creates a GitHub Issue.
 
 Run:
-    python auto_report/auto_weekly_report.py --force   # bypass Friday-afternoon gate
+    python -m auto_report.auto_weekly_report --force   # bypass Friday-afternoon gate
 """
 
 from __future__ import annotations
@@ -24,6 +24,9 @@ from zoneinfo import ZoneInfo
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
 

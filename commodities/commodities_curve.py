@@ -6,6 +6,7 @@ Provides current and historical (N-day lookback) futures curves for:
 - WTI Crude Oil (CL)
 - Brent Crude Oil (BZ)
 - Natural Gas (NG)
+- Dutch TTF Gas (TTF)
 
 Terminal:
   python commodities/commodities_curve.py
@@ -61,6 +62,7 @@ COMMODITIES = [
     ("CL", "WTI Crude Oil", "$/bbl"),
     ("BZ", "Brent Crude Oil", "$/bbl"),
     ("NG", "Natural Gas", "$/MMBtu"),
+    ("TTF", "Dutch TTF Gas", "€/MWh"),
 ]
 
 VALID_CODES = {c[0] for c in COMMODITIES}

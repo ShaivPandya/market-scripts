@@ -64,7 +64,7 @@ jobs:
           SODA_APP_TOKEN: ${{ secrets.SODA_APP_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RUN: "1"
-        run: python auto_report/auto_weekly_report.py
+        run: python -m auto_report.auto_weekly_report
 
       - name: Upload outputs
         if: always() && steps.ny_gate.outputs.should_run == 'true'
