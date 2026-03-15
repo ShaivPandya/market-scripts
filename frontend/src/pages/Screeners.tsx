@@ -207,9 +207,9 @@ function ShortPanel() {
   const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
   const [universe, setUniverse] = useState("Russell 2000")
   const [tickers, setTickers] = useState("")
-  const [checkPb, setCheckPb] = useState(true)
+  const [checkPb, setCheckPb] = useState(false)
   const [pbThreshold, setPbThreshold] = useState(3.0)
-  const [checkLoss, setCheckLoss] = useState(true)
+  const [checkLoss, setCheckLoss] = useState(false)
   const [lossType, setLossType] = useState<"Gross Loss" | "Operating Loss">("Gross Loss")
   const [checkIssuance, setCheckIssuance] = useState(false)
 
