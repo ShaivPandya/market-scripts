@@ -333,10 +333,9 @@ function ShortPanel() {
           <h3 className="text-sm font-medium text-gray-600 mb-3">Fundamental Growth Filters</h3>
           <div className="space-y-3">
             <Toggle
-              label="Max YoY Revenue Growth (per quarter)"
+              label="Max YoY Revenue Growth (avg of 3 quarters)"
               checked={checkRevenue}
               onChange={setCheckRevenue}
-              description="Each of last 3 quarters must be at/below threshold"
             />
             {checkRevenue && (
               <SliderInput

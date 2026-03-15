@@ -171,24 +171,28 @@ def fetch_yf_data(ticker: str) -> dict:
         )
 
         # Quarterly revenue & EPS YoY growth (need 7 quarters: 3 recent + 4 year-ago)
-        rev_yoy_q0 = rev_yoy_q1 = rev_yoy_q2 = np.nan
+        rev_yoy_q0 = rev_yoy_q1 = rev_yoy_q2 = rev_yoy_avg = np.nan
         eps_yoy_q0 = eps_yoy_q1 = eps_yoy_q2 = eps_yoy_avg = np.nan
         try:
             q_fin = t.quarterly_financials
             if q_fin is not None and not q_fin.empty and q_fin.shape[1] >= 5:
                 # Extract per-quarter revenue
                 revs = [get_item(q_fin.iloc[:, i], REVENUE_KEYS) for i in range(min(q_fin.shape[1], 7))]
+                rev_yoys: list[float] = []
                 for idx, (recent_i, prior_i) in enumerate([(0, 4), (1, 5), (2, 6)]):
                     if prior_i < len(revs):
                         r, p = revs[recent_i], revs[prior_i]
                         if not np.isnan(r) and not np.isnan(p) and p != 0:
                             val = (r / p - 1) * 100
+                            rev_yoys.append(val)
                             if idx == 0:
                                 rev_yoy_q0 = val
                             elif idx == 1:
                                 rev_yoy_q1 = val
                             else:
                                 rev_yoy_q2 = val
+                if rev_yoys:
+                    rev_yoy_avg = float(np.mean(rev_yoys))
 
                 # Extract per-quarter EPS (direct label, then fallback to net income / shares)
                 def _get_eps(col_idx: int) -> float:
@@ -234,6 +238,7 @@ def fetch_yf_data(ticker: str) -> dict:
             "rev_yoy_q0": rev_yoy_q0,
             "rev_yoy_q1": rev_yoy_q1,
             "rev_yoy_q2": rev_yoy_q2,
+            "rev_yoy_avg": rev_yoy_avg,
             "eps_yoy_q0": eps_yoy_q0,
             "eps_yoy_q1": eps_yoy_q1,
             "eps_yoy_q2": eps_yoy_q2,
@@ -281,11 +286,10 @@ def screen_ticker(
     else:
         loss_ok = (not (isinstance(operating, float) and np.isnan(operating))) and (operating < 0)
 
-    # Revenue growth filter: each of the last 3 quarters must be <= threshold
+    # Revenue growth filter: average YoY revenue growth across 3 quarters must be <= threshold
     if check_revenue:
-        yoys = [data.get("rev_yoy_q0", np.nan), data.get("rev_yoy_q1", np.nan), data.get("rev_yoy_q2", np.nan)]
-        valid = [v for v in yoys if not (isinstance(v, float) and np.isnan(v))]
-        rev_ok = len(valid) > 0 and all(v <= max_revenue_growth for v in valid)
+        avg = data.get("rev_yoy_avg", np.nan)
+        rev_ok = not (isinstance(avg, float) and np.isnan(avg)) and avg <= max_revenue_growth
     else:
         rev_ok = True
 
