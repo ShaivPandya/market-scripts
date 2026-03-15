@@ -50,6 +50,12 @@ YF_CHUNK_SIZE = 100  # tickers per batch (Phase 1 and Phase 3)
 YF_BATCH_DELAY = 0.5  # seconds between batches
 PHASE1_WORKERS = 6  # concurrent yfinance threads in Phase 1
 
+# Label variants for quarterly revenue / EPS extraction
+REVENUE_KEYS = ["Total Revenue", "TotalRevenue", "Revenue", "Operating Revenue", "Net Sales", "NetSales"]
+EPS_KEYS = ["Diluted EPS", "DilutedEPS", "Basic EPS", "BasicEPS"]
+NET_INCOME_KEYS = ["Net Income", "NetIncome", "Net Income Common Stockholders", "NetIncomeCommonStockholders"]
+DILUTED_SHARES_KEYS = ["Diluted Average Shares", "DilutedAverageShares", "Weighted Average Shares Diluted"]
+
 
 # ---------------------------------------------------------------------------
 # yfinance helpers (pattern from equities/quality/quality_single.py)
@@ -164,6 +170,61 @@ def fetch_yf_data(ticker: str) -> dict:
             ],
         )
 
+        # Quarterly revenue & EPS YoY growth (need 7 quarters: 3 recent + 4 year-ago)
+        rev_yoy_q0 = rev_yoy_q1 = rev_yoy_q2 = rev_yoy_avg = np.nan
+        eps_yoy_q0 = eps_yoy_q1 = eps_yoy_q2 = eps_yoy_avg = np.nan
+        try:
+            q_fin = t.quarterly_financials
+            if q_fin is not None and not q_fin.empty and q_fin.shape[1] >= 5:
+                # Extract per-quarter revenue
+                revs = [get_item(q_fin.iloc[:, i], REVENUE_KEYS) for i in range(min(q_fin.shape[1], 7))]
+                rev_yoys: list[float] = []
+                for idx, (recent_i, prior_i) in enumerate([(0, 4), (1, 5), (2, 6)]):
+                    if prior_i < len(revs):
+                        r, p = revs[recent_i], revs[prior_i]
+                        if not np.isnan(r) and not np.isnan(p) and p != 0:
+                            val = (r / p - 1) * 100
+                            rev_yoys.append(val)
+                            if idx == 0:
+                                rev_yoy_q0 = val
+                            elif idx == 1:
+                                rev_yoy_q1 = val
+                            else:
+                                rev_yoy_q2 = val
+                if rev_yoys:
+                    rev_yoy_avg = float(np.mean(rev_yoys))
+
+                # Extract per-quarter EPS (direct label, then fallback to net income / shares)
+                def _get_eps(col_idx: int) -> float:
+                    col = q_fin.iloc[:, col_idx]
+                    eps_val = get_item(col, EPS_KEYS)
+                    if not np.isnan(eps_val):
+                        return eps_val
+                    ni = get_item(col, NET_INCOME_KEYS)
+                    sh = get_item(col, DILUTED_SHARES_KEYS)
+                    if not np.isnan(ni) and not np.isnan(sh) and sh != 0:
+                        return ni / sh
+                    return np.nan
+
+                epss = [_get_eps(i) for i in range(min(q_fin.shape[1], 7))]
+                eps_yoys: list[float] = []
+                for idx, (recent_i, prior_i) in enumerate([(0, 4), (1, 5), (2, 6)]):
+                    if prior_i < len(epss):
+                        r, p = epss[recent_i], epss[prior_i]
+                        if not np.isnan(r) and not np.isnan(p) and abs(p) > 0:
+                            val = (r - p) / abs(p) * 100
+                            eps_yoys.append(val)
+                            if idx == 0:
+                                eps_yoy_q0 = val
+                            elif idx == 1:
+                                eps_yoy_q1 = val
+                            else:
+                                eps_yoy_q2 = val
+                if eps_yoys:
+                    eps_yoy_avg = float(np.mean(eps_yoys))
+        except Exception:
+            LOGGER.debug("Quarterly financials fetch failed for %s", ticker, exc_info=True)
+
         company_name: str = info.get("longName") or info.get("shortName") or ""
 
         return {
@@ -174,15 +235,31 @@ def fetch_yf_data(ticker: str) -> dict:
             "operating_income": operating_income,
             "market_cap": market_cap,
             "book_value": book_value,
+            "rev_yoy_q0": rev_yoy_q0,
+            "rev_yoy_q1": rev_yoy_q1,
+            "rev_yoy_q2": rev_yoy_q2,
+            "rev_yoy_avg": rev_yoy_avg,
+            "eps_yoy_q0": eps_yoy_q0,
+            "eps_yoy_q1": eps_yoy_q1,
+            "eps_yoy_q2": eps_yoy_q2,
+            "eps_yoy_avg": eps_yoy_avg,
         }
 
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
 
 
-def screen_ticker(ticker: str, pb_threshold: float | None, loss_type: str | None) -> tuple[bool, dict]:
+def screen_ticker(
+    ticker: str,
+    pb_threshold: float | None,
+    loss_type: str | None,
+    check_revenue: bool = False,
+    max_revenue_growth: float = 0.0,
+    check_eps: bool = False,
+    max_eps_growth: float = 0.0,
+) -> tuple[bool, dict]:
     """
-    Apply Phase 1 criteria (P/B + loss type) using yfinance data.
+    Apply Phase 1 criteria (P/B + loss type + optional revenue/EPS growth) using yfinance data.
 
     Returns:
         (passes: bool, data: dict)
@@ -209,7 +286,21 @@ def screen_ticker(ticker: str, pb_threshold: float | None, loss_type: str | None
     else:
         loss_ok = (not (isinstance(operating, float) and np.isnan(operating))) and (operating < 0)
 
-    return (pb_ok and loss_ok), data
+    # Revenue growth filter: average YoY revenue growth across 3 quarters must be <= threshold
+    if check_revenue:
+        avg = data.get("rev_yoy_avg", np.nan)
+        rev_ok = not (isinstance(avg, float) and np.isnan(avg)) and avg <= max_revenue_growth
+    else:
+        rev_ok = True
+
+    # EPS growth filter: average YoY EPS growth across 3 quarters must be <= threshold
+    if check_eps:
+        avg = data.get("eps_yoy_avg", np.nan)
+        eps_ok = not (isinstance(avg, float) and np.isnan(avg)) and avg <= max_eps_growth
+    else:
+        eps_ok = True
+
+    return (pb_ok and loss_ok and rev_ok and eps_ok), data
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +639,24 @@ def _build_result_row(data: dict, price_metrics: dict | None = None) -> dict:
         "Operating Income ($M)": to_m(data.get("operating_income")),
         "Market Cap ($M)": to_m(data.get("market_cap")),
     }
+    # Revenue / EPS YoY growth columns (shown when filters are active)
+    for key, label in [
+        ("rev_yoy_q0", "Rev YoY Q0 (%)"),
+        ("rev_yoy_q1", "Rev YoY Q1 (%)"),
+        ("rev_yoy_q2", "Rev YoY Q2 (%)"),
+    ]:
+        val = data.get(key)
+        if val is not None and not (isinstance(val, float) and np.isnan(val)):
+            row[label] = fmt_pct(val)
+    for key, label in [
+        ("eps_yoy_q0", "EPS YoY Q0 (%)"),
+        ("eps_yoy_q1", "EPS YoY Q1 (%)"),
+        ("eps_yoy_q2", "EPS YoY Q2 (%)"),
+    ]:
+        val = data.get(key)
+        if val is not None and not (isinstance(val, float) and np.isnan(val)):
+            row[label] = fmt_pct(val)
+
     if price_metrics:
         if price_metrics.get("return_52w") is not None:
             row["52w Return (%)"] = fmt_pct(price_metrics["return_52w"])
@@ -570,6 +679,10 @@ def get_data(
     pb_threshold: float | None = 3.0,
     loss_type: str | None = "Gross Loss",
     check_issuance: bool = False,
+    check_revenue: bool = False,
+    max_revenue_growth: float = 0.0,
+    check_eps: bool = False,
+    max_eps_growth: float = 0.0,
     check_52w_positive: bool = False,
     check_min_drawdown: bool = False,
     min_drawdown_pct: float = 25.0,
@@ -588,6 +701,10 @@ def get_data(
         pb_threshold:       P/B ratio must exceed this value (3.0 – 5.0)
         loss_type:          "Gross Loss" | "Operating Loss"
         check_issuance:     If True, keep only the top quartile by net equity issuance (SEC EDGAR)
+        check_revenue:      If True, filter by max YoY revenue growth (each of last 3 quarters)
+        max_revenue_growth: Max allowed YoY revenue growth % (e.g. 0 = flat or declining)
+        check_eps:          If True, filter by max avg YoY EPS growth (last 3 quarters)
+        max_eps_growth:     Max allowed avg YoY EPS growth % (e.g. 0 = flat or declining)
         check_52w_positive: If True, keep only stocks with positive 52-week return
         check_min_drawdown: If True, keep only stocks at least min_drawdown_pct% below 52w high
         min_drawdown_pct:   Minimum drawdown threshold (e.g. 25 means 25% off highs)
@@ -639,7 +756,19 @@ def get_data(
 
     with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
         for batch_idx, batch in enumerate(batches):
-            futures = {pool.submit(screen_ticker, tk, pb_threshold, loss_type): tk for tk in batch}
+            futures = {
+                pool.submit(
+                    screen_ticker,
+                    tk,
+                    pb_threshold,
+                    loss_type,
+                    check_revenue=check_revenue,
+                    max_revenue_growth=max_revenue_growth,
+                    check_eps=check_eps,
+                    max_eps_growth=max_eps_growth,
+                ): tk
+                for tk in batch
+            }
             for future in as_completed(futures):
                 tk = futures[future]
                 try:
@@ -790,6 +919,12 @@ def main() -> None:
         action="store_true",
         help="Keep only top-quartile net equity issuers among screened stocks (SEC EDGAR)",
     )
+    parser.add_argument(
+        "--check-revenue", action="store_true", help="Filter by max YoY revenue growth (each of last 3 quarters)"
+    )
+    parser.add_argument("--max-rev-growth", type=float, default=0.0, help="Max YoY revenue growth %% (default 0)")
+    parser.add_argument("--check-eps", action="store_true", help="Filter by max avg YoY EPS growth (last 3 quarters)")
+    parser.add_argument("--max-eps-growth", type=float, default=0.0, help="Max avg YoY EPS growth %% (default 0)")
     args = parser.parse_args()
 
     tickers = load_universe(args.universe)
@@ -812,6 +947,10 @@ def main() -> None:
         pb_threshold=args.pb,
         loss_type=loss_type,
         check_issuance=args.issuance,
+        check_revenue=args.check_revenue,
+        max_revenue_growth=args.max_rev_growth,
+        check_eps=args.check_eps,
+        max_eps_growth=args.max_eps_growth,
         progress_callback=cb,
     )
     print()

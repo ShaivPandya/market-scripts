@@ -16,17 +16,17 @@ _UNIVERSE_MAP = {
 }
 
 _SECTOR_PREFIX_MAP = {
-    "XLB — Materials": "XLB",
-    "XLC — Communication Services": "XLC",
-    "XLE — Energy": "XLE",
-    "XLF — Financials": "XLF",
-    "XLI — Industrials": "XLI",
-    "XLK — Technology": "XLK",
-    "XLP — Consumer Staples": "XLP",
-    "XLRE — Real Estate": "XLRE",
-    "XLU — Utilities": "XLU",
-    "XLV — Health Care": "XLV",
-    "XLY — Consumer Discretionary": "XLY",
+    "VAW — Materials": "VAW",
+    "VOX — Communication Services": "VOX",
+    "VDE — Energy": "VDE",
+    "VFH — Financials": "VFH",
+    "VIS — Industrials": "VIS",
+    "VGT — Technology": "VGT",
+    "VDC — Consumer Staples": "VDC",
+    "VNQ — Real Estate": "VNQ",
+    "VPU — Utilities": "VPU",
+    "VHT — Health Care": "VHT",
+    "VCR — Consumer Discretionary": "VCR",
 }
 
 _UNIVERSE_TO_ETF = {
@@ -43,6 +43,10 @@ class ShortScreenRequest(BaseModel):
     pb_threshold: float | None = 3.0
     loss_type: str | None = "Gross Loss"
     check_issuance: bool = False
+    check_revenue: bool = False
+    max_revenue_growth: float = 0.0
+    check_eps: bool = False
+    max_eps_growth: float = 0.0
     check_52w_positive: bool = False
     check_min_drawdown: bool = False
     min_drawdown_pct: float = 25.0
@@ -93,6 +97,10 @@ def run_short_screen(req: ShortScreenRequest):
             pb_threshold=req.pb_threshold,
             loss_type=req.loss_type,
             check_issuance=req.check_issuance,
+            check_revenue=req.check_revenue,
+            max_revenue_growth=req.max_revenue_growth,
+            check_eps=req.check_eps,
+            max_eps_growth=req.max_eps_growth,
             check_52w_positive=req.check_52w_positive,
             check_min_drawdown=req.check_min_drawdown,
             min_drawdown_pct=req.min_drawdown_pct,

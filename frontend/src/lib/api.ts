@@ -603,6 +603,10 @@ export const runShortScreen = (body: {
   pb_threshold: number | null
   loss_type: string | null
   check_issuance: boolean
+  check_revenue: boolean
+  max_revenue_growth: number
+  check_eps: boolean
+  max_eps_growth: number
   check_52w_positive: boolean
   check_min_drawdown: boolean
   min_drawdown_pct: number
