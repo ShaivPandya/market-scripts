@@ -20,7 +20,7 @@ _ETF_HOLDINGS_CACHE_TTL_SECS = 24 * 60 * 60  # 24 hours
 _SP500_CACHE_PATH = _REPO_ROOT / "data_cache" / "universes" / "sp500.txt"
 _SP500_CACHE_TTL_SECS = 24 * 60 * 60  # 24 hours
 
-# SPDR Select Sector ETFs (State Street / SSGA)
+# SPDR Select Sector ETFs (State Street / SSGA) — kept for sector_metrics compatibility
 _SPDR_SECTOR_ETFS = {
     "XLB",
     "XLC",
@@ -35,8 +35,23 @@ _SPDR_SECTOR_ETFS = {
     "XLY",
 }
 
-# Some callers pass lower-case shortcuts (xlk, xly, ...)
-_SECTOR_SHORTCUTS = {t.lower(): t for t in _SPDR_SECTOR_ETFS}
+# Vanguard Sector ETFs (broader MSCI-based sector coverage)
+_VANGUARD_SECTOR_ETFS = {
+    "VAW",  # Materials
+    "VCR",  # Consumer Discretionary
+    "VDC",  # Consumer Staples
+    "VDE",  # Energy
+    "VFH",  # Financials
+    "VGT",  # Technology
+    "VHT",  # Health Care
+    "VIS",  # Industrials
+    "VNQ",  # Real Estate
+    "VOX",  # Communication Services
+    "VPU",  # Utilities
+}
+
+# Some callers pass lower-case shortcuts (vgt, vht, ...)
+_SECTOR_SHORTCUTS = {t.lower(): t for t in _VANGUARD_SECTOR_ETFS}
 
 
 def clean_ticker(tk: str) -> str:
@@ -345,6 +360,42 @@ def fetch_etf_holdings_ssga(etf_ticker: str) -> list[str]:
     return []
 
 
+def fetch_etf_holdings_vanguard(etf_ticker: str) -> list[str]:
+    """
+    Fetch ETF holdings from Vanguard's public portfolio holdings API.
+
+    Intended for Vanguard sector ETFs (VGT, VHT, VIS, etc.).
+    Returns an empty list on failure.
+    """
+    etf = clean_ticker(etf_ticker).upper()
+    url = f"https://investor.vanguard.com/investment-products/etfs/profile/api/{etf}/portfolio-holding/stock"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+
+    try:
+        resp = requests_get(url, headers=headers, timeout=20)
+        if resp.status_code != 200 or not resp.content:
+            return []
+
+        data = resp.json()
+
+        # Vanguard's API nests holdings under "fund" -> "entity"
+        holdings = data.get("fund", {}).get("entity", [])
+        tickers: list[str] = []
+        for item in holdings:
+            ticker = item.get("ticker", "")
+            if ticker and isinstance(ticker, str):
+                t = clean_ticker(ticker.strip())
+                if t and t != etf:
+                    tickers.append(t)
+
+        return list(dict.fromkeys(tickers))
+    except Exception:
+        return []
+
+
 def fetch_etf_holdings_yfinance(etf_ticker: str) -> list[str]:
     """
     Fetch ETF holdings from yfinance.
@@ -388,7 +439,9 @@ def get_etf_holdings(etf_ticker: str, *, use_cache: bool = True) -> list[str]:
             return cached
 
     tickers: list[str] = []
-    if etf in _SPDR_SECTOR_ETFS:
+    if etf in _VANGUARD_SECTOR_ETFS:
+        tickers = fetch_etf_holdings_vanguard(etf)
+    elif etf in _SPDR_SECTOR_ETFS:
         tickers = fetch_etf_holdings_ssga(etf)
 
     if not tickers:
@@ -434,8 +487,8 @@ def get_universe_tickers(key: str) -> list[str]:
     if k in _SECTOR_SHORTCUTS:
         return get_etf_holdings(_SECTOR_SHORTCUTS[k])
 
-    # Explicit ETF ticker (e.g., XLY)
-    if raw.upper() in _SPDR_SECTOR_ETFS:
+    # Explicit ETF ticker (e.g., VGT, XLY)
+    if raw.upper() in _VANGUARD_SECTOR_ETFS or raw.upper() in _SPDR_SECTOR_ETFS:
         return get_etf_holdings(raw.upper())
 
     # File path or named universe file

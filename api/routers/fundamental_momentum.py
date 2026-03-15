@@ -19,17 +19,17 @@ _UNIVERSE_MAP = {
 }
 
 _SECTOR_PREFIX_MAP = {
-    "XLB — Materials": "XLB",
-    "XLC — Communication Services": "XLC",
-    "XLE — Energy": "XLE",
-    "XLF — Financials": "XLF",
-    "XLI — Industrials": "XLI",
-    "XLK — Technology": "XLK",
-    "XLP — Consumer Staples": "XLP",
-    "XLRE — Real Estate": "XLRE",
-    "XLU — Utilities": "XLU",
-    "XLV — Health Care": "XLV",
-    "XLY — Consumer Discretionary": "XLY",
+    "VAW — Materials": "VAW",
+    "VOX — Communication Services": "VOX",
+    "VDE — Energy": "VDE",
+    "VFH — Financials": "VFH",
+    "VIS — Industrials": "VIS",
+    "VGT — Technology": "VGT",
+    "VDC — Consumer Staples": "VDC",
+    "VNQ — Real Estate": "VNQ",
+    "VPU — Utilities": "VPU",
+    "VHT — Health Care": "VHT",
+    "VCR — Consumer Discretionary": "VCR",
 }
 
 

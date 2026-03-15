@@ -11,18 +11,18 @@ import { colorPositiveNegative, colorZscore } from "@/lib/colors"
 
 const UNIVERSE_OPTIONS = [
   "S&P 500", "Russell 2000", "S&P 400",
-  "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
-  "XLF — Financials", "XLI — Industrials", "XLK — Technology",
-  "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
-  "XLV — Health Care", "XLY — Consumer Discretionary",
+  "VAW — Materials", "VOX — Communication Services", "VDE — Energy",
+  "VFH — Financials", "VIS — Industrials", "VGT — Technology",
+  "VDC — Consumer Staples", "VNQ — Real Estate", "VPU — Utilities",
+  "VHT — Health Care", "VCR — Consumer Discretionary",
 ]
 
 const BENCHMARK_OPTIONS = [
   "Same as Input", "S&P 500",
-  "XLB — Materials", "XLC — Communication Services", "XLE — Energy",
-  "XLF — Financials", "XLI — Industrials", "XLK — Technology",
-  "XLP — Consumer Staples", "XLRE — Real Estate", "XLU — Utilities",
-  "XLV — Health Care", "XLY — Consumer Discretionary",
+  "VAW — Materials", "VOX — Communication Services", "VDE — Energy",
+  "VFH — Financials", "VIS — Industrials", "VGT — Technology",
+  "VDC — Consumer Staples", "VNQ — Real Estate", "VPU — Utilities",
+  "VHT — Health Care", "VCR — Consumer Discretionary",
 ]
 
 function formatHeader(key: string): string {
@@ -185,6 +185,12 @@ const SHORT_EXTRA_COLUMNS: Record<string, ColumnDef> = {
   "Drawdown (%)": { key: "Drawdown (%)", header: "DD from High (%)", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
   "3m Return (%)": { key: "3m Return (%)", header: "3m Ret (%)", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
   "2m Rel Return (%)": { key: "2m Rel Return (%)", header: "2m Rel (%)", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "Rev YoY Q0 (%)": { key: "Rev YoY Q0 (%)", header: "Rev Q0 YoY", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "Rev YoY Q1 (%)": { key: "Rev YoY Q1 (%)", header: "Rev Q1 YoY", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "Rev YoY Q2 (%)": { key: "Rev YoY Q2 (%)", header: "Rev Q2 YoY", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "EPS YoY Q0 (%)": { key: "EPS YoY Q0 (%)", header: "EPS Q0 YoY", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "EPS YoY Q1 (%)": { key: "EPS YoY Q1 (%)", header: "EPS Q1 YoY", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
+  "EPS YoY Q2 (%)": { key: "EPS YoY Q2 (%)", header: "EPS Q2 YoY", format: v => v != null ? `${Number(v).toFixed(1)}%` : "N/A", colorFn: colorPositiveNegative },
 }
 
 function buildShortColumns(rows: Record<string, unknown>[]): ColumnDef[] {
@@ -207,6 +213,12 @@ function ShortPanel() {
   const [lossType, setLossType] = useState<"Gross Loss" | "Operating Loss">("Gross Loss")
   const [checkIssuance, setCheckIssuance] = useState(false)
 
+  // Fundamental growth filters
+  const [checkRevenue, setCheckRevenue] = useState(false)
+  const [maxRevenueGrowth, setMaxRevenueGrowth] = useState(0)
+  const [checkEps, setCheckEps] = useState(false)
+  const [maxEpsGrowth, setMaxEpsGrowth] = useState(0)
+
   // Price filters
   const [check52wPositive, setCheck52wPositive] = useState(false)
   const [checkMinDrawdown, setCheckMinDrawdown] = useState(false)
@@ -227,6 +239,10 @@ function ShortPanel() {
       pb_threshold: checkPb ? pbThreshold : null,
       loss_type: checkLoss ? lossType : null,
       check_issuance: checkIssuance,
+      check_revenue: checkRevenue,
+      max_revenue_growth: maxRevenueGrowth,
+      check_eps: checkEps,
+      max_eps_growth: maxEpsGrowth,
       check_52w_positive: check52wPositive,
       check_min_drawdown: checkMinDrawdown,
       min_drawdown_pct: minDrawdownPct,
@@ -312,6 +328,50 @@ function ShortPanel() {
           onChange={setCheckIssuance}
           description="Adds time — uses SEC EDGAR"
         />
+
+        <div className="pt-2 border-t border-gray-100">
+          <h3 className="text-sm font-medium text-gray-600 mb-3">Fundamental Growth Filters</h3>
+          <div className="space-y-3">
+            <Toggle
+              label="Max YoY Revenue Growth (per quarter)"
+              checked={checkRevenue}
+              onChange={setCheckRevenue}
+              description="Each of last 3 quarters must be at/below threshold"
+            />
+            {checkRevenue && (
+              <SliderInput
+                label="Max Rev Growth (%)"
+                value={maxRevenueGrowth}
+                onChange={setMaxRevenueGrowth}
+                min={-50}
+                max={50}
+                step={5}
+                formatValue={v => `${v}%`}
+                minLabel="-50%"
+                maxLabel="50%"
+              />
+            )}
+
+            <Toggle
+              label="Max YoY EPS Growth (avg of 3 quarters)"
+              checked={checkEps}
+              onChange={setCheckEps}
+            />
+            {checkEps && (
+              <SliderInput
+                label="Max EPS Growth (%)"
+                value={maxEpsGrowth}
+                onChange={setMaxEpsGrowth}
+                min={-100}
+                max={100}
+                step={5}
+                formatValue={v => `${v}%`}
+                minLabel="-100%"
+                maxLabel="100%"
+              />
+            )}
+          </div>
+        </div>
 
         <div className="pt-2 border-t border-gray-100">
           <h3 className="text-sm font-medium text-gray-600 mb-3">Price Filters</h3>
