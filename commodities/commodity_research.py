@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import math
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -158,7 +158,7 @@ def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None
     macro = None
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {
+        futures: dict[Future[Any], str] = {
             pool.submit(_fetch_daily_prices): "daily",
             pool.submit(_fetch_monthly_prices): "monthly",
             pool.submit(_fetch_curves): "curves",
