@@ -67,6 +67,7 @@ _OPTIONAL_MODULES = [
     ("api.routers.fx_model", "fx_model", "fx"),
     ("api.routers.commodities", "commodities", "commodities"),
     ("api.routers.commodities_curve", "commodities_curve", "commodities"),
+    ("api.routers.commodity_research", "commodity_research", "commodities"),
     ("api.routers.market_technicals", "market_technicals", "equities"),
     ("api.routers.economic_growth", "economic_growth", "macro"),
     ("api.routers.labor_market", "labor_market", "macro"),

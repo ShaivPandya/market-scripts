@@ -33,6 +33,7 @@ import { IndustryMonitor } from "@/pages/IndustryMonitor"
 import { YieldCurve } from "@/pages/YieldCurve"
 import { BondDashboard } from "@/pages/BondDashboard"
 import { CommoditiesCurve } from "@/pages/CommoditiesCurve"
+import { CommodityResearch } from "@/pages/CommodityResearch"
 import { PortfolioNews } from "@/pages/PortfolioNews"
 import { WeeklyReport } from "@/pages/WeeklyReport"
 import { Sentiment } from "@/pages/Sentiment"
@@ -111,6 +112,7 @@ function AppRoutes() {
           <Route path="/yield-curve" element={<YieldCurve />} />
           <Route path="/bond-dashboard" element={<BondDashboard />} />
           <Route path="/commodities-curve" element={<CommoditiesCurve />} />
+          <Route path="/commodity-research" element={<CommodityResearch />} />
           <Route path="/portfolio-news" element={<PortfolioNews />} />
           <Route path="/weekly-report" element={<WeeklyReport />} />
         </Route>

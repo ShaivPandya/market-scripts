@@ -66,6 +66,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "FX Dashboard", path: "/fx-dashboard" },
       { label: "Commodity Dashboard", path: "/commodities" },
       { label: "Commodities Curve", path: "/commodities-curve" },
+      { label: "Commodity Research", path: "/commodity-research" },
     ],
   },
 ]
