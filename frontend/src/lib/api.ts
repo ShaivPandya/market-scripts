@@ -397,6 +397,9 @@ export const fetchCommoditiesCurve = (commodity = "CL", lookback_days = 30) =>
     .get(`/commodities-curve?commodity=${encodeURIComponent(commodity)}&lookback_days=${lookback_days}`)
     .then(r => r.data)
 
+export const fetchCommodityResearch = () =>
+  client.get("/commodity-research", { timeout: 120_000 }).then(r => r.data)
+
 export const fetchPositioningSummary = (params: Record<string, string>) =>
   client.get("/positioning/summary", { params }).then(r => r.data)
 
