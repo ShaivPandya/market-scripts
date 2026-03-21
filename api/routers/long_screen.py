@@ -1,0 +1,127 @@
+from typing import cast
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from api.cache import stamp_fresh
+from api.exceptions import DataFetchError
+from api.serializers import serialize_dataframe, serialize_value
+
+router = APIRouter()
+
+_UNIVERSE_MAP = {
+    "S&P 500": "sp500",
+    "Russell 2000": "russell2000",
+    "S&P 400": "sp400",
+}
+
+_SECTOR_PREFIX_MAP = {
+    "VAW — Materials": "VAW",
+    "VOX — Communication Services": "VOX",
+    "VDE — Energy": "VDE",
+    "VFH — Financials": "VFH",
+    "VIS — Industrials": "VIS",
+    "VGT — Technology": "VGT",
+    "VDC — Consumer Staples": "VDC",
+    "VNQ — Real Estate": "VNQ",
+    "VPU — Utilities": "VPU",
+    "VHT — Health Care": "VHT",
+    "VCR — Consumer Discretionary": "VCR",
+}
+
+_UNIVERSE_TO_ETF = {
+    "S&P 500": "SPY",
+    "Russell 2000": "IWM",
+    "S&P 400": "MDY",
+}
+
+
+class LongScreenRequest(BaseModel):
+    input_mode: str = "Universe"
+    universe: str = "Russell 2000"
+    tickers: str = ""
+    pb_threshold: float | None = 1.5
+    profit_type: str | None = "Gross Profit"
+    check_issuance: bool = False
+    check_revenue: bool = False
+    min_revenue_growth: float = 5.0
+    check_eps: bool = False
+    min_eps_growth: float = 5.0
+    check_52w_positive: bool = False
+    check_min_drawdown: bool = False
+    min_drawdown_pct: float = 25.0
+    check_max_drawdown: bool = False
+    max_drawdown_pct: float = 60.0
+    check_3m_pos_momentum: bool = False
+    check_2m_pos_rel_momentum: bool = False
+    rel_momentum_benchmark: str = "IWM"
+
+
+def _resolve_tickers(req: LongScreenRequest) -> list[str]:
+    if req.input_mode == "Custom Tickers":
+        return [t.strip().upper() for t in req.tickers.split(",") if t.strip()]
+    from equities.common import get_universe_tickers
+
+    key = _UNIVERSE_MAP.get(req.universe) or _SECTOR_PREFIX_MAP.get(req.universe, req.universe)
+    try:
+        return cast(list[str], get_universe_tickers(key))
+    except Exception:
+        return []
+
+
+def _resolve_benchmark_ticker(label: str, universe_label: str) -> str:
+    if label == "Same as Input":
+        etf = _UNIVERSE_TO_ETF.get(universe_label)
+        if etf:
+            return etf
+        sector_etf = _SECTOR_PREFIX_MAP.get(universe_label)
+        if sector_etf:
+            return sector_etf
+        return "SPY"
+    return label
+
+
+@router.post("/long-screen")
+def run_long_screen(req: LongScreenRequest):
+    tickers = _resolve_tickers(req)
+    if not tickers:
+        raise HTTPException(status_code=400, detail="No tickers resolved for the requested universe/input.")
+
+    benchmark = _resolve_benchmark_ticker(req.rel_momentum_benchmark, req.universe)
+
+    try:
+        from equities.long_screen.long_screen import get_data
+
+        data = get_data(
+            tickers=tickers,
+            pb_threshold=req.pb_threshold,
+            profit_type=req.profit_type,
+            check_issuance=req.check_issuance,
+            check_revenue=req.check_revenue,
+            min_revenue_growth=req.min_revenue_growth,
+            check_eps=req.check_eps,
+            min_eps_growth=req.min_eps_growth,
+            check_52w_positive=req.check_52w_positive,
+            check_min_drawdown=req.check_min_drawdown,
+            min_drawdown_pct=req.min_drawdown_pct,
+            check_max_drawdown=req.check_max_drawdown,
+            max_drawdown_pct=req.max_drawdown_pct,
+            check_3m_pos_momentum=req.check_3m_pos_momentum,
+            check_2m_pos_rel_momentum=req.check_2m_pos_rel_momentum,
+            benchmark_ticker=benchmark,
+        )
+    except Exception as e:
+        raise DataFetchError(source="long_screen", detail=str(e)) from e
+
+    if data.get("error"):
+        raise DataFetchError(source="long_screen", detail=data["error"])
+
+    import pandas as pd
+
+    result = {}
+    for k, v in data.items():
+        if isinstance(v, pd.DataFrame):
+            result[k] = serialize_dataframe(v.reset_index(drop=True))
+        else:
+            result[k] = serialize_value(v)
+    return stamp_fresh(result)

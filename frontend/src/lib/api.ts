@@ -620,6 +620,27 @@ export const runShortScreen = (body: {
   rel_momentum_benchmark: string
 }) => client.post("/short-screen", body, { timeout: 600_000 }).then(r => r.data)
 
+export const runLongScreen = (body: {
+  input_mode: string
+  universe: string
+  tickers: string
+  pb_threshold: number | null
+  profit_type: string | null
+  check_issuance: boolean
+  check_revenue: boolean
+  min_revenue_growth: number
+  check_eps: boolean
+  min_eps_growth: number
+  check_52w_positive: boolean
+  check_min_drawdown: boolean
+  min_drawdown_pct: number
+  check_max_drawdown: boolean
+  max_drawdown_pct: number
+  check_3m_pos_momentum: boolean
+  check_2m_pos_rel_momentum: boolean
+  rel_momentum_benchmark: string
+}) => client.post("/long-screen", body, { timeout: 600_000 }).then(r => r.data)
+
 type FundamentalMomentumRequest = {
   screen_type: string
   universe: string
