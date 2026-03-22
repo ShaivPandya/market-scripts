@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useQuery } from "@tanstack/react-query"
 import { Info } from "lucide-react"
 import { fetchSignalAggregator } from "@/lib/api"
@@ -117,6 +118,38 @@ export function SignalAggregator() {
   const historyEpisodes = useMemo(() => data?.history?.episodes ?? [], [data?.history?.episodes])
   const failedModules = data?.failed_modules ?? []
   const isDegraded = data?.status === "degraded" || failedModules.length > 0
+
+  // Register screen context for agent chat
+  const screenCtx = useMemo(() => {
+    if (!data) return null
+    const regime = data.regime
+    const metrics: Record<string, string> = {}
+    if (regime?.label) metrics["Regime"] = regime.label
+    if (typeof regime?.score === "number") metrics["Composite Score"] = regime.score.toFixed(2)
+    if (typeof regime?.confidence === "number") metrics["Confidence"] = `${(regime.confidence * 100).toFixed(0)}%`
+    if (typeof regime?.history_percentile === "number") metrics["History Percentile"] = `${regime.history_percentile.toFixed(1)}%`
+    const topF = [...(data.factors ?? [])]
+      .filter(f => typeof f.contribution === "number")
+      .sort((a, b) => (b.contribution ?? 0) - (a.contribution ?? 0))
+      .slice(0, 3)
+    if (topF.length > 0) {
+      metrics["Top Factors"] = topF.map(f => `${f.key}(${f.contribution.toFixed(2)})`).join(", ")
+    }
+    if (data.forward_outlook) {
+      metrics["Forward Outlook"] = `${data.forward_outlook.label} — ${data.forward_outlook.detail}`
+    }
+    if (failedModules.length > 0) {
+      metrics["Degraded Modules"] = failedModules.join(", ")
+    }
+    return {
+      pageName: "Signal Aggregator",
+      metrics,
+      filters: { lookback: `${appliedLookback} weeks`, instruments: appliedInstruments },
+      summary: `Regime: ${regime?.label ?? "unknown"}, Score: ${regime?.score?.toFixed(2) ?? "N/A"}, Status: ${data.status}`,
+      correspondingTools: ["get_signal_aggregator"],
+    }
+  }, [data, failedModules, appliedLookback, appliedInstruments])
+  useRegisterScreenContext(screenCtx)
 
   const factorColumns: ColumnDef[] = [
     { key: "factor", header: "Factor" },

@@ -59,7 +59,41 @@ def _load_required_prompt_file(filename: str) -> str:
     return content
 
 
-def _build_agent_instructions() -> str:
+def _build_screen_context_section(ctx: ScreenContextModel | None) -> str:
+    """Format screen context from the frontend into a system prompt section."""
+    if ctx is None:
+        return ""
+    lines = [
+        "## Current Screen Context",
+        "",
+        f"The user is currently viewing: **{ctx.page_name}** (`{ctx.route}`)",
+    ]
+    if ctx.ticker:
+        lines.append(f"Active ticker: **{ctx.ticker}**")
+    if ctx.filters:
+        filters_str = ", ".join(f"{k}={v}" for k, v in ctx.filters.items())
+        lines.append(f"Active filters: {filters_str}")
+    if ctx.metrics:
+        lines.append("")
+        lines.append("### Key metrics currently on screen:")
+        for key, value in ctx.metrics.items():
+            lines.append(f"- **{key}**: {value}")
+    if ctx.summary:
+        lines.append("")
+        lines.append(f"Screen summary: {ctx.summary}")
+    if ctx.corresponding_tools:
+        tools_str = ", ".join(f"`{t}`" for t in ctx.corresponding_tools)
+        lines.append("")
+        lines.append(
+            f"**Data overlap notice**: The data on screen was produced by the same source as tools: {tools_str}. "
+            "Prefer using the screen context metrics above rather than re-calling these tools, "
+            "unless the user explicitly asks for a fresh fetch or you need additional detail "
+            "beyond what is summarized here."
+        )
+    return "\n".join(lines)
+
+
+def _build_agent_instructions(screen_context: ScreenContextModel | None = None) -> str:
     core_md = _load_required_prompt_file("system.md")
     try:
         agent_md = _load_required_prompt_file("agent_system.md")
@@ -72,6 +106,10 @@ def _build_agent_instructions() -> str:
     memory_section = _build_memory_context()
     if memory_section:
         base += "\n\n---\n\n" + memory_section
+
+    screen_section = _build_screen_context_section(screen_context)
+    if screen_section:
+        base += "\n\n---\n\n" + screen_section
 
     return base
 
@@ -125,8 +163,19 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ScreenContextModel(BaseModel):
+    page_name: str
+    route: str
+    ticker: str | None = None
+    metrics: dict[str, str] | None = None
+    filters: dict[str, str] | None = None
+    summary: str | None = None
+    corresponding_tools: list[str] | None = None
+
+
 class AgentChatRequest(BaseModel):
     messages: list[ChatMessage]
+    screen_context: ScreenContextModel | None = None
 
 
 @router.get("/agent/workflows")
@@ -424,7 +473,7 @@ def _extract_tool_calls(content_blocks: list[dict]) -> list[dict]:
 @router.post("/agent/chat")
 def agent_chat(req: AgentChatRequest):
     api_key = _read_anthropic_api_key()
-    instructions = _build_agent_instructions()
+    instructions = _build_agent_instructions(screen_context=req.screen_context)
     latest_user_text = _extract_last_user_text(req.messages)
     casual = _is_casual(latest_user_text)
     workflow_name, workflow_ticker = _detect_workflow(latest_user_text)
@@ -528,8 +577,14 @@ def agent_chat(req: AgentChatRequest):
         conversation: list[dict[str, object]] = [{"role": m.role, "content": m.content} for m in req.messages]
         continuation_round = 0
         # Force tool use on the first round for non-casual queries so
-        # answers are always grounded in live data.
-        force_tool_use = not casual
+        # answers are always grounded in live data.  When rich screen
+        # context is present (metrics or summary from the frontend),
+        # the agent already has data to reason from — let it decide
+        # whether additional tool calls are needed.
+        has_rich_screen_data = req.screen_context is not None and (
+            req.screen_context.metrics or req.screen_context.summary
+        )
+        force_tool_use = not casual and not has_rich_screen_data
         tool_result_cache: dict[str, str] = {}
 
         try:

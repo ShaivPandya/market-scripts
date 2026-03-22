@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { ScreenContext } from "@/contexts/ScreenContext"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -161,7 +162,7 @@ export function useAgentChat() {
   }, [state.messages, state.sessionId])
 
   // ------ sendMessage ------
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string, screenContext?: ScreenContext | null) => {
     const userMsg: AgentMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -200,7 +201,20 @@ export function useAgentChat() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ messages: apiMessages }),
+        body: JSON.stringify({
+          messages: apiMessages,
+          ...(screenContext && {
+            screen_context: {
+              page_name: screenContext.pageName,
+              route: screenContext.route,
+              ticker: screenContext.ticker ?? null,
+              metrics: screenContext.metrics ?? null,
+              filters: screenContext.filters ?? null,
+              summary: screenContext.summary ?? null,
+              corresponding_tools: screenContext.correspondingTools ?? null,
+            },
+          }),
+        }),
         signal: controller.signal,
       })
 

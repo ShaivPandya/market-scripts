@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
@@ -9,6 +9,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SelectInput } from "@/components/shared/FormControls"
+import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
 import { colorPositiveNegative, colorZscore, colorForcedFlow } from "@/lib/colors"
 
@@ -66,6 +67,29 @@ export function Positioning() {
   )
 
   const summaryRows: Record<string, unknown>[] = Array.isArray(summaryData) ? summaryData : []
+
+  // Register screen context for agent chat
+  const screenCtx = useMemo(() => {
+    if (summaryRows.length === 0) return null
+    const metrics: Record<string, string> = {}
+    const instrParts = summaryRows.slice(0, 8).map(r => {
+      const instr = String(r.instrument ?? "")
+      const pctOi = r.lf_net_pct_oi != null ? `${Number(r.lf_net_pct_oi).toFixed(1)}%` : "N/A"
+      const z = r.lf_z != null ? `z=${Number(r.lf_z).toFixed(2)}` : ""
+      const forced = r.lf_forced ? ` ${String(r.lf_forced)}` : ""
+      return `${instr}(${pctOi} ${z}${forced})`
+    })
+    if (instrParts.length > 0) metrics["Instruments"] = instrParts.join(", ")
+    return {
+      pageName: "Positioning",
+      metrics,
+      filters: { view, instruments: selectedInstruments.join(", ") },
+      summary: `CFTC positioning for ${selectedInstruments.length} instruments, ${view} view`,
+      correspondingTools: ["get_positioning"],
+    }
+  }, [summaryRows, view, selectedInstruments])
+  useRegisterScreenContext(screenCtx)
+
   const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
   const analysisText = liveAnalysis ?? persistedAnalysis
   const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)

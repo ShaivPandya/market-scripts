@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { ChevronDown, Sparkles } from "lucide-react"
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -549,6 +550,16 @@ export function Sentiment() {
   const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
   const analysisText = liveAnalysis ?? persistedAnalysis
   const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError || isPreparingOverview || prepError)
+
+  // Register screen context for agent chat
+  const screenCtx = useMemo(() => ({
+    pageName: "Sentiment",
+    metrics: { "Active Tab": tab },
+    filters: { tab },
+    summary: `Sentiment dashboard, viewing ${tab} tab`,
+    correspondingTools: ["get_sentiment"],
+  }), [tab])
+  useRegisterScreenContext(screenCtx)
 
   async function handleAnalyzeClick() {
     setIsOpen(true)

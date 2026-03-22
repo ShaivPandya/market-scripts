@@ -3,6 +3,7 @@ import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2, History, 
 import { cn } from "@/lib/utils"
 import { useAgentChat, fetchSessionHistory, deleteSession, type SessionSummary } from "@/hooks/useAgentChat"
 import { AgentMessage } from "./AgentMessage"
+import type { ScreenContext } from "@/contexts/ScreenContext"
 
 // ---------------------------------------------------------------------------
 // Quick prompts shown when chat is empty
@@ -40,9 +41,10 @@ const WORKFLOWS: WorkflowDef[] = [
 interface AgentChatProps {
   open: boolean
   onClose: () => void
+  screenContext?: ScreenContext
 }
 
-export function AgentChat({ open, onClose }: AgentChatProps) {
+export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const { messages, isStreaming, error, sendMessage, stopStreaming, clearChat, loadSession } = useAgentChat()
   const [input, setInput] = useState("")
   const [isWide, setIsWide] = useState(false)
@@ -70,7 +72,7 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
     const trimmed = input.trim()
     if (!trimmed || isStreaming) return
     setInput("")
-    sendMessage(trimmed)
+    sendMessage(trimmed, screenContext)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -81,7 +83,7 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
   }
 
   function handleQuickPrompt(prompt: string) {
-    sendMessage(prompt)
+    sendMessage(prompt, screenContext)
   }
 
   function handleWorkflow(wf: WorkflowDef) {
@@ -90,7 +92,7 @@ export function AgentChat({ open, onClose }: AgentChatProps) {
     const cmd = wf.requiresTicker
       ? `/workflow:${wf.name}:${ticker}`
       : `/workflow:${wf.name}`
-    sendMessage(cmd)
+    sendMessage(cmd, screenContext)
     setWorkflowTicker("")
     setShowWorkflows(false)
   }
