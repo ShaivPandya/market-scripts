@@ -146,6 +146,22 @@ export const uploadThesisPdf = (ticker: string, file: File) => {
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 }
 
+// --- Overview ---
+
+export const saveOverviewContent = (ticker: string, content: string) =>
+  client
+    .put(`/overview/${encodeURIComponent(ticker)}`, { content })
+    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+
+export const uploadOverviewPdf = (ticker: string, file: File) => {
+  const formData = new FormData()
+  formData.append("ticker", ticker)
+  formData.append("file", file)
+  return client
+    .post("/overview/generate", formData, { timeout: 120_000 })
+    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+}
+
 // --- Thesis metadata types ---
 
 export type ThesisStatusValue = "active" | "under_review" | "invalidated"

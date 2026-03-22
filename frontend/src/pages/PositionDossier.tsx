@@ -2,18 +2,20 @@ import { useState } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import { useQueryClient, useMutation } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchDossier, approveItem, rejectItem, updateThesisStatus, fetchThesisStatus, saveThesisContent, completeAction, dismissAction, updateCatalystStatus, updateKillConditionStatus, type ThesisStatus, type ThesisStatusValue } from "@/lib/api"
+import { fetchDossier, approveItem, rejectItem, updateThesisStatus, fetchThesisStatus, saveThesisContent, saveOverviewContent, completeAction, dismissAction, updateCatalystStatus, updateKillConditionStatus, type ThesisStatus, type ThesisStatusValue } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { Dialog } from "@/components/shared/Dialog"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { ThesisUpload } from "@/components/ThesisUpload"
+import { OverviewUpload } from "@/components/OverviewUpload"
 import { cn } from "@/lib/utils"
 
 interface DossierData {
   ticker: string
   position: Record<string, unknown> | null
+  overview_content: string | null
   thesis: {
     meta: ThesisMeta | null
     content: string | null
@@ -57,8 +59,8 @@ interface Trigger { id: number; condition: string; trigger_type: string; status:
 interface ResearchNote { id: number; title: string; content: string; note_type: string | null; created_at: string }
 interface Approval { id: number; entity_type: string; reason: string | null; created_at: string; proposed_change: Record<string, unknown> }
 
-const TABS = ["Thesis", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Research", "Workflows"] as const
-type Tab = typeof TABS[number]
+const BASE_TABS = ["Thesis", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Research", "Workflows"] as const
+type Tab = "Overview" | typeof BASE_TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
   active: "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
@@ -151,6 +153,8 @@ export function PositionDossier() {
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
+  const isEquity = String(data.position?.asset ?? "") === "equity"
+  const visibleTabs: Tab[] = isEquity ? ["Overview", ...BASE_TABS] : [...BASE_TABS]
   const pos = data.position
   const meta = data.thesis?.meta
 
@@ -168,6 +172,7 @@ export function PositionDossier() {
           )}
           {data.position?.direction != null && <span className="text-sm text-muted">{String(data.position.direction)}</span>}
           <ThesisUpload ticker={ticker!} status={(thesisStatus?.[ticker!] ?? "missing") as ThesisStatus} />
+          {isEquity && <OverviewUpload ticker={ticker!} hasContent={!!data.overview_content} />}
         </div>
         <div className="flex items-center gap-2">
           {meta && (
@@ -206,7 +211,7 @@ export function PositionDossier() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-4 overflow-x-auto border-b border-app">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -227,6 +232,7 @@ export function PositionDossier() {
 
       {/* Tab content */}
       <div className="theme-surface rounded-xl p-4">
+        {tab === "Overview" && <OverviewTab content={data.overview_content} ticker={data.ticker} />}
         {tab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
         {tab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} ticker={ticker!} />}
         {tab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} ticker={ticker!} />}
@@ -384,6 +390,80 @@ export function PositionDossier() {
 }
 
 /* ---------- Sub-tab components ---------- */
+
+function OverviewTab({ content, ticker }: { content: string | null; ticker: string }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState("")
+  const qc = useQueryClient()
+  const saveMutation = useMutation({
+    mutationFn: () => saveOverviewContent(ticker, draft),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      setEditing(false)
+    },
+  })
+
+  const startEdit = () => {
+    setDraft(content ?? "")
+    setEditing(true)
+  }
+
+  if (!content) {
+    return (
+      <div>
+        <p className="text-sm text-muted mb-3">No overview on file for this position.</p>
+        <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
+          Write Overview
+        </button>
+        {editing && (
+          <div className="mt-3">
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              className="w-full min-h-[300px] rounded-lg border border-app bg-transparent p-3 text-sm text-app font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder={"# TICKER Overview\n## Financials\n## Sensitivity to Extrinsic Factors\n## Industry"}
+            />
+            {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
+            <div className="flex gap-2 mt-2">
+              <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+              <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {editing ? (
+        <div>
+          <textarea
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            className="w-full min-h-[400px] rounded-lg border border-app bg-transparent p-3 text-sm text-app font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
+          <div className="flex gap-2 mt-2">
+            <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+            <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex justify-end mb-2">
+            <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
+              Edit
+            </button>
+          </div>
+          <div className="prose prose-sm dark:prose-invert max-w-none">
+            <MarkdownRenderer content={content} />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]; ticker: string; position: Record<string, unknown> | null }) {
   const [editing, setEditing] = useState(false)

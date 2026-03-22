@@ -622,6 +622,51 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "type": "function",
+        "name": "propose_catalyst_status_change",
+        "description": (
+            "Propose a catalyst status change. This creates a pending approval that the user must "
+            "approve before the catalyst status is actually updated. Use this when evidence suggests "
+            "a catalyst has played out, failed, or been superseded."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol"},
+                "catalyst_id": {"type": "integer", "description": "ID of the catalyst to update"},
+                "new_status": {
+                    "type": "string",
+                    "description": "Proposed new status: pending|played_out|failed|superseded",
+                },
+                "evidence": {"type": "string", "description": "Evidence supporting the status change"},
+                "reason": {"type": "string", "description": "Explanation for the proposed change"},
+            },
+            "required": ["ticker", "catalyst_id", "new_status", "reason"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "propose_kill_condition_status_change",
+        "description": (
+            "Propose a kill condition status change. This creates a pending approval that the user must "
+            "approve before the kill condition status is actually updated. Use this when a kill condition "
+            "has been triggered or should be retired."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol"},
+                "kill_condition_id": {"type": "integer", "description": "ID of the kill condition to update"},
+                "new_status": {
+                    "type": "string",
+                    "description": "Proposed new status: active|triggered|retired",
+                },
+                "reason": {"type": "string", "description": "Explanation for the proposed change"},
+            },
+            "required": ["ticker", "kill_condition_id", "new_status", "reason"],
+        },
+    },
+    {
+        "type": "function",
         "name": "propose_watch_trigger",
         "description": (
             "Propose a new watch trigger. This creates a pending approval that the user must "
@@ -1813,6 +1858,49 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             "status": "pending_approval_created",
             "approval_id": approval["id"],
             "message": f"Proposed action item{f' for {ticker}' if ticker else ''}. User must approve in Workspace.",
+        }, {"cache": "n/a"}
+
+    if name == "propose_catalyst_status_change":
+        from portfolio.core_db import create_pending_approval
+
+        ticker = args["ticker"].strip().upper()
+        approval = create_pending_approval(
+            entity_type="catalyst_status",
+            ticker=ticker,
+            entity_id=args["catalyst_id"],
+            proposed_change={
+                "catalyst_id": args["catalyst_id"],
+                "status": args["new_status"],
+                "evidence": args.get("evidence"),
+            },
+            reason=args["reason"],
+            source_type="agent",
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "message": f"Proposed catalyst status change for {ticker}. User must approve in Workspace.",
+        }, {"cache": "n/a"}
+
+    if name == "propose_kill_condition_status_change":
+        from portfolio.core_db import create_pending_approval
+
+        ticker = args["ticker"].strip().upper()
+        approval = create_pending_approval(
+            entity_type="kill_condition_status",
+            ticker=ticker,
+            entity_id=args["kill_condition_id"],
+            proposed_change={
+                "kill_condition_id": args["kill_condition_id"],
+                "status": args["new_status"],
+            },
+            reason=args["reason"],
+            source_type="agent",
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "message": f"Proposed kill condition status change for {ticker}. User must approve in Workspace.",
         }, {"cache": "n/a"}
 
     if name == "propose_watch_trigger":
