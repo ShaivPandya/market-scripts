@@ -51,6 +51,46 @@ def test_query_ontology_tool_dispatch(monkeypatch):
     assert "aggregate" in payload
 
 
+def test_query_ontology_string_filters(monkeypatch):
+    """Filters passed as a JSON string should be parsed into a dict."""
+    captured: dict = {}
+    monkeypatch.setattr("api.agent_tools.get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr("api.agent_tools.set_cached", lambda *args, **kwargs: None)
+
+    def fake_query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+        captured["filters"] = filters
+        return {
+            "run_id": run_id or "run-1",
+            "intent": intent or "portfolio_risk_exposure",
+            "interpreted_query": {"source": "structured", "query": query, "filters": filters},
+            "as_of": "2026-03-08T00:00:00Z",
+            "source_status": {"portfolio": {"status": "ok"}},
+            "results": [],
+            "aggregate": {
+                "position_count": 0,
+                "risk_buckets": {"high": 0, "medium": 0, "low": 0},
+                "asset_exposure_counts": {},
+                "average_risk_score": 0.0,
+                "confidence": 1.0,
+            },
+        }
+
+    monkeypatch.setattr("ontology.service.OntologyQueryService.query", fake_query)
+
+    raw = execute_tool(
+        "query_ontology",
+        {
+            "query": "Show risk for AAPL",
+            "filters": json.dumps({"tickers": ["AAPL"]}),
+        },
+    )
+
+    payload = json.loads(raw)
+    assert payload["run_id"] == "run-1"
+    # The handler should have parsed the JSON string into a dict
+    assert captured["filters"] == {"tickers": ["AAPL"]}
+
+
 def test_signal_aggregator_tool_dispatch(monkeypatch):
     def fake_build(lookback_weeks, positioning_instruments, include_raw_modules):
         assert lookback_weeks == 104

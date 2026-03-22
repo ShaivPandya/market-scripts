@@ -1493,7 +1493,17 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
     if name == "query_ontology":
         from ontology.service import OntologyQueryService
 
-        filters = args.get("filters") if isinstance(args.get("filters"), dict) else {}
+        raw_filters = args.get("filters")
+        if isinstance(raw_filters, dict):
+            filters = raw_filters
+        elif isinstance(raw_filters, str):
+            try:
+                parsed = json.loads(raw_filters)
+                filters = parsed if isinstance(parsed, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                filters = {}
+        else:
+            filters = {}
         query = args.get("query")
         intent = args.get("intent")
         timeframe = args.get("timeframe", "Daily")

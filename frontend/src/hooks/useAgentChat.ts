@@ -188,21 +188,17 @@ export function useAgentChat() {
 
     const assistantId = assistantMsg.id
 
-    // Build the message history for the API (exclude the empty streaming msg)
-    const apiMessages = [...state.messages, userMsg]
-      .filter(m => m.content.length > 0)
-      .map(m => ({ role: m.role, content: m.content }))
-
     const controller = new AbortController()
     abortRef.current = controller
 
     try {
-      const response = await fetch(`${BASE_URL}/agent/chat`, {
+      const response = await fetch(`${BASE_URL}/agent/chat/v2`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          messages: apiMessages,
+          session_id: state.sessionId,
+          message: content,
           ...(screenContext && {
             screen_context: {
               page_name: screenContext.pageName,
@@ -304,6 +300,7 @@ export function useAgentChat() {
               setState(prev => ({
                 ...prev,
                 isStreaming: false,
+                sessionId: (data.session_id as string) ?? prev.sessionId,
                 messages: prev.messages.map(m =>
                   m.id === assistantId ? { ...m, isStreaming: false } : m,
                 ),
@@ -336,16 +333,6 @@ export function useAgentChat() {
         }
       })
 
-      // After stream completes, persist to server
-      setState(prev => {
-        const allMsgs = prev.messages.filter(m => m.content.length > 0)
-        saveSessionToServer(allMsgs, prev.sessionId).then(newId => {
-          if (newId) {
-            setState(p => ({ ...p, sessionId: newId }))
-          }
-        })
-        return prev
-      })
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         setState(prev => ({
@@ -366,7 +353,7 @@ export function useAgentChat() {
         ),
       }))
     }
-  }, [state.messages, state.sessionId])
+  }, [state.sessionId])
 
   // ------ stopStreaming ------
   const stopStreaming = useCallback(() => {

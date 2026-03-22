@@ -76,6 +76,15 @@ def _get_conn() -> sqlite3.Connection:
 def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(_CREATE_SESSIONS)
     conn.execute(_CREATE_SESSIONS_IDX)
+    # Migrate: add columns for server-managed rolling memory
+    for col, typedef in [
+        ("rolling_summary", "TEXT"),
+        ("server_messages", "TEXT NOT NULL DEFAULT '[]'"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE conversation_sessions ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
 
 
@@ -233,6 +242,105 @@ def get_recent_summaries(
             return relevant[:limit]
 
     return results[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Server-managed session state (rolling memory)
+# ---------------------------------------------------------------------------
+
+
+def get_or_create_session(session_id: str | None = None) -> dict[str, Any]:
+    """Load an existing session or create a new one.
+
+    Returns a dict with parsed ``server_messages`` (list) and
+    ``rolling_summary`` (str | None).
+    """
+    conn = _get_conn()
+    sid = session_id or str(uuid.uuid4())
+
+    if session_id:
+        with _lock:
+            row = conn.execute(
+                """
+                SELECT session_id, started_at, ended_at, message_count,
+                       rolling_summary, server_messages
+                FROM conversation_sessions
+                WHERE session_id = ?
+                """,
+                (sid,),
+            ).fetchone()
+        if row is not None:
+            try:
+                msgs = json.loads(row["server_messages"]) if row["server_messages"] else []
+            except Exception:
+                msgs = []
+            return {
+                "session_id": row["session_id"],
+                "started_at": row["started_at"],
+                "rolling_summary": row["rolling_summary"],
+                "server_messages": msgs,
+                "message_count": row["message_count"] or 0,
+            }
+
+    # Create a new session
+    now = datetime.now(UTC).isoformat()
+    with _lock:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO conversation_sessions
+                (session_id, started_at, ended_at, message_count, transcript, server_messages)
+            VALUES (?, ?, ?, 0, '[]', '[]')
+            """,
+            (sid, now, now),
+        )
+        conn.commit()
+    return {
+        "session_id": sid,
+        "started_at": now,
+        "rolling_summary": None,
+        "server_messages": [],
+        "message_count": 0,
+    }
+
+
+def append_messages(session_id: str, messages: list[dict[str, Any]]) -> int:
+    """Append messages to a session's server_messages. Returns new total count."""
+    conn = _get_conn()
+    now = datetime.now(UTC).isoformat()
+    with _lock:
+        row = conn.execute(
+            "SELECT server_messages FROM conversation_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Session {session_id} not found")
+        try:
+            existing = json.loads(row["server_messages"]) if row["server_messages"] else []
+        except Exception:
+            existing = []
+        existing.extend(messages)
+        conn.execute(
+            """
+            UPDATE conversation_sessions
+            SET server_messages = ?, message_count = ?, ended_at = ?
+            WHERE session_id = ?
+            """,
+            (json.dumps(existing, default=str), len(existing), now, session_id),
+        )
+        conn.commit()
+    return len(existing)
+
+
+def update_rolling_summary(session_id: str, summary: str) -> bool:
+    """Update the rolling summary for a session. Returns True if session exists."""
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE conversation_sessions SET rolling_summary = ? WHERE session_id = ?",
+            (summary, session_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------

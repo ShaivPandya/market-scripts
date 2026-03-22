@@ -186,6 +186,14 @@ class AgentChatRequest(BaseModel):
     screen_context: ScreenContextModel | None = None
 
 
+class AgentChatRequestV2(BaseModel):
+    """V2 request: frontend sends only the new message + session ID."""
+
+    session_id: str | None = None
+    message: str
+    screen_context: ScreenContextModel | None = None
+
+
 @router.get("/agent/workflows")
 def list_workflows():
     """List available deterministic workflows."""
@@ -750,6 +758,287 @@ def agent_chat(req: AgentChatRequest):
             logger.exception("Agent stream error")
             yield _sse("error", {"message": _format_stream_error(exc)})
             yield _sse("done", {"usage": {}})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# V2 Endpoint — server-managed rolling memory
+# ---------------------------------------------------------------------------
+
+
+@router.post("/agent/chat/v2")
+def agent_chat_v2(req: AgentChatRequestV2):
+    """Chat endpoint with server-managed conversation memory.
+
+    The frontend sends only the new message + session_id.  The server
+    assembles optimal context from a rolling summary, verbatim window,
+    and retrieval hits.
+    """
+    api_key = _read_anthropic_api_key()
+    instructions = _build_agent_instructions(screen_context=req.screen_context)
+    casual = _is_casual(req.message)
+    workflow_name, workflow_ticker = _detect_workflow(req.message)
+    tool_defs = ANTHROPIC_TOOL_DEFINITIONS
+    logger.info(
+        "agent_v2 casual=%s workflow=%s ticker=%s tools=%d session=%s",
+        casual,
+        workflow_name,
+        workflow_ticker,
+        len(tool_defs),
+        req.session_id,
+    )
+
+    def generate():  # noqa: C901
+        from api.memory_manager import build_conversation_context, finalize_turn_async
+
+        client = _get_anthropic_client(api_key)
+        conversation, session_id = build_conversation_context(
+            req.session_id,
+            req.message,
+        )
+
+        # --- Workflow path ---
+        if workflow_name:
+            try:
+                wf_def = AVAILABLE_WORKFLOWS.get(workflow_name, {})
+                if wf_def.get("requires_ticker") and not workflow_ticker:
+                    yield _sse(
+                        "delta",
+                        {
+                            "text": f"I need a ticker to run the **{wf_def.get('label', workflow_name)}** workflow. Which position would you like me to review?"
+                        },
+                    )
+                    yield _sse("done", {"usage": {}, "session_id": session_id})
+                    return
+
+                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker)
+                for section in sections:
+                    yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
+                    yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
+
+                synthesis_chunks: list[str] = []
+                for attempt in range(MAX_API_RETRIES):
+                    try:
+                        with client.messages.stream(
+                            model=CLAUDE_MODEL,
+                            max_tokens=CLAUDE_MAX_TOKENS,
+                            system=instructions,
+                            messages=[{"role": "user", "content": synthesis_prompt}],
+                        ) as stream:
+                            for event in stream:
+                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                                    synthesis_chunks.append(event.delta.text)
+                                    yield _sse("delta", {"text": event.delta.text})
+                            final_message = stream.get_final_message()
+                        break
+                    except Exception as retry_exc:
+                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                            time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                            continue
+                        raise
+
+                synthesis_text = "".join(synthesis_chunks)
+                try:
+                    from api.workflow_artifacts import extract_artifacts, persist_artifacts
+                    from portfolio.core_db import complete_workflow_run
+
+                    artifacts = extract_artifacts(synthesis_text, workflow_name)
+                    complete_workflow_run(run_id, synthesis_text, artifacts, sections)
+                    if artifacts:
+                        persist_artifacts(run_id, workflow_ticker, artifacts)
+                except Exception:
+                    logger.debug("Failed to persist workflow run %s", run_id, exc_info=True)
+
+                usage = {}
+                if hasattr(final_message, "usage") and final_message.usage:
+                    usage = {
+                        "input_tokens": final_message.usage.input_tokens,
+                        "output_tokens": final_message.usage.output_tokens,
+                    }
+                # Finalize turn before last yield
+                user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
+                assistant_msg = {"role": "assistant", "content": synthesis_text, "timestamp": time.time()}
+                finalize_turn_async(session_id, user_msg, assistant_msg)
+                yield _sse("done", {"usage": usage, "session_id": session_id, "workflow_run_id": run_id})
+                return
+
+            except Exception as exc:
+                logger.exception("Workflow %s failed (v2)", workflow_name)
+                try:
+                    from portfolio.core_db import fail_workflow_run
+
+                    fail_workflow_run(run_id, str(exc))
+                except Exception:
+                    pass
+                yield _sse("error", {"message": f"Workflow failed: {exc}"})
+                yield _sse("done", {"usage": {}, "session_id": session_id})
+                return
+
+        # --- Normal tool-calling path ---
+        has_rich_screen_data = req.screen_context is not None and (
+            req.screen_context.metrics or req.screen_context.summary
+        )
+        force_tool_use = not casual and not has_rich_screen_data
+        tool_result_cache: dict[str, str] = {}
+        continuation_round = 0
+        text_parts: list[str] = []
+
+        try:
+            while True:
+                if continuation_round >= MAX_TOOL_CONTINUATION_ROUNDS:
+                    yield _sse(
+                        "error",
+                        {"message": f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds)."},
+                    )
+                    yield _sse("done", {"usage": {}, "session_id": session_id})
+                    return
+
+                stream_kwargs: dict[str, object] = dict(
+                    model=CLAUDE_MODEL,
+                    max_tokens=CLAUDE_MAX_TOKENS,
+                    system=instructions,
+                    messages=conversation,
+                    tools=tool_defs,
+                )
+                if force_tool_use:
+                    stream_kwargs["tool_choice"] = {"type": "any"}
+
+                for attempt in range(MAX_API_RETRIES):
+                    try:
+                        with client.messages.stream(**stream_kwargs) as stream:
+                            for event in stream:
+                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                                    yield _sse("delta", {"text": event.delta.text})
+                                    text_parts.append(event.delta.text)
+                                elif event.type == "content_block_start" and event.content_block.type == "tool_use":
+                                    yield _sse(
+                                        "tool_call",
+                                        {"name": event.content_block.name, "id": event.content_block.id},
+                                    )
+                            final_message = stream.get_final_message()
+                        break
+                    except Exception as retry_exc:
+                        if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                            time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                            continue
+                        raise
+
+                assistant_content = _serialize_content_blocks(list(final_message.content))
+                deferred_calls = _extract_tool_calls(assistant_content)
+
+                if deferred_calls:
+                    tool_counts = Counter(c["name"] for c in deferred_calls)
+                    repeated_high_cost = [
+                        f"{name}x{count}"
+                        for name, count in tool_counts.items()
+                        if name in _HIGH_COST_TOOLS and count > 1
+                    ]
+                    if repeated_high_cost:
+                        logger.warning("agent tool round has repeated high-cost calls: %s", repeated_high_cost)
+
+                    unique_calls = _dedupe_tool_calls(deferred_calls)
+                    logger.info(
+                        "agent_v2_tool_round requested=%s unique=%s",
+                        [c["name"] for c in deferred_calls],
+                        [c["name"] for c in unique_calls],
+                    )
+
+                    tool_results: list[dict] = []
+                    turn_cache_hits: set[str] = set()
+                    pending_calls: list[dict] = []
+                    executed_by_signature: dict[str, tuple[str, float]] = {}
+
+                    for call_info in unique_calls:
+                        signature = _tool_call_signature(call_info["name"], call_info["args"])
+                        if signature in tool_result_cache:
+                            turn_cache_hits.add(signature)
+                            continue
+                        pending_calls.append(call_info)
+
+                    if pending_calls:
+                        for call_info, result_str, elapsed_ms in _execute_tools_parallel(pending_calls):
+                            signature = _tool_call_signature(call_info["name"], call_info["args"])
+                            tool_result_cache[signature] = result_str
+                            executed_by_signature[signature] = (result_str, elapsed_ms)
+
+                    for call_info in unique_calls:
+                        signature = _tool_call_signature(call_info["name"], call_info["args"])
+                        if signature in turn_cache_hits:
+                            result_str = tool_result_cache[signature]
+                            elapsed_ms = 0.0
+                        else:
+                            result_str, elapsed_ms = executed_by_signature[signature]
+
+                        err_msg = _tool_error_message(result_str)
+                        meta = _tool_meta(result_str)
+                        cache_status = "turn_hit" if signature in turn_cache_hits else str(meta.get("cache", "unknown"))
+                        logger.info(
+                            "agent_v2_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
+                            call_info["name"],
+                            elapsed_ms,
+                            cache_status,
+                            "error" if err_msg else "ok",
+                        )
+
+                        for call_id in call_info.get("call_ids", []):
+                            payload = {
+                                "name": call_info["name"],
+                                "id": call_id,
+                                "status": "error" if err_msg else "ok",
+                            }
+                            if err_msg:
+                                payload["message"] = err_msg
+                            yield _sse("tool_result", payload)
+
+                            result_block: dict[str, object] = {
+                                "type": "tool_result",
+                                "tool_use_id": call_id,
+                                "content": result_str,
+                            }
+                            if err_msg:
+                                result_block["is_error"] = True
+                            tool_results.append(result_block)
+
+                    conversation.append({"role": "assistant", "content": assistant_content})
+                    conversation.append({"role": "user", "content": tool_results})
+                    force_tool_use = False
+                    continuation_round += 1
+                    continue
+
+                if final_message.stop_reason == "pause_turn":
+                    conversation.append({"role": "assistant", "content": assistant_content})
+                    conversation.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
+                    force_tool_use = False
+                    continuation_round += 1
+                    continue
+
+                usage = {}
+                if hasattr(final_message, "usage") and final_message.usage:
+                    usage = {
+                        "input_tokens": final_message.usage.input_tokens,
+                        "output_tokens": final_message.usage.output_tokens,
+                    }
+                # Finalize turn before last yield
+                full_text = "".join(text_parts)
+                user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
+                assistant_msg = {"role": "assistant", "content": full_text, "timestamp": time.time()}
+                finalize_turn_async(session_id, user_msg, assistant_msg)
+                yield _sse("done", {"usage": usage, "session_id": session_id})
+                return
+
+        except Exception as exc:
+            logger.exception("Agent v2 stream error")
+            yield _sse("error", {"message": _format_stream_error(exc)})
+            yield _sse("done", {"usage": {}, "session_id": session_id})
 
     return StreamingResponse(
         generate(),

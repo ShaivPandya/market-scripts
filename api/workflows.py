@@ -167,7 +167,7 @@ def run_thesis_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
         ("get_portfolio", {}),
-        ("query_ontology", {"filters": json.dumps({"tickers": [ticker]})}),
+        ("query_ontology", {"filters": {"tickers": [ticker]}}),
         ("get_industry_monitor", {}),
         ("search_web", {"query": f"{ticker} recent news developments catalysts"}),
     ]
@@ -409,7 +409,7 @@ def run_thesis_invalidation_check(ticker: str) -> tuple[str, list[dict[str, Any]
     calls = [
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
-        ("query_ontology", {"filters": json.dumps({"tickers": [ticker]})}),
+        ("query_ontology", {"filters": {"tickers": [ticker]}}),
         ("search_web", {"query": f"{ticker} recent news risks regulatory"}),
     ]
 
