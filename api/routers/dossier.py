@@ -62,6 +62,17 @@ def get_dossier(ticker: str):
     except Exception:
         pass
 
+    # Overview content (equity overview markdown)
+    overview_content = None
+    try:
+        from paths import PROJECT_ROOT as _PR
+
+        overview_path = _PR / "investment_overviews" / f"{ticker}.md"
+        if overview_path.exists():
+            overview_content = overview_path.read_text(encoding="utf-8")
+    except Exception:
+        pass
+
     # Evaluations from thesis_db
     evaluations = []
     try:
@@ -110,6 +121,7 @@ def get_dossier(ticker: str):
     return {
         "ticker": ticker,
         "position": position,
+        "overview_content": overview_content,
         "thesis": {
             "meta": thesis_meta,
             "content": thesis_content,
