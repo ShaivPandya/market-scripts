@@ -163,7 +163,7 @@ def run_thesis_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     ticker = ticker.upper()
 
     # Phase 1: parallel fetch
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
         ("get_portfolio", {}),
@@ -406,7 +406,7 @@ def run_thesis_invalidation_check(ticker: str) -> tuple[str, list[dict[str, Any]
     """Execute thesis invalidation check workflow."""
     ticker = ticker.upper()
 
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
         ("query_ontology", {"filters": {"tickers": [ticker]}}),
