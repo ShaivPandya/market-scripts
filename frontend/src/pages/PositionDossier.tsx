@@ -85,7 +85,12 @@ export function PositionDossier() {
   const { ticker } = useParams<{ ticker: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const cameFromTheses = (location.state as { from?: string })?.from === "theses"
+  const from = (location.state as { from?: string })?.from
+  const backTarget = from === "theses"
+    ? { path: "/theses", label: "Theses" }
+    : from === "portfolio"
+    ? { path: "/", label: "Portfolio" }
+    : { path: "/workspace", label: "Workspace" }
   const [tab, setTab] = useState<Tab>("Thesis")
   const qc = useQueryClient()
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
@@ -154,7 +159,7 @@ export function PositionDossier() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
-          <button type="button" onClick={() => navigate(cameFromTheses ? "/theses" : "/")} className="text-sm text-muted hover:text-app">&larr; {cameFromTheses ? "Theses" : "Workspace"}</button>
+          <button type="button" onClick={() => navigate(backTarget.path)} className="text-sm text-muted hover:text-app">&larr; {backTarget.label}</button>
           <h1 className="text-2xl font-bold text-app">{data.ticker}</h1>
           {meta?.status && (
             <span className={cn("text-xs px-2 py-0.5 rounded font-medium", STATUS_COLORS[meta.status] ?? STATUS_COLORS.active)}>

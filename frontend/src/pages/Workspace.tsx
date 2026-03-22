@@ -197,6 +197,7 @@ export function Workspace() {
                 <Link
                   key={tp.ticker}
                   to={`/dossier/${tp.ticker}`}
+                  state={{ from: "workspace" }}
                   className="flex items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[hsl(var(--muted-2))] transition-colors"
                 >
                   <div className="flex items-center gap-3">
@@ -241,7 +242,7 @@ export function Workspace() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           {a.ticker && (
-                            <Link to={`/dossier/${a.ticker}`} className="font-semibold text-app hover:underline">
+                            <Link to={`/dossier/${a.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
                               {a.ticker}
                             </Link>
                           )}
@@ -296,7 +297,7 @@ export function Workspace() {
                         {a.urgency}
                       </span>
                       {a.ticker && (
-                        <Link to={`/dossier/${a.ticker}`} className="font-semibold text-app hover:underline shrink-0">
+                        <Link to={`/dossier/${a.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
                           {a.ticker}
                         </Link>
                       )}
@@ -339,7 +340,7 @@ export function Workspace() {
               {data.active_triggers.items.map(t => (
                 <div key={t.id} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm">
                   {t.ticker && (
-                    <Link to={`/dossier/${t.ticker}`} className="font-semibold text-app hover:underline shrink-0">
+                    <Link to={`/dossier/${t.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
                       {t.ticker}
                     </Link>
                   )}
@@ -370,7 +371,7 @@ export function Workspace() {
                     )} />
                     <span className="font-medium text-app">{run.workflow_name.replace(/_/g, " ")}</span>
                     {run.ticker && (
-                      <Link to={`/dossier/${run.ticker}`} className="text-blue-600 hover:underline dark:text-blue-400">
+                      <Link to={`/dossier/${run.ticker}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
                         {run.ticker}
                       </Link>
                     )}
