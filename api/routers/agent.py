@@ -133,7 +133,15 @@ def _build_memory_context() -> str:
             _memory_cache = (now, "")
             return ""
 
-        lines = ["## Recent Research Context\n"]
+        lines = [
+            "## Recent Research Context\n",
+            "**WARNING: The summaries below are historical records of past conversations. "
+            "ALL prices, percentages, scores, and numerical data in these summaries are "
+            "from the date shown and are STALE. NEVER cite any numerical value from these "
+            "summaries as current. Always use tools to fetch current data before making "
+            "any market claims. These summaries exist only to remind you what topics and "
+            "tickers were previously discussed, NOT to provide current data.**\n",
+        ]
         for s in summaries:
             ended = str(s.get("ended_at") or s.get("started_at") or "")[:10]
             summary = str(s.get("summary") or "").strip()

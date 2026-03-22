@@ -427,6 +427,32 @@ TOOL_DEFINITIONS: list[dict] = [
         },
     },
     # -----------------------------------------------------------------------
+    # Web search
+    # -----------------------------------------------------------------------
+    {
+        "type": "function",
+        "name": "search_web",
+        "description": (
+            "Search the web for recent news, events, or developments related to a ticker, "
+            "company, sector, or macro topic. Uses trusted financial news sources (Bloomberg, "
+            "CNBC, Reuters, WSJ, FT, etc.). Returns a summary of findings with source citations. "
+            "Use this to verify catalyst status, check for breaking news, confirm regulatory "
+            "actions, or validate thesis assumptions against real-world events."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Search query. Be specific — include ticker, company name, and what you're looking for."
+                    ),
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    # -----------------------------------------------------------------------
     # Investing OS tools — read
     # -----------------------------------------------------------------------
     {
@@ -1582,6 +1608,56 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             return serialize_value(diff), {"cache": "n/a"}
         except Exception as exc:
             return {"error": f"Ontology diff failed: {exc}"}, {"cache": "n/a"}
+
+    # -------------------------------------------------------------------
+    # Web search
+    # -------------------------------------------------------------------
+    if name == "search_web":
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return {"error": "Missing required parameter: query"}, {"cache": "n/a"}
+
+        key = f"web_search:{query[:200].lower()}"
+
+        def _load():
+            from llm_utils import MODEL_HAIKU, call_claude_text
+
+            allowed_domains = [
+                "bloomberg.com",
+                "cnbc.com",
+                "reuters.com",
+                "wsj.com",
+                "ft.com",
+                "federalreserve.gov",
+                "marketwatch.com",
+                "nytimes.com",
+                "axios.com",
+                "politico.com",
+            ]
+            text, citations, _response = call_claude_text(
+                prompt=f"Find the latest news and developments about: {query}",
+                model=MODEL_HAIKU,
+                api_key=None,
+                max_tokens=2048,
+                system=(
+                    "You are a financial research assistant. Search for the most recent, "
+                    "relevant information about the query. Return a concise summary of key "
+                    "findings organized by topic. Include dates when available. "
+                    "Focus on facts, not opinions."
+                ),
+                allowed_domains=allowed_domains,
+                max_web_search_uses=3,
+            )
+            return {
+                "query": query,
+                "summary": text,
+                "citations": [{"title": t, "url": u} for t, u in citations],
+                "citation_count": len(citations),
+            }
+
+        data, meta = _fetch_with_cache(short_cache, key, _load)
+        meta["high_cost"] = True
+        return data, meta
 
     # -------------------------------------------------------------------
     # Investing OS — read tools
