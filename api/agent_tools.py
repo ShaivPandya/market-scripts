@@ -8,9 +8,11 @@ for different LLM tool-calling APIs.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -24,6 +26,17 @@ from api.cache import get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
 
 logger = logging.getLogger("api.agent")
+
+_SEARCH_WEB_ALLOWED_DOMAINS_DEFAULT = [
+    "bloomberg.com",
+    "cnbc.com",
+    "federalreserve.gov",
+    "axios.com",
+]
+_INACCESSIBLE_DOMAINS_RX = re.compile(
+    r"domains are not accessible to our user agent:\s*(\[[^\]]*\])",
+    flags=re.IGNORECASE,
+)
 
 # ---------------------------------------------------------------------------
 # Tool definitions (generic function-calling schema)
@@ -1002,6 +1015,77 @@ def _fetch_with_cache(cache, key: str, loader: Callable[[], Any]) -> tuple[Any, 
     return value, {"cache": cache_status}
 
 
+def _extract_inaccessible_domains(exc: Exception) -> set[str]:
+    text = str(exc)
+    match = _INACCESSIBLE_DOMAINS_RX.search(text)
+    if not match:
+        return set()
+
+    raw = match.group(1).strip()
+    try:
+        parsed = ast.literal_eval(raw)
+    except (SyntaxError, ValueError):
+        return set()
+    if not isinstance(parsed, list):
+        return set()
+
+    blocked: set[str] = set()
+    for item in parsed:
+        domain = str(item).strip().lower()
+        if domain:
+            blocked.add(domain)
+    return blocked
+
+
+def _run_search_web(query: str) -> dict[str, Any]:
+    from llm_utils import MODEL_HAIKU, call_claude_text
+
+    allowed_domains = list(_SEARCH_WEB_ALLOWED_DOMAINS_DEFAULT)
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            text, citations, _response = call_claude_text(
+                prompt=f"Find the latest news and developments about: {query}",
+                model=MODEL_HAIKU,
+                api_key=None,
+                max_tokens=2048,
+                system=(
+                    "You are a financial research assistant. Search for the most recent, "
+                    "relevant information about the query. Return a concise summary of key "
+                    "findings organized by topic. Include dates when available. "
+                    "Focus on facts, not opinions."
+                ),
+                allowed_domains=allowed_domains,
+                max_web_search_uses=3,
+            )
+            return {
+                "query": query,
+                "summary": text,
+                "citations": [{"title": t, "url": u} for t, u in citations],
+                "citation_count": len(citations),
+            }
+        except Exception as exc:  # noqa: BLE001 - tool should recover if possible
+            blocked = _extract_inaccessible_domains(exc)
+            if not blocked:
+                raise
+
+            remaining = [d for d in allowed_domains if d.lower() not in blocked]
+            if len(remaining) == len(allowed_domains):
+                raise
+            if not remaining:
+                raise RuntimeError("All configured search domains were rejected by Anthropic.") from exc
+
+            logger.warning(
+                "search_web pruned inaccessible domains blocked=%s remaining=%s",
+                sorted(blocked),
+                remaining,
+            )
+            allowed_domains = remaining
+
+    raise RuntimeError("search_web failed after exhausting domain-pruning retries")
+
+
 # ---------------------------------------------------------------------------
 # Thesis helpers
 # ---------------------------------------------------------------------------
@@ -1630,40 +1714,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = f"web_search:{query[:200].lower()}"
 
         def _load():
-            from llm_utils import MODEL_HAIKU, call_claude_text
-
-            allowed_domains = [
-                "bloomberg.com",
-                "cnbc.com",
-                "reuters.com",
-                "wsj.com",
-                "ft.com",
-                "federalreserve.gov",
-                "marketwatch.com",
-                "nytimes.com",
-                "axios.com",
-                "politico.com",
-            ]
-            text, citations, _response = call_claude_text(
-                prompt=f"Find the latest news and developments about: {query}",
-                model=MODEL_HAIKU,
-                api_key=None,
-                max_tokens=2048,
-                system=(
-                    "You are a financial research assistant. Search for the most recent, "
-                    "relevant information about the query. Return a concise summary of key "
-                    "findings organized by topic. Include dates when available. "
-                    "Focus on facts, not opinions."
-                ),
-                allowed_domains=allowed_domains,
-                max_web_search_uses=3,
-            )
-            return {
-                "query": query,
-                "summary": text,
-                "citations": [{"title": t, "url": u} for t, u in citations],
-                "citation_count": len(citations),
-            }
+            return _run_search_web(query)
 
         data, meta = _fetch_with_cache(short_cache, key, _load)
         meta["high_cost"] = True
