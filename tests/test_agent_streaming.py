@@ -103,7 +103,7 @@ class _RaiseInStreamClient:
 
 def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
 
     streams = [
         (
@@ -156,7 +156,7 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
 
 def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
 
     streams = [
         (
@@ -194,7 +194,7 @@ def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):
 
 def test_agent_stream_enforces_tool_loop_limit(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(agent_router, "execute_tool", lambda _name, _args: json.dumps({"ok": True}))
 
     streams: list[tuple[list[Any], Any]] = []
@@ -227,7 +227,7 @@ def test_agent_stream_enforces_tool_loop_limit(auth_client, monkeypatch):
 
 def test_agent_stream_auth_error_is_user_friendly(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr("anthropic.Anthropic", lambda *args, **kwargs: _RaiseInStreamClient())
 
     resp = auth_client.post(
@@ -245,7 +245,7 @@ def test_agent_stream_auth_error_is_user_friendly(auth_client, monkeypatch):
 
 def test_agent_chat_rejects_non_anthropic_key(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-proj-not-anthropic")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
 
     resp = auth_client.post(
         "/api/v1/agent/chat",
@@ -258,7 +258,7 @@ def test_agent_chat_rejects_non_anthropic_key(auth_client, monkeypatch):
 
 def test_agent_stream_skips_forced_tools_for_casual_prompt(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
 
     streams = [
         (
@@ -285,7 +285,7 @@ def test_agent_stream_skips_forced_tools_for_casual_prompt(auth_client, monkeypa
 
 def test_agent_stream_dedupes_identical_tool_calls(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
 
     streams = [
         (
@@ -337,7 +337,7 @@ def test_agent_stream_dedupes_identical_tool_calls(auth_client, monkeypatch):
 
 def test_agent_stream_handles_sentiment_quality_failure_without_tool_error(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda: "agent instructions")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
 
     streams = [
         (

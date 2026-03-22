@@ -54,6 +54,7 @@ def test_agent_instructions_compose_core_and_overlay(tmp_path, monkeypatch):
     (prompts_dir / "agent_system.md").write_text("agent overlay", encoding="utf-8")
 
     monkeypatch.setattr(agent_router, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(agent_router, "_build_memory_context", lambda: "")
 
     instructions = agent_router._build_agent_instructions()
 
@@ -67,6 +68,7 @@ def test_agent_instructions_missing_overlay_degrades(tmp_path, monkeypatch):
     (prompts_dir / "system.md").write_text("core philosophy", encoding="utf-8")
 
     monkeypatch.setattr(agent_router, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(agent_router, "_build_memory_context", lambda: "")
 
     instructions = agent_router._build_agent_instructions()
     assert instructions == "core philosophy"
@@ -80,6 +82,7 @@ def test_agent_instructions_empty_overlay_degrades(tmp_path, monkeypatch):
     (prompts_dir / "agent_system.md").write_text(" \n", encoding="utf-8")
 
     monkeypatch.setattr(agent_router, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(agent_router, "_build_memory_context", lambda: "")
 
     instructions = agent_router._build_agent_instructions()
     assert instructions == "core philosophy"

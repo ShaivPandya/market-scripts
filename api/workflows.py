@@ -213,7 +213,7 @@ def run_pre_earnings(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     """Execute pre-earnings prep workflow for a specific ticker."""
     ticker = ticker.upper()
 
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_portfolio", {}),
         ("get_sector_metrics", {}),
@@ -289,7 +289,7 @@ def run_post_earnings_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     """Execute post-earnings review workflow."""
     ticker = ticker.upper()
 
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
         ("get_portfolio", {}),
