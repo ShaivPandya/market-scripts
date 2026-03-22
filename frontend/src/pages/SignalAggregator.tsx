@@ -173,6 +173,43 @@ export function SignalAggregator() {
     { key: "avg_score", header: "Avg Score", format: v => (typeof v === "number" ? v.toFixed(2) : "N/A") },
   ]
 
+  const backtestColumns: ColumnDef[] = [
+    { key: "factor", header: "Factor" },
+    {
+      key: "direction",
+      header: "Direction",
+      colorFn: v => {
+        if (v === "Contrarian") return "#7c3aed; font-weight: bold"
+        if (v === "Same-Dir") return "#0284c7; font-weight: bold"
+        return ""
+      },
+    },
+    { key: "weight", header: "Weight" },
+    {
+      key: "spread",
+      header: "Q5-Q1 Spread (4W)",
+      colorFn: v => {
+        const n = typeof v === "number" ? v : parseFloat(String(v))
+        if (isNaN(n)) return ""
+        return n < 0 ? "#7c3aed; font-weight: bold" : "#0284c7; font-weight: bold"
+      },
+      format: v => {
+        const n = typeof v === "number" ? v : parseFloat(String(v))
+        if (isNaN(n)) return "N/A"
+        return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`
+      },
+    },
+    { key: "interpretation", header: "Interpretation" },
+  ]
+
+  const backtestRows: Record<string, unknown>[] = [
+    { factor: "VIX", direction: "Contrarian", weight: "20%", spread: -1.74, interpretation: "High fear → higher returns" },
+    { factor: "BREADTH", direction: "Contrarian", weight: "20%", spread: -1.83, interpretation: "Poor breadth → mean reversion" },
+    { factor: "LIQUIDITY", direction: "Same-Dir", weight: "35%", spread: 1.13, interpretation: "Tight liquidity → lower returns" },
+    { factor: "SECTOR", direction: "Contrarian", weight: "15%", spread: -0.55, interpretation: "Weak contrarian signal" },
+    { factor: "MOMENTUM", direction: "Contrarian", weight: "10%", spread: -1.23, interpretation: "Moderate contrarian signal" },
+  ]
+
   const factorRows = factors.map(f => ({
     factor: String(f.key).toUpperCase(),
     direction: FACTOR_DIRECTION[f.key] ?? "—",
@@ -360,9 +397,45 @@ export function SignalAggregator() {
             <DataTable columns={episodeColumns} rows={episodeRows} />
           </section>
 
-          <section>
+          <section className="mb-8">
             <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Module Status</h2>
             <DataTable columns={moduleColumns} rows={moduleRows} />
+          </section>
+
+          <section className="mt-10 border-t border-app pt-6">
+            <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">
+              Backtest Evidence (10-Year)
+            </h2>
+            <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              Based on 523 weekly observations (2016-2026). The composite score is a{" "}
+              <strong>contrarian</strong> indicator: &ldquo;risk-off&rdquo; (high stress) historically
+              precedes the highest 4-week forward returns. Liquidity is the exception &mdash;
+              tight conditions are directionally negative for returns.
+            </div>
+            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <MetricCard
+                title="Risk-On (Score < 40)"
+                value="+1.07%"
+                subtitle="4-wk fwd return spread"
+                signal="success"
+                signalLabel="LOW STRESS"
+              />
+              <MetricCard
+                title="Transitional (40-65)"
+                value="+2.45%"
+                subtitle="4-wk fwd return spread"
+                signal="warning"
+                signalLabel="MIXED"
+              />
+              <MetricCard
+                title="Risk-Off (Score ≥ 65)"
+                value="+10.70%"
+                subtitle="4-wk fwd return spread"
+                signal="error"
+                signalLabel="HIGH STRESS"
+              />
+            </div>
+            <DataTable columns={backtestColumns} rows={backtestRows} />
           </section>
         </>
       )}
