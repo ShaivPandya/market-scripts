@@ -128,3 +128,36 @@ def test_sentiment_snapshot_parity_from_normalized_shape():
     assert snapshot["latest"]["surveys"]["aaii"]["spread"] == 15.0
     assert snapshot["latest"]["surveys"]["naaim"]["exposure"] == 72.0
     assert snapshot["latest"]["volatility"]["vix"] == 15.5
+
+
+def test_extract_inaccessible_domains_parses_error_message():
+    err = RuntimeError(
+        "Error code: 400 - {'message': \"The following domains are not accessible to our user agent: "
+        "['ft.com', 'WSJ.com']\"}"
+    )
+    blocked = agent_tools._extract_inaccessible_domains(err)
+    assert blocked == {"ft.com", "wsj.com"}
+
+
+def test_run_search_web_prunes_blocked_domains_and_retries(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_call_claude_text(*, allowed_domains=None, **_kwargs):
+        domains = list(allowed_domains or [])
+        calls.append(domains)
+        if len(calls) == 1:
+            raise RuntimeError(
+                "Error code: 400 - {'message': \"The following domains are not accessible to our user agent: "
+                "['axios.com']\"}"
+            )
+        return "ok summary", [("Example", "https://example.com")], object()
+
+    monkeypatch.setattr("llm_utils.call_claude_text", fake_call_claude_text)
+
+    result = agent_tools._run_search_web("microsoft antitrust")
+
+    assert result["summary"] == "ok summary"
+    assert result["citation_count"] == 1
+    assert len(calls) == 2
+    assert "axios.com" in calls[0]
+    assert "axios.com" not in calls[1]

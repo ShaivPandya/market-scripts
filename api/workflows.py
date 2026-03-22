@@ -152,6 +152,7 @@ Given the data below, assess:
 4. **Risk Context** – What does the ontology risk score say? How does macro/sector environment affect this position?
 5. **Evaluation Trend** – Has conviction been rising or falling based on evaluation history?
 6. **Position Sizing** – Is current position size appropriate given thesis conviction and risk?
+7. **Recent News** – What recent headlines are relevant? Do they support or challenge the thesis?
 
 End with a clear **recommendation**: hold, add, trim, or exit — with reasoning.
 """
@@ -162,16 +163,17 @@ def run_thesis_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     ticker = ticker.upper()
 
     # Phase 1: parallel fetch
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
         ("get_portfolio", {}),
-        ("query_ontology", {"filters": json.dumps({"tickers": [ticker]})}),
+        ("query_ontology", {"filters": {"tickers": [ticker]}}),
         ("get_industry_monitor", {}),
+        ("search_web", {"query": f"{ticker} recent news developments catalysts"}),
     ]
 
     results: list[tuple[str, dict, float]] = []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
         for name, fut in futures:
             _str, parsed, elapsed = fut.result()
@@ -211,7 +213,7 @@ def run_pre_earnings(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     """Execute pre-earnings prep workflow for a specific ticker."""
     ticker = ticker.upper()
 
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_portfolio", {}),
         ("get_sector_metrics", {}),
@@ -287,7 +289,7 @@ def run_post_earnings_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     """Execute post-earnings review workflow."""
     ticker = ticker.upper()
 
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
         ("get_portfolio", {}),
@@ -378,7 +380,8 @@ Given the data below — including the explicit kill conditions — assess:
 2. **Thesis Integrity** – Is the core thesis still intact? What would change your mind?
 3. **Risk Score Context** – What does the ontology risk assessment show?
 4. **Evaluation Trend** – Has conviction been declining? Any pattern?
-5. **Recommendation** – Should the thesis status be changed? If so, to what?
+5. **Recent News** – Are there recent news events bearing on kill conditions or thesis integrity?
+6. **Recommendation** – Should the thesis status be changed? If so, to what?
 
 Be honest and direct. If the thesis is invalidated, say so clearly.
 
@@ -403,10 +406,11 @@ def run_thesis_invalidation_check(ticker: str) -> tuple[str, list[dict[str, Any]
     """Execute thesis invalidation check workflow."""
     ticker = ticker.upper()
 
-    calls = [
+    calls: list[tuple[str, dict[str, Any]]] = [
         ("get_thesis", {"ticker": ticker}),
         ("get_thesis_evaluations", {"ticker": ticker}),
-        ("query_ontology", {"filters": json.dumps({"tickers": [ticker]})}),
+        ("query_ontology", {"filters": {"tickers": [ticker]}}),
+        ("search_web", {"query": f"{ticker} recent news risks regulatory"}),
     ]
 
     results: list[tuple[str, dict, float]] = []

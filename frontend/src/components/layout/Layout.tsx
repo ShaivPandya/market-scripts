@@ -3,10 +3,35 @@ import { Outlet } from "react-router-dom"
 import { MessageCircle } from "lucide-react"
 import { Sidebar } from "./Sidebar"
 import { AgentChat } from "../agent/AgentChat"
+import { ScreenContextProvider, useScreenContext, useAutoScreenContext } from "@/contexts/ScreenContext"
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
+
+  return (
+    <ScreenContextProvider>
+      <LayoutInner
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        agentOpen={agentOpen}
+        setAgentOpen={setAgentOpen}
+      />
+    </ScreenContextProvider>
+  )
+}
+
+interface LayoutInnerProps {
+  sidebarOpen: boolean
+  setSidebarOpen: (v: boolean) => void
+  agentOpen: boolean
+  setAgentOpen: (v: boolean) => void
+}
+
+function LayoutInner({ sidebarOpen, setSidebarOpen, agentOpen, setAgentOpen }: LayoutInnerProps) {
+  const { screenContext } = useScreenContext()
+  const autoContext = useAutoScreenContext()
+  const effectiveContext = screenContext ?? autoContext
 
   return (
     <div className="flex min-h-screen bg-app text-app">
@@ -43,7 +68,7 @@ export function Layout() {
       </button>
 
       {/* Stan drawer */}
-      <AgentChat open={agentOpen} onClose={() => setAgentOpen(false)} />
+      <AgentChat open={agentOpen} onClose={() => setAgentOpen(false)} screenContext={effectiveContext} />
     </div>
   )
 }

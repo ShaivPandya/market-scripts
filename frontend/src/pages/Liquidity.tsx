@@ -1,5 +1,7 @@
+import { useMemo } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
+import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
 import { fetchLiquidity, analyzeLiquidity } from "@/lib/api"
@@ -25,6 +27,29 @@ export function Liquidity() {
   const liveAnalysis = typeof mutation.data?.analysis === "string" ? mutation.data.analysis : null
   const analysisText = liveAnalysis ?? persistedAnalysis
   const showPanel = Boolean(analysisText || mutation.isPending || mutation.isError)
+
+  // Register screen context for agent chat
+  const screenCtx = useMemo(() => {
+    if (!data) return null
+    const metrics: Record<string, string> = {}
+    if (data.composite_score != null) metrics["Composite Score"] = Number(data.composite_score).toFixed(2)
+    if (data.regime) metrics["Regime"] = String(data.regime)
+    if (data.latest_date) metrics["As Of"] = String(data.latest_date)
+    const rs = data.regional_scores as Record<string, unknown> | undefined
+    if (rs) {
+      const regionParts = Object.entries(rs)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => `${k}: ${Number(v).toFixed(2)}`)
+      if (regionParts.length > 0) metrics["Regional Scores"] = regionParts.join(", ")
+    }
+    return {
+      pageName: "Liquidity",
+      metrics,
+      summary: `Liquidity regime: ${data.regime ?? "unknown"}, composite: ${data.composite_score != null ? Number(data.composite_score).toFixed(2) : "N/A"}`,
+      correspondingTools: ["get_liquidity"],
+    }
+  }, [data])
+  useRegisterScreenContext(screenCtx)
 
   const REGION_LABELS: Record<string, string> = {
     us: "United States",

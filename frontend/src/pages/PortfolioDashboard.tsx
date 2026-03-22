@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
+import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchPortfolioAllTimeframes } from "@/lib/api"
 import { TimeSeriesChart, calcReturn, type DataPoint } from "@/components/shared/TimeSeriesChart"
@@ -29,6 +30,30 @@ export function PortfolioDashboard() {
   const timeframeData = data?.timeframes?.[timeframe]
   const positions: Record<string, DataPoint[]> = timeframeData?.positions ?? {}
   const order: string[] = timeframeData?.position_order ?? Object.keys(positions)
+
+  // Register screen context for agent chat
+  const screenCtx = useMemo(() => {
+    if (!timeframeData || order.length === 0) return null
+    const metrics: Record<string, string> = {
+      "Positions": `${order.length} tickers`,
+      "Timeframe": timeframe,
+    }
+    const returns = order.slice(0, 10).map(ticker => {
+      const series = positions[ticker]
+      if (!series || series.length === 0) return null
+      const ret = calcReturn(series)
+      return ret != null ? `${ticker}: ${ret >= 0 ? "+" : ""}${ret.toFixed(2)}%` : null
+    }).filter(Boolean)
+    if (returns.length > 0) metrics["Returns"] = returns.join(", ")
+    return {
+      pageName: "Portfolio Dashboard",
+      metrics,
+      filters: { timeframe },
+      summary: `Portfolio with ${order.length} positions, viewing ${timeframe}`,
+      correspondingTools: ["get_portfolio"],
+    }
+  }, [timeframeData, order, positions, timeframe])
+  useRegisterScreenContext(screenCtx)
 
   return (
     <div>
@@ -69,7 +94,7 @@ export function PortfolioDashboard() {
               <div key={ticker} className="rounded-xl border bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <Link to={`/dossier/${ticker}`} className="text-sm font-semibold text-app hover:underline">{ticker}</Link>
+                    <Link to={`/dossier/${ticker}`} state={{ from: "portfolio" }} className="text-sm font-semibold text-app hover:underline">{ticker}</Link>
                   </div>
                   {ret != null && (
                     <span className={`text-xs font-medium ${ret >= 0 ? "text-green-600" : "text-red-600"}`}>

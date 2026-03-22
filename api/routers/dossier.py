@@ -89,12 +89,20 @@ def get_dossier(ticker: str):
     research_notes = get_research_notes(ticker=ticker, limit=20)
     pending_approvals = get_pending_approvals(ticker=ticker)
 
-    # Ontology risk data (graceful fallback)
+    # Ontology risk data (graceful fallback — read cached data only, never trigger ingestion)
     ontology_risk = None
     try:
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as FuturesTimeout
+
         from api.agent_tools import execute_tool
 
-        raw = execute_tool("query_ontology", {"filters": json.dumps({"tickers": [ticker]})})
+        def _query():
+            return execute_tool("query_ontology", {"filters": {"tickers": [ticker]}})
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_query)
+            raw = future.result(timeout=10)
         ontology_risk = json.loads(raw) if isinstance(raw, str) else raw
     except Exception:
         pass
