@@ -126,7 +126,7 @@ const COLUMN_LABELS: Record<string, string> = {
   ticker: "Ticker",
   asset: "Asset",
   direction: "Direction",
-  distressed: "Distressed",
+  contrarian: "Contrarian",
   conviction: "Conviction",
   drawdown_52w: "Drawdown 52W",
   stabilized_10d: "Stabilized",

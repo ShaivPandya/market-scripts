@@ -94,7 +94,7 @@ export interface PortfolioPosition {
   ticker: string
   asset: "equity" | "commodity" | "fx" | "bond"
   direction: "long" | "short"
-  distressed: boolean
+  contrarian: boolean
   conviction: number
   cost_basis: number | null
   shares: number | null

@@ -89,8 +89,10 @@ Columns:
     ticker      - Ticker symbol (e.g., AAPL, SPY, METSO.HE)
     asset       - Asset class: equity, fx, commodity, bond
     direction   - "long" or "short" (leave blank for inactive/hedges)
-    distressed  - Optional boolean-ish flag (true/false/1/0). For equity longs,
+    contrarian  - Optional boolean-ish flag (true/false/1/0). For equity longs,
                   requires 52-week drawdown + stabilization before activating.
+                  For equity shorts, requires no new 252d high for 20 days
+                  (1/3 weight) and negative momentum for full conviction.
 
 The script will automatically fetch required FX rates from yfinance.
 
@@ -193,11 +195,12 @@ LONG_MAX = 0.20  # max 25% for any single long position
 SHORT_MIN = -0.10  # max 25% (abs) for any single short position
 SEVERE_DD_MAX = 0.05  # max 5% absolute SHORT position size if 60%+ off 104-week high
 SEVERE_DD_THRESHOLD = 0.60  # drawdown from 104-week high that triggers the reduced cap
-DISTRESSED_DD_THRESHOLD = 0.25
-DISTRESSED_STABILIZATION_DAYS = 10
-DISTRESSED_LOOKBACK_TD = 252
-DISTRESSED_SIGNAL_DD_SCALE = 0.20
-DISTRESSED_SIGNAL_CLIP = 3.0
+CONTRARIAN_DD_THRESHOLD = 0.25
+CONTRARIAN_STABILIZATION_DAYS = 10
+CONTRARIAN_LOOKBACK_TD = 252
+CONTRARIAN_SIGNAL_DD_SCALE = 0.20
+CONTRARIAN_SIGNAL_CLIP = 3.0
+CONTRARIAN_SHORT_NO_HIGH_DAYS = 20
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: dict[str, float] = {
@@ -380,12 +383,12 @@ def parse_bool_column(series: pd.Series) -> pd.Series:
     return parsed.astype(bool)
 
 
-def compute_distressed_metrics(local_prices: pd.DataFrame, tickers: list) -> pd.DataFrame:
+def compute_contrarian_long_metrics(local_prices: pd.DataFrame, tickers: list) -> pd.DataFrame:
     """
-    Compute drawdown/stabilization metrics for distressed long gating.
+    Compute drawdown/stabilization metrics for contrarian long gating.
 
     - Drawdown is computed from 52-week high using local adjusted close prices.
-    - Stabilization means no strictly lower low for DISTRESSED_STABILIZATION_DAYS
+    - Stabilization means no strictly lower low for CONTRARIAN_STABILIZATION_DAYS
       trading sessions since the most recent 52-week high.
     """
     metrics = pd.DataFrame(
@@ -393,7 +396,7 @@ def compute_distressed_metrics(local_prices: pd.DataFrame, tickers: list) -> pd.
             "drawdown_52w": pd.Series(np.nan, index=tickers, dtype="float64"),
             "stabilized_10d": pd.Series(False, index=tickers, dtype="bool"),
             "days_since_new_low": pd.Series(np.nan, index=tickers, dtype="float64"),
-            "distressed_eligible": pd.Series(False, index=tickers, dtype="bool"),
+            "contrarian_eligible": pd.Series(False, index=tickers, dtype="bool"),
         }
     )
 
@@ -401,8 +404,8 @@ def compute_distressed_metrics(local_prices: pd.DataFrame, tickers: list) -> pd.
         if ticker not in local_prices.columns:
             continue
 
-        series = local_prices[ticker].dropna().tail(DISTRESSED_LOOKBACK_TD)
-        if len(series) < DISTRESSED_LOOKBACK_TD:
+        series = local_prices[ticker].dropna().tail(CONTRARIAN_LOOKBACK_TD)
+        if len(series) < CONTRARIAN_LOOKBACK_TD:
             continue
 
         high_52w = float(series.max())
@@ -428,54 +431,162 @@ def compute_distressed_metrics(local_prices: pd.DataFrame, tickers: list) -> pd.
             days_since_new_low = len(post_high) - 1
 
         stabilized = (
-            len(post_high) >= (DISTRESSED_STABILIZATION_DAYS + 1)
-            and days_since_new_low >= DISTRESSED_STABILIZATION_DAYS
+            len(post_high) >= (CONTRARIAN_STABILIZATION_DAYS + 1)
+            and days_since_new_low >= CONTRARIAN_STABILIZATION_DAYS
         )
 
         current_price = float(series.iloc[-1])
         drawdown_52w = (high_52w - current_price) / high_52w
-        distressed_eligible = drawdown_52w >= DISTRESSED_DD_THRESHOLD and stabilized
+        contrarian_eligible = drawdown_52w >= CONTRARIAN_DD_THRESHOLD and stabilized
 
         metrics.at[ticker, "drawdown_52w"] = drawdown_52w
         metrics.at[ticker, "stabilized_10d"] = bool(stabilized)
         metrics.at[ticker, "days_since_new_low"] = int(days_since_new_low)
-        metrics.at[ticker, "distressed_eligible"] = bool(distressed_eligible)
+        metrics.at[ticker, "contrarian_eligible"] = bool(contrarian_eligible)
 
     return metrics
 
 
-def apply_distressed_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> pd.DataFrame:
+def compute_contrarian_short_metrics(
+    local_prices: pd.DataFrame,
+    benchmark_prices: pd.Series,
+    tickers: list,
+) -> pd.DataFrame:
     """
-    Apply distressed gating:
-    - For distressed equity longs, require drawdown threshold + stabilization.
+    Compute momentum/confirmation metrics for contrarian short gating.
+
+    - no_new_high_20d: True if the 252-day high was NOT set in the last 20 trading days.
+    - avg20_roc63: 20-day average of 63-day Rate of Change (%).
+    - avg10_rel_roc: 10-day average of 42-day relative ROC vs benchmark (%).
+    - contrarian_eligible: all three conditions met (no new high + negative ROC + negative rel ROC).
+    """
+    metrics = pd.DataFrame(
+        {
+            "no_new_high_20d": pd.Series(False, index=tickers, dtype="bool"),
+            "days_since_high": pd.Series(np.nan, index=tickers, dtype="float64"),
+            "avg20_roc63": pd.Series(np.nan, index=tickers, dtype="float64"),
+            "avg10_rel_roc": pd.Series(np.nan, index=tickers, dtype="float64"),
+            "contrarian_eligible": pd.Series(False, index=tickers, dtype="bool"),
+        }
+    )
+
+    benchmark = benchmark_prices.dropna()
+
+    for ticker in tickers:
+        if ticker not in local_prices.columns:
+            continue
+
+        series = local_prices[ticker].dropna().tail(CONTRARIAN_LOOKBACK_TD)
+        if len(series) < CONTRARIAN_LOOKBACK_TD:
+            continue
+
+        # --- No new high check ---
+        high_252d = float(series.max())
+        if not np.isfinite(high_252d) or high_252d <= 0:
+            continue
+
+        high_dates = series[series == high_252d].index
+        if len(high_dates) == 0:
+            continue
+        last_high_pos = int(np.flatnonzero(series.values == high_252d)[-1])
+        days_since_high = len(series) - 1 - last_high_pos
+        no_new_high_20d = days_since_high >= CONTRARIAN_SHORT_NO_HIGH_DAYS
+
+        metrics.at[ticker, "days_since_high"] = int(days_since_high)
+        metrics.at[ticker, "no_new_high_20d"] = bool(no_new_high_20d)
+
+        # --- Momentum metrics ---
+        combined = pd.DataFrame({"ticker": series, "benchmark": benchmark}).dropna()
+        if len(combined) < 100:
+            continue
+
+        prices = combined["ticker"]
+        bench = combined["benchmark"]
+
+        # 20-day avg of 63-day ROC (%)
+        roc63 = (prices / prices.shift(63) - 1.0) * 100.0
+        avg20_roc63_series = roc63.rolling(window=20, min_periods=20).mean()
+        avg20_roc63_val = avg20_roc63_series.iloc[-1]
+
+        # 10-day avg of 42-day relative ROC (%)
+        relative_price = prices / bench
+        rel_roc42 = (relative_price / relative_price.shift(42) - 1.0) * 100.0
+        avg10_rel_roc_series = rel_roc42.rolling(window=10, min_periods=10).mean()
+        avg10_rel_roc_val = avg10_rel_roc_series.iloc[-1]
+
+        if pd.isna(avg20_roc63_val) or pd.isna(avg10_rel_roc_val):
+            continue
+
+        metrics.at[ticker, "avg20_roc63"] = float(avg20_roc63_val)
+        metrics.at[ticker, "avg10_rel_roc"] = float(avg10_rel_roc_val)
+        metrics.at[ticker, "contrarian_eligible"] = bool(
+            no_new_high_20d and avg20_roc63_val < 0 and avg10_rel_roc_val < 0
+        )
+
+    return metrics
+
+
+def apply_contrarian_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply contrarian gating:
+    - For contrarian equity longs, require drawdown threshold + stabilization.
+    - For contrarian equity shorts, require no new 252d high for 20 days + negative momentum.
     - If not eligible, set effective direction to inactive ("").
     """
     out = meta.copy()
 
-    if "distressed" in out.columns:
-        out["distressed"] = parse_bool_column(out["distressed"])
+    if "contrarian" in out.columns:
+        out["contrarian"] = parse_bool_column(out["contrarian"])
     else:
-        out["distressed"] = False
+        out["contrarian"] = False
 
     out["direction_intended"] = out["direction"].fillna("").astype(str).str.strip().str.lower()
     out["direction"] = out["direction_intended"]
 
+    # Long contrarian columns
     out["drawdown_52w"] = np.nan
     out["stabilized_10d"] = False
     out["days_since_new_low"] = np.nan
-    out["distressed_eligible"] = False
+    # Short contrarian columns
+    out["no_new_high_20d"] = False
+    out["days_since_high"] = np.nan
+    out["avg20_roc63"] = np.nan
+    out["avg10_rel_roc"] = np.nan
+    # Shared
+    out["contrarian_eligible"] = False
 
-    candidate_mask = out["distressed"] & out["asset"].str.lower().eq("equity") & out["direction_intended"].eq("long")
-    candidate_tickers = out.index[candidate_mask].tolist()
-    if candidate_tickers:
-        metrics = compute_distressed_metrics(local_prices=local_prices, tickers=candidate_tickers)
-        out.loc[candidate_tickers, "drawdown_52w"] = metrics["drawdown_52w"]
-        out.loc[candidate_tickers, "stabilized_10d"] = metrics["stabilized_10d"].astype(bool)
-        out.loc[candidate_tickers, "days_since_new_low"] = metrics["days_since_new_low"]
-        out.loc[candidate_tickers, "distressed_eligible"] = metrics["distressed_eligible"].astype(bool)
+    # --- Contrarian longs ---
+    long_mask = out["contrarian"] & out["asset"].str.lower().eq("equity") & out["direction_intended"].eq("long")
+    long_tickers = out.index[long_mask].tolist()
+    if long_tickers:
+        metrics = compute_contrarian_long_metrics(local_prices=local_prices, tickers=long_tickers)
+        out.loc[long_tickers, "drawdown_52w"] = metrics["drawdown_52w"]
+        out.loc[long_tickers, "stabilized_10d"] = metrics["stabilized_10d"].astype(bool)
+        out.loc[long_tickers, "days_since_new_low"] = metrics["days_since_new_low"]
+        out.loc[long_tickers, "contrarian_eligible"] = metrics["contrarian_eligible"].astype(bool)
 
-    gated_off_mask = candidate_mask & ~out["distressed_eligible"]
-    out.loc[gated_off_mask, "direction"] = ""
+    gated_long = long_mask & ~out["contrarian_eligible"]
+    out.loc[gated_long, "direction"] = ""
+
+    # --- Contrarian shorts ---
+    short_mask = out["contrarian"] & out["asset"].str.lower().eq("equity") & out["direction_intended"].eq("short")
+    short_tickers = out.index[short_mask].tolist()
+    if short_tickers and MARKET_TICKER_LONG in local_prices.columns:
+        benchmark = local_prices[MARKET_TICKER_LONG]
+        metrics = compute_contrarian_short_metrics(
+            local_prices=local_prices,
+            benchmark_prices=benchmark,
+            tickers=short_tickers,
+        )
+        out.loc[short_tickers, "no_new_high_20d"] = metrics["no_new_high_20d"].astype(bool)
+        out.loc[short_tickers, "days_since_high"] = metrics["days_since_high"]
+        out.loc[short_tickers, "avg20_roc63"] = metrics["avg20_roc63"]
+        out.loc[short_tickers, "avg10_rel_roc"] = metrics["avg10_rel_roc"]
+        out.loc[short_tickers, "contrarian_eligible"] = metrics["contrarian_eligible"].astype(bool)
+
+    gated_short = short_mask & ~out["contrarian_eligible"]
+    out.loc[gated_short, "direction"] = ""
+
     return out
 
 
@@ -1175,7 +1286,7 @@ def analyze_portfolio() -> dict:
         all_tickers_to_fetch = list(set(tickers + market_tickers))
         ticker_currencies = fetch_currencies(all_tickers_to_fetch)
 
-        # Download prices needed for signals and distressed gating.
+        # Download prices needed for signals and contrarian gating.
         fx_tickers = get_required_fx_tickers(ticker_currencies)
         prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
 
@@ -1200,7 +1311,7 @@ def analyze_portfolio() -> dict:
             return {"error": "No instruments with sufficient return history for signal analysis."}
 
         meta = meta.loc[tickers]
-        meta = apply_distressed_gating(meta, prices_all)
+        meta = apply_contrarian_gating(meta, prices_all)
 
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
         asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
@@ -1236,15 +1347,17 @@ def analyze_portfolio() -> dict:
         )
 
         signal_effective = signal_composite.copy()
-        distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
-        distressed_tickers = distressed_active[distressed_active].index.tolist()
-        if distressed_tickers:
-            distressed_drawdowns = meta.loc[distressed_tickers, "drawdown_52w"].astype(float)
-            distress_signal = ((distressed_drawdowns - DISTRESSED_DD_THRESHOLD) / DISTRESSED_SIGNAL_DD_SCALE).clip(
+        contrarian_active = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool) & meta[
+            "direction_intended"
+        ].reindex(tickers).fillna("").eq("long")
+        contrarian_tickers = contrarian_active[contrarian_active].index.tolist()
+        if contrarian_tickers:
+            contrarian_drawdowns = meta.loc[contrarian_tickers, "drawdown_52w"].astype(float)
+            contrarian_signal = ((contrarian_drawdowns - CONTRARIAN_DD_THRESHOLD) / CONTRARIAN_SIGNAL_DD_SCALE).clip(
                 lower=0.0,
-                upper=DISTRESSED_SIGNAL_CLIP,
+                upper=CONTRARIAN_SIGNAL_CLIP,
             )
-            signal_effective.loc[distressed_tickers] = distress_signal
+            signal_effective.loc[contrarian_tickers] = contrarian_signal
 
         direction_display = meta["direction_intended"].fillna(meta["direction"]).astype(str).str.strip().str.lower()
 
@@ -1253,10 +1366,14 @@ def analyze_portfolio() -> dict:
                 "ticker": tickers,
                 "asset": meta["asset"].values,
                 "direction": direction_display.values,
-                "distressed": meta["distressed"].values,
+                "contrarian": meta["contrarian"].values,
                 "drawdown_52w": meta["drawdown_52w"].values,
                 "stabilized_10d": meta["stabilized_10d"].values,
                 "days_since_new_low": meta["days_since_new_low"].values,
+                "no_new_high_20d": meta["no_new_high_20d"].values,
+                "days_since_high": meta["days_since_high"].values,
+                "avg20_roc63": meta["avg20_roc63"].values,
+                "avg10_rel_roc": meta["avg10_rel_roc"].values,
                 "signal": signal_effective.values,
                 "quality_signal": signal_subcomponents["quality_signal"].values,
                 "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
@@ -1336,7 +1453,7 @@ def optimize_portfolio(
         rets = usd_prices.pct_change(fill_method=None).dropna(how="all")
         tickers = [t for t in tickers if t in rets.columns]
         meta = meta.loc[tickers]
-        meta = apply_distressed_gating(meta, prices_all)
+        meta = apply_contrarian_gating(meta, prices_all)
 
         # Compute defense volatility
         defense_vol = compute_defense_volatility(usd_prices, tickers)
@@ -1403,15 +1520,17 @@ def optimize_portfolio(
         )
         signal_effective = signal_composite.copy()
 
-        distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
-        distressed_tickers = distressed_active[distressed_active].index.tolist()
-        if distressed_tickers:
-            distressed_drawdowns = meta.loc[distressed_tickers, "drawdown_52w"].astype(float)
-            distress_signal = ((distressed_drawdowns - DISTRESSED_DD_THRESHOLD) / DISTRESSED_SIGNAL_DD_SCALE).clip(
+        contrarian_active = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool) & meta[
+            "direction_intended"
+        ].reindex(tickers).fillna("").eq("long")
+        contrarian_tickers = contrarian_active[contrarian_active].index.tolist()
+        if contrarian_tickers:
+            contrarian_drawdowns = meta.loc[contrarian_tickers, "drawdown_52w"].astype(float)
+            contrarian_signal = ((contrarian_drawdowns - CONTRARIAN_DD_THRESHOLD) / CONTRARIAN_SIGNAL_DD_SCALE).clip(
                 lower=0.0,
-                upper=DISTRESSED_SIGNAL_CLIP,
+                upper=CONTRARIAN_SIGNAL_CLIP,
             )
-            signal_effective.loc[distressed_tickers] = distress_signal
+            signal_effective.loc[contrarian_tickers] = contrarian_signal
 
         # Raw weights
         w_raw = (
@@ -1597,10 +1716,14 @@ def optimize_portfolio(
                 "asset": meta["asset"].values,
                 "direction": meta["direction"].values,
                 "direction_intended": meta["direction_intended"].values,
-                "distressed": meta["distressed"].values,
+                "contrarian": meta["contrarian"].values,
                 "drawdown_52w": meta["drawdown_52w"].values,
                 "stabilized_10d": meta["stabilized_10d"].values,
                 "days_since_new_low": meta["days_since_new_low"].values,
+                "no_new_high_20d": meta["no_new_high_20d"].values,
+                "days_since_high": meta["days_since_high"].values,
+                "avg20_roc63": meta["avg20_roc63"].values,
+                "avg10_rel_roc": meta["avg10_rel_roc"].values,
                 "signal": signal_effective.values,
                 "signal_composite": signal_composite.values,
                 "signal_effective": signal_effective.values,
@@ -1779,7 +1902,7 @@ def main(book: float | None = None, debug_weights: bool = False):
     # Ensure consistent ordering (keep only portfolio tickers, but rets still has MARKET_TICKER for beta)
     tickers = [t for t in tickers if t in rets.columns]
     meta = meta.loc[tickers]
-    meta = apply_distressed_gating(meta, prices_all)
+    meta = apply_contrarian_gating(meta, prices_all)
 
     # Compute defense volatility (max of 20d, 60d rolling vol) from USD prices
     console.print("[cyan]Computing defense volatility (EWMA blend + floor)...[/cyan]")
@@ -1849,15 +1972,17 @@ def main(book: float | None = None, debug_weights: bool = False):
     )
     signal_effective = signal_composite.copy()
 
-    distressed_active = meta["distressed_eligible"].reindex(tickers).fillna(False).astype(bool)
-    distressed_tickers = distressed_active[distressed_active].index.tolist()
-    if distressed_tickers:
-        distressed_drawdowns = meta.loc[distressed_tickers, "drawdown_52w"].astype(float)
-        distress_signal = ((distressed_drawdowns - DISTRESSED_DD_THRESHOLD) / DISTRESSED_SIGNAL_DD_SCALE).clip(
+    contrarian_active = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool) & meta[
+        "direction_intended"
+    ].reindex(tickers).fillna("").eq("long")
+    contrarian_tickers = contrarian_active[contrarian_active].index.tolist()
+    if contrarian_tickers:
+        contrarian_drawdowns = meta.loc[contrarian_tickers, "drawdown_52w"].astype(float)
+        contrarian_signal = ((contrarian_drawdowns - CONTRARIAN_DD_THRESHOLD) / CONTRARIAN_SIGNAL_DD_SCALE).clip(
             lower=0.0,
-            upper=DISTRESSED_SIGNAL_CLIP,
+            upper=CONTRARIAN_SIGNAL_CLIP,
         )
-        signal_effective.loc[distressed_tickers] = distress_signal
+        signal_effective.loc[contrarian_tickers] = contrarian_signal
 
     # Raw weights shape (inverse-vol by long/short buckets, tilted by signals)
     w_raw = (
@@ -2058,10 +2183,14 @@ def main(book: float | None = None, debug_weights: bool = False):
             "asset": meta["asset"],
             "direction": meta["direction"],
             "direction_intended": meta["direction_intended"],
-            "distressed": meta["distressed"],
+            "contrarian": meta["contrarian"],
             "drawdown_52w": meta["drawdown_52w"],
             "stabilized_10d": meta["stabilized_10d"],
             "days_since_new_low": meta["days_since_new_low"],
+            "no_new_high_20d": meta["no_new_high_20d"],
+            "days_since_high": meta["days_since_high"],
+            "avg20_roc63": meta["avg20_roc63"],
+            "avg10_rel_roc": meta["avg10_rel_roc"],
             "signal": signal_effective,
             "signal_composite": signal_composite,
             "signal_effective": signal_effective,
@@ -2115,7 +2244,7 @@ def main(book: float | None = None, debug_weights: bool = False):
             row["asset"],
             row["direction"],
             row["direction_intended"],
-            "Y" if bool(row["distressed"]) else "N",
+            "Y" if bool(row["contrarian"]) else "N",
             drawdown_str,
             "Y" if bool(row["stabilized_10d"]) else "N",
             days_no_low_str,

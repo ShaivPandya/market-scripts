@@ -952,10 +952,10 @@ def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[s
         direction = pos.get("direction", "long")
         conviction = pos.get("conviction", "")
         asset = pos.get("asset", "equity")
-        distressed = pos.get("distressed", "false")
+        contrarian = pos.get("contrarian", "false")
 
         section_parts = [
-            f"### {ticker} (direction: {direction}, conviction: {conviction}, asset: {asset}, distressed: {distressed})"
+            f"### {ticker} (direction: {direction}, conviction: {conviction}, asset: {asset}, contrarian: {contrarian})"
         ]
 
         # Thesis

@@ -58,7 +58,7 @@ function newRow(): EditorRow {
     ticker: "",
     asset: "equity",
     direction: "long",
-    distressed: false,
+    contrarian: false,
     conviction: 3,
     cost_basis: null,
     shares: null,
@@ -177,7 +177,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       ticker: r.ticker.trim().toUpperCase(),
       asset: r.asset,
       direction: r.direction,
-      distressed: r.distressed,
+      contrarian: r.contrarian,
       conviction: r.conviction,
       cost_basis: r.cost_basis,
       shares: r.shares,
@@ -259,7 +259,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                 <p className="col-span-2 text-xs font-medium text-gray-500">Conviction</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Cost Basis</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Shares</p>
-                <p className="col-span-1 text-xs font-medium text-gray-500">Distressed</p>
+                <p className="col-span-1 text-xs font-medium text-gray-500">Contrarian</p>
                 <p className="col-span-1 text-xs font-medium text-gray-500"></p>
               </div>
 
@@ -363,13 +363,13 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                       <button
                         type="button"
                         role="switch"
-                        aria-checked={row.distressed}
-                        onClick={() => updatePositionRow(row._id, { distressed: !row.distressed })}
+                        aria-checked={row.contrarian}
+                        onClick={() => updatePositionRow(row._id, { contrarian: !row.contrarian })}
                         className="relative inline-flex h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-200"
-                        style={{ backgroundColor: row.distressed ? "hsl(var(--accent))" : "hsl(var(--muted-3))" }}
+                        style={{ backgroundColor: row.contrarian ? "hsl(var(--accent))" : "hsl(var(--muted-3))" }}
                       >
                         <span
-                          className={`pointer-events-none inline-block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200 mt-[2px] ${row.distressed ? "translate-x-[20px]" : "translate-x-[2px]"}`}
+                          className={`pointer-events-none inline-block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200 mt-[2px] ${row.contrarian ? "translate-x-[20px]" : "translate-x-[2px]"}`}
                           style={{ backgroundColor: "hsl(var(--card))" }}
                         />
                       </button>
