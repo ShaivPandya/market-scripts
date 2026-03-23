@@ -41,7 +41,7 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     MARKET_TICKER_SHORT,
     SEVERE_DD_MAX,
     SHORT_MIN,
-    apply_distressed_gating,
+    apply_contrarian_gating,
     apply_hedges_with_gross_cap,
     apply_net_neutral,
     compute_10yr_equivalent,
@@ -195,11 +195,18 @@ def size_portfolio(
         tickers = [t for t in tickers if t in rets.columns]
         meta = meta.loc[tickers]
 
-        # Distressed gating
-        meta = apply_distressed_gating(meta, prices_all)
+        # Contrarian gating
+        meta = apply_contrarian_gating(meta, prices_all)
 
-        # Allow unconfirmed distressed positions at 1/3 weight
-        _gated_mask = meta["distressed"] & ~meta["distressed_eligible"] & meta["direction_intended"].ne("")
+        # Re-enable gated contrarian positions:
+        # - Longs: always re-enable at 1/3
+        # - Shorts: only re-enable if no_new_high_20d (hard gate stays for recent-high shorts)
+        _gated_mask = (
+            meta["contrarian"]
+            & ~meta["contrarian_eligible"]
+            & meta["direction_intended"].ne("")
+            & (meta["direction_intended"].ne("short") | meta["no_new_high_20d"])
+        )
         meta.loc[_gated_mask, "direction"] = meta.loc[_gated_mask, "direction_intended"]
 
         # Defense volatility
@@ -228,9 +235,9 @@ def size_portfolio(
         # Build conviction-driven raw weights
         w_raw = _build_conviction_weights(meta, convictions).reindex(tickers).fillna(0.0)
 
-        # Scale unconfirmed distressed positions to 1/3
+        # Scale unconfirmed contrarian positions to 1/3
         for t in tickers:
-            if meta.loc[t, "distressed"] and not meta.loc[t, "distressed_eligible"]:
+            if meta.loc[t, "contrarian"] and not meta.loc[t, "contrarian_eligible"]:
                 w_raw[t] *= 1.0 / 3.0
 
         w_raw_vec = w_raw.values
@@ -400,7 +407,7 @@ def size_portfolio(
                 "ticker": tickers,
                 "asset": meta["asset"].values,
                 "direction": meta["direction"].values,
-                "distressed": meta["distressed"].values if "distressed" in meta.columns else False,
+                "contrarian": meta["contrarian"].values if "contrarian" in meta.columns else False,
                 "conviction": [convictions.get(t, 0) for t in tickers],
                 "beta_spy": betas_spy.values,
                 "beta_iwm": betas_iwm.values,

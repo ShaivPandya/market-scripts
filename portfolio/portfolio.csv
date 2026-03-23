@@ -1,4 +1,4 @@
-ticker,asset,direction,distressed,conviction
+ticker,asset,direction,contrarian,conviction
 DBB,commodity,long,false,2
 UGL,commodity,long,false,4
 MU,equity,long,false,3

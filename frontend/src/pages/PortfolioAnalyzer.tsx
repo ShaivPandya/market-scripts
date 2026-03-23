@@ -28,10 +28,14 @@ const COLUMN_LABELS: Record<string, string> = {
   ticker: "Ticker",
   asset: "Asset",
   direction: "Direction",
-  distressed: "Distressed",
+  contrarian: "Contrarian",
   drawdown_52w: "Drawdown 52W",
   stabilized_10d: "Stabilized",
   days_since_new_low: "Days Since New Low",
+  no_new_high_20d: "No New High 20D",
+  days_since_high: "Days Since High",
+  avg20_roc63: "Avg20 ROC(63)",
+  avg10_rel_roc: "Avg10 Rel ROC",
   signal: "Signal",
   quality_signal: "Quality",
   eps_mom_signal: "EPS Momentum",
@@ -43,10 +47,14 @@ const COLUMN_ORDER = [
   "ticker",
   "asset",
   "direction",
-  "distressed",
+  "contrarian",
   "drawdown_52w",
   "stabilized_10d",
   "days_since_new_low",
+  "no_new_high_20d",
+  "days_since_high",
+  "avg20_roc63",
+  "avg10_rel_roc",
   "signal",
   "quality_signal",
   "eps_mom_signal",
@@ -98,7 +106,7 @@ function buildColumns(rows: Record<string, unknown>[]): ColumnDef[] {
       header: COLUMN_LABELS[key] ?? key,
       colorFn: isSignalColumn(key) ? colorPositiveNegative : undefined,
       format: (value: unknown) => {
-        if (key === "distressed" || key === "stabilized_10d") {
+        if (key === "contrarian" || key === "stabilized_10d" || key === "no_new_high_20d") {
           const parsed = toBoolean(value)
           return parsed == null ? "N/A" : parsed ? "Yes" : "No"
         }

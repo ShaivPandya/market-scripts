@@ -229,8 +229,8 @@ def collect_risk_data(portfolio_df) -> dict:
             MARKET_TICKER_LONG,
             MARKET_TICKER_SHORT,
             compute_beta_frame,
+            compute_contrarian_long_metrics,
             compute_defense_volatility,
-            compute_distressed_metrics,
             compute_severe_drawdown_flags,
             download_prices,
             fetch_currencies,
@@ -262,18 +262,18 @@ def collect_risk_data(portfolio_df) -> dict:
         severe_dd = compute_severe_drawdown_flags(usd_prices, equity_tickers)
         results["severe_drawdown_flags"] = severe_dd
 
-        # Distressed metrics
-        distressed_tickers = list(
+        # Contrarian metrics
+        contrarian_tickers = list(
             portfolio_df.loc[
-                portfolio_df["distressed"].astype(str).str.lower().isin(["true", "1", "yes"]),
+                portfolio_df["contrarian"].astype(str).str.lower().isin(["true", "1", "yes"]),
                 "ticker",
             ]
         )
-        if distressed_tickers:
-            distressed_metrics = compute_distressed_metrics(prices_all, distressed_tickers)
-            results["distressed_metrics"] = distressed_metrics.to_dict(orient="index")
+        if contrarian_tickers:
+            contrarian_metrics = compute_contrarian_long_metrics(prices_all, contrarian_tickers)
+            results["contrarian_metrics"] = contrarian_metrics.to_dict(orient="index")
         else:
-            results["distressed_metrics"] = {}
+            results["contrarian_metrics"] = {}
 
         # Beta frame
         valid_tickers = [t for t in tickers if t in rets.columns]
@@ -738,7 +738,7 @@ def _build_pass2_user_message(
 Analyze this portfolio and produce a daily risk report with these sections:
 
 1. **Risk Summary** -- max 5 bullets on the most important risks/vulnerabilities today
-2. **Position-Level Flags** -- for each position with an actionable signal (deteriorating technicals, momentum divergence, severe drawdown, distressed gating changes, high beta exposure), describe the concern and severity (low/medium/high)
+2. **Position-Level Flags** -- for each position with an actionable signal (deteriorating technicals, momentum divergence, severe drawdown, contrarian gating changes, high beta exposure), describe the concern and severity (low/medium/high)
 3. **Portfolio-Level Risks** -- beta neutrality status, gross leverage vs limits, concentration, correlation risks
 4. **Actionable Alerts** -- positions where the share adjustment is large or where risk metrics warrant immediate attention
 5. **Stance Alignment** -- briefly assess whether the portfolio as sized at the target leverage aligns with the market stance from your system context. Flag any tension between the stance and current risk exposures. Note if the leverage level creates any binding constraints or unusual risk concentrations.

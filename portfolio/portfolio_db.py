@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS positions (
                         CHECK (asset IN ('equity','commodity','fx','bond')),
     direction   TEXT    NOT NULL
                         CHECK (direction IN ('long','short')),
-    distressed  INTEGER NOT NULL DEFAULT 0,
+    contrarian  INTEGER NOT NULL DEFAULT 0,
     conviction  INTEGER NOT NULL DEFAULT 3
                         CHECK (conviction BETWEEN 1 AND 5),
     cost_basis  REAL,
@@ -77,6 +77,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
     if "role" not in cols:
         conn.execute("ALTER TABLE positions ADD COLUMN role TEXT NOT NULL DEFAULT 'position'")
         conn.commit()
+    # Migrate: rename distressed -> contrarian
+    if "distressed" in cols and "contrarian" not in cols:
+        conn.execute("ALTER TABLE positions RENAME COLUMN distressed TO contrarian")
+        conn.commit()
 
 
 def get_positions(include_hedges: bool = False) -> list[dict]:
@@ -89,12 +93,12 @@ def get_positions(include_hedges: bool = False) -> list[dict]:
     with _lock:
         if include_hedges:
             rows = conn.execute(
-                "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares, role "
+                "SELECT ticker, asset, direction, contrarian, conviction, cost_basis, shares, role "
                 "FROM positions ORDER BY rowid"
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares, role "
+                "SELECT ticker, asset, direction, contrarian, conviction, cost_basis, shares, role "
                 "FROM positions WHERE role = 'position' ORDER BY rowid"
             ).fetchall()
     return [dict(r) for r in rows]
@@ -105,7 +109,7 @@ def get_hedge_positions() -> list[dict]:
     conn = _get_conn()
     with _lock:
         rows = conn.execute(
-            "SELECT ticker, asset, direction, distressed, conviction, cost_basis, shares, role "
+            "SELECT ticker, asset, direction, contrarian, conviction, cost_basis, shares, role "
             "FROM positions WHERE role = 'hedge' ORDER BY rowid"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -114,16 +118,16 @@ def get_hedge_positions() -> list[dict]:
 def get_positions_df(include_hedges: bool = False) -> pd.DataFrame:
     """Return positions as a DataFrame — drop-in replacement for pd.read_csv(portfolio.csv).
 
-    Columns: ticker, asset, direction, distressed, conviction, cost_basis, shares, role
-    distressed is returned as bool for convenience.
+    Columns: ticker, asset, direction, contrarian, conviction, cost_basis, shares, role
+    contrarian is returned as bool for convenience.
     """
     positions = get_positions(include_hedges=include_hedges)
     if not positions:
         return pd.DataFrame(
-            columns=["ticker", "asset", "direction", "distressed", "conviction", "cost_basis", "shares", "role"]
+            columns=["ticker", "asset", "direction", "contrarian", "conviction", "cost_basis", "shares", "role"]
         )
     df = pd.DataFrame(positions)
-    df["distressed"] = df["distressed"].astype(bool)
+    df["contrarian"] = df["contrarian"].astype(bool)
     return df
 
 
@@ -141,7 +145,7 @@ def save_positions(positions: list[dict], role: str = "position") -> None:
         ticker = str(p.get("ticker", "")).strip().upper()
         asset = str(p.get("asset", "equity")).strip().lower()
         direction = str(p.get("direction", "long")).strip().lower()
-        distressed = 1 if p.get("distressed") else 0
+        contrarian = 1 if p.get("contrarian") else 0
         try:
             conviction = int(p.get("conviction", 3))
             conviction = max(1, min(5, conviction))
@@ -157,11 +161,11 @@ def save_positions(positions: list[dict], role: str = "position") -> None:
             shares = float(shares_raw) if shares_raw is not None else None
         except (ValueError, TypeError):
             shares = None
-        rows.append((ticker, asset, direction, distressed, conviction, cost_basis, shares, role))
+        rows.append((ticker, asset, direction, contrarian, conviction, cost_basis, shares, role))
     with _lock:
         conn.execute("DELETE FROM positions WHERE role = ?", (role,))
         conn.executemany(
-            "INSERT INTO positions (ticker, asset, direction, distressed, conviction, cost_basis, shares, role) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO positions (ticker, asset, direction, contrarian, conviction, cost_basis, shares, role) VALUES (?,?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()

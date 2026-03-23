@@ -18,7 +18,7 @@ class PortfolioPosition(BaseModel):
     ticker: str
     asset: Literal["equity", "commodity", "fx", "bond"]
     direction: Literal["long", "short"]
-    distressed: bool = False
+    contrarian: bool = False
     conviction: int = Field(default=3, ge=1, le=5)
     cost_basis: float | None = None
     shares: float | None = None
@@ -65,7 +65,7 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
                 "ticker": pos.ticker.strip().upper(),
                 "asset": pos.asset,
                 "direction": pos.direction,
-                "distressed": pos.distressed,
+                "contrarian": pos.contrarian,
                 "conviction": pos.conviction,
                 "cost_basis": pos.cost_basis,
                 "shares": pos.shares,
@@ -156,7 +156,7 @@ def update_hedge_positions(req: HedgeUpdateRequest):
                 "ticker": pos.ticker.strip().upper(),
                 "asset": "equity",
                 "direction": pos.direction,
-                "distressed": False,
+                "contrarian": False,
                 "conviction": 3,
                 "cost_basis": pos.cost_basis,
                 "shares": pos.shares,

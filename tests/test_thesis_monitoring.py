@@ -11,7 +11,7 @@ def test_load_theses_reads_files(tmp_path, monkeypatch):
     csv_path = tmp_path / "portfolio" / "portfolio.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(
-        "ticker,asset,direction,distressed,conviction\nAAA,equity,long,false,3\nBBB,equity,short,false,2\n"
+        "ticker,asset,direction,contrarian,conviction\nAAA,equity,long,false,3\nBBB,equity,short,false,2\n"
     )
 
     thesis_dir = tmp_path / "investment_theses"
@@ -30,7 +30,7 @@ def test_load_theses_empty_file(tmp_path, monkeypatch):
     """An empty thesis file returns None."""
     csv_path = tmp_path / "portfolio" / "portfolio.csv"
     csv_path.parent.mkdir(parents=True)
-    csv_path.write_text("ticker,asset,direction,distressed,conviction\nXYZ,equity,long,false,3\n")
+    csv_path.write_text("ticker,asset,direction,contrarian,conviction\nXYZ,equity,long,false,3\n")
 
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
@@ -158,7 +158,7 @@ def test_build_thesis_prompt_includes_web_search_instruction():
                 "direction": "long",
                 "conviction": "3",
                 "asset": "equity",
-                "distressed": "false",
+                "contrarian": "false",
             }
         ],
     }
