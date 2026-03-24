@@ -68,7 +68,7 @@ const STATUS_COLORS: Record<string, string> = {
   suspended: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
   closed: "text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-800",
   pending: "text-blue-700 bg-blue-50 dark:text-blue-400 dark:bg-blue-950",
-  played_out: "text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-800",
+  played_out: "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
   failed: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
   triggered: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
   retired: "text-gray-500 bg-gray-50 dark:text-gray-400 dark:bg-gray-800",

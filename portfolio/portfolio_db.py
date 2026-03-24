@@ -20,9 +20,11 @@ from pathlib import Path
 import pandas as pd
 
 DB_PATH = Path(__file__).parent / "portfolio.db"
+CSV_PATH = Path(__file__).parent / "portfolio.csv"
 
 _ASSET_CLASSES = {"equity", "commodity", "fx", "bond"}
 _DIRECTIONS = {"long", "short"}
+_POSITION_COLUMNS = ["ticker", "asset", "direction", "contrarian", "conviction", "cost_basis", "shares", "role"]
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS positions (
@@ -115,7 +117,43 @@ def get_hedge_positions() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_positions_df(include_hedges: bool = False) -> pd.DataFrame:
+def load_positions_csv() -> pd.DataFrame:
+    """Load ``portfolio.csv`` into the same shape as ``get_positions_df``."""
+    if not CSV_PATH.exists():
+        return pd.DataFrame(columns=_POSITION_COLUMNS)
+
+    df = pd.read_csv(CSV_PATH)
+    if df.empty:
+        return pd.DataFrame(columns=_POSITION_COLUMNS)
+
+    df.columns = df.columns.str.strip()
+    defaults = {
+        "ticker": "",
+        "asset": "equity",
+        "direction": "long",
+        "contrarian": False,
+        "conviction": 3,
+        "cost_basis": None,
+        "shares": None,
+        "role": "position",
+    }
+    for column, default in defaults.items():
+        if column not in df.columns:
+            df[column] = default
+
+    df = df[_POSITION_COLUMNS].copy()
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    df["asset"] = df["asset"].astype(str).str.strip().str.lower()
+    df["direction"] = df["direction"].astype(str).str.strip().str.lower()
+    df["contrarian"] = df["contrarian"].astype(str).str.strip().str.lower().isin({"1", "true", "yes"})
+    df["conviction"] = pd.to_numeric(df["conviction"], errors="coerce").fillna(3).clip(1, 5).astype(int)
+    df["cost_basis"] = pd.to_numeric(df["cost_basis"], errors="coerce")
+    df["shares"] = pd.to_numeric(df["shares"], errors="coerce")
+    df["role"] = df["role"].astype(str).str.strip().str.lower().replace("", "position")
+    return df
+
+
+def get_positions_df(include_hedges: bool = False, fallback_to_csv: bool = False) -> pd.DataFrame:
     """Return positions as a DataFrame — drop-in replacement for pd.read_csv(portfolio.csv).
 
     Columns: ticker, asset, direction, contrarian, conviction, cost_basis, shares, role
@@ -123,9 +161,12 @@ def get_positions_df(include_hedges: bool = False) -> pd.DataFrame:
     """
     positions = get_positions(include_hedges=include_hedges)
     if not positions:
-        return pd.DataFrame(
-            columns=["ticker", "asset", "direction", "contrarian", "conviction", "cost_basis", "shares", "role"]
-        )
+        if fallback_to_csv:
+            csv_df = load_positions_csv()
+            if not include_hedges and "role" in csv_df.columns:
+                csv_df = csv_df[csv_df["role"].eq("position")]
+            return csv_df.reset_index(drop=True)
+        return pd.DataFrame(columns=_POSITION_COLUMNS)
     df = pd.DataFrame(positions)
     df["contrarian"] = df["contrarian"].astype(bool)
     return df
