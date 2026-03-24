@@ -129,7 +129,7 @@ def calculate_crb_returns(df, periods):
 
     returns = {}
     for period_name, days in periods.items():
-        target_date = latest_date - timedelta(days=days)
+        target_date = _normalize_reference_time(latest_date - timedelta(days=days), date_index)
         past_idx = date_index.searchsorted(target_date, side="right") - 1
 
         if past_idx >= 0:
@@ -204,15 +204,21 @@ def download_close_series(ticker_dict, period=DEFAULT_YF_PERIOD):
 
 
 def _normalize_reference_time(reference_time, index):
-    """Align a timestamp with a DatetimeIndex timezone."""
-    if index.tz is None:
-        if reference_time.tzinfo is None:
-            return reference_time
-        return reference_time.tz_localize(None)
+    """Align a timestamp with a DatetimeIndex timezone and precision."""
+    reference_time = pd.Timestamp(reference_time)
 
-    if reference_time.tzinfo is None:
-        return reference_time.tz_localize(index.tz)
-    return reference_time.tz_convert(index.tz)
+    if index.tz is None:
+        if reference_time.tzinfo is not None:
+            reference_time = reference_time.tz_localize(None)
+    elif reference_time.tzinfo is None:
+        reference_time = reference_time.tz_localize(index.tz)
+    else:
+        reference_time = reference_time.tz_convert(index.tz)
+
+    index_unit = getattr(index, "unit", None)
+    if index_unit and hasattr(reference_time, "as_unit"):
+        reference_time = reference_time.as_unit(index_unit)
+    return reference_time
 
 
 def calculate_return(close_series, days, reference_time=None):
@@ -229,7 +235,7 @@ def calculate_return(close_series, days, reference_time=None):
 
     reference_ts = pd.Timestamp.now() if reference_time is None else pd.Timestamp(reference_time)
     reference_ts = _normalize_reference_time(reference_ts, close_series.index)
-    target_date = reference_ts - timedelta(days=days)
+    target_date = _normalize_reference_time(reference_ts - timedelta(days=days), close_series.index)
 
     past_idx = close_series.index.searchsorted(target_date, side="right") - 1
     past_price = close_series.iloc[past_idx] if past_idx >= 0 else close_series.iloc[0]

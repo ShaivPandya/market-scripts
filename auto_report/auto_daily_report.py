@@ -91,6 +91,15 @@ DEFAULT_STANCE = "Neutral"
 
 
 # ---------------------------------------------------------------------------
+# Formatting helpers
+# ---------------------------------------------------------------------------
+
+
+def _format_currency(amount: float) -> str:
+    return format(float(amount), ",.2f")
+
+
+# ---------------------------------------------------------------------------
 # Leverage validation
 # ---------------------------------------------------------------------------
 
@@ -161,7 +170,7 @@ def load_portfolio():
 
     from portfolio.portfolio_db import get_positions_df
 
-    df = get_positions_df()
+    df = get_positions_df(fallback_to_csv=True)
     df["ticker"] = df["ticker"].str.strip().str.upper()
     df["direction"] = df["direction"].fillna("").str.strip().str.lower()
     df["conviction"] = df["conviction"].fillna(3).astype(int)
@@ -295,14 +304,17 @@ def collect_risk_data(portfolio_df) -> dict:
 
 def run_sizer(portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERAGE) -> dict:
     """Run portfolio sizer and return full result dict."""
-    from portfolio_sizer import size_portfolio
+    try:
+        from portfolio.portfolio_optimizer.portfolio_sizer import size_portfolio
 
-    positions = [
-        {"ticker": row["ticker"], "conviction": int(row["conviction"])}
-        for _, row in portfolio_df.iterrows()
-        if row["direction"] in ("long", "short")
-    ]
-    return size_portfolio(positions=positions, book=book, target_leverage=target_leverage)
+        positions = [
+            {"ticker": row["ticker"], "conviction": int(row["conviction"])}
+            for _, row in portfolio_df.iterrows()
+            if row["direction"] in ("long", "short")
+        ]
+        return size_portfolio(positions=positions, book=book, target_leverage=target_leverage)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 # ---------------------------------------------------------------------------
@@ -943,10 +955,10 @@ def main():
         book = args.book
     elif not open_positions_df.empty and "PositionValue" in open_positions_df.columns:
         book = float(open_positions_df["PositionValue"].abs().sum())
-        log.info("Book size from open_positions.csv: $%,.2f", book)
+        log.info("Book size from open_positions.csv: $%s", _format_currency(book))
     else:
         book = 100_000.0
-        log.info("Using default book size: $%,.2f", book)
+        log.info("Using default book size: $%s", _format_currency(book))
 
     # ---------------------------------------------------------------
     # STEP 3: Load previous-day summary (feeds Pass 1 context)
@@ -1016,7 +1028,11 @@ def main():
     # ---------------------------------------------------------------
     # STEP 8: Run sizer at Pass 1's target leverage
     # ---------------------------------------------------------------
-    log.info("Running portfolio sizer (book=$%,.2f, leverage=%.2f)...", book, target_leverage)
+    log.info(
+        "Running portfolio sizer (book=$%s, leverage=%.2f)...",
+        _format_currency(book),
+        target_leverage,
+    )
     t_sizer = time.perf_counter()
     sizer_result = run_sizer(portfolio_df, book, target_leverage=target_leverage)
     log.info("Sizer completed in %.2fs", time.perf_counter() - t_sizer)

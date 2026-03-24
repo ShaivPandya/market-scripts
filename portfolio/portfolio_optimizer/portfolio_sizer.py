@@ -145,7 +145,7 @@ def size_portfolio(
         convictions = _parse_positions(positions)
 
         # Load portfolio metadata
-        meta = _get_positions_df()
+        meta = _get_positions_df(fallback_to_csv=True)
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
 
