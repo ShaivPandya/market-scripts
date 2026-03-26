@@ -203,11 +203,13 @@ def _parse_sensitivity(text: str) -> list[dict] | None:
         if not in_table:
             continue
         if len(cells) >= 3:
-            rows.append({
-                "factor": cells[0],
-                "sensitivity": cells[1],
-                "capacity": cells[2],
-            })
+            rows.append(
+                {
+                    "factor": cells[0],
+                    "sensitivity": cells[1],
+                    "capacity": cells[2],
+                }
+            )
     return rows if rows else None
 
 
@@ -220,11 +222,13 @@ def _parse_porters(text: str) -> list[dict] | None:
             line,
         )
         if m:
-            forces.append({
-                "force": m.group(1).strip(),
-                "rating": m.group(2).strip(),
-                "description": m.group(3).strip(),
-            })
+            forces.append(
+                {
+                    "force": m.group(1).strip(),
+                    "rating": m.group(2).strip(),
+                    "description": m.group(3).strip(),
+                }
+            )
     return forces if forces else None
 
 
@@ -275,9 +279,7 @@ def parse_overview_markdown(content: str) -> dict | None:
 
     # Sensitivity
     try:
-        result["sensitivity"] = _parse_sensitivity(
-            sections.get("sensitivity to extrinsic factors", "")
-        )
+        result["sensitivity"] = _parse_sensitivity(sections.get("sensitivity to extrinsic factors", ""))
     except Exception:
         result["sensitivity"] = None
 
