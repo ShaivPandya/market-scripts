@@ -2,8 +2,10 @@
 *__pycache__
 **/data_cache/
 **/outputs/
-**/portfolio/open_positions.csv
-**/portfolio/portfolio.db
+# SQLite transient files
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Environment variables
 .env
