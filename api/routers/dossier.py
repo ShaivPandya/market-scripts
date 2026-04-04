@@ -73,6 +73,15 @@ def get_dossier(ticker: str):
     except Exception:
         pass
 
+    overview_parsed = None
+    if overview_content:
+        try:
+            from api.routers.overview import parse_overview_markdown
+
+            overview_parsed = parse_overview_markdown(overview_content)
+        except Exception:
+            pass
+
     # Evaluations from thesis_db
     evaluations = []
     try:
@@ -122,6 +131,7 @@ def get_dossier(ticker: str):
         "ticker": ticker,
         "position": position,
         "overview_content": overview_content,
+        "overview_parsed": overview_parsed,
         "thesis": {
             "meta": thesis_meta,
             "content": thesis_content,

@@ -95,6 +95,217 @@ def _strip_outer_markdown_fence(text: str) -> str:
     return cleaned.strip()
 
 
+def _split_sections(content: str) -> dict[str, str]:
+    """Split markdown into named sections keyed by heading text."""
+    sections: dict[str, str] = {}
+    current_key: str | None = None
+    current_lines: list[str] = []
+    for line in content.splitlines():
+        if line.startswith("## ") or line.startswith("### "):
+            if current_key is not None:
+                sections[current_key] = "\n".join(current_lines).strip()
+            current_key = line.lstrip("#").strip().lower()
+            current_lines = []
+        elif current_key is not None:
+            current_lines.append(line)
+    if current_key is not None:
+        sections[current_key] = "\n".join(current_lines).strip()
+    return sections
+
+
+def _parse_financials(text: str) -> dict | None:
+    result: dict = {}
+    lines = text.splitlines()
+
+    # Revenue growth
+    for line in lines:
+        m = re.match(r"^\s*-\s*\*\*3-Year Avg\.?\s*YoY Revenue Growth\*\*:\s*(.+)", line)
+        if m:
+            raw = m.group(1).strip()
+            val_m = re.match(r"^([~+\-\d.%]+)", raw)
+            result["revenue_growth"] = {
+                "value": val_m.group(1) if val_m else None,
+                "context": raw,
+            }
+            break
+    if "revenue_growth" not in result:
+        result["revenue_growth"] = None
+
+    # EPS growth
+    for line in lines:
+        m = re.match(r"^\s*-\s*\*\*3-Year Avg\.?\s*YoY EPS Growth\*\*:\s*(.+)", line)
+        if m:
+            raw = m.group(1).strip()
+            val_m = re.match(r"^([~+\-\d.%]+)", raw)
+            result["eps_growth"] = {
+                "value": val_m.group(1) if val_m else None,
+                "context": raw,
+            }
+            break
+    if "eps_growth" not in result:
+        result["eps_growth"] = None
+
+    # Debt
+    debt_started = False
+    debt_summary = ""
+    tranches: list[dict] = []
+    in_table = False
+    for line in lines:
+        if not debt_started:
+            m = re.match(r"^\s*-\s*\*\*Debt\*\*:\s*(.+)", line)
+            if m:
+                debt_started = True
+                debt_summary = m.group(1).strip()
+            continue
+        # Stop at next bullet that isn't a table row
+        if re.match(r"^\s*-\s*\*\*", line):
+            break
+        # Parse table rows
+        if "|" in line:
+            cells = [c.strip() for c in line.split("|")]
+            cells = [c for c in cells if c]
+            if cells and re.match(r"^[-:]+$", cells[0]):
+                in_table = True
+                continue
+            if in_table and len(cells) >= 3:
+                tranches.append({"tranche": cells[0], "rate": cells[1], "maturity": cells[2]})
+            elif not in_table and len(cells) >= 3:
+                # header row
+                in_table = False
+                continue
+    result["debt"] = {"summary": debt_summary, "tranches": tranches} if debt_started else None
+
+    # Reinvestment
+    for line in lines:
+        m = re.match(r"^\s*-\s*\*\*Reinvestment Costs?\*\*:\s*(.+)", line)
+        if m:
+            result["reinvestment"] = m.group(1).strip()
+            break
+    if "reinvestment" not in result:
+        result["reinvestment"] = None
+
+    return result if any(v is not None for v in result.values()) else None
+
+
+def _parse_sensitivity(text: str) -> list[dict] | None:
+    rows: list[dict] = []
+    in_table = False
+    for line in text.splitlines():
+        if "|" not in line:
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        cells = [c for c in cells if c]
+        if not cells:
+            continue
+        if re.match(r"^[-:]+$", cells[0]):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if len(cells) >= 3:
+            rows.append(
+                {
+                    "factor": cells[0],
+                    "sensitivity": cells[1],
+                    "capacity": cells[2],
+                }
+            )
+    return rows if rows else None
+
+
+def _parse_porters(text: str) -> list[dict] | None:
+    forces: list[dict] = []
+    for line in text.splitlines():
+        # Pattern: - **Force Name — Rating**: Description
+        m = re.match(
+            r"^\s*-\s*\*\*(.+?)\s*[—–\-]+\s*(.+?)\*\*:\s*(.+)",
+            line,
+        )
+        if m:
+            forces.append(
+                {
+                    "force": m.group(1).strip(),
+                    "rating": m.group(2).strip(),
+                    "description": m.group(3).strip(),
+                }
+            )
+    return forces if forces else None
+
+
+def _infer_outlook_rating(text: str) -> str | None:
+    lower = text.lower()
+    strong_signals = ["strong demand", "strong growth", "robust demand", "robust growth", "elevated demand"]
+    weak_signals = ["weak demand", "weak growth", "declining demand", "slowing demand", "contracting"]
+    for s in strong_signals:
+        if s in lower:
+            return "Strong"
+    for s in weak_signals:
+        if s in lower:
+            return "Weak"
+    if "moderate" in lower or "mixed" in lower:
+        return "Medium"
+    return None
+
+
+def _parse_outlook(text: str) -> dict | None:
+    points: list[dict | str] = []
+    for line in text.splitlines():
+        m = re.match(r"^\s*-\s*\*\*(.+?)\*\*:\s*(.+)", line)
+        if m:
+            points.append({"label": m.group(1).strip(), "text": m.group(2).strip()})
+        elif re.match(r"^\s*-\s+\S", line):
+            points.append(line.lstrip("- ").strip())
+    if not points:
+        return None
+    return {
+        "rating": _infer_outlook_rating(text),
+        "points": points,
+    }
+
+
+def parse_overview_markdown(content: str) -> dict | None:
+    """Parse overview markdown into structured JSON for frontend rendering."""
+    if not content or not content.strip():
+        return None
+
+    sections = _split_sections(content)
+    result: dict = {}
+
+    # Financials
+    try:
+        result["financials"] = _parse_financials(sections.get("financials", ""))
+    except Exception:
+        result["financials"] = None
+
+    # Sensitivity
+    try:
+        result["sensitivity"] = _parse_sensitivity(sections.get("sensitivity to extrinsic factors", ""))
+    except Exception:
+        result["sensitivity"] = None
+
+    # Porter's Five Forces
+    try:
+        result["porters_five_forces"] = _parse_porters(
+            sections.get("porter's five forces", sections.get("porters five forces", ""))
+        )
+    except Exception:
+        result["porters_five_forces"] = None
+
+    # Supply Outlook
+    try:
+        result["supply_outlook"] = _parse_outlook(sections.get("supply outlook", ""))
+    except Exception:
+        result["supply_outlook"] = None
+
+    # Demand Outlook
+    try:
+        result["demand_outlook"] = _parse_outlook(sections.get("demand outlook", ""))
+    except Exception:
+        result["demand_outlook"] = None
+
+    return result if any(v is not None for v in result.values()) else None
+
+
 def _normalize_overview_markdown(ticker: str, content: str) -> str:
     cleaned = _strip_outer_markdown_fence(content)
     lines = cleaned.splitlines()

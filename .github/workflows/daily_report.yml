@@ -56,18 +56,6 @@ jobs:
         if: steps.ny_gate.outputs.should_run == 'true'
         run: pip install -r requirements.txt
 
-      - name: Decode open_positions.csv from secret
-        if: steps.ny_gate.outputs.should_run == 'true'
-        env:
-          OPEN_POSITIONS_B64: ${{ secrets.OPEN_POSITIONS_B64 }}
-        run: |
-          if [ -n "$OPEN_POSITIONS_B64" ]; then
-            echo "$OPEN_POSITIONS_B64" | base64 --decode > portfolio/open_positions.csv
-            echo "Decoded open_positions.csv ($(wc -l < portfolio/open_positions.csv) lines)"
-          else
-            echo "OPEN_POSITIONS_B64 secret not set — running without open positions"
-          fi
-
       - name: Generate daily report
         if: steps.ny_gate.outputs.should_run == 'true'
         env:
