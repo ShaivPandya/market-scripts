@@ -29,6 +29,8 @@ _SECTOR_PREFIX_MAP = {
     "VCR — Consumer Discretionary": "VCR",
 }
 
+# Resolves display labels to backend keys; sector/universe labels fall through
+# to _SECTOR_PREFIX_MAP and _UNIVERSE_MAP in the endpoint handler.
 _BENCHMARK_MAP = {
     "S&P 500": "sp500",
 }
@@ -43,7 +45,7 @@ class QualityRequest(BaseModel):
 
 def _resolve_universe_tickers(universe_label: str) -> list[str]:
     """Return list of tickers for a named universe label."""
-    from common import get_universe_tickers
+    from equities.common import get_universe_tickers
 
     ticker_key = _UNIVERSE_MAP.get(universe_label)
     if ticker_key:
@@ -78,7 +80,12 @@ def run_quality_screen(req: QualityRequest):
         if benchmark_label == "Same as Input":
             benchmark = "self"
         else:
-            benchmark = _BENCHMARK_MAP.get(benchmark_label, benchmark_label)
+            benchmark = (
+                _BENCHMARK_MAP.get(benchmark_label)
+                or _SECTOR_PREFIX_MAP.get(benchmark_label)
+                or _UNIVERSE_MAP.get(benchmark_label)
+                or benchmark_label
+            )
 
         from equities.quality.quality import get_data
 

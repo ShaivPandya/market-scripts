@@ -59,7 +59,7 @@ _FM_ACTIVE_NS = "fundamental_momentum:active:"
 def _resolve_tickers(req: FMRequest) -> list[str]:
     if req.input_mode == "Custom Tickers":
         return [t.strip().upper() for t in req.tickers.split(",") if t.strip()]
-    from common import get_universe_tickers
+    from equities.common import get_universe_tickers
 
     key = _UNIVERSE_MAP.get(req.universe) or _SECTOR_PREFIX_MAP.get(req.universe, req.universe)
     try:

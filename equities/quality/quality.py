@@ -30,7 +30,7 @@ from typing import Dict, List, Optional  # noqa: UP035
 
 import pandas as pd
 
-from equities.common import clean_ticker, get_sp500_universe, list_universes, load_universe
+from equities.common import clean_ticker, get_sp500_universe, get_universe_tickers, list_universes, load_universe
 from equities.quality.quality_single import RawMetrics, compute_scores, fetch_raw_metrics
 
 
@@ -41,6 +41,9 @@ def _build_universe(
     """
     Build the full scoring universe from input tickers + benchmark.
 
+    Benchmark can be "self"/None, "sp500", an ETF ticker (e.g. "VDE"),
+    or any key accepted by get_universe_tickers.
+
     Returns:
         (scoring_universe, input_tickers, benchmark_name)
     """
@@ -50,12 +53,10 @@ def _build_universe(
         # Use input tickers as their own benchmark
         return list(dict.fromkeys(input_tickers)), input_tickers, "Self"
 
-    if benchmark.lower() == "sp500":
-        bench_tickers = get_sp500_universe()
-        bench_name = "S&P 500"
-    else:
-        bench_tickers = load_universe(benchmark)
-        bench_name = benchmark
+    bench_tickers = get_universe_tickers(benchmark)
+    if not bench_tickers:
+        raise ValueError(f"Could not resolve benchmark '{benchmark}' to any tickers")
+    bench_name = benchmark
 
     # Union: input tickers first, then benchmark (deduplicated, order-preserving)
     combined = list(dict.fromkeys(input_tickers + bench_tickers))
