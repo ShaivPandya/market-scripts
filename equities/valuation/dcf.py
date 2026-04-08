@@ -84,6 +84,16 @@ def _safe_float(val: Any) -> float | None:
         return None
 
 
+def _ym(d: _date) -> tuple[int, int]:
+    """Convert date to (year, month) for fuzzy fiscal period matching.
+
+    EDGAR reports slightly different exact dates for the same fiscal period
+    across different XBRL concepts (e.g. revenue ends Sep-28, D&A ends Sep-30).
+    Matching by (year, month) resolves this.
+    """
+    return (d.year, d.month)
+
+
 # ---------------------------------------------------------------------------
 # EDGAR → list-of-dicts table builders
 # ---------------------------------------------------------------------------
@@ -102,20 +112,22 @@ def _build_annual_table_edgar(
     n: int = 5,
 ) -> list[dict]:
     """Build an annual table (EBITDA, D&A, or CapEx) from EDGAR data."""
-    rev_map = {d: v for d, v in revenue_pairs}
-    # Use all dates that appear in metric_pairs where we also have revenue
-    common_dates = sorted([d for d, _ in metric_pairs if d in rev_map])[-n:]
+    rev_map = {_ym(d): v for d, v in revenue_pairs}
+    metric_map = {_ym(d): v for d, v in metric_pairs}
+    # Use metric dates where we also have revenue in the same (year, month)
+    common_yms = sorted([_ym(d) for d, _ in metric_pairs if _ym(d) in rev_map])[-n:]
 
     rows = []
-    for d in common_dates:
-        rev = rev_map[d]
-        metric = dict(metric_pairs).get(d)
+    for ym in common_yms:
+        rev = rev_map[ym]
+        metric = metric_map.get(ym)
         if metric is not None and metric_key in ("capex", "da"):
             metric = abs(metric)
         pct = (metric / rev * 100) if rev and metric and rev != 0 else None
+        label = _date(ym[0], ym[1], 1).strftime("%b-%y")
         rows.append(
             {
-                "fiscal_year": d.strftime("%b-%y"),
+                "fiscal_year": label,
                 "revenue": rev,
                 metric_key: metric,
                 pct_key: round(pct, 1) if pct is not None else None,
@@ -136,21 +148,22 @@ def _build_nwc_table_edgar(
     n: int = 5,
 ) -> list[dict]:
     """Build NWC table from EDGAR quarterly balance sheet data."""
-    rev_map = {d: v for d, v in quarterly_revenue}
-    ca_map = {d: v for d, v in quarterly_ca}
-    cl_map = {d: v for d, v in quarterly_cl}
+    rev_map = {_ym(d): v for d, v in quarterly_revenue}
+    ca_map = {_ym(d): v for d, v in quarterly_ca}
+    cl_map = {_ym(d): v for d, v in quarterly_cl}
 
-    common_dates = sorted(d for d in ca_map if d in cl_map)[-n:]
+    common_yms = sorted(ym for ym in ca_map if ym in cl_map)[-n:]
     rows = []
-    for d in common_dates:
-        ca = ca_map[d]
-        cl = cl_map[d]
+    for ym in common_yms:
+        ca = ca_map[ym]
+        cl = cl_map[ym]
         nwc = ca - cl
-        rev = rev_map.get(d)
+        rev = rev_map.get(ym)
         pct = (nwc / rev * 100) if nwc is not None and rev and rev != 0 else None
+        label = _date(ym[0], ym[1], 1).strftime("%b-%y")
         rows.append(
             {
-                "quarter_end": d.strftime("%b-%y"),
+                "quarter_end": label,
                 "revenue": rev,
                 "nwc": nwc,
                 "nwc_pct_rev": round(pct, 1) if pct is not None else None,
@@ -179,21 +192,21 @@ def _build_quarterly_multiples_edgar(
     if not shares_outstanding or not quarterly_revenue:
         return [], []
 
-    # Build EBITDA from direct or OpIncome + D&A
-    ebitda_map: dict[_date, float] = {}
+    # Build EBITDA from direct or OpIncome + D&A (keyed by year-month)
+    ebitda_map: dict[tuple[int, int], float] = {}
     if quarterly_ebitda:
-        ebitda_map = {d: v for d, v in quarterly_ebitda}
+        ebitda_map = {_ym(d): v for d, v in quarterly_ebitda}
     elif quarterly_op_income and quarterly_da:
-        oi_map = {d: v for d, v in quarterly_op_income}
-        da_map = {d: v for d, v in quarterly_da}
-        for d in oi_map:
-            if d in da_map:
-                ebitda_map[d] = oi_map[d] + abs(da_map[d])
+        oi_map = {_ym(d): v for d, v in quarterly_op_income}
+        da_map = {_ym(d): v for d, v in quarterly_da}
+        for ym in oi_map:
+            if ym in da_map:
+                ebitda_map[ym] = oi_map[ym] + abs(da_map[ym])
 
-    rev_map = {d: v for d, v in quarterly_revenue}
-    debt_map = {d: v for d, v in quarterly_debt}
-    cd_map = {d: v for d, v in quarterly_current_debt}
-    cash_map = {d: v for d, v in quarterly_cash}
+    rev_map = {_ym(d): v for d, v in quarterly_revenue}
+    debt_map = {_ym(d): v for d, v in quarterly_debt}
+    cd_map = {_ym(d): v for d, v in quarterly_current_debt}
+    cash_map = {_ym(d): v for d, v in quarterly_cash}
 
     # Get price series
     price_series = prices
@@ -209,35 +222,36 @@ def _build_quarterly_multiples_edgar(
     else:
         price_series = prices.iloc[:, 0]
 
-    # Get all quarter-end dates from revenue, sorted chronologically
-    all_dates = sorted(rev_map.keys())[-24:]
+    # Get all quarter-end (year, month) keys from revenue, sorted chronologically
+    all_yms = sorted(rev_map.keys())[-24:]
 
     ev_ebitda_rows: list[dict] = []
     ev_rev_rows: list[dict] = []
 
-    for i, d in enumerate(all_dates):
-        d_ts = pd.Timestamp(d)
+    for i, ym in enumerate(all_yms):
+        # Use ~end of month for price lookup
+        d_ts = pd.Timestamp(_date(ym[0], ym[1], 28))
         mask = price_series.index <= d_ts
         if not mask.any():
             continue
         close_price = float(price_series[mask].iloc[-1])
         market_cap = close_price * shares_outstanding
 
-        total_debt = (debt_map.get(d) or 0) + (cd_map.get(d) or 0)
-        cash = cash_map.get(d) or 0
+        total_debt = (debt_map.get(ym) or 0) + (cd_map.get(ym) or 0)
+        cash = cash_map.get(ym) or 0
         net_debt = total_debt - cash
         ev = market_cap + net_debt
 
         # TTM = sum of last 4 quarters
         start_idx = max(0, i - 3)
-        ttm_dates = all_dates[start_idx : i + 1]
-        if len(ttm_dates) < 4:
+        ttm_yms = all_yms[start_idx : i + 1]
+        if len(ttm_yms) < 4:
             continue
 
-        ttm_rev = sum(rev_map.get(qd, 0) for qd in ttm_dates)
-        ttm_ebitda = sum(ebitda_map.get(qd, 0) for qd in ttm_dates) if ebitda_map else 0
+        ttm_rev = sum(rev_map.get(qym, 0) for qym in ttm_yms)
+        ttm_ebitda = sum(ebitda_map.get(qym, 0) for qym in ttm_yms) if ebitda_map else 0
 
-        label = d.strftime("%b-%y")
+        label = _date(ym[0], ym[1], 1).strftime("%b-%y")
 
         if ttm_ebitda and ttm_ebitda > 0:
             ev_ebitda_rows.append(
@@ -675,9 +689,9 @@ def get_historical_data(ticker: str) -> dict[str, Any]:
             oi = edgar.get("annual_operating_income") or []
             da = edgar.get("annual_da") or []
             if oi and da:
-                oi_map = {d: v for d, v in oi}
-                da_map = {d: v for d, v in da}
-                annual_ebitda = [(d, oi_map[d] + abs(da_map[d])) for d in oi_map if d in da_map]
+                oi_map = {_ym(d): (d, v) for d, v in oi}
+                da_map = {_ym(d): v for d, v in da}
+                annual_ebitda = [(oi_map[ym][0], oi_map[ym][1] + abs(da_map[ym])) for ym in oi_map if ym in da_map]
                 annual_ebitda.sort(key=lambda x: x[0], reverse=True)
 
         if annual_rev and annual_ebitda:
