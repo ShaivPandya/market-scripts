@@ -89,6 +89,7 @@ _OPTIONAL_MODULES = [
     ("api.routers.portfolio_news", "portfolio_news", "portfolio"),
     ("api.routers.ontology", "ontology", "ontology"),
     ("api.routers.weekly_report", "weekly_report", "reports"),
+    ("api.routers.dcf", "dcf", "equities"),
 ]
 
 for module_path, name, tag in _OPTIONAL_MODULES:

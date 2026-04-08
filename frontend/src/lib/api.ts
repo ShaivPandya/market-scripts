@@ -733,6 +733,27 @@ export const runFundamentalMomentum = runFundamentalMomentumAsync
 export const runFinancials = (body: { ticker: string }) =>
   client.post("/financials", body).then(r => r.data)
 
+// DCF Model
+export const fetchDCFHistorical = (ticker: string) =>
+  client.get(`/dcf/historical/${encodeURIComponent(ticker)}`).then(r => r.data)
+
+export interface DCFValuationRequest {
+  ticker: string
+  revenue_growth_rates: number[]
+  ebitda_margin: number
+  tax_rate: number
+  da_pct_revenue: number
+  nwc_pct_revenue: number
+  capex_pct_revenue: number
+  wacc: number
+  terminal_growth_rates: { bear: number; base: number; bull: number }
+  exit_ev_ebitda: { bear: number; base: number; bull: number }
+  exit_ev_revenue: { bear: number; base: number; bull: number }
+}
+
+export const runDCFValuation = (body: DCFValuationRequest) =>
+  client.post("/dcf/valuation", body).then(r => r.data)
+
 export const runFxModel = (body: {
   pair: string
   bootstrap: number

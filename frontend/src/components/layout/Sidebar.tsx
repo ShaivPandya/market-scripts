@@ -28,6 +28,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Chart", path: "/chart" },
       { label: "Screeners", path: "/screeners" },
       { label: "Financials", path: "/financials" },
+      { label: "DCF Model", path: "/dcf-model" },
       { label: "FX Model", path: "/fx-model" },
       { label: "Momentum", path: "/momentum" },
     ],

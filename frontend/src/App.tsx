@@ -42,6 +42,7 @@ import { OntologyWorkbench } from "@/pages/OntologyWorkbench"
 import { ThesisManager } from "@/pages/ThesisManager"
 import { Workspace } from "@/pages/Workspace"
 import { PositionDossier } from "@/pages/PositionDossier"
+import { DCFModel } from "@/pages/DCFModel"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -93,6 +94,7 @@ function AppRoutes() {
           <Route path="/short-screen" element={<Navigate to="/screeners" replace />} />
           <Route path="/fundamental-momentum" element={<Navigate to="/screeners" replace />} />
           <Route path="/financials" element={<Financials />} />
+          <Route path="/dcf-model" element={<DCFModel />} />
           <Route path="/index-dashboard" element={<IndexDashboard />} />
           <Route path="/fx-dashboard" element={<FXDashboard />} />
           <Route path="/commodities" element={<CommodityDashboard />} />
