@@ -838,7 +838,7 @@ def _parse_optional_bool(v: object) -> bool | None:
 
 def _filing_context_for_nlp(html: str) -> str:
     try:
-        from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+        from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
     except Exception:
         return ""
 
@@ -1021,7 +1021,7 @@ def _extract_breakdown_from_html(
         return None
 
     try:
-        from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+        from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
     except Exception:
         return None
 
@@ -1037,7 +1037,7 @@ def _extract_breakdown_from_html(
     default_scale = _detect_unit_scale(body_text)
 
     # ── Collect all tables with their preceding text context ─────────────
-    tables = soup.find_all("table")
+    tables = [table for table in soup.find_all("table") if isinstance(table, Tag)]
     breakdowns: dict[str, dict[str, float]] = {}  # kind -> { label: value }
 
     for table in tables:
@@ -1050,6 +1050,8 @@ def _extract_breakdown_from_html(
                 ["p", "div", "span", "b", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "td"]
             )
             if prev_node is None:
+                break
+            if not isinstance(prev_node, Tag):
                 break
             node = prev_node
             txt = " ".join(node.get_text(" ", strip=True).split())
@@ -1066,7 +1068,8 @@ def _extract_breakdown_from_html(
         heading_context = " ".join(reversed(heading_parts))
 
         # Get just the first few rows of the table for context checking
-        table_text = "\n".join([r.get_text(" ", strip=True) for r in table.find_all("tr")[:10]])
+        preview_rows = [row for row in table.find_all("tr")[:10] if isinstance(row, Tag)]
+        table_text = "\n".join(row.get_text(" ", strip=True) for row in preview_rows)
 
         kind = _classify_table(heading_context, table_text)
         if kind is None or kind not in wanted_axes:
@@ -1082,13 +1085,13 @@ def _extract_breakdown_from_html(
             table_scale = default_scale
 
         # ── Extract rows from the table ──────────────────────────────────
-        rows = table.find_all("tr")
+        rows = [row for row in table.find_all("tr") if isinstance(row, Tag)]
         if not rows:
             continue
 
         value_map: dict[str, float] = {}
         for row in rows:
-            cells = row.find_all(["td", "th"])
+            cells = [cell for cell in row.find_all(["td", "th"]) if isinstance(cell, Tag)]
             if len(cells) < 2:
                 continue
 

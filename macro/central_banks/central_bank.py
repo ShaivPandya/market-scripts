@@ -20,7 +20,7 @@ from urllib.parse import urljoin
 
 import feedparser
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from dotenv import load_dotenv
 from readability import Document
 
@@ -245,6 +245,8 @@ def _resolve_fed_minutes_document_url(press_release_url: str, html: str) -> str 
     soup = BeautifulSoup(html, "lxml")
     candidates: list[tuple[int, str]] = []
     for link in soup.find_all("a", href=True):
+        if not isinstance(link, Tag):
+            continue
         href_raw = link.get("href")
         if isinstance(href_raw, list):
             href_token = str(href_raw[0]).strip() if href_raw else ""

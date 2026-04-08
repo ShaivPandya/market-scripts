@@ -140,7 +140,7 @@ def _build_annual_table_edgar(
             }
         )
 
-    pcts = [r[pct_key] for r in rows if r[pct_key] is not None]
+    pcts = [float(value) for r in rows if isinstance(value := r.get(pct_key), (int, float))]
     avg = round(sum(pcts) / len(pcts), 1) if pcts else None
     for r in rows:
         r["avg"] = avg
@@ -176,7 +176,7 @@ def _build_nwc_table_edgar(
             }
         )
 
-    pcts = [r["nwc_pct_rev"] for r in rows if r["nwc_pct_rev"] is not None]
+    pcts = [float(value) for r in rows if isinstance(value := r.get("nwc_pct_rev"), (int, float))]
     avg = round(sum(pcts) / len(pcts), 1) if pcts else None
     for r in rows:
         r["avg"] = avg
@@ -328,7 +328,7 @@ def _compute_ebitda_table_yf(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) 
                 "ebitda_margin": round(pct, 1) if pct is not None else None,
             }
         )
-    margins = [r["ebitda_margin"] for r in rows if r["ebitda_margin"] is not None]
+    margins = [float(value) for r in rows if isinstance(value := r.get("ebitda_margin"), (int, float))]
     avg = round(sum(margins) / len(margins), 1) if margins else None
     for r in rows:
         r["avg"] = avg
@@ -359,7 +359,7 @@ def _compute_da_table_yf(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -> l
                 "da_pct_rev": round(pct, 1) if pct is not None else None,
             }
         )
-    pcts = [r["da_pct_rev"] for r in rows if r["da_pct_rev"] is not None]
+    pcts = [float(value) for r in rows if isinstance(value := r.get("da_pct_rev"), (int, float))]
     avg = round(sum(pcts) / len(pcts), 1) if pcts else None
     for r in rows:
         r["avg"] = avg
@@ -388,7 +388,7 @@ def _compute_capex_table_yf(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -
                 "capex_pct_rev": round(pct, 1) if pct is not None else None,
             }
         )
-    pcts = [r["capex_pct_rev"] for r in rows if r["capex_pct_rev"] is not None]
+    pcts = [float(value) for r in rows if isinstance(value := r.get("capex_pct_rev"), (int, float))]
     avg = round(sum(pcts) / len(pcts), 1) if pcts else None
     for r in rows:
         r["avg"] = avg
@@ -421,7 +421,7 @@ def _compute_nwc_table_yf(
                 "nwc_pct_rev": round(pct, 1) if pct is not None else None,
             }
         )
-    pcts = [r["nwc_pct_rev"] for r in rows if r["nwc_pct_rev"] is not None]
+    pcts = [float(value) for r in rows if isinstance(value := r.get("nwc_pct_rev"), (int, float))]
     avg = round(sum(pcts) / len(pcts), 1) if pcts else None
     for r in rows:
         r["avg"] = avg
@@ -612,11 +612,11 @@ def _compute_wacc(
 
     # Capital structure
     market_cap = info.get("marketCap", 0) or 0
-    total_debt_val = 0
+    total_debt_val = 0.0
     if total_debt_row is not None:
         latest_date = sorted(total_debt_row.index, reverse=True)[0]
         td = _safe_float(total_debt_row.get(latest_date))
-        total_debt_val = td if td else 0
+        total_debt_val = td if td else 0.0
 
     total_capital = market_cap + total_debt_val
     equity_weight = market_cap / total_capital if total_capital > 0 else 1.0

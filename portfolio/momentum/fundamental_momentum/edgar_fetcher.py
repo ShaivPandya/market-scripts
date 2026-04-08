@@ -559,9 +559,6 @@ def extract_dcf_historicals(ticker: str) -> dict | None:
     def _instant_q(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
         return _extract_concept(us_gaap, concepts, "USD", "instant", n)
 
-    def _instant_q(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
-        return _extract_concept(us_gaap, concepts, "USD", "instant", n)
-
     def _instant_shares(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
         return _extract_concept(us_gaap, concepts, "shares", "instant", n)
 
