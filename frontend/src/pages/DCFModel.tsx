@@ -516,22 +516,19 @@ export function DCFModel() {
       </div>
 
       {/* Ticker input */}
-      <div className="flex items-end gap-3">
+      <form onSubmit={e => { e.preventDefault(); handleAnalyze() }} className="flex items-end gap-3">
         <div className="w-48">
           <TextInput
             label="Ticker"
             value={ticker}
-            onChange={setTicker}
+            onChange={v => setTicker(v.toUpperCase())}
             placeholder="e.g. AAPL"
-            onKeyDown={e => {
-              if (e.key === "Enter") handleAnalyze()
-            }}
           />
         </div>
-        <ActionButton onClick={handleAnalyze} loading={isFetching} disabled={!ticker.trim()}>
+        <ActionButton type="submit" loading={isFetching} disabled={!ticker.trim()}>
           Analyze
         </ActionButton>
-      </div>
+      </form>
 
       {isError && (
         <ErrorMessage message={(error as any)?.message ?? "Failed to fetch data"} />
