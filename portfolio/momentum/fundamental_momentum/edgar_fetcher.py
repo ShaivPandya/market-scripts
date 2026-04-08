@@ -1,9 +1,9 @@
 """
-SEC EDGAR XBRL fetcher for quarterly EPS and revenue data.
+SEC EDGAR XBRL fetcher for financial data.
 
 Provides thread-safe, rate-limited access to the SEC EDGAR companyfacts API.
-Used by eps_momentum_single.py and revenue_momentum_single.py as the primary
-source for quarterly financial data (YoY and growth acceleration metrics).
+Used for quarterly EPS/revenue momentum, DCF valuation historicals, and other
+fundamental analysis requiring deep historical financial data.
 
 Rate limiting: all EDGAR requests are serialised through a global lock with a
 0.11 s delay, keeping throughput at ≤ 9 req/s across all threads (SEC limit: 10).
@@ -153,6 +153,165 @@ def _quarterly_entries_from_concept(us_gaap: dict, concept: str, unit: str) -> l
             quarterly[end] = e
 
     return list(quarterly.values())
+
+
+def _annual_entries_from_concept(us_gaap: dict, concept: str, unit: str) -> list[dict]:
+    """
+    Return all annual (FY) fact entries for a given GAAP concept and unit.
+
+    Filters to fp == "FY" (10-K filings).
+    Deduplicates by period-end date, keeping the most recently filed value.
+    """
+    try:
+        entries = us_gaap[concept]["units"][unit]
+    except (KeyError, TypeError):
+        return []
+
+    annual: dict[str, dict] = {}
+    for e in entries:
+        if e.get("fp") != "FY":
+            continue
+        end = e.get("end", "")
+        if not end:
+            continue
+        filed = e.get("filed", "")
+        existing = annual.get(end)
+        if existing is None or filed > existing.get("filed", ""):
+            annual[end] = e
+
+    return list(annual.values())
+
+
+def _instant_entries_from_concept(us_gaap: dict, concept: str, unit: str) -> list[dict]:
+    """
+    Return point-in-time (instant) fact entries for balance sheet concepts.
+
+    Balance sheet items don't have start/end duration — they are snapshots at
+    a point in time.  We keep entries from Q1-Q4 and FY filings,
+    deduplicated by period-end date (keeping most recently filed).
+    """
+    try:
+        entries = us_gaap[concept]["units"][unit]
+    except (KeyError, TypeError):
+        return []
+
+    by_end: dict[str, dict] = {}
+    for e in entries:
+        fp = e.get("fp", "")
+        if fp not in {"Q1", "Q2", "Q3", "Q4", "FY"}:
+            continue
+        end = e.get("end", "")
+        if not end:
+            continue
+        filed = e.get("filed", "")
+        existing = by_end.get(end)
+        if existing is None or filed > existing.get("filed", ""):
+            by_end[end] = e
+
+    return list(by_end.values())
+
+
+def _extract_concept(
+    us_gaap: dict,
+    concepts: tuple[str, ...],
+    unit: str,
+    mode: str,
+    n: int,
+) -> list[tuple[date, float]]:
+    """
+    Generic extraction: try multiple XBRL concept names, return (date, value)
+    pairs sorted newest-first.
+
+    mode: "quarterly", "annual", or "instant"
+    """
+    extractor = {
+        "quarterly": _quarterly_entries_from_concept,
+        "annual": _annual_entries_from_concept,
+        "instant": _instant_entries_from_concept,
+    }[mode]
+
+    for concept in concepts:
+        entries = extractor(us_gaap, concept, unit)
+        if entries:
+            result = sorted(
+                [(date.fromisoformat(e["end"]), float(e["val"])) for e in entries],
+                key=lambda x: x[0],
+                reverse=True,
+            )
+            return result[:n]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# XBRL concept registries for DCF-relevant metrics
+# ---------------------------------------------------------------------------
+
+REVENUE_CONCEPTS = (
+    "Revenues",
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "SalesRevenueNet",
+    "SalesRevenueGoodsNet",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+)
+
+OPERATING_INCOME_CONCEPTS = (
+    "OperatingIncomeLoss",
+    "IncomeLossFromOperations",
+)
+
+DA_CONCEPTS = (
+    "DepreciationDepletionAndAmortization",
+    "DepreciationAndAmortization",
+    "Depreciation",
+)
+
+CAPEX_CONCEPTS = (
+    "PaymentsToAcquirePropertyPlantAndEquipment",
+    "PaymentsToAcquireProductiveAssets",
+)
+
+CURRENT_ASSETS_CONCEPTS = ("AssetsCurrent",)
+
+CURRENT_LIABILITIES_CONCEPTS = ("LiabilitiesCurrent",)
+
+TOTAL_DEBT_CONCEPTS = (
+    "LongTermDebt",
+    "LongTermDebtNoncurrent",
+)
+
+CURRENT_DEBT_CONCEPTS = (
+    "DebtCurrent",
+    "ShortTermBorrowings",
+    "LongTermDebtCurrent",
+)
+
+CASH_CONCEPTS = (
+    "CashAndCashEquivalentsAtCarryingValue",
+    "CashCashEquivalentsAndShortTermInvestments",
+    "Cash",
+)
+
+INTEREST_EXPENSE_CONCEPTS = (
+    "InterestExpense",
+    "InterestExpenseDebt",
+    "InterestPaid",
+)
+
+PRETAX_INCOME_CONCEPTS = (
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+)
+
+TAX_EXPENSE_CONCEPTS = ("IncomeTaxExpenseBenefit",)
+
+SHARES_OUTSTANDING_CONCEPTS = (
+    "EntityCommonStockSharesOutstanding",
+    "CommonStockSharesOutstanding",
+    "CommonStockSharesIssued",
+)
+
+EBITDA_CONCEPTS = ("EarningsBeforeInterestTaxesDepreciationAndAmortization",)
 
 
 # ---------------------------------------------------------------------------
@@ -369,3 +528,90 @@ def fetch_quarterly_revenue_edgar(ticker: str, n: int = 8) -> list[tuple[date, f
 
     result = extract_quarterly_revenue(facts, n=n)
     return result if result else None
+
+
+# ---------------------------------------------------------------------------
+# DCF-oriented extraction functions
+# ---------------------------------------------------------------------------
+
+
+def extract_dcf_historicals(ticker: str) -> dict | None:
+    """
+    Extract all DCF-relevant historical data from SEC EDGAR for a ticker.
+
+    Returns a dict with annual and quarterly data, or None if unavailable.
+    Each value is a list of (date, float) tuples sorted newest-first.
+    """
+    facts = fetch_companyfacts_by_ticker(ticker)
+    if facts is None:
+        return None
+
+    us_gaap = facts.get("facts", {}).get("us-gaap", {})
+    if not us_gaap:
+        return None
+
+    def _annual(concepts: tuple[str, ...], n: int = 10) -> list[tuple[date, float]]:
+        return _extract_concept(us_gaap, concepts, "USD", "annual", n)
+
+    def _quarterly(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
+        return _extract_concept(us_gaap, concepts, "USD", "quarterly", n)
+
+    def _instant_q(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
+        return _extract_concept(us_gaap, concepts, "USD", "instant", n)
+
+    def _instant_shares(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
+        return _extract_concept(us_gaap, concepts, "shares", "instant", n)
+
+    def _instant_annual(concepts: tuple[str, ...], n: int = 10) -> list[tuple[date, float]]:
+        """Extract FY-only instant (balance sheet) values."""
+        for concept in concepts:
+            try:
+                entries = us_gaap[concept]["units"]["USD"]
+            except (KeyError, TypeError):
+                continue
+            annual: dict[str, dict] = {}
+            for e in entries:
+                if e.get("fp") != "FY":
+                    continue
+                end = e.get("end", "")
+                if not end:
+                    continue
+                filed = e.get("filed", "")
+                existing = annual.get(end)
+                if existing is None or filed > existing.get("filed", ""):
+                    annual[end] = e
+            if annual:
+                result = sorted(
+                    [(date.fromisoformat(e["end"]), float(e["val"])) for e in annual.values()],
+                    key=lambda x: x[0],
+                    reverse=True,
+                )
+                return result[:n]
+        return []
+
+    return {
+        # Annual income statement / cash flow items
+        "annual_revenue": _annual(REVENUE_CONCEPTS),
+        "annual_operating_income": _annual(OPERATING_INCOME_CONCEPTS),
+        "annual_ebitda": _annual(EBITDA_CONCEPTS),
+        "annual_da": _annual(DA_CONCEPTS),
+        "annual_capex": _annual(CAPEX_CONCEPTS),
+        "annual_interest_expense": _annual(INTEREST_EXPENSE_CONCEPTS),
+        "annual_pretax_income": _annual(PRETAX_INCOME_CONCEPTS),
+        "annual_tax_expense": _annual(TAX_EXPENSE_CONCEPTS),
+        # Annual balance sheet items (instant/point-in-time, FY only)
+        "annual_current_assets": _instant_annual(CURRENT_ASSETS_CONCEPTS),
+        "annual_current_liabilities": _instant_annual(CURRENT_LIABILITIES_CONCEPTS),
+        # Quarterly income statement items
+        "quarterly_revenue": _quarterly(REVENUE_CONCEPTS),
+        "quarterly_operating_income": _quarterly(OPERATING_INCOME_CONCEPTS),
+        "quarterly_ebitda": _quarterly(EBITDA_CONCEPTS),
+        "quarterly_da": _quarterly(DA_CONCEPTS),
+        # Quarterly balance sheet items (instant/point-in-time)
+        "quarterly_current_assets": _instant_q(CURRENT_ASSETS_CONCEPTS),
+        "quarterly_current_liabilities": _instant_q(CURRENT_LIABILITIES_CONCEPTS),
+        "quarterly_total_debt": _instant_q(TOTAL_DEBT_CONCEPTS),
+        "quarterly_current_debt": _instant_q(CURRENT_DEBT_CONCEPTS),
+        "quarterly_cash": _instant_q(CASH_CONCEPTS),
+        "quarterly_shares_outstanding": _instant_shares(SHARES_OUTSTANDING_CONCEPTS),
+    }

@@ -198,7 +198,7 @@ def _fetch_naaim_excel(page_url: str) -> pd.DataFrame:
     then fetch and parse the Excel.
     """
     try:
-        from bs4 import BeautifulSoup
+        from bs4 import BeautifulSoup, Tag
     except ImportError as e:
         raise ImportError("beautifulsoup4 is required for NAAIM scraping") from e
 
@@ -209,6 +209,8 @@ def _fetch_naaim_excel(page_url: str) -> pd.DataFrame:
     # Find the Excel download link
     xlsx_url = None
     for a in soup.find_all("a", href=True):
+        if not isinstance(a, Tag):
+            continue
         href_raw = a.get("href")
         if isinstance(href_raw, list):
             href = str(href_raw[0]) if href_raw else ""
