@@ -4,6 +4,8 @@ Discounted Cash Flow (DCF) valuation model.
 Provides:
   - get_historical_data(ticker) → historical financials for the Historical tab
   - run_valuation(ticker, assumptions) → 5-year projection + multi-method valuations
+
+Data sourcing: SEC EDGAR (primary, deeper history) with yfinance fallback.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from datetime import date as _date
 from typing import Any
 
 import numpy as np
@@ -19,6 +22,9 @@ import yfinance as yf
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from portfolio.momentum.fundamental_momentum.edgar_fetcher import (  # noqa: E402
+    extract_dcf_historicals,
+)
 from utils.retry import yf_download, yf_ticker_info  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -33,46 +39,33 @@ DEFAULT_TAX_RATE = 0.21
 
 
 # ---------------------------------------------------------------------------
-# yfinance data fetching
+# yfinance helpers
 # ---------------------------------------------------------------------------
 
 
 def _fetch_yfinance_data(ticker: str) -> dict[str, Any]:
-    """Fetch all required yfinance data for a ticker."""
+    """Fetch yfinance data (used for info, prices, and fallback financials)."""
     t = yf.Ticker(ticker)
     info = yf_ticker_info(ticker)
     if not info:
         raise ValueError(f"Could not fetch data for ticker '{ticker}'")
 
-    income_stmt = t.income_stmt
-    quarterly_income_stmt = t.quarterly_income_stmt
-    balance_sheet = t.balance_sheet
-    quarterly_balance_sheet = t.quarterly_balance_sheet
-    cashflow = t.cashflow
-    quarterly_cashflow = t.quarterly_cashflow
-
-    # Historical prices for quarterly EV computation (6 years to cover 20 quarters)
     prices = yf_download(ticker, period="6y", interval="1d")
 
     return {
         "info": info,
-        "income_stmt": income_stmt,
-        "quarterly_income_stmt": quarterly_income_stmt,
-        "balance_sheet": balance_sheet,
-        "quarterly_balance_sheet": quarterly_balance_sheet,
-        "cashflow": cashflow,
-        "quarterly_cashflow": quarterly_cashflow,
+        "income_stmt": t.income_stmt,
+        "quarterly_income_stmt": t.quarterly_income_stmt,
+        "balance_sheet": t.balance_sheet,
+        "quarterly_balance_sheet": t.quarterly_balance_sheet,
+        "cashflow": t.cashflow,
+        "quarterly_cashflow": t.quarterly_cashflow,
         "prices": prices,
     }
 
 
-# ---------------------------------------------------------------------------
-# Row extraction helpers
-# ---------------------------------------------------------------------------
-
-
 def _get_row(df: pd.DataFrame, *names: str) -> pd.Series | None:
-    """Try multiple row names and return the first match."""
+    """Try multiple row names in a yfinance DataFrame."""
     if df is None or df.empty:
         return None
     for name in names:
@@ -82,156 +75,82 @@ def _get_row(df: pd.DataFrame, *names: str) -> pd.Series | None:
 
 
 def _safe_float(val: Any) -> float | None:
-    """Convert to float, returning None for NaN/Inf."""
     if val is None:
         return None
     try:
         f = float(val)
-        if np.isnan(f) or np.isinf(f):
-            return None
-        return f
+        return None if (np.isnan(f) or np.isinf(f)) else f
     except (TypeError, ValueError):
         return None
 
 
 # ---------------------------------------------------------------------------
-# Historical table builders
+# EDGAR → list-of-dicts table builders
 # ---------------------------------------------------------------------------
 
 
-def _compute_ebitda_table(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -> list[dict]:
-    """Build EBITDA table from annual income statement (5 years)."""
-    revenue_row = _get_row(income_stmt, "Total Revenue", "Operating Revenue")
-    ebitda_row = _get_row(income_stmt, "EBITDA", "Normalized EBITDA")
-
-    if ebitda_row is None:
-        # Fallback: Operating Income + D&A
-        op_income = _get_row(income_stmt, "Operating Income", "EBIT")
-        da = _get_row(cashflow, "Depreciation And Amortization", "Depreciation & Amortization")
-        if da is None:
-            da = _get_row(income_stmt, "Reconciled Depreciation", "Depreciation And Amortization In Income Statement")
-        if op_income is not None and da is not None:
-            ebitda_row = op_income + da.reindex(op_income.index, fill_value=0)
-
-    if revenue_row is None or ebitda_row is None:
-        return []
-
-    # Columns are dates, sorted newest first in yfinance; reverse for chronological
-    dates = sorted(revenue_row.index, reverse=False)[-5:]
-    rows = []
-    for d in dates:
-        rev = _safe_float(revenue_row.get(d))
-        ebitda = _safe_float(ebitda_row.get(d))
-        pct = (ebitda / rev * 100) if rev and ebitda and rev != 0 else None
-        label = d.strftime("%b-%y") if hasattr(d, "strftime") else str(d)
-        rows.append(
-            {
-                "fiscal_year": label,
-                "revenue": rev,
-                "ebitda": ebitda,
-                "ebitda_margin": round(pct, 1) if pct is not None else None,
-            }
-        )
-
-    margins = [r["ebitda_margin"] for r in rows if r["ebitda_margin"] is not None]
-    avg = round(sum(margins) / len(margins), 1) if margins else None
-    for r in rows:
-        r["avg"] = avg
-    return rows
+def _edgar_to_annual_map(pairs: list[tuple[_date, float]]) -> dict[str, float]:
+    """Convert EDGAR (date, value) pairs to {date_label: value} dict."""
+    return {d.strftime("%b-%y"): v for d, v in pairs}
 
 
-def _compute_da_table(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -> list[dict]:
-    """Build D&A table from annual data (5 years)."""
-    revenue_row = _get_row(income_stmt, "Total Revenue", "Operating Revenue")
-    da_row = _get_row(cashflow, "Depreciation And Amortization", "Depreciation & Amortization")
-    if da_row is None:
-        da_row = _get_row(income_stmt, "Reconciled Depreciation", "Depreciation And Amortization In Income Statement")
-
-    if revenue_row is None or da_row is None:
-        return []
-
-    dates = sorted(revenue_row.index, reverse=False)[-5:]
-    rows = []
-    for d in dates:
-        rev = _safe_float(revenue_row.get(d))
-        da = _safe_float(da_row.get(d))
-        if da is not None:
-            da = abs(da)
-        pct = (da / rev * 100) if rev and da and rev != 0 else None
-        label = d.strftime("%b-%y") if hasattr(d, "strftime") else str(d)
-        rows.append(
-            {
-                "fiscal_year": label,
-                "revenue": rev,
-                "da": da,
-                "da_pct_rev": round(pct, 1) if pct is not None else None,
-            }
-        )
-
-    pcts = [r["da_pct_rev"] for r in rows if r["da_pct_rev"] is not None]
-    avg = round(sum(pcts) / len(pcts), 1) if pcts else None
-    for r in rows:
-        r["avg"] = avg
-    return rows
-
-
-def _compute_capex_table(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -> list[dict]:
-    """Build CapEx table from annual data (5 years)."""
-    revenue_row = _get_row(income_stmt, "Total Revenue", "Operating Revenue")
-    capex_row = _get_row(cashflow, "Capital Expenditure", "Capital Expenditures")
-
-    if revenue_row is None or capex_row is None:
-        return []
-
-    dates = sorted(revenue_row.index, reverse=False)[-5:]
-    rows = []
-    for d in dates:
-        rev = _safe_float(revenue_row.get(d))
-        capex = _safe_float(capex_row.get(d))
-        if capex is not None:
-            capex = abs(capex)
-        pct = (capex / rev * 100) if rev and capex and rev != 0 else None
-        label = d.strftime("%b-%y") if hasattr(d, "strftime") else str(d)
-        rows.append(
-            {
-                "fiscal_year": label,
-                "revenue": rev,
-                "capex": capex,
-                "capex_pct_rev": round(pct, 1) if pct is not None else None,
-            }
-        )
-
-    pcts = [r["capex_pct_rev"] for r in rows if r["capex_pct_rev"] is not None]
-    avg = round(sum(pcts) / len(pcts), 1) if pcts else None
-    for r in rows:
-        r["avg"] = avg
-    return rows
-
-
-def _compute_nwc_table(
-    quarterly_balance_sheet: pd.DataFrame,
-    quarterly_income_stmt: pd.DataFrame,
+def _build_annual_table_edgar(
+    revenue_pairs: list[tuple[_date, float]],
+    metric_pairs: list[tuple[_date, float]],
+    metric_key: str,
+    pct_key: str,
+    n: int = 5,
 ) -> list[dict]:
-    """Build NWC table from quarterly data (5 quarters)."""
-    ca_row = _get_row(quarterly_balance_sheet, "Current Assets")
-    cl_row = _get_row(quarterly_balance_sheet, "Current Liabilities")
-    rev_row = _get_row(quarterly_income_stmt, "Total Revenue", "Operating Revenue")
+    """Build an annual table (EBITDA, D&A, or CapEx) from EDGAR data."""
+    rev_map = {d: v for d, v in revenue_pairs}
+    # Use all dates that appear in metric_pairs where we also have revenue
+    common_dates = sorted([d for d, _ in metric_pairs if d in rev_map])[-n:]
 
-    if ca_row is None or cl_row is None:
-        return []
-
-    dates = sorted(ca_row.index, reverse=False)[-5:]
     rows = []
-    for d in dates:
-        ca = _safe_float(ca_row.get(d))
-        cl = _safe_float(cl_row.get(d))
-        nwc = (ca - cl) if ca is not None and cl is not None else None
-        rev = _safe_float(rev_row.get(d)) if rev_row is not None else None
-        pct = (nwc / rev * 100) if nwc is not None and rev and rev != 0 else None
-        label = d.strftime("%b-%y") if hasattr(d, "strftime") else str(d)
+    for d in common_dates:
+        rev = rev_map[d]
+        metric = dict(metric_pairs).get(d)
+        if metric is not None and metric_key in ("capex", "da"):
+            metric = abs(metric)
+        pct = (metric / rev * 100) if rev and metric and rev != 0 else None
         rows.append(
             {
-                "quarter_end": label,
+                "fiscal_year": d.strftime("%b-%y"),
+                "revenue": rev,
+                metric_key: metric,
+                pct_key: round(pct, 1) if pct is not None else None,
+            }
+        )
+
+    pcts = [r[pct_key] for r in rows if r[pct_key] is not None]
+    avg = round(sum(pcts) / len(pcts), 1) if pcts else None
+    for r in rows:
+        r["avg"] = avg
+    return rows
+
+
+def _build_nwc_table_edgar(
+    quarterly_revenue: list[tuple[_date, float]],
+    quarterly_ca: list[tuple[_date, float]],
+    quarterly_cl: list[tuple[_date, float]],
+    n: int = 5,
+) -> list[dict]:
+    """Build NWC table from EDGAR quarterly balance sheet data."""
+    rev_map = {d: v for d, v in quarterly_revenue}
+    ca_map = {d: v for d, v in quarterly_ca}
+    cl_map = {d: v for d, v in quarterly_cl}
+
+    common_dates = sorted(d for d in ca_map if d in cl_map)[-n:]
+    rows = []
+    for d in common_dates:
+        ca = ca_map[d]
+        cl = cl_map[d]
+        nwc = ca - cl
+        rev = rev_map.get(d)
+        pct = (nwc / rev * 100) if nwc is not None and rev and rev != 0 else None
+        rows.append(
+            {
+                "quarter_end": d.strftime("%b-%y"),
                 "revenue": rev,
                 "nwc": nwc,
                 "nwc_pct_rev": round(pct, 1) if pct is not None else None,
@@ -245,44 +164,38 @@ def _compute_nwc_table(
     return rows
 
 
-# ---------------------------------------------------------------------------
-# Quarterly EV multiples
-# ---------------------------------------------------------------------------
-
-
-def _compute_quarterly_multiples(
-    quarterly_income_stmt: pd.DataFrame,
-    quarterly_balance_sheet: pd.DataFrame,
+def _build_quarterly_multiples_edgar(
+    quarterly_revenue: list[tuple[_date, float]],
+    quarterly_ebitda: list[tuple[_date, float]] | None,
+    quarterly_op_income: list[tuple[_date, float]] | None,
+    quarterly_da: list[tuple[_date, float]] | None,
+    quarterly_debt: list[tuple[_date, float]],
+    quarterly_current_debt: list[tuple[_date, float]],
+    quarterly_cash: list[tuple[_date, float]],
     prices: pd.DataFrame,
-    info: dict,
+    shares_outstanding: int | None,
 ) -> tuple[list[dict], list[dict]]:
-    """Compute EV/EBITDA and EV/Revenue for up to 20 quarters."""
-    shares = info.get("sharesOutstanding")
-    if not shares:
+    """Build EV/EBITDA and EV/Revenue tables from EDGAR quarterly data."""
+    if not shares_outstanding or not quarterly_revenue:
         return [], []
 
-    rev_row = _get_row(quarterly_income_stmt, "Total Revenue", "Operating Revenue")
-    ebitda_row = _get_row(quarterly_income_stmt, "EBITDA", "Normalized EBITDA")
-    if ebitda_row is None:
-        op_income = _get_row(quarterly_income_stmt, "Operating Income", "EBIT")
-        da_q = _get_row(
-            quarterly_income_stmt, "Reconciled Depreciation", "Depreciation And Amortization In Income Statement"
-        )
-        if op_income is not None and da_q is not None:
-            ebitda_row = op_income + da_q.reindex(op_income.index, fill_value=0)
+    # Build EBITDA from direct or OpIncome + D&A
+    ebitda_map: dict[_date, float] = {}
+    if quarterly_ebitda:
+        ebitda_map = {d: v for d, v in quarterly_ebitda}
+    elif quarterly_op_income and quarterly_da:
+        oi_map = {d: v for d, v in quarterly_op_income}
+        da_map = {d: v for d, v in quarterly_da}
+        for d in oi_map:
+            if d in da_map:
+                ebitda_map[d] = oi_map[d] + abs(da_map[d])
 
-    debt_row = _get_row(quarterly_balance_sheet, "Total Debt", "Long Term Debt")
-    cash_row = _get_row(
-        quarterly_balance_sheet,
-        "Cash And Cash Equivalents",
-        "Cash Cash Equivalents And Short Term Investments",
-        "Cash Financial",
-    )
+    rev_map = {d: v for d, v in quarterly_revenue}
+    debt_map = {d: v for d, v in quarterly_debt}
+    cd_map = {d: v for d, v in quarterly_current_debt}
+    cash_map = {d: v for d, v in quarterly_cash}
 
-    if rev_row is None or ebitda_row is None:
-        return [], []
-
-    # Handle MultiIndex columns from yf_download
+    # Get price series
     price_series = prices
     if isinstance(prices.columns, pd.MultiIndex):
         if "Close" in prices.columns.get_level_values(0):
@@ -296,38 +209,35 @@ def _compute_quarterly_multiples(
     else:
         price_series = prices.iloc[:, 0]
 
-    quarter_dates = sorted(rev_row.index, reverse=False)[-20:]
+    # Get all quarter-end dates from revenue, sorted chronologically
+    all_dates = sorted(rev_map.keys())[-24:]
 
     ev_ebitda_rows: list[dict] = []
     ev_rev_rows: list[dict] = []
 
-    for i, d in enumerate(quarter_dates):
-        # Get price nearest to quarter end
+    for i, d in enumerate(all_dates):
         d_ts = pd.Timestamp(d)
         mask = price_series.index <= d_ts
         if not mask.any():
             continue
         close_price = float(price_series[mask].iloc[-1])
-        market_cap = close_price * shares
+        market_cap = close_price * shares_outstanding
 
-        # Net debt
-        total_debt = _safe_float(debt_row.get(d)) if debt_row is not None else 0
-        cash = _safe_float(cash_row.get(d)) if cash_row is not None else 0
-        total_debt = total_debt or 0
-        cash = cash or 0
+        total_debt = (debt_map.get(d) or 0) + (cd_map.get(d) or 0)
+        cash = cash_map.get(d) or 0
         net_debt = total_debt - cash
         ev = market_cap + net_debt
 
         # TTM = sum of last 4 quarters
         start_idx = max(0, i - 3)
-        ttm_dates = quarter_dates[start_idx : i + 1]
+        ttm_dates = all_dates[start_idx : i + 1]
         if len(ttm_dates) < 4:
             continue
 
-        ttm_rev = sum(_safe_float(rev_row.get(qd)) or 0 for qd in ttm_dates)
-        ttm_ebitda = sum(_safe_float(ebitda_row.get(qd)) or 0 for qd in ttm_dates)
+        ttm_rev = sum(rev_map.get(qd, 0) for qd in ttm_dates)
+        ttm_ebitda = sum(ebitda_map.get(qd, 0) for qd in ttm_dates) if ebitda_map else 0
 
-        label = d.strftime("%b-%y") if hasattr(d, "strftime") else str(d)
+        label = d.strftime("%b-%y")
 
         if ttm_ebitda and ttm_ebitda > 0:
             ev_ebitda_rows.append(
@@ -349,16 +259,252 @@ def _compute_quarterly_multiples(
                 }
             )
 
-    # Compute averages
+    # Keep last 20 quarters max
+    ev_ebitda_rows = ev_ebitda_rows[-20:]
+    ev_rev_rows = ev_rev_rows[-20:]
+
     if ev_ebitda_rows:
-        avg_ebitda = round(sum(r["ev_ebitda"] for r in ev_ebitda_rows) / len(ev_ebitda_rows), 1)
+        avg = round(sum(r["ev_ebitda"] for r in ev_ebitda_rows) / len(ev_ebitda_rows), 1)
         for r in ev_ebitda_rows:
-            r["avg"] = avg_ebitda
+            r["avg"] = avg
 
     if ev_rev_rows:
-        avg_rev = round(sum(r["ev_revenue"] for r in ev_rev_rows) / len(ev_rev_rows), 1)
+        avg = round(sum(r["ev_revenue"] for r in ev_rev_rows) / len(ev_rev_rows), 1)
         for r in ev_rev_rows:
-            r["avg"] = avg_rev
+            r["avg"] = avg
+
+    return ev_ebitda_rows, ev_rev_rows
+
+
+# ---------------------------------------------------------------------------
+# yfinance fallback table builders (unchanged logic from original)
+# ---------------------------------------------------------------------------
+
+
+def _compute_ebitda_table_yf(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -> list[dict]:
+    revenue_row = _get_row(income_stmt, "Total Revenue", "Operating Revenue")
+    ebitda_row = _get_row(income_stmt, "EBITDA", "Normalized EBITDA")
+    if ebitda_row is None:
+        op_income = _get_row(income_stmt, "Operating Income", "EBIT")
+        da = _get_row(cashflow, "Depreciation And Amortization", "Depreciation & Amortization")
+        if da is None:
+            da = _get_row(income_stmt, "Reconciled Depreciation")
+        if op_income is not None and da is not None:
+            ebitda_row = op_income + da.reindex(op_income.index, fill_value=0)
+    if revenue_row is None or ebitda_row is None:
+        return []
+
+    dates = sorted(revenue_row.index, reverse=False)[-5:]
+    rows = []
+    for d in dates:
+        rev = _safe_float(revenue_row.get(d))
+        ebitda = _safe_float(ebitda_row.get(d))
+        pct = (ebitda / rev * 100) if rev and ebitda and rev != 0 else None
+        rows.append(
+            {
+                "fiscal_year": d.strftime("%b-%y") if hasattr(d, "strftime") else str(d),
+                "revenue": rev,
+                "ebitda": ebitda,
+                "ebitda_margin": round(pct, 1) if pct is not None else None,
+            }
+        )
+    margins = [r["ebitda_margin"] for r in rows if r["ebitda_margin"] is not None]
+    avg = round(sum(margins) / len(margins), 1) if margins else None
+    for r in rows:
+        r["avg"] = avg
+    return rows
+
+
+def _compute_da_table_yf(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -> list[dict]:
+    revenue_row = _get_row(income_stmt, "Total Revenue", "Operating Revenue")
+    da_row = _get_row(cashflow, "Depreciation And Amortization", "Depreciation & Amortization")
+    if da_row is None:
+        da_row = _get_row(income_stmt, "Reconciled Depreciation")
+    if revenue_row is None or da_row is None:
+        return []
+
+    dates = sorted(revenue_row.index, reverse=False)[-5:]
+    rows = []
+    for d in dates:
+        rev = _safe_float(revenue_row.get(d))
+        da = _safe_float(da_row.get(d))
+        if da is not None:
+            da = abs(da)
+        pct = (da / rev * 100) if rev and da and rev != 0 else None
+        rows.append(
+            {
+                "fiscal_year": d.strftime("%b-%y") if hasattr(d, "strftime") else str(d),
+                "revenue": rev,
+                "da": da,
+                "da_pct_rev": round(pct, 1) if pct is not None else None,
+            }
+        )
+    pcts = [r["da_pct_rev"] for r in rows if r["da_pct_rev"] is not None]
+    avg = round(sum(pcts) / len(pcts), 1) if pcts else None
+    for r in rows:
+        r["avg"] = avg
+    return rows
+
+
+def _compute_capex_table_yf(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -> list[dict]:
+    revenue_row = _get_row(income_stmt, "Total Revenue", "Operating Revenue")
+    capex_row = _get_row(cashflow, "Capital Expenditure", "Capital Expenditures")
+    if revenue_row is None or capex_row is None:
+        return []
+
+    dates = sorted(revenue_row.index, reverse=False)[-5:]
+    rows = []
+    for d in dates:
+        rev = _safe_float(revenue_row.get(d))
+        capex = _safe_float(capex_row.get(d))
+        if capex is not None:
+            capex = abs(capex)
+        pct = (capex / rev * 100) if rev and capex and rev != 0 else None
+        rows.append(
+            {
+                "fiscal_year": d.strftime("%b-%y") if hasattr(d, "strftime") else str(d),
+                "revenue": rev,
+                "capex": capex,
+                "capex_pct_rev": round(pct, 1) if pct is not None else None,
+            }
+        )
+    pcts = [r["capex_pct_rev"] for r in rows if r["capex_pct_rev"] is not None]
+    avg = round(sum(pcts) / len(pcts), 1) if pcts else None
+    for r in rows:
+        r["avg"] = avg
+    return rows
+
+
+def _compute_nwc_table_yf(
+    quarterly_balance_sheet: pd.DataFrame,
+    quarterly_income_stmt: pd.DataFrame,
+) -> list[dict]:
+    ca_row = _get_row(quarterly_balance_sheet, "Current Assets")
+    cl_row = _get_row(quarterly_balance_sheet, "Current Liabilities")
+    rev_row = _get_row(quarterly_income_stmt, "Total Revenue", "Operating Revenue")
+    if ca_row is None or cl_row is None:
+        return []
+
+    dates = sorted(ca_row.index, reverse=False)[-5:]
+    rows = []
+    for d in dates:
+        ca = _safe_float(ca_row.get(d))
+        cl = _safe_float(cl_row.get(d))
+        nwc = (ca - cl) if ca is not None and cl is not None else None
+        rev = _safe_float(rev_row.get(d)) if rev_row is not None else None
+        pct = (nwc / rev * 100) if nwc is not None and rev and rev != 0 else None
+        rows.append(
+            {
+                "quarter_end": d.strftime("%b-%y") if hasattr(d, "strftime") else str(d),
+                "revenue": rev,
+                "nwc": nwc,
+                "nwc_pct_rev": round(pct, 1) if pct is not None else None,
+            }
+        )
+    pcts = [r["nwc_pct_rev"] for r in rows if r["nwc_pct_rev"] is not None]
+    avg = round(sum(pcts) / len(pcts), 1) if pcts else None
+    for r in rows:
+        r["avg"] = avg
+    return rows
+
+
+def _compute_multiples_yf(
+    quarterly_income_stmt: pd.DataFrame,
+    quarterly_balance_sheet: pd.DataFrame,
+    prices: pd.DataFrame,
+    info: dict,
+) -> tuple[list[dict], list[dict]]:
+    """Fallback: compute multiples from yfinance quarterly data."""
+    shares = info.get("sharesOutstanding")
+    if not shares:
+        return [], []
+
+    rev_row = _get_row(quarterly_income_stmt, "Total Revenue", "Operating Revenue")
+    ebitda_row = _get_row(quarterly_income_stmt, "EBITDA", "Normalized EBITDA")
+    if ebitda_row is None:
+        op_income = _get_row(quarterly_income_stmt, "Operating Income", "EBIT")
+        da_q = _get_row(quarterly_income_stmt, "Reconciled Depreciation")
+        if op_income is not None and da_q is not None:
+            ebitda_row = op_income + da_q.reindex(op_income.index, fill_value=0)
+
+    debt_row = _get_row(quarterly_balance_sheet, "Total Debt", "Long Term Debt")
+    cash_row = _get_row(
+        quarterly_balance_sheet,
+        "Cash And Cash Equivalents",
+        "Cash Cash Equivalents And Short Term Investments",
+        "Cash Financial",
+    )
+
+    if rev_row is None or ebitda_row is None:
+        return [], []
+
+    price_series = prices
+    if isinstance(prices.columns, pd.MultiIndex):
+        if "Close" in prices.columns.get_level_values(0):
+            price_series = prices["Close"]
+            if isinstance(price_series, pd.DataFrame):
+                price_series = price_series.iloc[:, 0]
+        else:
+            price_series = prices.iloc[:, 0]
+    elif "Close" in prices.columns:
+        price_series = prices["Close"]
+    else:
+        price_series = prices.iloc[:, 0]
+
+    quarter_dates = sorted(rev_row.index, reverse=False)[-20:]
+    ev_ebitda_rows: list[dict] = []
+    ev_rev_rows: list[dict] = []
+
+    for i, d in enumerate(quarter_dates):
+        d_ts = pd.Timestamp(d)
+        mask = price_series.index <= d_ts
+        if not mask.any():
+            continue
+        close_price = float(price_series[mask].iloc[-1])
+        market_cap = close_price * shares
+
+        total_debt = _safe_float(debt_row.get(d)) if debt_row is not None else 0
+        cash = _safe_float(cash_row.get(d)) if cash_row is not None else 0
+        net_debt = (total_debt or 0) - (cash or 0)
+        ev = market_cap + net_debt
+
+        start_idx = max(0, i - 3)
+        ttm_dates = quarter_dates[start_idx : i + 1]
+        if len(ttm_dates) < 4:
+            continue
+
+        ttm_rev = sum(_safe_float(rev_row.get(qd)) or 0 for qd in ttm_dates)
+        ttm_ebitda = sum(_safe_float(ebitda_row.get(qd)) or 0 for qd in ttm_dates)
+
+        label = d.strftime("%b-%y") if hasattr(d, "strftime") else str(d)
+
+        if ttm_ebitda and ttm_ebitda > 0:
+            ev_ebitda_rows.append(
+                {
+                    "quarter_end": label,
+                    "ev": ev,
+                    "ebitda_ttm": ttm_ebitda,
+                    "ev_ebitda": round(ev / ttm_ebitda, 1),
+                }
+            )
+        if ttm_rev and ttm_rev > 0:
+            ev_rev_rows.append(
+                {
+                    "quarter_end": label,
+                    "ev": ev,
+                    "revenue_ttm": ttm_rev,
+                    "ev_revenue": round(ev / ttm_rev, 1),
+                }
+            )
+
+    if ev_ebitda_rows:
+        avg = round(sum(r["ev_ebitda"] for r in ev_ebitda_rows) / len(ev_ebitda_rows), 1)
+        for r in ev_ebitda_rows:
+            r["avg"] = avg
+    if ev_rev_rows:
+        avg = round(sum(r["ev_revenue"] for r in ev_rev_rows) / len(ev_rev_rows), 1)
+        for r in ev_rev_rows:
+            r["avg"] = avg
 
     return ev_ebitda_rows, ev_rev_rows
 
@@ -369,7 +515,7 @@ def _compute_quarterly_multiples(
 
 
 def _get_risk_free_rate() -> float:
-    """Fetch 10Y Treasury yield. Try FRED, then yfinance ^TNX fallback."""
+    """Fetch 10Y Treasury yield. Try FRED first, then yfinance ^TNX."""
     try:
         fred_key = os.environ.get("FRED_API_KEY")
         if fred_key:
@@ -380,8 +526,7 @@ def _get_risk_free_rate() -> float:
             fred = Fred(api_key=fred_key)
             s = fred_get_series(fred, "DGS10")
             if not s.empty:
-                latest = s.dropna().iloc[-1]
-                return float(latest) / 100.0
+                return float(s.dropna().iloc[-1]) / 100.0
     except Exception:
         logger.warning("FRED DGS10 fetch failed, falling back to ^TNX")
 
@@ -398,7 +543,7 @@ def _get_risk_free_rate() -> float:
         if not close.empty:
             return float(close.dropna().iloc[-1]) / 100.0
     except Exception:
-        logger.warning("^TNX fetch failed, using 4.0% default")
+        logger.warning("^TNX fetch failed, using 4.0%% default")
 
     return 0.04
 
@@ -485,17 +630,11 @@ def _compute_historical_averages(
     nwc_table: list[dict],
     capex_table: list[dict],
 ) -> dict[str, float | None]:
-    """Extract averages from historical tables to pre-populate DCF assumptions."""
-    ebitda_avg = ebitda_table[0]["avg"] if ebitda_table else None
-    da_avg = da_table[0]["avg"] if da_table else None
-    nwc_avg = nwc_table[0]["avg"] if nwc_table else None
-    capex_avg = capex_table[0]["avg"] if capex_table else None
-
     return {
-        "ebitda_margin_avg": ebitda_avg,
-        "da_pct_avg": da_avg,
-        "nwc_pct_avg": nwc_avg,
-        "capex_pct_avg": capex_avg,
+        "ebitda_margin_avg": ebitda_table[0]["avg"] if ebitda_table else None,
+        "da_pct_avg": da_table[0]["avg"] if da_table else None,
+        "nwc_pct_avg": nwc_table[0]["avg"] if nwc_table else None,
+        "capex_pct_avg": capex_table[0]["avg"] if capex_table else None,
     }
 
 
@@ -505,28 +644,129 @@ def _compute_historical_averages(
 
 
 def get_historical_data(ticker: str) -> dict[str, Any]:
-    """Fetch all historical data for the DCF Historical tab."""
-    ticker = ticker.strip().upper()
-    data = _fetch_yfinance_data(ticker)
-    info = data["info"]
+    """Fetch all historical data for the DCF Historical tab.
 
-    ebitda_table = _compute_ebitda_table(data["income_stmt"], data["cashflow"])
-    da_table = _compute_da_table(data["income_stmt"], data["cashflow"])
-    capex_table = _compute_capex_table(data["income_stmt"], data["cashflow"])
-    nwc_table = _compute_nwc_table(data["quarterly_balance_sheet"], data["quarterly_income_stmt"])
-    ev_ebitda, ev_revenue = _compute_quarterly_multiples(
-        data["quarterly_income_stmt"],
-        data["quarterly_balance_sheet"],
-        data["prices"],
-        info,
-    )
-    wacc_inputs = _compute_wacc(info, data["income_stmt"], data["balance_sheet"])
+    Strategy: try EDGAR first for deeper history, fall back to yfinance.
+    Always use yfinance for: info, prices, WACC inputs.
+    """
+    ticker = ticker.strip().upper()
+    yf_data = _fetch_yfinance_data(ticker)
+    info = yf_data["info"]
+
+    # Try EDGAR for deeper historical data
+    edgar = None
+    data_source = "yfinance"
+    try:
+        edgar = extract_dcf_historicals(ticker)
+        if edgar and edgar.get("annual_revenue"):
+            data_source = "edgar"
+            logger.info("Using EDGAR data for %s", ticker)
+    except Exception:
+        logger.warning("EDGAR fetch failed for %s, using yfinance only", ticker)
+
+    # --- Build tables: EDGAR primary, yfinance fallback ---
+
+    if data_source == "edgar" and edgar:
+        # EBITDA table
+        annual_rev = edgar["annual_revenue"]
+        annual_ebitda = edgar.get("annual_ebitda") or []
+        if not annual_ebitda:
+            # Derive from OpIncome + D&A
+            oi = edgar.get("annual_operating_income") or []
+            da = edgar.get("annual_da") or []
+            if oi and da:
+                oi_map = {d: v for d, v in oi}
+                da_map = {d: v for d, v in da}
+                annual_ebitda = [(d, oi_map[d] + abs(da_map[d])) for d in oi_map if d in da_map]
+                annual_ebitda.sort(key=lambda x: x[0], reverse=True)
+
+        if annual_rev and annual_ebitda:
+            ebitda_table = _build_annual_table_edgar(
+                annual_rev,
+                annual_ebitda,
+                "ebitda",
+                "ebitda_margin",
+            )
+        else:
+            ebitda_table = _compute_ebitda_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+
+        # D&A table
+        annual_da = edgar.get("annual_da") or []
+        if annual_rev and annual_da:
+            da_table = _build_annual_table_edgar(annual_rev, annual_da, "da", "da_pct_rev")
+        else:
+            da_table = _compute_da_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+
+        # CapEx table
+        annual_capex = edgar.get("annual_capex") or []
+        if annual_rev and annual_capex:
+            capex_table = _build_annual_table_edgar(annual_rev, annual_capex, "capex", "capex_pct_rev")
+        else:
+            capex_table = _compute_capex_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+
+        # NWC table (quarterly)
+        q_rev = edgar.get("quarterly_revenue") or []
+        q_ca = edgar.get("quarterly_current_assets") or []
+        q_cl = edgar.get("quarterly_current_liabilities") or []
+        if q_ca and q_cl:
+            nwc_table = _build_nwc_table_edgar(q_rev, q_ca, q_cl)
+        else:
+            nwc_table = _compute_nwc_table_yf(
+                yf_data["quarterly_balance_sheet"],
+                yf_data["quarterly_income_stmt"],
+            )
+
+        # Quarterly multiples (EDGAR + yfinance prices)
+        q_ebitda = edgar.get("quarterly_ebitda") or []
+        q_oi = edgar.get("quarterly_operating_income") or []
+        q_da = edgar.get("quarterly_da") or []
+        q_debt = edgar.get("quarterly_total_debt") or []
+        q_cd = edgar.get("quarterly_current_debt") or []
+        q_cash = edgar.get("quarterly_cash") or []
+
+        if q_rev and (q_ebitda or (q_oi and q_da)):
+            ev_ebitda, ev_revenue = _build_quarterly_multiples_edgar(
+                q_rev,
+                q_ebitda or None,
+                q_oi or None,
+                q_da or None,
+                q_debt,
+                q_cd,
+                q_cash,
+                yf_data["prices"],
+                info.get("sharesOutstanding"),
+            )
+        else:
+            ev_ebitda, ev_revenue = _compute_multiples_yf(
+                yf_data["quarterly_income_stmt"],
+                yf_data["quarterly_balance_sheet"],
+                yf_data["prices"],
+                info,
+            )
+    else:
+        # Pure yfinance fallback
+        ebitda_table = _compute_ebitda_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+        da_table = _compute_da_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+        capex_table = _compute_capex_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+        nwc_table = _compute_nwc_table_yf(
+            yf_data["quarterly_balance_sheet"],
+            yf_data["quarterly_income_stmt"],
+        )
+        ev_ebitda, ev_revenue = _compute_multiples_yf(
+            yf_data["quarterly_income_stmt"],
+            yf_data["quarterly_balance_sheet"],
+            yf_data["prices"],
+            info,
+        )
+
+    # WACC (always from yfinance — needs beta, market cap, etc.)
+    wacc_inputs = _compute_wacc(info, yf_data["income_stmt"], yf_data["balance_sheet"])
     historical_averages = _compute_historical_averages(ebitda_table, da_table, nwc_table, capex_table)
 
-    # Net debt for valuation
-    debt_row = _get_row(data["balance_sheet"], "Total Debt", "Long Term Debt")
+    # Net debt (from yfinance for most current values)
+    debt_row = _get_row(yf_data["balance_sheet"], "Total Debt", "Long Term Debt")
     cash_row = _get_row(
-        data["balance_sheet"],
+        yf_data["balance_sheet"],
         "Cash And Cash Equivalents",
         "Cash Cash Equivalents And Short Term Investments",
         "Cash Financial",
@@ -539,7 +779,7 @@ def get_historical_data(ticker: str) -> dict[str, Any]:
         net_debt = d - c
 
     # Base revenue (most recent annual)
-    rev_row = _get_row(data["income_stmt"], "Total Revenue", "Operating Revenue")
+    rev_row = _get_row(yf_data["income_stmt"], "Total Revenue", "Operating Revenue")
     base_revenue = None
     if rev_row is not None:
         latest = sorted(rev_row.index, reverse=True)[0]
@@ -552,6 +792,7 @@ def get_historical_data(ticker: str) -> dict[str, Any]:
         "shares_outstanding": info.get("sharesOutstanding"),
         "net_debt": net_debt,
         "base_revenue": base_revenue,
+        "data_source": data_source,
         "ebitda": ebitda_table,
         "depreciation": da_table,
         "capex": capex_table,
@@ -571,11 +812,11 @@ def get_historical_data(ticker: str) -> dict[str, Any]:
 def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
     """Run full DCF valuation with user-provided assumptions."""
     ticker = ticker.strip().upper()
-    data = _fetch_yfinance_data(ticker)
-    info = data["info"]
+    yf_data = _fetch_yfinance_data(ticker)
+    info = yf_data["info"]
 
     # Base revenue
-    rev_row = _get_row(data["income_stmt"], "Total Revenue", "Operating Revenue")
+    rev_row = _get_row(yf_data["income_stmt"], "Total Revenue", "Operating Revenue")
     if rev_row is None:
         raise ValueError(f"No revenue data available for {ticker}")
     latest = sorted(rev_row.index, reverse=True)[0]
@@ -643,9 +884,9 @@ def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
     terminal_year_revenue = projection[-1]["revenue"]
 
     # Net debt & shares
-    debt_row = _get_row(data["balance_sheet"], "Total Debt", "Long Term Debt")
+    debt_row = _get_row(yf_data["balance_sheet"], "Total Debt", "Long Term Debt")
     cash_row = _get_row(
-        data["balance_sheet"],
+        yf_data["balance_sheet"],
         "Cash And Cash Equivalents",
         "Cash Cash Equivalents And Short Term Investments",
         "Cash Financial",
@@ -668,9 +909,7 @@ def run_valuation(ticker: str, assumptions: dict[str, Any]) -> dict[str, Any]:
         "bull": tgr.get("bull", 0.04),
     }
 
-    # EV/EBITDA exit multiples
     exit_ebitda = assumptions.get("exit_ev_ebitda", {})
-    # EV/Revenue exit multiples
     exit_rev = assumptions.get("exit_ev_revenue", {})
 
     def _gordon(g: float) -> dict | None:

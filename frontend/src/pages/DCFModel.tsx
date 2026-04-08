@@ -550,6 +550,13 @@ export function DCFModel() {
                 {fmtPrice(hist.current_price)}
               </span>
             )}
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+              hist.data_source === "edgar"
+                ? "bg-green-50 text-green-700 border border-green-200"
+                : "bg-blue-50 text-blue-700 border border-blue-200"
+            }`}>
+              {hist.data_source === "edgar" ? "SEC EDGAR" : "yFinance"}
+            </span>
           </div>
 
           {/* Tab switcher */}
