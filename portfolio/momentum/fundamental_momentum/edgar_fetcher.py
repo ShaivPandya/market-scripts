@@ -559,8 +559,38 @@ def extract_dcf_historicals(ticker: str) -> dict | None:
     def _instant_q(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
         return _extract_concept(us_gaap, concepts, "USD", "instant", n)
 
+    def _instant_q(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
+        return _extract_concept(us_gaap, concepts, "USD", "instant", n)
+
     def _instant_shares(concepts: tuple[str, ...], n: int = 24) -> list[tuple[date, float]]:
         return _extract_concept(us_gaap, concepts, "shares", "instant", n)
+
+    def _instant_annual(concepts: tuple[str, ...], n: int = 10) -> list[tuple[date, float]]:
+        """Extract FY-only instant (balance sheet) values."""
+        for concept in concepts:
+            try:
+                entries = us_gaap[concept]["units"]["USD"]
+            except (KeyError, TypeError):
+                continue
+            annual: dict[str, dict] = {}
+            for e in entries:
+                if e.get("fp") != "FY":
+                    continue
+                end = e.get("end", "")
+                if not end:
+                    continue
+                filed = e.get("filed", "")
+                existing = annual.get(end)
+                if existing is None or filed > existing.get("filed", ""):
+                    annual[end] = e
+            if annual:
+                result = sorted(
+                    [(date.fromisoformat(e["end"]), float(e["val"])) for e in annual.values()],
+                    key=lambda x: x[0],
+                    reverse=True,
+                )
+                return result[:n]
+        return []
 
     return {
         # Annual income statement / cash flow items
@@ -572,6 +602,9 @@ def extract_dcf_historicals(ticker: str) -> dict | None:
         "annual_interest_expense": _annual(INTEREST_EXPENSE_CONCEPTS),
         "annual_pretax_income": _annual(PRETAX_INCOME_CONCEPTS),
         "annual_tax_expense": _annual(TAX_EXPENSE_CONCEPTS),
+        # Annual balance sheet items (instant/point-in-time, FY only)
+        "annual_current_assets": _instant_annual(CURRENT_ASSETS_CONCEPTS),
+        "annual_current_liabilities": _instant_annual(CURRENT_LIABILITIES_CONCEPTS),
         # Quarterly income statement items
         "quarterly_revenue": _quarterly(REVENUE_CONCEPTS),
         "quarterly_operating_income": _quarterly(OPERATING_INCOME_CONCEPTS),

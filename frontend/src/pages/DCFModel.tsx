@@ -494,7 +494,7 @@ export function DCFModel() {
   ) : null
 
   const nwcTable = hist ? buildHistoricalRows(
-    hist.nwc, "quarter_end", "nwc", "nwc_pct_rev",
+    hist.nwc, "fiscal_year", "nwc", "nwc_pct_rev",
     "Net Working Capital", "% of Revenue", fmtB,
   ) : null
 
@@ -547,13 +547,14 @@ export function DCFModel() {
                 {fmtPrice(hist.current_price)}
               </span>
             )}
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-              hist.data_source === "edgar"
-                ? "bg-green-50 text-green-700 border border-green-200"
-                : "bg-blue-50 text-blue-700 border border-blue-200"
-            }`}>
-              {hist.data_source === "edgar" ? "SEC EDGAR" : "yFinance"}
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700 border border-blue-200">
+              yFinance
             </span>
+            {hist.data_source === "edgar" && (
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-50 text-green-700 border border-green-200">
+                + SEC EDGAR (multiples)
+              </span>
+            )}
           </div>
 
           {/* Tab switcher */}
@@ -628,10 +629,10 @@ export function DCFModel() {
               {/* NWC */}
               {nwcTable && nwcTable.columns.length > 0 && (
                 <TransposedTable
-                  title="Net Working Capital (Quarterly)"
+                  title="Net Working Capital"
                   columns={nwcTable.columns}
                   rows={nwcTable.rows}
-                  avgLabel="5-Quarter Average"
+                  avgLabel="5-Year Average"
                 />
               )}
 

@@ -84,13 +84,19 @@ def _safe_float(val: Any) -> float | None:
         return None
 
 
-def _ym(d: _date) -> tuple[int, int]:
-    """Convert date to (year, month) for fuzzy fiscal period matching.
+def _fiscal_bucket(d: _date) -> tuple[int, int]:
+    """Convert date to a (year, month) bucket for fuzzy fiscal period matching.
 
     EDGAR reports slightly different exact dates for the same fiscal period
-    across different XBRL concepts (e.g. revenue ends Sep-28, D&A ends Sep-30).
-    Matching by (year, month) resolves this.
+    across different XBRL concepts. Dates near month boundaries can straddle
+    months (e.g. Aug-28 vs Sep-01 for Micron's FY end). We snap dates in the
+    first 5 days of a month back to the previous month so they land in the
+    same bucket.
     """
+    if d.day <= 5 and d.month > 1:
+        return (d.year, d.month - 1)
+    if d.day <= 5 and d.month == 1:
+        return (d.year - 1, 12)
     return (d.year, d.month)
 
 
@@ -112,10 +118,10 @@ def _build_annual_table_edgar(
     n: int = 5,
 ) -> list[dict]:
     """Build an annual table (EBITDA, D&A, or CapEx) from EDGAR data."""
-    rev_map = {_ym(d): v for d, v in revenue_pairs}
-    metric_map = {_ym(d): v for d, v in metric_pairs}
+    rev_map = {_fiscal_bucket(d): v for d, v in revenue_pairs}
+    metric_map = {_fiscal_bucket(d): v for d, v in metric_pairs}
     # Use metric dates where we also have revenue in the same (year, month)
-    common_yms = sorted([_ym(d) for d, _ in metric_pairs if _ym(d) in rev_map])[-n:]
+    common_yms = sorted([_fiscal_bucket(d) for d, _ in metric_pairs if _fiscal_bucket(d) in rev_map])[-n:]
 
     rows = []
     for ym in common_yms:
@@ -142,15 +148,15 @@ def _build_annual_table_edgar(
 
 
 def _build_nwc_table_edgar(
-    quarterly_revenue: list[tuple[_date, float]],
-    quarterly_ca: list[tuple[_date, float]],
-    quarterly_cl: list[tuple[_date, float]],
+    annual_revenue: list[tuple[_date, float]],
+    annual_ca: list[tuple[_date, float]],
+    annual_cl: list[tuple[_date, float]],
     n: int = 5,
 ) -> list[dict]:
-    """Build NWC table from EDGAR quarterly balance sheet data."""
-    rev_map = {_ym(d): v for d, v in quarterly_revenue}
-    ca_map = {_ym(d): v for d, v in quarterly_ca}
-    cl_map = {_ym(d): v for d, v in quarterly_cl}
+    """Build NWC table from EDGAR annual balance sheet data."""
+    rev_map = {_fiscal_bucket(d): v for d, v in annual_revenue}
+    ca_map = {_fiscal_bucket(d): v for d, v in annual_ca}
+    cl_map = {_fiscal_bucket(d): v for d, v in annual_cl}
 
     common_yms = sorted(ym for ym in ca_map if ym in cl_map)[-n:]
     rows = []
@@ -163,7 +169,7 @@ def _build_nwc_table_edgar(
         label = _date(ym[0], ym[1], 1).strftime("%b-%y")
         rows.append(
             {
-                "quarter_end": label,
+                "fiscal_year": label,
                 "revenue": rev,
                 "nwc": nwc,
                 "nwc_pct_rev": round(pct, 1) if pct is not None else None,
@@ -195,18 +201,18 @@ def _build_quarterly_multiples_edgar(
     # Build EBITDA from direct or OpIncome + D&A (keyed by year-month)
     ebitda_map: dict[tuple[int, int], float] = {}
     if quarterly_ebitda:
-        ebitda_map = {_ym(d): v for d, v in quarterly_ebitda}
+        ebitda_map = {_fiscal_bucket(d): v for d, v in quarterly_ebitda}
     elif quarterly_op_income and quarterly_da:
-        oi_map = {_ym(d): v for d, v in quarterly_op_income}
-        da_map = {_ym(d): v for d, v in quarterly_da}
+        oi_map = {_fiscal_bucket(d): v for d, v in quarterly_op_income}
+        da_map = {_fiscal_bucket(d): v for d, v in quarterly_da}
         for ym in oi_map:
             if ym in da_map:
                 ebitda_map[ym] = oi_map[ym] + abs(da_map[ym])
 
-    rev_map = {_ym(d): v for d, v in quarterly_revenue}
-    debt_map = {_ym(d): v for d, v in quarterly_debt}
-    cd_map = {_ym(d): v for d, v in quarterly_current_debt}
-    cash_map = {_ym(d): v for d, v in quarterly_cash}
+    rev_map = {_fiscal_bucket(d): v for d, v in quarterly_revenue}
+    debt_map = {_fiscal_bucket(d): v for d, v in quarterly_debt}
+    cd_map = {_fiscal_bucket(d): v for d, v in quarterly_current_debt}
+    cash_map = {_fiscal_bucket(d): v for d, v in quarterly_cash}
 
     # Get price series
     price_series = prices
@@ -390,12 +396,12 @@ def _compute_capex_table_yf(income_stmt: pd.DataFrame, cashflow: pd.DataFrame) -
 
 
 def _compute_nwc_table_yf(
-    quarterly_balance_sheet: pd.DataFrame,
-    quarterly_income_stmt: pd.DataFrame,
+    balance_sheet: pd.DataFrame,
+    income_stmt: pd.DataFrame,
 ) -> list[dict]:
-    ca_row = _get_row(quarterly_balance_sheet, "Current Assets")
-    cl_row = _get_row(quarterly_balance_sheet, "Current Liabilities")
-    rev_row = _get_row(quarterly_income_stmt, "Total Revenue", "Operating Revenue")
+    ca_row = _get_row(balance_sheet, "Current Assets")
+    cl_row = _get_row(balance_sheet, "Current Liabilities")
+    rev_row = _get_row(income_stmt, "Total Revenue", "Operating Revenue")
     if ca_row is None or cl_row is None:
         return []
 
@@ -409,7 +415,7 @@ def _compute_nwc_table_yf(
         pct = (nwc / rev * 100) if nwc is not None and rev and rev != 0 else None
         rows.append(
             {
-                "quarter_end": d.strftime("%b-%y") if hasattr(d, "strftime") else str(d),
+                "fiscal_year": d.strftime("%b-%y") if hasattr(d, "strftime") else str(d),
                 "revenue": rev,
                 "nwc": nwc,
                 "nwc_pct_rev": round(pct, 1) if pct is not None else None,
@@ -667,105 +673,44 @@ def get_historical_data(ticker: str) -> dict[str, Any]:
     yf_data = _fetch_yfinance_data(ticker)
     info = yf_data["info"]
 
-    # Try EDGAR for deeper historical data
-    edgar = None
+    # --- Annual tables: yfinance (reliable for ~5 years) ---
+    ebitda_table = _compute_ebitda_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+    da_table = _compute_da_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+    capex_table = _compute_capex_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
+    nwc_table = _compute_nwc_table_yf(yf_data["balance_sheet"], yf_data["income_stmt"])
+
+    # --- Quarterly multiples: EDGAR for 20Q depth, yfinance fallback ---
     data_source = "yfinance"
     try:
         edgar = extract_dcf_historicals(ticker)
-        if edgar and edgar.get("annual_revenue"):
+        if edgar and edgar.get("quarterly_revenue"):
             data_source = "edgar"
-            logger.info("Using EDGAR data for %s", ticker)
+            q_rev = edgar["quarterly_revenue"]
+            q_ebitda = edgar.get("quarterly_ebitda") or []
+            q_oi = edgar.get("quarterly_operating_income") or []
+            q_da = edgar.get("quarterly_da") or []
+            q_debt = edgar.get("quarterly_total_debt") or []
+            q_cd = edgar.get("quarterly_current_debt") or []
+            q_cash = edgar.get("quarterly_cash") or []
+
+            if q_ebitda or (q_oi and q_da):
+                ev_ebitda, ev_revenue = _build_quarterly_multiples_edgar(
+                    q_rev,
+                    q_ebitda or None,
+                    q_oi or None,
+                    q_da or None,
+                    q_debt,
+                    q_cd,
+                    q_cash,
+                    yf_data["prices"],
+                    info.get("sharesOutstanding"),
+                )
+            else:
+                data_source = "yfinance"
     except Exception:
-        logger.warning("EDGAR fetch failed for %s, using yfinance only", ticker)
+        logger.warning("EDGAR fetch failed for %s, using yfinance for multiples", ticker)
 
-    # --- Build tables: EDGAR primary, yfinance fallback ---
-
-    if data_source == "edgar" and edgar:
-        # EBITDA table
-        annual_rev = edgar["annual_revenue"]
-        annual_ebitda = edgar.get("annual_ebitda") or []
-        if not annual_ebitda:
-            # Derive from OpIncome + D&A
-            oi = edgar.get("annual_operating_income") or []
-            da = edgar.get("annual_da") or []
-            if oi and da:
-                oi_map = {_ym(d): (d, v) for d, v in oi}
-                da_map = {_ym(d): v for d, v in da}
-                annual_ebitda = [(oi_map[ym][0], oi_map[ym][1] + abs(da_map[ym])) for ym in oi_map if ym in da_map]
-                annual_ebitda.sort(key=lambda x: x[0], reverse=True)
-
-        if annual_rev and annual_ebitda:
-            ebitda_table = _build_annual_table_edgar(
-                annual_rev,
-                annual_ebitda,
-                "ebitda",
-                "ebitda_margin",
-            )
-        else:
-            ebitda_table = _compute_ebitda_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
-
-        # D&A table
-        annual_da = edgar.get("annual_da") or []
-        if annual_rev and annual_da:
-            da_table = _build_annual_table_edgar(annual_rev, annual_da, "da", "da_pct_rev")
-        else:
-            da_table = _compute_da_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
-
-        # CapEx table
-        annual_capex = edgar.get("annual_capex") or []
-        if annual_rev and annual_capex:
-            capex_table = _build_annual_table_edgar(annual_rev, annual_capex, "capex", "capex_pct_rev")
-        else:
-            capex_table = _compute_capex_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
-
-        # NWC table (quarterly)
-        q_rev = edgar.get("quarterly_revenue") or []
-        q_ca = edgar.get("quarterly_current_assets") or []
-        q_cl = edgar.get("quarterly_current_liabilities") or []
-        if q_ca and q_cl:
-            nwc_table = _build_nwc_table_edgar(q_rev, q_ca, q_cl)
-        else:
-            nwc_table = _compute_nwc_table_yf(
-                yf_data["quarterly_balance_sheet"],
-                yf_data["quarterly_income_stmt"],
-            )
-
-        # Quarterly multiples (EDGAR + yfinance prices)
-        q_ebitda = edgar.get("quarterly_ebitda") or []
-        q_oi = edgar.get("quarterly_operating_income") or []
-        q_da = edgar.get("quarterly_da") or []
-        q_debt = edgar.get("quarterly_total_debt") or []
-        q_cd = edgar.get("quarterly_current_debt") or []
-        q_cash = edgar.get("quarterly_cash") or []
-
-        if q_rev and (q_ebitda or (q_oi and q_da)):
-            ev_ebitda, ev_revenue = _build_quarterly_multiples_edgar(
-                q_rev,
-                q_ebitda or None,
-                q_oi or None,
-                q_da or None,
-                q_debt,
-                q_cd,
-                q_cash,
-                yf_data["prices"],
-                info.get("sharesOutstanding"),
-            )
-        else:
-            ev_ebitda, ev_revenue = _compute_multiples_yf(
-                yf_data["quarterly_income_stmt"],
-                yf_data["quarterly_balance_sheet"],
-                yf_data["prices"],
-                info,
-            )
-    else:
-        # Pure yfinance fallback
-        ebitda_table = _compute_ebitda_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
-        da_table = _compute_da_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
-        capex_table = _compute_capex_table_yf(yf_data["income_stmt"], yf_data["cashflow"])
-        nwc_table = _compute_nwc_table_yf(
-            yf_data["quarterly_balance_sheet"],
-            yf_data["quarterly_income_stmt"],
-        )
+    if data_source == "yfinance":
         ev_ebitda, ev_revenue = _compute_multiples_yf(
             yf_data["quarterly_income_stmt"],
             yf_data["quarterly_balance_sheet"],
