@@ -164,7 +164,7 @@ export const uploadOverviewPdf = (ticker: string, file: File) => {
 
 // --- Thesis metadata types ---
 
-export type ThesisStatusValue = "active" | "under_review" | "invalidated"
+export type ThesisStatusValue = "active" | "under_review" | "invalidated" | "missing"
 
 export interface ThesisEvaluation {
   id: number

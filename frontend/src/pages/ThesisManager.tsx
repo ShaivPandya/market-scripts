@@ -36,6 +36,7 @@ const STATUS_LABELS: Record<string, string> = {
   active: "Active",
   under_review: "Under Review",
   invalidated: "Invalidated",
+  missing: "Missing",
 }
 
 const LIST_COLUMNS: ColumnDef[] = [
@@ -45,6 +46,7 @@ const LIST_COLUMNS: ColumnDef[] = [
     if (s === "active") return "#00c853"
     if (s === "under review") return "#fb8c00"
     if (s === "invalidated") return "#ff1744"
+    if (s === "missing") return "#9e9e9e"
     return ""
   }},
   { key: "eval_date", header: "Last Eval" },

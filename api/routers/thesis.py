@@ -197,9 +197,25 @@ async def generate_thesis(
 
 @router.get("/thesis/meta")
 def get_thesis_meta_all():
+    from portfolio.portfolio_db import get_positions
     from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
 
-    meta = get_all_thesis_meta()
+    held = {_normalize_ticker(str(row.get("ticker", ""))) for row in get_positions()}
+    held.discard("")
+
+    meta = [m for m in get_all_thesis_meta() if _normalize_ticker(m["ticker"]) in held]
+    covered = {_normalize_ticker(m["ticker"]) for m in meta}
+    for ticker in sorted(held - covered):
+        meta.append(
+            {
+                "ticker": ticker,
+                "status": "missing",
+                "created_at": None,
+                "updated_at": None,
+            }
+        )
+    meta.sort(key=lambda m: m["ticker"])
+
     latest = {e["ticker"]: e for e in get_latest_evaluations()}
     for m in meta:
         m["latest_evaluation"] = latest.get(m["ticker"])
