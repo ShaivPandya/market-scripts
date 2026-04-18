@@ -10,6 +10,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from llm_utils import MODEL_OPUS
+
 log = logging.getLogger("auto_report.shared")
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
@@ -136,7 +138,7 @@ def call_claude(
     system_msg: str,
     user_msg: str,
     allowed_domains: list[str] | None = None,
-    model: str = "claude-opus-4-6",
+    model: str = MODEL_OPUS,
     max_tokens: int = 16384,
 ) -> tuple[str, list[tuple[str, str]]]:
     """Call Claude, optionally with web search.

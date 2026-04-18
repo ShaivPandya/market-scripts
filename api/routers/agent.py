@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from api.agent_tools import TOOL_DEFINITIONS, execute_tool
 from api.exceptions import ConfigurationError
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
+from llm_utils import MODEL_SONNET
 
 router = APIRouter()
 logger = logging.getLogger("api.agent")
@@ -212,7 +213,6 @@ def _sse(event: str, data: dict) -> str:
 MAX_TOOL_CONTINUATION_ROUNDS = 8
 MAX_API_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
-CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_MAX_TOKENS = 8_192
 ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
     {
@@ -530,7 +530,7 @@ def agent_chat(req: AgentChatRequest):
                 for attempt in range(MAX_API_RETRIES):
                     try:
                         with client.messages.stream(
-                            model=CLAUDE_MODEL,
+                            model=MODEL_SONNET,
                             max_tokens=CLAUDE_MAX_TOKENS,
                             system=instructions,
                             messages=[{"role": "user", "content": synthesis_prompt}],
@@ -614,7 +614,7 @@ def agent_chat(req: AgentChatRequest):
                     return
 
                 stream_kwargs: dict[str, object] = dict(
-                    model=CLAUDE_MODEL,
+                    model=MODEL_SONNET,
                     max_tokens=CLAUDE_MAX_TOKENS,
                     system=instructions,
                     messages=conversation,
@@ -829,7 +829,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
                 for attempt in range(MAX_API_RETRIES):
                     try:
                         with client.messages.stream(
-                            model=CLAUDE_MODEL,
+                            model=MODEL_SONNET,
                             max_tokens=CLAUDE_MAX_TOKENS,
                             system=instructions,
                             messages=[{"role": "user", "content": synthesis_prompt}],
@@ -903,7 +903,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
                     return
 
                 stream_kwargs: dict[str, object] = dict(
-                    model=CLAUDE_MODEL,
+                    model=MODEL_SONNET,
                     max_tokens=CLAUDE_MAX_TOKENS,
                     system=instructions,
                     messages=conversation,

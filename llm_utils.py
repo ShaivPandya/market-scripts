@@ -5,7 +5,7 @@ from typing import Any
 
 MODEL_HAIKU = "claude-haiku-4-5"
 MODEL_SONNET = "claude-sonnet-4-6"
-MODEL_OPUS = "claude-opus-4-6"
+MODEL_OPUS = "claude-opus-4-7"
 
 
 def _obj_get(value: Any, key: str, default: Any = None) -> Any:

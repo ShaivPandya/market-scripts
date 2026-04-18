@@ -4,6 +4,7 @@ import sys
 import types
 
 import api.routers.thesis as thesis_router
+from llm_utils import MODEL_SONNET
 
 
 def test_thesis_status(auth_client, monkeypatch, tmp_path):
@@ -43,7 +44,7 @@ def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
 
     class FakeMessages:
         def create(self, **kwargs):
-            assert kwargs["model"] == "claude-sonnet-4-6"
+            assert kwargs["model"] == MODEL_SONNET
             return {
                 "content": [
                     {
