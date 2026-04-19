@@ -491,7 +491,7 @@ function buildLongColumns(rows: Record<string, unknown>[]): ColumnDef[] {
 
 function LongPanel() {
   const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
-  const [universe, setUniverse] = useState("Russell 2000")
+  const [universe, setUniverse] = useState("S&P 500")
   const [tickers, setTickers] = useState("")
   const [checkPb, setCheckPb] = useState(false)
   const [pbThreshold, setPbThreshold] = useState(1.5)
