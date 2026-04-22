@@ -558,7 +558,31 @@ def collect_data() -> dict:
         log.warning("economic growth fetch failed: %s", e, exc_info=True)
         results["economic_growth"] = {"error": str(e)}
 
-    # 11. Liquidity
+    # 11. Labor Market
+    try:
+        from macro.labor_market.labor_market import get_data as get_labor_market_data
+
+        t0 = time.perf_counter()
+        labor_market = get_labor_market_data()
+        log.info("labor market fetched in %.2fs", time.perf_counter() - t0)
+        results["labor_market"] = labor_market
+    except Exception as e:
+        log.warning("labor market fetch failed: %s", e, exc_info=True)
+        results["labor_market"] = {"error": str(e)}
+
+    # 12. Housing
+    try:
+        from macro.housing.housing import get_data as get_housing_data
+
+        t0 = time.perf_counter()
+        housing = get_housing_data()
+        log.info("housing fetched in %.2fs", time.perf_counter() - t0)
+        results["housing"] = housing
+    except Exception as e:
+        log.warning("housing fetch failed: %s", e, exc_info=True)
+        results["housing"] = {"error": str(e)}
+
+    # 13. Liquidity
     try:
         from macro.liquidity.liquidity import get_snapshot as get_liquidity_snapshot
 
@@ -570,7 +594,61 @@ def collect_data() -> dict:
         log.warning("liquidity fetch failed: %s", e, exc_info=True)
         results["liquidity"] = {"error": str(e)}
 
-    # 12. Industry Monitor
+    # 14. Central Banks
+    try:
+        from macro.central_banks.central_bank import get_data as get_central_banks_data
+
+        t0 = time.perf_counter()
+        central_banks = get_central_banks_data(refresh=False)
+        log.info("central banks fetched in %.2fs", time.perf_counter() - t0)
+        results["central_banks"] = central_banks
+    except Exception as e:
+        log.warning("central banks fetch failed: %s", e, exc_info=True)
+        results["central_banks"] = {"error": str(e)}
+
+    # 15. Yield Curve
+    try:
+        from government_bonds.yield_curve import get_data as get_yield_curve_data
+
+        t0 = time.perf_counter()
+        yield_curve = get_yield_curve_data(lookback_days=90)
+        log.info("yield curve fetched in %.2fs", time.perf_counter() - t0)
+        results["yield_curve"] = yield_curve
+    except Exception as e:
+        log.warning("yield curve fetch failed: %s", e, exc_info=True)
+        results["yield_curve"] = {"error": str(e)}
+
+    # 16. Bond Dashboard
+    try:
+        from government_bonds.bond_dashboard import get_data as get_bond_dashboard_data
+
+        t0 = time.perf_counter()
+        bond_dashboard = get_bond_dashboard_data()
+        log.info("bond dashboard fetched in %.2fs", time.perf_counter() - t0)
+        results["bond_dashboard"] = bond_dashboard
+    except Exception as e:
+        log.warning("bond dashboard fetch failed: %s", e, exc_info=True)
+        results["bond_dashboard"] = {"error": str(e)}
+
+    # 17. Country Dashboard
+    try:
+        from macro.country_dashboard.country_dashboard import METRICS as COUNTRY_DASHBOARD_METRICS
+        from macro.country_dashboard.country_dashboard import get_data as get_country_dashboard_data
+
+        t0 = time.perf_counter()
+        country_dashboard = {}
+        for metric in COUNTRY_DASHBOARD_METRICS:
+            try:
+                country_dashboard[metric] = get_country_dashboard_data(metric=metric)
+            except Exception as metric_exc:
+                country_dashboard[metric] = {"error": str(metric_exc)}
+        log.info("country dashboard fetched in %.2fs", time.perf_counter() - t0)
+        results["country_dashboard"] = country_dashboard
+    except Exception as e:
+        log.warning("country dashboard fetch failed: %s", e, exc_info=True)
+        results["country_dashboard"] = {"error": str(e)}
+
+    # 18. Industry Monitor
     try:
         from macro.industry.industry_monitor import get_data as get_industry_data
 
@@ -582,7 +660,7 @@ def collect_data() -> dict:
         log.warning("industry monitor fetch failed: %s", e, exc_info=True)
         results["industry"] = {"error": str(e)}
 
-    # 13. Sentiment (AAII, NAAIM, Put/Call, VVIX)
+    # 19. Sentiment (AAII, NAAIM, Put/Call, VVIX)
     try:
         from macro.sentiment.sentiment import get_put_call, get_surveys, get_volatility
 
@@ -764,6 +842,88 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
         liq.pop("df_weekly", None)
         liq.pop("composite_series", None)
 
+    # --- Slim labor/housing: keep latest values + labels/units, drop full histories ---
+    for macro_key in ("labor_market", "housing"):
+        macro_block = prompt_bundle.get(macro_key)
+        if not isinstance(macro_block, dict) or "error" in macro_block:
+            continue
+        latest = macro_block.get("latest") if isinstance(macro_block.get("latest"), dict) else {}
+        series = macro_block.get("series")
+        if isinstance(series, dict):
+            slim_series = {}
+            for key, value in series.items():
+                if not isinstance(value, dict):
+                    continue
+                entry = {
+                    "label": value.get("label"),
+                    "unit": value.get("unit"),
+                    "latest": latest.get(key) if isinstance(latest, dict) else None,
+                }
+                if value.get("error"):
+                    entry["error"] = value.get("error")
+                slim_series[key] = entry
+            macro_block["series"] = slim_series
+
+    # --- Slim central bank monitor: keep counts + recent summarized items only ---
+    cb = prompt_bundle.get("central_banks")
+    if isinstance(cb, dict) and "error" not in cb:
+        cb.pop("by_source", None)
+        items = cb.get("items")
+        if isinstance(items, list):
+            slim_items = []
+            for item in items[:20]:
+                if not isinstance(item, dict):
+                    continue
+                slim_items.append(
+                    {
+                        "source": item.get("source"),
+                        "kind": item.get("kind"),
+                        "title": item.get("title"),
+                        "published_at": item.get("published_at"),
+                        "url": item.get("url"),
+                        "summary_bullets": item.get("summary_bullets", []),
+                        "signals": item.get("signals", {}),
+                    }
+                )
+            cb["items"] = slim_items
+
+    # --- Slim bond dashboard: keep tenor summaries, drop chart series ---
+    bond = prompt_bundle.get("bond_dashboard")
+    if isinstance(bond, dict) and "error" not in bond:
+        countries = bond.get("countries")
+        if isinstance(countries, dict):
+            for country in countries.values():
+                if not isinstance(country, dict):
+                    continue
+                tenors = country.get("tenors")
+                if not isinstance(tenors, dict):
+                    continue
+                for tenor_data in tenors.values():
+                    if isinstance(tenor_data, dict):
+                        tenor_data.pop("series", None)
+
+    # --- Slim country dashboard: latest value/date by country, not full history ---
+    country = prompt_bundle.get("country_dashboard")
+    if isinstance(country, dict) and "error" not in country:
+        for metric_data in country.values():
+            if not isinstance(metric_data, dict) or "error" in metric_data:
+                continue
+            countries = metric_data.get("countries")
+            if not isinstance(countries, dict):
+                continue
+            latest_by_country = {}
+            for country_name, series_rows in countries.items():
+                if not isinstance(series_rows, list):
+                    latest_by_country[country_name] = series_rows
+                    continue
+                latest_point = None
+                for row in reversed(series_rows):
+                    if isinstance(row, dict) and row.get("value") is not None:
+                        latest_point = {"date": row.get("date"), "value": row.get("value")}
+                        break
+                latest_by_country[country_name] = latest_point
+            metric_data["countries"] = latest_by_country
+
     # --- Strip per-company detail from industry ---
     ind = prompt_bundle.get("industry")
     if isinstance(ind, dict) and "error" not in ind:
@@ -839,6 +999,10 @@ context into each relevant section and cite your sources for news-driven claims.
 
 {RULES_TEXT}
 {search_instruction}
+Use labor_market, housing, central_banks, yield_curve, bond_dashboard, and
+country_dashboard as macro/cycle evidence when assessing policy, rates, growth,
+labor slack, housing momentum, and cross-country inflation/GDP/unemployment.
+
 Write the weekly report with these exact sections:
 1. **Executive Summary** — max 5 bullets
 2. **Market Moves & Regime Shifts**
