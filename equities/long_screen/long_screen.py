@@ -447,11 +447,11 @@ def get_data(
         _report_progress(progress_callback, "prices", phase3_pass_count, total)
 
         if not needs_fundamentals:
-            final_rows = [
+            prefilter_rows = [
                 _build_result_row({"ticker": d["ticker"]}, price_metrics=price_metrics.get(d["ticker"]))
                 for d in price_pass_data
             ]
-            results_df = pd.DataFrame(final_rows)
+            results_df = pd.DataFrame(prefilter_rows)
             return {
                 "results_df": results_df,
                 "failed_tickers": [],

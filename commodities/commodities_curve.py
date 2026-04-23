@@ -214,7 +214,7 @@ def _fetch_curve_prices(
 
 
 def _curve_spread_pct(front: float | None, other: float | None) -> float | None:
-    if front in (None, 0) or other is None:
+    if front is None or front == 0 or other is None:
         return None
     return round((other - front) / front * 100, 2)
 
@@ -227,7 +227,11 @@ def _analyze_curve(points: list[dict]) -> dict:
     warning_count = 0
     newest_valid_contract_date = None
 
-    valid_dates = [p.get("current_date") for p in valid if isinstance(p.get("current_date"), str)]
+    valid_dates: list[str] = []
+    for point in valid:
+        current_date = point.get("current_date")
+        if isinstance(current_date, str):
+            valid_dates.append(current_date)
     if valid_dates:
         newest_valid_contract_date = max(valid_dates)
 

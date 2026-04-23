@@ -231,26 +231,31 @@ def _annual_fact_entries(entries: list[dict]) -> list[dict]:
     for e in entries:
         if not _is_annual_fact_row(e):
             continue
-        fy = _canonical_fiscal_year(e)
-        if fy is None:
+        fiscal_year = _canonical_fiscal_year(e)
+        if fiscal_year is None:
             continue
-        grouped[fy].append(e)
+        grouped[fiscal_year].append(e)
 
     out: list[dict] = []
-    for fy, rows in grouped.items():
-
-        def _score(e: dict, fy: int = fy) -> tuple[int, int, str, int]:
-            dur = _duration_days(e)
+    for fiscal_year, rows in grouped.items():
+        best_row: dict | None = None
+        best_score: tuple[int, int, str, int] | None = None
+        for row in rows:
+            dur = _duration_days(row)
             diff = abs((dur if dur is not None else 365) - 365)
-            return (
-                _period_ownership_rank(e, fy),
-                1 if _is_amended_form(e) else 0,
-                str(e.get("filed") or ""),
+            row_score = (
+                _period_ownership_rank(row, fiscal_year),
+                1 if _is_amended_form(row) else 0,
+                str(row.get("filed") or ""),
                 -diff,
             )
-
-        best = dict(max(rows, key=_score))
-        best["fy"] = fy
+            if best_score is None or row_score > best_score:
+                best_score = row_score
+                best_row = row
+        if best_row is None:
+            continue
+        best = dict(best_row)
+        best["fy"] = fiscal_year
         best["fp"] = "FY"
         out.append(best)
 
