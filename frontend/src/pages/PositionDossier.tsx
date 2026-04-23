@@ -479,7 +479,7 @@ function FinancialsSection({ ticker, parsed }: { ticker: string; parsed: ParsedF
   const [view, setView] = useState<FinancialViewMode>("annual")
 
   const { data: rawData, isLoading, error } = useApiQuery<Record<string, unknown>>(
-    ["financials-overview", ticker],
+    ["financials-overview-v9", ticker],
     () => runFinancials({ ticker }),
     300_000,
   )

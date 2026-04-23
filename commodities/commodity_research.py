@@ -56,7 +56,7 @@ CURVE_CODES: dict[str, str] = {
     "Dutch TTF Gas": "TTF",
 }
 
-STALE_THRESHOLD_DAYS = 5
+STALE_THRESHOLD_DAYS = 7
 
 
 # -- Utility helpers ----------------------------------------------------------
@@ -151,27 +151,31 @@ def _fetch_macro() -> dict | None:
         return None
 
 
-def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None]:
-    daily = None
-    monthly = None
-    curves: dict[str, dict] = {}
-    macro = None
+def _fetch_prices_sequential() -> tuple[dict | None, dict | None]:
+    # Serialize daily + monthly to avoid nested concurrency with yfinance's
+    # internal threadpool (threads=True in fetch_commodities_data), which
+    # otherwise corrupts per-ticker results when fired in parallel.
+    return _fetch_daily_prices(), _fetch_monthly_prices()
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+
+def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None]:
+    daily: dict | None = None
+    monthly: dict | None = None
+    curves: dict[str, dict] = {}
+    macro: dict | None = None
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
         futures: dict[Future[Any], str] = {
-            pool.submit(_fetch_daily_prices): "daily",
-            pool.submit(_fetch_monthly_prices): "monthly",
+            pool.submit(_fetch_prices_sequential): "prices",
             pool.submit(_fetch_curves): "curves",
             pool.submit(_fetch_macro): "macro",
         }
-        for fut in as_completed(futures, timeout=120):
+        for fut in as_completed(futures, timeout=180):
             key = futures[fut]
             try:
                 result = fut.result()
-                if key == "daily":
-                    daily = result
-                elif key == "monthly":
-                    monthly = result
+                if key == "prices":
+                    daily, monthly = result
                 elif key == "curves":
                     curves = result or {}
                 elif key == "macro":

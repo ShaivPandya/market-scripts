@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
-import { runQualityScreen, runShortScreen, runLongScreen, runFundamentalMomentum } from "@/lib/api"
+import {
+  runQualityScreen,
+  runShortScreen,
+  runLongScreen,
+  runFundamentalMomentum,
+  type LongScreenRequest,
+  type ScreenJobProgress,
+  type ShortScreenRequest,
+} from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import {
@@ -48,6 +56,36 @@ function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
         ? `${v >= 0 ? "+" : ""}${v.toFixed(2)}`
         : String(v ?? "N/A"),
   }))
+}
+
+function formatScreenProgress(progress: ScreenJobProgress | undefined, fallback: string): string {
+  if (!progress?.phase) return fallback
+  const labels: Record<string, string> = {
+    queued: "Queued",
+    prices: "Screening prices",
+    fundamentals: "Fetching fundamentals",
+    issuance: "Checking issuance",
+    finalizing: "Finalizing",
+    done: "Complete",
+  }
+  const label = labels[progress.phase] ?? progress.phase
+  const done = typeof progress.done === "number" ? progress.done : null
+  const total = typeof progress.total === "number" ? progress.total : null
+  if (done != null && total != null && total > 0) return `${label} ${done}/${total}`
+  return label
+}
+
+function FailedTickerNotice({ failed }: { failed: unknown }) {
+  if (!Array.isArray(failed) || failed.length === 0) return null
+  const tickers = failed.filter(x => typeof x === "string") as string[]
+  if (tickers.length === 0) return null
+  const shown = tickers.slice(0, 20).join(", ")
+  const extra = tickers.length > 20 ? `, and ${tickers.length - 20} more` : ""
+  return (
+    <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+      <strong>Some tickers failed:</strong> {shown}{extra}
+    </div>
+  )
 }
 
 /* ─── Quality Screen ─── */
@@ -228,10 +266,14 @@ function ShortPanel() {
   const [check3mNegMomentum, setCheck3mNegMomentum] = useState(false)
   const [check2mNegRelMomentum, setCheck2mNegRelMomentum] = useState(false)
   const [relMomentumBenchmark, setRelMomentumBenchmark] = useState("Same as Input")
+  const [progress, setProgress] = useState<ScreenJobProgress | undefined>(undefined)
 
-  const mutation = useMutation({ mutationFn: runShortScreen })
+  const mutation = useMutation({
+    mutationFn: (body: ShortScreenRequest) => runShortScreen(body, setProgress),
+  })
 
   function handleRun() {
+    setProgress({ phase: "queued", done: 0, total: 0 })
     mutation.mutate({
       input_mode: inputMode,
       universe,
@@ -447,7 +489,14 @@ function ShortPanel() {
         </ActionButton>
       </ControlPanel>
 
-      {mutation.isPending && <LoadingSpinner message={`Screening ${inputMode === "Custom Tickers" ? "custom tickers" : universe} (this may take several minutes)...`} />}
+      {mutation.isPending && (
+        <LoadingSpinner
+          message={formatScreenProgress(
+            progress,
+            `Screening ${inputMode === "Custom Tickers" ? "custom tickers" : universe} (this may take several minutes)...`,
+          )}
+        />
+      )}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (
@@ -460,6 +509,7 @@ function ShortPanel() {
             )}
             <span>Final candidates: <strong>{mutation.data.final_count ?? rows.length}</strong></span>
           </div>
+          <FailedTickerNotice failed={mutation.data.failed_tickers} />
           {rows.length > 0 ? (
             <DataTable columns={columns} rows={rows} />
           ) : (
@@ -514,10 +564,14 @@ function LongPanel() {
   const [check3mPosMomentum, setCheck3mPosMomentum] = useState(false)
   const [check2mPosRelMomentum, setCheck2mPosRelMomentum] = useState(false)
   const [relMomentumBenchmark, setRelMomentumBenchmark] = useState("Same as Input")
+  const [progress, setProgress] = useState<ScreenJobProgress | undefined>(undefined)
 
-  const mutation = useMutation({ mutationFn: runLongScreen })
+  const mutation = useMutation({
+    mutationFn: (body: LongScreenRequest) => runLongScreen(body, setProgress),
+  })
 
   function handleRun() {
+    setProgress({ phase: "queued", done: 0, total: 0 })
     mutation.mutate({
       input_mode: inputMode,
       universe,
@@ -733,7 +787,14 @@ function LongPanel() {
         </ActionButton>
       </ControlPanel>
 
-      {mutation.isPending && <LoadingSpinner message={`Screening ${inputMode === "Custom Tickers" ? "custom tickers" : universe} (this may take several minutes)...`} />}
+      {mutation.isPending && (
+        <LoadingSpinner
+          message={formatScreenProgress(
+            progress,
+            `Screening ${inputMode === "Custom Tickers" ? "custom tickers" : universe} (this may take several minutes)...`,
+          )}
+        />
+      )}
       {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (
@@ -746,6 +807,7 @@ function LongPanel() {
             )}
             <span>Final candidates: <strong>{mutation.data.final_count ?? rows.length}</strong></span>
           </div>
+          <FailedTickerNotice failed={mutation.data.failed_tickers} />
           {rows.length > 0 ? (
             <DataTable columns={columns} rows={rows} />
           ) : (

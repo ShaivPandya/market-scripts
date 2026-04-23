@@ -615,7 +615,28 @@ export const runQualityScreen = (body: {
     .finally(() => clearTimeout(timer))
 }
 
-export const runShortScreen = (body: {
+export type ScreenJobProgress = {
+  phase?: string
+  done?: number
+  total?: number
+}
+
+type ScreenJobResponse<T> =
+  | { job_id: string; status: "queued" | "running"; progress?: ScreenJobProgress }
+  | { job_id: string; status: "error"; error?: string; progress?: ScreenJobProgress }
+  | { job_id: string; status: "done"; result?: T; progress?: ScreenJobProgress }
+
+export type ScreenResult = {
+  results_df?: Record<string, unknown>[]
+  failed_tickers?: string[]
+  phase1_count?: number
+  phase1_pass_count?: number | null
+  phase3_pass_count?: number
+  final_count?: number
+  [key: string]: unknown
+}
+
+export type ShortScreenRequest = {
   input_mode: string
   universe: string
   tickers: string
@@ -634,9 +655,9 @@ export const runShortScreen = (body: {
   check_3m_neg_momentum: boolean
   check_2m_neg_rel_momentum: boolean
   rel_momentum_benchmark: string
-}) => client.post("/short-screen", body, { timeout: 600_000 }).then(r => r.data)
+}
 
-export const runLongScreen = (body: {
+export type LongScreenRequest = {
   input_mode: string
   universe: string
   tickers: string
@@ -655,7 +676,57 @@ export const runLongScreen = (body: {
   check_3m_pos_momentum: boolean
   check_2m_pos_rel_momentum: boolean
   rel_momentum_benchmark: string
-}) => client.post("/long-screen", body, { timeout: 600_000 }).then(r => r.data)
+}
+
+const startShortScreenJob = (body: ShortScreenRequest) =>
+  client.post("/short-screen/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+const fetchShortScreenJob = (job_id: string) =>
+  client.get(`/short-screen/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+const startLongScreenJob = (body: LongScreenRequest) =>
+  client.post("/long-screen/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+const fetchLongScreenJob = (job_id: string) =>
+  client.get(`/long-screen/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+async function runScreenJob<TBody>(
+  body: TBody,
+  startJob: (body: TBody) => Promise<ScreenJobResponse<ScreenResult>>,
+  fetchJob: (job_id: string) => Promise<ScreenJobResponse<ScreenResult>>,
+  label: string,
+  onProgress?: (progress: ScreenJobProgress | undefined) => void,
+): Promise<ScreenResult> {
+  const started = await startJob(body)
+  onProgress?.(started.progress)
+  if (started.status === "done" && "result" in started && started.result != null) return started.result
+  if (started.status === "error") throw new Error(started.error || `${label} failed`)
+
+  const job_id = started.job_id
+  const deadline = Date.now() + 45 * 60_000
+
+  for (; ;) {
+    if (Date.now() > deadline) {
+      throw new Error(`Timeout: ${label} is still running after 45 minutes. Try a smaller universe or fewer filters.`)
+    }
+
+    await new Promise(r => setTimeout(r, 2000))
+    const job = await fetchJob(job_id)
+    onProgress?.(job.progress)
+
+    if (job.status === "done") {
+      if ("result" in job && job.result != null) return job.result
+      return {}
+    }
+    if (job.status === "error") throw new Error(job.error || `${label} failed`)
+  }
+}
+
+export const runShortScreen = (body: ShortScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
+  runScreenJob(body, startShortScreenJob, fetchShortScreenJob, "Short screen", onProgress)
+
+export const runLongScreen = (body: LongScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
+  runScreenJob(body, startLongScreenJob, fetchLongScreenJob, "Long screen", onProgress)
 
 type FundamentalMomentumRequest = {
   screen_type: string

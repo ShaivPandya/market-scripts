@@ -15,6 +15,7 @@ Execution is phased:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import time
@@ -27,7 +28,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from utils.retry import requests_get, yf_ticker_info
+from utils.retry import requests_get
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,9 +47,69 @@ _edgar_facts_lock = threading.Lock()
 SEC_HEADERS = {"User-Agent": "market-scripts research@example.com"}
 SEC_RATE_LIMIT_DELAY = 0.12  # comfortably under SEC's 10 requests/second limit
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 YF_CHUNK_SIZE = 100  # tickers per batch (Phase 1 and Phase 3)
 YF_BATCH_DELAY = 0.5  # seconds between batches
-PHASE1_WORKERS = 6  # concurrent yfinance threads in Phase 1
+PHASE1_WORKERS = max(1, _env_int("SCREEN_YF_WORKERS", 4))  # concurrent yfinance statement threads
+YF_CALL_INTERVAL_SECONDS = max(0.0, _env_float("SCREEN_YF_CALL_INTERVAL_SECONDS", 0.08))
+YF_RATE_LIMIT_COOLDOWN_SECONDS = max(0.0, _env_float("SCREEN_YF_RATE_LIMIT_COOLDOWN_SECONDS", 20.0))
+
+_yf_call_lock = threading.Lock()
+_yf_last_call_at = 0.0
+_yf_cooldown_until = 0.0
+
+
+class YahooRateLimitError(RuntimeError):
+    """Raised when Yahoo explicitly rate limits a yfinance call."""
+
+
+def _is_yahoo_rate_limit_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "too many requests" in msg or "rate limited" in msg or "rate limit" in msg
+
+
+def _throttled_yf_call(label: str, func):
+    """
+    Rate-limit yfinance quote-summary/statement call starts across screen jobs.
+
+    Yahoo's quote-summary endpoints rate-limit aggressively when the Russell
+    2000 is fanned out across workers. This gate spaces request starts and
+    honors cooldowns without serializing the entire network call.
+    """
+    global _yf_cooldown_until, _yf_last_call_at
+
+    with _yf_call_lock:
+        now = time.monotonic()
+        wait_for_spacing = max(0.0, (_yf_last_call_at + YF_CALL_INTERVAL_SECONDS) - now)
+        wait_for_cooldown = max(0.0, _yf_cooldown_until - now)
+        delay = max(wait_for_spacing, wait_for_cooldown)
+        if delay > 0:
+            time.sleep(delay)
+        _yf_last_call_at = time.monotonic()
+
+    try:
+        return func()
+    except Exception as exc:
+        if _is_yahoo_rate_limit_error(exc):
+            with _yf_call_lock:
+                _yf_cooldown_until = max(_yf_cooldown_until, time.monotonic() + YF_RATE_LIMIT_COOLDOWN_SECONDS)
+            raise YahooRateLimitError(f"{label}: {exc}") from exc
+        raise
+
 
 # Label variants for quarterly revenue / EPS extraction
 REVENUE_KEYS = ["Total Revenue", "TotalRevenue", "Revenue", "Operating Revenue", "Net Sales", "NetSales"]
@@ -88,7 +149,14 @@ def get_item(s: pd.Series | None, keys: list[str]) -> float:
 # ---------------------------------------------------------------------------
 
 
-def fetch_yf_data(ticker: str) -> dict:
+def fetch_yf_data(
+    ticker: str,
+    *,
+    include_quarterly: bool = False,
+    need_price_to_book: bool = True,
+    need_profit: bool = True,
+    need_market_cap: bool = True,
+) -> dict:
     """
     Fetch P/B, gross profit, operating income, and market cap for one ticker.
 
@@ -102,128 +170,166 @@ def fetch_yf_data(ticker: str) -> dict:
         t = yf.Ticker(ticker)
 
         info: dict = {}
-        try:
-            info = yf_ticker_info(ticker)
-        except Exception:
-            info = {}
+        if need_price_to_book or need_market_cap:
+            try:
+                info = _throttled_yf_call(f"{ticker}.info", lambda: dict(yf.Ticker(ticker).info or {}))
+            except YahooRateLimitError as exc:
+                return {"ticker": ticker, "error": str(exc)}
+            except Exception:
+                info = {}
 
-        fin = t.financials
-        inc_last = last_col(fin)
-
-        bal = t.balance_sheet
-        bal_last = last_col(bal)
+        inc_last: pd.Series | None = None
+        if need_profit:
+            try:
+                fin = _throttled_yf_call(f"{ticker}.financials", lambda: t.financials)
+            except YahooRateLimitError as exc:
+                return {"ticker": ticker, "error": str(exc)}
+            except Exception:
+                LOGGER.debug("Annual financials fetch failed for %s", ticker, exc_info=True)
+                fin = pd.DataFrame()
+            inc_last = last_col(fin)
 
         # P/B from info dict (primary source)
         price_to_book: float = np.nan
-        pb_raw = info.get("priceToBook")
-        if pb_raw is not None:
-            try:
-                price_to_book = float(pb_raw)
-            except (TypeError, ValueError):
-                pass
+        if need_price_to_book:
+            pb_raw = info.get("priceToBook")
+            if pb_raw is not None:
+                try:
+                    price_to_book = float(pb_raw)
+                except (TypeError, ValueError):
+                    pass
 
         # Market cap — try fast_info first (uses chart API, immune to crumb invalidation)
         # then fall back to info dict. This matters because t.info returns {} when Yahoo
         # Finance rejects the request crumb, but fast_info uses a different endpoint.
         market_cap: float = np.nan
-        try:
-            mc_fast = t.fast_info.market_cap
-            if mc_fast is not None:
-                market_cap = float(mc_fast)
-        except Exception:
-            LOGGER.debug("fast_info.market_cap failed for %s", ticker, exc_info=True)
+        mc_raw = info.get("marketCap")
+        if mc_raw is not None:
+            try:
+                market_cap = float(mc_raw)
+            except (TypeError, ValueError):
+                pass
+        if need_market_cap and np.isnan(market_cap):
+            try:
+                mc_fast = _throttled_yf_call(f"{ticker}.fast_info.market_cap", lambda: t.fast_info.market_cap)
+                if mc_fast is not None:
+                    market_cap = float(mc_fast)
+            except YahooRateLimitError as exc:
+                return {"ticker": ticker, "error": str(exc)}
+            except Exception:
+                LOGGER.debug("fast_info.market_cap failed for %s", ticker, exc_info=True)
         if np.isnan(market_cap):
-            mc_raw = info.get("marketCap")
-            if mc_raw is not None:
-                try:
-                    market_cap = float(mc_raw)
-                except (TypeError, ValueError):
-                    pass
+            market_cap = np.nan
 
-        # Book value from balance sheet
-        book_value = get_item(
-            bal_last,
-            [
-                "Stockholders Equity",
-                "StockholdersEquity",
-                "Total Stockholder Equity",
-                "TotalStockholderEquity",
-                "Common Stock Equity",
-            ],
-        )
+        book_value = np.nan
+        if need_price_to_book and np.isnan(price_to_book):
+            if np.isnan(market_cap):
+                try:
+                    mc_fast = _throttled_yf_call(f"{ticker}.fast_info.market_cap", lambda: t.fast_info.market_cap)
+                    if mc_fast is not None:
+                        market_cap = float(mc_fast)
+                except YahooRateLimitError as exc:
+                    return {"ticker": ticker, "error": str(exc)}
+                except Exception:
+                    LOGGER.debug("fast_info.market_cap failed for %s", ticker, exc_info=True)
+            try:
+                bal = _throttled_yf_call(f"{ticker}.balance_sheet", lambda: t.balance_sheet)
+            except YahooRateLimitError as exc:
+                return {"ticker": ticker, "error": str(exc)}
+            except Exception:
+                LOGGER.debug("Balance sheet fetch failed for %s", ticker, exc_info=True)
+                bal = pd.DataFrame()
+            bal_last = last_col(bal)
+            book_value = get_item(
+                bal_last,
+                [
+                    "Stockholders Equity",
+                    "StockholdersEquity",
+                    "Total Stockholder Equity",
+                    "TotalStockholderEquity",
+                    "Common Stock Equity",
+                ],
+            )
 
         # P/B fallback: market_cap / book_value when priceToBook is missing
         if np.isnan(price_to_book) and not np.isnan(market_cap) and not np.isnan(book_value) and book_value > 0:
             price_to_book = market_cap / book_value
 
         # Gross profit (most recent annual)
-        gross_profit = get_item(inc_last, ["Gross Profit", "GrossProfit"])
+        gross_profit = get_item(inc_last, ["Gross Profit", "GrossProfit"]) if need_profit else np.nan
 
         # Operating income (most recent annual)
-        operating_income = get_item(
-            inc_last,
-            [
-                "Operating Income",
-                "OperatingIncome",
-                "EBIT",
-                "Ebit",
-            ],
+        operating_income = (
+            get_item(
+                inc_last,
+                [
+                    "Operating Income",
+                    "OperatingIncome",
+                    "EBIT",
+                    "Ebit",
+                ],
+            )
+            if need_profit
+            else np.nan
         )
 
         # Quarterly revenue & EPS YoY growth (need 7 quarters: 3 recent + 4 year-ago)
         rev_yoy_q0 = rev_yoy_q1 = rev_yoy_q2 = rev_yoy_avg = np.nan
         eps_yoy_q0 = eps_yoy_q1 = eps_yoy_q2 = eps_yoy_avg = np.nan
-        try:
-            q_fin = t.quarterly_financials
-            if q_fin is not None and not q_fin.empty and q_fin.shape[1] >= 5:
-                # Extract per-quarter revenue
-                revs = [get_item(q_fin.iloc[:, i], REVENUE_KEYS) for i in range(min(q_fin.shape[1], 7))]
-                rev_yoys: list[float] = []
-                for idx, (recent_i, prior_i) in enumerate([(0, 4), (1, 5), (2, 6)]):
-                    if prior_i < len(revs):
-                        r, p = revs[recent_i], revs[prior_i]
-                        if not np.isnan(r) and not np.isnan(p) and p != 0:
-                            val = (r / p - 1) * 100
-                            rev_yoys.append(val)
-                            if idx == 0:
-                                rev_yoy_q0 = val
-                            elif idx == 1:
-                                rev_yoy_q1 = val
-                            else:
-                                rev_yoy_q2 = val
-                if rev_yoys:
-                    rev_yoy_avg = float(np.mean(rev_yoys))
+        if include_quarterly:
+            try:
+                q_fin = _throttled_yf_call(f"{ticker}.quarterly_financials", lambda: t.quarterly_financials)
+                if q_fin is not None and not q_fin.empty and q_fin.shape[1] >= 5:
+                    # Extract per-quarter revenue
+                    revs = [get_item(q_fin.iloc[:, i], REVENUE_KEYS) for i in range(min(q_fin.shape[1], 7))]
+                    rev_yoys: list[float] = []
+                    for idx, (recent_i, prior_i) in enumerate([(0, 4), (1, 5), (2, 6)]):
+                        if prior_i < len(revs):
+                            r, p = revs[recent_i], revs[prior_i]
+                            if not np.isnan(r) and not np.isnan(p) and p != 0:
+                                val = (r / p - 1) * 100
+                                rev_yoys.append(val)
+                                if idx == 0:
+                                    rev_yoy_q0 = val
+                                elif idx == 1:
+                                    rev_yoy_q1 = val
+                                else:
+                                    rev_yoy_q2 = val
+                    if rev_yoys:
+                        rev_yoy_avg = float(np.mean(rev_yoys))
 
-                # Extract per-quarter EPS (direct label, then fallback to net income / shares)
-                def _get_eps(col_idx: int) -> float:
-                    col = q_fin.iloc[:, col_idx]
-                    eps_val = get_item(col, EPS_KEYS)
-                    if not np.isnan(eps_val):
-                        return eps_val
-                    ni = get_item(col, NET_INCOME_KEYS)
-                    sh = get_item(col, DILUTED_SHARES_KEYS)
-                    if not np.isnan(ni) and not np.isnan(sh) and sh != 0:
-                        return ni / sh
-                    return np.nan
+                    # Extract per-quarter EPS (direct label, then fallback to net income / shares)
+                    def _get_eps(col_idx: int) -> float:
+                        col = q_fin.iloc[:, col_idx]
+                        eps_val = get_item(col, EPS_KEYS)
+                        if not np.isnan(eps_val):
+                            return eps_val
+                        ni = get_item(col, NET_INCOME_KEYS)
+                        sh = get_item(col, DILUTED_SHARES_KEYS)
+                        if not np.isnan(ni) and not np.isnan(sh) and sh != 0:
+                            return ni / sh
+                        return np.nan
 
-                epss = [_get_eps(i) for i in range(min(q_fin.shape[1], 7))]
-                eps_yoys: list[float] = []
-                for idx, (recent_i, prior_i) in enumerate([(0, 4), (1, 5), (2, 6)]):
-                    if prior_i < len(epss):
-                        r, p = epss[recent_i], epss[prior_i]
-                        if not np.isnan(r) and not np.isnan(p) and abs(p) > 0:
-                            val = (r - p) / abs(p) * 100
-                            eps_yoys.append(val)
-                            if idx == 0:
-                                eps_yoy_q0 = val
-                            elif idx == 1:
-                                eps_yoy_q1 = val
-                            else:
-                                eps_yoy_q2 = val
-                if eps_yoys:
-                    eps_yoy_avg = float(np.mean(eps_yoys))
-        except Exception:
-            LOGGER.debug("Quarterly financials fetch failed for %s", ticker, exc_info=True)
+                    epss = [_get_eps(i) for i in range(min(q_fin.shape[1], 7))]
+                    eps_yoys: list[float] = []
+                    for idx, (recent_i, prior_i) in enumerate([(0, 4), (1, 5), (2, 6)]):
+                        if prior_i < len(epss):
+                            r, p = epss[recent_i], epss[prior_i]
+                            if not np.isnan(r) and not np.isnan(p) and abs(p) > 0:
+                                val = (r - p) / abs(p) * 100
+                                eps_yoys.append(val)
+                                if idx == 0:
+                                    eps_yoy_q0 = val
+                                elif idx == 1:
+                                    eps_yoy_q1 = val
+                                else:
+                                    eps_yoy_q2 = val
+                    if eps_yoys:
+                        eps_yoy_avg = float(np.mean(eps_yoys))
+            except YahooRateLimitError as exc:
+                return {"ticker": ticker, "error": str(exc)}
+            except Exception:
+                LOGGER.debug("Quarterly financials fetch failed for %s", ticker, exc_info=True)
 
         company_name: str = info.get("longName") or info.get("shortName") or ""
 
@@ -257,6 +363,7 @@ def screen_ticker(
     max_revenue_growth: float = 0.0,
     check_eps: bool = False,
     max_eps_growth: float = 0.0,
+    need_market_cap: bool = False,
 ) -> tuple[bool, dict]:
     """
     Apply Phase 1 criteria (P/B + loss type + optional revenue/EPS growth) using yfinance data.
@@ -265,7 +372,13 @@ def screen_ticker(
         (passes: bool, data: dict)
         data["error"] is set if yfinance fetch failed hard.
     """
-    data = fetch_yf_data(ticker)
+    data = fetch_yf_data(
+        ticker,
+        include_quarterly=check_revenue or check_eps,
+        need_price_to_book=pb_threshold is not None,
+        need_profit=loss_type is not None,
+        need_market_cap=need_market_cap or pb_threshold is not None,
+    )
 
     if "error" in data:
         return False, data
@@ -674,6 +787,97 @@ def _build_result_row(data: dict, price_metrics: dict | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _report_progress(progress_callback, phase: str, done: int, total: int) -> None:
+    if not progress_callback:
+        return
+    try:
+        progress_callback(phase, done, total)
+    except TypeError:
+        progress_callback(done, total)
+
+
+def _any_short_price_filter(
+    *,
+    check_52w_positive: bool,
+    check_min_drawdown: bool,
+    check_max_drawdown: bool,
+    check_3m_neg_momentum: bool,
+    check_2m_neg_rel_momentum: bool,
+) -> bool:
+    return (
+        check_52w_positive
+        or check_min_drawdown
+        or check_max_drawdown
+        or check_3m_neg_momentum
+        or check_2m_neg_rel_momentum
+    )
+
+
+def _needs_short_fundamentals(
+    *,
+    pb_threshold: float | None,
+    loss_type: str | None,
+    check_revenue: bool,
+    check_eps: bool,
+) -> bool:
+    return pb_threshold is not None or loss_type is not None or check_revenue or check_eps
+
+
+def _screen_short_fundamentals(
+    universe: list[str],
+    *,
+    pb_threshold: float | None,
+    loss_type: str | None,
+    check_revenue: bool,
+    max_revenue_growth: float,
+    check_eps: bool,
+    max_eps_growth: float,
+    need_market_cap: bool = False,
+    progress_callback=None,
+) -> tuple[list[dict], list[str]]:
+    phase1_pass_data: list[dict] = []
+    failed_tickers: list[str] = []
+    done_count = 0
+    total = len(universe)
+    batches = [universe[i : i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
+
+    with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
+        for batch_idx, batch in enumerate(batches):
+            futures = {
+                pool.submit(
+                    screen_ticker,
+                    tk,
+                    pb_threshold,
+                    loss_type,
+                    check_revenue=check_revenue,
+                    max_revenue_growth=max_revenue_growth,
+                    check_eps=check_eps,
+                    max_eps_growth=max_eps_growth,
+                    need_market_cap=need_market_cap,
+                ): tk
+                for tk in batch
+            }
+            for future in as_completed(futures):
+                tk = futures[future]
+                try:
+                    passes, data = future.result()
+                    if passes:
+                        phase1_pass_data.append(data)
+                    elif "error" in data:
+                        failed_tickers.append(f"{tk}: {data.get('error') or 'data fetch failed'}")
+                except Exception as exc:
+                    failed_tickers.append(f"{tk}: {exc}")
+
+                done_count += 1
+                if done_count % 25 == 0 or done_count == total:
+                    _report_progress(progress_callback, "fundamentals", done_count, total)
+
+            if batch_idx < len(batches) - 1:
+                time.sleep(YF_BATCH_DELAY)
+
+    return phase1_pass_data, failed_tickers
+
+
 def get_data(
     tickers: list[str],
     pb_threshold: float | None = 3.0,
@@ -734,6 +938,19 @@ def get_data(
         return {"error": "No tickers provided"}
 
     total = len(universe)
+    any_price_filter = _any_short_price_filter(
+        check_52w_positive=check_52w_positive,
+        check_min_drawdown=check_min_drawdown,
+        check_max_drawdown=check_max_drawdown,
+        check_3m_neg_momentum=check_3m_neg_momentum,
+        check_2m_neg_rel_momentum=check_2m_neg_rel_momentum,
+    )
+    needs_fundamentals = _needs_short_fundamentals(
+        pb_threshold=pb_threshold,
+        loss_type=loss_type,
+        check_revenue=check_revenue,
+        check_eps=check_eps,
+    )
 
     # ------------------------------------------------------------------
     # Pre-warm yfinance session so the authentication crumb is fresh
@@ -741,51 +958,68 @@ def get_data(
     # t.info to silently return {} for every ticker, producing 0 results.
     # ------------------------------------------------------------------
     try:
-        yf.Ticker(universe[0]).fast_info.last_price  # noqa: B018
+        _throttled_yf_call(f"{universe[0]}.prewarm", lambda: yf.Ticker(universe[0]).fast_info.last_price)  # noqa: B018
     except Exception:
         LOGGER.debug("yfinance session pre-warm failed", exc_info=True)
 
     # ------------------------------------------------------------------
-    # Phase 1: Batched parallel yfinance fetch + P/B + loss filter
-    # Process in chunks with pauses between batches to avoid rate limits.
+    # Price prefilter: use one cheap batch chart pass before heavyweight
+    # quote-summary/statement calls when issuance does not need the full
+    # fundamental-pass universe for its quartile cutoff.
     # ------------------------------------------------------------------
-    phase1_pass_data: list[dict] = []
-    failed_tickers: list[str] = []
-    done_count = 0
-    batches = [universe[i : i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
+    price_metrics: dict[str, dict] = {}
+    phase3_pass_count: int | None = None
+    price_prefiltered = False
+    candidate_universe = list(universe)
 
-    with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
-        for batch_idx, batch in enumerate(batches):
-            futures = {
-                pool.submit(
-                    screen_ticker,
-                    tk,
-                    pb_threshold,
-                    loss_type,
-                    check_revenue=check_revenue,
-                    max_revenue_growth=max_revenue_growth,
-                    check_eps=check_eps,
-                    max_eps_growth=max_eps_growth,
-                ): tk
-                for tk in batch
+    if any_price_filter and not check_issuance:
+        _report_progress(progress_callback, "prices", 0, total)
+        price_pass_data, price_metrics = _apply_price_filters(
+            [{"ticker": tk} for tk in universe],
+            check_52w_positive=check_52w_positive,
+            check_min_drawdown=check_min_drawdown,
+            min_drawdown_pct=min_drawdown_pct,
+            check_max_drawdown=check_max_drawdown,
+            max_drawdown_pct=max_drawdown_pct,
+            check_3m_neg_momentum=check_3m_neg_momentum,
+            check_2m_neg_rel_momentum=check_2m_neg_rel_momentum,
+            benchmark_ticker=benchmark_ticker,
+        )
+        price_prefiltered = True
+        phase3_pass_count = len(price_pass_data)
+        candidate_universe = [d["ticker"] for d in price_pass_data]
+        _report_progress(progress_callback, "prices", phase3_pass_count, total)
+
+        if not needs_fundamentals:
+            final_rows = [
+                _build_result_row({"ticker": d["ticker"]}, price_metrics=price_metrics.get(d["ticker"]))
+                for d in price_pass_data
+            ]
+            results_df = pd.DataFrame(final_rows)
+            return {
+                "results_df": results_df,
+                "failed_tickers": [],
+                "phase1_count": total,
+                "phase1_pass_count": None,
+                "phase3_pass_count": phase3_pass_count,
+                "final_count": len(results_df),
             }
-            for future in as_completed(futures):
-                tk = futures[future]
-                try:
-                    passes, data = future.result()
-                    if passes:
-                        phase1_pass_data.append(data)
-                    elif "error" in data:
-                        failed_tickers.append(tk)
-                except Exception:
-                    failed_tickers.append(tk)
 
-                done_count += 1
-                if progress_callback and (done_count % 25 == 0 or done_count == total):
-                    progress_callback(done_count, total)
-
-            if batch_idx < len(batches) - 1:
-                time.sleep(YF_BATCH_DELAY)
+    # ------------------------------------------------------------------
+    # Phase 1: throttled yfinance fundamentals fetch + P/B + loss filter.
+    # ------------------------------------------------------------------
+    _report_progress(progress_callback, "fundamentals", 0, len(candidate_universe))
+    phase1_pass_data, failed_tickers = _screen_short_fundamentals(
+        candidate_universe,
+        pb_threshold=pb_threshold,
+        loss_type=loss_type,
+        check_revenue=check_revenue,
+        max_revenue_growth=max_revenue_growth,
+        check_eps=check_eps,
+        max_eps_growth=max_eps_growth,
+        need_market_cap=check_issuance,
+        progress_callback=progress_callback,
+    )
 
     phase1_pass_count = len(phase1_pass_data)
 
@@ -795,6 +1029,7 @@ def get_data(
             "failed_tickers": failed_tickers,
             "phase1_count": total,
             "phase1_pass_count": 0,
+            **({"phase3_pass_count": phase3_pass_count} if phase3_pass_count is not None else {}),
             "final_count": 0,
         }
 
@@ -809,11 +1044,13 @@ def get_data(
     if not check_issuance:
         phase2_pass_data = list(phase1_pass_data)
     else:
+        _report_progress(progress_callback, "issuance", 0, len(phase1_pass_data))
         phase2_pass_data = []
         issuance_records: list[dict] = []
-        for data in phase1_pass_data:
+        for idx, data in enumerate(phase1_pass_data, start=1):
             sec = fetch_sec_issuance(data["ticker"])
             if "error" in sec:
+                _report_progress(progress_callback, "issuance", idx, len(phase1_pass_data))
                 continue
 
             net = sec.get("net_issuance", np.nan)
@@ -824,9 +1061,11 @@ def get_data(
                 or (isinstance(mktcap, float) and np.isnan(mktcap))
                 or mktcap <= 0
             ):
+                _report_progress(progress_callback, "issuance", idx, len(phase1_pass_data))
                 continue
 
             issuance_records.append({"data": data, "net": net, "pct": net / mktcap})
+            _report_progress(progress_callback, "issuance", idx, len(phase1_pass_data))
 
         if issuance_records:
             net_values = [r["net"] for r in issuance_records]
@@ -839,22 +1078,8 @@ def get_data(
                         "pct": rec["pct"],
                     }
 
-    # ------------------------------------------------------------------
-    # Phase 3 (optional): Price-based filters
-    # Runs only when at least one price filter is enabled.
-    # ------------------------------------------------------------------
-    any_price_filter = (
-        check_52w_positive
-        or check_min_drawdown
-        or check_max_drawdown
-        or check_3m_neg_momentum
-        or check_2m_neg_rel_momentum
-    )
-
-    price_metrics: dict[str, dict] = {}
-    phase3_pass_count: int | None = None
-
-    if any_price_filter and phase2_pass_data:
+    if any_price_filter and not price_prefiltered and phase2_pass_data:
+        _report_progress(progress_callback, "prices", 0, len(phase2_pass_data))
         phase2_pass_data, price_metrics = _apply_price_filters(
             phase2_pass_data,
             check_52w_positive=check_52w_positive,
@@ -867,6 +1092,7 @@ def get_data(
             benchmark_ticker=benchmark_ticker,
         )
         phase3_pass_count = len(phase2_pass_data)
+        _report_progress(progress_callback, "prices", phase3_pass_count, len(phase1_pass_data))
 
     # ------------------------------------------------------------------
     # Build final result rows

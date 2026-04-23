@@ -150,7 +150,7 @@ export function Financials() {
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
 
   const { data: rawData, isFetching, isError, error } = useQuery({
-    queryKey: ["financials", submittedTicker],
+    queryKey: ["financials-v9", submittedTicker],
     queryFn: () => runFinancials({ ticker: submittedTicker! }),
     enabled: Boolean(submittedTicker),
     staleTime: Infinity,
