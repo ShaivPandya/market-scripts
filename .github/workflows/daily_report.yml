@@ -2,10 +2,10 @@ name: Daily Portfolio Risk Report
 
 on:
   schedule:
-    # Weekdays 13:15 UTC = 09:15 ET during EDT
-    # Weekdays 14:15 UTC = 09:15 ET during EST
-    - cron: "15 13 * * 1-5"
-    - cron: "15 14 * * 1-5"
+    # Weekdays 13:45 UTC = 09:45 ET during EDT
+    # Weekdays 14:45 UTC = 09:45 ET during EST
+    - cron: "45 13 * * 1-5"
+    - cron: "45 14 * * 1-5"
   workflow_dispatch:
 
 permissions:
