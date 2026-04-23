@@ -2,8 +2,9 @@
 Commodity Proxy Screener.
 
 Ranks commodities with a proxy-based composite built from orthogonal
-technical and curve-structure factors. Market stress is shown as a shared
-overlay, not as a ranked input.
+technical and market-structure factors. Market stress is shown as a shared
+overlay, not as a ranked input. Real commodity-specific fundamentals are
+reported separately and are intentionally unavailable in this phase.
 
 Entry point:
     build_commodity_research() -> dict
@@ -22,7 +23,7 @@ from commodities.commodities_dashboard import COMMODITIES, fetch_commodities_dat
 
 logger = logging.getLogger("api.commodity_research")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 OWN_HISTORY_MIN_DAYS = 730
 MIN_PERCENTILE_SAMPLES = 60
 MIN_RELATIVE_STRENGTH_PEERS = 3
@@ -99,6 +100,17 @@ CURVE_CODES: dict[str, str] = {
     "Brent Crude Oil": "BZ",
     "Natural Gas": "NG",
     "Dutch TTF Gas": "TTF",
+}
+
+FUNDAMENTAL_COVERAGE_NOTES: dict[str, str] = {
+    "energy": (
+        "No real energy fundamental inputs are integrated yet. Inventory, storage, "
+        "refining, trade-flow, and physical balance coverage still needs to be added."
+    ),
+    "metals": (
+        "No real metals fundamental inputs are integrated yet. Inventory, production, "
+        "end-demand, and commodity-specific flow data still needs to be added."
+    ),
 }
 
 
@@ -465,45 +477,45 @@ def _compute_composite(
     return round(composite, 1), round(coverage_ratio, 4), rounded_weights, round(observed, 1)
 
 
-def assign_direction(composite_score: float | None, trend_score: float | None) -> str:
-    if composite_score is None or trend_score is None:
-        return "watchlist"
-    if composite_score >= 60.0 and trend_score >= 55.0:
-        return "long"
-    if composite_score <= 40.0 and trend_score <= 45.0:
-        return "short"
-    return "watchlist"
+def assign_bias(proxy_score: float | None, trend_score: float | None) -> str:
+    if proxy_score is None or trend_score is None:
+        return "neutral"
+    if proxy_score >= 60.0 and trend_score >= 55.0:
+        return "bullish"
+    if proxy_score <= 40.0 and trend_score <= 45.0:
+        return "bearish"
+    return "neutral"
 
 
-def assign_confidence(
-    composite_score: float | None,
-    coverage_ratio: float,
+def assign_signal_conviction(
+    proxy_score: float | None,
+    proxy_coverage_ratio: float,
     data_quality: dict[str, str],
     curve_quality: str,
 ) -> str:
-    if composite_score is None:
+    if proxy_score is None:
         return "low"
 
-    distance = abs(composite_score - 50.0)
+    distance = abs(proxy_score - 50.0)
     quality = _quality_ratio(data_quality)
 
-    if distance >= 15.0 and coverage_ratio >= 0.90 and quality >= 0.85:
-        confidence = "high"
-    elif distance >= 8.0 and coverage_ratio >= 0.70 and quality >= 0.60:
-        confidence = "medium"
+    if distance >= 15.0 and proxy_coverage_ratio >= 0.90 and quality >= 0.85:
+        signal_conviction = "high"
+    elif distance >= 8.0 and proxy_coverage_ratio >= 0.70 and quality >= 0.60:
+        signal_conviction = "medium"
     else:
-        confidence = "low"
+        signal_conviction = "low"
 
-    if curve_quality == "degraded" and confidence == "high":
+    if curve_quality == "degraded" and signal_conviction == "high":
         return "medium"
-    return confidence
+    return signal_conviction
 
 
 def _generate_rationale(
     sector: str,
     returns: dict[str, float | None],
     trend_label: str,
-    direction: str,
+    bias: str,
     curve_analysis: dict[str, Any] | None,
     relative_strength_score: float | None,
     macro_overlay: dict[str, Any],
@@ -535,10 +547,26 @@ def _generate_rationale(
             f"Market stress overlay is {macro_overlay['label']} with {macro_overlay.get('forward_outlook') or 'n/a'} outlook; overlay is informational only"
         )
 
-    if direction != "watchlist":
-        bullets.append(f"Composite proxy score supports a {direction} bias")
+    if bias != "neutral":
+        bullets.append(f"Current proxy signal mix supports a {bias} bias")
 
     return bullets[:4]
+
+
+def _build_fundamental_inputs(sector: str) -> dict[str, Any]:
+    return {
+        "coverage_status": "unavailable",
+        "coverage_note": FUNDAMENTAL_COVERAGE_NOTES.get(
+            sector,
+            "No real commodity-specific fundamental inputs are integrated yet for this family.",
+        ),
+        "available_inputs": [],
+    }
+
+
+def _build_fundamental_coverage_summary() -> dict[str, dict[str, Any]]:
+    sectors = sorted({sector for sector in SECTOR_MAP.values() if sector != "other"})
+    return {sector: _build_fundamental_inputs(sector) for sector in sectors}
 
 
 def _build_price_series(series: pd.Series | None, days_back: int = 90) -> list[dict[str, Any]]:
@@ -669,7 +697,7 @@ def build_commodity_research() -> dict[str, Any]:
                 if name_sector == sector:
                     relative_strength_map.setdefault(name, None)
 
-    ideas: list[dict[str, Any]] = []
+    commodities: list[dict[str, Any]] = []
 
     for name, ticker in COMMODITIES.items():
         sector = SECTOR_MAP.get(name, "other")
@@ -714,12 +742,12 @@ def build_commodity_research() -> dict[str, Any]:
         if curve_quality in ("missing", "error"):
             score_for_composite["curve_structure"] = None
 
-        composite_score, coverage_ratio, effective_weights, observed_composite = _compute_composite(
+        proxy_score, proxy_coverage_ratio, effective_weights, observed_proxy_score = _compute_composite(
             score_for_composite,
             eligible_factor_keys,
         )
-        direction = assign_direction(composite_score, trend_score)
-        confidence = assign_confidence(composite_score, coverage_ratio, data_quality, curve_quality)
+        bias = assign_bias(proxy_score, trend_score)
+        signal_conviction = assign_signal_conviction(proxy_score, proxy_coverage_ratio, data_quality, curve_quality)
 
         factor_quality = {
             "trend": data_quality["prices_daily"] if trend_score is not None else "missing",
@@ -738,13 +766,13 @@ def build_commodity_research() -> dict[str, Any]:
             sector=sector,
             returns=returns,
             trend_label=trend_label,
-            direction=direction,
+            bias=bias,
             curve_analysis=curve_analysis,
             relative_strength_score=relative_strength_score,
             macro_overlay=macro_overlay,
         )
 
-        ideas.append(
+        commodities.append(
             {
                 "commodity": name,
                 "ticker": ticker,
@@ -755,35 +783,55 @@ def build_commodity_research() -> dict[str, Any]:
                     "3m": round(returns["3m"], 2) if returns["3m"] is not None else None,
                     "12m": round(returns["12m"], 2) if returns["12m"] is not None else None,
                 },
-                "factors": factors,
-                "composite_score": composite_score,
-                "observed_composite_score": observed_composite,
-                "coverage_ratio": coverage_ratio,
-                "direction": direction,
-                "confidence": confidence,
-                "rationale": rationale,
-                "data_quality": data_quality,
                 "price_series": _build_price_series(daily_s, days_back=90),
+                "proxy_signals": {
+                    "proxy_score": proxy_score,
+                    "observed_proxy_score": observed_proxy_score,
+                    "proxy_coverage_ratio": proxy_coverage_ratio,
+                    "bias": bias,
+                    "signal_conviction": signal_conviction,
+                    "factors": factors,
+                    "rationale": rationale,
+                    "data_quality": data_quality,
+                },
+                "fundamental_inputs": _build_fundamental_inputs(sector),
             }
         )
 
-    ideas.sort(key=lambda item: item["composite_score"] if item["composite_score"] is not None else -1.0, reverse=True)
+    commodities.sort(
+        key=lambda item: (
+            item["proxy_signals"]["proxy_score"] if item["proxy_signals"]["proxy_score"] is not None else -1.0
+        ),
+        reverse=True,
+    )
 
-    longs = [idea for idea in ideas if idea["direction"] == "long" and idea["composite_score"] is not None]
-    shorts = [idea for idea in ideas if idea["direction"] == "short" and idea["composite_score"] is not None]
-    top_long = {"commodity": longs[0]["commodity"], "score": longs[0]["composite_score"]} if longs else None
-    worst_short = min(shorts, key=lambda idea: idea["composite_score"]) if shorts else None
-    top_short = (
-        {"commodity": worst_short["commodity"], "score": worst_short["composite_score"]}
-        if worst_short is not None
+    bullish = [
+        item
+        for item in commodities
+        if item["proxy_signals"]["bias"] == "bullish" and item["proxy_signals"]["proxy_score"] is not None
+    ]
+    bearish = [
+        item
+        for item in commodities
+        if item["proxy_signals"]["bias"] == "bearish" and item["proxy_signals"]["proxy_score"] is not None
+    ]
+    strongest_bullish_bias = (
+        {"commodity": bullish[0]["commodity"], "proxy_score": bullish[0]["proxy_signals"]["proxy_score"]}
+        if bullish
+        else None
+    )
+    weakest_bearish = min(bearish, key=lambda item: item["proxy_signals"]["proxy_score"]) if bearish else None
+    strongest_bearish_bias = (
+        {"commodity": weakest_bearish["commodity"], "proxy_score": weakest_bearish["proxy_signals"]["proxy_score"]}
+        if weakest_bearish is not None
         else None
     )
 
     ok_count = 0
     degraded_count = 0
     missing_count = 0
-    for idea in ideas:
-        statuses = [status for status in idea["data_quality"].values()]
+    for item in commodities:
+        statuses = [status for status in item["proxy_signals"]["data_quality"].values()]
         if any(status in ("missing", "error") for status in statuses):
             missing_count += 1
         elif any(status in ("degraded", "stale") for status in statuses):
@@ -800,22 +848,36 @@ def build_commodity_research() -> dict[str, Any]:
         "status": overall_status,
         "timestamp": datetime.now().isoformat(),
         "methodology": {
-            "name": "Commodity Proxy Screener",
-            "note": (
-                "Rankings combine trend, family-relative strength, acceleration, and front-curve structure. "
-                "Market stress is shown as an informational overlay and is not part of the ranked composite."
-            ),
-            "ranking_mode": "proxy_rank_v2",
+            "proxy_signals": {
+                "name": "Commodity Proxy Screener",
+                "note": (
+                    "Rankings combine trend, family-relative strength, acceleration, and forward-curve structure "
+                    "where available. Market stress is shown separately as an informational overlay."
+                ),
+                "limitations": (
+                    "This is a proxy/technical ranking, not a full commodity fundamentals engine. Proxy scores do "
+                    "not imply verified supply-demand or family-level fundamental coverage."
+                ),
+                "ranking_mode": "proxy_rank_v3",
+            },
+            "fundamental_inputs": {
+                "coverage_policy": "Only real commodity-specific fundamental inputs are shown in this section.",
+                "current_status": (
+                    "No real commodity-specific fundamental inputs are currently integrated for the tracked "
+                    "commodity families, so no combined proxy-plus-fundamental score is shown."
+                ),
+            },
         },
         "macro_overlay": macro_overlay,
-        "ideas": ideas,
+        "commodities": commodities,
         "summary": {
-            "top_long": top_long,
-            "top_short": top_short,
-            "data_health": {
+            "strongest_bullish_bias": strongest_bullish_bias,
+            "strongest_bearish_bias": strongest_bearish_bias,
+            "proxy_data_health": {
                 "ok": ok_count,
                 "degraded": degraded_count,
                 "missing": missing_count,
             },
+            "fundamental_coverage": _build_fundamental_coverage_summary(),
         },
     }

@@ -59,7 +59,7 @@ def _curve_payload(
     }
 
 
-def _fake_fetch_all_payload():
+def _fake_fetch_all_payload(*, macro_status: str = "ok", degraded_proxy: bool = True):
     from commodities.commodities_dashboard import COMMODITIES
 
     specs = {
@@ -82,26 +82,56 @@ def _fake_fetch_all_payload():
         daily_prices[name] = daily
         monthly_prices[name] = _make_monthly_series(daily)
 
-    curves = {
-        "WTI Crude Oil": _curve_payload(valid_contracts=12, warning_count=0),
-        "Brent Crude Oil": _curve_payload(
-            valid_contracts=7,
-            warning_count=1,
-            prompt_to_m3=1.2,
-            prompt_to_m6=2.4,
-            prompt_to_m12=None,
-            shape="Contango",
-        ),
-        "Natural Gas": _curve_payload(
-            valid_contracts=10, warning_count=0, prompt_to_m3=-1.0, prompt_to_m6=-1.8, prompt_to_m12=-2.5
-        ),
-        "Dutch TTF Gas": _curve_payload(
-            valid_contracts=5, warning_count=0, prompt_to_m3=None, prompt_to_m6=None, prompt_to_m12=None, shape="N/A"
-        ),
-    }
+    if degraded_proxy:
+        curves = {
+            "WTI Crude Oil": _curve_payload(valid_contracts=12, warning_count=0),
+            "Brent Crude Oil": _curve_payload(
+                valid_contracts=7,
+                warning_count=1,
+                prompt_to_m3=1.2,
+                prompt_to_m6=2.4,
+                prompt_to_m12=None,
+                shape="Contango",
+            ),
+            "Natural Gas": _curve_payload(
+                valid_contracts=10,
+                warning_count=0,
+                prompt_to_m3=-1.0,
+                prompt_to_m6=-1.8,
+                prompt_to_m12=-2.5,
+            ),
+            "Dutch TTF Gas": _curve_payload(
+                valid_contracts=5,
+                warning_count=0,
+                prompt_to_m3=None,
+                prompt_to_m6=None,
+                prompt_to_m12=None,
+                shape="N/A",
+            ),
+        }
+    else:
+        curves = {
+            "WTI Crude Oil": _curve_payload(valid_contracts=12, warning_count=0),
+            "Brent Crude Oil": _curve_payload(valid_contracts=10, warning_count=0),
+            "Natural Gas": _curve_payload(
+                valid_contracts=10,
+                warning_count=0,
+                prompt_to_m3=-1.0,
+                prompt_to_m6=-1.8,
+                prompt_to_m12=-2.5,
+            ),
+            "Dutch TTF Gas": _curve_payload(
+                valid_contracts=10,
+                warning_count=0,
+                prompt_to_m3=-0.8,
+                prompt_to_m6=-1.4,
+                prompt_to_m12=-2.0,
+                shape="Backwardation",
+            ),
+        }
 
     macro = {
-        "status": "degraded",
+        "status": macro_status,
         "as_of": pd.Timestamp.now().normalize().date().isoformat(),
         "regime": {
             "label": "risk-off",
@@ -182,10 +212,10 @@ def test_curve_structure_score_prefers_backwardation():
     assert contango < 50.0
 
 
-def test_confidence_ignores_na_sources_and_macro_overlay():
-    from commodities.commodity_research import assign_confidence
+def test_signal_conviction_ignores_na_sources_and_macro_overlay():
+    from commodities.commodity_research import assign_signal_conviction
 
-    confidence = assign_confidence(
+    signal_conviction = assign_signal_conviction(
         68.0,
         1.0,
         {
@@ -197,13 +227,13 @@ def test_confidence_ignores_na_sources_and_macro_overlay():
         "n/a",
     )
 
-    assert confidence == "high"
+    assert signal_conviction == "high"
 
 
-def test_composite_shrinks_toward_neutral_when_coverage_is_missing():
+def test_proxy_score_shrinks_toward_neutral_when_coverage_is_missing():
     from commodities.commodity_research import _compute_composite
 
-    composite, coverage_ratio, effective_weights, observed = _compute_composite(
+    proxy_score, proxy_coverage_ratio, effective_weights, observed_proxy_score = _compute_composite(
         {
             "trend": 80.0,
             "relative_strength": 80.0,
@@ -214,91 +244,145 @@ def test_composite_shrinks_toward_neutral_when_coverage_is_missing():
         ["trend", "relative_strength", "acceleration"],
     )
 
-    assert observed == 80.0
-    assert coverage_ratio < 1.0
-    assert composite is not None
-    assert composite < observed
+    assert observed_proxy_score == 80.0
+    assert proxy_coverage_ratio < 1.0
+    assert proxy_score is not None
+    assert proxy_score < observed_proxy_score
     assert "market_stress_overlay" not in effective_weights
 
 
-def test_build_research_handles_curve_quality_and_overlay(monkeypatch):
+def test_build_research_splits_proxy_and_fundamental_sections(monkeypatch):
     import commodities.commodity_research as cr_mod
 
     monkeypatch.setattr(cr_mod, "_fetch_all", _fake_fetch_all_payload)
 
     data = cr_mod.build_commodity_research()
-    ideas = {idea["commodity"]: idea for idea in data["ideas"]}
+    commodities = {item["commodity"]: item for item in data["commodities"]}
 
-    gold = ideas["Gold"]
-    wti = ideas["WTI Crude Oil"]
-    brent = ideas["Brent Crude Oil"]
-    ttf = ideas["Dutch TTF Gas"]
+    gold = commodities["Gold"]
+    wti = commodities["WTI Crude Oil"]
+    brent = commodities["Brent Crude Oil"]
+    ttf = commodities["Dutch TTF Gas"]
 
-    assert data["schema_version"] == 2
-    assert data["methodology"]["name"] == "Commodity Proxy Screener"
-    assert data["macro_overlay"]["status"] == "degraded"
-    assert "strongest_tailwind" not in data["summary"]
-    assert "strongest_headwind" not in data["summary"]
+    assert data["schema_version"] == 3
+    assert data["status"] == "degraded"
+    assert "ideas" not in data
+    assert data["methodology"]["proxy_signals"]["name"] == "Commodity Proxy Screener"
+    assert "limitations" in data["methodology"]["proxy_signals"]
+    assert "current_status" in data["methodology"]["fundamental_inputs"]
 
-    assert gold["data_quality"]["curve"] == "n/a"
-    assert gold["factors"]["curve_structure"]["quality"] == "n/a"
+    assert "composite_score" not in gold
+    assert "confidence" not in gold
+    assert gold["proxy_signals"]["bias"] in ("bullish", "bearish", "neutral")
+    assert gold["proxy_signals"]["signal_conviction"] in ("high", "medium", "low")
+    assert gold["fundamental_inputs"]["coverage_status"] == "unavailable"
+    assert gold["fundamental_inputs"]["available_inputs"] == []
 
-    assert wti["factors"]["curve_structure"]["quality"] == "ok"
-    assert wti["factors"]["curve_structure"]["included_in_composite"] is True
+    assert gold["proxy_signals"]["data_quality"]["curve"] == "n/a"
+    assert gold["proxy_signals"]["factors"]["curve_structure"]["quality"] == "n/a"
 
-    assert brent["factors"]["curve_structure"]["quality"] == "degraded"
-    assert brent["confidence"] in ("medium", "low")
+    assert wti["proxy_signals"]["factors"]["curve_structure"]["quality"] == "ok"
+    assert wti["proxy_signals"]["factors"]["curve_structure"]["included_in_composite"] is True
 
-    assert ttf["factors"]["curve_structure"]["quality"] == "missing"
-    assert ttf["factors"]["curve_structure"]["included_in_composite"] is False
+    assert brent["proxy_signals"]["factors"]["curve_structure"]["quality"] == "degraded"
+    assert brent["proxy_signals"]["signal_conviction"] in ("medium", "low")
 
-    assert wti["factors"]["market_stress_overlay"]["included_in_composite"] is False
-    assert wti["factors"]["market_stress_overlay"]["effective_weight"] == 0.0
+    assert ttf["proxy_signals"]["factors"]["curve_structure"]["quality"] == "missing"
+    assert ttf["proxy_signals"]["factors"]["curve_structure"]["included_in_composite"] is False
+
+    assert wti["proxy_signals"]["factors"]["market_stress_overlay"]["included_in_composite"] is False
+    assert wti["proxy_signals"]["factors"]["market_stress_overlay"]["effective_weight"] == 0.0
+
+    assert data["summary"]["strongest_bullish_bias"] is not None
+    assert "top_long" not in data["summary"]
+    assert "top_short" not in data["summary"]
+    assert "data_health" not in data["summary"]
+    assert data["summary"]["fundamental_coverage"]["energy"]["coverage_status"] == "unavailable"
+    assert data["summary"]["fundamental_coverage"]["metals"]["coverage_status"] == "unavailable"
+
+    assert all(item["fundamental_inputs"]["coverage_status"] == "unavailable" for item in data["commodities"])
 
 
-def test_router_payload_uses_new_schema(auth_client, monkeypatch):
+def test_status_is_not_degraded_solely_for_unavailable_fundamentals(monkeypatch):
+    import commodities.commodity_research as cr_mod
+
+    monkeypatch.setattr(cr_mod, "_fetch_all", lambda: _fake_fetch_all_payload(degraded_proxy=False))
+
+    data = cr_mod.build_commodity_research()
+
+    assert data["status"] == "ok"
+    assert all(item["fundamental_inputs"]["coverage_status"] == "unavailable" for item in data["commodities"])
+
+
+def test_router_payload_uses_v3_schema(auth_client, monkeypatch):
     import api.routers.commodity_research as router_mod
 
     def fake_build():
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "status": "ok",
             "timestamp": "2026-03-20T12:00:00",
             "methodology": {
-                "name": "Commodity Proxy Screener",
-                "note": "Test note",
-                "ranking_mode": "proxy_rank_v2",
+                "proxy_signals": {
+                    "name": "Commodity Proxy Screener",
+                    "note": "Test note",
+                    "limitations": "Proxy-only test payload",
+                    "ranking_mode": "proxy_rank_v3",
+                },
+                "fundamental_inputs": {
+                    "coverage_policy": "Only real fundamentals are shown.",
+                    "current_status": "No real commodity-specific inputs are currently available.",
+                },
             },
             "macro_overlay": {
                 "label": "risk-off",
                 "score": 72.0,
                 "forward_outlook": "opportunity",
                 "as_of": "2026-03-20",
-                "status": "degraded",
-                "quality": "degraded",
+                "status": "ok",
+                "quality": "ok",
             },
-            "ideas": [
+            "commodities": [
                 {
                     "commodity": "Gold",
                     "ticker": "GC=F",
                     "sector": "metals",
                     "spot_price": 2650.0,
                     "returns": {"1m": 3.2, "3m": 8.1, "12m": 22.5},
-                    "factors": {},
-                    "composite_score": 61.8,
-                    "observed_composite_score": 61.8,
-                    "coverage_ratio": 1.0,
-                    "direction": "long",
-                    "confidence": "medium",
-                    "rationale": ["Test bullet"],
-                    "data_quality": {"prices_daily": "ok", "curve": "n/a"},
                     "price_series": [],
+                    "proxy_signals": {
+                        "proxy_score": 61.8,
+                        "observed_proxy_score": 61.8,
+                        "proxy_coverage_ratio": 1.0,
+                        "bias": "bullish",
+                        "signal_conviction": "medium",
+                        "factors": {},
+                        "rationale": ["Test bullet"],
+                        "data_quality": {"prices_daily": "ok", "curve": "n/a"},
+                    },
+                    "fundamental_inputs": {
+                        "coverage_status": "unavailable",
+                        "coverage_note": "No real fundamental inputs yet.",
+                        "available_inputs": [],
+                    },
                 }
             ],
             "summary": {
-                "top_long": {"commodity": "Gold", "score": 61.8},
-                "top_short": None,
-                "data_health": {"ok": 1, "degraded": 0, "missing": 0},
+                "strongest_bullish_bias": {"commodity": "Gold", "proxy_score": 61.8},
+                "strongest_bearish_bias": None,
+                "proxy_data_health": {"ok": 1, "degraded": 0, "missing": 0},
+                "fundamental_coverage": {
+                    "metals": {
+                        "coverage_status": "unavailable",
+                        "coverage_note": "No real fundamental inputs yet.",
+                        "available_inputs": [],
+                    },
+                    "energy": {
+                        "coverage_status": "unavailable",
+                        "coverage_note": "No real fundamental inputs yet.",
+                        "available_inputs": [],
+                    },
+                },
             },
         }
 
@@ -313,8 +397,13 @@ def test_router_payload_uses_new_schema(auth_client, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
 
-    assert data["schema_version"] == 2
-    assert "macro_overlay" in data
-    assert "methodology" in data
-    assert "strongest_tailwind" not in data["summary"]
-    assert "strongest_headwind" not in data["summary"]
+    assert data["schema_version"] == 3
+    assert "commodities" in data
+    assert "ideas" not in data
+    assert "proxy_signals" in data["methodology"]
+    assert "fundamental_inputs" in data["methodology"]
+    assert "strongest_bullish_bias" in data["summary"]
+    assert "top_long" not in data["summary"]
+    assert "top_short" not in data["summary"]
+    assert "composite_score" not in data["commodities"][0]
+    assert "confidence" not in data["commodities"][0]

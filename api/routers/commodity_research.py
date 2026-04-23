@@ -9,7 +9,7 @@ router = APIRouter()
 
 @router.get("/commodity-research")
 def get_commodity_research():
-    key = "commodity_research"
+    key = "commodity_research:v3"
     cached = get_cached(short_cache, key)
     if cached is not None:
         return cached
