@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 import math
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
@@ -626,38 +625,15 @@ def _fetch_macro() -> dict | None:
         return None
 
 
-def _fetch_prices_sequential() -> tuple[dict | None, dict | None]:
-    # Serialize daily + monthly to avoid nested concurrency with yfinance's
-    # internal threadpool (threads=True in fetch_commodities_data), which
-    # otherwise corrupts per-ticker results when fired in parallel.
-    return _fetch_daily_prices(), _fetch_monthly_prices()
-
-
 def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None]:
-    daily: dict | None = None
-    monthly: dict | None = None
-    curves: dict[str, dict] = {}
-    macro: dict | None = None
-
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures: dict[Future[Any], str] = {
-            pool.submit(_fetch_prices_sequential): "prices",
-            pool.submit(_fetch_curves): "curves",
-            pool.submit(_fetch_macro): "macro",
-        }
-        for fut in as_completed(futures, timeout=180):
-            key = futures[fut]
-            try:
-                result = fut.result()
-                if key == "prices":
-                    daily, monthly = result
-                elif key == "curves":
-                    curves = result or {}
-                elif key == "macro":
-                    macro = result
-            except Exception:
-                logger.exception("fetch failed for %s", key)
-
+    # All four fetches are serialized. Prices, curves, and macro all hit
+    # yfinance, which maintains a single shared crumb/session globally; running
+    # them in parallel produces "HTTP 401 Invalid Crumb" failures that drop
+    # random subsets of tickers silently.
+    daily = _fetch_daily_prices()
+    monthly = _fetch_monthly_prices()
+    curves = _fetch_curves()
+    macro = _fetch_macro()
     return daily, monthly, curves, macro
 
 
