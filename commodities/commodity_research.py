@@ -1,10 +1,9 @@
 """
-Commodity Research — proxy-based idea scoring engine.
+Commodity Proxy Screener.
 
-Ranks each commodity in the universe by a deterministic composite score
-built from momentum, curve shape, macro regime, relative performance,
-and price velocity.  All supply/demand signals are heuristic proxies
-and are labelled accordingly.
+Ranks commodities with a proxy-based composite built from orthogonal
+technical and curve-structure factors. Market stress is shown as a shared
+overlay, not as a ranked input.
 
 Entry point:
     build_commodity_research() -> dict
@@ -15,7 +14,7 @@ from __future__ import annotations
 import logging
 import math
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -24,15 +23,62 @@ from commodities.commodities_dashboard import COMMODITIES, fetch_commodities_dat
 
 logger = logging.getLogger("api.commodity_research")
 
-# -- Factor weights (must sum to 1.0) ----------------------------------------
-
-FACTOR_WEIGHTS: dict[str, float] = {
-    "momentum": 0.30,
-    "relative_value": 0.20,
-    "macro": 0.20,
-    "supply_demand": 0.20,
-    "velocity": 0.10,
+SCHEMA_VERSION = 2
+OWN_HISTORY_MIN_DAYS = 730
+MIN_PERCENTILE_SAMPLES = 60
+MIN_RELATIVE_STRENGTH_PEERS = 3
+MIN_VOL_OBSERVATIONS = 40
+DAILY_STALE_DAYS = 5
+MONTHLY_STALE_DAYS = 45
+CURVE_STALE_DAYS = 5
+MACRO_STALE_DAYS = 7
+QUALITY_SCORES = {
+    "ok": 1.0,
+    "degraded": 0.5,
+    "stale": 0.5,
+    "missing": 0.0,
+    "error": 0.0,
 }
+
+FACTOR_CONFIG: dict[str, dict[str, Any]] = {
+    "trend": {
+        "configured_weight": 0.40,
+        "display_label": "Trend",
+        "category": "technical",
+        "source": "own-history",
+        "ranked": True,
+    },
+    "relative_strength": {
+        "configured_weight": 0.30,
+        "display_label": "Relative Strength",
+        "category": "technical",
+        "source": "family rank",
+        "ranked": True,
+    },
+    "acceleration": {
+        "configured_weight": 0.15,
+        "display_label": "Acceleration",
+        "category": "technical",
+        "source": "own-history",
+        "ranked": True,
+    },
+    "curve_structure": {
+        "configured_weight": 0.15,
+        "display_label": "Curve Structure",
+        "category": "market_structure",
+        "source": "curve",
+        "ranked": True,
+    },
+    "market_stress_overlay": {
+        "configured_weight": 0.00,
+        "display_label": "Market Stress Overlay",
+        "category": "overlay",
+        "source": "overlay",
+        "ranked": False,
+    },
+}
+
+RANK_FACTOR_KEYS = tuple(key for key, meta in FACTOR_CONFIG.items() if meta["ranked"])
 
 # Commodity -> sector classification
 SECTOR_MAP: dict[str, str] = {
@@ -56,11 +102,6 @@ CURVE_CODES: dict[str, str] = {
     "Dutch TTF Gas": "TTF",
 }
 
-STALE_THRESHOLD_DAYS = 7
-
-
-# -- Utility helpers ----------------------------------------------------------
-
 
 def clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
@@ -78,36 +119,470 @@ def _safe_float(v: Any) -> float | None:
         return None
 
 
+def _safe_int(v: Any) -> int | None:
+    try:
+        if v is None:
+            return None
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_series(series: pd.Series | None) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype=float)
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if s.empty:
+        return pd.Series(dtype=float)
+    idx = pd.to_datetime(s.index, errors="coerce")
+    s.index = idx
+    s = s[~s.index.isna()].sort_index()
+    if s.empty:
+        return pd.Series(dtype=float)
+    if getattr(s.index, "tz", None) is not None:
+        s.index = s.index.tz_localize(None)
+    return s
+
+
+def _series_span_days(series: pd.Series | None) -> int:
+    s = _normalize_series(series)
+    if len(s) < 2:
+        return 0
+    return int((s.index[-1] - s.index[0]).days)
+
+
+def _age_days_from_iso(value: Any) -> int | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is not None:
+            ts = ts.tz_localize(None)
+        return int((pd.Timestamp(datetime.now()) - ts).days)
+    except Exception:
+        return None
+
+
+def _check_series_quality(series: pd.Series | None, stale_days: int) -> str:
+    s = _normalize_series(series)
+    if s.empty:
+        return "missing"
+    try:
+        age = int((pd.Timestamp(datetime.now()) - pd.Timestamp(s.index[-1])).days)
+        return "stale" if age > stale_days else "ok"
+    except Exception:
+        return "missing"
+
+
 def _date_return(series: pd.Series | None, days_back: int) -> float | None:
     """Return over approximately *days_back* calendar days, date-based."""
-    if series is None or len(series) < 2:
+    s = _normalize_series(series)
+    if len(s) < 2:
         return None
-    end_val = _safe_float(series.iloc[-1])
+    end_val = _safe_float(s.iloc[-1])
     if end_val is None or end_val == 0:
         return None
 
-    target = series.index[-1] - pd.Timedelta(days=days_back)
-    earlier = series[series.index <= target]
+    target = s.index[-1] - pd.Timedelta(days=days_back)
+    earlier = s[s.index <= target]
     if earlier.empty:
-        # Target is before all data — use first point if coverage is ≥ 80%
-        actual_days = (series.index[-1] - series.index[0]).days
+        actual_days = (s.index[-1] - s.index[0]).days
         if actual_days < days_back * 0.8:
             return None
-        start_val = _safe_float(series.iloc[0])
+        start_val = _safe_float(s.iloc[0])
     else:
         start_val = _safe_float(earlier.iloc[-1])
 
     if start_val is None or start_val == 0:
         return None
-    return (end_val / start_val - 1) * 100
+    return (end_val / start_val - 1.0) * 100.0
 
 
-# -- Data fetching (parallel) ------------------------------------------------
+def _rolling_date_returns(series: pd.Series | None, days_back: int) -> pd.Series:
+    s = _normalize_series(series)
+    if len(s) < 2:
+        return pd.Series(dtype=float)
+
+    idx = s.index
+    vals = s.to_numpy(dtype=float)
+    out_values: list[float] = []
+    out_index: list[pd.Timestamp] = []
+
+    for i, end_date in enumerate(idx):
+        target = end_date - pd.Timedelta(days=days_back)
+        pos = idx.searchsorted(target, side="right") - 1
+        if pos < 0:
+            actual_days = (end_date - idx[0]).days
+            if actual_days < days_back * 0.8:
+                continue
+            pos = 0
+        if pos >= i:
+            continue
+        start = vals[pos]
+        end = vals[i]
+        if not math.isfinite(start) or not math.isfinite(end) or start == 0:
+            continue
+        out_values.append((end / start - 1.0) * 100.0)
+        out_index.append(pd.Timestamp(end_date))
+
+    return pd.Series(out_values, index=out_index, dtype=float)
+
+
+def _empirical_percentile(history: pd.Series | None, current: float | None) -> float | None:
+    if current is None:
+        return None
+    h = pd.to_numeric(history, errors="coerce").dropna() if history is not None else pd.Series(dtype=float)
+    if len(h) < MIN_PERCENTILE_SAMPLES:
+        return None
+    less = float((h < current).sum())
+    equal = float((h == current).sum())
+    percentile = ((less + 0.5 * equal) / len(h)) * 100.0
+    return round(max(0.0, min(100.0, percentile)), 1)
+
+
+def _cross_sectional_percentile(history: pd.Series | None, current: float | None) -> float | None:
+    if current is None:
+        return None
+    h = pd.to_numeric(history, errors="coerce").dropna() if history is not None else pd.Series(dtype=float)
+    if len(h) < MIN_RELATIVE_STRENGTH_PEERS:
+        return None
+    less = float((h < current).sum())
+    equal = float((h == current).sum())
+    percentile = ((less + 0.5 * equal) / len(h)) * 100.0
+    return round(max(0.0, min(100.0, percentile)), 1)
+
+
+def _trend_label(score: float | None) -> str:
+    if score is None:
+        return "no_data"
+    if score >= 70.0:
+        return "strong_up"
+    if score >= 55.0:
+        return "moderate_up"
+    if score <= 30.0:
+        return "strong_down"
+    if score <= 45.0:
+        return "moderate_down"
+    return "neutral"
+
+
+def _score_trend(series: pd.Series | None) -> tuple[float | None, str]:
+    if _series_span_days(series) < OWN_HISTORY_MIN_DAYS:
+        return None, "no_data"
+
+    horizons = {
+        "1m": (30, 0.20),
+        "3m": (90, 0.35),
+        "12m": (365, 0.45),
+    }
+    weighted = 0.0
+    total_w = 0.0
+
+    for days_back, weight in horizons.values():
+        current = _date_return(series, days_back)
+        history = _rolling_date_returns(series, days_back)
+        percentile = _empirical_percentile(history.iloc[:-1], current)
+        if percentile is None:
+            continue
+        weighted += weight * percentile
+        total_w += weight
+
+    if total_w <= 0:
+        return None, "no_data"
+
+    score = round(weighted / total_w, 1)
+    return score, _trend_label(score)
+
+
+def _rolling_acceleration(series: pd.Series | None) -> pd.Series:
+    ret_1m = _rolling_date_returns(series, 30).rename("ret_1m")
+    ret_3m = _rolling_date_returns(series, 90).rename("ret_3m")
+    merged = pd.concat([ret_1m, ret_3m], axis=1).dropna()
+    if merged.empty:
+        return pd.Series(dtype=float)
+    return (merged["ret_1m"] - merged["ret_3m"] / 3.0).rename("acceleration")
+
+
+def _score_acceleration(series: pd.Series | None) -> float | None:
+    if _series_span_days(series) < OWN_HISTORY_MIN_DAYS:
+        return None
+    history = _rolling_acceleration(series)
+    if len(history) < MIN_PERCENTILE_SAMPLES + 1:
+        return None
+    current = _safe_float(history.iloc[-1])
+    return _empirical_percentile(history.iloc[:-1], current)
+
+
+def _risk_adjusted_strength(series: pd.Series | None) -> float | None:
+    s = _normalize_series(series)
+    if len(s) < 2:
+        return None
+    ret_3m = _date_return(s, 90)
+    if ret_3m is None:
+        return None
+    cutoff = s.index[-1] - pd.Timedelta(days=120)
+    recent = s[s.index >= cutoff]
+    daily_ret = recent.pct_change().dropna()
+    if len(daily_ret) < MIN_VOL_OBSERVATIONS:
+        return None
+    vol = _safe_float(daily_ret.std())
+    if vol is None or vol <= 0:
+        return None
+    annualized_vol_pct = vol * math.sqrt(252.0) * 100.0
+    if annualized_vol_pct <= 0:
+        return None
+    return ret_3m / annualized_vol_pct
+
+
+def _family_relative_strength_scores(values: dict[str, float]) -> dict[str, float | None]:
+    if len(values) < MIN_RELATIVE_STRENGTH_PEERS:
+        return {name: None for name in values}
+    history = pd.Series(list(values.values()), dtype=float)
+    out: dict[str, float | None] = {}
+    for name, value in values.items():
+        out[name] = _cross_sectional_percentile(history, value)
+    return out
+
+
+def _curve_quality(curve_data: dict | None) -> str:
+    if curve_data is None:
+        return "error"
+
+    analysis = curve_data.get("analysis", {})
+    valid_contracts = (
+        _safe_int(analysis.get("valid_contract_count")) or _safe_int(analysis.get("contracts_available")) or 0
+    )
+    warning_count = _safe_int(analysis.get("warning_count"))
+    if warning_count is None:
+        warning_count = len(curve_data.get("warnings", []))
+    newest = analysis.get("newest_valid_contract_date")
+    age = _age_days_from_iso(newest)
+
+    if valid_contracts < 6:
+        return "missing"
+    if age is not None and age > CURVE_STALE_DAYS:
+        return "stale"
+    if valid_contracts >= 9 and warning_count == 0:
+        return "ok"
+    return "degraded"
+
+
+def _curve_spread_score(spread_pct: float | None) -> float | None:
+    if spread_pct is None:
+        return None
+    return round(max(0.0, min(100.0, 50.0 - spread_pct * 5.0)), 1)
+
+
+def _score_curve_structure(curve_data: dict | None) -> float | None:
+    if curve_data is None:
+        return None
+
+    analysis = curve_data.get("analysis", {})
+    parts: list[tuple[float, float]] = []
+    for key, weight in (
+        ("prompt_to_m3_spread_pct", 0.50),
+        ("prompt_to_m6_spread_pct", 0.30),
+        ("prompt_to_m12_spread_pct", 0.20),
+    ):
+        score = _curve_spread_score(_safe_float(analysis.get(key)))
+        if score is not None:
+            parts.append((weight, score))
+
+    if not parts:
+        return None
+
+    total_w = sum(weight for weight, _ in parts)
+    return round(sum(weight * score for weight, score in parts) / total_w, 1)
+
+
+def _macro_overlay_quality(macro: dict | None) -> str:
+    if macro is None:
+        return "error"
+    status = str(macro.get("status") or "ok").lower()
+    as_of = macro.get("as_of")
+    age = _age_days_from_iso(as_of)
+    if age is None:
+        return "degraded"
+    if age > MACRO_STALE_DAYS:
+        return "stale"
+    if status != "ok":
+        return "degraded"
+    return "ok"
+
+
+def _extract_macro_overlay(macro: dict | None) -> dict[str, Any]:
+    quality = _macro_overlay_quality(macro)
+    overlay: dict[str, Any] = {
+        "label": None,
+        "score": None,
+        "forward_outlook": None,
+        "as_of": None,
+        "status": "error" if macro is None else str(macro.get("status") or "ok"),
+        "quality": quality,
+    }
+    if macro is None:
+        return overlay
+
+    regime = macro.get("regime", {})
+    overlay["label"] = regime.get("label")
+    overlay["score"] = _safe_float(regime.get("score"))
+    overlay["forward_outlook"] = macro.get("forward_outlook", {}).get("label")
+    overlay["as_of"] = macro.get("as_of")
+    overlay["confidence"] = _safe_float(regime.get("confidence"))
+    overlay["history_percentile"] = _safe_float(regime.get("history_percentile"))
+    return overlay
+
+
+def _quality_ratio(data_quality: dict[str, str]) -> float:
+    relevant = [
+        QUALITY_SCORES[value] for source, value in data_quality.items() if source != "macro_overlay" and value != "n/a"
+    ]
+    if not relevant:
+        return 1.0
+    return sum(relevant) / len(relevant)
+
+
+def _compute_composite(
+    scores: dict[str, float | None],
+    eligible_factor_keys: list[str],
+) -> tuple[float | None, float, dict[str, float], float | None]:
+    eligible_weight = sum(FACTOR_CONFIG[key]["configured_weight"] for key in eligible_factor_keys)
+    if eligible_weight <= 0:
+        return None, 1.0, {}, None
+
+    available_scores = {
+        key: score for key, score in scores.items() if key in eligible_factor_keys and score is not None
+    }
+    available_weight = sum(FACTOR_CONFIG[key]["configured_weight"] for key in available_scores)
+    coverage_ratio = available_weight / eligible_weight if eligible_weight > 0 else 1.0
+
+    if available_weight <= 0:
+        return None, round(coverage_ratio, 4), {}, None
+
+    effective_weights = {key: FACTOR_CONFIG[key]["configured_weight"] / available_weight for key in available_scores}
+    observed = sum(effective_weights[key] * available_scores[key] for key in available_scores)
+    composite = observed * coverage_ratio + 50.0 * (1.0 - coverage_ratio)
+    rounded_weights = {key: round(value, 4) for key, value in effective_weights.items()}
+    return round(composite, 1), round(coverage_ratio, 4), rounded_weights, round(observed, 1)
+
+
+def assign_direction(composite_score: float | None, trend_score: float | None) -> str:
+    if composite_score is None or trend_score is None:
+        return "watchlist"
+    if composite_score >= 60.0 and trend_score >= 55.0:
+        return "long"
+    if composite_score <= 40.0 and trend_score <= 45.0:
+        return "short"
+    return "watchlist"
+
+
+def assign_confidence(
+    composite_score: float | None,
+    coverage_ratio: float,
+    data_quality: dict[str, str],
+    curve_quality: str,
+) -> str:
+    if composite_score is None:
+        return "low"
+
+    distance = abs(composite_score - 50.0)
+    quality = _quality_ratio(data_quality)
+
+    if distance >= 15.0 and coverage_ratio >= 0.90 and quality >= 0.85:
+        confidence = "high"
+    elif distance >= 8.0 and coverage_ratio >= 0.70 and quality >= 0.60:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    if curve_quality == "degraded" and confidence == "high":
+        return "medium"
+    return confidence
+
+
+def _generate_rationale(
+    sector: str,
+    returns: dict[str, float | None],
+    trend_label: str,
+    direction: str,
+    curve_analysis: dict[str, Any] | None,
+    relative_strength_score: float | None,
+    macro_overlay: dict[str, Any],
+) -> list[str]:
+    bullets: list[str] = []
+
+    ret_3m = returns.get("3m")
+    if ret_3m is not None:
+        sign = "+" if ret_3m >= 0 else ""
+        bullets.append(f"{sign}{ret_3m:.1f}% over 3M; trend regime reads {trend_label.replace('_', ' ')}")
+
+    if relative_strength_score is not None:
+        position = "upper" if relative_strength_score >= 50.0 else "lower"
+        bullets.append(
+            f"Relative strength sits in the {position} half of the {sector} family on 3M risk-adjusted return"
+        )
+
+    if curve_analysis is not None and curve_analysis.get("shape") not in (None, "N/A"):
+        spread = _safe_float(curve_analysis.get("prompt_to_m3_spread_pct"))
+        if spread is not None:
+            bullets.append(
+                f"Front curve is {str(curve_analysis.get('shape')).lower()} with prompt-to-M3 spread at {spread:.2f}%"
+            )
+        else:
+            bullets.append(f"Front curve is {str(curve_analysis.get('shape')).lower()}")
+
+    if macro_overlay.get("label") is not None:
+        bullets.append(
+            f"Market stress overlay is {macro_overlay['label']} with {macro_overlay.get('forward_outlook') or 'n/a'} outlook; overlay is informational only"
+        )
+
+    if direction != "watchlist":
+        bullets.append(f"Composite proxy score supports a {direction} bias")
+
+    return bullets[:4]
+
+
+def _build_price_series(series: pd.Series | None, days_back: int = 90) -> list[dict[str, Any]]:
+    s = _normalize_series(series)
+    if s.empty:
+        return []
+    cutoff = s.index[-1] - pd.Timedelta(days=days_back)
+    recent = s[s.index >= cutoff]
+    points: list[dict[str, Any]] = []
+    for idx, value in recent.items():
+        fv = _safe_float(value)
+        if fv is None:
+            continue
+        points.append({"date": idx.isoformat(), "value": fv})
+    return points
+
+
+def _factor_entry(
+    key: str,
+    score: float | None,
+    effective_weights: dict[str, float],
+    quality: str,
+) -> dict[str, Any]:
+    meta = FACTOR_CONFIG[key]
+    included = key in effective_weights
+    effective_weight = effective_weights.get(key, 0.0)
+    contribution = round(score * effective_weight, 2) if score is not None and included else 0.0
+    return {
+        "score": score,
+        "contribution": contribution,
+        "display_label": meta["display_label"],
+        "category": meta["category"],
+        "source": meta["source"],
+        "included_in_composite": included,
+        "configured_weight": round(float(meta["configured_weight"]), 4),
+        "effective_weight": round(float(effective_weight), 4),
+        "quality": quality,
+    }
 
 
 def _fetch_daily_prices() -> dict | None:
     try:
-        data = fetch_commodities_data("Daily")
+        data = fetch_commodities_data("ResearchDaily")
         if "error" in data:
             logger.warning("daily prices error: %s", data["error"])
             return None
@@ -186,355 +661,112 @@ def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None
     return daily, monthly, curves, macro
 
 
-# -- Scoring functions --------------------------------------------------------
-
-
-def _score_momentum(
-    ret_1m: float | None,
-    ret_3m: float | None,
-    ret_12m: float | None,
-) -> tuple[float | None, str]:
-    vals = {"1m": ret_1m, "3m": ret_3m, "12m": ret_12m}
-    weights = {"1m": 0.20, "3m": 0.35, "12m": 0.45}
-
-    total_w = 0.0
-    weighted_sum = 0.0
-    for k in ("1m", "3m", "12m"):
-        v = vals[k]
-        if v is not None:
-            normed = clamp01((v + 30) / 60)
-            weighted_sum += weights[k] * normed
-            total_w += weights[k]
-
-    if total_w == 0:
-        return None, "no_data"
-
-    score = weighted_sum / total_w
-
-    if score > 0.65:
-        label = "strong_up"
-    elif score > 0.50:
-        label = "moderate_up"
-    elif score >= 0.35:
-        label = "neutral"
-    elif score >= 0.20:
-        label = "moderate_down"
-    else:
-        label = "strong_down"
-
-    return round(score, 4), label
-
-
-def _score_curve(shape: str | None, spread_pct: float | None) -> float | None:
-    if shape is None or shape == "N/A":
-        return None
-    sp = abs(spread_pct) if spread_pct is not None else 0.0
-    if shape == "Backwardation":
-        return round(clamp01(0.6 + sp / 30), 4)
-    elif shape == "Contango":
-        return round(clamp01(0.4 - sp / 30), 4)
-    return 0.5  # Flat
-
-
-def _score_relative_value(
-    commodity_3m: float | None,
-    median_3m: float,
-) -> float:
-    if commodity_3m is None:
-        return 0.5
-    return round(clamp01(0.5 + (commodity_3m - median_3m) / 40), 4)
-
-
-def _score_macro(regime_score: float | None) -> float | None:
-    if regime_score is None:
-        return None
-    return round(clamp01(regime_score / 100), 4)
-
-
-def _score_supply_demand(
-    trend: float | None,
-    curve: float | None,
-    cross_rank: float | None,
-    macro: float | None,
-) -> float | None:
-    parts = {
-        "trend": (0.30, trend),
-        "curve": (0.25, curve),
-        "cross_rank": (0.20, cross_rank),
-        "macro": (0.25, macro),
-    }
-    total_w = 0.0
-    weighted = 0.0
-    for w, v in parts.values():
-        if v is not None:
-            weighted += w * v
-            total_w += w
-    if total_w == 0:
-        return None
-    return round(weighted / total_w, 4)
-
-
-def _score_velocity(ret_1m: float | None, ret_3m: float | None) -> float | None:
-    if ret_1m is None or ret_3m is None:
-        return None
-    annualized_3m = ret_3m * 4
-    acceleration = ret_1m - annualized_3m / 12
-    return round(clamp01(0.5 + acceleration / 20), 4)
-
-
-# -- Composite ----------------------------------------------------------------
-
-
-def _compute_composite(
-    scores: dict[str, float | None],
-) -> tuple[float | None, dict[str, float]]:
-    valid = {k: v for k, v in scores.items() if v is not None}
-    total_available = sum(FACTOR_WEIGHTS[k] for k in valid)
-    if total_available <= 0:
-        return None, {}
-
-    effective_weights: dict[str, float] = {}
-    for k in valid:
-        effective_weights[k] = FACTOR_WEIGHTS[k] / total_available
-
-    composite = sum(effective_weights[k] * valid[k] for k in valid)
-    return round(composite, 4), effective_weights
-
-
-# -- Direction and confidence -------------------------------------------------
-
-
-def assign_direction(composite: float, trend_label: str) -> str:
-    composite_100 = composite * 100
-    if composite_100 >= 60 and trend_label in ("strong_up", "moderate_up"):
-        return "long"
-    if composite_100 <= 40 and trend_label in ("strong_down", "moderate_down"):
-        return "short"
-    return "watchlist"
-
-
-def assign_confidence(composite: float, data_quality: dict[str, str]) -> str:
-    quality_ok = sum(1 for v in data_quality.values() if v == "ok")
-    quality_ratio = quality_ok / max(len(data_quality), 1)
-    distance = abs(composite - 0.5)
-
-    if distance > 0.20 and quality_ratio >= 0.75:
-        return "high"
-    if distance > 0.10 and quality_ratio >= 0.50:
-        return "medium"
-    return "low"
-
-
-# -- Rationale bullets --------------------------------------------------------
-
-
-def _generate_rationale(
-    commodity: str,
-    returns: dict[str, float | None],
-    trend_label: str,
-    direction: str,
-    curve_shape: str | None,
-    cross_rank: float | None,
-    macro_label: str | None,
-    macro_outlook: str | None,
-) -> list[str]:
-    bullets: list[str] = []
-
-    r3m = returns.get("3m")
-    if r3m is not None:
-        sign = "+" if r3m >= 0 else ""
-        bullets.append(f"{sign}{r3m:.1f}% over 3M; trend regime is {trend_label}")
-
-    if curve_shape and curve_shape not in ("N/A", None):
-        interp = "supply tightness" if curve_shape == "Backwardation" else "oversupply signals"
-        bullets.append(f"Forward curve in {curve_shape.lower()}, suggesting {interp}")
-    elif cross_rank is not None:
-        pos = "above" if cross_rank > 0.5 else "below"
-        bullets.append(f"Relative performance ranks {pos} commodity complex median")
-
-    if macro_label is not None:
-        bullets.append(f"Macro regime: {macro_label}; forward outlook: {macro_outlook or 'n/a'}")
-
-    if direction != "watchlist":
-        bullets.append(f"Composite score supports {direction} bias (proxy-based)")
-
-    return bullets[:4]
-
-
-# -- Data quality -------------------------------------------------------------
-
-
-def _check_staleness(series: pd.Series | None) -> str:
-    if series is None or series.empty:
-        return "missing"
-    try:
-        last_date = pd.Timestamp(series.index[-1])
-        if last_date.tzinfo is not None:
-            last_date = last_date.tz_localize(None)
-        age = (pd.Timestamp(datetime.now()) - last_date).days
-        return "stale" if age > STALE_THRESHOLD_DAYS else "ok"
-    except Exception:
-        return "missing"
-
-
-# -- Main entry point ---------------------------------------------------------
-
-
 def build_commodity_research() -> dict[str, Any]:
     daily, monthly, curves, macro = _fetch_all()
 
     daily_prices = daily.get("commodities", {}) if daily else {}
     monthly_prices = monthly.get("commodities", {}) if monthly else {}
+    macro_overlay = _extract_macro_overlay(macro)
 
-    # Extract macro regime
-    macro_regime: dict[str, Any] = {"label": None, "score": None, "forward_outlook": None}
-    macro_score_raw: float | None = None
-    if macro is not None:
-        regime = macro.get("regime", {})
-        macro_regime = {
-            "label": regime.get("label"),
-            "score": _safe_float(regime.get("composite")),
-            "forward_outlook": macro.get("forward_outlook", {}).get("label"),
-        }
-        macro_score_raw = macro_regime["score"]
+    risk_adjusted_by_family: dict[str, dict[str, float]] = {"metals": {}, "energy": {}}
+    returns_cache: dict[str, dict[str, float | None]] = {}
 
-    macro_factor = _score_macro(macro_score_raw)
-
-    # Compute cross-sectional stats for relative value
-    all_3m: dict[str, float] = {}
     for name in COMMODITIES:
         series = daily_prices.get(name)
-        r = _date_return(series, 90)
-        if r is not None:
-            all_3m[name] = r
-    median_3m = float(pd.Series(list(all_3m.values())).median()) if all_3m else 0.0
+        sector = SECTOR_MAP.get(name, "other")
+        returns_cache[name] = {
+            "1m": _date_return(series, 30),
+            "3m": _date_return(series, 90),
+            "12m": _date_return(series, 365),
+        }
+        risk_adjusted = _risk_adjusted_strength(series)
+        if risk_adjusted is not None and sector in risk_adjusted_by_family:
+            risk_adjusted_by_family[sector][name] = risk_adjusted
 
-    # Cross-sectional rank (percentile)
-    sorted_3m = sorted(all_3m.items(), key=lambda x: x[1])
-    rank_map: dict[str, float] = {}
-    n = len(sorted_3m)
-    for i, (name, _) in enumerate(sorted_3m):
-        rank_map[name] = i / max(n - 1, 1)
+    relative_strength_map: dict[str, float | None] = {}
+    for sector, values in risk_adjusted_by_family.items():
+        family_scores = _family_relative_strength_scores(values)
+        for name, score in family_scores.items():
+            relative_strength_map[name] = score
+        if len(values) < MIN_RELATIVE_STRENGTH_PEERS:
+            for name, name_sector in SECTOR_MAP.items():
+                if name_sector == sector:
+                    relative_strength_map.setdefault(name, None)
 
-    # Score each commodity
     ideas: list[dict[str, Any]] = []
-    any_degraded = False
 
     for name, ticker in COMMODITIES.items():
         sector = SECTOR_MAP.get(name, "other")
         daily_s = daily_prices.get(name)
         monthly_s = monthly_prices.get(name)
+        curve_data = curves.get(name) if name in CURVE_CODES else None
+        curve_analysis = curve_data.get("analysis", {}) if curve_data is not None else None
+        curve_quality = "n/a" if name not in CURVE_CODES else _curve_quality(curve_data)
 
-        # Data quality
-        dq: dict[str, str] = {
-            "prices_daily": _check_staleness(daily_s),
-            "prices_monthly": _check_staleness(monthly_s),
-            "curve": "n/a" if name not in CURVE_CODES else "ok",
-            "macro": "ok" if macro is not None else "error",
+        data_quality: dict[str, str] = {
+            "prices_daily": _check_series_quality(daily_s, DAILY_STALE_DAYS),
+            "prices_monthly": _check_series_quality(monthly_s, MONTHLY_STALE_DAYS),
+            "curve": curve_quality,
+            "macro_overlay": macro_overlay["quality"],
         }
 
-        # Returns
-        ret_1m = _date_return(daily_s, 30)
-        ret_3m = _date_return(daily_s, 90)
-        ret_12m = _date_return(monthly_s, 365)
+        returns = returns_cache[name]
+        spot = None
+        normalized_daily = _normalize_series(daily_s)
+        if not normalized_daily.empty:
+            spot = _safe_float(normalized_daily.iloc[-1])
 
-        # Spot price
-        spot = _safe_float(daily_s.iloc[-1]) if daily_s is not None and len(daily_s) > 0 else None
+        trend_score, trend_label = _score_trend(daily_s)
+        acceleration_score = _score_acceleration(daily_s)
+        relative_strength_score = relative_strength_map.get(name)
+        curve_score = _score_curve_structure(curve_data) if name in CURVE_CODES else None
+        overlay_score = macro_overlay["score"]
 
-        # Factor 1: Momentum
-        mom_score, trend_label = _score_momentum(ret_1m, ret_3m, ret_12m)
+        factor_scores: dict[str, float | None] = {
+            "trend": trend_score,
+            "relative_strength": relative_strength_score,
+            "acceleration": acceleration_score,
+            "curve_structure": curve_score,
+            "market_stress_overlay": overlay_score,
+        }
 
-        # Factor 2: Relative value / Curve
-        curve_shape: str | None = None
-        curve_spread: float | None = None
-        rv_score: float | None = None
-
+        eligible_factor_keys = ["trend", "relative_strength", "acceleration"]
         if name in CURVE_CODES:
-            curve_data = curves.get(name)
-            if curve_data is not None:
-                analysis = curve_data.get("analysis", {})
-                curve_shape = analysis.get("shape")
-                curve_spread = _safe_float(analysis.get("spread_pct"))
-                rv_score = _score_curve(curve_shape, curve_spread)
-            else:
-                dq["curve"] = "error"
-                rv_score = _score_relative_value(all_3m.get(name), median_3m)
-        else:
-            rv_score = _score_relative_value(all_3m.get(name), median_3m)
+            eligible_factor_keys.append("curve_structure")
 
-        # Factor 3: Macro alignment
-        # (macro_factor computed once, same for all)
+        score_for_composite = dict(factor_scores)
+        if curve_quality in ("missing", "error"):
+            score_for_composite["curve_structure"] = None
 
-        # Factor 4: Supply/demand proxy
-        cross_rank = rank_map.get(name)
-        sd_score = _score_supply_demand(mom_score, rv_score, cross_rank, macro_factor)
+        composite_score, coverage_ratio, effective_weights, observed_composite = _compute_composite(
+            score_for_composite,
+            eligible_factor_keys,
+        )
+        direction = assign_direction(composite_score, trend_score)
+        confidence = assign_confidence(composite_score, coverage_ratio, data_quality, curve_quality)
 
-        # Factor 5: Velocity
-        vel_score = _score_velocity(ret_1m, ret_3m)
-
-        # Composite
-        factor_scores = {
-            "momentum": mom_score,
-            "relative_value": rv_score,
-            "macro": macro_factor,
-            "supply_demand": sd_score,
-            "velocity": vel_score,
+        factor_quality = {
+            "trend": data_quality["prices_daily"] if trend_score is not None else "missing",
+            "relative_strength": data_quality["prices_daily"] if relative_strength_score is not None else "missing",
+            "acceleration": data_quality["prices_daily"] if acceleration_score is not None else "missing",
+            "curve_structure": curve_quality,
+            "market_stress_overlay": data_quality["macro_overlay"] if overlay_score is not None else "error",
         }
-        composite, effective_weights = _compute_composite(factor_scores)
 
-        if composite is None:
-            direction = "watchlist"
-            confidence = "low"
-            any_degraded = True
-        else:
-            direction = assign_direction(composite, trend_label)
-            confidence = assign_confidence(composite, dq)
+        factors = {
+            key: _factor_entry(key, factor_scores.get(key), effective_weights, factor_quality[key])
+            for key in FACTOR_CONFIG
+        }
 
-        # Check if any data quality issue
-        if any(v in ("error", "missing", "stale") for v in dq.values()):
-            any_degraded = True
-
-        # Build factors detail
-        factors_detail: dict[str, dict[str, Any]] = {}
-        for fkey in FACTOR_WEIGHTS:
-            sc = factor_scores.get(fkey)
-            ew = effective_weights.get(fkey, 0.0)
-            contrib = ew * sc if sc is not None else 0.0
-            entry: dict[str, Any] = {
-                "score": sc,
-                "weight": round(ew, 4),
-                "contribution": round(contrib, 4),
-            }
-            if fkey == "momentum":
-                entry["label"] = trend_label
-            if fkey == "relative_value":
-                entry["source"] = (
-                    "curve" if (name in CURVE_CODES and curve_shape not in (None, "N/A")) else "cross_section"
-                )
-            if fkey == "supply_demand":
-                entry["proxy"] = True
-            factors_detail[fkey] = entry
-
-        # Rationale
         rationale = _generate_rationale(
-            commodity=name,
-            returns={"1m": ret_1m, "3m": ret_3m, "12m": ret_12m},
+            sector=sector,
+            returns=returns,
             trend_label=trend_label,
             direction=direction,
-            curve_shape=curve_shape,
-            cross_rank=cross_rank,
-            macro_label=macro_regime["label"],
-            macro_outlook=macro_regime["forward_outlook"],
+            curve_analysis=curve_analysis,
+            relative_strength_score=relative_strength_score,
+            macro_overlay=macro_overlay,
         )
-
-        # Price series for chart
-        price_series: list[dict[str, Any]] = []
-        if daily_s is not None and not daily_s.empty:
-            for idx, val in daily_s.items():
-                fv = _safe_float(val)
-                if fv is not None:
-                    dt = idx.isoformat() if hasattr(idx, "isoformat") else str(idx)
-                    price_series.append({"date": dt, "value": fv})
 
         ideas.append(
             {
@@ -543,63 +775,71 @@ def build_commodity_research() -> dict[str, Any]:
                 "sector": sector,
                 "spot_price": spot,
                 "returns": {
-                    "1m": round(ret_1m, 2) if ret_1m is not None else None,
-                    "3m": round(ret_3m, 2) if ret_3m is not None else None,
-                    "12m": round(ret_12m, 2) if ret_12m is not None else None,
+                    "1m": round(returns["1m"], 2) if returns["1m"] is not None else None,
+                    "3m": round(returns["3m"], 2) if returns["3m"] is not None else None,
+                    "12m": round(returns["12m"], 2) if returns["12m"] is not None else None,
                 },
-                "factors": factors_detail,
-                "composite_score": round(composite * 100, 1) if composite is not None else None,
+                "factors": factors,
+                "composite_score": composite_score,
+                "observed_composite_score": observed_composite,
+                "coverage_ratio": coverage_ratio,
                 "direction": direction,
                 "confidence": confidence,
                 "rationale": rationale,
-                "data_quality": dq,
-                "price_series": price_series,
+                "data_quality": data_quality,
+                "price_series": _build_price_series(daily_s, days_back=90),
             }
         )
 
-    # Sort by composite score descending (None → bottom)
-    ideas.sort(key=lambda x: x["composite_score"] if x["composite_score"] is not None else -1, reverse=True)
+    ideas.sort(key=lambda item: item["composite_score"] if item["composite_score"] is not None else -1.0, reverse=True)
 
-    # Summary
-    longs = [i for i in ideas if i["direction"] == "long" and i["composite_score"] is not None]
-    shorts = [i for i in ideas if i["direction"] == "short" and i["composite_score"] is not None]
-
+    longs = [idea for idea in ideas if idea["direction"] == "long" and idea["composite_score"] is not None]
+    shorts = [idea for idea in ideas if idea["direction"] == "short" and idea["composite_score"] is not None]
     top_long = {"commodity": longs[0]["commodity"], "score": longs[0]["composite_score"]} if longs else None
-    top_short = {"commodity": shorts[0]["commodity"], "score": shorts[0]["composite_score"]} if shorts else None
+    worst_short = min(shorts, key=lambda idea: idea["composite_score"]) if shorts else None
+    top_short = (
+        {"commodity": worst_short["commodity"], "score": worst_short["composite_score"]}
+        if worst_short is not None
+        else None
+    )
 
-    # Macro tailwind/headwind — use the macro factor contribution
-    with_macro = [i for i in ideas if i["factors"]["macro"]["score"] is not None]
-    strongest_tailwind = None
-    strongest_headwind = None
-    if with_macro:
-        best = max(with_macro, key=lambda x: x["factors"]["macro"]["score"])
-        worst = min(with_macro, key=lambda x: x["factors"]["macro"]["score"])
-        strongest_tailwind = {"commodity": best["commodity"], "macro_score": best["factors"]["macro"]["score"]}
-        strongest_headwind = {"commodity": worst["commodity"], "macro_score": worst["factors"]["macro"]["score"]}
+    ok_count = 0
+    degraded_count = 0
+    missing_count = 0
+    for idea in ideas:
+        statuses = [status for status in idea["data_quality"].values()]
+        if any(status in ("missing", "error") for status in statuses):
+            missing_count += 1
+        elif any(status in ("degraded", "stale") for status in statuses):
+            degraded_count += 1
+        else:
+            ok_count += 1
 
-    ok_count = sum(1 for i in ideas if all(v == "ok" or v == "n/a" for v in i["data_quality"].values()))
-    degraded_count = sum(1 for i in ideas if any(v in ("stale", "error") for v in i["data_quality"].values()))
-    missing_count = sum(1 for i in ideas if any(v == "missing" for v in i["data_quality"].values()))
+    overall_status = "ok"
+    if degraded_count > 0 or missing_count > 0 or macro_overlay["quality"] != "ok":
+        overall_status = "degraded"
 
     return {
-        "status": "degraded" if any_degraded else "ok",
+        "schema_version": SCHEMA_VERSION,
+        "status": overall_status,
         "timestamp": datetime.now().isoformat(),
-        "macro_regime": macro_regime,
+        "methodology": {
+            "name": "Commodity Proxy Screener",
+            "note": (
+                "Rankings combine trend, family-relative strength, acceleration, and front-curve structure. "
+                "Market stress is shown as an informational overlay and is not part of the ranked composite."
+            ),
+            "ranking_mode": "proxy_rank_v2",
+        },
+        "macro_overlay": macro_overlay,
         "ideas": ideas,
         "summary": {
             "top_long": top_long,
             "top_short": top_short,
-            "strongest_tailwind": strongest_tailwind,
-            "strongest_headwind": strongest_headwind,
             "data_health": {
                 "ok": ok_count,
                 "degraded": degraded_count,
                 "missing": missing_count,
             },
         },
-        "methodology_note": (
-            "Scores are proxy-based composites derived from price momentum, "
-            "curve shape, macro regime, and cross-sectional rank. "
-            "Supply/demand estimates are heuristic. Not investment advice."
-        ),
     }

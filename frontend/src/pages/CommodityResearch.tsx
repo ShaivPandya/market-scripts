@@ -10,15 +10,16 @@ import { LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { TimeSeriesChart } from "@/components/shared/TimeSeriesChart"
 
-/* ── Types ──────────────────────────────────────────────────────────────────── */
-
 interface CommodityFactor {
   score: number | null
-  weight: number
   contribution: number
-  label?: string
-  source?: string
-  proxy?: boolean
+  display_label: string
+  category: string
+  source: string
+  included_in_composite: boolean
+  configured_weight: number
+  effective_weight: number
+  quality: string
 }
 
 interface CommodityIdea {
@@ -29,6 +30,8 @@ interface CommodityIdea {
   returns: { "1m": number | null; "3m": number | null; "12m": number | null }
   factors: Record<string, CommodityFactor>
   composite_score: number | null
+  observed_composite_score: number | null
+  coverage_ratio: number
   direction: "long" | "short" | "watchlist"
   confidence: "high" | "medium" | "low"
   rationale: string[]
@@ -37,24 +40,34 @@ interface CommodityIdea {
 }
 
 interface CommodityResearchResponse {
+  schema_version: number
   status: string
   timestamp: string
-  macro_regime: { label: string | null; score: number | null; forward_outlook: string | null }
+  methodology: {
+    name: string
+    note: string
+    ranking_mode: string
+  }
+  macro_overlay: {
+    label: string | null
+    score: number | null
+    forward_outlook: string | null
+    as_of: string | null
+    status: string
+    quality: string
+    confidence?: number | null
+    history_percentile?: number | null
+  }
   ideas: CommodityIdea[]
   summary: {
     top_long: { commodity: string; score: number } | null
     top_short: { commodity: string; score: number } | null
-    strongest_tailwind: { commodity: string; macro_score: number } | null
-    strongest_headwind: { commodity: string; macro_score: number } | null
     data_health: { ok: number; degraded: number; missing: number }
   }
-  methodology_note: string
 }
 
 type Direction = "all" | "long" | "short" | "watchlist"
 type Confidence = "all" | "high" | "medium" | "low"
-
-/* ── Constants ──────────────────────────────────────────────────────────────── */
 
 const DIRECTION_OPTIONS: { value: Direction; label: string }[] = [
   { value: "all", label: "All" },
@@ -70,31 +83,30 @@ const CONFIDENCE_OPTIONS: { value: Confidence; label: string }[] = [
   { value: "low", label: "Low" },
 ]
 
-const FACTOR_LABELS: Record<string, string> = {
-  momentum: "Momentum",
-  relative_value: "Relative Value",
-  macro: "Macro Alignment",
-  supply_demand: "Supply/Demand Proxy",
-  velocity: "Velocity",
-}
+const FACTOR_ORDER = [
+  "trend",
+  "relative_strength",
+  "acceleration",
+  "curve_structure",
+  "market_stress_overlay",
+]
 
 const FACTOR_COLORS: Record<string, string> = {
-  momentum: "#3b82f6",
-  relative_value: "#8b5cf6",
-  macro: "#f59e0b",
-  supply_demand: "#10b981",
-  velocity: "#6366f1",
+  trend: "#2563eb",
+  relative_strength: "#0f766e",
+  acceleration: "#ea580c",
+  curve_structure: "#7c3aed",
+  market_stress_overlay: "#b45309",
 }
 
 const DQ_BADGE: Record<string, { bg: string; text: string }> = {
   ok: { bg: "bg-green-100 text-green-800", text: "OK" },
+  degraded: { bg: "bg-amber-100 text-amber-800", text: "Degraded" },
   stale: { bg: "bg-yellow-100 text-yellow-800", text: "Stale" },
   "n/a": { bg: "bg-gray-100 text-gray-500", text: "N/A" },
   missing: { bg: "bg-red-100 text-red-800", text: "Missing" },
   error: { bg: "bg-red-100 text-red-800", text: "Error" },
 }
-
-/* ── Table columns ──────────────────────────────────────────────────────────── */
 
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "commodity", header: "Commodity" },
@@ -150,7 +162,23 @@ const TABLE_COLUMNS: ColumnDef[] = [
   },
 ]
 
-/* ── Component ──────────────────────────────────────────────────────────────── */
+function titleCase(value: string | null | undefined) {
+  if (!value) return "N/A"
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, ch => ch.toUpperCase())
+}
+
+function formatCoverageRatio(value: number | null | undefined) {
+  if (typeof value !== "number") return "N/A"
+  return `${fmtNum(value * 100, 0)}%`
+}
+
+function factorBarWidth(factor: CommodityFactor, maxContribution: number) {
+  if (factor.score == null) return 0
+  if (!factor.included_in_composite) return Math.round(Math.max(8, Math.min(100, factor.score)))
+  return Math.round((Math.abs(factor.contribution) / maxContribution) * 100)
+}
 
 export function CommodityResearch() {
   const [directionFilter, setDirectionFilter] = useState<Direction>("all")
@@ -162,7 +190,6 @@ export function CommodityResearch() {
     () => fetchCommodityResearch(),
   )
 
-  /* Filtered + flattened rows for DataTable */
   const { filteredIdeas, tableRows } = useMemo(() => {
     let ideas = data?.ideas ?? []
     if (directionFilter !== "all") ideas = ideas.filter(i => i.direction === directionFilter)
@@ -188,25 +215,41 @@ export function CommodityResearch() {
     [data?.ideas, selectedCommodity],
   )
 
-  /* ── Render ─────────────────────────────────────────────────────────────── */
+  const orderedFactors = useMemo(() => {
+    if (!selectedIdea) return []
+    return FACTOR_ORDER
+      .map(key => [key, selectedIdea.factors[key]] as const)
+      .filter(([, factor]) => factor != null)
+  }, [selectedIdea])
+
+  const maxContribution = useMemo(() => {
+    if (!selectedIdea) return 1
+    const ranked = Object.values(selectedIdea.factors)
+      .filter(f => f.included_in_composite)
+      .map(f => Math.abs(f.contribution))
+    return Math.max(...ranked, 1)
+  }, [selectedIdea])
 
   return (
     <>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold text-app">Commodity Research</h1>
-          <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-yellow-100 text-yellow-800 border border-yellow-300">Beta</span>
+          <h1 className="text-2xl font-semibold text-app">Commodity Proxy Screener</h1>
+          <span className="rounded border border-yellow-300 bg-yellow-100 px-1.5 py-0.5 text-xs font-semibold text-yellow-800">Beta</span>
         </div>
         <RefreshButton queryKeys={[["commodity-research"]]} />
       </div>
 
-      {/* Proxy disclaimer */}
-      <div className="mb-4 rounded-xl border border-amber-300/40 bg-amber-50/60 px-4 py-2 text-xs text-amber-800 dark:border-amber-400/20 dark:bg-amber-950/30 dark:text-amber-300">
-        Scores are proxy-based composites derived from price momentum, curve shape, macro regime, and cross-sectional rank. Supply/demand estimates are heuristic.
-      </div>
+      {data && (
+        <div className="mb-4 rounded-xl border border-amber-300/40 bg-amber-50/60 px-4 py-3 text-sm text-amber-900 dark:border-amber-400/20 dark:bg-amber-950/30 dark:text-amber-300">
+          <p className="font-semibold">{data.methodology.name}</p>
+          <p className="mt-1 text-xs">{data.methodology.note}</p>
+          <p className="mt-1 text-[11px] uppercase tracking-[0.12em] text-amber-700 dark:text-amber-400">
+            {data.methodology.ranking_mode}
+          </p>
+        </div>
+      )}
 
-      {/* Filters */}
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-muted">Direction</span>
@@ -218,17 +261,15 @@ export function CommodityResearch() {
         </div>
       </div>
 
-      {/* Loading / Error */}
       {isLoading && <LoadingSpinner />}
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
-          Failed to load commodity research data. {String(error)}
+          Failed to load commodity proxy screener data. {String(error)}
         </div>
       )}
 
       {data && (
         <>
-          {/* Summary cards */}
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               title="Top Long Idea"
@@ -245,15 +286,16 @@ export function CommodityResearch() {
               signalLabel={data.summary.top_short ? "Short" : undefined}
             />
             <MetricCard
-              title="Macro Regime"
-              value={data.macro_regime.label ?? "N/A"}
-              subtitle={data.macro_regime.score != null ? `Composite: ${fmtNum(data.macro_regime.score, 1)}` : undefined}
+              title="Macro Overlay"
+              value={data.macro_overlay.label ?? "N/A"}
+              subtitle={data.macro_overlay.score != null ? `Score: ${fmtNum(data.macro_overlay.score, 1)}` : undefined}
               signal={
-                data.macro_regime.label === "risk-off" ? "error" :
-                data.macro_regime.label === "transitional" ? "warning" :
-                data.macro_regime.label === "risk-on" ? "success" : null
+                data.macro_overlay.label === "risk-off" ? "warning"
+                : data.macro_overlay.label === "transitional" ? "warning"
+                : data.macro_overlay.label === "risk-on" ? "success"
+                : null
               }
-              signalLabel={data.macro_regime.forward_outlook ?? undefined}
+              signalLabel={`${titleCase(data.macro_overlay.forward_outlook)} · ${titleCase(data.macro_overlay.quality)}`}
             />
             <MetricCard
               title="Data Health"
@@ -264,7 +306,6 @@ export function CommodityResearch() {
             />
           </div>
 
-          {/* Ideas table */}
           <div className="mb-6">
             <DataTable
               label={`Ranked Ideas (${filteredIdeas.length})`}
@@ -274,14 +315,29 @@ export function CommodityResearch() {
             />
           </div>
 
-          {/* Detail panel */}
           {selectedIdea && (
             <div className="rounded-xl border border-app bg-card p-5">
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-app">
-                  {selectedIdea.commodity}
-                  <span className="ml-2 text-sm font-normal text-muted">{selectedIdea.ticker}</span>
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-app">
+                    {selectedIdea.commodity}
+                    <span className="ml-2 text-sm font-normal text-muted">{selectedIdea.ticker}</span>
+                  </h2>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                    <span className="rounded bg-muted-surface px-2 py-0.5 text-muted">
+                      Score: {selectedIdea.composite_score != null ? fmtNum(selectedIdea.composite_score, 1) : "N/A"}
+                    </span>
+                    <span className="rounded bg-muted-surface px-2 py-0.5 text-muted">
+                      Observed: {selectedIdea.observed_composite_score != null ? fmtNum(selectedIdea.observed_composite_score, 1) : "N/A"}
+                    </span>
+                    <span className="rounded bg-muted-surface px-2 py-0.5 text-muted">
+                      Coverage: {formatCoverageRatio(selectedIdea.coverage_ratio)}
+                    </span>
+                    <span className="rounded bg-muted-surface px-2 py-0.5 text-muted">
+                      Confidence: {titleCase(selectedIdea.confidence)}
+                    </span>
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => setSelectedCommodity(null)}
@@ -292,58 +348,54 @@ export function CommodityResearch() {
               </div>
 
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                {/* Left: Factor breakdown + rationale */}
                 <div>
                   <h3 className="mb-3 text-sm font-semibold text-muted">Factor Breakdown</h3>
-                  <div className="space-y-2">
-                    {Object.entries(selectedIdea.factors).map(([key, factor]) => {
-                      const maxContrib = Math.max(
-                        ...Object.values(selectedIdea.factors).map(f => Math.abs(f.contribution)),
-                        0.01,
-                      )
-                      const barWidth = factor.score != null
-                        ? Math.round((Math.abs(factor.contribution) / maxContrib) * 100)
-                        : 0
-
-                      return (
-                        <div key={key}>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-medium text-app">
-                              {FACTOR_LABELS[key] ?? key}
-                              {factor.proxy && (
-                                <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
-                                  proxy
-                                </span>
-                              )}
-                            </span>
-                            <span className="text-muted">
-                              {factor.score != null ? (factor.score * 100).toFixed(0) : "N/A"}
-                              <span className="ml-1 text-subtle">({(factor.weight * 100).toFixed(0)}%)</span>
-                            </span>
+                  <div className="space-y-3">
+                    {orderedFactors.map(([key, factor]) => (
+                      <div key={key}>
+                        <div className="flex items-start justify-between gap-3 text-xs">
+                          <div>
+                            <div className="font-medium text-app">{factor.display_label}</div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              <span className="rounded bg-muted-surface px-1.5 py-0.5 text-[10px] text-muted">
+                                {factor.source}
+                              </span>
+                              <span className="rounded bg-muted-surface px-1.5 py-0.5 text-[10px] text-muted">
+                                {factor.included_in_composite ? "ranked" : "overlay"}
+                              </span>
+                              <span className={`rounded px-1.5 py-0.5 text-[10px] ${DQ_BADGE[factor.quality]?.bg ?? DQ_BADGE.error.bg}`}>
+                                {DQ_BADGE[factor.quality]?.text ?? "Error"}
+                              </span>
+                            </div>
                           </div>
-                          <div className="mt-0.5 h-2 w-full rounded-full bg-muted-surface">
-                            <div
-                              className="h-2 rounded-full transition-all duration-300"
-                              style={{
-                                width: `${barWidth}%`,
-                                backgroundColor: FACTOR_COLORS[key] ?? "#6b7280",
-                              }}
-                            />
+                          <div className="text-right text-muted">
+                            <div>{factor.score != null ? fmtNum(factor.score, 1) : "N/A"}</div>
+                            <div className="text-[10px]">
+                              cfg {fmtNum(factor.configured_weight * 100, 0)}%
+                              {factor.included_in_composite && ` · eff ${fmtNum(factor.effective_weight * 100, 0)}%`}
+                            </div>
                           </div>
                         </div>
-                      )
-                    })}
+                        <div className="mt-1 h-2 w-full rounded-full bg-muted-surface">
+                          <div
+                            className="h-2 rounded-full transition-all duration-300"
+                            style={{
+                              width: `${factorBarWidth(factor, maxContribution)}%`,
+                              backgroundColor: FACTOR_COLORS[key] ?? "#6b7280",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
 
-                  {/* Rationale */}
                   <h3 className="mb-2 mt-5 text-sm font-semibold text-muted">Rationale</h3>
                   <ul className="list-disc space-y-1 pl-4 text-sm text-app">
-                    {selectedIdea.rationale.map((bullet, i) => (
-                      <li key={i}>{bullet}</li>
+                    {selectedIdea.rationale.map((bullet, index) => (
+                      <li key={index}>{bullet}</li>
                     ))}
                   </ul>
 
-                  {/* Data quality */}
                   <h3 className="mb-2 mt-5 text-sm font-semibold text-muted">Data Quality</h3>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(selectedIdea.data_quality).map(([source, status]) => {
@@ -357,32 +409,48 @@ export function CommodityResearch() {
                   </div>
                 </div>
 
-                {/* Right: Price chart */}
                 <div>
                   <h3 className="mb-3 text-sm font-semibold text-muted">90-Day Price</h3>
                   <TimeSeriesChart
                     data={selectedIdea.price_series}
                     height={220}
                     timeframe="Daily"
-                    tooltipFormatter={v => fmtNum(v)}
+                    tooltipFormatter={value => fmtNum(value)}
                   />
 
-                  {/* Return summary */}
                   <div className="mt-4 grid grid-cols-3 gap-3">
                     {(["1m", "3m", "12m"] as const).map(period => {
-                      const val = selectedIdea.returns[period]
+                      const value = selectedIdea.returns[period]
                       return (
                         <div key={period} className="rounded-lg bg-muted-surface p-2 text-center">
                           <p className="text-[10px] font-medium uppercase text-muted">{period}</p>
                           <p
                             className="text-sm font-semibold"
-                            style={{ color: val != null ? (val >= 0 ? "#00c853" : "#ff1744") : "gray" }}
+                            style={{ color: value != null ? (value >= 0 ? "#00c853" : "#ff1744") : "gray" }}
                           >
-                            {fmtPct(val)}
+                            {fmtPct(value)}
                           </p>
                         </div>
                       )
                     })}
+                  </div>
+
+                  <div className="mt-5 rounded-xl border border-app bg-muted-surface/60 p-4">
+                    <h3 className="text-sm font-semibold text-app">Macro Overlay</h3>
+                    <p className="mt-2 text-sm text-app">
+                      {data.macro_overlay.label ? titleCase(data.macro_overlay.label) : "N/A"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted">
+                      Score {data.macro_overlay.score != null ? fmtNum(data.macro_overlay.score, 1) : "N/A"} ·
+                      Outlook {titleCase(data.macro_overlay.forward_outlook)} ·
+                      Quality {titleCase(data.macro_overlay.quality)}
+                    </p>
+                    {data.macro_overlay.as_of && (
+                      <p className="mt-1 text-[11px] text-subtle">As of {data.macro_overlay.as_of}</p>
+                    )}
+                    <p className="mt-2 text-xs text-muted">
+                      Overlay data is informational only and is excluded from the ranked composite.
+                    </p>
                   </div>
                 </div>
               </div>

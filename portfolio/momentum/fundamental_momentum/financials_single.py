@@ -239,7 +239,7 @@ def _annual_fact_entries(entries: list[dict]) -> list[dict]:
     out: list[dict] = []
     for fy, rows in grouped.items():
 
-        def _score(e: dict) -> tuple[int, int, str, int]:
+        def _score(e: dict, fy: int = fy) -> tuple[int, int, str, int]:
             dur = _duration_days(e)
             diff = abs((dur if dur is not None else 365) - 365)
             return (
