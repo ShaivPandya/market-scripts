@@ -600,7 +600,7 @@ export const runQualityScreen = (body: {
   input_mode: string
 }) => {
   const controller = new AbortController()
-  const timeoutMs = 90_000
+  const timeoutMs = 180_000
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   return client
@@ -608,7 +608,7 @@ export const runQualityScreen = (body: {
     .then(r => r.data)
     .catch(err => {
       if (axios.isAxiosError(err) && err.code === "ERR_CANCELED") {
-        throw new Error("Timeout: Quality screen exceeded 90s. Try a smaller universe or custom tickers.")
+        throw new Error("Timeout: Quality screen exceeded 180s. Try a smaller universe or custom tickers.")
       }
       throw err
     })

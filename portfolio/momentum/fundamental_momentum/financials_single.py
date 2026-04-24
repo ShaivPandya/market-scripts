@@ -13,11 +13,28 @@ import os
 import re
 import warnings
 from collections import defaultdict
-from collections.abc import Callable, Iterable
-from datetime import date
 from typing import Any, Dict, List, Optional, Set, Tuple  # noqa: UP035
 
 from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text, parse_json_text
+from portfolio.momentum.fundamental_momentum._edgar_periods import (
+    ALLOWED_ANNUAL_FORMS,
+    ALLOWED_QUARTERLY_FORMS,
+    QUARTER_FPS,
+    _annual_fact_entries,
+    _as_float,
+    _entries_for,
+    _is_valid_fact_row,
+    _keep_latest_by,
+    _parse_iso_date,
+    _pick_best_concept_entries,
+    _quarterly_average_entries,
+    _quarterly_direct_entries,
+    _safe_growth,
+    _sort_newest,
+)
+from portfolio.momentum.fundamental_momentum._edgar_periods import (
+    _quarterly_flow_entries as _quarterly_fact_entries,
+)
 from portfolio.momentum.fundamental_momentum.edgar_fetcher import (
     build_filing_url,
     fetch_companyfacts_by_cik,
@@ -27,10 +44,6 @@ from portfolio.momentum.fundamental_momentum.edgar_fetcher import (
 from utils.retry import requests_get
 
 LOGGER = logging.getLogger(__name__)
-
-ALLOWED_ANNUAL_FORMS = {"10-K", "10-K/A"}
-ALLOWED_QUARTERLY_FORMS = {"10-Q", "10-Q/A", "10-K", "10-K/A"}
-QUARTER_FPS = {"Q1", "Q2", "Q3", "Q4"}
 
 REVENUE_CONCEPTS = (
     "Revenues",
@@ -47,438 +60,6 @@ ANNUAL_DISPLAY_LIMIT = 5
 QUARTERLY_DISPLAY_LIMIT = 20
 ANNUAL_YOY_STEP = 1
 QUARTERLY_YOY_STEP = 4
-ANNUAL_DURATION_MIN_DAYS = 330
-ANNUAL_DURATION_MAX_DAYS = 380
-QUARTER_DURATION_MIN_DAYS = 60
-QUARTER_DURATION_MAX_DAYS = 130
-PERIOD_OWN_FILING_MAX_LAG_DAYS = 240
-
-
-def _as_float(v: object) -> float | None:
-    if not isinstance(v, (int, float, str)):
-        return None
-    try:
-        x = float(v)
-    except Exception:
-        return None
-    if x != x:  # NaN
-        return None
-    return x
-
-
-def _safe_growth(numer: float | None, denom: float | None, denom_abs: bool = False) -> float | None:
-    if numer is None or denom is None:
-        return None
-    d = abs(denom) if denom_abs else denom
-    if d == 0:
-        return None
-    return numer / d
-
-
-def _parse_iso_date(s: object) -> date | None:
-    if not isinstance(s, str) or not s:
-        return None
-    try:
-        return date.fromisoformat(s)
-    except ValueError:
-        return None
-
-
-def _entries_for(us_gaap: dict, concept: str, unit: str) -> list[dict]:
-    try:
-        rows = us_gaap[concept]["units"][unit]
-    except (KeyError, TypeError):
-        return []
-    return rows if isinstance(rows, list) else []
-
-
-def _is_valid_fact_row(e: dict) -> bool:
-    return bool(e.get("end")) and _as_float(e.get("val")) is not None
-
-
-def _frame_is_quarterly(e: dict) -> bool:
-    frame = str(e.get("frame") or "").upper()
-    return bool(re.search(r"Q[1-4](?:$|[^0-9])", frame))
-
-
-def _is_full_year_duration(e: dict) -> bool:
-    dur = _duration_days(e)
-    return dur is not None and ANNUAL_DURATION_MIN_DAYS <= dur <= ANNUAL_DURATION_MAX_DAYS
-
-
-def _is_direct_quarter_duration(e: dict) -> bool:
-    dur = _duration_days(e)
-    return dur is not None and QUARTER_DURATION_MIN_DAYS <= dur <= QUARTER_DURATION_MAX_DAYS
-
-
-def _is_annual_fact_row(e: dict) -> bool:
-    return (
-        _is_valid_fact_row(e)
-        and str(e.get("fp") or "") == "FY"
-        and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
-        and _is_full_year_duration(e)
-        and not _frame_is_quarterly(e)
-    )
-
-
-def _filed_lag_days(e: dict) -> int | None:
-    filed = _parse_iso_date(e.get("filed"))
-    end = _parse_iso_date(e.get("end"))
-    if filed is None or end is None:
-        return None
-    return (filed - end).days
-
-
-def _is_amended_form(e: dict) -> bool:
-    return str(e.get("form") or "").endswith("/A")
-
-
-def _canonical_fiscal_year(e: dict) -> int | None:
-    end = _parse_iso_date(e.get("end"))
-    if end is not None:
-        return end.year
-    return _as_int(e.get("fy"))
-
-
-def _period_ownership_rank(e: dict, target_fiscal_year: int | None) -> int:
-    fy = _as_int(e.get("fy"))
-    if target_fiscal_year is not None and fy == target_fiscal_year:
-        return 2
-
-    lag = _filed_lag_days(e)
-    if lag is not None and 0 <= lag <= PERIOD_OWN_FILING_MAX_LAG_DAYS:
-        return 1
-    return 0
-
-
-def _keep_latest_by(entries: Iterable[dict], key_fn) -> list[dict]:
-    best: dict[str, dict] = {}
-    for e in entries:
-        key = key_fn(e)
-        if not key:
-            continue
-        filed = str(e.get("filed") or "")
-        curr = best.get(key)
-        if curr is None or filed > str(curr.get("filed") or ""):
-            best[key] = e
-    return list(best.values())
-
-
-def _sort_newest(entries: list[dict]) -> list[dict]:
-    def _k(e: dict):
-        d = _parse_iso_date(e.get("end"))
-        return (
-            d or date.min,
-            str(e.get("filed") or ""),
-        )
-
-    return sorted(entries, key=_k, reverse=True)
-
-
-def _latest_end_date(entries: list[dict]) -> date:
-    latest = date.min
-    for e in entries:
-        d = _parse_iso_date(e.get("end"))
-        if d is not None and d > latest:
-            latest = d
-    return latest
-
-
-def _latest_filed_date(entries: list[dict]) -> str:
-    if not entries:
-        return ""
-    return max(str(e.get("filed") or "") for e in entries)
-
-
-def _pick_best_concept_entries(
-    us_gaap: dict,
-    concepts: Iterable[str],
-    unit: str,
-    extractor: Callable[[list[dict]], list[dict]],
-) -> list[dict]:
-    """
-    Choose the strongest concept series for a metric.
-    Priority:
-      1) most recent period end date
-      2) largest history length
-      3) latest filing date
-    """
-    best_entries: list[dict] = []
-    best_score: tuple[date, int, str] | None = None
-
-    for concept in concepts:
-        raw = _entries_for(us_gaap, concept, unit)
-        if not raw:
-            continue
-        candidate = extractor(raw)
-        if not candidate:
-            continue
-
-        score = (
-            _latest_end_date(candidate),
-            len(candidate),
-            _latest_filed_date(candidate),
-        )
-        if best_score is None or score > best_score:
-            best_score = score
-            best_entries = candidate
-
-    return best_entries
-
-
-def _annual_fact_entries(entries: list[dict]) -> list[dict]:
-    grouped: dict[int, list[dict]] = defaultdict(list)
-    for e in entries:
-        if not _is_annual_fact_row(e):
-            continue
-        fiscal_year = _canonical_fiscal_year(e)
-        if fiscal_year is None:
-            continue
-        grouped[fiscal_year].append(e)
-
-    out: list[dict] = []
-    for fiscal_year, rows in grouped.items():
-        best_row: dict | None = None
-        best_score: tuple[int, int, str, int] | None = None
-        for row in rows:
-            dur = _duration_days(row)
-            diff = abs((dur if dur is not None else 365) - 365)
-            row_score = (
-                _period_ownership_rank(row, fiscal_year),
-                1 if _is_amended_form(row) else 0,
-                str(row.get("filed") or ""),
-                -diff,
-            )
-            if best_score is None or row_score > best_score:
-                best_score = row_score
-                best_row = row
-        if best_row is None:
-            continue
-        best = dict(best_row)
-        best["fy"] = fiscal_year
-        best["fp"] = "FY"
-        out.append(best)
-
-    return _sort_newest(out)
-
-
-def _duration_days(e: dict) -> int | None:
-    start = _parse_iso_date(e.get("start"))
-    end = _parse_iso_date(e.get("end"))
-    if start is None or end is None or end < start:
-        return None
-    return (end - start).days + 1
-
-
-def _infer_ytd_quarters(e: dict) -> int | None:
-    dur = _duration_days(e)
-    if dur is not None:
-        if QUARTER_DURATION_MIN_DAYS <= dur <= QUARTER_DURATION_MAX_DAYS:
-            return 1
-        if dur <= 220:
-            return 2
-        if dur <= 320:
-            return 3
-        if ANNUAL_DURATION_MIN_DAYS <= dur <= ANNUAL_DURATION_MAX_DAYS:
-            return 4
-        return None
-
-    fp = str(e.get("fp") or "")
-    if fp == "Q1":
-        return 1
-    if fp == "Q2":
-        return 2
-    if fp == "Q3":
-        return 3
-    if fp in {"Q4", "FY"}:
-        return 4
-    return None
-
-
-def _as_int(v: object) -> int | None:
-    try:
-        return int(str(v))
-    except Exception:
-        return None
-
-
-def _annual_calendar(entries: list[dict]) -> list[tuple[date, int]]:
-    """
-    Build a clean fiscal-year anchor calendar: one trusted fiscal-year-end date per FY.
-
-    SEC companyfacts can include comparative prior-year columns in later 10-K filings,
-    where deduping by period-end and "latest filed" can attach misleading FY metadata.
-    Grouping by FY first avoids mapping old period-ends into a newer fiscal year.
-    """
-    annual_entries = _annual_fact_entries(entries)
-    out: list[tuple[date, int]] = []
-    for e in annual_entries:
-        end = _parse_iso_date(e.get("end"))
-        fy = _as_int(e.get("fy"))
-        if end is not None and fy is not None:
-            out.append((end, fy))
-    return sorted(out, key=lambda x: x[0])
-
-
-def _assign_fiscal_year(end: date, annual_calendar: list[tuple[date, int]]) -> int:
-    if not annual_calendar:
-        return end.year
-
-    for annual_end, fy in annual_calendar:
-        gap = (annual_end - end).days
-        if end <= annual_end and gap <= 370:
-            return fy
-
-    first_end, first_fy = annual_calendar[0]
-    last_end, last_fy = annual_calendar[-1]
-
-    if end > last_end:
-        step = max(1, ((end - last_end).days // 320) + 1)
-        return last_fy + step
-
-    if end < first_end:
-        step = max(1, ((first_end - end).days // 320) + 1)
-        return first_fy - step
-
-    # end is between calendar entries but no annual_end is within 370 days.
-    # Find the nearest annual end and interpolate by year distance.
-    nearest_end, nearest_fy = min(annual_calendar, key=lambda ac: abs((ac[0] - end).days))
-    offset = round((end - nearest_end).days / 365.25)
-    return nearest_fy + offset
-
-
-def _pick_best_for_target(
-    entries: list[dict],
-    target_quarters: int,
-    prefer_form: str,
-    target_fiscal_year: int | None = None,
-) -> dict | None:
-    if not entries:
-        return None
-
-    target_days = 91 * max(1, target_quarters)
-
-    def _score(e: dict) -> tuple[int, int, int, str, int]:
-        form = str(e.get("form") or "")
-        filed = str(e.get("filed") or "")
-        dur = _duration_days(e)
-        diff = abs((dur if dur is not None else target_days) - target_days)
-
-        form_pref = 0
-        if prefer_form == "quarterly" and form.startswith("10-Q"):
-            form_pref = 1
-        elif prefer_form == "annual" and form.startswith("10-K"):
-            form_pref = 1
-        return (
-            _period_ownership_rank(e, target_fiscal_year),
-            form_pref,
-            1 if _is_amended_form(e) else 0,
-            filed,
-            -diff,
-        )
-
-    return max(entries, key=_score)
-
-
-def _quarterly_fact_entries(entries: list[dict]) -> list[dict]:
-    filtered = [
-        e
-        for e in entries
-        if _is_valid_fact_row(e)
-        and str(e.get("fp") or "") in (QUARTER_FPS | {"FY"})
-        and str(e.get("form") or "") in ALLOWED_QUARTERLY_FORMS
-    ]
-    if not filtered:
-        return []
-
-    by_end: dict[str, list[dict]] = defaultdict(list)
-    for e in filtered:
-        end = str(e.get("end") or "")
-        if end:
-            by_end[end].append(e)
-
-    ordered_ends: list[tuple[date, str]] = []
-    for end_str in by_end.keys():
-        d = _parse_iso_date(end_str)
-        if d is not None:
-            ordered_ends.append((d, end_str))
-    if not ordered_ends:
-        return []
-    ordered_ends.sort(key=lambda x: x[0])
-
-    annual_calendar = _annual_calendar(entries)
-    ends_by_fy: dict[int, list[tuple[date, str]]] = defaultdict(list)
-    for end_date, end_str in ordered_ends:
-        fy = _assign_fiscal_year(end_date, annual_calendar)
-        ends_by_fy[fy].append((end_date, end_str))
-
-    normalized: list[dict] = []
-    for fy, ends in ends_by_fy.items():
-        fy_ends = sorted(ends, key=lambda x: x[0])
-        if len(fy_ends) > 4:
-            fy_ends = fy_ends[-4:]
-
-        ytd_prev: float | None = None
-        for q_idx, (_, end_str) in enumerate(fy_ends, start=1):
-            candidates = by_end[end_str]
-            prefer_form = "annual" if q_idx == 4 else "quarterly"
-
-            direct_candidates = [e for e in candidates if _is_direct_quarter_duration(e)]
-            direct_entry = _pick_best_for_target(
-                direct_candidates,
-                1,
-                prefer_form="quarterly",
-                target_fiscal_year=fy,
-            )
-
-            ytd_candidates = [
-                e
-                for e in candidates
-                if _infer_ytd_quarters(e) == q_idx
-                or (
-                    q_idx == 4
-                    and str(e.get("fp") or "") == "FY"
-                    and _is_full_year_duration(e)
-                    and not _frame_is_quarterly(e)
-                )
-            ]
-            ytd_entry = _pick_best_for_target(
-                ytd_candidates,
-                q_idx,
-                prefer_form=prefer_form,
-                target_fiscal_year=fy,
-            )
-
-            value: float | None = None
-            source: dict | None = None
-
-            if direct_entry is not None:
-                value = _as_float(direct_entry.get("val"))
-                source = direct_entry
-
-            if value is None and ytd_entry is not None:
-                ytd_val = _as_float(ytd_entry.get("val"))
-                if ytd_val is not None:
-                    value = ytd_val if q_idx == 1 or ytd_prev is None else (ytd_val - ytd_prev)
-                    source = ytd_entry
-
-            if value is None or source is None:
-                continue
-
-            ytd_val_from_entry = _as_float(ytd_entry.get("val")) if ytd_entry is not None else None
-            if ytd_val_from_entry is not None:
-                ytd_prev = ytd_val_from_entry
-            else:
-                ytd_prev = value if ytd_prev is None else (ytd_prev + value)
-
-            row = dict(source)
-            row["val"] = value
-            row["fy"] = fy
-            row["fp"] = f"Q{q_idx}"
-            row["end"] = end_str
-            normalized.append(row)
-
-    return _sort_newest(_keep_latest_by(normalized, lambda e: str(e.get("end") or "")))
 
 
 def _period_label(e: dict, frequency: str) -> str:
@@ -600,7 +181,7 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> list[dict]:
         if frequency == "annual":
             sh = _annual_fact_entries(sh_raw)
         else:
-            sh = _quarterly_fact_entries(sh_raw)
+            sh = _quarterly_average_entries(sh_raw)
         if sh:
             shares = sh
             break
@@ -638,7 +219,7 @@ def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -> tu
             if not raw:
                 continue
             a = _annual_fact_entries(raw)
-            q = _quarterly_fact_entries(raw)
+            q = _quarterly_direct_entries(raw)
             if a and not annual_entries:
                 annual_entries = a
             if q and not quarterly_entries:

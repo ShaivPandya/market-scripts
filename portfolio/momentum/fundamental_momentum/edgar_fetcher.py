@@ -19,6 +19,14 @@ from typing import Dict, List, Optional, Tuple  # noqa: UP035
 
 import requests  # type: ignore[import-untyped]
 
+from portfolio.momentum.fundamental_momentum._edgar_periods import (
+    _annual_fact_entries,
+    _as_float,
+    _entries_for,
+    _quarterly_average_entries,
+    _quarterly_direct_entries,
+    _quarterly_flow_entries,
+)
 from utils.retry import requests_get
 
 LOGGER = logging.getLogger(__name__)
@@ -130,56 +138,19 @@ def _fetch_edgar_submissions(cik_str: str) -> dict | None:
 
 def _quarterly_entries_from_concept(us_gaap: dict, concept: str, unit: str) -> list[dict]:
     """
-    Return all quarterly fact entries for a given GAAP concept and unit.
+    Return normalized discrete quarterly flow entries for a GAAP concept/unit.
 
-    Filters to fp in {Q1, Q2, Q3, Q4} (covers both 10-Q and 10-K Q4 entries).
-    Deduplicates by period-end date, keeping the most recently *filed* value.
+    SEC companyfacts often includes YTD income-statement facts for Q2/Q3.
+    This normalizes those rows into quarter-specific values before returning.
     """
-    try:
-        entries = us_gaap[concept]["units"][unit]
-    except (KeyError, TypeError):
-        return []
-
-    quarterly: dict[str, dict] = {}  # end_date_str -> best entry
-    for e in entries:
-        if e.get("fp") not in {"Q1", "Q2", "Q3", "Q4"}:
-            continue
-        end = e.get("end", "")
-        if not end:
-            continue
-        filed = e.get("filed", "")
-        existing = quarterly.get(end)
-        if existing is None or filed > existing.get("filed", ""):
-            quarterly[end] = e
-
-    return list(quarterly.values())
+    return _quarterly_flow_entries(_entries_for(us_gaap, concept, unit))
 
 
 def _annual_entries_from_concept(us_gaap: dict, concept: str, unit: str) -> list[dict]:
     """
-    Return all annual (FY) fact entries for a given GAAP concept and unit.
-
-    Filters to fp == "FY" (10-K filings).
-    Deduplicates by period-end date, keeping the most recently filed value.
+    Return normalized annual FY fact entries for a given GAAP concept and unit.
     """
-    try:
-        entries = us_gaap[concept]["units"][unit]
-    except (KeyError, TypeError):
-        return []
-
-    annual: dict[str, dict] = {}
-    for e in entries:
-        if e.get("fp") != "FY":
-            continue
-        end = e.get("end", "")
-        if not end:
-            continue
-        filed = e.get("filed", "")
-        existing = annual.get(end)
-        if existing is None or filed > existing.get("filed", ""):
-            annual[end] = e
-
-    return list(annual.values())
+    return _annual_fact_entries(_entries_for(us_gaap, concept, unit))
 
 
 def _instant_entries_from_concept(us_gaap: dict, concept: str, unit: str) -> list[dict]:
@@ -412,7 +383,7 @@ def extract_quarterly_eps(facts: dict, n: int = 8) -> list[tuple[date, float]]:
     # Try direct EPS concepts first
     for concept in ("EarningsPerShareDiluted", "EarningsPerShareBasic"):
         for unit in ("USD/shares", "USD-per-shares"):
-            entries = _quarterly_entries_from_concept(us_gaap, concept, unit)
+            entries = _quarterly_direct_entries(_entries_for(us_gaap, concept, unit))
             if entries:
                 result = sorted(
                     [(date.fromisoformat(e["end"]), float(e["val"])) for e in entries],
@@ -421,21 +392,31 @@ def extract_quarterly_eps(facts: dict, n: int = 8) -> list[tuple[date, float]]:
                 )
                 return result[:n]
 
-    # Derived: NetIncomeLoss / shares
-    ni_entries = _quarterly_entries_from_concept(us_gaap, "NetIncomeLoss", "USD")
+    # Derived: normalized quarterly NetIncomeLoss / normalized quarterly average shares
+    ni_entries = _quarterly_flow_entries(_entries_for(us_gaap, "NetIncomeLoss", "USD"))
     if not ni_entries:
         return []
 
-    ni_by_end: dict[str, float] = {e["end"]: float(e["val"]) for e in ni_entries}
+    ni_by_end: dict[str, float] = {}
+    for e in ni_entries:
+        val = _as_float(e.get("val"))
+        end = str(e.get("end") or "")
+        if end and val is not None:
+            ni_by_end[end] = val
 
     for shares_concept in (
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
     ):
-        sh_entries = _quarterly_entries_from_concept(us_gaap, shares_concept, "shares")
+        sh_entries = _quarterly_average_entries(_entries_for(us_gaap, shares_concept, "shares"))
         if not sh_entries:
             continue
-        sh_by_end: dict[str, float] = {e["end"]: float(e["val"]) for e in sh_entries}
+        sh_by_end: dict[str, float] = {}
+        for e in sh_entries:
+            val = _as_float(e.get("val"))
+            end = str(e.get("end") or "")
+            if end and val is not None:
+                sh_by_end[end] = val
 
         common_ends = sorted(
             (e for e in ni_by_end if e in sh_by_end),
@@ -478,7 +459,7 @@ def extract_quarterly_revenue(facts: dict, n: int = 8) -> list[tuple[date, float
         "SalesRevenueGoodsNet",
         "RevenueFromContractWithCustomerIncludingAssessedTax",
     ):
-        entries = _quarterly_entries_from_concept(us_gaap, concept, "USD")
+        entries = _quarterly_flow_entries(_entries_for(us_gaap, concept, "USD"))
         if entries:
             result = sorted(
                 [(date.fromisoformat(e["end"]), float(e["val"])) for e in entries],
