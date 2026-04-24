@@ -30,6 +30,8 @@ from equities.short_screen.short_screen import (
     YF_BATCH_DELAY,
     YF_CHUNK_SIZE,
     _build_result_row,
+    _report_progress,
+    _throttled_yf_call,
     fetch_sec_issuance,
     fetch_yf_data,
 )
@@ -50,6 +52,7 @@ def screen_ticker_long(
     min_revenue_growth: float = 5.0,
     check_eps: bool = False,
     min_eps_growth: float = 5.0,
+    need_market_cap: bool = False,
 ) -> tuple[bool, dict]:
     """
     Apply Phase 1 criteria using yfinance data (inverted from short screen).
@@ -57,7 +60,13 @@ def screen_ticker_long(
     Returns:
         (passes: bool, data: dict)
     """
-    data = fetch_yf_data(ticker)
+    data = fetch_yf_data(
+        ticker,
+        include_quarterly=check_revenue or check_eps,
+        need_price_to_book=pb_threshold is not None,
+        need_profit=profit_type is not None,
+        need_market_cap=need_market_cap or pb_threshold is not None,
+    )
 
     if "error" in data:
         return False, data
@@ -264,6 +273,88 @@ def _apply_price_filters_long(
 # ---------------------------------------------------------------------------
 
 
+def _any_long_price_filter(
+    *,
+    check_52w_positive: bool,
+    check_min_drawdown: bool,
+    check_max_drawdown: bool,
+    check_3m_pos_momentum: bool,
+    check_2m_pos_rel_momentum: bool,
+) -> bool:
+    return (
+        check_52w_positive
+        or check_min_drawdown
+        or check_max_drawdown
+        or check_3m_pos_momentum
+        or check_2m_pos_rel_momentum
+    )
+
+
+def _needs_long_fundamentals(
+    *,
+    pb_threshold: float | None,
+    profit_type: str | None,
+    check_revenue: bool,
+    check_eps: bool,
+) -> bool:
+    return pb_threshold is not None or profit_type is not None or check_revenue or check_eps
+
+
+def _screen_long_fundamentals(
+    universe: list[str],
+    *,
+    pb_threshold: float | None,
+    profit_type: str | None,
+    check_revenue: bool,
+    min_revenue_growth: float,
+    check_eps: bool,
+    min_eps_growth: float,
+    need_market_cap: bool = False,
+    progress_callback=None,
+) -> tuple[list[dict], list[str]]:
+    phase1_pass_data: list[dict] = []
+    failed_tickers: list[str] = []
+    done_count = 0
+    total = len(universe)
+    batches = [universe[i : i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
+
+    with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
+        for batch_idx, batch in enumerate(batches):
+            futures = {
+                pool.submit(
+                    screen_ticker_long,
+                    tk,
+                    pb_threshold,
+                    profit_type,
+                    check_revenue=check_revenue,
+                    min_revenue_growth=min_revenue_growth,
+                    check_eps=check_eps,
+                    min_eps_growth=min_eps_growth,
+                    need_market_cap=need_market_cap,
+                ): tk
+                for tk in batch
+            }
+            for future in as_completed(futures):
+                tk = futures[future]
+                try:
+                    passes, data = future.result()
+                    if passes:
+                        phase1_pass_data.append(data)
+                    elif "error" in data:
+                        failed_tickers.append(f"{tk}: {data.get('error') or 'data fetch failed'}")
+                except Exception as exc:
+                    failed_tickers.append(f"{tk}: {exc}")
+
+                done_count += 1
+                if done_count % 25 == 0 or done_count == total:
+                    _report_progress(progress_callback, "fundamentals", done_count, total)
+
+            if batch_idx < len(batches) - 1:
+                time.sleep(YF_BATCH_DELAY)
+
+    return phase1_pass_data, failed_tickers
+
+
 def get_data(
     tickers: list[str],
     pb_threshold: float | None = 1.5,
@@ -307,53 +398,84 @@ def get_data(
         return {"error": "No tickers provided"}
 
     total = len(universe)
+    any_price_filter = _any_long_price_filter(
+        check_52w_positive=check_52w_positive,
+        check_min_drawdown=check_min_drawdown,
+        check_max_drawdown=check_max_drawdown,
+        check_3m_pos_momentum=check_3m_pos_momentum,
+        check_2m_pos_rel_momentum=check_2m_pos_rel_momentum,
+    )
+    needs_fundamentals = _needs_long_fundamentals(
+        pb_threshold=pb_threshold,
+        profit_type=profit_type,
+        check_revenue=check_revenue,
+        check_eps=check_eps,
+    )
 
     # Pre-warm yfinance session
     try:
-        yf.Ticker(universe[0]).fast_info.last_price  # noqa: B018
+        _throttled_yf_call(f"{universe[0]}.prewarm", lambda: yf.Ticker(universe[0]).fast_info.last_price)  # noqa: B018
     except Exception:
         LOGGER.debug("yfinance session pre-warm failed", exc_info=True)
 
     # ------------------------------------------------------------------
-    # Phase 1: Batched parallel yfinance fetch + P/B + profit filter
+    # Price prefilter: use one cheap batch chart pass before heavyweight
+    # quote-summary/statement calls when issuance does not need the full
+    # fundamental-pass universe for its quartile cutoff.
     # ------------------------------------------------------------------
-    phase1_pass_data: list[dict] = []
-    failed_tickers: list[str] = []
-    done_count = 0
-    batches = [universe[i : i + YF_CHUNK_SIZE] for i in range(0, total, YF_CHUNK_SIZE)]
+    price_metrics: dict[str, dict] = {}
+    phase3_pass_count: int | None = None
+    price_prefiltered = False
+    candidate_universe = list(universe)
 
-    with ThreadPoolExecutor(max_workers=PHASE1_WORKERS) as pool:
-        for batch_idx, batch in enumerate(batches):
-            futures = {
-                pool.submit(
-                    screen_ticker_long,
-                    tk,
-                    pb_threshold,
-                    profit_type,
-                    check_revenue=check_revenue,
-                    min_revenue_growth=min_revenue_growth,
-                    check_eps=check_eps,
-                    min_eps_growth=min_eps_growth,
-                ): tk
-                for tk in batch
+    if any_price_filter and not check_issuance:
+        _report_progress(progress_callback, "prices", 0, total)
+        price_pass_data, price_metrics = _apply_price_filters_long(
+            [{"ticker": tk} for tk in universe],
+            check_52w_positive=check_52w_positive,
+            check_min_drawdown=check_min_drawdown,
+            min_drawdown_pct=min_drawdown_pct,
+            check_max_drawdown=check_max_drawdown,
+            max_drawdown_pct=max_drawdown_pct,
+            check_3m_pos_momentum=check_3m_pos_momentum,
+            check_2m_pos_rel_momentum=check_2m_pos_rel_momentum,
+            benchmark_ticker=benchmark_ticker,
+        )
+        price_prefiltered = True
+        phase3_pass_count = len(price_pass_data)
+        candidate_universe = [d["ticker"] for d in price_pass_data]
+        _report_progress(progress_callback, "prices", phase3_pass_count, total)
+
+        if not needs_fundamentals:
+            prefilter_rows = [
+                _build_result_row({"ticker": d["ticker"]}, price_metrics=price_metrics.get(d["ticker"]))
+                for d in price_pass_data
+            ]
+            results_df = pd.DataFrame(prefilter_rows)
+            return {
+                "results_df": results_df,
+                "failed_tickers": [],
+                "phase1_count": total,
+                "phase1_pass_count": None,
+                "phase3_pass_count": phase3_pass_count,
+                "final_count": len(results_df),
             }
-            for future in as_completed(futures):
-                tk = futures[future]
-                try:
-                    passes, data = future.result()
-                    if passes:
-                        phase1_pass_data.append(data)
-                    elif "error" in data:
-                        failed_tickers.append(tk)
-                except Exception:
-                    failed_tickers.append(tk)
 
-                done_count += 1
-                if progress_callback and (done_count % 25 == 0 or done_count == total):
-                    progress_callback(done_count, total)
-
-            if batch_idx < len(batches) - 1:
-                time.sleep(YF_BATCH_DELAY)
+    # ------------------------------------------------------------------
+    # Phase 1: throttled yfinance fundamentals fetch + P/B + profit filter
+    # ------------------------------------------------------------------
+    _report_progress(progress_callback, "fundamentals", 0, len(candidate_universe))
+    phase1_pass_data, failed_tickers = _screen_long_fundamentals(
+        candidate_universe,
+        pb_threshold=pb_threshold,
+        profit_type=profit_type,
+        check_revenue=check_revenue,
+        min_revenue_growth=min_revenue_growth,
+        check_eps=check_eps,
+        min_eps_growth=min_eps_growth,
+        need_market_cap=check_issuance,
+        progress_callback=progress_callback,
+    )
 
     phase1_pass_count = len(phase1_pass_data)
 
@@ -363,6 +485,7 @@ def get_data(
             "failed_tickers": failed_tickers,
             "phase1_count": total,
             "phase1_pass_count": 0,
+            **({"phase3_pass_count": phase3_pass_count} if phase3_pass_count is not None else {}),
             "final_count": 0,
         }
 
@@ -374,11 +497,13 @@ def get_data(
     if not check_issuance:
         phase2_pass_data = list(phase1_pass_data)
     else:
+        _report_progress(progress_callback, "issuance", 0, len(phase1_pass_data))
         phase2_pass_data = []
         issuance_records: list[dict] = []
-        for data in phase1_pass_data:
+        for idx, data in enumerate(phase1_pass_data, start=1):
             sec = fetch_sec_issuance(data["ticker"])
             if "error" in sec:
+                _report_progress(progress_callback, "issuance", idx, len(phase1_pass_data))
                 continue
 
             net = sec.get("net_issuance", np.nan)
@@ -389,9 +514,11 @@ def get_data(
                 or (isinstance(mktcap, float) and np.isnan(mktcap))
                 or mktcap <= 0
             ):
+                _report_progress(progress_callback, "issuance", idx, len(phase1_pass_data))
                 continue
 
             issuance_records.append({"data": data, "net": net, "pct": net / mktcap})
+            _report_progress(progress_callback, "issuance", idx, len(phase1_pass_data))
 
         if issuance_records:
             net_values = [r["net"] for r in issuance_records]
@@ -405,21 +532,8 @@ def get_data(
                         "pct": rec["pct"],
                     }
 
-    # ------------------------------------------------------------------
-    # Phase 3 (optional): Price-based filters
-    # ------------------------------------------------------------------
-    any_price_filter = (
-        check_52w_positive
-        or check_min_drawdown
-        or check_max_drawdown
-        or check_3m_pos_momentum
-        or check_2m_pos_rel_momentum
-    )
-
-    price_metrics: dict[str, dict] = {}
-    phase3_pass_count: int | None = None
-
-    if any_price_filter and phase2_pass_data:
+    if any_price_filter and not price_prefiltered and phase2_pass_data:
+        _report_progress(progress_callback, "prices", 0, len(phase2_pass_data))
         phase2_pass_data, price_metrics = _apply_price_filters_long(
             phase2_pass_data,
             check_52w_positive=check_52w_positive,
@@ -432,6 +546,7 @@ def get_data(
             benchmark_ticker=benchmark_ticker,
         )
         phase3_pass_count = len(phase2_pass_data)
+        _report_progress(progress_callback, "prices", phase3_pass_count, len(phase1_pass_data))
 
     # ------------------------------------------------------------------
     # Build final result rows

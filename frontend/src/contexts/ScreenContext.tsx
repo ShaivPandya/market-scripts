@@ -75,7 +75,7 @@ const ROUTE_PAGE_MAP: Record<string, RouteEntry> = {
   "/fx-dashboard": { pageName: "FX Dashboard" },
   "/commodities": { pageName: "Commodity Dashboard" },
   "/commodities-curve": { pageName: "Commodities Curve" },
-  "/commodity-research": { pageName: "Commodity Research" },
+  "/commodity-research": { pageName: "Commodity Proxy Screener" },
 }
 
 // ---------------------------------------------------------------------------

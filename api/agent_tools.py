@@ -1508,8 +1508,26 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
         def _load():
             from portfolio.portfolio_dashboard import get_data
+            from portfolio.portfolio_db import get_positions
 
-            return serialize_value(get_data(timeframe=timeframe))
+            raw = get_data(timeframe=timeframe)
+            holdings = {
+                p["ticker"]: {
+                    "cost_basis": p.get("cost_basis"),
+                    "shares": p.get("shares"),
+                    "direction": p.get("direction"),
+                    "asset": p.get("asset"),
+                }
+                for p in get_positions()
+            }
+            return serialize_value(
+                {
+                    "holdings": holdings,
+                    "analytics": raw.get("analytics"),
+                    "timeframe": raw.get("timeframe"),
+                    "timestamp": raw.get("timestamp"),
+                }
+            )
 
         data, meta = _fetch_with_cache(short_cache, key, _load)
         return data, meta

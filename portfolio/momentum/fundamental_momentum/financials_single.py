@@ -47,6 +47,11 @@ ANNUAL_DISPLAY_LIMIT = 5
 QUARTERLY_DISPLAY_LIMIT = 20
 ANNUAL_YOY_STEP = 1
 QUARTERLY_YOY_STEP = 4
+ANNUAL_DURATION_MIN_DAYS = 330
+ANNUAL_DURATION_MAX_DAYS = 380
+QUARTER_DURATION_MIN_DAYS = 60
+QUARTER_DURATION_MAX_DAYS = 130
+PERIOD_OWN_FILING_MAX_LAG_DAYS = 240
 
 
 def _as_float(v: object) -> float | None:
@@ -89,6 +94,61 @@ def _entries_for(us_gaap: dict, concept: str, unit: str) -> list[dict]:
 
 def _is_valid_fact_row(e: dict) -> bool:
     return bool(e.get("end")) and _as_float(e.get("val")) is not None
+
+
+def _frame_is_quarterly(e: dict) -> bool:
+    frame = str(e.get("frame") or "").upper()
+    return bool(re.search(r"Q[1-4](?:$|[^0-9])", frame))
+
+
+def _is_full_year_duration(e: dict) -> bool:
+    dur = _duration_days(e)
+    return dur is not None and ANNUAL_DURATION_MIN_DAYS <= dur <= ANNUAL_DURATION_MAX_DAYS
+
+
+def _is_direct_quarter_duration(e: dict) -> bool:
+    dur = _duration_days(e)
+    return dur is not None and QUARTER_DURATION_MIN_DAYS <= dur <= QUARTER_DURATION_MAX_DAYS
+
+
+def _is_annual_fact_row(e: dict) -> bool:
+    return (
+        _is_valid_fact_row(e)
+        and str(e.get("fp") or "") == "FY"
+        and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
+        and _is_full_year_duration(e)
+        and not _frame_is_quarterly(e)
+    )
+
+
+def _filed_lag_days(e: dict) -> int | None:
+    filed = _parse_iso_date(e.get("filed"))
+    end = _parse_iso_date(e.get("end"))
+    if filed is None or end is None:
+        return None
+    return (filed - end).days
+
+
+def _is_amended_form(e: dict) -> bool:
+    return str(e.get("form") or "").endswith("/A")
+
+
+def _canonical_fiscal_year(e: dict) -> int | None:
+    end = _parse_iso_date(e.get("end"))
+    if end is not None:
+        return end.year
+    return _as_int(e.get("fy"))
+
+
+def _period_ownership_rank(e: dict, target_fiscal_year: int | None) -> int:
+    fy = _as_int(e.get("fy"))
+    if target_fiscal_year is not None and fy == target_fiscal_year:
+        return 2
+
+    lag = _filed_lag_days(e)
+    if lag is not None and 0 <= lag <= PERIOD_OWN_FILING_MAX_LAG_DAYS:
+        return 1
+    return 0
 
 
 def _keep_latest_by(entries: Iterable[dict], key_fn) -> list[dict]:
@@ -167,16 +227,39 @@ def _pick_best_concept_entries(
 
 
 def _annual_fact_entries(entries: list[dict]) -> list[dict]:
-    filtered = [
-        e
-        for e in entries
-        if _is_valid_fact_row(e) and e.get("fp") == "FY" and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
-    ]
+    grouped: dict[int, list[dict]] = defaultdict(list)
+    for e in entries:
+        if not _is_annual_fact_row(e):
+            continue
+        fiscal_year = _canonical_fiscal_year(e)
+        if fiscal_year is None:
+            continue
+        grouped[fiscal_year].append(e)
 
-    def _key(e: dict) -> str:
-        return f"END:{e.get('end', '')}"
+    out: list[dict] = []
+    for fiscal_year, rows in grouped.items():
+        best_row: dict | None = None
+        best_score: tuple[int, int, str, int] | None = None
+        for row in rows:
+            dur = _duration_days(row)
+            diff = abs((dur if dur is not None else 365) - 365)
+            row_score = (
+                _period_ownership_rank(row, fiscal_year),
+                1 if _is_amended_form(row) else 0,
+                str(row.get("filed") or ""),
+                -diff,
+            )
+            if best_score is None or row_score > best_score:
+                best_score = row_score
+                best_row = row
+        if best_row is None:
+            continue
+        best = dict(best_row)
+        best["fy"] = fiscal_year
+        best["fp"] = "FY"
+        out.append(best)
 
-    return _sort_newest(_keep_latest_by(filtered, _key))
+    return _sort_newest(out)
 
 
 def _duration_days(e: dict) -> int | None:
@@ -190,13 +273,15 @@ def _duration_days(e: dict) -> int | None:
 def _infer_ytd_quarters(e: dict) -> int | None:
     dur = _duration_days(e)
     if dur is not None:
-        if dur <= 130:
+        if QUARTER_DURATION_MIN_DAYS <= dur <= QUARTER_DURATION_MAX_DAYS:
             return 1
         if dur <= 220:
             return 2
         if dur <= 320:
             return 3
-        return 4
+        if ANNUAL_DURATION_MIN_DAYS <= dur <= ANNUAL_DURATION_MAX_DAYS:
+            return 4
+        return None
 
     fp = str(e.get("fp") or "")
     if fp == "Q1":
@@ -225,38 +310,14 @@ def _annual_calendar(entries: list[dict]) -> list[tuple[date, int]]:
     where deduping by period-end and "latest filed" can attach misleading FY metadata.
     Grouping by FY first avoids mapping old period-ends into a newer fiscal year.
     """
-    grouped: dict[int, list[dict]] = defaultdict(list)
-    fallback: list[tuple[date, int]] = []
-
-    for e in entries:
-        if not _is_valid_fact_row(e):
-            continue
-        if str(e.get("fp") or "") != "FY":
-            continue
-        if str(e.get("form") or "") not in ALLOWED_ANNUAL_FORMS:
-            continue
-
-        end = _parse_iso_date(e.get("end"))
-        if end is None:
-            continue
-
-        fy = _as_int(e.get("fy"))
-        if fy is None:
-            fallback.append((end, end.year))
-            continue
-        grouped[fy].append(e)
-
+    annual_entries = _annual_fact_entries(entries)
     out: list[tuple[date, int]] = []
-    for fy, rows in grouped.items():
-        # Prefer the row with the latest period-end; tie-break by filed date.
-        best = max(rows, key=lambda r: (_parse_iso_date(r.get("end")) or date.min, str(r.get("filed") or "")))
-        end = _parse_iso_date(best.get("end"))
-        if end is not None:
+    for e in annual_entries:
+        end = _parse_iso_date(e.get("end"))
+        fy = _as_int(e.get("fy"))
+        if end is not None and fy is not None:
             out.append((end, fy))
-
-    if out:
-        return sorted(out, key=lambda x: x[0])
-    return sorted(fallback, key=lambda x: x[0])
+    return sorted(out, key=lambda x: x[0])
 
 
 def _assign_fiscal_year(end: date, annual_calendar: list[tuple[date, int]]) -> int:
@@ -286,13 +347,18 @@ def _assign_fiscal_year(end: date, annual_calendar: list[tuple[date, int]]) -> i
     return nearest_fy + offset
 
 
-def _pick_best_for_target(entries: list[dict], target_quarters: int, prefer_form: str) -> dict | None:
+def _pick_best_for_target(
+    entries: list[dict],
+    target_quarters: int,
+    prefer_form: str,
+    target_fiscal_year: int | None = None,
+) -> dict | None:
     if not entries:
         return None
 
     target_days = 91 * max(1, target_quarters)
 
-    def _score(e: dict) -> tuple[int, str, int]:
+    def _score(e: dict) -> tuple[int, int, int, str, int]:
         form = str(e.get("form") or "")
         filed = str(e.get("filed") or "")
         dur = _duration_days(e)
@@ -303,7 +369,13 @@ def _pick_best_for_target(entries: list[dict], target_quarters: int, prefer_form
             form_pref = 1
         elif prefer_form == "annual" and form.startswith("10-K"):
             form_pref = 1
-        return (form_pref, filed, -diff)
+        return (
+            _period_ownership_rank(e, target_fiscal_year),
+            form_pref,
+            1 if _is_amended_form(e) else 0,
+            filed,
+            -diff,
+        )
 
     return max(entries, key=_score)
 
@@ -351,15 +423,31 @@ def _quarterly_fact_entries(entries: list[dict]) -> list[dict]:
             candidates = by_end[end_str]
             prefer_form = "annual" if q_idx == 4 else "quarterly"
 
-            direct_candidates = [e for e in candidates if _infer_ytd_quarters(e) == 1]
-            direct_entry = _pick_best_for_target(direct_candidates, 1, prefer_form="quarterly")
+            direct_candidates = [e for e in candidates if _is_direct_quarter_duration(e)]
+            direct_entry = _pick_best_for_target(
+                direct_candidates,
+                1,
+                prefer_form="quarterly",
+                target_fiscal_year=fy,
+            )
 
             ytd_candidates = [
                 e
                 for e in candidates
-                if _infer_ytd_quarters(e) == q_idx or (q_idx == 4 and str(e.get("fp") or "") == "FY")
+                if _infer_ytd_quarters(e) == q_idx
+                or (
+                    q_idx == 4
+                    and str(e.get("fp") or "") == "FY"
+                    and _is_full_year_duration(e)
+                    and not _frame_is_quarterly(e)
+                )
             ]
-            ytd_entry = _pick_best_for_target(ytd_candidates, q_idx, prefer_form=prefer_form)
+            ytd_entry = _pick_best_for_target(
+                ytd_candidates,
+                q_idx,
+                prefer_form=prefer_form,
+                target_fiscal_year=fy,
+            )
 
             value: float | None = None
             source: dict | None = None
@@ -399,10 +487,10 @@ def _period_label(e: dict, frequency: str) -> str:
     fp = str(e.get("fp") or "")
 
     if frequency == "annual":
-        if len(end) >= 4:
-            return f"FY{end[:4]}"
         if fy is not None:
             return f"FY{fy}"
+        if len(end) >= 4:
+            return f"FY{end[:4]}"
         return "FY"
 
     if fp in QUARTER_FPS and fy is not None:
@@ -499,13 +587,7 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> list[dict]:
 
     ni_raw = _entries_for(us_gaap, "NetIncomeLoss", "USD")
     if frequency == "annual":
-        ni = [
-            e
-            for e in ni_raw
-            if _is_valid_fact_row(e)
-            and str(e.get("fp") or "") == "FY"
-            and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
-        ]
+        ni = _annual_fact_entries(ni_raw)
     else:
         ni = _quarterly_fact_entries(ni_raw)
 
@@ -516,13 +598,7 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> list[dict]:
     ):
         sh_raw = _entries_for(us_gaap, concept, "shares")
         if frequency == "annual":
-            sh = [
-                e
-                for e in sh_raw
-                if _is_valid_fact_row(e)
-                and str(e.get("fp") or "") == "FY"
-                and str(e.get("form") or "") in ALLOWED_ANNUAL_FORMS
-            ]
+            sh = _annual_fact_entries(sh_raw)
         else:
             sh = _quarterly_fact_entries(sh_raw)
         if sh:

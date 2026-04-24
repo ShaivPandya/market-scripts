@@ -595,8 +595,8 @@ Analyze the market environment through the lens of the investment philosophy and
 1. **Market Regime Assessment** — Where are we in the cycle? What is the dominant market character today? How is the market handling news (constructively or destructively)?
 2. **Six Dimensions** — Evaluate each dimension as Supportive / Neutral / Cautionary / Adverse with one-sentence evidence:
    - Market Behavior (breadth, sector internals, price action)
-   - Macro Momentum (leading indicators, economic data, earnings)
-   - Liquidity (Fed balance sheet, credit conditions, funding markets)
+   - Macro Momentum (economic_growth, labor_market, housing, country_dashboard, earnings)
+   - Liquidity (Fed balance sheet, central_banks, yield_curve, bond_dashboard, credit conditions, funding markets)
    - Positioning (COT data, sentiment, consensus)
    - Risk Sentiment (VIX term structure, credit spreads, safe haven flows)
    - Cycle Position (where in boom-bust, credit cycle phase)
@@ -615,6 +615,7 @@ level within the stance — e.g., a borderline Offensive environment might warra
 
 Constraints:
 - Cite specific metrics from the data and news search.
+- Use labor_market, housing, central_banks, yield_curve, bond_dashboard, and country_dashboard explicitly when they inform Macro Momentum, Liquidity/Rates, Risk Sentiment, or Cycle Position.
 - Assess the context for a long/short equity portfolio — not generic market commentary.
 - Be direct and concise. No filler.
 - Max 1200 words for the analysis sections.

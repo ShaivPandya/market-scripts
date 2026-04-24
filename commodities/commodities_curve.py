@@ -213,11 +213,27 @@ def _fetch_curve_prices(
     return points, warn
 
 
+def _curve_spread_pct(front: float | None, other: float | None) -> float | None:
+    if front is None or front == 0 or other is None:
+        return None
+    return round((other - front) / front * 100, 2)
+
+
 def _analyze_curve(points: list[dict]) -> dict:
     """Determine contango vs backwardation and compute spread metrics."""
     valid = [p for p in points if p["current"] is not None]
     total = len(points)
     available = len(valid)
+    warning_count = 0
+    newest_valid_contract_date = None
+
+    valid_dates: list[str] = []
+    for point in valid:
+        current_date = point.get("current_date")
+        if isinstance(current_date, str):
+            valid_dates.append(current_date)
+    if valid_dates:
+        newest_valid_contract_date = max(valid_dates)
 
     if available < 2:
         return {
@@ -228,12 +244,21 @@ def _analyze_curve(points: list[dict]) -> dict:
             "shape": "N/A",
             "contracts_available": available,
             "contracts_total": total,
+            "prompt_to_m3_spread_pct": None,
+            "prompt_to_m6_spread_pct": None,
+            "prompt_to_m12_spread_pct": None,
+            "valid_contract_count": available,
+            "warning_count": warning_count,
+            "newest_valid_contract_date": newest_valid_contract_date,
         }
 
     front = valid[0]["current"]
     back = valid[-1]["current"]
     spread = round(back - front, 4)
     spread_pct = round((back - front) / front * 100, 2) if front != 0 else None
+    prompt_to_m3 = _curve_spread_pct(front, valid[2]["current"] if available >= 3 else None)
+    prompt_to_m6 = _curve_spread_pct(front, valid[5]["current"] if available >= 6 else None)
+    prompt_to_m12 = _curve_spread_pct(front, valid[11]["current"] if available >= 12 else None)
 
     if spread > 0.01:
         shape = "Contango"
@@ -250,6 +275,12 @@ def _analyze_curve(points: list[dict]) -> dict:
         "shape": shape,
         "contracts_available": available,
         "contracts_total": total,
+        "prompt_to_m3_spread_pct": prompt_to_m3,
+        "prompt_to_m6_spread_pct": prompt_to_m6,
+        "prompt_to_m12_spread_pct": prompt_to_m12,
+        "valid_contract_count": available,
+        "warning_count": warning_count,
+        "newest_valid_contract_date": newest_valid_contract_date,
     }
 
 
@@ -291,6 +322,7 @@ def get_data(commodity: str = "CL", lookback_days: int = 30) -> dict:
     curve_warnings = [w for w in curve_warnings if not any(w.startswith(tk) for tk in trimmed_tickers)]
 
     analysis = _analyze_curve(points)
+    analysis["warning_count"] = len(curve_warnings)
 
     return {
         "timestamp": pd.Timestamp.utcnow().isoformat(),
