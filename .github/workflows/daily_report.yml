@@ -32,13 +32,17 @@ jobs:
           ny_hour="$(TZ=America/New_York date +%H)"
           ny_minute="$(TZ=America/New_York date +%M)"
 
-          # GitHub's scheduled workflows can start several minutes late.
-          # Accept any weekday run that lands during the 09:00 ET hour.
-          if [ "$ny_day" -ge 1 ] && [ "$ny_day" -le 5 ] && [ "$ny_hour" = "09" ]; then
+          ny_total_minutes=$((10#$ny_hour * 60 + 10#$ny_minute))
+          window_start=$((9 * 60 + 45))
+          window_end=$((10 * 60 + 30))
+
+          # GitHub's scheduled workflows can start late. Accept the intended
+          # 09:45 ET run through 10:30 ET, but reject the opposite-DST cron.
+          if [ "$ny_day" -ge 1 ] && [ "$ny_day" -le 5 ] && [ "$ny_total_minutes" -ge "$window_start" ] && [ "$ny_total_minutes" -le "$window_end" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping run outside weekday 09:00-09:59 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
+            echo "Skipping run outside weekday 09:45-10:30 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
           fi
 
       - name: Checkout
