@@ -13,7 +13,10 @@ def _make_daily_series(
     boost_days: int = 120,
     periods: int = 1300,
 ) -> pd.Series:
-    dates = pd.bdate_range(end=pd.Timestamp.now().normalize(), periods=periods)
+    end = pd.Timestamp.now().normalize()
+    if end.dayofweek >= 5:
+        end = end - pd.offsets.BDay(1)
+    dates = pd.bdate_range(end=end, periods=periods)
     price = base
     values: list[float] = []
 
