@@ -381,21 +381,24 @@ def extract_quarterly_eps(facts: dict, n: int = 8) -> list[tuple[date, float]]:
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
 
     # Try direct EPS concepts first
+    direct_result: list[tuple[date, float]] = []
     for concept in ("EarningsPerShareDiluted", "EarningsPerShareBasic"):
         for unit in ("USD/shares", "USD-per-shares"):
             entries = _quarterly_direct_entries(_entries_for(us_gaap, concept, unit))
             if entries:
-                result = sorted(
+                direct_result = sorted(
                     [(date.fromisoformat(e["end"]), float(e["val"])) for e in entries],
                     key=lambda x: x[0],
                     reverse=True,
                 )
-                return result[:n]
+                break
+        if direct_result:
+            break
 
     # Derived: normalized quarterly NetIncomeLoss / normalized quarterly average shares
     ni_entries = _quarterly_flow_entries(_entries_for(us_gaap, "NetIncomeLoss", "USD"))
     if not ni_entries:
-        return []
+        return direct_result[:n]
 
     ni_by_end: dict[str, float] = {}
     for e in ni_entries:
@@ -425,15 +428,20 @@ def extract_quarterly_eps(facts: dict, n: int = 8) -> list[tuple[date, float]]:
         if not common_ends:
             continue
 
-        result = []
-        for end in common_ends[:n]:
+        derived_result = []
+        for end in common_ends:
             shares = sh_by_end[end]
             if shares and shares != 0:
-                result.append((date.fromisoformat(end), ni_by_end[end] / shares))
-        if result:
-            return result
+                derived_result.append((date.fromisoformat(end), ni_by_end[end] / shares))
+        if derived_result:
+            if not direct_result:
+                return derived_result[:n]
 
-    return []
+            seen = {end for end, _ in direct_result}
+            merged = direct_result + [(end, value) for end, value in derived_result if end not in seen]
+            return sorted(merged, key=lambda x: x[0], reverse=True)[:n]
+
+    return direct_result[:n]
 
 
 def extract_quarterly_revenue(facts: dict, n: int = 8) -> list[tuple[date, float]]:

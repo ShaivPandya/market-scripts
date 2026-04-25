@@ -209,6 +209,22 @@ def _derived_eps_entries(us_gaap: dict, frequency: str) -> list[dict]:
     return _sort_newest(derived)
 
 
+def _fill_missing_period_entries(primary: list[dict], fallback: list[dict]) -> list[dict]:
+    if not primary:
+        return fallback
+
+    seen_ends = {str(e.get("end") or "") for e in primary if e.get("end")}
+    merged = list(primary)
+    for e in fallback:
+        end = str(e.get("end") or "")
+        if not end or end in seen_ends:
+            continue
+        merged.append(e)
+        seen_ends.add(end)
+
+    return _sort_newest(merged)
+
+
 def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -> tuple[list[dict], list[dict]]:
     annual_entries: list[dict] = []
     quarterly_entries: list[dict] = []
@@ -229,10 +245,11 @@ def _build_eps_rows(us_gaap: dict, cik_str: str, submissions: dict | None) -> tu
         if annual_entries and quarterly_entries:
             break
 
-    if not annual_entries:
-        annual_entries = _derived_eps_entries(us_gaap, "annual")
-    if not quarterly_entries:
-        quarterly_entries = _derived_eps_entries(us_gaap, "quarterly")
+    derived_annual_entries = _derived_eps_entries(us_gaap, "annual")
+    derived_quarterly_entries = _derived_eps_entries(us_gaap, "quarterly")
+
+    annual_entries = _fill_missing_period_entries(annual_entries, derived_annual_entries)
+    quarterly_entries = _fill_missing_period_entries(quarterly_entries, derived_quarterly_entries)
 
     annual_rows_full = _rows_from_entries(
         annual_entries,

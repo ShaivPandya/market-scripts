@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 
 def _poll(client, path: str, job_id: str, timeout_s: float = 3.0):
     deadline = time.time() + timeout_s
@@ -250,3 +252,90 @@ def test_quarterly_financials_only_requested_for_growth_filters(monkeypatch):
     screen.screen_ticker("AAA", None, None, check_eps=True)
 
     assert calls == [False, True, True]
+
+
+def test_long_screen_ebit_multiple_filter(monkeypatch):
+    from equities.long_screen import long_screen as screen
+
+    calls = []
+    records = {
+        "PASS": {"market_cap": 1_000.0, "operating_income": 100.0},
+        "RICH": {"market_cap": 2_500.0, "operating_income": 100.0},
+        "ZERO": {"market_cap": 1_000.0, "operating_income": 0.0},
+        "NEG": {"market_cap": 1_000.0, "operating_income": -100.0},
+        "MISSING": {"market_cap": 1_000.0, "operating_income": float("nan")},
+    }
+
+    def fake_fetch(ticker, **kwargs):
+        calls.append(kwargs)
+        return {"ticker": ticker, **records[ticker]}
+
+    monkeypatch.setattr(screen, "fetch_yf_data", fake_fetch)
+
+    passes, data = screen.screen_ticker_long(
+        "PASS",
+        pb_threshold=None,
+        profit_type=None,
+        check_ebit_multiple=True,
+        max_ebit_multiple=20.0,
+    )
+    assert passes is True
+    assert data["ebit_multiple"] == pytest.approx(10.0)
+    assert calls[-1]["need_profit"] is True
+    assert calls[-1]["need_market_cap"] is True
+
+    for ticker in ("RICH", "ZERO", "NEG", "MISSING"):
+        passes, _ = screen.screen_ticker_long(
+            ticker,
+            pb_threshold=None,
+            profit_type=None,
+            check_ebit_multiple=True,
+            max_ebit_multiple=20.0,
+        )
+        assert passes is False
+
+
+def test_long_screen_ebit_multiple_requires_fundamentals():
+    from equities.long_screen import long_screen as screen
+
+    assert screen._needs_long_fundamentals(
+        pb_threshold=None,
+        profit_type=None,
+        check_revenue=False,
+        check_eps=False,
+        check_ebit_multiple=True,
+    )
+
+
+def test_long_screen_router_forwards_ebit_multiple(monkeypatch):
+    from api.routers import long_screen as router
+    from equities.long_screen import long_screen as screen
+
+    captured = {}
+
+    def fake_get_data(**kwargs):
+        captured.update(kwargs)
+        return {
+            "results_df": [],
+            "failed_tickers": [],
+            "phase1_count": 1,
+            "phase1_pass_count": 0,
+            "final_count": 0,
+        }
+
+    monkeypatch.setattr(router, "_resolve_tickers", lambda req: ["AAA"])
+    monkeypatch.setattr(screen, "get_data", fake_get_data)
+
+    req = router.LongScreenRequest(
+        input_mode="Custom Tickers",
+        tickers="AAA",
+        pb_threshold=None,
+        profit_type=None,
+        check_ebit_multiple=True,
+        max_ebit_multiple=20.0,
+    )
+    result = router._compute_long_screen(req)
+
+    assert result["final_count"] == 0
+    assert captured["check_ebit_multiple"] is True
+    assert captured["max_ebit_multiple"] == 20.0

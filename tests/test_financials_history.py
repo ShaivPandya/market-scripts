@@ -218,6 +218,142 @@ def test_derived_annual_eps_uses_full_year_filter():
     assert annual[0]["value"] == 10
 
 
+def test_quarterly_eps_fills_missing_q4_from_derived_net_income_and_shares():
+    direct_eps = [
+        _fact(
+            start="2025-01-01",
+            end="2025-03-31",
+            val=1.0,
+            fy=2025,
+            fp="Q1",
+            form="10-Q",
+            filed="2025-05-01",
+            accn="eps-q1",
+        ),
+        _fact(
+            start="2025-04-01",
+            end="2025-06-30",
+            val=2.0,
+            fy=2025,
+            fp="Q2",
+            form="10-Q",
+            filed="2025-08-01",
+            accn="eps-q2",
+        ),
+        _fact(
+            start="2025-07-01",
+            end="2025-09-30",
+            val=3.0,
+            fy=2025,
+            fp="Q3",
+            form="10-Q",
+            filed="2025-11-01",
+            accn="eps-q3",
+        ),
+        _fact(
+            start="2025-01-01",
+            end="2025-12-31",
+            val=10.0,
+            fy=2025,
+            filed="2026-02-20",
+            accn="eps-fy",
+        ),
+    ]
+    net_income = [
+        _fact(
+            start="2025-01-01",
+            end="2025-03-31",
+            val=100,
+            fy=2025,
+            fp="Q1",
+            form="10-Q",
+            filed="2025-05-01",
+            accn="ni-q1",
+        ),
+        _fact(
+            start="2025-01-01",
+            end="2025-06-30",
+            val=300,
+            fy=2025,
+            fp="Q2",
+            form="10-Q",
+            filed="2025-08-01",
+            accn="ni-q2-ytd",
+        ),
+        _fact(
+            start="2025-01-01",
+            end="2025-09-30",
+            val=600,
+            fy=2025,
+            fp="Q3",
+            form="10-Q",
+            filed="2025-11-01",
+            accn="ni-q3-ytd",
+        ),
+        _fact(
+            start="2025-01-01",
+            end="2025-12-31",
+            val=1000,
+            fy=2025,
+            filed="2026-02-20",
+            accn="ni-fy",
+        ),
+    ]
+    shares = [
+        _fact(
+            start="2025-01-01",
+            end="2025-03-31",
+            val=100,
+            fy=2025,
+            fp="Q1",
+            form="10-Q",
+            filed="2025-05-01",
+            accn="shares-q1",
+        ),
+        _fact(
+            start="2025-01-01",
+            end="2025-06-30",
+            val=100,
+            fy=2025,
+            fp="Q2",
+            form="10-Q",
+            filed="2025-08-01",
+            accn="shares-q2-ytd",
+        ),
+        _fact(
+            start="2025-01-01",
+            end="2025-09-30",
+            val=100,
+            fy=2025,
+            fp="Q3",
+            form="10-Q",
+            filed="2025-11-01",
+            accn="shares-q3-ytd",
+        ),
+        _fact(
+            start="2025-01-01",
+            end="2025-12-31",
+            val=100,
+            fy=2025,
+            filed="2026-02-20",
+            accn="shares-fy",
+        ),
+    ]
+    us_gaap = {
+        "EarningsPerShareDiluted": {"units": {"USD/shares": direct_eps}},
+        "NetIncomeLoss": {"units": {"USD": net_income}},
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": shares}},
+    }
+
+    _annual, quarterly = fs._build_eps_rows(us_gaap, "0000000000", None)
+
+    assert [r["period_label"] for r in quarterly[:4]] == ["Q4 2025", "Q3 2025", "Q2 2025", "Q1 2025"]
+    assert quarterly[0]["period_end"] == "2025-12-31"
+    assert quarterly[0]["value"] == 4.0
+    assert quarterly[0]["accn"] == "ni-fy"
+    assert quarterly[1]["accn"] == "eps-q3"
+
+
 def test_quarterly_selection_prefers_period_own_filing_over_later_comparative():
     rows = [
         _fact(
