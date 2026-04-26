@@ -274,13 +274,11 @@ def _quarter_index_from_fp(e: dict) -> int | None:
 
 
 def _quarter_index_for_end(candidates: list[dict], fallback: int) -> int:
-    fp_indexes = [_quarter_index_from_fp(e) for e in candidates]
-    fp_indexes = [i for i in fp_indexes if i is not None]
+    fp_indexes: list[int] = [i for e in candidates if (i := _quarter_index_from_fp(e)) is not None]
     if fp_indexes:
         return max(set(fp_indexes), key=fp_indexes.count)
 
-    inferred = [_infer_ytd_quarters(e) for e in candidates]
-    inferred = [i for i in inferred if i is not None]
+    inferred: list[int] = [i for e in candidates if (i := _infer_ytd_quarters(e)) is not None]
     if inferred:
         return max(set(inferred), key=inferred.count)
 
