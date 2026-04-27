@@ -51,6 +51,8 @@ class LongScreenRequest(BaseModel):
     min_revenue_growth: float = 5.0
     check_eps: bool = False
     min_eps_growth: float = 5.0
+    check_ebit_multiple: bool = False
+    max_ebit_multiple: float = 20.0
     check_52w_positive: bool = False
     check_min_drawdown: bool = False
     min_drawdown_pct: float = 25.0
@@ -169,6 +171,8 @@ def _compute_long_screen(req: LongScreenRequest, progress_callback=None) -> dict
         min_revenue_growth=req.min_revenue_growth,
         check_eps=req.check_eps,
         min_eps_growth=req.min_eps_growth,
+        check_ebit_multiple=req.check_ebit_multiple,
+        max_ebit_multiple=req.max_ebit_multiple,
         check_52w_positive=req.check_52w_positive,
         check_min_drawdown=req.check_min_drawdown,
         min_drawdown_pct=req.min_drawdown_pct,

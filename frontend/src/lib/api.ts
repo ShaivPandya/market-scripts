@@ -668,6 +668,8 @@ export type LongScreenRequest = {
   min_revenue_growth: number
   check_eps: boolean
   min_eps_growth: number
+  check_ebit_multiple: boolean
+  max_ebit_multiple: number
   check_52w_positive: boolean
   check_min_drawdown: boolean
   min_drawdown_pct: number

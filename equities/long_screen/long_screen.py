@@ -5,10 +5,11 @@ Long Screen: Identify potential long candidates from a stock universe.
 Screening criteria (all enabled filters must be met to pass):
   1. P/B ratio below threshold (undervalued)
   2. Gross profit OR operating profit (profitable companies)
-  3. (Optional) Min YoY revenue growth across last 3 quarters
-  4. (Optional) Min YoY EPS growth across last 3 quarters
-  5. (Optional) Net equity issuance in the bottom quartile (buyback-heavy) among Phase 1 passers
-  6. (Optional) Price-based filters: 52w return, drawdown, positive momentum
+  3. (Optional) Market cap / EBIT below threshold
+  4. (Optional) Min YoY revenue growth across last 3 quarters
+  5. (Optional) Min YoY EPS growth across last 3 quarters
+  6. (Optional) Net equity issuance in the bottom quartile (buyback-heavy) among Phase 1 passers
+  7. (Optional) Price-based filters: 52w return, drawdown, positive momentum
 
 Execution is phased:
   Phase 1 — parallel yfinance fetch, filter by P/B + profitability + growth
@@ -39,6 +40,16 @@ from equities.short_screen.short_screen import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _finite_float(value) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(out):
+        return None
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Phase 1: Screen one ticker (inverted criteria)
 # ---------------------------------------------------------------------------
@@ -52,6 +63,8 @@ def screen_ticker_long(
     min_revenue_growth: float = 5.0,
     check_eps: bool = False,
     min_eps_growth: float = 5.0,
+    check_ebit_multiple: bool = False,
+    max_ebit_multiple: float = 20.0,
     need_market_cap: bool = False,
 ) -> tuple[bool, dict]:
     """
@@ -64,8 +77,8 @@ def screen_ticker_long(
         ticker,
         include_quarterly=check_revenue or check_eps,
         need_price_to_book=pb_threshold is not None,
-        need_profit=profit_type is not None,
-        need_market_cap=need_market_cap or pb_threshold is not None,
+        need_profit=profit_type is not None or check_ebit_multiple,
+        need_market_cap=need_market_cap or pb_threshold is not None or check_ebit_multiple,
     )
 
     if "error" in data:
@@ -74,6 +87,7 @@ def screen_ticker_long(
     pb = data.get("price_to_book", np.nan)
     gross = data.get("gross_profit", np.nan)
     operating = data.get("operating_income", np.nan)
+    market_cap = data.get("market_cap", np.nan)
 
     # P/B must be positive AND below threshold (undervalued)
     if pb_threshold is not None:
@@ -103,7 +117,24 @@ def screen_ticker_long(
     else:
         eps_ok = True
 
-    return (pb_ok and profit_ok and rev_ok and eps_ok), data
+    # Valuation filter: require positive EBIT/operating income and market cap.
+    if check_ebit_multiple:
+        operating_float = _finite_float(operating)
+        market_cap_float = _finite_float(market_cap)
+        if (
+            operating_float is not None
+            and operating_float > 0
+            and market_cap_float is not None
+            and market_cap_float > 0
+        ):
+            data["ebit_multiple"] = market_cap_float / operating_float
+            ebit_multiple_ok = data["ebit_multiple"] <= max_ebit_multiple
+        else:
+            ebit_multiple_ok = False
+    else:
+        ebit_multiple_ok = True
+
+    return (pb_ok and profit_ok and rev_ok and eps_ok and ebit_multiple_ok), data
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +327,9 @@ def _needs_long_fundamentals(
     profit_type: str | None,
     check_revenue: bool,
     check_eps: bool,
+    check_ebit_multiple: bool,
 ) -> bool:
-    return pb_threshold is not None or profit_type is not None or check_revenue or check_eps
+    return pb_threshold is not None or profit_type is not None or check_revenue or check_eps or check_ebit_multiple
 
 
 def _screen_long_fundamentals(
@@ -309,6 +341,8 @@ def _screen_long_fundamentals(
     min_revenue_growth: float,
     check_eps: bool,
     min_eps_growth: float,
+    check_ebit_multiple: bool,
+    max_ebit_multiple: float,
     need_market_cap: bool = False,
     progress_callback=None,
 ) -> tuple[list[dict], list[str]]:
@@ -330,6 +364,8 @@ def _screen_long_fundamentals(
                     min_revenue_growth=min_revenue_growth,
                     check_eps=check_eps,
                     min_eps_growth=min_eps_growth,
+                    check_ebit_multiple=check_ebit_multiple,
+                    max_ebit_multiple=max_ebit_multiple,
                     need_market_cap=need_market_cap,
                 ): tk
                 for tk in batch
@@ -364,6 +400,8 @@ def get_data(
     min_revenue_growth: float = 5.0,
     check_eps: bool = False,
     min_eps_growth: float = 5.0,
+    check_ebit_multiple: bool = False,
+    max_ebit_multiple: float = 20.0,
     check_52w_positive: bool = False,
     check_min_drawdown: bool = False,
     min_drawdown_pct: float = 25.0,
@@ -410,6 +448,7 @@ def get_data(
         profit_type=profit_type,
         check_revenue=check_revenue,
         check_eps=check_eps,
+        check_ebit_multiple=check_ebit_multiple,
     )
 
     # Pre-warm yfinance session
@@ -473,7 +512,9 @@ def get_data(
         min_revenue_growth=min_revenue_growth,
         check_eps=check_eps,
         min_eps_growth=min_eps_growth,
-        need_market_cap=check_issuance,
+        check_ebit_multiple=check_ebit_multiple,
+        max_ebit_multiple=max_ebit_multiple,
+        need_market_cap=check_issuance or check_ebit_multiple,
         progress_callback=progress_callback,
     )
 
@@ -556,6 +597,9 @@ def get_data(
         tk = data["ticker"]
         pm = price_metrics.get(tk) if any_price_filter else None
         row = _build_result_row(data, price_metrics=pm)
+        ebit_multiple = _finite_float(data.get("ebit_multiple"))
+        if ebit_multiple is not None:
+            row["Mkt Cap / EBIT"] = round(ebit_multiple, 1)
         if tk in issuance_info:
             row["Net Issuance ($M)"] = round(issuance_info[tk]["net"] / 1e6, 1)
             row["Issuance % Mkt Cap"] = round(issuance_info[tk]["pct"] * 100, 1)

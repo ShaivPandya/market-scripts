@@ -529,10 +529,17 @@ function ShortPanel() {
 
 const LONG_REL_BENCHMARK_OPTIONS = ["IWM", "SPY", "QQQ", "Same as Input"]
 
+const LONG_EXTRA_COLUMNS: Record<string, ColumnDef> = {
+  "Mkt Cap / EBIT": { key: "Mkt Cap / EBIT", header: "Mkt Cap / EBIT", format: v => v != null ? Number(v).toFixed(1) : "N/A" },
+}
+
 function buildLongColumns(rows: Record<string, unknown>[]): ColumnDef[] {
   if (rows.length === 0) return SHORT_BASE_COLUMNS
   const firstRow = rows[0]
   const cols = [...SHORT_BASE_COLUMNS]
+  for (const [key, col] of Object.entries(LONG_EXTRA_COLUMNS)) {
+    if (key in firstRow) cols.push(col)
+  }
   for (const [key, col] of Object.entries(SHORT_EXTRA_COLUMNS)) {
     if (key in firstRow) cols.push(col)
   }
@@ -554,6 +561,8 @@ function LongPanel() {
   const [minRevenueGrowth, setMinRevenueGrowth] = useState(5)
   const [checkEps, setCheckEps] = useState(false)
   const [minEpsGrowth, setMinEpsGrowth] = useState(5)
+  const [checkEbitMultiple, setCheckEbitMultiple] = useState(false)
+  const [maxEbitMultiple, setMaxEbitMultiple] = useState(20)
 
   // Price filters
   const [check52wPositive, setCheck52wPositive] = useState(false)
@@ -583,6 +592,8 @@ function LongPanel() {
       min_revenue_growth: minRevenueGrowth,
       check_eps: checkEps,
       min_eps_growth: minEpsGrowth,
+      check_ebit_multiple: checkEbitMultiple,
+      max_ebit_multiple: maxEbitMultiple,
       check_52w_positive: check52wPositive,
       check_min_drawdown: checkMinDrawdown,
       min_drawdown_pct: minDrawdownPct,
@@ -668,6 +679,25 @@ function LongPanel() {
           onChange={setCheckIssuance}
           description="Buyback-heavy companies — adds time (SEC EDGAR)"
         />
+
+        <Toggle
+          label="Max Market Cap / EBIT"
+          checked={checkEbitMultiple}
+          onChange={setCheckEbitMultiple}
+        />
+        {checkEbitMultiple && (
+          <SliderInput
+            label="Max Mkt Cap / EBIT"
+            value={maxEbitMultiple}
+            onChange={setMaxEbitMultiple}
+            min={1}
+            max={50}
+            step={1}
+            formatValue={v => `${v.toFixed(0)}x`}
+            minLabel="1x"
+            maxLabel="50x"
+          />
+        )}
 
         <div className="pt-2 border-t border-gray-100">
           <h3 className="text-sm font-medium text-gray-600 mb-3">Fundamental Growth Filters</h3>
