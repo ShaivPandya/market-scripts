@@ -137,7 +137,7 @@ export const saveThesisContent = (ticker: string, content: string) =>
     .put(`/thesis/${encodeURIComponent(ticker)}`, { content })
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 
-export const uploadThesisPdf = (ticker: string, file: File) => {
+export const uploadThesisDocument = (ticker: string, file: File) => {
   const formData = new FormData()
   formData.append("ticker", ticker)
   formData.append("file", file)
@@ -153,7 +153,7 @@ export const saveOverviewContent = (ticker: string, content: string) =>
     .put(`/overview/${encodeURIComponent(ticker)}`, { content })
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 
-export const uploadOverviewPdf = (ticker: string, file: File) => {
+export const uploadOverviewDocument = (ticker: string, file: File) => {
   const formData = new FormData()
   formData.append("ticker", ticker)
   formData.append("file", file)
@@ -454,6 +454,14 @@ export const fetchSizerPrefill = () =>
 
 export const runChart = (body: { ticker: string; lookback: string }) =>
   client.post("/chart", body).then(r => r.data)
+
+export const downloadPriceHistory = (ticker: string) =>
+  client
+    .get(`/chart/price-history/${encodeURIComponent(ticker)}`, {
+      responseType: "blob",
+      timeout: 120_000,
+    })
+    .then(r => r.data as Blob)
 
 export const runPriceRatioChart = (body: {
   symbol_a: string

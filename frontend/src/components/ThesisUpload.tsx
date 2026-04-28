@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { FileUp, Loader2 } from "lucide-react"
 
-import { uploadThesisPdf, type ThesisStatus } from "@/lib/api"
+import { uploadThesisDocument, type ThesisStatus } from "@/lib/api"
 
 type ThesisUploadProps = {
   ticker: string
@@ -36,9 +36,14 @@ export function ThesisUpload({ ticker, status = "missing" }: ThesisUploadProps) 
     if (!selectedFile) return
 
     const fileName = (selectedFile.name || "").toLowerCase()
-    if (selectedFile.type !== "application/pdf" && !fileName.endsWith(".pdf")) {
+    const isPdf = selectedFile.type === "application/pdf" || fileName.endsWith(".pdf")
+    const isMarkdown =
+      selectedFile.type === "text/markdown" ||
+      selectedFile.type === "text/x-markdown" ||
+      fileName.endsWith(".md")
+    if (!isPdf && !isMarkdown) {
       setNotice(null)
-      setError("PDF only")
+      setError("PDF or Markdown only")
       return
     }
 
@@ -46,7 +51,7 @@ export function ThesisUpload({ ticker, status = "missing" }: ThesisUploadProps) 
     setNotice(null)
     setError(null)
     try {
-      await uploadThesisPdf(ticker, selectedFile)
+      await uploadThesisDocument(ticker, selectedFile)
       setNotice("Saved")
       await queryClient.invalidateQueries({ queryKey: ["thesis", "status"] })
     } catch (e) {
@@ -59,10 +64,10 @@ export function ThesisUpload({ ticker, status = "missing" }: ThesisUploadProps) 
 
   const isPopulated = status === "populated"
   const title = isUploading
-    ? `Generating ${ticker} thesis...`
+    ? `Saving ${ticker} thesis...`
     : isPopulated
-      ? `Regenerate ${ticker} thesis from PDF`
-      : `Upload PDF thesis for ${ticker}`
+      ? `Replace ${ticker} thesis from PDF or Markdown`
+      : `Upload PDF or Markdown thesis for ${ticker}`
 
   return (
     <div className="flex items-center gap-1">
@@ -85,7 +90,7 @@ export function ThesisUpload({ ticker, status = "missing" }: ThesisUploadProps) 
       <input
         ref={fileInputRef}
         type="file"
-        accept=".pdf,application/pdf"
+        accept=".pdf,.md,application/pdf,text/markdown,text/x-markdown"
         className="hidden"
         onChange={handleFileChange}
       />

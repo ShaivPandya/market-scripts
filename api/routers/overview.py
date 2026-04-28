@@ -19,12 +19,13 @@ from paths import PROJECT_ROOT
 router = APIRouter()
 
 OVERVIEWS_DIR = PROJECT_ROOT / "investment_overviews"
-MAX_PDF_SIZE_BYTES = 30 * 1024 * 1024
+MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
+_MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
 _REQ_SECTIONS = ("## Financials", "## Sensitivity to Extrinsic Factors", "## Industry")
 
 _SYSTEM_PROMPT = """You are a buy-side equity research analyst.
-Extract a structured equity overview from the attached PDF and output it as markdown.
+Extract a structured equity overview from the source document and output it as markdown.
 
 Output only markdown and follow this structure exactly:
 
@@ -44,20 +45,36 @@ Present as a markdown table with three columns:
 
 Include rows for all applicable factors from this list: commodity prices, interest rates, currency/FX, tariffs/trade policy, war/geopolitical disruption, regulatory changes, inflation, labor costs.
 Rate sensitivity as Low, Low-medium, Medium, Medium-high, or High. Describe capacity to deal briefly.
-Only include factors relevant to this company. If the PDF does not cover a factor, omit it.
+Only include factors relevant to this company. If the source document does not cover a factor, omit it.
 
 ## Industry
-- **Porter's Five Forces**: Summarize each force (threat of new entrants, bargaining power of suppliers, bargaining power of buyers, threat of substitutes, competitive rivalry) in one bullet each with a Low/Medium/High rating
-- **Supply Outlook**: current and forward-looking supply dynamics
-- **Demand Outlook**: current and forward-looking demand dynamics
+
+### Porter's Five Forces
+- **Threat of New Entrants — Low/Medium/High**: concise explanation
+- **Bargaining Power of Suppliers — Low/Medium/High**: concise explanation
+- **Bargaining Power of Buyers — Low/Medium/High**: concise explanation
+- **Threat of Substitutes — Low/Medium/High**: concise explanation
+- **Competitive Rivalry — Low/Medium/High**: concise explanation
+
+### Supply Outlook
+- current and forward-looking supply dynamics
+
+### Demand Outlook
+- current and forward-looking demand dynamics
 
 Use short bullets. Be concise and decision-useful.
 Focus on company-specific and financially material points.
 Do not include disclaimers or any text outside the markdown."""
 
-_USER_PROMPT = """Use the attached PDF to write the equity overview markdown.
+_PDF_USER_PROMPT = """Use the attached PDF to write the equity overview markdown.
 Extract specific data points (revenue growth percentages, EPS figures, debt amounts, sensitivity ratings) directly from the document.
-If a section's data is not present in the PDF, write "Data not available in source document" under that subsection.
+If a section's data is not present in the source document, write "Data not available in source document" under that subsection.
+Keep it concise and decision-useful."""
+
+_MARKDOWN_USER_PROMPT = """Use the uploaded markdown below to write the equity overview markdown.
+Restructure the source into the exact schema from the system prompt so the application can render the structured Overview UI.
+Preserve source-backed company-specific facts, but remove citation artifacts, entity tags, nav lists, and source metadata that are not useful in the overview UI.
+If a section's data is not present in the source document, write "Data not available in source document" under that subsection.
 Keep it concise and decision-useful."""
 
 
@@ -323,28 +340,25 @@ def _normalize_overview_markdown(ticker: str, content: str) -> str:
     return cleaned.strip() + "\n"
 
 
-def _call_claude_overview_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
+def _decode_markdown_upload(markdown_bytes: bytes) -> str:
+    try:
+        content = markdown_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise ValidationError("Markdown file must be UTF-8 encoded.") from e
+    if not content.strip():
+        raise ValidationError("Markdown file is empty.")
+    return content
+
+
+def _create_anthropic_client():
     import anthropic
 
     api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-    pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
-    messages: list[dict[str, Any]] = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": pdf_b64,
-                    },
-                },
-                {"type": "text", "text": _USER_PROMPT},
-            ],
-        }
-    ]
+    return anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+
+
+def _run_claude_overview(*, ticker: str, messages: list[dict[str, Any]]) -> str:
+    client = _create_anthropic_client()
     kwargs: dict[str, Any] = {
         "model": MODEL_SONNET,
         "max_tokens": 4096,
@@ -367,6 +381,42 @@ def _call_claude_overview_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
     return _normalize_overview_markdown(ticker, generated)
 
 
+def _call_claude_overview_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
+    pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": pdf_b64,
+                    },
+                },
+                {"type": "text", "text": _PDF_USER_PROMPT},
+            ],
+        }
+    ]
+    return _run_claude_overview(ticker=ticker, messages=messages)
+
+
+def _call_claude_overview_markdown(*, ticker: str, markdown: str) -> str:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"{_MARKDOWN_USER_PROMPT}\n\n<uploaded_markdown>\n{markdown}\n</uploaded_markdown>",
+                }
+            ],
+        }
+    ]
+    return _run_claude_overview(ticker=ticker, messages=messages)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -380,25 +430,37 @@ async def generate_overview(
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    pdf_bytes = await file.read()
-    if not pdf_bytes:
+    upload_bytes = await file.read()
+    if not upload_bytes:
         raise ValidationError("Uploaded file is empty.")
-    if len(pdf_bytes) > MAX_PDF_SIZE_BYTES:
-        raise ValidationError("PDF exceeds 30MB limit.")
+    if len(upload_bytes) > MAX_UPLOAD_SIZE_BYTES:
+        raise ValidationError("Uploaded file exceeds 30MB limit.")
 
-    content_type = (file.content_type or "").lower()
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
     filename = (file.filename or "").lower()
     has_pdf_type = content_type == "application/pdf" or filename.endswith(".pdf")
-    has_pdf_signature = pdf_bytes.startswith(b"%PDF-")
-    if not (has_pdf_type and has_pdf_signature):
-        raise ValidationError("File must be a valid PDF.")
+    has_pdf_signature = upload_bytes.startswith(b"%PDF-")
+    has_markdown_type = content_type in _MARKDOWN_CONTENT_TYPES or filename.endswith(".md")
 
-    try:
-        content = _call_claude_overview_pdf(ticker=normalized_ticker, pdf_bytes=pdf_bytes)
-    except (ValidationError, DataFetchError):
-        raise
-    except Exception as e:
-        raise DataFetchError(source="claude", detail=f"Failed to generate overview: {e}") from e
+    if has_pdf_type or has_pdf_signature:
+        if not (has_pdf_type and has_pdf_signature):
+            raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+        try:
+            content = _call_claude_overview_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
+        except (ValidationError, DataFetchError):
+            raise
+        except Exception as e:
+            raise DataFetchError(source="claude", detail=f"Failed to generate overview: {e}") from e
+    elif has_markdown_type:
+        markdown = _decode_markdown_upload(upload_bytes)
+        try:
+            content = _call_claude_overview_markdown(ticker=normalized_ticker, markdown=markdown)
+        except (ValidationError, DataFetchError):
+            raise
+        except Exception as e:
+            raise DataFetchError(source="claude", detail=f"Failed to generate overview: {e}") from e
+    else:
+        raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
     OVERVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     overview_path = OVERVIEWS_DIR / f"{normalized_ticker}.md"

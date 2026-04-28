@@ -39,6 +39,9 @@ export function renderInlineMarkdown(text: string) {
                 i = end + 1
                 continue
             }
+            pushText("`")
+            i += 1
+            continue
         }
 
         if (rest.startsWith("**")) {
@@ -51,6 +54,9 @@ export function renderInlineMarkdown(text: string) {
                 i = end + 2
                 continue
             }
+            pushText("**")
+            i += 2
+            continue
         }
 
         if (rest.startsWith("*")) {
@@ -63,6 +69,9 @@ export function renderInlineMarkdown(text: string) {
                 i = end + 1
                 continue
             }
+            pushText("*")
+            i += 1
+            continue
         }
 
         if (rest.startsWith("[")) {
@@ -91,6 +100,9 @@ export function renderInlineMarkdown(text: string) {
                     }
                 }
             }
+            pushText("[")
+            i += 1
+            continue
         }
 
         const nextSpecial = (() => {
