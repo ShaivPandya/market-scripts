@@ -24,7 +24,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -36,9 +39,18 @@ import pandas as pd
 
 from utils.retry import requests_get, yf_download
 
+logger = logging.getLogger(__name__)
+
 # Download configuration
 CHUNK_SIZE = 50  # Tickers per batch
 BATCH_DELAY = 1.0  # Seconds between successful batches
+
+# IBKR settings (via env). Distinct clientId from portfolio_news.py (10) so the
+# two paths can coexist on a single TWS/Gateway session.
+IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
+IB_PORT = int(os.environ.get("IB_PORT", "4001"))
+IB_CLIENT_ID = int(os.environ.get("IB_CLIENT_ID_BREADTH", "11"))
+IB_FETCH_TIMEOUT_SECONDS = 600
 
 CONSOLE: Any | None = None
 
@@ -199,25 +211,188 @@ def _latest_market_close_date() -> str | None:
         return None
 
 
-def download_with_retry(
+def _period_to_ibkr_duration(period: str) -> str:
+    """
+    Map yfinance-style period strings to IBKR durationStr format.
+
+    Floors at "1 Y" because the breadth metric needs >=252 bars for 52w highs/lows.
+    """
+    if not period:
+        return "1 Y"
+
+    s = period.strip().lower()
+    m = re.fullmatch(r"(\d+)\s*([dwmoy]+)", s)
+    if not m:
+        if s == "max":
+            return "30 Y"
+        if s == "ytd":
+            return "1 Y"
+        logger.warning("Unrecognised period '%s' for IBKR; defaulting to 1 Y", period)
+        return "1 Y"
+
+    n = int(m.group(1))
+    unit = m.group(2)
+
+    if unit == "d":
+        return f"{max(n, 365)} D"
+    if unit == "w":
+        weeks = max(n, 52)
+        return f"{weeks} W"
+    if unit in {"m", "mo"}:
+        months = max(n, 12)
+        return f"{months} M"
+    if unit == "y":
+        years = max(n, 1)
+        return f"{years} Y"
+
+    return "1 Y"
+
+
+def _ticker_to_ibkr_symbol(ticker: str) -> str:
+    """Convert yfinance-style class shares (BRK-B) to IBKR-style (BRK B)."""
+    return ticker.replace("-", " ")
+
+
+def _bars_to_dataframe(bars) -> pd.DataFrame | None:
+    """Convert ib_insync BarDataList to a DataFrame indexed by date with Close/High/Low."""
+    if not bars:
+        return None
+    rows = []
+    for b in bars:
+        date = getattr(b, "date", None)
+        close = getattr(b, "close", None)
+        high = getattr(b, "high", None)
+        low = getattr(b, "low", None)
+        if date is None or close is None or high is None or low is None:
+            continue
+        rows.append((pd.Timestamp(date), float(close), float(high), float(low)))
+    if not rows:
+        return None
+    df = pd.DataFrame(rows, columns=["date", "Close", "High", "Low"]).set_index("date")
+    df.index = pd.to_datetime(df.index)
+    return df
+
+
+def _fetch_ibkr_prices(
     tickers: list[str],
-    period: str = "1y",
-    chunk_size: int = CHUNK_SIZE,
-    batch_delay: float = BATCH_DELAY,
-    **kwargs,
+    period: str,
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """
+    Fetch daily ADJUSTED_LAST bars from IBKR for the given tickers.
+
+    Runs ib_insync inside a dedicated worker thread with a fresh asyncio loop so
+    it does not collide with uvloop under FastAPI/uvicorn (same idiom as
+    portfolio/portfolio_news.py::_fetch_all_ibkr_news).
+
+    Returns (per_ticker_frames, failed_tickers). On connection failure, all
+    tickers are returned as failed so the caller falls back to yfinance.
+    """
+
+    duration = _period_to_ibkr_duration(period)
+
+    def _run() -> tuple[dict[str, pd.DataFrame], list[str]]:
+        import asyncio
+
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+        try:
+            from ib_insync import IB, Stock
+        except Exception as e:
+            logger.warning("ib_insync unavailable (%s: %s); skipping IBKR fetch", type(e).__name__, e)
+            return {}, list(tickers)
+
+        ib = IB()
+        try:
+            ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=5, readonly=True)
+        except Exception as e:
+            logger.warning("IBKR connection unavailable (%s: %s); skipping IBKR fetch", type(e).__name__, e)
+            return {}, list(tickers)
+
+        try:
+            contracts = [Stock(_ticker_to_ibkr_symbol(t), "SMART", "USD") for t in tickers]
+            try:
+                ib.qualifyContracts(*contracts)
+            except Exception as e:
+                logger.warning("IBKR qualifyContracts failed (%s: %s); skipping IBKR fetch", type(e).__name__, e)
+                return {}, list(tickers)
+
+            frames: dict[str, pd.DataFrame] = {}
+            failed: list[str] = []
+            request_count = 0
+
+            for ticker, contract in zip(tickers, contracts, strict=True):
+                if not getattr(contract, "conId", 0):
+                    failed.append(ticker)
+                    continue
+
+                try:
+                    bars = ib.reqHistoricalData(
+                        contract,
+                        endDateTime="",
+                        durationStr=duration,
+                        barSizeSetting="1 day",
+                        whatToShow="ADJUSTED_LAST",
+                        useRTH=True,
+                        formatDate=1,
+                        timeout=15,
+                    )
+                except Exception as e:
+                    logger.debug("IBKR reqHistoricalData failed for %s: %s", ticker, e)
+                    failed.append(ticker)
+                else:
+                    df = _bars_to_dataframe(bars)
+                    if df is None:
+                        failed.append(ticker)
+                    else:
+                        frames[ticker] = df
+
+                request_count += 1
+                if request_count % CHUNK_SIZE == 0 and request_count < len(tickers):
+                    time.sleep(BATCH_DELAY)
+
+            return frames, failed
+        finally:
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run)
+            return future.result(timeout=IB_FETCH_TIMEOUT_SECONDS)
+    except Exception as e:
+        logger.warning("IBKR fetch thread failed (%s: %s); skipping IBKR fetch", type(e).__name__, e)
+        return {}, list(tickers)
+
+
+def _ibkr_frames_to_multiindex(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Stack per-ticker IBKR DataFrames into a (field, ticker) MultiIndex DataFrame."""
+    if not frames:
+        return pd.DataFrame()
+    fields = ["Close", "High", "Low"]
+    parts: dict[str, pd.DataFrame] = {}
+    for field in fields:
+        cols = {ticker: df[field] for ticker, df in frames.items() if field in df.columns}
+        if cols:
+            parts[field] = pd.DataFrame(cols)
+    if not parts:
+        return pd.DataFrame()
+    combined = pd.concat(parts, axis=1)
+    combined.columns = pd.MultiIndex.from_tuples(combined.columns)
+    return combined.sort_index().sort_index(axis=1)
+
+
+def _yfinance_download_chunked(
+    tickers: list[str],
+    period: str,
+    chunk_size: int,
+    batch_delay: float,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """
-    Download price data in chunks with retry logic for reliability.
-
-    Retry logic is handled by yf_download (from utils.retry).
-
-    Returns:
-        tuple of (combined DataFrame, list of failed tickers)
-    """
-    all_data = []
+    """Original chunked yfinance fetch loop. Used as the fallback path."""
+    all_data: list[pd.DataFrame] = []
     failed_tickers: list[str] = []
 
-    # Split into chunks
     chunks = [tickers[i : i + chunk_size] for i in range(0, len(tickers), chunk_size)]
     total_chunks = len(chunks)
 
@@ -236,7 +411,6 @@ def download_with_retry(
             if df is not None and not df.empty:
                 all_data.append(df)
 
-                # Check which tickers actually returned data
                 if isinstance(df.columns, pd.MultiIndex):
                     returned = set(df["Close"].columns.tolist())
                 else:
@@ -257,11 +431,9 @@ def download_with_retry(
     if not all_data:
         return pd.DataFrame(), failed_tickers
 
-    # Combine all chunks
     if len(all_data) == 1:
         combined = all_data[0]
     else:
-        # Merge DataFrames along columns
         combined_parts: dict[str, list[pd.DataFrame]] = {"Close": [], "High": [], "Low": []}
         for df in all_data:
             if isinstance(df.columns, pd.MultiIndex):
@@ -269,12 +441,11 @@ def download_with_retry(
                     if col in df.columns.get_level_values(0):
                         combined_parts[col].append(df[col])
             else:
-                # Single ticker in this chunk
                 for col in combined_parts:
                     if col in df.columns:
                         combined_parts[col].append(df[[col]])
 
-        merged = {}
+        merged: dict[str, pd.DataFrame] = {}
         for col, dfs in combined_parts.items():
             if dfs:
                 merged[col] = pd.concat(dfs, axis=1)
@@ -282,6 +453,47 @@ def download_with_retry(
         combined = pd.concat(merged, axis=1)
 
     return combined, failed_tickers
+
+
+def download_with_retry(
+    tickers: list[str],
+    period: str = "1y",
+    chunk_size: int = CHUNK_SIZE,
+    batch_delay: float = BATCH_DELAY,
+    **kwargs,
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Download price data, preferring IBKR IB Gateway and falling back to yfinance.
+
+    Returns:
+        tuple of (combined MultiIndex DataFrame, list of failed tickers)
+    """
+    ibkr_frames, ibkr_failed = _fetch_ibkr_prices(tickers, period)
+
+    yf_combined = pd.DataFrame()
+    yf_failed: list[str] = []
+    if ibkr_failed:
+        yf_combined, yf_failed = _yfinance_download_chunked(ibkr_failed, period, chunk_size, batch_delay)
+
+    ibkr_combined = _ibkr_frames_to_multiindex(ibkr_frames)
+
+    if ibkr_combined.empty and yf_combined.empty:
+        combined = pd.DataFrame()
+    elif ibkr_combined.empty:
+        combined = yf_combined
+    elif yf_combined.empty:
+        combined = ibkr_combined
+    else:
+        combined = pd.concat([ibkr_combined, yf_combined], axis=1).sort_index().sort_index(axis=1)
+
+    logger.info(
+        "market_breadth: fetched %d tickers from IBKR, %d from yfinance, %d failed",
+        len(ibkr_frames),
+        max(len(ibkr_failed) - len(yf_failed), 0),
+        len(yf_failed),
+    )
+
+    return combined, yf_failed
 
 
 def calculate_breadth_metrics(

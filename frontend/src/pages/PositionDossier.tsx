@@ -1,8 +1,28 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
-import { useQueryClient, useMutation } from "@tanstack/react-query"
+import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchDossier, approveItem, rejectItem, updateThesisStatus, fetchThesisStatus, saveThesisContent, saveOverviewContent, runFinancials, completeAction, dismissAction, updateCatalystStatus, updateKillConditionStatus, type ThesisStatus, type ThesisStatusValue } from "@/lib/api"
+import {
+  fetchDossier,
+  approveItem,
+  rejectItem,
+  updateThesisStatus,
+  fetchThesisStatus,
+  saveThesisContent,
+  saveOverviewContent,
+  runFinancials,
+  completeAction,
+  dismissAction,
+  updateCatalystStatus,
+  updateKillConditionStatus,
+  fetchOntologyRuns,
+  queryOntology,
+  runOntologyQueryAsync,
+  type OntologyEvidence,
+  type OntologyResponse,
+  type ThesisStatus,
+  type ThesisStatusValue,
+} from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
@@ -117,7 +137,7 @@ export function PositionDossier() {
     : from === "portfolio"
     ? { path: "/", label: "Portfolio" }
     : { path: "/workspace", label: "Workspace" }
-  const [tab, setTab] = useState<Tab>("Thesis")
+  const [tab, setTab] = useState<Tab>("Overview")
   const qc = useQueryClient()
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -179,6 +199,7 @@ export function PositionDossier() {
 
   const isEquity = String(data.position?.asset ?? "") === "equity"
   const visibleTabs: Tab[] = isEquity ? ["Overview", ...BASE_TABS] : [...BASE_TABS]
+  const activeTab: Tab = tab === "Overview" && !isEquity ? "Thesis" : tab
   const pos = data.position
   const meta = data.thesis?.meta
 
@@ -241,7 +262,7 @@ export function PositionDossier() {
             onClick={() => setTab(t)}
             className={cn(
               "px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors",
-              tab === t
+              activeTab === t
                 ? "border-blue-500 text-blue-600 dark:text-blue-400"
                 : "border-transparent text-muted hover:text-app",
             )}
@@ -256,14 +277,14 @@ export function PositionDossier() {
 
       {/* Tab content */}
       <div className="theme-surface rounded-xl p-4">
-        {tab === "Overview" && <OverviewTab content={data.overview_content} parsed={data.overview_parsed} ticker={data.ticker} />}
-        {tab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
-        {tab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} ticker={ticker!} />}
-        {tab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} ticker={ticker!} />}
-        {tab === "Evaluations" && <EvaluationsTab evaluations={data.evaluations} />}
-        {tab === "Risk" && <RiskTab ontology={data.ontology_risk} />}
-        {tab === "Research" && <ResearchTab notes={data.research_notes} />}
-        {tab === "Workflows" && <WorkflowsTab runs={data.workflow_runs} />}
+        {activeTab === "Overview" && <OverviewTab content={data.overview_content} parsed={data.overview_parsed} ticker={data.ticker} />}
+        {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
+        {activeTab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} ticker={ticker!} />}
+        {activeTab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} ticker={ticker!} />}
+        {activeTab === "Evaluations" && <EvaluationsTab evaluations={data.evaluations} />}
+        {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
+        {activeTab === "Research" && <ResearchTab notes={data.research_notes} />}
+        {activeTab === "Workflows" && <WorkflowsTab runs={data.workflow_runs} />}
       </div>
 
       {/* Pending Approvals for this ticker */}
@@ -989,12 +1010,245 @@ function EvaluationsTab({ evaluations }: { evaluations: Evaluation[] }) {
   )
 }
 
-function RiskTab({ ontology }: { ontology: Record<string, unknown> | null }) {
-  if (!ontology) return <p className="text-sm text-muted">No ontology risk data available.</p>
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "-"
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
+
+function formatNumber(value: unknown, digits = 2): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-"
+  return value.toFixed(digits)
+}
+
+function formatConfidence(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-"
+  return `${Math.round(value * 100)}%`
+}
+
+function formatMetricValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return value.toFixed(2)
+  if (value == null || value === "") return "-"
+  return String(value)
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+function riskLevelClass(level: unknown): string {
+  const s = String(level ?? "").toLowerCase()
+  if (s === "high") return "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950"
+  if (s === "medium") return "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
+  if (s === "low") return "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950"
+  return "text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-800"
+}
+
+function moduleStatusClass(status: unknown): string {
+  const s = String(status ?? "error").toLowerCase()
+  if (s === "ok") return "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950"
+  if (s === "partial") return "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
+  return "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950"
+}
+
+function evidenceTitle(ev: OntologyEvidence): string {
+  return ev.name || ev.component || ev.source || "Risk driver"
+}
+
+function RiskTab({ ticker }: { ticker: string }) {
+  const qc = useQueryClient()
+  const [elapsed, setElapsed] = useState(0)
+
+  const runsQuery = useQuery({
+    queryKey: ["ontology-runs", "latest"],
+    queryFn: () => fetchOntologyRuns(1),
+    staleTime: 60 * 1000,
+    retry: 1,
+  })
+  const latestRun = runsQuery.data?.runs?.[0]
+
+  const cachedRiskQuery = useQuery({
+    queryKey: ["ontology-risk", ticker, latestRun?.run_id],
+    queryFn: () => queryOntology({
+      filters: { tickers: [ticker] },
+      run_id: latestRun!.run_id,
+      include_graph: false,
+      refresh_snapshot: false,
+    }),
+    enabled: Boolean(latestRun?.run_id),
+    staleTime: 60 * 1000,
+    retry: 1,
+  })
+
+  const refreshMutation = useMutation({
+    mutationFn: () => runOntologyQueryAsync({
+      filters: { tickers: [ticker] },
+      timeframe: "Daily",
+      include_graph: false,
+      refresh_snapshot: true,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ontology-runs"] })
+    },
+  })
+
+  useEffect(() => {
+    if (!refreshMutation.isPending) {
+      setElapsed(0)
+      return
+    }
+    const start = Date.now()
+    const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+    return () => window.clearInterval(id)
+  }, [refreshMutation.isPending])
+
+  const ontology: OntologyResponse | undefined = refreshMutation.data ?? cachedRiskQuery.data
+  const rows = Array.isArray(ontology?.results) ? ontology.results : []
+  const tickerUpper = ticker.toUpperCase()
+  const row = rows.find(r => String(r.ticker ?? "").toUpperCase() === tickerUpper) ?? null
+  const evidence = Array.isArray(row?.evidence) ? row.evidence : []
+  const sourceStatus = ontology?.source_status ?? {}
+  const moduleRows = Object.entries(sourceStatus).sort(([a], [b]) => a.localeCompare(b))
+  const moduleIssueCount = moduleRows.filter(([, state]) => String(state?.status ?? "error").toLowerCase() !== "ok").length
+  const requiredHealth = latestRun?.required_modules_ok == null
+    ? moduleRows.length
+      ? moduleIssueCount === 0 ? "OK" : `${moduleIssueCount} issue${moduleIssueCount === 1 ? "" : "s"}`
+      : "-"
+    : latestRun.required_modules_ok ? "OK" : "Degraded"
+  const primaryError = refreshMutation.error ?? (!ontology ? cachedRiskQuery.error ?? runsQuery.error : null)
+  const noCachedRun = !runsQuery.isLoading && !latestRun && !refreshMutation.data
+
   return (
-    <pre className="text-xs text-muted whitespace-pre-wrap overflow-auto max-h-[600px]">
-      {JSON.stringify(ontology, null, 2)}
-    </pre>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-app">Ontology Risk</h2>
+          <p className="text-xs text-subtle">Snapshot {formatDateTime(ontology?.as_of ?? latestRun?.as_of)}</p>
+        </div>
+        <ActionButton
+          onClick={() => refreshMutation.mutate()}
+          loading={refreshMutation.isPending}
+          loadingText="Refreshing..."
+          className="w-auto px-3 py-1.5"
+        >
+          Refresh Risk
+        </ActionButton>
+      </div>
+
+      {refreshMutation.isPending && <LoadingSpinner message={`Refreshing ontology risk... (${elapsed}s elapsed)`} />}
+      {!ontology && runsQuery.isLoading && <LoadingSpinner message="Loading cached ontology risk..." />}
+      {!ontology && latestRun && cachedRiskQuery.isLoading && <LoadingSpinner message="Loading cached ontology risk..." />}
+
+      {primaryError && <ErrorMessage message={errorMessage(primaryError)} />}
+      {refreshMutation.isSuccess && (
+        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-400">
+          Risk snapshot refreshed.
+        </div>
+      )}
+
+      {noCachedRun && (
+        <div className="rounded-lg border border-app px-4 py-3">
+          <p className="text-sm font-medium text-app">No cached ontology snapshot available.</p>
+          <p className="mt-1 text-xs text-muted">Use Refresh Risk to build a fresh snapshot.</p>
+        </div>
+      )}
+
+      {ontology && !row && !cachedRiskQuery.isLoading && (
+        <div className="rounded-lg border border-app px-4 py-3">
+          <p className="text-sm font-medium text-app">No cached ontology risk for {tickerUpper}.</p>
+          <p className="mt-1 text-xs text-muted">Use Refresh Risk to rebuild the risk snapshot.</p>
+        </div>
+      )}
+
+      {row && (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg border border-app px-4 py-3">
+              <p className="text-xs text-subtle">Risk Level</p>
+              <span className={cn("mt-2 inline-flex rounded px-2 py-0.5 text-xs font-medium", riskLevelClass(row.risk_level))}>
+                {String(row.risk_level ?? "unknown")}
+              </span>
+            </div>
+            <div className="rounded-lg border border-app px-4 py-3">
+              <p className="text-xs text-subtle">Risk Score</p>
+              <p className="mt-1 text-xl font-semibold text-app">{formatNumber(row.risk_score)}</p>
+            </div>
+            <div className="rounded-lg border border-app px-4 py-3">
+              <p className="text-xs text-subtle">Required Modules</p>
+              <p className="mt-1 text-xl font-semibold text-app">{requiredHealth}</p>
+            </div>
+            <div className="rounded-lg border border-app px-4 py-3">
+              <p className="text-xs text-subtle">Confidence</p>
+              <p className="mt-1 text-xl font-semibold text-app">{formatConfidence(ontology?.aggregate?.confidence)}</p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-app px-4 py-3">
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-subtle">
+              <span>{row.asset ?? "unknown"} asset</span>
+              <span>{row.direction ?? "unknown"}</span>
+              <span>{row.sector ?? "Unknown sector"}</span>
+            </div>
+            <h3 className="mb-2 text-sm font-semibold text-app">Top Drivers</h3>
+            {evidence.length ? (
+              <div className="space-y-2">
+                {evidence.map((ev, i) => (
+                  <div key={`${evidenceTitle(ev)}-${i}`} className="rounded border border-app px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-app">{evidenceTitle(ev)}</span>
+                      <span className="text-xs text-subtle">Contribution {formatMetricValue(ev.contribution)}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+                      <span>{ev.source ?? "unknown source"}</span>
+                      <span>{ev.direction ?? "unknown direction"}</span>
+                      <span>Value {formatMetricValue(ev.value)}</span>
+                    </div>
+                    {ev.threshold && <p className="mt-1 text-xs text-subtle">{ev.threshold}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted">No evidence drivers available.</p>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-app px-4 py-3">
+            <h3 className="mb-2 text-sm font-semibold text-app">Module Health</h3>
+            {moduleRows.length ? (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {moduleRows.map(([module, state]) => (
+                  <div key={module} className="flex items-center justify-between gap-3 rounded border border-app px-3 py-2 text-sm">
+                    <span className="min-w-0 truncate text-muted">{module}</span>
+                    <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-xs font-medium", moduleStatusClass(state?.status))}>
+                      {state?.status ?? "error"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted">No module status available.</p>
+            )}
+          </div>
+        </>
+      )}
+
+      {ontology && (
+        <details className="rounded-lg border border-app px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-app">Raw ontology JSON</summary>
+          <pre className="mt-3 max-h-[500px] overflow-auto whitespace-pre-wrap text-xs text-muted">
+            {JSON.stringify(ontology, null, 2)}
+          </pre>
+        </details>
+      )}
+    </div>
   )
 }
 

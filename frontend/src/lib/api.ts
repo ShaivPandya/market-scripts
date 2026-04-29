@@ -249,7 +249,7 @@ export const fetchPriceVolumeSignals = () =>
 export const fetchVixTermStructure = () =>
   client.get("/vix-term-structure").then(r => r.data)
 
-type OntologyQueryBody = {
+export type OntologyQueryBody = {
   query?: string
   intent?: "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
   filters?: {
@@ -265,6 +265,46 @@ type OntologyQueryBody = {
   refresh_snapshot?: boolean
 }
 
+export interface OntologyEvidence {
+  component?: string
+  source?: string
+  name?: string
+  value?: number | string | null
+  threshold?: string
+  direction?: string
+  contribution?: number | null
+}
+
+export interface OntologyRow {
+  ticker: string
+  asset?: string
+  direction?: string
+  sector?: string
+  risk_score?: number | null
+  risk_level?: string
+  evidence?: OntologyEvidence[]
+}
+
+export interface OntologySourceStatus {
+  status?: string
+  detail?: string
+}
+
+export interface OntologyResponse {
+  run_id?: string
+  intent?: string
+  as_of?: string
+  source_status?: Record<string, OntologySourceStatus>
+  results?: OntologyRow[]
+  aggregate?: {
+    confidence?: number
+    position_count?: number
+    average_risk_score?: number
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
 export interface OntologyRunSummary {
   run_id: string
   as_of: string
@@ -278,12 +318,12 @@ export const fetchOntologyRuns = (limit = 100) =>
     .then(r => r.data as { runs: OntologyRunSummary[] })
 
 export const queryOntology = (body: OntologyQueryBody) =>
-  client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data)
+  client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data as OntologyResponse)
 
 type OntologyJobResponse =
   | { job_id: string; status: "queued" | "running" }
   | { job_id: string; status: "error"; error?: string }
-  | { job_id: string; status: "done"; result?: unknown }
+  | { job_id: string; status: "done"; result?: OntologyResponse }
 
 export const startOntologyQueryJob = (body: OntologyQueryBody) =>
   client.post("/ontology/query/async", body, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
@@ -291,7 +331,7 @@ export const startOntologyQueryJob = (body: OntologyQueryBody) =>
 export const fetchOntologyQueryJob = (job_id: string) =>
   client.get(`/ontology/query/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
 
-export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: AbortSignal) {
+export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: AbortSignal): Promise<OntologyResponse> {
   const started = await startOntologyQueryJob(body)
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Ontology query failed")
@@ -308,7 +348,7 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: Ab
 
     if (job.status === "done") {
       if ("result" in job && job.result != null) return job.result
-      return "result" in started ? started.result : undefined
+      throw new Error("Ontology query returned no result")
     }
     if (job.status === "error") throw new Error(job.error || "Ontology query failed")
   }
