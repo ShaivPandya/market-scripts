@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from api.cache import stamp_fresh
@@ -6,6 +6,11 @@ from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
 router = APIRouter()
+
+
+def _csv_download_filename(symbol: str) -> str:
+    clean = "".join(ch if ch.isalnum() else "_" for ch in symbol.strip().upper()).strip("_")
+    return f"{clean or 'ticker'}_price_history.csv"
 
 
 class ChartRequest(BaseModel):
@@ -43,6 +48,28 @@ def run_chart(req: ChartRequest):
         else:
             result[k] = serialize_value(v)
     return stamp_fresh(result)
+
+
+@router.get("/chart/price-history/{ticker}")
+def download_price_history(ticker: str):
+    normalized = ticker.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+
+    try:
+        from portfolio.technical_analysis.technical_analysis import fetch_full_price_history
+
+        df = fetch_full_price_history(normalized)
+    except Exception as e:
+        raise DataFetchError(source="chart", detail=str(e)) from e
+
+    csv_text = df.to_csv(index=False)
+    filename = _csv_download_filename(normalized)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/chart/ratio")

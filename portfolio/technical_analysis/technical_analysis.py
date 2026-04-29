@@ -43,6 +43,33 @@ def _fetch_daily(ticker: str, years: int = 9) -> pd.Series:
     return close
 
 
+def fetch_full_price_history(ticker: str) -> pd.DataFrame:
+    """Download all available daily close prices for *ticker*."""
+    raw = yf_download(
+        ticker,
+        period="max",
+        interval="1d",
+        auto_adjust=False,
+        progress=False,
+    )
+    if raw.empty:
+        raise ValueError(f"No data returned for ticker '{ticker}'")
+
+    close_values = raw["Close"]
+    close_raw = close_values.iloc[:, 0] if isinstance(close_values, pd.DataFrame) else close_values
+    close = close_raw.dropna()
+    if close.empty:
+        raise ValueError(f"No close prices returned for ticker '{ticker}'")
+
+    df = close.to_frame("Close")
+    df.index = pd.DatetimeIndex(df.index).tz_localize(None)
+    df.reset_index(inplace=True)
+    date_col = df.columns[0]
+    df.rename(columns={date_col: "Date"}, inplace=True)
+    df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+    return df[["Date", "Close"]]
+
+
 # ---------------------------------------------------------------------------
 # Moving averages
 # ---------------------------------------------------------------------------

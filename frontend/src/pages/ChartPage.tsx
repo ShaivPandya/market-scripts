@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { Download, Loader2 } from "lucide-react"
 
-import { runChart, runPriceRatioChart } from "@/lib/api"
+import { downloadPriceHistory, runChart, runPriceRatioChart } from "@/lib/api"
 import { TimeSeriesChart, type SeriesDef } from "@/components/shared/TimeSeriesChart"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -74,6 +75,11 @@ const PRICE_FORMATTER = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
+
+function csvFileNameForTicker(ticker: string): string {
+  const clean = ticker.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+  return `${clean || "ticker"}_price_history.csv`
+}
 
 function toNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value
@@ -171,6 +177,8 @@ export function ChartPage() {
   const [ticker, setTicker] = useState("")
   const [lookback, setLookback] = useState<string>("2Y")
   const [submittedTicker, setSubmittedTicker] = useState<string | null>(null)
+  const [isDownloadingHistory, setIsDownloadingHistory] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   const [ratioSymbolA, setRatioSymbolA] = useState("")
   const [ratioSymbolB, setRatioSymbolB] = useState("")
@@ -244,6 +252,29 @@ export function ChartPage() {
     setRatioSymbolB(preset.symbolB)
     const endDate = isoDateToday()
     setSubmittedRatioBase({ symbol_a: preset.symbolA, symbol_b: preset.symbolB, end_date: endDate })
+  }
+
+  async function handleDownloadHistory() {
+    const activeTicker = (ticker.trim() || submittedTicker || "").toUpperCase()
+    if (!activeTicker || isDownloadingHistory) return
+
+    setIsDownloadingHistory(true)
+    setDownloadError(null)
+    try {
+      const blob = await downloadPriceHistory(activeTicker)
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = csvFileNameForTicker(activeTicker)
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : "Failed to download price history")
+    } finally {
+      setIsDownloadingHistory(false)
+    }
   }
 
   const allPriceData = useMemo<Record<string, unknown>[]>(() => {
@@ -465,6 +496,20 @@ export function ChartPage() {
             <ActionButton type="submit" loading={isLoading} loadingText="Analyzing..." className="w-auto px-6">
               Analyze
             </ActionButton>
+            <button
+              type="button"
+              onClick={handleDownloadHistory}
+              disabled={isDownloadingHistory || !(ticker.trim() || submittedTicker)}
+              className="theme-button-secondary inline-flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              title="Download complete daily close price history as CSV"
+            >
+              {isDownloadingHistory ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              Price History CSV
+            </button>
           </div>
         )}
 
@@ -516,6 +561,12 @@ export function ChartPage() {
           </div>
         )}
       </form>
+
+      {downloadError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {downloadError}
+        </div>
+      )}
 
       {isLoading && <LoadingSpinner message={mode === "ratio" ? "Fetching ratio data..." : "Fetching chart data..."} />}
       {isError && <ErrorMessage message={String(error)} />}

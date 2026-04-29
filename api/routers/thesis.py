@@ -17,7 +17,8 @@ from paths import PROJECT_ROOT
 router = APIRouter()
 
 THESES_DIR = PROJECT_ROOT / "investment_theses"
-MAX_PDF_SIZE_BYTES = 30 * 1024 * 1024
+MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
+_MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
 _REQ_SECTIONS = ("## Thesis", "## Key Catalysts", "## Risk Factors")
 
@@ -85,6 +86,16 @@ def _normalize_output_markdown(ticker: str, content: str) -> str:
     return cleaned.strip() + "\n"
 
 
+def _decode_markdown_upload(markdown_bytes: bytes) -> str:
+    try:
+        content = markdown_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise ValidationError("Markdown file must be UTF-8 encoded.") from e
+    if not content.strip():
+        raise ValidationError("Markdown file is empty.")
+    return content
+
+
 def _call_claude_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
     import anthropic
 
@@ -137,25 +148,31 @@ async def generate_thesis(
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    pdf_bytes = await file.read()
-    if not pdf_bytes:
+    upload_bytes = await file.read()
+    if not upload_bytes:
         raise ValidationError("Uploaded file is empty.")
-    if len(pdf_bytes) > MAX_PDF_SIZE_BYTES:
-        raise ValidationError("PDF exceeds 30MB limit.")
+    if len(upload_bytes) > MAX_UPLOAD_SIZE_BYTES:
+        raise ValidationError("Uploaded file exceeds 30MB limit.")
 
-    content_type = (file.content_type or "").lower()
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
     filename = (file.filename or "").lower()
     has_pdf_type = content_type == "application/pdf" or filename.endswith(".pdf")
-    has_pdf_signature = pdf_bytes.startswith(b"%PDF-")
-    if not (has_pdf_type and has_pdf_signature):
-        raise ValidationError("File must be a valid PDF.")
+    has_pdf_signature = upload_bytes.startswith(b"%PDF-")
+    has_markdown_type = content_type in _MARKDOWN_CONTENT_TYPES or filename.endswith(".md")
 
-    try:
-        content = _call_claude_pdf(ticker=normalized_ticker, pdf_bytes=pdf_bytes)
-    except (ValidationError, DataFetchError):
-        raise
-    except Exception as e:
-        raise DataFetchError(source="claude", detail=f"Failed to generate thesis: {e}") from e
+    if has_pdf_type or has_pdf_signature:
+        if not (has_pdf_type and has_pdf_signature):
+            raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+        try:
+            content = _call_claude_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
+        except (ValidationError, DataFetchError):
+            raise
+        except Exception as e:
+            raise DataFetchError(source="claude", detail=f"Failed to generate thesis: {e}") from e
+    elif has_markdown_type:
+        content = _normalize_output_markdown(normalized_ticker, _decode_markdown_upload(upload_bytes))
+    else:
+        raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
     THESES_DIR.mkdir(parents=True, exist_ok=True)
     thesis_path = THESES_DIR / f"{normalized_ticker}.md"

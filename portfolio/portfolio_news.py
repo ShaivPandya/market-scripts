@@ -133,7 +133,7 @@ def _fetch_all_ibkr_news(positions: list[dict[str, str]]) -> dict[str, list[dict
             from ib_insync import IB
 
             ib = IB()
-            ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=5)
+            ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=5, readonly=True)
         except Exception as e:
             logger.warning("IBKR connection unavailable (%s: %s), skipping IB news", type(e).__name__, e)
             return {}
