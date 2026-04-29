@@ -24,6 +24,8 @@ from bs4 import BeautifulSoup, Tag
 from dotenv import load_dotenv
 from readability import Document
 
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
 from llm_utils import MODEL_HAIKU, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
@@ -380,6 +382,12 @@ def _resolve_db_path(db_path: str | None = None) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
 
 
+def _connect_db(db_path: str | None = None):
+    if db_path is None and use_postgres_state():
+        return PostgresCompatConnection(table_map={"items": "central_bank_items"})
+    return sqlite3.connect(_resolve_db_path(db_path))
+
+
 def iter_feed_items(sources: list[str] | None = None) -> Iterable[Item]:
     for source, feed_urls in FEEDS.items():
         if sources and source not in sources:
@@ -527,10 +535,9 @@ def get_data(db_path: str | None = None, refresh: bool = False, sources: list[st
     *sources* filters which central banks to fetch/query (default: all in FEEDS).
     Returns dict with keys: items, by_source, counts, last_updated, error (on failure).
     """
-    db_path = _resolve_db_path(db_path)
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _connect_db(db_path)
         init_db(conn)
         if refresh:
             _fetch_and_store(conn, sources=sources)

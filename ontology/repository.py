@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
 from ontology.models import OntologyEdge, OntologyNode
 
 logger = logging.getLogger("uvicorn.error")
@@ -50,11 +52,25 @@ def _resolve_default_db_path() -> Path:
 
 class OntologyRepository:
     def __init__(self, db_path: Path | None = None):
-        self.db_path = Path(db_path) if db_path is not None else _resolve_default_db_path()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._use_postgres = db_path is None and use_postgres_state()
+        self.db_path = (
+            None if self._use_postgres else Path(db_path) if db_path is not None else _resolve_default_db_path()
+        )
+        if self.db_path is not None:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> sqlite3.Connection | PostgresCompatConnection:
+        if self._use_postgres:
+            return PostgresCompatConnection(
+                table_map={
+                    "nodes": "ontology_nodes",
+                    "edges": "ontology_edges",
+                    "snapshot_nodes": "ontology_snapshot_nodes",
+                    "snapshot_edges": "ontology_snapshot_edges",
+                }
+            )
+        assert self.db_path is not None
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -62,6 +78,8 @@ class OntologyRepository:
         return conn
 
     def _init_schema(self) -> None:
+        if self._use_postgres:
+            return
         with self._connect() as conn:
             # Legacy tables are intentionally preserved for additive migration.
             conn.execute(

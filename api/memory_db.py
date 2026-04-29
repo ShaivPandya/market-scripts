@@ -16,11 +16,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DB_PATH = _REPO_ROOT / "data_cache" / "memory" / "memory.db"
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+_conn: sqlite3.Connection | PostgresCompatConnection | None = None
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -49,7 +52,7 @@ ON conversation_sessions(ended_at DESC)
 # ---------------------------------------------------------------------------
 
 
-def _get_conn() -> sqlite3.Connection:
+def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
     global _conn
 
     if _conn is not None:
@@ -65,11 +68,14 @@ def _get_conn() -> sqlite3.Connection:
     if _conn is None:
         with _lock:
             if _conn is None:
-                _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-                _conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
-                _conn.execute("PRAGMA journal_mode=WAL")
-                _conn.row_factory = sqlite3.Row
-                _init_db(_conn)
+                if use_postgres_state():
+                    _conn = PostgresCompatConnection()
+                else:
+                    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    _conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+                    _conn.execute("PRAGMA journal_mode=WAL")
+                    _conn.row_factory = sqlite3.Row
+                    _init_db(_conn)
     return _conn
 
 

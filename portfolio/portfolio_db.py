@@ -19,6 +19,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from api.postgres import connect, use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
+
 DB_PATH = Path(__file__).parent / "portfolio.db"
 CSV_PATH = Path(__file__).parent / "portfolio.csv"
 
@@ -44,10 +47,10 @@ CREATE TABLE IF NOT EXISTS positions (
 """
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+_conn: sqlite3.Connection | PostgresCompatConnection | None = None
 
 
-def _get_conn() -> sqlite3.Connection:
+def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
     global _conn
     if _conn is not None:
         try:
@@ -61,10 +64,13 @@ def _get_conn() -> sqlite3.Connection:
     if _conn is None:
         with _lock:
             if _conn is None:
-                _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-                _conn.execute("PRAGMA journal_mode=WAL")
-                _conn.row_factory = sqlite3.Row
-                _init_db(_conn)
+                if use_postgres_state():
+                    _conn = PostgresCompatConnection()
+                else:
+                    _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+                    _conn.execute("PRAGMA journal_mode=WAL")
+                    _conn.row_factory = sqlite3.Row
+                    _init_db(_conn)
     return _conn
 
 
@@ -91,6 +97,9 @@ def get_positions(include_hedges: bool = False) -> list[dict]:
     By default only ``role='position'`` rows are returned.  Pass
     ``include_hedges=True`` to also include ``role='hedge'`` rows.
     """
+    if use_postgres_state():
+        return _pg_get_positions(include_hedges=include_hedges)
+
     conn = _get_conn()
     with _lock:
         if include_hedges:
@@ -108,6 +117,9 @@ def get_positions(include_hedges: bool = False) -> list[dict]:
 
 def get_hedge_positions() -> list[dict]:
     """Return only hedge positions."""
+    if use_postgres_state():
+        return _pg_get_positions(include_hedges=True, role="hedge")
+
     conn = _get_conn()
     with _lock:
         rows = conn.execute(
@@ -180,7 +192,22 @@ def save_positions(positions: list[dict], role: str = "position") -> None:
     """
     if role not in ("position", "hedge"):
         raise ValueError(f"Invalid role: {role!r}")
+    rows = _normalize_position_rows(positions, role)
+    if use_postgres_state():
+        _pg_save_position_rows(rows, role=role)
+        return
+
     conn = _get_conn()
+    with _lock:
+        conn.execute("DELETE FROM positions WHERE role = ?", (role,))
+        conn.executemany(
+            "INSERT INTO positions (ticker, asset, direction, contrarian, conviction, cost_basis, shares, role) VALUES (?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        conn.commit()
+
+
+def _normalize_position_rows(positions: list[dict], role: str) -> list[tuple]:
     rows = []
     for p in positions:
         ticker = str(p.get("ticker", "")).strip().upper()
@@ -203,10 +230,35 @@ def save_positions(positions: list[dict], role: str = "position") -> None:
         except (ValueError, TypeError):
             shares = None
         rows.append((ticker, asset, direction, contrarian, conviction, cost_basis, shares, role))
-    with _lock:
-        conn.execute("DELETE FROM positions WHERE role = ?", (role,))
-        conn.executemany(
-            "INSERT INTO positions (ticker, asset, direction, contrarian, conviction, cost_basis, shares, role) VALUES (?,?,?,?,?,?,?,?)",
-            rows,
-        )
+    return rows
+
+
+def _pg_get_positions(*, include_hedges: bool = False, role: str | None = None) -> list[dict]:
+    sql = "SELECT ticker, asset, direction, contrarian, conviction, cost_basis, shares, role FROM positions"
+    params: tuple = ()
+    if role:
+        sql += " WHERE role = %s"
+        params = (role,)
+    elif not include_hedges:
+        sql += " WHERE role = 'position'"
+    sql += " ORDER BY ticker"
+    with connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    out = [dict(row) for row in rows]
+    for row in out:
+        row["contrarian"] = 1 if row.get("contrarian") else 0
+    return out
+
+
+def _pg_save_position_rows(rows: list[tuple], *, role: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM positions WHERE role = %s", (role,))
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO positions (ticker, asset, direction, contrarian, conviction, cost_basis, shares, role)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                rows,
+            )
         conn.commit()

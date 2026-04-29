@@ -56,6 +56,9 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
+
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent / "core.db"
@@ -207,10 +210,10 @@ _INDEXES = [
 # ---------------------------------------------------------------------------
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+_conn: sqlite3.Connection | PostgresCompatConnection | None = None
 
 
-def _get_conn() -> sqlite3.Connection:
+def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
     global _conn
     if _conn is not None:
         try:
@@ -224,11 +227,23 @@ def _get_conn() -> sqlite3.Connection:
     if _conn is None:
         with _lock:
             if _conn is None:
-                _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-                _conn.execute("PRAGMA journal_mode=WAL")
-                _conn.row_factory = sqlite3.Row
-                _conn.execute("PRAGMA foreign_keys = ON")
-                _init_db(_conn)
+                if use_postgres_state():
+                    _conn = PostgresCompatConnection(
+                        identity_tables={
+                            "catalysts",
+                            "kill_conditions",
+                            "action_items",
+                            "watch_triggers",
+                            "research_notes",
+                            "pending_approvals",
+                        }
+                    )
+                else:
+                    _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+                    _conn.execute("PRAGMA journal_mode=WAL")
+                    _conn.row_factory = sqlite3.Row
+                    _conn.execute("PRAGMA foreign_keys = ON")
+                    _init_db(_conn)
     return _conn
 
 

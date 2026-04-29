@@ -20,6 +20,8 @@ from typing import Optional, TypedDict, cast
 
 from dotenv import load_dotenv
 
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
 from llm_utils import MODEL_SONNET, call_claude_text, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
@@ -106,6 +108,14 @@ def _resolve_db_path(db_path: str | None = None) -> str:
     if db_path:
         return db_path
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
+
+
+def _connect_db(db_path: str | None = None):
+    if db_path is None and use_postgres_state():
+        return PostgresCompatConnection(table_map={"transcripts": "industry_transcripts"})
+    conn = sqlite3.connect(_resolve_db_path(db_path))
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def _make_id(ticker: str, year: int, quarter: int) -> str:
@@ -818,11 +828,9 @@ def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
 
 
 def get_data(db_path: str | None = None, refresh: bool = False) -> dict:
-    db_path = _resolve_db_path(db_path)
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn = _connect_db(db_path)
         init_db(conn)
         if refresh:
             _fetch_and_store(conn)

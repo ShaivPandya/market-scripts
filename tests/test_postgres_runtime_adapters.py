@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import Any
+
+
+class _FakeCursor:
+    def __init__(self, conn):
+        self.conn = conn
+        self.description = None
+        self.rowcount = 0
+        self._rows: list[dict[str, Any]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return None
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()):
+        self.conn.queries.append((sql, params))
+        if "retrieval_chunks" in sql and "JOIN retrieval_documents" in sql:
+            self.description = [
+                SimpleNamespace(name=name)
+                for name in [
+                    "chunk_id",
+                    "doc_id",
+                    "chunk_index",
+                    "content",
+                    "heading",
+                    "doc_type",
+                    "ticker",
+                    "source_path",
+                    "created_at",
+                    "score",
+                ]
+            ]
+            self._rows = [
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "doc-1",
+                    "chunk_index": 0,
+                    "content": "hello world",
+                    "heading": "Heading",
+                    "doc_type": "thesis",
+                    "ticker": "MU",
+                    "source_path": "gs://bucket/live/theses/MU.md",
+                    "created_at": "2026-04-29T00:00:00+00:00",
+                    "score": 0.91,
+                }
+            ]
+        else:
+            self.description = []
+            self._rows = []
+        return self
+
+    def executemany(self, sql: str, params_seq):
+        self.conn.queries.append((sql, tuple(params_seq)))
+        self.rowcount = len(params_seq)
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+class _FakeConn:
+    def __init__(self):
+        self.queries: list[tuple[str, tuple[Any, ...]]] = []
+        self.commits = 0
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    def cursor(self):
+        return _FakeCursor(self)
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()):
+        cur = _FakeCursor(self)
+        return cur.execute(sql, params)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def test_portfolio_uses_postgres_in_production(monkeypatch):
+    from portfolio import portfolio_db
+
+    fake = _FakeConn()
+
+    @contextmanager
+    def fake_connect():
+        yield fake
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(portfolio_db, "connect", fake_connect)
+
+    portfolio_db.save_positions([{"ticker": "MU", "asset": "equity", "direction": "long"}])
+
+    assert any("DELETE FROM positions WHERE role = %s" in sql for sql, _params in fake.queries)
+    assert any("INSERT INTO positions" in sql for sql, _params in fake.queries)
+
+
+def test_retrieval_search_uses_pgvector_tables(monkeypatch):
+    from api import retrieval
+
+    fake = _FakeConn()
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(retrieval, "_embed_single", lambda _query: [0.0] * 384)
+    monkeypatch.setattr(retrieval, "open_connection", lambda register_pgvector=False: fake)
+
+    results = retrieval.search("memory cycle", doc_types=["thesis"], tickers=["MU"], top_k=3)
+
+    assert results[0]["doc_id"] == "doc-1"
+    sql = fake.queries[0][0]
+    assert "retrieval_chunks" in sql
+    assert "retrieval_documents" in sql
+    assert "<=>" in sql
+
+
+def test_compat_layer_maps_legacy_table_names(monkeypatch):
+    import api.postgres_compat as compat
+
+    fake = _FakeConn()
+    monkeypatch.setattr(compat, "open_connection", lambda register_pgvector=False: fake)
+
+    conn = compat.PostgresCompatConnection(
+        table_map={
+            "items": "central_bank_items",
+            "transcripts": "industry_transcripts",
+            "nodes": "ontology_nodes",
+        }
+    )
+    conn.execute("SELECT * FROM items WHERE guid=?", ("g1",))
+    conn.execute("SELECT * FROM transcripts WHERE ticker=?", ("MU",))
+    conn.execute("SELECT * FROM nodes ORDER BY id")
+
+    queries = [sql for sql, _params in fake.queries]
+    assert "central_bank_items" in queries[0]
+    assert "industry_transcripts" in queries[1]
+    assert "ontology_nodes" in queries[2]
+    assert "%s" in queries[0]
