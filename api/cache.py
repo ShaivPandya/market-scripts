@@ -198,3 +198,11 @@ def invalidate_all() -> None:
                             pass
     except Exception:
         logger.debug("api cache invalidate_all: disk cleanup failed", exc_info=True)
+
+    # Downstream module disk caches that survive between server restarts.
+    try:
+        from equities.market_technicals.market_breadth import invalidate_disk_cache as _invalidate_breadth
+
+        _invalidate_breadth()
+    except Exception:
+        logger.debug("api cache invalidate_all: breadth disk cleanup failed", exc_info=True)

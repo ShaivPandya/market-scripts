@@ -190,6 +190,19 @@ def _write_breadth_cache(
         return
 
 
+def invalidate_disk_cache() -> None:
+    """Wipe all market_breadth_*.json cache files. Called by api.cache.invalidate_all."""
+    try:
+        if _CACHE_DIR.exists():
+            for path in _CACHE_DIR.glob("market_breadth_*.json"):
+                try:
+                    path.unlink()
+                except Exception:
+                    logger.debug("Failed to unlink breadth cache file %s", path, exc_info=True)
+    except Exception:
+        logger.debug("market_breadth invalidate_disk_cache failed", exc_info=True)
+
+
 def _latest_market_close_date() -> str | None:
     try:
         probe = yf_download(
