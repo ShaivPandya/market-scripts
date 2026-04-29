@@ -49,11 +49,13 @@ def generate_thesis_markdown(ticker: str) -> str:
     # Thesis content (original markdown if available)
     thesis_content = None
     try:
+        from api.state_storage import exists_text, read_text
         from paths import PROJECT_ROOT
 
         thesis_path = PROJECT_ROOT / "investment_theses" / f"{ticker}.md"
-        if thesis_path.exists():
-            raw = thesis_path.read_text(encoding="utf-8").strip()
+        thesis_key = f"live/theses/{ticker}.md"
+        if exists_text(thesis_path, thesis_key):
+            raw = read_text(thesis_path, thesis_key, encoding="utf-8").strip()
             # Extract core thesis section (between first # and ## Key Catalysts)
             lines = raw.splitlines()
             core_lines: list[str] = []

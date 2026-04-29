@@ -13,12 +13,14 @@ from pydantic import BaseModel
 
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
+from api.state_storage import exists_text, read_text, write_text
 from llm_utils import MODEL_SONNET, extract_text
 from paths import PROJECT_ROOT
 
 router = APIRouter()
 
 OVERVIEWS_DIR = PROJECT_ROOT / "investment_overviews"
+OVERVIEWS_GCS_PREFIX = "live/overviews"
 MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
 _MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
@@ -92,6 +94,32 @@ def _validate_ticker(ticker: str) -> None:
         raise ValidationError("Ticker cannot be empty.")
     if not _TICKER_RE.match(ticker):
         raise ValidationError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
+
+
+def _overview_path(ticker: str) -> Path:
+    return OVERVIEWS_DIR / f"{ticker}.md"
+
+
+def _overview_gcs_key(ticker: str) -> str:
+    return f"{OVERVIEWS_GCS_PREFIX}/{ticker}.md"
+
+
+def _overview_exists(ticker: str) -> bool:
+    return exists_text(_overview_path(ticker), _overview_gcs_key(ticker))
+
+
+def _read_overview(ticker: str) -> str:
+    return read_text(_overview_path(ticker), _overview_gcs_key(ticker), encoding="utf-8")
+
+
+def _write_overview(ticker: str, content: str) -> str:
+    return write_text(
+        _overview_path(ticker),
+        _overview_gcs_key(ticker),
+        content,
+        encoding="utf-8",
+        content_type="text/markdown; charset=utf-8",
+    )
 
 
 def _extract_stop_reason(response: Any) -> str | None:
@@ -462,10 +490,8 @@ async def generate_overview(
     else:
         raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
-    OVERVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    overview_path = OVERVIEWS_DIR / f"{normalized_ticker}.md"
     try:
-        overview_path.write_text(content, encoding="utf-8")
+        source_path = _write_overview(normalized_ticker, content)
     except Exception as e:
         from api.exceptions import AppError
 
@@ -479,7 +505,7 @@ async def generate_overview(
             doc_type="thesis",
             content=content,
             ticker=normalized_ticker,
-            source_path=str(overview_path),
+            source_path=source_path,
             doc_id=f"overview-{normalized_ticker}",
         )
     except Exception:
@@ -502,10 +528,8 @@ def save_overview(ticker: str, body: SaveOverviewRequest):
     if not content:
         raise ValidationError("Overview content cannot be empty.")
 
-    OVERVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    overview_path = OVERVIEWS_DIR / f"{normalized_ticker}.md"
     try:
-        overview_path.write_text(content + "\n", encoding="utf-8")
+        source_path = _write_overview(normalized_ticker, content + "\n")
     except Exception as e:
         from api.exceptions import AppError
 
@@ -519,7 +543,7 @@ def save_overview(ticker: str, body: SaveOverviewRequest):
             doc_type="thesis",
             content=content,
             ticker=normalized_ticker,
-            source_path=str(overview_path),
+            source_path=source_path,
             doc_id=f"overview-{normalized_ticker}",
         )
     except Exception:
@@ -533,11 +557,10 @@ def get_overview(ticker: str):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    overview_path = OVERVIEWS_DIR / f"{normalized_ticker}.md"
-    if not overview_path.exists():
+    if not _overview_exists(normalized_ticker):
         raise NotFoundError("Overview", normalized_ticker)
     try:
-        content = overview_path.read_text(encoding="utf-8")
+        content = _read_overview(normalized_ticker)
     except Exception as e:
         from api.exceptions import AppError
 

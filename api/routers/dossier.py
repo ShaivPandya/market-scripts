@@ -52,22 +52,26 @@ def get_dossier(ticker: str):
         pass
 
     try:
+        from api.state_storage import exists_text, read_text
         from paths import PROJECT_ROOT
 
         thesis_path = PROJECT_ROOT / "investment_theses" / f"{ticker}.md"
-        if thesis_path.exists():
-            thesis_content = thesis_path.read_text(encoding="utf-8")
+        thesis_key = f"live/theses/{ticker}.md"
+        if exists_text(thesis_path, thesis_key):
+            thesis_content = read_text(thesis_path, thesis_key, encoding="utf-8")
     except Exception:
         pass
 
     # Overview content (equity overview markdown)
     overview_content = None
     try:
+        from api.state_storage import exists_text, read_text
         from paths import PROJECT_ROOT as _PR
 
         overview_path = _PR / "investment_overviews" / f"{ticker}.md"
-        if overview_path.exists():
-            overview_content = overview_path.read_text(encoding="utf-8")
+        overview_key = f"live/overviews/{ticker}.md"
+        if exists_text(overview_path, overview_key):
+            overview_content = read_text(overview_path, overview_key, encoding="utf-8")
     except Exception:
         pass
 

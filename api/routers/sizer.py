@@ -177,6 +177,12 @@ def start_portfolio_sizer(req: SizerRequest):
         job_id = f"cached:{uuid.uuid4().hex}"
         return {"job_id": job_id, "status": "done", "result": cached}
 
+    from api.cloud_run_jobs import cloud_run_jobs_enabled, dispatch_cloud_run_job
+
+    if cloud_run_jobs_enabled():
+        job = dispatch_cloud_run_job("sizer", req.model_dump())
+        return {"job_id": job["job_id"], "status": job["status"]}
+
     now = time.time()
     with _jobs_lock:
         _job_cleanup_locked(now)
@@ -207,6 +213,21 @@ def get_portfolio_sizer_job(job_id: str):
 
     if job_id.startswith("cached:"):
         return {"job_id": job_id, "status": "done"}
+
+    from api.cloud_run_jobs import cloud_run_jobs_enabled
+
+    if cloud_run_jobs_enabled():
+        from api.job_queue import get_job
+
+        job = get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job_id")
+        status = job.get("status")
+        if status == "completed":
+            return {"job_id": job_id, "status": "done", "result": job.get("result_json")}
+        if status == "failed":
+            return {"job_id": job_id, "status": "error", "error": job.get("error") or "Portfolio sizer failed"}
+        return {"job_id": job_id, "status": status}
 
     with _jobs_lock:
         _job_cleanup_locked(now)

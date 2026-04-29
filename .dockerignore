@@ -1,5 +1,7 @@
 .git
 .DS_Store
+.venv/
+venv/
 
 # Secrets
 .env
@@ -17,9 +19,13 @@ data_cache/
 **/data_cache/
 outputs/
 **/outputs/
+portfolio/*.db
+portfolio/*.db-*
+macro/**/*.sqlite3
+macro/**/*.sqlite3-*
+results/
 
 # Frontend build artifacts
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
-

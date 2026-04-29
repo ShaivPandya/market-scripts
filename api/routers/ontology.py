@@ -155,6 +155,13 @@ def start_query_ontology_async(req: OntologyQueryRequest):
             if status == "done":
                 return {"job_id": existing_id, "status": "done", "result": job.get("result")}
 
+    from api.cloud_run_jobs import cloud_run_jobs_enabled, dispatch_cloud_run_job
+
+    if cloud_run_jobs_enabled():
+        job = dispatch_cloud_run_job("ontology", req.model_dump(exclude_none=True))
+        return {"job_id": job["job_id"], "status": job["status"]}
+
+    with _jobs_lock:
         job_id = uuid.uuid4().hex
         _jobs[job_id] = {
             "status": "queued",
@@ -171,6 +178,22 @@ def start_query_ontology_async(req: OntologyQueryRequest):
 @router.get("/ontology/query/async/{job_id}")
 def get_query_ontology_async(job_id: str):
     now = time.time()
+
+    from api.cloud_run_jobs import cloud_run_jobs_enabled
+
+    if cloud_run_jobs_enabled():
+        from api.job_queue import get_job
+
+        job = get_job(job_id)
+        if not job:
+            raise NotFoundError("Ontology job", job_id)
+        status = job.get("status")
+        if status == "completed":
+            return {"job_id": job_id, "status": "done", "result": job.get("result_json")}
+        if status == "failed":
+            return {"job_id": job_id, "status": "error", "error": job.get("error") or "Ontology query failed"}
+        return {"job_id": job_id, "status": status}
+
     with _jobs_lock:
         _job_cleanup_locked(now)
         job = _jobs.get(job_id)

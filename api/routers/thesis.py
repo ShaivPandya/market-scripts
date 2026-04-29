@@ -11,12 +11,14 @@ from pydantic import BaseModel
 
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
+from api.state_storage import exists_text, read_text, write_text
 from llm_utils import MODEL_SONNET, extract_text
 from paths import PROJECT_ROOT
 
 router = APIRouter()
 
 THESES_DIR = PROJECT_ROOT / "investment_theses"
+THESES_GCS_PREFIX = "live/theses"
 MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
 _MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
@@ -49,6 +51,32 @@ def _validate_ticker(ticker: str) -> None:
         raise ValidationError("Ticker cannot be empty.")
     if not _TICKER_RE.match(ticker):
         raise ValidationError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
+
+
+def _thesis_path(ticker: str) -> Path:
+    return THESES_DIR / f"{ticker}.md"
+
+
+def _thesis_gcs_key(ticker: str) -> str:
+    return f"{THESES_GCS_PREFIX}/{ticker}.md"
+
+
+def _thesis_exists(ticker: str) -> bool:
+    return exists_text(_thesis_path(ticker), _thesis_gcs_key(ticker))
+
+
+def _read_thesis(ticker: str) -> str:
+    return read_text(_thesis_path(ticker), _thesis_gcs_key(ticker), encoding="utf-8")
+
+
+def _write_thesis(ticker: str, content: str) -> str:
+    return write_text(
+        _thesis_path(ticker),
+        _thesis_gcs_key(ticker),
+        content,
+        encoding="utf-8",
+        content_type="text/markdown; charset=utf-8",
+    )
 
 
 def _extract_stop_reason(response: Any) -> str | None:
@@ -174,10 +202,8 @@ async def generate_thesis(
     else:
         raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
-    THESES_DIR.mkdir(parents=True, exist_ok=True)
-    thesis_path = THESES_DIR / f"{normalized_ticker}.md"
     try:
-        thesis_path.write_text(content, encoding="utf-8")
+        source_path = _write_thesis(normalized_ticker, content)
     except Exception as e:
         from api.exceptions import AppError
 
@@ -195,7 +221,7 @@ async def generate_thesis(
             doc_type="thesis",
             content=content,
             ticker=normalized_ticker,
-            source_path=str(thesis_path),
+            source_path=source_path,
             doc_id=f"thesis-{normalized_ticker}",
         )
     except Exception:
@@ -258,12 +284,11 @@ def get_thesis_status() -> dict[str, Literal["populated", "empty", "missing"]]:
         if not _TICKER_RE.match(ticker):
             statuses[ticker] = "missing"
             continue
-        thesis_path: Path = THESES_DIR / f"{ticker}.md"
-        if not thesis_path.exists():
+        if not _thesis_exists(ticker):
             statuses[ticker] = "missing"
             continue
         try:
-            content = thesis_path.read_text(encoding="utf-8").strip()
+            content = _read_thesis(ticker).strip()
             statuses[ticker] = "populated" if content else "empty"
         except Exception:
             statuses[ticker] = "missing"
@@ -282,10 +307,9 @@ def get_thesis_detail(ticker: str):
         raise NotFoundError("Thesis metadata", normalized_ticker)
 
     content = None
-    thesis_path = THESES_DIR / f"{normalized_ticker}.md"
-    if thesis_path.exists():
+    if _thesis_exists(normalized_ticker):
         try:
-            content = thesis_path.read_text(encoding="utf-8")
+            content = _read_thesis(normalized_ticker)
         except Exception:
             content = None
 
@@ -333,10 +357,8 @@ def save_thesis(ticker: str, body: SaveThesisRequest):
     if not content:
         raise ValidationError("Thesis content cannot be empty.")
 
-    THESES_DIR.mkdir(parents=True, exist_ok=True)
-    thesis_path = THESES_DIR / f"{normalized_ticker}.md"
     try:
-        thesis_path.write_text(content + "\n", encoding="utf-8")
+        source_path = _write_thesis(normalized_ticker, content + "\n")
     except Exception as e:
         from api.exceptions import AppError
 
@@ -353,7 +375,7 @@ def save_thesis(ticker: str, body: SaveThesisRequest):
             doc_type="thesis",
             content=content,
             ticker=normalized_ticker,
-            source_path=str(thesis_path),
+            source_path=source_path,
             doc_id=f"thesis-{normalized_ticker}",
         )
     except Exception:
@@ -375,11 +397,10 @@ def get_thesis(ticker: str):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    thesis_path = THESES_DIR / f"{normalized_ticker}.md"
-    if not thesis_path.exists():
+    if not _thesis_exists(normalized_ticker):
         raise NotFoundError("Thesis", normalized_ticker)
     try:
-        content = thesis_path.read_text(encoding="utf-8")
+        content = _read_thesis(normalized_ticker)
     except Exception as e:
         from api.exceptions import AppError
 

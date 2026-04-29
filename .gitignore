@@ -4,9 +4,14 @@
 results/aluminum/
 **/outputs/
 # SQLite transient files
+*.db
+*.sqlite3
 *.db-wal
 *.db-shm
 *.db-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
 # Environment variables
 .env

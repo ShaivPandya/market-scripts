@@ -177,6 +177,7 @@ async def _request_timing_middleware(request: Request, call_next):
 
 
 _API_PROXY_SECRET = (os.environ.get("API_PROXY_SECRET") or "").strip() or None
+_WRITE_FREEZE = (os.environ.get("WRITE_FREEZE") or "").strip().lower() in ("1", "true", "yes")
 
 
 @app.middleware("http")
@@ -190,6 +191,15 @@ async def _require_proxy_secret(request: Request, call_next):
             provided = request.headers.get("x-api-proxy-secret")
             if provided != _API_PROXY_SECRET:
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def _write_freeze_middleware(request: Request, call_next):
+    """Reject mutating API calls during cutover freeze."""
+    if _WRITE_FREEZE and request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if request.url.path not in {"/api/v1/auth/login", "/api/health", "/api/v1/admin/quiescence"}:
+            return JSONResponse({"detail": "Writes are frozen for migration cutover."}, status_code=423)
     return await call_next(request)
 
 
@@ -357,3 +367,19 @@ def health():
 
     status_code = 200 if status != "unhealthy" else 503
     return JSONResponse({"status": status, "checks": checks}, status_code=status_code)
+
+
+@app.get("/api/v1/admin/quiescence", dependencies=_auth_dep, tags=["admin"])
+def quiescence():
+    active_jobs = 0
+    try:
+        from api.job_queue import count_active_jobs
+
+        active_jobs = count_active_jobs()
+    except Exception:
+        active_jobs = 0
+    return {
+        "write_freeze": _WRITE_FREEZE,
+        "active_jobs": active_jobs,
+        "pending_writes": 0,
+    }
