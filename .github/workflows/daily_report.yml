@@ -2,10 +2,10 @@ name: Daily Portfolio Risk Report
 
 on:
   schedule:
-    # Weekdays 13:45 UTC = 09:45 ET during EDT
-    # Weekdays 14:45 UTC = 09:45 ET during EST
-    - cron: "45 13 * * 1-5"
-    - cron: "45 14 * * 1-5"
+    # Weekdays 13:07 UTC = 09:07 ET during EDT; wait in-job until 09:45 ET
+    # Weekdays 14:07 UTC = 09:07 ET during EST; wait in-job until 09:45 ET
+    - cron: "7 13 * * 1-5"
+    - cron: "7 14 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -15,13 +15,14 @@ permissions:
 jobs:
   generate-report:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Check New York schedule window
         id: ny_gate
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -31,18 +32,27 @@ jobs:
           ny_day="$(TZ=America/New_York date +%u)"
           ny_hour="$(TZ=America/New_York date +%H)"
           ny_minute="$(TZ=America/New_York date +%M)"
+          ny_offset="$(TZ=America/New_York date +%z)"
 
           ny_total_minutes=$((10#$ny_hour * 60 + 10#$ny_minute))
-          window_start=$((9 * 60 + 45))
-          window_end=$((10 * 60 + 30))
+          window_start=$((9 * 60 + 7))
+          window_end=$((10 * 60 + 59))
 
-          # GitHub's scheduled workflows can start late. Accept the intended
-          # 09:45 ET run through 10:30 ET, but reject the opposite-DST cron.
-          if [ "$ny_day" -ge 1 ] && [ "$ny_day" -le 5 ] && [ "$ny_total_minutes" -ge "$window_start" ] && [ "$ny_total_minutes" -le "$window_end" ]; then
+          correct_dst_cron=false
+          if [ "$EVENT_SCHEDULE" = "7 13 * * 1-5" ] && [ "$ny_offset" = "-0400" ]; then
+            correct_dst_cron=true
+          elif [ "$EVENT_SCHEDULE" = "7 14 * * 1-5" ] && [ "$ny_offset" = "-0500" ]; then
+            correct_dst_cron=true
+          fi
+
+          # GitHub's scheduled workflows can start late. Enqueue early, then wait
+          # immediately before report generation if GitHub starts the runner promptly.
+          # Use the triggering cron plus NY UTC offset to reject the opposite-DST cron.
+          if [ "$correct_dst_cron" = "true" ] && [ "$ny_day" -ge 1 ] && [ "$ny_day" -le 5 ] && [ "$ny_total_minutes" -ge "$window_start" ] && [ "$ny_total_minutes" -le "$window_end" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping run outside weekday 09:45-10:30 ET (got day=$ny_day hour=$ny_hour minute=$ny_minute)"
+            echo "Skipping run outside weekday 09:07-10:59 ET for the active DST cron (got schedule=$EVENT_SCHEDULE offset=$ny_offset day=$ny_day hour=$ny_hour minute=$ny_minute)"
           fi
 
       - name: Checkout
@@ -59,6 +69,22 @@ jobs:
       - name: Install dependencies
         if: steps.ny_gate.outputs.should_run == 'true'
         run: pip install -r requirements.txt
+
+      - name: Wait until 09:45 ET
+        if: steps.ny_gate.outputs.should_run == 'true'
+        run: |
+          ny_hour="$(TZ=America/New_York date +%H)"
+          ny_minute="$(TZ=America/New_York date +%M)"
+          ny_second="$(TZ=America/New_York date +%S)"
+
+          ny_total_seconds=$((10#$ny_hour * 3600 + 10#$ny_minute * 60 + 10#$ny_second))
+          target_seconds=$((9 * 3600 + 45 * 60))
+
+          if [ "$ny_total_seconds" -lt "$target_seconds" ]; then
+            sleep_seconds=$((target_seconds - ny_total_seconds))
+            echo "Waiting $sleep_seconds seconds until 09:45 ET"
+            sleep "$sleep_seconds"
+          fi
 
       - name: Generate daily report
         if: steps.ny_gate.outputs.should_run == 'true'
