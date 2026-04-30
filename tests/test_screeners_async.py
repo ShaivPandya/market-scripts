@@ -59,14 +59,14 @@ def test_short_screen_async_returns_result_and_cache(auth_client, monkeypatch):
     }
 
     started = auth_client.post("/api/v1/short-screen/async", json=body)
-    assert started.status_code == 200
+    assert started.status_code in (200, 202)
     job_id = started.json()["job_id"]
     done = _poll(auth_client, "/api/v1/short-screen/async", job_id)
     assert done["status"] == "done"
     assert done["result"]["results_df"] == [{"Ticker": "AAA"}]
 
     cached = auth_client.post("/api/v1/short-screen/async", json=body)
-    assert cached.status_code == 200
+    assert cached.status_code in (200, 202)
     assert cached.json()["status"] == "done"
     assert cached.json()["result"]["results_df"] == [{"Ticker": "AAA"}]
     assert calls["n"] == 1
@@ -115,11 +115,11 @@ def test_short_screen_async_dedupes_running_job(auth_client, monkeypatch):
     }
 
     first = auth_client.post("/api/v1/short-screen/async", json=body)
-    assert first.status_code == 200
+    assert first.status_code in (200, 202)
     assert started_compute.wait(timeout=2)
 
     second = auth_client.post("/api/v1/short-screen/async", json=body)
-    assert second.status_code == 200
+    assert second.status_code in (200, 202)
     assert second.json()["job_id"] == first.json()["job_id"]
 
     release_compute.set()
@@ -160,7 +160,7 @@ def test_short_screen_async_surfaces_worker_error(auth_client, monkeypatch):
     }
 
     started = auth_client.post("/api/v1/short-screen/async", json=body)
-    assert started.status_code == 200
+    assert started.status_code in (200, 202)
     done = _poll(auth_client, "/api/v1/short-screen/async", started.json()["job_id"])
     assert done["status"] == "error"
     assert "rate limited" in done["error"]

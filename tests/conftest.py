@@ -12,6 +12,7 @@ os.environ["AUTH_PASSWORD_HASH"] = (
 )
 os.environ["AUTH_MODE"] = "password"
 os.environ["AUTH_LOGIN_RATE_LIMIT"] = "1000/minute"
+os.environ["ASYNC_JOB_BACKEND"] = "local"
 
 
 @pytest.fixture

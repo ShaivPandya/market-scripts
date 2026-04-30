@@ -206,3 +206,10 @@ def invalidate_all() -> None:
         _invalidate_breadth()
     except Exception:
         logger.debug("api cache invalidate_all: breadth disk cleanup failed", exc_info=True)
+
+    try:
+        from api.job_queue import clear_memory_jobs
+
+        clear_memory_jobs()
+    except Exception:
+        logger.debug("api cache invalidate_all: async job cleanup failed", exc_info=True)

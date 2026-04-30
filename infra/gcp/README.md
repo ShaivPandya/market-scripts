@@ -25,6 +25,46 @@ Cloud Run services and jobs must include:
 --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}"
 ```
 
+## Async Jobs
+
+Production async work uses RQ workers, Memorystore for Valkey, and the
+`async_jobs` Postgres table.
+
+Required services:
+
+- Cloud Run service `api`: `uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8080}`
+- Cloud Run worker pool `worker`: `python -m api.rq_worker default screens reports`
+- Cloud Scheduler jobs:
+  - every 5 minutes: `POST /api/v1/admin/jobs/enqueue-cache-warm`
+  - hourly: `POST /api/v1/admin/jobs/enqueue-async-job-sweep`
+
+Cloud Scheduler should send `X-Scheduler-Secret: $SCHEDULER_SECRET`. If
+`API_PROXY_SECRET` is enabled on the API service, the scheduler request must
+also include `X-Api-Proxy-Secret` or route through the same proxy that injects it.
+
+Memorystore connectivity:
+
+- Create Memorystore for Valkey in the same region as Cloud Run.
+- Create a Serverless VPC Access connector or configure Direct VPC egress in
+  that same region.
+- Deploy the API service and worker pool with the VPC connector, for example:
+
+```bash
+--vpc-connector="${SERVERLESS_VPC_CONNECTOR}" \
+--add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}"
+```
+
+Required async env/secrets:
+
+```bash
+REDIS_URL="redis://MEMORYSTORE_PRIVATE_IP:6379/0"
+ASYNC_JOB_BACKEND="rq"
+ASYNC_WORKER_QUEUES="default,screens,reports"
+ASYNC_JOB_COMPLETED_TTL_SECONDS="86400"
+ASYNC_JOB_FAILED_TTL_SECONDS="604800"
+SCHEDULER_SECRET="..."
+```
+
 ## Database Migrations
 
 Run Alembic with the migration URL:

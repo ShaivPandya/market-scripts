@@ -7,9 +7,7 @@ Run from project root:
 
 import logging
 import os
-import threading
 import time
-from typing import Any
 
 from dotenv import load_dotenv
 
@@ -235,6 +233,7 @@ app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agen
 # Investing OS routers (core_db entities + aggregates)
 from api.routers import (
     action_items,
+    admin_jobs,
     approvals,
     dossier,
     process_entities,
@@ -252,43 +251,11 @@ app.include_router(triggers.router, prefix=_V1, dependencies=_auth_dep, tags=["t
 app.include_router(process_entities.router, prefix=_V1, dependencies=_auth_dep, tags=["process"])
 app.include_router(research_notes.router, prefix=_V1, dependencies=_auth_dep, tags=["research"])
 app.include_router(workflow_runs.router, prefix=_V1, dependencies=_auth_dep, tags=["workflows"])
+app.include_router(admin_jobs.router, prefix=_V1, tags=["admin"])
 
 # Optional routers (gracefully degraded if import failed)
 for _name, (_router, _tag, _healthy) in _optional_routers.items():
     app.include_router(_router, prefix=_V1, dependencies=_auth_dep, tags=[_tag])
-
-
-# ---------------------------------------------------------------------------
-# Cache warming on startup
-# ---------------------------------------------------------------------------
-_WARM_TOOLS: list[tuple[str, dict[str, Any]]] = [
-    ("get_portfolio", {}),
-    ("get_market_breadth", {}),
-    ("get_vix_term_structure", {}),
-    ("get_liquidity", {}),
-]
-
-
-def _warm_caches() -> None:
-    """Pre-fetch frequently used tool results into the in-memory TTL caches.
-
-    Runs in a background thread so it does not delay server startup.
-    """
-    from api.agent_tools import execute_tool
-
-    for tool_name, args in _WARM_TOOLS:
-        try:
-            execute_tool(tool_name, args)
-            logger.info("cache_warm tool=%s status=ok", tool_name)
-        except Exception:
-            logger.warning("cache_warm tool=%s status=error", tool_name, exc_info=True)
-
-
-@app.on_event("startup")
-def _startup_warm_caches():
-    thread = threading.Thread(target=_warm_caches, daemon=True, name="cache-warm")
-    thread.start()
-    logger.info("Cache warming started in background thread")
 
 
 # ---------------------------------------------------------------------------
