@@ -12,7 +12,8 @@ require_var REGION
 require_var WORKER_POOL
 require_var WORKER_SA
 require_var CLOUDSQL_INSTANCE
-require_var VPC_CONNECTOR
+require_var VPC_NETWORK
+require_var VPC_SUBNET
 require_var GCS_STATE_BUCKET
 
 WORKER_ENV_VARS=(
@@ -22,7 +23,6 @@ WORKER_ENV_VARS=(
   "GCS_STATE_BUCKET=${GCS_STATE_BUCKET}"
   "CLOUD_RUN_REGION=${REGION}"
   "ASYNC_JOB_BACKEND=rq"
-  "ASYNC_WORKER_QUEUES=default,screens,reports"
   "ASYNC_JOB_COMPLETED_TTL_SECONDS=86400"
   "ASYNC_JOB_FAILED_TTL_SECONDS=604800"
 )
@@ -35,13 +35,13 @@ gcloud beta run worker-pools deploy "${WORKER_POOL}" \
   --image="$(image_uri)" \
   --service-account="${WORKER_SA}" \
   --add-cloudsql-instances="${CLOUDSQL_INSTANCE}" \
-  --vpc-connector="${VPC_CONNECTOR}" \
+  --network="${VPC_NETWORK}" \
+  --subnet="${VPC_SUBNET}" \
   --vpc-egress=private-ranges-only \
   --command=python \
   --args=-m,api.rq_worker,default,screens,reports \
-  --set-env-vars="$(join_csv WORKER_ENV_VARS)" \
-  --set-secrets="$(join_csv WORKER_SECRETS)" \
+  --set-env-vars="$(join_kv "${WORKER_ENV_VARS[@]}")" \
+  --set-secrets="$(join_kv "${WORKER_SECRETS[@]}")" \
   --cpu=2 \
   --memory=2Gi \
-  --min-instances=1 \
-  --max-instances=3
+  --instances=1

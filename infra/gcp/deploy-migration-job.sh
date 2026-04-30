@@ -30,8 +30,8 @@ gcloud run jobs deploy "${MIGRATION_JOB}" \
   --set-cloudsql-instances="${CLOUDSQL_INSTANCE}" \
   --command=python \
   --args=-m,api.gcp_state_migration,migrate \
-  --set-env-vars="$(join_csv MIGRATION_ENV_VARS)" \
-  --set-secrets="$(join_csv MIGRATION_SECRETS)" \
+  --set-env-vars="$(join_kv "${MIGRATION_ENV_VARS[@]}")" \
+  --set-secrets="$(join_kv "${MIGRATION_SECRETS[@]}")" \
   --cpu=2 \
   --memory=4Gi \
   --max-retries=0 \

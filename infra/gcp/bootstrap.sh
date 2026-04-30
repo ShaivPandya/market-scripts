@@ -21,20 +21,17 @@ require_var PROJECT_ID
 require_var REGION
 require_var ARTIFACT_REPO
 require_var CLOUDSQL_INSTANCE
-require_var VPC_CONNECTOR
 require_var GCS_STATE_BUCKET
 
 # Cloud SQL instance name is the third segment of CLOUDSQL_INSTANCE.
 SQL_INSTANCE="${CLOUDSQL_INSTANCE##*:}"
 SQL_DATABASE="talisman"
-VPC_CONNECTOR_NAME="${VPC_CONNECTOR##*/}"
 VPC_NETWORK="${VPC_NETWORK:-default}"
-VPC_CONNECTOR_RANGE="${VPC_CONNECTOR_RANGE:-10.8.0.0/28}"
 SQL_TIER="${SQL_TIER:-db-custom-2-7680}"
 REDIS_INSTANCE="${REDIS_INSTANCE:-talisman}"
 REDIS_SIZE_GB="${REDIS_SIZE_GB:-1}"
 REDIS_TIER="${REDIS_TIER:-basic}"
-REDIS_VERSION="${REDIS_VERSION:-valkey_7_2}"
+REDIS_VERSION="${REDIS_VERSION:-redis_7_2}"
 
 log() { printf '\n[bootstrap] %s\n' "$*"; }
 
@@ -49,7 +46,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   redis.googleapis.com \
-  vpcaccess.googleapis.com \
+  compute.googleapis.com \
   cloudscheduler.googleapis.com \
   storage.googleapis.com \
   firebasehosting.googleapis.com \
@@ -95,6 +92,7 @@ else
   gcloud sql instances create "${SQL_INSTANCE}" \
     --project="${PROJECT_ID}" \
     --database-version=POSTGRES_16 \
+    --edition=enterprise \
     --region="${REGION}" \
     --tier="${SQL_TIER}" \
     --database-flags=cloudsql.enable_pgvector=on \
@@ -143,19 +141,11 @@ else
 fi
 
 ###############################################################################
-# 7. Serverless VPC Access connector
+# 7. (Direct VPC egress — no Serverless VPC connector needed)
 ###############################################################################
-log "VPC connector: ${VPC_CONNECTOR_NAME}"
-if gcloud compute networks vpc-access connectors describe "${VPC_CONNECTOR_NAME}" \
-      --region="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
-  echo "  exists"
-else
-  gcloud compute networks vpc-access connectors create "${VPC_CONNECTOR_NAME}" \
-    --project="${PROJECT_ID}" \
-    --region="${REGION}" \
-    --network="${VPC_NETWORK}" \
-    --range="${VPC_CONNECTOR_RANGE}"
-fi
+# Cloud Run reaches Memorystore over the default VPC via Direct VPC egress
+# (configured per-service in deploy-api.sh / deploy-worker.sh). Nothing to
+# provision here.
 
 ###############################################################################
 # Done. Print follow-up steps.

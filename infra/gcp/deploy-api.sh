@@ -9,7 +9,8 @@ require_var REGION
 require_var API_SERVICE
 require_var API_SA
 require_var CLOUDSQL_INSTANCE
-require_var VPC_CONNECTOR
+require_var VPC_NETWORK
+require_var VPC_SUBNET
 require_var GCS_STATE_BUCKET
 
 API_ENV_VARS=(
@@ -20,7 +21,6 @@ API_ENV_VARS=(
   "CLOUD_RUN_REGION=${REGION}"
   "CLOUD_RUN_JOBS_ENABLED=true"
   "ASYNC_JOB_BACKEND=rq"
-  "ASYNC_WORKER_QUEUES=default,screens,reports"
   "ASYNC_JOB_COMPLETED_TTL_SECONDS=86400"
   "ASYNC_JOB_FAILED_TTL_SECONDS=604800"
   "CORS_ORIGINS=${CORS_ORIGINS}"
@@ -32,10 +32,11 @@ gcloud run deploy "${API_SERVICE}" \
   --image="$(image_uri)" \
   --service-account="${API_SA}" \
   --add-cloudsql-instances="${CLOUDSQL_INSTANCE}" \
-  --vpc-connector="${VPC_CONNECTOR}" \
+  --network="${VPC_NETWORK}" \
+  --subnet="${VPC_SUBNET}" \
   --vpc-egress=private-ranges-only \
-  --set-env-vars="$(join_csv API_ENV_VARS)" \
-  --set-secrets="$(join_csv API_SECRETS)" \
+  --set-env-vars="$(join_kv "${API_ENV_VARS[@]}")" \
+  --set-secrets="$(join_kv "${API_SECRETS[@]}")" \
   --cpu=2 \
   --memory=2Gi \
   --concurrency=40 \
@@ -43,4 +44,4 @@ gcloud run deploy "${API_SERVICE}" \
   --max-instances=10 \
   --timeout=300 \
   --port=8080 \
-  --no-allow-unauthenticated
+  --allow-unauthenticated

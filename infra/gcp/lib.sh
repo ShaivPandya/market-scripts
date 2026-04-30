@@ -24,9 +24,12 @@ image_uri() {
   echo "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
 }
 
-# Comma-join an array passed by name. Used for --set-secrets and --set-env-vars.
-join_csv() {
-  local -n _arr="$1"
-  local IFS=','
-  echo "${_arr[*]}"
+# Format an array of KEY=VALUE pairs for gcloud --set-env-vars / --set-secrets.
+# Uses gcloud's "^|^" alternate-delimiter syntax so values may contain commas
+# (e.g. CORS_ORIGINS=https://a,https://b).
+# Callers pass the array expanded: join_kv "${MY_ARRAY[@]}"
+# Bash 3.2 compatible (no `local -n`).
+join_kv() {
+  local IFS='|'
+  echo "^|^$*"
 }

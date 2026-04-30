@@ -14,9 +14,11 @@ export IMAGE_TAG="${IMAGE_TAG:-latest}"
 # Cloud SQL (Postgres). Format: PROJECT_ID:REGION:INSTANCE_ID
 export CLOUDSQL_INSTANCE="${PROJECT_ID}:${REGION}:talisman"
 
-# Serverless VPC connector for Memorystore (Valkey) access.
-# projects/<project>/locations/<region>/connectors/<name>
-export VPC_CONNECTOR="projects/${PROJECT_ID}/locations/${REGION}/connectors/talisman"
+# Direct VPC egress for Memorystore access (replaces Serverless VPC Access connector).
+# Cloud Run gets a network interface in this subnet and reaches Memorystore's
+# private IP directly. Default subnet works for the default network.
+export VPC_NETWORK="default"
+export VPC_SUBNET="default"
 
 # Cloud Storage bucket holding production state (theses, overviews, backups).
 export GCS_STATE_BUCKET="talisman-state-prod"
@@ -41,12 +43,10 @@ export API_SECRETS=(
   "REDIS_URL=REDIS_URL:latest"
   "AUTH_PASSWORD_HASH=AUTH_PASSWORD_HASH:latest"
   "JWT_SECRET=JWT_SECRET:latest"
-  "API_PROXY_SECRET=API_PROXY_SECRET:latest"
   "SCHEDULER_SECRET=SCHEDULER_SECRET:latest"
   "ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
   "FRED_API_KEY=FRED_API_KEY:latest"
   "ESTAT_APP_ID=ESTAT_APP_ID:latest"
-  "SODA_APP_TOKEN=SODA_APP_TOKEN:latest"
 )
 
 export WORKER_SECRETS=(
@@ -55,7 +55,6 @@ export WORKER_SECRETS=(
   "ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
   "FRED_API_KEY=FRED_API_KEY:latest"
   "ESTAT_APP_ID=ESTAT_APP_ID:latest"
-  "SODA_APP_TOKEN=SODA_APP_TOKEN:latest"
 )
 
 # Migration job runs with the migrator user only — no LLM/data-vendor secrets.

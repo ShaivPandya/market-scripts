@@ -13,7 +13,8 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `cloudbuild.yaml` — builds the API image and pushes to Artifact Registry.
 - `config.example.sh` — copy to `config.sh` (gitignored) and fill in project / SA / bucket / VPC values.
 - `lib.sh` — shared helpers sourced by the other scripts.
-- `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL, GCS bucket, Memorystore, and the VPC connector.
+- `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL, GCS bucket, and Memorystore. (Direct VPC egress is configured per-service in the deploy scripts; no connector is provisioned.)
+- `setup-secrets.sh` — generates random secrets, prompts for the rest, creates Cloud SQL users with their generated passwords, writes everything to Secret Manager, and binds least-privilege accessor IAM to each SA.
 - `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite).
 - `deploy-worker.sh` — Cloud Run worker pool running `python -m api.rq_worker`.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
@@ -23,7 +24,8 @@ Typical flow:
 ```bash
 cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
 ./infra/gcp/bootstrap.sh                              # provision foundation infra
-# create Cloud SQL users, populate Secret Manager, grant per-resource IAM
+./infra/gcp/setup-secrets.sh                          # SQL users, Secret Manager, IAM bindings
+# (still need: bucket-scoped IAM for SAs, CREATE EXTENSION vector, alembic upgrade)
 gcloud builds submit --config=infra/gcp/cloudbuild.yaml .
 IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-api.sh
 IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-worker.sh
@@ -66,13 +68,16 @@ also include `X-Api-Proxy-Secret` or route through the same proxy that injects i
 
 Memorystore connectivity:
 
-- Create Memorystore for Valkey in the same region as Cloud Run.
-- Create a Serverless VPC Access connector or configure Direct VPC egress in
-  that same region.
-- Deploy the API service and worker pool with the VPC connector, for example:
+- Create Memorystore in the same region as Cloud Run on the `default` VPC.
+- Use Direct VPC egress on Cloud Run (no Serverless VPC Access connector
+  required). The deploy scripts pass `--network=default --subnet=default
+  --vpc-egress=private-ranges-only`, which gives the service a network
+  interface in the default subnet that can reach Memorystore's private IP.
 
 ```bash
---vpc-connector="${SERVERLESS_VPC_CONNECTOR}" \
+--network="${VPC_NETWORK}" \
+--subnet="${VPC_SUBNET}" \
+--vpc-egress=private-ranges-only \
 --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}"
 ```
 
