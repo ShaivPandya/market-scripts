@@ -69,14 +69,14 @@ random_token()    { openssl rand -base64 48 | tr -d '\n'; }
 prompt_secret() {
   local label="$1" var
   read -rsp "${label}: " var
-  echo
+  echo >&2   # newline to stderr — must NOT mix with the captured stdout value
   printf '%s' "${var}"
 }
 
 prompt_optional() {
   local label="$1" var
   read -rsp "${label} (leave blank to skip): " var
-  echo
+  echo >&2   # see prompt_secret
   printf '%s' "${var}"
 }
 

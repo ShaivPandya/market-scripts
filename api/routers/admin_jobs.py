@@ -13,7 +13,7 @@ router = APIRouter()
 
 def require_job_admin(
     request: Request,
-    access_token: str | None = Cookie(default=None),
+    access_token: str | None = Cookie(default=None, alias="__session"),
     scheduler_secret: str | None = Header(default=None, alias="X-Scheduler-Secret"),
 ) -> str:
     expected = (os.getenv("SCHEDULER_SECRET") or "").strip()

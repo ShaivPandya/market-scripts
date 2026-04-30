@@ -77,7 +77,7 @@ def _create_token() -> str:
 # ── Dependency — inject via dependencies=[Depends(require_auth)] ──────────────
 
 
-def require_auth(access_token: str | None = Cookie(default=None)) -> str:
+def require_auth(access_token: str | None = Cookie(default=None, alias="__session")) -> str:
     """
     Returns the token subject ("admin") or raises HTTP 401.
 
@@ -134,11 +134,11 @@ def login(request: Request, body: LoginRequest, response: Response):
         )
     token = _create_token()
     response.set_cookie(
-        key="access_token",
+        key="__session",
         value=token,
         httponly=True,
         samesite="strict",
-        secure=bool(os.environ.get("RENDER")),  # True on Render (HTTPS), False locally (HTTP)
+        secure=os.environ.get("ENVIRONMENT", "development").strip().lower() == "production",
         path="/",
     )
     return {"detail": "ok"}
@@ -146,7 +146,7 @@ def login(request: Request, body: LoginRequest, response: Response):
 
 @router.post("/auth/logout")
 def logout(response: Response):
-    response.delete_cookie(key="access_token", path="/", samesite="strict")
+    response.delete_cookie(key="__session", path="/", samesite="strict")
     return {"detail": "ok"}
 
 
