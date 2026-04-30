@@ -117,7 +117,7 @@ Each module also often has a `__main__` / CLI path for terminal usage.
 - The frontend uses Vite’s dev proxy: `/api/*` → `http://localhost:8000` (`frontend/vite.config.ts`).
 
 **Production**
-- The frontend is served by Firebase Hosting and `/api/**` is rewritten to the Cloud Run service `market-scripts-api` in `us-central1` (see `firebase.json`).
+- The frontend is served by Firebase Hosting and `/api/**` is rewritten to the Cloud Run service `talisman-api` in `us-central1` (see `firebase.json`).
 - Set `API_PROXY_SECRET` on the Cloud Run service if you want to require an `X-Api-Proxy-Secret` header on every `/api/*` request (see `api/main.py` middleware and `.env.example`).
 
 ## Repository structure (high level)
@@ -195,7 +195,7 @@ Some modules have their own deeper docs:
 
 The production stack runs on Google Cloud:
 
-- **Cloud Run** — `market-scripts-api` (FastAPI) and a worker service running `python -m api.rq_worker`
+- **Cloud Run** — `talisman-api` (FastAPI) and a worker service running `python -m api.rq_worker`
 - **Cloud SQL (Postgres + pgvector)** — application state
 - **Memorystore for Valkey** — async job queue (RQ)
 - **Cloud Storage** — generated documents (theses, overviews) and pre-migration backups

@@ -25,3 +25,6 @@ tmp/
 
 # Local GCP tooling
 cloud-sql-proxy
+
+# Local deploy config (copy of infra/gcp/config.example.sh)
+infra/gcp/config.sh

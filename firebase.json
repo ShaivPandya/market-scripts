@@ -6,7 +6,7 @@
       {
         "source": "/api/**",
         "run": {
-          "serviceId": "market-scripts-api",
+          "serviceId": "talisman-api",
           "region": "us-central1"
         }
       },

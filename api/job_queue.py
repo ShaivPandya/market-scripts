@@ -1,8 +1,9 @@
 """Async job status storage.
 
-Production uses Postgres as the durable source of truth.  Local development and
-tests without ``DATABASE_URL`` use an in-process fallback so route contracts can
-be exercised without external services.
+Production uses Postgres as the durable source of truth. Local development and
+tests use an in-process fallback unless async jobs are explicitly configured for
+Postgres/RQ, so a production ``DATABASE_URL`` in ``.env`` does not leak into
+local dashboard workflows.
 """
 
 from __future__ import annotations
@@ -27,7 +28,12 @@ def _now() -> datetime:
 
 
 def postgres_jobs_enabled() -> bool:
-    return bool(database_url())
+    backend = (os.getenv("ASYNC_JOB_BACKEND") or "").strip().lower()
+    if backend in {"local", "memory", "in-memory", "in_process", "in-process"}:
+        return False
+    if backend in {"rq", "postgres"}:
+        return bool(database_url())
+    return os.getenv("ENVIRONMENT", "development").strip().lower() == "production" and bool(database_url())
 
 
 def _expires_in(seconds: int | None) -> datetime | None:
@@ -441,4 +447,4 @@ def sweep_expired_jobs(now: datetime | None = None) -> int:
 
 def cloud_run_job_name(job_type: str) -> str:
     env_key = f"CLOUD_RUN_JOB_{job_type.upper().replace('-', '_')}"
-    return os.getenv(env_key, f"market-scripts-{job_type}")
+    return os.getenv(env_key, f"talisman-{job_type}")

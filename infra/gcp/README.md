@@ -8,15 +8,37 @@ This repository now has the code-level migration pieces for the GCP state move:
 - Production local-write guard via `api/local_write_guard.py`.
 - Firebase Hosting rewrite config in `firebase.json`.
 
+## Deploy automation (this directory)
+
+- `cloudbuild.yaml` — builds the API image and pushes to Artifact Registry.
+- `config.example.sh` — copy to `config.sh` (gitignored) and fill in project / SA / bucket / VPC values.
+- `lib.sh` — shared helpers sourced by the other scripts.
+- `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL, GCS bucket, Memorystore, and the VPC connector.
+- `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite).
+- `deploy-worker.sh` — Cloud Run worker pool running `python -m api.rq_worker`.
+- `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
+
+Typical flow:
+
+```bash
+cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
+./infra/gcp/bootstrap.sh                              # provision foundation infra
+# create Cloud SQL users, populate Secret Manager, grant per-resource IAM
+gcloud builds submit --config=infra/gcp/cloudbuild.yaml .
+IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-api.sh
+IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-worker.sh
+IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-migration-job.sh
+```
+
 ## Cloud SQL
 
 Use Unix socket connectivity:
 
 ```bash
 INSTANCE_CONNECTION_NAME="PROJECT_ID:REGION:INSTANCE_ID"
-DATABASE_URL_API="postgresql+psycopg://market_scripts_app:${DB_PASSWORD}@/market_scripts?host=/cloudsql/${INSTANCE_CONNECTION_NAME}"
-DATABASE_URL_WORKER="postgresql+psycopg://market_scripts_worker:${DB_PASSWORD}@/market_scripts?host=/cloudsql/${INSTANCE_CONNECTION_NAME}"
-DATABASE_URL_MIGRATION="postgresql+psycopg://market_scripts_migrator:${DB_PASSWORD}@/market_scripts?host=/cloudsql/${INSTANCE_CONNECTION_NAME}"
+DATABASE_URL_API="postgresql+psycopg://talisman_app:${DB_PASSWORD}@/talisman?host=/cloudsql/${INSTANCE_CONNECTION_NAME}"
+DATABASE_URL_WORKER="postgresql+psycopg://talisman_worker:${DB_PASSWORD}@/talisman?host=/cloudsql/${INSTANCE_CONNECTION_NAME}"
+DATABASE_URL_MIGRATION="postgresql+psycopg://talisman_migrator:${DB_PASSWORD}@/talisman?host=/cloudsql/${INSTANCE_CONNECTION_NAME}"
 ```
 
 Cloud Run services and jobs must include:
@@ -110,7 +132,7 @@ Required env/secrets for the migration job:
 
 ```bash
 DATABASE_URL="$DATABASE_URL_MIGRATION"
-GCS_STATE_BUCKET="market-scripts-state-prod"
+GCS_STATE_BUCKET="talisman-state-prod"
 MIGRATION_RUN_ID="YYYYMMDDTHHMMSSZ"
 ENVIRONMENT="production"
 STATE_STORAGE_BACKEND="gcs"

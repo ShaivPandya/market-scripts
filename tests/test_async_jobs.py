@@ -20,6 +20,36 @@ def test_async_jobs_migration_contract():
     assert "DO NOTHING" in queue
 
 
+def test_async_job_storage_stays_local_when_backend_is_local(monkeypatch):
+    from api.job_queue import postgres_jobs_enabled
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+
+    assert postgres_jobs_enabled() is False
+
+
+def test_async_job_storage_defaults_local_in_development(monkeypatch):
+    from api.job_queue import postgres_jobs_enabled
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.delenv("ASYNC_JOB_BACKEND", raising=False)
+
+    assert postgres_jobs_enabled() is False
+
+
+def test_async_job_storage_defaults_postgres_in_production(monkeypatch):
+    from api.job_queue import postgres_jobs_enabled
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("ASYNC_JOB_BACKEND", raising=False)
+
+    assert postgres_jobs_enabled() is True
+
+
 def test_local_async_jobs_dedupe_concurrent_active(monkeypatch):
     from api import cache
     from api.async_job_runner import enqueue_registered_job, poll_registered_job
