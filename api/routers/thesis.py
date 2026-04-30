@@ -128,10 +128,13 @@ def _anthropic_error_message(exc: Exception) -> str:
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
         error = body.get("error")
-        if isinstance(error, dict) and isinstance(error.get("message"), str):
-            return error["message"]
-        if isinstance(body.get("message"), str):
-            return body["message"]
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str):
+                return message
+        message = body.get("message")
+        if isinstance(message, str):
+            return message
 
     response = getattr(exc, "response", None)
     if response is not None:
@@ -141,10 +144,13 @@ def _anthropic_error_message(exc: Exception) -> str:
             data = None
         if isinstance(data, dict):
             error = data.get("error")
-            if isinstance(error, dict) and isinstance(error.get("message"), str):
-                return error["message"]
-            if isinstance(data.get("message"), str):
-                return data["message"]
+            if isinstance(error, dict):
+                message = error.get("message")
+                if isinstance(message, str):
+                    return message
+            message = data.get("message")
+            if isinstance(message, str):
+                return message
 
     text = str(exc)
     match = re.search(r"'message': '([^']+)'", text)

@@ -152,3 +152,17 @@ def test_compat_layer_maps_legacy_table_names(monkeypatch):
     assert "industry_transcripts" in queries[1]
     assert "ontology_nodes" in queries[2]
     assert "%s" in queries[0]
+
+
+def test_compat_cursor_is_iterable_like_sqlite_cursor():
+    from api.postgres_compat import CompatCursor, CompatRow
+
+    cursor = CompatCursor(
+        [
+            CompatRow({"cid": 0, "name": "guid"}, ["cid", "name"]),
+            CompatRow({"cid": 1, "name": "content_url"}, ["cid", "name"]),
+        ]
+    )
+
+    assert {row[1] for row in cursor} == {"guid", "content_url"}
+    assert cursor.fetchone() is None

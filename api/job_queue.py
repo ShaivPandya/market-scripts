@@ -42,6 +42,24 @@ def _expires_in(seconds: int | None) -> datetime | None:
     return _now() + timedelta(seconds=max(0, int(seconds)))
 
 
+def _memory_timestamp(row: dict[str, Any], *keys: str) -> datetime:
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, datetime):
+            return value
+    return datetime.min.replace(tzinfo=UTC)
+
+
+def _memory_result_expires_after(row: dict[str, Any], now: datetime) -> bool:
+    expires_at = row.get("result_expires_at")
+    return expires_at is None or (isinstance(expires_at, datetime) and expires_at > now)
+
+
+def _memory_result_expired(row: dict[str, Any], cutoff: datetime) -> bool:
+    expires_at = row.get("result_expires_at")
+    return isinstance(expires_at, datetime) and expires_at < cutoff
+
+
 def _memory_select_completed(job_type: str, cache_key: str | None, now: datetime) -> dict[str, Any] | None:
     if not cache_key:
         return None
@@ -51,11 +69,11 @@ def _memory_select_completed(job_type: str, cache_key: str | None, now: datetime
         if job.get("job_type") == job_type
         and job.get("cache_key") == cache_key
         and job.get("status") == "completed"
-        and (job.get("result_expires_at") is None or job.get("result_expires_at") > now)
+        and _memory_result_expires_after(job, now)
     ]
     if not candidates:
         return None
-    return dict(sorted(candidates, key=lambda row: row.get("updated_at") or row.get("created_at"), reverse=True)[0])
+    return dict(sorted(candidates, key=lambda row: _memory_timestamp(row, "updated_at", "created_at"), reverse=True)[0])
 
 
 def _memory_select_active(job_type: str, cache_key: str | None) -> dict[str, Any] | None:
@@ -70,7 +88,7 @@ def _memory_select_active(job_type: str, cache_key: str | None) -> dict[str, Any
     ]
     if not candidates:
         return None
-    return dict(sorted(candidates, key=lambda row: row.get("created_at"))[0])
+    return dict(sorted(candidates, key=lambda row: _memory_timestamp(row, "created_at"))[0])
 
 
 def _select_completed_postgres(job_type: str, cache_key: str | None) -> dict[str, Any] | None:
@@ -423,9 +441,7 @@ def sweep_expired_jobs(now: datetime | None = None) -> int:
             to_delete = [
                 job_id
                 for job_id, row in _memory_jobs.items()
-                if row.get("status") in TERMINAL_STATUSES
-                and row.get("result_expires_at") is not None
-                and row.get("result_expires_at") < cutoff
+                if row.get("status") in TERMINAL_STATUSES and _memory_result_expired(row, cutoff)
             ]
             for job_id in to_delete:
                 _memory_jobs.pop(job_id, None)

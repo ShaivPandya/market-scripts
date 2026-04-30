@@ -15,6 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+PathInput = str | bytes | os.PathLike[Any]
+
 
 class ProductionLocalWriteError(RuntimeError):
     """Raised when production code attempts to write inside PROJECT_ROOT."""
@@ -41,8 +43,8 @@ def _is_production() -> bool:
     return os.getenv("ENVIRONMENT", "development").strip().lower() == "production"
 
 
-def _resolve(path: os.PathLike[str] | str) -> Path:
-    return Path(path).expanduser().resolve(strict=False)
+def _resolve(path: PathInput) -> Path:
+    return Path(os.fsdecode(path)).expanduser().resolve(strict=False)
 
 
 def _is_under(path: Path, root: Path) -> bool:
@@ -53,7 +55,7 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
-def assert_project_write_allowed(path: os.PathLike[str] | str, *, operation: str = "write") -> None:
+def assert_project_write_allowed(path: PathInput, *, operation: str = "write") -> None:
     """Raise when *path* points under a guarded project root in production."""
     if _allow_depth > 0 or not _is_production():
         return
@@ -119,7 +121,7 @@ def _guarded_replace(self: Path, target: str | os.PathLike[str], *args: Any, **k
     return _original_replace(self, target, *args, **kwargs)
 
 
-def _sqlite_path(database: Any) -> str | os.PathLike[str] | None:
+def _sqlite_path(database: Any) -> PathInput | None:
     if database in (None, ":memory:"):
         return None
     if isinstance(database, str) and database.startswith("file:"):

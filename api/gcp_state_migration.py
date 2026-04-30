@@ -227,7 +227,7 @@ class StateMigrator:
         self.snapshot_root = snapshot_root
         self.run_id = run_id
         self.gcs_bucket = gcs_bucket
-        self.conn = None
+        self.conn: Any | None = None
 
     def __enter__(self) -> StateMigrator:
         import psycopg

@@ -36,6 +36,12 @@ class CompatCursor:
         self.rowcount = rowcount
         self.lastrowid = lastrowid
 
+    def __iter__(self) -> Iterator[CompatRow]:
+        while self._rows:
+            row = self.fetchone()
+            if row is not None:
+                yield row
+
     def fetchone(self) -> CompatRow | None:
         if not self._rows:
             return None

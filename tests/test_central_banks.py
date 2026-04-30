@@ -1,8 +1,12 @@
 import sqlite3
+import sys
+import types
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
+from api.exceptions import DataFetchError
 from macro.central_banks.central_bank import (
     Item,
     _content_is_current,
@@ -116,3 +120,52 @@ def test_set_content_persists_content_url():
         assert row == (item.url, "minutes text")
     finally:
         conn.close()
+
+
+def _stub_central_bank_module(get_data):
+    module = types.ModuleType("macro.central_banks.central_bank")
+    module.get_data = get_data
+    return module
+
+
+def test_central_bank_route_raises_on_error_payload(monkeypatch):
+    from api.routers import central_banks as router
+
+    monkeypatch.setitem(
+        sys.modules,
+        "macro.central_banks.central_bank",
+        _stub_central_bank_module(lambda refresh=False: {"error": "database unavailable"}),
+    )
+    monkeypatch.setattr(router, "get_cached", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(router, "set_cached", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(DataFetchError) as exc:
+        router.get_central_banks(refresh=True)
+
+    assert exc.value.source == "central_banks"
+    assert exc.value.detail == "database unavailable"
+
+
+def test_central_bank_route_refresh_updates_default_cache(monkeypatch):
+    from api.routers import central_banks as router
+
+    payload = {
+        "items": [],
+        "by_source": {},
+        "counts": {"total": 0},
+        "last_updated": "2026-04-30T00:00:00+00:00",
+    }
+    cache_sets: list[tuple[str, dict]] = []
+
+    monkeypatch.setitem(
+        sys.modules,
+        "macro.central_banks.central_bank",
+        _stub_central_bank_module(lambda refresh=False: payload),
+    )
+    monkeypatch.setattr(router, "get_cached", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(router, "set_cached", lambda _cache, key, value: cache_sets.append((key, value)))
+
+    result = router.get_central_banks(refresh=True)
+
+    assert result["counts"]["total"] == 0
+    assert [key for key, _value in cache_sets] == ["central_banks"]

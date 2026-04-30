@@ -14,7 +14,7 @@ import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
@@ -354,8 +354,8 @@ def update_rolling_summary(session_id: str, summary: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    d = dict(row)
+def _row_to_dict(row: Any) -> dict[str, Any]:
+    d = cast(dict[str, Any], dict(row))
     for key in ("key_tickers", "key_topics"):
         raw = d.get(key)
         if isinstance(raw, str):

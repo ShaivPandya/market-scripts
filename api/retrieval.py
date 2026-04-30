@@ -424,7 +424,7 @@ def delete_document(doc_id: str) -> bool:
         with open_connection(register_pgvector=True) as conn:
             cur = conn.execute("DELETE FROM retrieval_documents WHERE doc_id = %s", (doc_id,))
             conn.commit()
-            return cur.rowcount > 0
+            return bool(cur.rowcount > 0)
 
     conn = _get_conn()
     with _lock:

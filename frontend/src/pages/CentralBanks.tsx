@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchCentralBanks } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -70,29 +70,50 @@ interface CBItem {
   content_preview: string
 }
 
+interface CentralBanksData {
+  items?: CBItem[]
+  by_source?: Record<string, CBItem[]>
+  counts?: Record<string, number>
+  last_updated?: string
+  error?: string
+}
+
 function publishedTimestamp(value: string) {
   const parsed = Date.parse(value)
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
 export function CentralBanks() {
-  const [refresh, setRefresh] = useState(false)
+  const [refreshToken, setRefreshToken] = useState(0)
   const [viewMode, setViewMode] = useState<"grouped" | "chronological">("chronological")
-  const { data, isLoading, error } = useApiQuery(
-    ["central-banks", refresh],
-    () => fetchCentralBanks(refresh),
+  const { data, isLoading, isFetching, error } = useApiQuery<CentralBanksData>(
+    ["central-banks", refreshToken],
+    () => fetchCentralBanks(refreshToken > 0),
     60 * 60 * 1000,
   )
 
-  const items: CBItem[] = data?.items ?? []
-  const bySource: Record<string, CBItem[]> = data?.by_source ?? {}
+  const dataError = typeof data?.error === "string" && data.error.trim() ? data.error.trim() : null
+  const queryError = error instanceof Error ? error.message : error ? String(error) : null
+  const loadError = dataError || queryError || (!data ? "Failed to load" : null)
+  const hasLoadedData = Boolean(data && !dataError)
+  const isRefreshing = refreshToken > 0 && isFetching
 
-  const sources = Object.keys(bySource)
+  const items: CBItem[] = dataError ? [] : data?.items ?? []
+  const bySource: Record<string, CBItem[]> = dataError ? {} : data?.by_source ?? {}
+
+  const totalItems = data?.counts?.total ?? items.length
+  const sources = Object.keys(bySource).filter(source => (bySource[source]?.length ?? 0) > 0)
   const chronologicalItems = [...items].sort((a, b) => {
     const left = publishedTimestamp(a.published_at)
     const right = publishedTimestamp(b.published_at)
     return right - left
   })
+
+  useEffect(() => {
+    if (!isLoading && !isFetching && hasLoadedData && totalItems === 0 && refreshToken === 0) {
+      setRefreshToken(1)
+    }
+  }, [hasLoadedData, isFetching, isLoading, refreshToken, totalItems])
 
   return (
     <div>
@@ -101,14 +122,14 @@ export function CentralBanks() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Central Bank Monitor</h1>
-            {data && !isLoading && (
+            {hasLoadedData && !isLoading && (
               <p className="text-sm text-gray-400 mt-0.5">
-                {data.counts?.total ?? items.length} items across {sources.length} central banks
+                {totalItems} items across {sources.length} central banks
               </p>
             )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {data && !isLoading && (
+            {hasLoadedData && !isLoading && (
               <div className="inline-flex items-center rounded-full bg-gray-100 p-0.5">
                 {(["grouped", "chronological"] as const).map(mode => (
                   <button
@@ -127,61 +148,103 @@ export function CentralBanks() {
               </div>
             )}
             <button
-              onClick={() => setRefresh(r => !r)}
-              className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
+              onClick={() => setRefreshToken(token => token + 1)}
+              disabled={isFetching}
+              className={cn(
+                "px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 transition-colors",
+                isFetching && "opacity-60 cursor-not-allowed"
+              )}
             >
-              Refresh Data
+              {isRefreshing ? "Refreshing..." : "Refresh Data"}
             </button>
           </div>
         </div>
       </div>
 
       {isLoading && <LoadingSpinner message="Fetching central bank data..." />}
-      {!isLoading && (error || !data) && <ErrorMessage message={String(error) || "Failed to load"} />}
+      {!isLoading && loadError && <ErrorMessage message={loadError} />}
 
-      {data && !isLoading && (
-        <>
-          {viewMode === "grouped" ? (
-            sources.map(source => (
-              <section key={source} className="mb-8">
+      {hasLoadedData && !isLoading && (
+        chronologicalItems.length === 0 ? (
+          <EmptyCentralBanksState
+            isRefreshing={isRefreshing}
+            onRefresh={() => setRefreshToken(token => token + 1)}
+          />
+        ) : (
+          <>
+            {viewMode === "grouped" ? (
+              sources.map(source => (
+                <section key={source} className="mb-8">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span
+                      className="inline-block w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: getSourceColor(source) }}
+                    />
+                    <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">
+                      {source}
+                    </h2>
+                    <span className="text-xs text-gray-300 ml-1">
+                      {bySource[source].length}
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {bySource[source].map((item, i) => (
+                      <CBItemCard
+                        key={item.url || `${source}-${item.title}-${item.published_at}-${i}`}
+                        item={item}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))
+            ) : (
+              <section>
                 <div className="flex items-center gap-2 mb-3">
-                  <span
-                    className="inline-block w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: getSourceColor(source) }}
-                  />
                   <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">
-                    {source}
+                    Latest
                   </h2>
-                  <span className="text-xs text-gray-300 ml-1">
-                    {bySource[source].length}
+                  <span className="text-xs text-gray-300">
+                    {chronologicalItems.length}
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {bySource[source].map((item, i) => (
-                    <CBItemCard key={item.url || `${source}-${item.title}-${item.published_at}-${i}`} item={item} />
+                  {chronologicalItems.map((item, i) => (
+                    <CBItemCard
+                      key={item.url || `${item.source}-${item.title}-${item.published_at}-${i}`}
+                      item={item}
+                      showSource
+                    />
                   ))}
                 </div>
               </section>
-            ))
-          ) : (
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">
-                  Latest
-                </h2>
-                <span className="text-xs text-gray-300">
-                  {chronologicalItems.length}
-                </span>
-              </div>
-              <div className="space-y-3">
-                {chronologicalItems.map((item, i) => (
-                  <CBItemCard key={item.url || `${item.source}-${item.title}-${item.published_at}-${i}`} item={item} showSource />
-                ))}
-              </div>
-            </section>
-          )}
-        </>
+            )}
+          </>
+        )
       )}
+    </div>
+  )
+}
+
+function EmptyCentralBanksState({
+  isRefreshing,
+  onRefresh,
+}: {
+  isRefreshing: boolean
+  onRefresh: () => void
+}) {
+  return (
+    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-5 py-8 text-center">
+      <p className="text-sm font-medium text-gray-700">No central bank items available.</p>
+      <button
+        onClick={onRefresh}
+        disabled={isRefreshing}
+        className={cn(
+          "mt-3 px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50 transition-colors",
+          isRefreshing && "opacity-60 cursor-not-allowed"
+        )}
+      >
+        {isRefreshing ? "Refreshing..." : "Refresh Data"}
+      </button>
     </div>
   )
 }

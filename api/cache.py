@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from cachetools import TTLCache
+from cachetools import TTLCache  # type: ignore[import-untyped]
 
 logger = logging.getLogger("uvicorn.error")
 

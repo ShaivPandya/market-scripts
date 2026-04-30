@@ -6,12 +6,22 @@ from api.serializers import serialize_response
 
 router = APIRouter()
 
+CACHE_KEY = "central_banks"
+
+
+def _error_detail(data) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    detail = data.get("error")
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    return None
+
 
 @router.get("/central-banks")
 def get_central_banks(refresh: bool = False):
-    key = f"central_banks:{refresh}"
     if not refresh:
-        cached = get_cached(long_cache, key)
+        cached = get_cached(long_cache, CACHE_KEY)
         if cached is not None:
             return cached
     try:
@@ -21,6 +31,10 @@ def get_central_banks(refresh: bool = False):
     except Exception as e:
         raise DataFetchError(source="central_banks", detail=str(e)) from e
 
+    detail = _error_detail(data)
+    if detail:
+        raise DataFetchError(source="central_banks", detail=detail)
+
     result = serialize_response(data)
-    set_cached(long_cache, key, result)
+    set_cached(long_cache, CACHE_KEY, result)
     return result

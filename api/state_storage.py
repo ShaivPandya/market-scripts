@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from api.local_write_guard import assert_project_write_allowed
 
@@ -52,13 +52,13 @@ def exists_text(local_path: Path, gcs_key: str) -> bool:
 
 def read_text(local_path: Path, gcs_key: str, *, encoding: str = "utf-8") -> str:
     if use_gcs_state():
-        return _bucket().blob(gcs_key).download_as_text(encoding=encoding)
+        return cast(str, _bucket().blob(gcs_key).download_as_text(encoding=encoding))
     return local_path.read_text(encoding=encoding)
 
 
 def read_bytes(local_path: Path, gcs_key: str) -> bytes:
     if use_gcs_state():
-        return _bucket().blob(gcs_key).download_as_bytes()
+        return cast(bytes, _bucket().blob(gcs_key).download_as_bytes())
     return local_path.read_bytes()
 
 
@@ -69,7 +69,7 @@ def object_updated(local_path: Path, gcs_key: str) -> datetime | None:
         if not blob.exists():
             return None
         blob.reload()
-        return blob.updated
+        return cast(datetime | None, blob.updated)
     if not local_path.exists():
         return None
     return datetime.fromtimestamp(local_path.stat().st_mtime, tz=UTC)
