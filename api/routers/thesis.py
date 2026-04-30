@@ -124,6 +124,35 @@ def _decode_markdown_upload(markdown_bytes: bytes) -> str:
     return content
 
 
+def _anthropic_error_message(exc: Exception) -> str:
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return error["message"]
+        if isinstance(body.get("message"), str):
+            return body["message"]
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            data = response.json()
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict) and isinstance(error.get("message"), str):
+                return error["message"]
+            if isinstance(data.get("message"), str):
+                return data["message"]
+
+    text = str(exc)
+    match = re.search(r"'message': '([^']+)'", text)
+    if match:
+        return match.group(1)
+    return text
+
+
 def _call_claude_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
     import anthropic
 
@@ -196,7 +225,10 @@ async def generate_thesis(
         except (ValidationError, DataFetchError):
             raise
         except Exception as e:
-            raise DataFetchError(source="claude", detail=f"Failed to generate thesis: {e}") from e
+            raise DataFetchError(
+                source="claude",
+                detail=f"Failed to generate thesis: {_anthropic_error_message(e)}",
+            ) from e
     elif has_markdown_type:
         content = _normalize_output_markdown(normalized_ticker, _decode_markdown_upload(upload_bytes))
     else:

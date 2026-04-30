@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Literal
 
@@ -210,9 +210,24 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _sse_ping() -> str:
+    return _sse("ping", {"ts": round(time.time(), 3)})
+
+
+def _sse_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+        # Prevent GZipMiddleware and upstream proxies from buffering small SSE frames.
+        "Content-Encoding": "identity",
+    }
+
+
 MAX_TOOL_CONTINUATION_ROUNDS = 8
 MAX_API_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
+SSE_KEEPALIVE_INTERVAL_S = 15.0
 CLAUDE_MAX_TOKENS = 8_192
 ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
     {
@@ -414,6 +429,38 @@ def _execute_tools_parallel(
         return out
 
 
+def _execute_tools_parallel_keepalive(
+    calls: list[dict],
+):
+    """Execute tool calls while yielding None periodically as an SSE keepalive signal."""
+    if not calls:
+        return
+
+    with ThreadPoolExecutor(max_workers=min(len(calls), 8)) as pool:
+        future_meta = {}
+        for c in calls:
+            started = time.perf_counter()
+            fut = pool.submit(execute_tool, c["name"], c["args"])
+            future_meta[fut] = (c, started)
+
+        pending = set(future_meta)
+        while pending:
+            done, pending = wait(
+                pending,
+                timeout=SSE_KEEPALIVE_INTERVAL_S,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
+                yield None
+                continue
+
+            for fut in done:
+                c, started = future_meta[fut]
+                result = fut.result()
+                elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+                yield (c, result, elapsed_ms)
+
+
 def _tool_error_message(result_str: str) -> str | None:
     try:
         payload = json.loads(result_str)
@@ -503,6 +550,7 @@ def agent_chat(req: AgentChatRequest):
     )
 
     def generate():  # noqa: C901 — complex but linear control flow
+        yield _sse_ping()
         client = _get_anthropic_client(api_key)
 
         # --- Workflow path: deterministic tool execution → single synthesis ---
@@ -686,7 +734,11 @@ def agent_chat(req: AgentChatRequest):
                         pending_calls.append(call_info)
 
                     if pending_calls:
-                        for call_info, result_str, elapsed_ms in _execute_tools_parallel(pending_calls):
+                        for tool_item in _execute_tools_parallel_keepalive(pending_calls):
+                            if tool_item is None:
+                                yield _sse_ping()
+                                continue
+                            call_info, result_str, elapsed_ms = tool_item
                             signature = _tool_call_signature(call_info["name"], call_info["args"])
                             tool_result_cache[signature] = result_str
                             executed_by_signature[signature] = (result_str, elapsed_ms)
@@ -762,11 +814,7 @@ def agent_chat(req: AgentChatRequest):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=_sse_headers(),
     )
 
 
@@ -798,6 +846,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
     )
 
     def generate():  # noqa: C901
+        yield _sse_ping()
         from api.memory_manager import build_conversation_context, finalize_turn_async
 
         client = _get_anthropic_client(api_key)
@@ -965,7 +1014,11 @@ def agent_chat_v2(req: AgentChatRequestV2):
                         pending_calls.append(call_info)
 
                     if pending_calls:
-                        for call_info, result_str, elapsed_ms in _execute_tools_parallel(pending_calls):
+                        for tool_item in _execute_tools_parallel_keepalive(pending_calls):
+                            if tool_item is None:
+                                yield _sse_ping()
+                                continue
+                            call_info, result_str, elapsed_ms = tool_item
                             signature = _tool_call_signature(call_info["name"], call_info["args"])
                             tool_result_cache[signature] = result_str
                             executed_by_signature[signature] = (result_str, elapsed_ms)
@@ -1043,9 +1096,5 @@ def agent_chat_v2(req: AgentChatRequestV2):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=_sse_headers(),
     )

@@ -213,7 +213,9 @@ def _normalize_position_rows(positions: list[dict], role: str) -> list[tuple]:
         ticker = str(p.get("ticker", "")).strip().upper()
         asset = str(p.get("asset", "equity")).strip().lower()
         direction = str(p.get("direction", "long")).strip().lower()
-        contrarian = 1 if p.get("contrarian") else 0
+        # Keep this as a bool: sqlite stores bools as 0/1, while psycopg sends
+        # Python bools as native Postgres booleans.
+        contrarian = bool(p.get("contrarian"))
         try:
             conviction = int(p.get("conviction", 3))
             conviction = max(1, min(5, conviction))

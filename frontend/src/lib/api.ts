@@ -36,7 +36,8 @@ function formatApiError(err: unknown): string | null {
   const data = err.response?.data
   const detail = _extractDetail(data)
 
-  const prefix = status ? `${status}: ` : isTimeout ? "Timeout: " : ""
+  const prefix =
+    status === 424 ? "Dependency error: " : status ? `${status}: ` : isTimeout ? "Timeout: " : ""
 
   if (typeof detail === "string" && detail.trim()) return prefix + _truncate(detail.trim(), 500)
 

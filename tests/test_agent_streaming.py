@@ -385,3 +385,39 @@ def test_agent_stream_handles_sentiment_quality_failure_without_tool_error(auth_
     assert len(tool_results) == 1
     assert tool_results[0]["status"] == "ok"
     assert any(e == "done" for e, _p in parsed)
+
+
+def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message: ([{"role": "user", "content": new_user_message}], "session-1"),
+    )
+    monkeypatch.setattr("api.memory_manager.finalize_turn_async", lambda *_args, **_kwargs: None)
+
+    streams = [
+        (
+            [_event_text_delta("hi there")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "hi there"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "hello"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("content-encoding") == "identity"
+    assert "no-transform" in resp.headers.get("cache-control", "")
+    parsed = _parse_sse(resp.text)
+    assert parsed[0][0] == "ping"
+    assert any(e == "delta" and p.get("text") == "hi there" for e, p in parsed)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "session-1"
