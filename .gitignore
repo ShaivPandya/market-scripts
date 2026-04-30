@@ -22,3 +22,6 @@ tmp/
 # Python
 *.pyc
 .pytest_cache/
+
+# Local GCP tooling
+cloud-sql-proxy

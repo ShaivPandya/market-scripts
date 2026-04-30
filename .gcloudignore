@@ -39,3 +39,6 @@ macro/**/*.sqlite3-*
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+# Local GCP tooling
+cloud-sql-proxy

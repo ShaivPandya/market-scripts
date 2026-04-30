@@ -19,7 +19,11 @@ data_cache/
 **/data_cache/
 outputs/
 **/outputs/
+# Keep tracked SQLite seed DBs in the image for Render/local Docker startup.
 portfolio/*.db
+!portfolio/portfolio.db
+!portfolio/thesis.db
+!portfolio/core.db
 portfolio/*.db-*
 macro/**/*.sqlite3
 macro/**/*.sqlite3-*

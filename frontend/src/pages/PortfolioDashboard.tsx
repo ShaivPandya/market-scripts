@@ -14,9 +14,11 @@ type Timeframe = typeof TIMEFRAMES[number]
 type TimeframePayload = {
   positions?: Record<string, DataPoint[]>
   position_order?: string[]
+  warning?: string
 }
 type PortfolioAllTimeframesResponse = {
   timeframes?: Partial<Record<Timeframe, TimeframePayload>>
+  warning?: string
 }
 
 export function PortfolioDashboard() {
@@ -30,6 +32,11 @@ export function PortfolioDashboard() {
   const timeframeData = data?.timeframes?.[timeframe]
   const positions: Record<string, DataPoint[]> = timeframeData?.positions ?? {}
   const order: string[] = timeframeData?.position_order ?? Object.keys(positions)
+  const warning = timeframeData?.warning ?? data?.warning
+  const hasSeries = order.some(ticker => {
+    const series = positions[ticker]
+    return Array.isArray(series) && series.length > 0
+  })
 
   // Register screen context for agent chat
   const screenCtx = useMemo(() => {
@@ -83,8 +90,18 @@ export function PortfolioDashboard() {
       {!isLoading && (error || !data || !timeframeData) && (
         <ErrorMessage message={String(error) || "Failed to load"} />
       )}
+      {!isLoading && !error && warning && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {warning}
+        </div>
+      )}
+      {!isLoading && !error && timeframeData && !hasSeries && (
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
+          No price series available.
+        </div>
+      )}
 
-      {timeframeData && !isLoading && (
+      {timeframeData && !isLoading && hasSeries && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {order.map(ticker => {
             const series = positions[ticker]

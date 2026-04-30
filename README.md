@@ -117,14 +117,13 @@ Each module also often has a `__main__` / CLI path for terminal usage.
 - The frontend uses Vite’s dev proxy: `/api/*` → `http://localhost:8000` (`frontend/vite.config.ts`).
 
 **Production**
-- The repo includes a Cloudflare Pages Function proxy at `frontend/functions/api/[[path]].ts`.
-- That proxy forwards `/api/*` to your backend origin and injects an `X-Api-Proxy-Secret` header.
-- The backend can enforce this by setting `API_PROXY_SECRET` (see `api/main.py` middleware and `.env.example`).
+- The frontend is served by Firebase Hosting and `/api/**` is rewritten to the Cloud Run service `market-scripts-api` in `us-central1` (see `firebase.json`).
+- Set `API_PROXY_SECRET` on the Cloud Run service if you want to require an `X-Api-Proxy-Secret` header on every `/api/*` request (see `api/main.py` middleware and `.env.example`).
 
 ## Repository structure (high level)
 
 - `api/` — FastAPI server (`api/main.py`) + route adapters in `api/routers/`
-- `frontend/` — React + TypeScript + Vite UI, plus Cloudflare Pages Functions under `frontend/functions/`
+- `frontend/` — React + TypeScript + Vite UI (deployed via Firebase Hosting)
 - `macro/` — macro monitors (liquidity, country dashboard, positioning, breakouts, central banks, industry transcripts)
 - `equities/` — equity screens + dashboards (index dashboard, market technicals, quality, sector metrics, short screen, universes)
 - `portfolio/` — portfolio dashboard, analyzer/sizer modules, momentum modules, technical analysis chart module
@@ -190,13 +189,21 @@ Some modules have their own deeper docs:
 ## Security notes
 
 - `.env` is ignored by git; don’t commit secrets
-- Prefer production deployments behind:
-  - Cloudflare Access (optional) and/or
-  - `API_PROXY_SECRET` + the Pages function proxy
+- In production, store secrets in Google Secret Manager and set `API_PROXY_SECRET` on the Cloud Run service so only callers presenting the matching `X-Api-Proxy-Secret` header can reach `/api/*`.
 
 ## Deployment
 
-Site is deployed using Cloudflare Pages and Render.
+The production stack runs on Google Cloud:
+
+- **Cloud Run** — `market-scripts-api` (FastAPI) and a worker service running `python -m api.rq_worker`
+- **Cloud SQL (Postgres + pgvector)** — application state
+- **Memorystore for Valkey** — async job queue (RQ)
+- **Cloud Storage** — generated documents (theses, overviews) and pre-migration backups
+- **Cloud Run Jobs** — long-running batch work and the state migration entrypoint
+- **Cloud Scheduler** — periodic cache warm + async-job sweep
+- **Firebase Hosting** — serves the built frontend and rewrites `/api/**` to Cloud Run
+
+See `infra/gcp/README.md` for the full runbook (env vars, service accounts, cutover checks).
 
 ## Disclaimer
 
