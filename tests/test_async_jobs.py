@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def test_async_jobs_migration_contract():
@@ -48,6 +49,104 @@ def test_async_job_storage_defaults_postgres_in_production(monkeypatch):
     monkeypatch.delenv("ASYNC_JOB_BACKEND", raising=False)
 
     assert postgres_jobs_enabled() is True
+
+
+def test_rq_enqueue_uses_enqueue_call_not_function_kwargs(monkeypatch):
+    from api import async_job_runner
+
+    calls: list[dict] = []
+    rq_ids: list[tuple[str, str]] = []
+
+    class FakeQueue:
+        def enqueue(self, *_args, **_kwargs):
+            raise AssertionError("Queue.enqueue would pass timeout/result_ttl as function kwargs in rq 2.x")
+
+        def enqueue_call(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(id=f"rq-{kwargs['job_id']}")
+
+    monkeypatch.setattr(async_job_runner, "_rq_queue", lambda _queue_name, _timeout_s: FakeQueue())
+    monkeypatch.setattr(async_job_runner, "set_rq_job_id", lambda job_id, rq_job_id: rq_ids.append((job_id, rq_job_id)))
+
+    async_job_runner._enqueue_rq_job("sizer", "job-123")
+
+    assert calls[0]["func"] is async_job_runner.perform_job
+    assert calls[0]["args"] == ("job-123",)
+    assert calls[0]["timeout"] == 180
+    assert calls[0]["job_id"] == "job-123"
+    assert rq_ids == [("job-123", "rq-job-123")]
+
+
+def test_poll_registered_job_syncs_failed_rq_status(monkeypatch):
+    from api import cache
+    from api.async_job_runner import poll_registered_job
+    from api.job_queue import create_or_reuse_job, get_job, set_rq_job_id
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    row, _disposition = create_or_reuse_job(
+        "analyzer",
+        payload={},
+        cache_key="failed-rq-job",
+        queue_name="default",
+    )
+    set_rq_job_id(row["job_id"], "rq-failed")
+
+    fake_job = SimpleNamespace(
+        exc_info="TypeError: perform_job() got an unexpected keyword argument 'timeout'",
+        get_status=lambda refresh=True: "failed",
+    )
+
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "rq")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr("redis.Redis.from_url", lambda _url: object())
+    monkeypatch.setattr("rq.job.Job.fetch", lambda _job_id, connection: fake_job)
+
+    payload = poll_registered_job(row["job_id"])
+
+    assert payload["status"] == "error"
+    assert "unexpected keyword argument 'timeout'" in payload["error"]
+    assert get_job(row["job_id"])["status"] == "failed"
+
+
+def test_enqueue_registered_job_replaces_failed_rq_active_job(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import create_or_reuse_job, get_job, set_rq_job_id
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    old_row, _disposition = create_or_reuse_job(
+        "analyzer",
+        payload={},
+        cache_key="recover-rq-job",
+        queue_name="default",
+    )
+    set_rq_job_id(old_row["job_id"], "rq-failed")
+
+    fake_job = SimpleNamespace(
+        exc_info="TypeError: perform_job() got an unexpected keyword argument 'timeout'",
+        get_status=lambda refresh=True: "failed",
+    )
+    enqueued: list[str] = []
+
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "rq")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr("redis.Redis.from_url", lambda _url: object())
+    monkeypatch.setattr("rq.job.Job.fetch", lambda _job_id, connection: fake_job)
+    monkeypatch.setattr(async_job_runner, "_enqueue_rq_job", lambda _job_type, job_id: enqueued.append(job_id))
+
+    new_row, disposition = async_job_runner.enqueue_registered_job(
+        "analyzer",
+        {},
+        cache_key="recover-rq-job",
+    )
+
+    assert disposition == "created"
+    assert new_row["job_id"] != old_row["job_id"]
+    assert enqueued == [new_row["job_id"]]
+    assert get_job(old_row["job_id"])["status"] == "failed"
 
 
 def test_local_async_jobs_dedupe_concurrent_active(monkeypatch):

@@ -9,6 +9,7 @@ Industry earnings monitor:
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -16,10 +17,12 @@ import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timezone
+from pathlib import Path
 from typing import Optional, TypedDict, cast
 
 from dotenv import load_dotenv
 
+from api import state_storage
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
 from llm_utils import MODEL_SONNET, call_claude_text, parse_json_text
@@ -150,21 +153,40 @@ def _sentiment_value(sentiment: str) -> int:
 # ---------- PDF helpers ----------
 _TICKER_FILENAME_MAP = {"ODFL": "ODL"}
 
+INDUSTRY_TRANSCRIPTS_PREFIX = os.environ.get("INDUSTRY_TRANSCRIPTS_PREFIX", "industry-transcripts").strip("/")
 
-def _get_pdf_path(sector: str, ticker: str) -> str:
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+def _sector_dir(sector: str) -> str:
+    return sector.strip().lower().replace(" ", "_")
+
+
+def _get_pdf_locator(sector: str, ticker: str) -> tuple[Path, str]:
+    """Return (local_path, gcs_key) for a sector/ticker. Both forms apply _TICKER_FILENAME_MAP."""
     base = _TICKER_FILENAME_MAP.get(ticker, ticker)
-    sector_dir = sector.strip().lower().replace(" ", "_")
-    return os.path.join(script_dir, "files", sector_dir, f"{base}.pdf")
+    sector_dir = _sector_dir(sector)
+    script_dir = Path(__file__).resolve().parent
+    local_path = script_dir / "files" / sector_dir / f"{base}.pdf"
+    gcs_key = f"{INDUSTRY_TRANSCRIPTS_PREFIX}/{sector_dir}/{base}.pdf"
+    return local_path, gcs_key
 
 
-def _extract_text_from_pdf(pdf_path: str) -> str:
+def _extract_text_from_bytes(pdf_bytes: bytes) -> str:
     import logging
 
     from pdfminer.high_level import extract_text
 
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
-    return extract_text(pdf_path) or ""
+    return extract_text(io.BytesIO(pdf_bytes)) or ""
+
+
+def _load_pdf_bytes(sector: str, ticker: str) -> tuple[bytes, datetime] | None:
+    """Load PDF bytes + last-modified for sector/ticker. Returns None when missing."""
+    local_path, gcs_key = _get_pdf_locator(sector, ticker)
+    updated = state_storage.object_updated(local_path, gcs_key)
+    if updated is None:
+        return None
+    pdf_bytes = state_storage.read_bytes(local_path, gcs_key)
+    return pdf_bytes, updated
 
 
 _QUARTER_WORDS = {
@@ -175,7 +197,7 @@ _QUARTER_WORDS = {
 }
 
 
-def _parse_period_from_text(text: str, pdf_path: str) -> tuple[int, int, str]:
+def _parse_period_from_text(text: str, fallback_dt: datetime) -> tuple[int, int, str]:
     header = text[:3000]
     year: int | None = None
     quarter: int | None = None
@@ -223,15 +245,12 @@ def _parse_period_from_text(text: str, pdf_path: str) -> tuple[int, int, str]:
             }
             transcript_date = f"{m.group(3)}-{month_map[m.group(1)]}-{int(m.group(2)):02d}"
 
-    if year is None or quarter is None:
-        dt = datetime.fromtimestamp(os.path.getmtime(pdf_path))
-        if year is None:
-            year = dt.year
-        if quarter is None:
-            quarter = (dt.month - 1) // 3 + 1
+    if year is None:
+        year = fallback_dt.year
+    if quarter is None:
+        quarter = (fallback_dt.month - 1) // 3 + 1
     if not transcript_date:
-        dt = datetime.fromtimestamp(os.path.getmtime(pdf_path))
-        transcript_date = dt.strftime("%Y-%m-%d")
+        transcript_date = fallback_dt.strftime("%Y-%m-%d")
 
     return year, quarter, transcript_date
 
@@ -693,70 +712,75 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
     for sector, cfg in SECTORS.items():
         sector_type = cfg["type"]
         for ticker, company_name, sub_sector, report_time in cfg["companies"]:  # noqa: B007
-            pdf_path = _get_pdf_path(sector, ticker)
-
-            if not os.path.isfile(pdf_path):
-                LOGGER.warning("PDF file not found for %s: %s", ticker, pdf_path)
-                _set_fresh_row(conn, ticker, None)
-                continue
-
             try:
-                transcript_text = _extract_text_from_pdf(pdf_path)
-            except Exception as ex:
-                LOGGER.warning("Failed to extract text from PDF for %s: %s", ticker, ex)
-                _set_fresh_row(conn, ticker, None)
-                continue
+                loaded = _load_pdf_bytes(sector, ticker)
+                if loaded is None:
+                    LOGGER.warning("PDF not found for %s in sector %s", ticker, sector)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
 
-            if not transcript_text.strip():
-                LOGGER.warning("No text extracted from PDF for %s", ticker)
-                _set_fresh_row(conn, ticker, None)
-                continue
+                pdf_bytes, fallback_dt = loaded
 
-            try:
-                year, quarter, transcript_date = _parse_period_from_text(transcript_text, pdf_path)
-            except Exception as ex:
-                LOGGER.warning("Failed to parse period from PDF for %s: %s", ticker, ex)
-                _set_fresh_row(conn, ticker, None)
-                continue
+                try:
+                    transcript_text = _extract_text_from_bytes(pdf_bytes)
+                except Exception as ex:
+                    LOGGER.warning("Failed to extract text from PDF for %s: %s", ticker, ex)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
 
-            sha = hashlib.sha256(transcript_text.encode("utf-8", errors="ignore")).hexdigest()
+                if not transcript_text.strip():
+                    LOGGER.warning("No text extracted from PDF for %s", ticker)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
 
-            row_id = _make_id(ticker, year, quarter)
-            existing = _get_row_by_id(conn, row_id)
+                try:
+                    year, quarter, transcript_date = _parse_period_from_text(transcript_text, fallback_dt)
+                except Exception as ex:
+                    LOGGER.warning("Failed to parse period from PDF for %s: %s", ticker, ex)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
 
-            if existing and existing["content_sha256"] == sha and existing["summary_json"]:
+                sha = hashlib.sha256(transcript_text.encode("utf-8", errors="ignore")).hexdigest()
+
+                row_id = _make_id(ticker, year, quarter)
+                existing = _get_row_by_id(conn, row_id)
+
+                if existing and existing["content_sha256"] == sha and existing["summary_json"]:
+                    _set_fresh_row(conn, ticker, row_id)
+                    continue
+
+                now_iso = _now_iso()
+                _upsert_transcript(
+                    conn,
+                    row_id=row_id,
+                    ticker=ticker,
+                    company_name=company_name,
+                    sector=sector,
+                    sector_type=sector_type,
+                    sub_sector=sub_sector,
+                    year=year,
+                    quarter=quarter,
+                    transcript_text=transcript_text,
+                    transcript_date=transcript_date,
+                    content_sha256=sha,
+                    fetched_at=now_iso,
+                )
                 _set_fresh_row(conn, ticker, row_id)
-                continue
 
-            now_iso = _now_iso()
-            _upsert_transcript(
-                conn,
-                row_id=row_id,
-                ticker=ticker,
-                company_name=company_name,
-                sector=sector,
-                sector_type=sector_type,
-                sub_sector=sub_sector,
-                year=year,
-                quarter=quarter,
-                transcript_text=transcript_text,
-                transcript_date=transcript_date,
-                content_sha256=sha,
-                fetched_at=now_iso,
-            )
-            _set_fresh_row(conn, ticker, row_id)
-
-            meta = {
-                "ticker": ticker,
-                "company_name": company_name,
-                "sector": sector,
-                "sector_type": sector_type,
-                "sub_sector": sub_sector,
-                "quarter": quarter,
-                "year": year,
-                "transcript_date": transcript_date,
-            }
-            to_summarize.append((row_id, transcript_text, meta))
+                meta = {
+                    "ticker": ticker,
+                    "company_name": company_name,
+                    "sector": sector,
+                    "sector_type": sector_type,
+                    "sub_sector": sub_sector,
+                    "quarter": quarter,
+                    "year": year,
+                    "transcript_date": transcript_date,
+                }
+                to_summarize.append((row_id, transcript_text, meta))
+            except Exception as ex:
+                LOGGER.exception("Unexpected error processing %s in sector %s: %s", ticker, sector, ex)
+                _set_fresh_row(conn, ticker, None)
 
     # Phase 2: Summarize via LLM in parallel
     if not to_summarize:

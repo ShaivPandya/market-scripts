@@ -7,6 +7,7 @@ Storage and refuses to fall back to project-local writes.
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,25 @@ def read_text(local_path: Path, gcs_key: str, *, encoding: str = "utf-8") -> str
     if use_gcs_state():
         return _bucket().blob(gcs_key).download_as_text(encoding=encoding)
     return local_path.read_text(encoding=encoding)
+
+
+def read_bytes(local_path: Path, gcs_key: str) -> bytes:
+    if use_gcs_state():
+        return _bucket().blob(gcs_key).download_as_bytes()
+    return local_path.read_bytes()
+
+
+def object_updated(local_path: Path, gcs_key: str) -> datetime | None:
+    """Return the last-modified time of the underlying object, or None if it doesn't exist."""
+    if use_gcs_state():
+        blob = _bucket().blob(gcs_key)
+        if not blob.exists():
+            return None
+        blob.reload()
+        return blob.updated
+    if not local_path.exists():
+        return None
+    return datetime.fromtimestamp(local_path.stat().st_mtime, tz=UTC)
 
 
 def write_text(

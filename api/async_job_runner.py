@@ -51,9 +51,9 @@ def _rq_queue(queue_name: str, timeout_s: int):
 def _enqueue_rq_job(job_type: str, job_id: str) -> None:
     spec = get_job_spec(job_type)
     queue = _rq_queue(spec.queue_name, spec.timeout_s)
-    rq_job = queue.enqueue(
-        perform_job,
-        job_id,
+    rq_job = queue.enqueue_call(
+        func=perform_job,
+        args=(job_id,),
         job_id=job_id,
         timeout=spec.timeout_s,
         result_ttl=spec.completed_ttl_s,
@@ -92,7 +92,20 @@ def enqueue_registered_job(
         reuse_completed=reuse_completed,
     )
     if disposition != "created":
-        return row, disposition
+        row = _sync_failed_rq_job(row)
+        if str(row.get("status") or "") != "failed":
+            return row, disposition
+
+        row, disposition = create_or_reuse_job(
+            job_type,
+            payload=payload,
+            cache_key=key,
+            queue_name=spec.queue_name,
+            initial_progress=spec.initial_progress,
+            reuse_completed=reuse_completed,
+        )
+        if disposition != "created":
+            return _sync_failed_rq_job(row), disposition
 
     try:
         if _env_backend() == "rq":
@@ -162,10 +175,47 @@ def job_response(row: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _sync_failed_rq_job(row: dict[str, Any]) -> dict[str, Any]:
+    """Reflect RQ-side failures that happened before ``perform_job`` ran."""
+    if _env_backend() != "rq":
+        return row
+
+    status = str(row.get("status") or "")
+    if status not in {"queued", "running"}:
+        return row
+
+    rq_job_id = str(row.get("rq_job_id") or row.get("job_id") or "")
+    if not rq_job_id:
+        return row
+
+    try:
+        from redis import Redis
+        from rq.job import Job
+    except ImportError:
+        return row
+
+    try:
+        rq_job = Job.fetch(rq_job_id, connection=Redis.from_url(_redis_url()))
+        raw_status = rq_job.get_status(refresh=True)
+        rq_status = str(getattr(raw_status, "value", raw_status)).lower()
+    except Exception:
+        return row
+
+    if rq_status not in {"failed", "stopped", "canceled"}:
+        return row
+
+    error = getattr(rq_job, "exc_info", None) or f"RQ job {rq_status}"
+    spec = get_job_spec(str(row.get("job_type") or ""))
+    fail_job(str(row.get("job_id") or rq_job_id), str(error), result_ttl_seconds=spec.failed_ttl_s)
+    refreshed = get_job(str(row.get("job_id") or rq_job_id))
+    return refreshed or row
+
+
 def poll_registered_job(job_id: str) -> dict[str, Any]:
     row = get_job(job_id)
     if not row:
         raise KeyError(job_id)
+    row = _sync_failed_rq_job(row)
     return job_response(row)
 
 
