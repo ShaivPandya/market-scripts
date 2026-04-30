@@ -148,14 +148,14 @@ def install_production_write_guard(project_root: os.PathLike[str] | str) -> None
         if _installed:
             return
         builtins.open = _guarded_open
-        Path.open = _guarded_path_open
-        Path.write_text = _guarded_write_text
-        Path.write_bytes = _guarded_write_bytes
-        Path.mkdir = _guarded_mkdir
-        Path.touch = _guarded_touch
-        Path.unlink = _guarded_unlink
-        Path.rename = _guarded_rename
-        Path.replace = _guarded_replace
+        Path.open = _guarded_path_open  # type: ignore[method-assign]
+        Path.write_text = _guarded_write_text  # type: ignore[method-assign]
+        Path.write_bytes = _guarded_write_bytes  # type: ignore[method-assign]
+        Path.mkdir = _guarded_mkdir  # type: ignore[method-assign]
+        Path.touch = _guarded_touch  # type: ignore[method-assign]
+        Path.unlink = _guarded_unlink  # type: ignore[method-assign]
+        Path.rename = _guarded_rename  # type: ignore[method-assign]
+        Path.replace = _guarded_replace  # type: ignore[method-assign]
         sqlite3.connect = _guarded_sqlite_connect
         _installed = True
 
