@@ -269,7 +269,11 @@ def call_llm_pdf_text(
                 {
                     "role": "user",
                     "content": [
-                        {"type": "input_file", "filename": filename, "file_data": pdf_b64},
+                        {
+                            "type": "input_file",
+                            "filename": filename,
+                            "file_data": f"data:application/pdf;base64,{pdf_b64}",
+                        },
                         {"type": "input_text", "text": prompt},
                     ],
                 }
