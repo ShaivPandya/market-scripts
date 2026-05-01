@@ -5,7 +5,7 @@ import types
 
 import api.routers.overview as overview_router
 import api.routers.thesis as thesis_router
-from llm_utils import MODEL_SONNET
+from llm_utils import MODEL_MID, model_for_tier
 
 
 def test_thesis_status(auth_client, monkeypatch, tmp_path):
@@ -39,13 +39,14 @@ def test_get_thesis_not_found(auth_client, monkeypatch, tmp_path):
 
 
 def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
     monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
 
     class FakeMessages:
         def create(self, **kwargs):
-            assert kwargs["model"] == MODEL_SONNET
+            assert kwargs["model"] == model_for_tier(MODEL_MID, "anthropic")
             return {
                 "content": [
                     {
@@ -88,7 +89,7 @@ def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path):
     def fail_pdf_call(*args, **kwargs):
         raise AssertionError("PDF generation should not run for markdown uploads")
 
-    monkeypatch.setattr(thesis_router, "_call_claude_pdf", fail_pdf_call)
+    monkeypatch.setattr(thesis_router, "_call_llm_pdf", fail_pdf_call)
 
     resp = auth_client.post(
         "/api/v1/thesis/generate",
@@ -141,8 +142,8 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
             "- Demand is improving\n"
         )
 
-    monkeypatch.setattr(overview_router, "_call_claude_overview_pdf", fail_pdf_call)
-    monkeypatch.setattr(overview_router, "_call_claude_overview_markdown", fake_markdown_call)
+    monkeypatch.setattr(overview_router, "_call_llm_overview_pdf", fail_pdf_call)
+    monkeypatch.setattr(overview_router, "_call_llm_overview_markdown", fake_markdown_call)
 
     resp = auth_client.post(
         "/api/v1/overview/generate",

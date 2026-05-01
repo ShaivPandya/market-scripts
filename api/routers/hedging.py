@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
+from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
 
@@ -247,26 +248,23 @@ Be direct and specific. Reference actual tickers and numbers. Write for a profes
 
 @router.post("/hedging-tool/recommend")
 def recommend_hedging_adjustments(req: HedgingRecommendRequest):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ConfigurationError("ANTHROPIC_API_KEY")
+    if not has_llm_api_key():
+        raise ConfigurationError(api_key_env())
 
     if not req.positions_df:
         raise HTTPException(status_code=400, detail="No position data provided for recommendations.")
 
-    from llm_utils import MODEL_HAIKU, call_claude_text
-
     prompt = _build_recommend_prompt(req)
 
     try:
-        analysis, _citations, _resp = call_claude_text(
+        analysis, _citations, _resp = call_llm_text(
             prompt=prompt,
-            model=MODEL_HAIKU,
-            api_key=api_key,
+            model=MODEL_LOW,
+            api_key=None,
             max_tokens=4096,
         )
         if not analysis:
-            raise ValueError("Claude returned empty response")
+            raise ValueError("LLM returned empty response")
     except Exception as exc:
         raise DataFetchError(source="hedging_recommend", detail=str(exc)) from exc
 

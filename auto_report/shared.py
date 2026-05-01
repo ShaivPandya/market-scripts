@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from llm_utils import MODEL_OPUS
+from llm_utils import MODEL_HIGH, call_llm_text, extract_citations, extract_text
 
 log = logging.getLogger("auto_report.shared")
 
@@ -130,7 +130,7 @@ def slim_error(value):
 
 
 # ---------------------------------------------------------------------------
-# Claude call
+# LLM call
 # ---------------------------------------------------------------------------
 
 
@@ -138,49 +138,33 @@ def call_claude(
     system_msg: str,
     user_msg: str,
     allowed_domains: list[str] | None = None,
-    model: str = MODEL_OPUS,
+    model: str = MODEL_HIGH,
     max_tokens: int = 16384,
 ) -> tuple[str, list[tuple[str, str]]]:
-    """Call Claude, optionally with web search.
+    """Call the configured LLM provider, optionally with web search.
 
     Returns (text, citations) where citations is a list of (title, url) tuples.
     """
-    import anthropic
 
-    client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
-
-    tools = []
-    if allowed_domains is not None:
-        tools.append(
-            {
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 5,
-                "allowed_domains": allowed_domains,
-            }
-        )
-
-    kwargs = dict(
-        model=model,
-        max_tokens=max_tokens,
-        system=system_msg,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-    if tools:
-        kwargs["tools"] = tools
-
-    def _create_with_retry(**kw):
-        """Call client.messages.create with automatic retry on rate-limit (429) errors."""
-        import anthropic as _anthropic
-
+    def _create_with_retry():
+        """Call the configured LLM with automatic retry on rate-limit errors."""
         max_retries = 5
         for attempt in range(max_retries + 1):
             try:
-                return client.messages.create(**kw)
-            except _anthropic.RateLimitError as exc:
+                return call_llm_text(
+                    prompt=user_msg,
+                    model=model,
+                    api_key=None,
+                    max_tokens=max_tokens,
+                    system=system_msg,
+                    allowed_domains=allowed_domains,
+                )
+            except Exception as exc:
+                status_code = getattr(exc, "status_code", None)
+                if status_code != 429 and "rate_limit" not in str(exc).lower():
+                    raise
                 if attempt == max_retries:
                     raise
-                # Use Retry-After header if available, otherwise exponential backoff
                 retry_after = None
                 if hasattr(exc, "response") and exc.response is not None:
                     retry_after = exc.response.headers.get("retry-after")
@@ -197,44 +181,21 @@ def call_claude(
                 time.sleep(wait)
 
     t0 = time.perf_counter()
-    response = _create_with_retry(**kwargs)
-
-    # Handle pause_turn for long-running web search turns
-    messages = list(kwargs["messages"])
-    while response.stop_reason == "pause_turn":
-        messages.append({"role": "assistant", "content": response.content})
-        messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
-        kwargs["messages"] = messages
-        response = _create_with_retry(**kwargs)
-
-    # Extract text and citations from all content blocks
-    text_parts = []
-    seen_urls: set[str] = set()
-    citations: list[tuple[str, str]] = []
-    for block in response.content:
-        if hasattr(block, "text"):
-            text_parts.append(block.text)
-            # Collect citations from text blocks
-            if hasattr(block, "citations") and block.citations:
-                for cite in block.citations:
-                    url = getattr(cite, "url", None)
-                    title = getattr(cite, "title", None)
-                    if url and url not in seen_urls:
-                        seen_urls.add(url)
-                        citations.append((title or url, url))
+    text, citations, response = _create_with_retry()
 
     search_count = 0
-    if hasattr(response.usage, "server_tool_use") and response.usage.server_tool_use:
-        search_count = getattr(response.usage.server_tool_use, "web_search_requests", 0)
+    usage = getattr(response, "usage", None)
+    if usage is not None and hasattr(usage, "server_tool_use") and usage.server_tool_use:
+        search_count = getattr(usage.server_tool_use, "web_search_requests", 0)
 
     log.info(
-        "Claude call completed in %.2fs (%d input tokens, %d output tokens, %d web searches)",
+        "LLM call completed in %.2fs (%d input tokens, %d output tokens, %d web searches)",
         time.perf_counter() - t0,
-        response.usage.input_tokens,
-        response.usage.output_tokens,
+        getattr(usage, "input_tokens", 0) if usage is not None else 0,
+        getattr(usage, "output_tokens", 0) if usage is not None else 0,
         search_count,
     )
-    return "\n".join(text_parts), citations
+    return text or extract_text(response), citations or extract_citations(response)
 
 
 # ---------------------------------------------------------------------------

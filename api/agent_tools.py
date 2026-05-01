@@ -1260,16 +1260,16 @@ def _extract_inaccessible_domains(exc: Exception) -> set[str]:
 
 
 def _run_search_web(query: str) -> dict[str, Any]:
-    from llm_utils import MODEL_HAIKU, call_claude_text
+    from llm_utils import MODEL_LOW, call_llm_text, selected_provider
 
     allowed_domains = list(_SEARCH_WEB_ALLOWED_DOMAINS_DEFAULT)
     attempts = 0
     while attempts < 3:
         attempts += 1
         try:
-            text, citations, _response = call_claude_text(
+            text, citations, _response = call_llm_text(
                 prompt=f"Find the latest news and developments about: {query}",
-                model=MODEL_HAIKU,
+                model=MODEL_LOW,
                 api_key=None,
                 max_tokens=2048,
                 system=(
@@ -1289,14 +1289,14 @@ def _run_search_web(query: str) -> dict[str, Any]:
             }
         except Exception as exc:  # noqa: BLE001 - tool should recover if possible
             blocked = _extract_inaccessible_domains(exc)
-            if not blocked:
+            if selected_provider() != "anthropic" or not blocked:
                 raise
 
             remaining = [d for d in allowed_domains if d.lower() not in blocked]
             if len(remaining) == len(allowed_domains):
                 raise
             if not remaining:
-                raise RuntimeError("All configured search domains were rejected by Anthropic.") from exc
+                raise RuntimeError("All configured search domains were rejected by the LLM provider.") from exc
 
             logger.warning(
                 "search_web pruned inaccessible domains blocked=%s remaining=%s",

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -142,8 +144,14 @@ def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(m
         },
     ]
 
-    monkeypatch.setattr("portfolio.portfolio_dashboard.get_data", lambda timeframe="Daily": raw)
-    monkeypatch.setattr("portfolio.portfolio_db.get_positions", lambda include_hedges=False: positions)
+    monkeypatch.setitem(
+        sys.modules, "portfolio.portfolio_dashboard", SimpleNamespace(get_data=lambda timeframe="Daily": raw)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "portfolio.portfolio_db",
+        SimpleNamespace(get_positions=lambda include_hedges=False: positions),
+    )
     monkeypatch.setattr("api.agent_tools.get_cached", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("api.agent_tools.set_cached", lambda *_args, **_kwargs: None)
 
@@ -253,9 +261,10 @@ def test_extract_inaccessible_domains_parses_error_message():
 
 
 def test_run_search_web_prunes_blocked_domains_and_retries(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     calls: list[list[str]] = []
 
-    def fake_call_claude_text(*, allowed_domains=None, **_kwargs):
+    def fake_call_llm_text(*, allowed_domains=None, **_kwargs):
         domains = list(allowed_domains or [])
         calls.append(domains)
         if len(calls) == 1:
@@ -265,7 +274,7 @@ def test_run_search_web_prunes_blocked_domains_and_retries(monkeypatch):
             )
         return "ok summary", [("Example", "https://example.com")], object()
 
-    monkeypatch.setattr("llm_utils.call_claude_text", fake_call_claude_text)
+    monkeypatch.setattr("llm_utils.call_llm_text", fake_call_llm_text)
 
     result = agent_tools._run_search_web("microsoft antitrust")
 

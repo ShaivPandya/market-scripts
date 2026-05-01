@@ -1,6 +1,6 @@
 """
 pip install feedparser httpx beautifulsoup4 lxml readability-lxml pdfminer.six python-dotenv
-Optional (Claude): pip install anthropic
+Optional LLM support: configure LLM_PROVIDER plus provider API key
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from readability import Document
 
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
-from llm_utils import MODEL_HAIKU, call_claude_text, parse_json_text
+from llm_utils import MODEL_LOW, call_llm_text, has_llm_api_key, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -316,13 +316,13 @@ def extract_full_text(client: httpx.Client, url: str) -> str:
 # ---------- Summarization ----------
 def summarize_with_llm(text: str, meta: dict) -> dict:
     """
-    Summarize using Claude if ANTHROPIC_API_KEY is set, otherwise fall back to naive truncation.
+    Summarize using the configured LLM provider if its API key is set, otherwise fall back to naive truncation.
     """
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if has_llm_api_key():
         try:
             return summarize_with_claude(text, meta)
         except Exception as ex:
-            LOGGER.warning("Claude summarization failed: %s", ex)
+            LOGGER.warning("LLM summarization failed: %s", ex)
     # naive fallback summary if no LLM
     first = " ".join(text.split()[:60])
     return {
@@ -361,17 +361,17 @@ Text:
 {text_in}
 """.strip()
 
-    out, _citations, _resp = call_claude_text(
+    out, _citations, _resp = call_llm_text(
         prompt=prompt,
-        model=MODEL_HAIKU,
-        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        model=MODEL_LOW,
+        api_key=None,
         max_tokens=2048,
     )
     if not out:
-        raise ValueError("Claude returned empty response")
+        raise ValueError("LLM returned empty response")
     parsed = parse_json_text(out)
     if not isinstance(parsed, dict):
-        raise ValueError("Claude returned invalid JSON")
+        raise ValueError("LLM returned invalid JSON")
     return parsed
 
 

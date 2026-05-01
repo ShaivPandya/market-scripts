@@ -1,9 +1,9 @@
 """
 AI Agent chat endpoint with streaming (SSE) and function calling.
 
-Uses Anthropic's Messages API with Claude Sonnet 4.6 and the tool definitions from
-:mod:`api.agent_tools` to answer cross-cutting investment questions by
-fetching live data from the platform's analysis modules.
+Uses the configured LLM provider and the tool definitions from :mod:`api.agent_tools`
+to answer cross-cutting investment questions by fetching live data from the
+platform's analysis modules.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import re
-import threading
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -26,7 +25,15 @@ from pydantic import BaseModel
 from api.agent_tools import TOOL_DEFINITIONS, execute_tool
 from api.exceptions import ConfigurationError
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
-from llm_utils import MODEL_SONNET
+from llm_utils import (
+    MODEL_MID,
+    PROVIDER_ANTHROPIC,
+    PROVIDER_OPENAI,
+    api_key_env,
+    get_llm_client,
+    resolve_model,
+    selected_provider,
+)
 
 router = APIRouter()
 logger = logging.getLogger("api.agent")
@@ -228,8 +235,8 @@ MAX_TOOL_CONTINUATION_ROUNDS = 8
 MAX_API_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
 SSE_KEEPALIVE_INTERVAL_S = 15.0
-CLAUDE_MAX_TOKENS = 8_192
-CLAUDE_CHAT_MAX_TOKENS = 2_048
+LLM_MAX_TOKENS = 8_192
+LLM_CHAT_MAX_TOKENS = 2_048
 ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
     {
         "name": tool["name"],
@@ -239,7 +246,24 @@ ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
     for tool in TOOL_DEFINITIONS
     if isinstance(tool.get("name"), str)
 ]
-_TOOL_DEFINITION_BY_NAME = {tool["name"]: tool for tool in ANTHROPIC_TOOL_DEFINITIONS}
+OPENAI_TOOL_DEFINITIONS: list[dict] = [
+    {
+        "type": "function",
+        "name": tool["name"],
+        "description": tool.get("description", ""),
+        "parameters": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
+    }
+    for tool in TOOL_DEFINITIONS
+    if isinstance(tool.get("name"), str)
+]
+_TOOL_DEFINITIONS_BY_PROVIDER = {
+    PROVIDER_ANTHROPIC: ANTHROPIC_TOOL_DEFINITIONS,
+    PROVIDER_OPENAI: OPENAI_TOOL_DEFINITIONS,
+}
+_TOOL_DEFINITION_BY_NAME_BY_PROVIDER = {
+    provider: {tool["name"]: tool for tool in tools} for provider, tools in _TOOL_DEFINITIONS_BY_PROVIDER.items()
+}
+_TOOL_NAMES = {tool["name"] for tool in TOOL_DEFINITIONS if isinstance(tool.get("name"), str)}
 _HIGH_COST_TOOLS = {"get_sector_metrics", "query_ontology", "get_signal_aggregator"}
 _CASUAL_RX = re.compile(
     r"^\s*(hi|hello|hey|yo|thanks|thank you|cool|ok|okay|who are you|what can you do)[\s!.?]*$",
@@ -264,49 +288,27 @@ _DATA_SEEKING_RX = re.compile(
 )
 
 
-def _read_anthropic_api_key() -> str:
-    api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip().strip("\"'")
+def _read_llm_api_key() -> tuple[str, str]:
+    try:
+        provider = selected_provider()
+    except ValueError as exc:
+        raise ConfigurationError(str(exc)) from exc
+    key_env = api_key_env(provider)
+    api_key = (os.environ.get(key_env) or "").strip().strip("\"'")
     if not api_key:
-        raise ConfigurationError("ANTHROPIC_API_KEY")
+        raise ConfigurationError(key_env)
 
     # A common misconfiguration is placing an OpenAI key into ANTHROPIC_API_KEY.
-    if api_key.startswith("sk-proj-") or (api_key.startswith("sk-") and not api_key.startswith("sk-ant-")):
+    if provider == PROVIDER_ANTHROPIC and (
+        api_key.startswith("sk-proj-") or (api_key.startswith("sk-") and not api_key.startswith("sk-ant-"))
+    ):
         raise ConfigurationError("ANTHROPIC_API_KEY (must be an Anthropic key beginning with sk-ant-)")
 
-    return api_key
+    return provider, api_key
 
 
-_anthropic_client = None
-_anthropic_client_api_key: str | None = None
-_anthropic_client_factory = None
-_client_lock = threading.Lock()
-
-
-def _get_anthropic_client(api_key: str):
-    """Return a cached Anthropic client, creating one on first call."""
-    global _anthropic_client, _anthropic_client_api_key, _anthropic_client_factory
-    from anthropic import Anthropic
-
-    if (
-        _anthropic_client is not None
-        and _anthropic_client_api_key == api_key
-        and _anthropic_client_factory is Anthropic
-    ):
-        return _anthropic_client
-    with _client_lock:
-        from anthropic import Anthropic
-
-        if (
-            _anthropic_client is not None
-            and _anthropic_client_api_key == api_key
-            and _anthropic_client_factory is Anthropic
-        ):
-            return _anthropic_client
-
-        _anthropic_client = Anthropic(api_key=api_key)
-        _anthropic_client_api_key = api_key
-        _anthropic_client_factory = Anthropic
-        return _anthropic_client
+def _get_provider_client(provider: str, api_key: str):
+    return get_llm_client(provider, api_key=api_key)
 
 
 def _format_stream_error(exc: Exception) -> str:
@@ -315,9 +317,13 @@ def _format_stream_error(exc: Exception) -> str:
     lowered = raw.lower()
 
     if status_code == 401 or "invalid x-api-key" in lowered or "authentication_error" in lowered:
-        return (
-            "Agent authentication failed. Set a valid Anthropic API key in ANTHROPIC_API_KEY and restart the backend."
-        )
+        try:
+            provider = selected_provider()
+            key_env = api_key_env(provider)
+        except Exception:
+            provider = "configured provider"
+            key_env = "the selected provider API key"
+        return f"Agent authentication failed. Set a valid {provider} API key in {key_env} and restart the backend."
 
     if status_code == 529 or "overloaded" in lowered:
         return "The AI model is temporarily overloaded. Please try again in a few seconds."
@@ -371,7 +377,7 @@ def _select_tool_names(user_text: str) -> list[str]:
 
     def add(*names: str) -> None:
         for name in names:
-            if name in _TOOL_DEFINITION_BY_NAME and name not in selected:
+            if name in _TOOL_NAMES and name not in selected:
                 selected.append(name)
 
     if re.search(r"\b(portfolio|holding|holdings|position|positions|p&l|pnl|performance|exposure|risks?)\b", text):
@@ -433,8 +439,9 @@ def _select_tool_names(user_text: str) -> list[str]:
     return selected
 
 
-def _select_tool_definitions(user_text: str) -> list[dict]:
-    return [_TOOL_DEFINITION_BY_NAME[name] for name in _select_tool_names(user_text)]
+def _select_tool_definitions(user_text: str, provider: str) -> list[dict]:
+    definitions = _TOOL_DEFINITION_BY_NAME_BY_PROVIDER[provider]
+    return [definitions[name] for name in _select_tool_names(user_text)]
 
 
 def _execution_args(name: str, args: dict, *, force_refresh: bool, user_text: str) -> dict:
@@ -637,6 +644,10 @@ def _serialize_content_blocks(blocks: list[object]) -> list[dict]:
     return serialized
 
 
+def _serialize_output_items(response: object) -> list[dict]:
+    return _serialize_content_blocks(list(_obj_list(response, "output")))
+
+
 def _extract_tool_calls(content_blocks: list[dict]) -> list[dict]:
     calls: list[dict] = []
     for block in content_blocks:
@@ -653,6 +664,166 @@ def _extract_tool_calls(content_blocks: list[dict]) -> list[dict]:
     return calls
 
 
+def _extract_openai_tool_calls(output_items: list[dict]) -> list[dict]:
+    calls: list[dict] = []
+    for item in output_items:
+        if item.get("type") != "function_call":
+            continue
+        name = item.get("name")
+        call_id = item.get("call_id") or item.get("id")
+        raw_args = item.get("arguments", {})
+        args: dict
+        if isinstance(raw_args, str) and raw_args.strip():
+            try:
+                parsed_args = json.loads(raw_args)
+            except json.JSONDecodeError:
+                parsed_args = {}
+            args = parsed_args if isinstance(parsed_args, dict) else {}
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            args = {}
+        if isinstance(name, str) and isinstance(call_id, str):
+            calls.append({"name": name, "call_id": call_id, "args": args})
+    return calls
+
+
+def _obj_list(value: object, key: str) -> list[object]:
+    if isinstance(value, dict):
+        out = value.get(key, [])
+    else:
+        out = getattr(value, key, [])
+    return list(out or [])
+
+
+def _obj_value(value: object, key: str, default: object = None) -> object:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _tool_definitions_for_provider(provider: str) -> list[dict]:
+    return _TOOL_DEFINITIONS_BY_PROVIDER[provider]
+
+
+def _model_stream_kwargs(
+    *,
+    provider: str,
+    instructions: str,
+    conversation: list[dict],
+    max_tokens: int,
+    tool_defs: list[dict] | None = None,
+    force_tool_use: bool = False,
+) -> dict[str, object]:
+    if provider == PROVIDER_ANTHROPIC:
+        kwargs: dict[str, object] = {
+            "model": resolve_model(MODEL_MID, PROVIDER_ANTHROPIC),
+            "max_tokens": max_tokens,
+            "system": instructions,
+            "messages": conversation,
+        }
+        if tool_defs:
+            kwargs["tools"] = tool_defs
+        if force_tool_use and tool_defs:
+            kwargs["tool_choice"] = {"type": "any"}
+        return kwargs
+
+    kwargs = {
+        "model": resolve_model(MODEL_MID, PROVIDER_OPENAI),
+        "max_output_tokens": max_tokens,
+        "instructions": instructions,
+        "input": conversation,
+    }
+    if tool_defs:
+        kwargs["tools"] = tool_defs
+    if force_tool_use and tool_defs:
+        kwargs["tool_choice"] = "required"
+    return kwargs
+
+
+def _initial_conversation(provider: str, messages: list[ChatMessage]) -> list[dict]:
+    if provider == PROVIDER_ANTHROPIC:
+        return [{"role": m.role, "content": m.content} for m in messages]
+    return [{"role": m.role, "content": [{"type": "input_text", "text": m.content}]} for m in messages]
+
+
+def _openai_conversation_from_context(conversation: list[dict[str, object]]) -> list[dict]:
+    out: list[dict] = []
+    for msg in conversation:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            out.append({"role": role, "content": [{"type": "input_text", "text": content}]})
+        else:
+            out.append({"role": role, "content": content})
+    return out
+
+
+def _openai_user_prompt(prompt: str) -> list[dict]:
+    return [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}]
+
+
+def _stream_llm_response(
+    client: object, provider: str, stream_kwargs: dict[str, object], text_parts: list[str] | None = None
+):
+    if provider == PROVIDER_ANTHROPIC:
+        with client.messages.stream(**stream_kwargs) as stream:
+            for event in stream:
+                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                    if text_parts is not None:
+                        text_parts.append(event.delta.text)
+                    yield _sse("delta", {"text": event.delta.text})
+                elif event.type == "content_block_start" and event.content_block.type == "tool_use":
+                    yield _sse(
+                        "tool_call",
+                        {
+                            "name": event.content_block.name,
+                            "id": event.content_block.id,
+                        },
+                    )
+            return stream.get_final_message()
+
+    emitted_call_ids: set[str] = set()
+    with client.responses.stream(**stream_kwargs) as stream:
+        for event in stream:
+            event_type = _obj_value(event, "type")
+            if event_type == "response.output_text.delta":
+                delta = _obj_value(event, "delta", "")
+                if isinstance(delta, str) and delta:
+                    if text_parts is not None:
+                        text_parts.append(delta)
+                    yield _sse("delta", {"text": delta})
+            elif event_type == "response.output_item.added":
+                item = _obj_value(event, "item", {})
+                if _obj_value(item, "type") == "function_call":
+                    call_id = _obj_value(item, "call_id") or _obj_value(item, "id")
+                    name = _obj_value(item, "name")
+                    if isinstance(call_id, str) and isinstance(name, str) and call_id not in emitted_call_ids:
+                        emitted_call_ids.add(call_id)
+                        yield _sse("tool_call", {"name": name, "id": call_id})
+        get_final = getattr(stream, "get_final_response", None)
+        if callable(get_final):
+            return get_final()
+        get_final = getattr(stream, "get_final_message", None)
+        if callable(get_final):
+            return get_final()
+        return None
+
+
+def _usage_dict(message: object) -> dict:
+    usage = _obj_value(message, "usage")
+    if not usage:
+        return {}
+    input_tokens = _obj_value(usage, "input_tokens", _obj_value(usage, "prompt_tokens", None))
+    output_tokens = _obj_value(usage, "output_tokens", _obj_value(usage, "completion_tokens", None))
+    out: dict[str, int] = {}
+    if isinstance(input_tokens, int):
+        out["input_tokens"] = input_tokens
+    if isinstance(output_tokens, int):
+        out["output_tokens"] = output_tokens
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -660,14 +831,15 @@ def _extract_tool_calls(content_blocks: list[dict]) -> list[dict]:
 
 @router.post("/agent/chat")
 def agent_chat(req: AgentChatRequest):
-    api_key = _read_anthropic_api_key()
+    provider, api_key = _read_llm_api_key()
     instructions = _build_agent_instructions(screen_context=req.screen_context)
     latest_user_text = _extract_last_user_text(req.messages)
     casual = _is_casual(latest_user_text)
     workflow_name, workflow_ticker = _detect_workflow(latest_user_text)
-    tool_defs = ANTHROPIC_TOOL_DEFINITIONS
+    tool_defs = _tool_definitions_for_provider(provider)
     logger.info(
-        "agent_tool_policy casual=%s workflow=%s ticker=%s tools=%d",
+        "agent_tool_policy provider=%s casual=%s workflow=%s ticker=%s tools=%d",
+        provider,
         casual,
         workflow_name,
         workflow_ticker,
@@ -676,7 +848,7 @@ def agent_chat(req: AgentChatRequest):
 
     def generate():  # noqa: C901 — complex but linear control flow
         yield _sse_ping()
-        client = _get_anthropic_client(api_key)
+        client = _get_provider_client(provider, api_key)
 
         # --- Workflow path: deterministic tool execution → single synthesis ---
         if workflow_name:
@@ -698,21 +870,27 @@ def agent_chat(req: AgentChatRequest):
                     yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
 
-                # Single synthesis call — no tools, just Claude reasoning over the data
+                # Single synthesis call — no tools, just model reasoning over the data
                 synthesis_chunks: list[str] = []
                 for attempt in range(MAX_API_RETRIES):
                     try:
-                        with client.messages.stream(
-                            model=MODEL_SONNET,
-                            max_tokens=CLAUDE_MAX_TOKENS,
-                            system=instructions,
-                            messages=[{"role": "user", "content": synthesis_prompt}],
-                        ) as stream:
-                            for event in stream:
-                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                                    synthesis_chunks.append(event.delta.text)
-                                    yield _sse("delta", {"text": event.delta.text})
-                            final_message = stream.get_final_message()
+                        synthesis_conversation = (
+                            [{"role": "user", "content": synthesis_prompt}]
+                            if provider == PROVIDER_ANTHROPIC
+                            else _openai_user_prompt(synthesis_prompt)
+                        )
+                        stream_kwargs = _model_stream_kwargs(
+                            provider=provider,
+                            instructions=instructions,
+                            conversation=synthesis_conversation,
+                            max_tokens=LLM_MAX_TOKENS,
+                        )
+                        final_message = yield from _stream_llm_response(
+                            client,
+                            provider,
+                            stream_kwargs,
+                            synthesis_chunks,
+                        )
                         break
                     except Exception as retry_exc:
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
@@ -741,12 +919,7 @@ def agent_chat(req: AgentChatRequest):
                 except Exception:
                     logger.debug("Failed to persist workflow run %s", run_id, exc_info=True)
 
-                usage = {}
-                if hasattr(final_message, "usage") and final_message.usage:
-                    usage = {
-                        "input_tokens": final_message.usage.input_tokens,
-                        "output_tokens": final_message.usage.output_tokens,
-                    }
+                usage = _usage_dict(final_message)
                 yield _sse("done", {"usage": usage, "workflow_run_id": run_id})
                 return
 
@@ -763,7 +936,7 @@ def agent_chat(req: AgentChatRequest):
                 return
 
         # --- Normal tool-calling path ---
-        conversation: list[dict[str, object]] = [{"role": m.role, "content": m.content} for m in req.messages]
+        conversation = _initial_conversation(provider, req.messages)
         continuation_round = 0
         # Force tool use on the first round for non-casual queries so
         # answers are always grounded in live data.  When rich screen
@@ -786,31 +959,18 @@ def agent_chat(req: AgentChatRequest):
                     yield _sse("done", {"usage": {}})
                     return
 
-                stream_kwargs: dict[str, object] = dict(
-                    model=MODEL_SONNET,
-                    max_tokens=CLAUDE_MAX_TOKENS,
-                    system=instructions,
-                    messages=conversation,
-                    tools=tool_defs,
+                stream_kwargs = _model_stream_kwargs(
+                    provider=provider,
+                    instructions=instructions,
+                    conversation=conversation,
+                    max_tokens=LLM_MAX_TOKENS,
+                    tool_defs=tool_defs,
+                    force_tool_use=force_tool_use,
                 )
-                if force_tool_use:
-                    stream_kwargs["tool_choice"] = {"type": "any"}
 
                 for attempt in range(MAX_API_RETRIES):
                     try:
-                        with client.messages.stream(**stream_kwargs) as stream:
-                            for event in stream:
-                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                                    yield _sse("delta", {"text": event.delta.text})
-                                elif event.type == "content_block_start" and event.content_block.type == "tool_use":
-                                    yield _sse(
-                                        "tool_call",
-                                        {
-                                            "name": event.content_block.name,
-                                            "id": event.content_block.id,
-                                        },
-                                    )
-                            final_message = stream.get_final_message()
+                        final_message = yield from _stream_llm_response(client, provider, stream_kwargs)
                         break
                     except Exception as retry_exc:
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
@@ -826,8 +986,12 @@ def agent_chat(req: AgentChatRequest):
                             continue
                         raise
 
-                assistant_content = _serialize_content_blocks(list(final_message.content))
-                deferred_calls = _extract_tool_calls(assistant_content)
+                if provider == PROVIDER_ANTHROPIC:
+                    assistant_content = _serialize_content_blocks(list(final_message.content))
+                    deferred_calls = _extract_tool_calls(assistant_content)
+                else:
+                    assistant_content = _serialize_output_items(final_message)
+                    deferred_calls = _extract_openai_tool_calls(assistant_content)
 
                 if deferred_calls:
                     tool_counts = Counter(c["name"] for c in deferred_calls)
@@ -898,36 +1062,42 @@ def agent_chat(req: AgentChatRequest):
                                 payload["message"] = err_msg
                             yield _sse("tool_result", payload)
 
-                            result_block: dict[str, object] = {
-                                "type": "tool_result",
-                                "tool_use_id": call_id,
-                                "content": result_str,
-                            }
-                            if err_msg:
-                                result_block["is_error"] = True
+                            if provider == PROVIDER_ANTHROPIC:
+                                result_block: dict[str, object] = {
+                                    "type": "tool_result",
+                                    "tool_use_id": call_id,
+                                    "content": result_str,
+                                }
+                                if err_msg:
+                                    result_block["is_error"] = True
+                            else:
+                                result_block = {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": result_str,
+                                }
                             tool_results.append(result_block)
 
-                    conversation.append({"role": "assistant", "content": assistant_content})
-                    conversation.append({"role": "user", "content": tool_results})
-                    # After the first tool round, let Claude decide whether it
+                    if provider == PROVIDER_ANTHROPIC:
+                        conversation.append({"role": "assistant", "content": assistant_content})
+                        conversation.append({"role": "user", "content": tool_results})
+                    else:
+                        conversation.extend(assistant_content)
+                        conversation.extend(tool_results)
+                    # After the first tool round, let the model decide whether it
                     # needs more data (tool_choice: auto).
                     force_tool_use = False
                     continuation_round += 1
                     continue
 
-                if final_message.stop_reason == "pause_turn":
+                if provider == PROVIDER_ANTHROPIC and final_message.stop_reason == "pause_turn":
                     conversation.append({"role": "assistant", "content": assistant_content})
                     conversation.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
                     force_tool_use = False
                     continuation_round += 1
                     continue
 
-                usage = {}
-                if hasattr(final_message, "usage") and final_message.usage:
-                    usage = {
-                        "input_tokens": final_message.usage.input_tokens,
-                        "output_tokens": final_message.usage.output_tokens,
-                    }
+                usage = _usage_dict(final_message)
                 yield _sse("done", {"usage": usage})
                 return
 
@@ -957,12 +1127,17 @@ def agent_chat_v2(req: AgentChatRequestV2):
     and retrieval hits.
     """
     casual = _is_casual(req.message)
+    try:
+        provider = selected_provider()
+    except ValueError as exc:
+        raise ConfigurationError(str(exc)) from exc
     workflow_name, workflow_ticker = _detect_workflow(req.message)
-    tool_defs = [] if casual else _select_tool_definitions(req.message)
+    tool_defs = [] if casual else _select_tool_definitions(req.message, provider)
     force_refresh = _wants_fresh_data(req.message)
     enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
-        "agent_v2 casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
+        "agent_v2 provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
+        provider,
         casual,
         workflow_name,
         workflow_ticker,
@@ -989,13 +1164,16 @@ def agent_chat_v2(req: AgentChatRequestV2):
             yield _sse("done", {"usage": {}, "session_id": session_id})
             return
 
-        api_key = _read_anthropic_api_key()
+        provider, api_key = _read_llm_api_key()
         instructions = _build_agent_instructions(screen_context=req.screen_context)
-        client = _get_anthropic_client(api_key)
-        conversation, session_id = build_conversation_context(
+        client = _get_provider_client(provider, api_key)
+        raw_conversation, session_id = build_conversation_context(
             req.session_id,
             req.message,
             enable_retrieval=enable_retrieval,
+        )
+        conversation = (
+            raw_conversation if provider == PROVIDER_ANTHROPIC else _openai_conversation_from_context(raw_conversation)
         )
 
         # --- Workflow path ---
@@ -1020,17 +1198,23 @@ def agent_chat_v2(req: AgentChatRequestV2):
                 synthesis_chunks: list[str] = []
                 for attempt in range(MAX_API_RETRIES):
                     try:
-                        with client.messages.stream(
-                            model=MODEL_SONNET,
-                            max_tokens=CLAUDE_MAX_TOKENS,
-                            system=instructions,
-                            messages=[{"role": "user", "content": synthesis_prompt}],
-                        ) as stream:
-                            for event in stream:
-                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                                    synthesis_chunks.append(event.delta.text)
-                                    yield _sse("delta", {"text": event.delta.text})
-                            final_message = stream.get_final_message()
+                        synthesis_conversation = (
+                            [{"role": "user", "content": synthesis_prompt}]
+                            if provider == PROVIDER_ANTHROPIC
+                            else _openai_user_prompt(synthesis_prompt)
+                        )
+                        stream_kwargs = _model_stream_kwargs(
+                            provider=provider,
+                            instructions=instructions,
+                            conversation=synthesis_conversation,
+                            max_tokens=LLM_MAX_TOKENS,
+                        )
+                        final_message = yield from _stream_llm_response(
+                            client,
+                            provider,
+                            stream_kwargs,
+                            synthesis_chunks,
+                        )
                         break
                     except Exception as retry_exc:
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
@@ -1050,12 +1234,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
                 except Exception:
                     logger.debug("Failed to persist workflow run %s", run_id, exc_info=True)
 
-                usage = {}
-                if hasattr(final_message, "usage") and final_message.usage:
-                    usage = {
-                        "input_tokens": final_message.usage.input_tokens,
-                        "output_tokens": final_message.usage.output_tokens,
-                    }
+                usage = _usage_dict(final_message)
                 # Finalize turn before last yield
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
                 assistant_msg = {"role": "assistant", "content": synthesis_text, "timestamp": time.time()}
@@ -1094,30 +1273,23 @@ def agent_chat_v2(req: AgentChatRequestV2):
                     yield _sse("done", {"usage": {}, "session_id": session_id})
                     return
 
-                stream_kwargs: dict[str, object] = dict(
-                    model=MODEL_SONNET,
-                    max_tokens=CLAUDE_CHAT_MAX_TOKENS,
-                    system=instructions,
-                    messages=conversation,
+                stream_kwargs = _model_stream_kwargs(
+                    provider=provider,
+                    instructions=instructions,
+                    conversation=conversation,
+                    max_tokens=LLM_CHAT_MAX_TOKENS,
+                    tool_defs=tool_defs,
+                    force_tool_use=force_tool_use,
                 )
-                if tool_defs:
-                    stream_kwargs["tools"] = tool_defs
-                if force_tool_use and tool_defs:
-                    stream_kwargs["tool_choice"] = {"type": "any"}
 
                 for attempt in range(MAX_API_RETRIES):
                     try:
-                        with client.messages.stream(**stream_kwargs) as stream:
-                            for event in stream:
-                                if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                                    yield _sse("delta", {"text": event.delta.text})
-                                    text_parts.append(event.delta.text)
-                                elif event.type == "content_block_start" and event.content_block.type == "tool_use":
-                                    yield _sse(
-                                        "tool_call",
-                                        {"name": event.content_block.name, "id": event.content_block.id},
-                                    )
-                            final_message = stream.get_final_message()
+                        final_message = yield from _stream_llm_response(
+                            client,
+                            provider,
+                            stream_kwargs,
+                            text_parts,
+                        )
                         break
                     except Exception as retry_exc:
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
@@ -1125,8 +1297,12 @@ def agent_chat_v2(req: AgentChatRequestV2):
                             continue
                         raise
 
-                assistant_content = _serialize_content_blocks(list(final_message.content))
-                deferred_calls = _extract_tool_calls(assistant_content)
+                if provider == PROVIDER_ANTHROPIC:
+                    assistant_content = _serialize_content_blocks(list(final_message.content))
+                    deferred_calls = _extract_tool_calls(assistant_content)
+                else:
+                    assistant_content = _serialize_output_items(final_message)
+                    deferred_calls = _extract_openai_tool_calls(assistant_content)
 
                 if deferred_calls:
                     tool_counts = Counter(c["name"] for c in deferred_calls)
@@ -1203,34 +1379,40 @@ def agent_chat_v2(req: AgentChatRequestV2):
                                 payload["message"] = err_msg
                             yield _sse("tool_result", payload)
 
-                            result_block: dict[str, object] = {
-                                "type": "tool_result",
-                                "tool_use_id": call_id,
-                                "content": result_str,
-                            }
-                            if err_msg:
-                                result_block["is_error"] = True
+                            if provider == PROVIDER_ANTHROPIC:
+                                result_block: dict[str, object] = {
+                                    "type": "tool_result",
+                                    "tool_use_id": call_id,
+                                    "content": result_str,
+                                }
+                                if err_msg:
+                                    result_block["is_error"] = True
+                            else:
+                                result_block = {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": result_str,
+                                }
                             tool_results.append(result_block)
 
-                    conversation.append({"role": "assistant", "content": assistant_content})
-                    conversation.append({"role": "user", "content": tool_results})
+                    if provider == PROVIDER_ANTHROPIC:
+                        conversation.append({"role": "assistant", "content": assistant_content})
+                        conversation.append({"role": "user", "content": tool_results})
+                    else:
+                        conversation.extend(assistant_content)
+                        conversation.extend(tool_results)
                     force_tool_use = False
                     continuation_round += 1
                     continue
 
-                if final_message.stop_reason == "pause_turn":
+                if provider == PROVIDER_ANTHROPIC and final_message.stop_reason == "pause_turn":
                     conversation.append({"role": "assistant", "content": assistant_content})
                     conversation.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
                     force_tool_use = False
                     continuation_round += 1
                     continue
 
-                usage = {}
-                if hasattr(final_message, "usage") and final_message.usage:
-                    usage = {
-                        "input_tokens": final_message.usage.input_tokens,
-                        "output_tokens": final_message.usage.output_tokens,
-                    }
+                usage = _usage_dict(final_message)
                 # Finalize turn before last yield
                 full_text = "".join(text_parts)
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}

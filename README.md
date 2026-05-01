@@ -51,7 +51,10 @@ python3 -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt(
 Then set `AUTH_PASSWORD_HASH=...` and choose any random `JWT_SECRET`.
 
 Optional but supported:
-- `ANTHROPIC_API_KEY` (AI analysis, central bank + industry transcript summarization)
+- `LLM_PROVIDER` (`anthropic` or `openai`; defaults to `anthropic`)
+- `ANTHROPIC_API_KEY` (required when `LLM_PROVIDER=anthropic`)
+- `OPENAI_API_KEY` (required when `LLM_PROVIDER=openai`)
+- `ANTHROPIC_MODEL_LOW|MID|HIGH` and `OPENAI_MODEL_LOW|MID|HIGH` (optional tier overrides)
 - `ESTAT_APP_ID` (Japan CPI via e-Stat; used by the Country Dashboard and FX model helpers)
 - `SODA_APP_TOKEN` (CFTC positioning API throttling reduction)
 

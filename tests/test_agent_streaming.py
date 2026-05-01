@@ -50,6 +50,9 @@ class _FakeStream:
     def get_final_message(self):
         return self._final_message
 
+    def get_final_response(self):
+        return self._final_message
+
 
 class _FakeStreamManager:
     def __init__(self, stream: _FakeStream):
@@ -85,6 +88,43 @@ class _FakeClient:
 def _install_fake_anthropic(monkeypatch, streams: list[tuple[list[Any], Any]]):
     fake_client = _FakeClient(streams)
     monkeypatch.setattr("anthropic.Anthropic", lambda *args, **kwargs: fake_client)
+    return fake_client
+
+
+def _openai_event_text_delta(text: str):
+    return SimpleNamespace(type="response.output_text.delta", delta=text)
+
+
+def _openai_event_function_call(name: str, call_id: str):
+    return SimpleNamespace(
+        type="response.output_item.added",
+        item=SimpleNamespace(type="function_call", name=name, call_id=call_id),
+    )
+
+
+class _FakeResponses:
+    def __init__(self, streams: list[tuple[list[Any], Any]]):
+        self._streams = streams
+        self.calls = 0
+        self.kwargs_history: list[dict[str, Any]] = []
+
+    def stream(self, **kwargs):
+        self.kwargs_history.append(dict(kwargs))
+        if self.calls >= len(self._streams):
+            raise AssertionError("Unexpected extra responses.stream() call")
+        events, final_response = self._streams[self.calls]
+        self.calls += 1
+        return _FakeStreamManager(_FakeStream(events, final_response))
+
+
+class _FakeOpenAIClient:
+    def __init__(self, streams: list[tuple[list[Any], Any]]):
+        self.responses = _FakeResponses(streams)
+
+
+def _install_fake_openai(monkeypatch, streams: list[tuple[list[Any], Any]]):
+    fake_client = _FakeOpenAIClient(streams)
+    monkeypatch.setattr("openai.OpenAI", lambda *args, **kwargs: fake_client)
     return fake_client
 
 
@@ -152,6 +192,65 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
     tool_results = [p for e, p in parsed if e == "tool_result"]
     assert len(tool_results) == 2
     assert all(p["status"] == "ok" for p in tool_results)
+
+
+def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+
+    streams = [
+        (
+            [_openai_event_function_call("query_ontology", "call-1")],
+            SimpleNamespace(
+                output=[
+                    {
+                        "type": "function_call",
+                        "name": "query_ontology",
+                        "call_id": "call-1",
+                        "arguments": json.dumps({"query": "A"}),
+                    }
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        (
+            [_openai_event_text_delta("analysis")],
+            SimpleNamespace(
+                output=[{"type": "message", "content": [{"type": "output_text", "text": "analysis"}]}],
+                usage=SimpleNamespace(input_tokens=2, output_tokens=3),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_openai(monkeypatch, streams)
+
+    seen_args: list[dict] = []
+
+    def fake_execute_tool(_name: str, args: dict):
+        seen_args.append(args)
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "test"}]},
+    )
+
+    assert resp.status_code == 200
+    assert fake_client.responses.kwargs_history[0]["tool_choice"] == "required"
+    assert "tool_choice" not in fake_client.responses.kwargs_history[1]
+    assert fake_client.responses.kwargs_history[0]["tools"][0]["type"] == "function"
+    assert fake_client.responses.kwargs_history[1]["input"][-1] == {
+        "type": "function_call_output",
+        "call_id": "call-1",
+        "output": json.dumps({"ok": True}),
+    }
+    assert seen_args == [{"query": "A"}]
+    parsed = _parse_sse(resp.text)
+    assert any(e == "tool_call" and p["name"] == "query_ontology" for e, p in parsed)
+    assert any(e == "tool_result" and p["status"] == "ok" for e, p in parsed)
+    assert any(e == "delta" and p["text"] == "analysis" for e, p in parsed)
 
 
 def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):

@@ -1,7 +1,7 @@
 """
 Industry earnings monitor:
 - Read earnings call transcripts from local PDF files in macro/industry/files/
-- Summarize with Claude (optional fallback if key/package is unavailable)
+- Summarize with configured LLM provider (optional fallback if key/package is unavailable)
 - Cache transcripts + summaries in SQLite
 - Return structured data for frontend consumption
 """
@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from api import state_storage
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
-from llm_utils import MODEL_SONNET, call_claude_text, parse_json_text
+from llm_utils import MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ SECTORS: dict[str, SectorConfig] = {
 }
 
 DB_PATH = "industry_transcripts.sqlite3"
-SUMMARY_MODEL = MODEL_SONNET
+SUMMARY_MODEL = MODEL_MID
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
 
 
@@ -563,26 +563,26 @@ Transcript:
 {text_in}
 """.strip()
 
-    output_text, _citations, _resp = call_claude_text(
+    output_text, _citations, _resp = call_llm_text(
         prompt=prompt,
         model=SUMMARY_MODEL,
-        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        api_key=None,
         max_tokens=2048,
     )
     if not output_text:
-        raise ValueError("Claude returned empty response")
+        raise ValueError("LLM returned empty response")
     parsed = parse_json_text(output_text)
     if not isinstance(parsed, dict):
-        raise ValueError("Claude returned invalid JSON")
+        raise ValueError("LLM returned invalid JSON")
     return _normalize_summary(parsed, text, meta)
 
 
 def summarize_with_llm(text: str, meta: dict) -> dict:
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if has_llm_api_key():
         try:
             return summarize_with_claude(text, meta)
         except Exception as ex:
-            LOGGER.warning("Claude summarization failed for %s: %s", meta["ticker"], ex)
+            LOGGER.warning("LLM summarization failed for %s: %s", meta["ticker"], ex)
     return _fallback_summary(text, meta)
 
 

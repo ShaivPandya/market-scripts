@@ -1,11 +1,63 @@
 from __future__ import annotations
 
+import base64
+import os
+import threading
 from collections.abc import Sequence
 from typing import Any
 
-MODEL_HAIKU = "claude-haiku-4-5"
-MODEL_SONNET = "claude-sonnet-4-6"
-MODEL_OPUS = "claude-opus-4-7"
+PROVIDER_ANTHROPIC = "anthropic"
+PROVIDER_OPENAI = "openai"
+PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_OPENAI}
+
+MODEL_LOW = "low"
+MODEL_MID = "mid"
+MODEL_HIGH = "high"
+MODEL_TIERS = {MODEL_LOW, MODEL_MID, MODEL_HIGH}
+
+ANTHROPIC_DEFAULT_MODELS = {
+    MODEL_LOW: "claude-haiku-4-5",
+    MODEL_MID: "claude-sonnet-4-6",
+    MODEL_HIGH: "claude-opus-4-7",
+}
+OPENAI_DEFAULT_MODELS = {
+    MODEL_LOW: "gpt-5.4-mini",
+    MODEL_MID: "gpt-5.4",
+    MODEL_HIGH: "gpt-5.5",
+}
+
+# Compatibility aliases for older call sites. These now represent tiers.
+MODEL_HAIKU = MODEL_LOW
+MODEL_SONNET = MODEL_MID
+MODEL_OPUS = MODEL_HIGH
+
+_LEGACY_MODEL_TO_TIER = {
+    "claude-haiku-4-5": MODEL_LOW,
+    "claude-sonnet-4-6": MODEL_MID,
+    "claude-opus-4-7": MODEL_HIGH,
+    "gpt-5.4-mini": MODEL_LOW,
+    "gpt-5.4": MODEL_MID,
+    "gpt-5.5": MODEL_HIGH,
+}
+_MODEL_ENV_BY_PROVIDER = {
+    PROVIDER_ANTHROPIC: {
+        MODEL_LOW: "ANTHROPIC_MODEL_LOW",
+        MODEL_MID: "ANTHROPIC_MODEL_MID",
+        MODEL_HIGH: "ANTHROPIC_MODEL_HIGH",
+    },
+    PROVIDER_OPENAI: {
+        MODEL_LOW: "OPENAI_MODEL_LOW",
+        MODEL_MID: "OPENAI_MODEL_MID",
+        MODEL_HIGH: "OPENAI_MODEL_HIGH",
+    },
+}
+_API_KEY_ENV_BY_PROVIDER = {
+    PROVIDER_ANTHROPIC: "ANTHROPIC_API_KEY",
+    PROVIDER_OPENAI: "OPENAI_API_KEY",
+}
+_CLIENT_CACHE: dict[tuple[str, str | None], Any] = {}
+_CLIENT_FACTORY_CACHE: dict[str, Any] = {}
+_CLIENT_LOCK = threading.Lock()
 
 
 def _obj_get(value: Any, key: str, default: Any = None) -> Any:
@@ -14,13 +66,97 @@ def _obj_get(value: Any, key: str, default: Any = None) -> Any:
     return getattr(value, key, default)
 
 
+def selected_provider() -> str:
+    provider = (os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
+    if provider not in PROVIDERS:
+        raise ValueError("LLM_PROVIDER must be 'anthropic' or 'openai'")
+    return provider
+
+
+def api_key_env(provider: str | None = None) -> str:
+    return _API_KEY_ENV_BY_PROVIDER[_normalize_provider(provider)]
+
+
+def get_api_key(provider: str | None = None) -> str | None:
+    value = (os.environ.get(api_key_env(provider)) or "").strip().strip("\"'")
+    return value or None
+
+
+def has_llm_api_key(provider: str | None = None) -> bool:
+    return get_api_key(provider) is not None
+
+
+def require_api_key(provider: str | None = None) -> str:
+    resolved_provider = _normalize_provider(provider)
+    api_key = get_api_key(resolved_provider)
+    if not api_key:
+        raise RuntimeError(f"{api_key_env(resolved_provider)} is required for LLM_PROVIDER={resolved_provider}")
+    if resolved_provider == PROVIDER_ANTHROPIC and (
+        api_key.startswith("sk-proj-") or (api_key.startswith("sk-") and not api_key.startswith("sk-ant-"))
+    ):
+        raise RuntimeError("ANTHROPIC_API_KEY must be an Anthropic key beginning with sk-ant-")
+    return api_key
+
+
+def model_for_tier(tier: str, provider: str | None = None) -> str:
+    resolved_provider = _normalize_provider(provider)
+    normalized_tier = _normalize_tier(tier)
+    env_name = _MODEL_ENV_BY_PROVIDER[resolved_provider][normalized_tier]
+    override = (os.environ.get(env_name) or "").strip()
+    if override:
+        return override
+    defaults = ANTHROPIC_DEFAULT_MODELS if resolved_provider == PROVIDER_ANTHROPIC else OPENAI_DEFAULT_MODELS
+    return defaults[normalized_tier]
+
+
+def resolve_model(model: str, provider: str | None = None) -> str:
+    resolved_provider = _normalize_provider(provider)
+    tier = _model_to_tier(model)
+    if tier is None:
+        return model
+    return model_for_tier(tier, resolved_provider)
+
+
+def get_llm_client(provider: str | None = None, api_key: str | None = None) -> Any:
+    resolved_provider = _normalize_provider(provider)
+    resolved_key = api_key if api_key is not None else get_api_key(resolved_provider)
+    cache_key = (resolved_provider, resolved_key)
+    factory = _client_factory(resolved_provider)
+
+    if cache_key in _CLIENT_CACHE and _CLIENT_FACTORY_CACHE.get(resolved_provider) is factory:
+        return _CLIENT_CACHE[cache_key]
+
+    with _CLIENT_LOCK:
+        if cache_key in _CLIENT_CACHE and _CLIENT_FACTORY_CACHE.get(resolved_provider) is factory:
+            return _CLIENT_CACHE[cache_key]
+
+        client = factory(api_key=resolved_key) if resolved_key else factory()
+        _CLIENT_FACTORY_CACHE[resolved_provider] = factory
+        _CLIENT_CACHE[cache_key] = client
+        return client
+
+
 def extract_text(response: Any) -> str:
+    output_text = _obj_get(response, "output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
     parts: list[str] = []
+
     for block in _obj_get(response, "content", []) or []:
         if _obj_get(block, "type") == "text":
             text = _obj_get(block, "text")
             if isinstance(text, str) and text:
                 parts.append(text)
+
+    for item in _obj_get(response, "output", []) or []:
+        if _obj_get(item, "type") != "message":
+            continue
+        for block in _obj_get(item, "content", []) or []:
+            text = _obj_get(block, "text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+
     return "".join(parts).strip()
 
 
@@ -28,28 +164,122 @@ def extract_citations(response: Any) -> list[tuple[str, str]]:
     seen_urls: set[str] = set()
     citations: list[tuple[str, str]] = []
 
+    def add(title: Any, url: Any) -> None:
+        if not isinstance(url, str) or not url or url in seen_urls:
+            return
+        label = title if isinstance(title, str) and title else url
+        seen_urls.add(url)
+        citations.append((label, url))
+
     for block in _obj_get(response, "content", []) or []:
         if _obj_get(block, "type") != "text":
             continue
         for citation in _obj_get(block, "citations", []) or []:
-            url = _obj_get(citation, "url")
-            if not isinstance(url, str) or not url or url in seen_urls:
-                continue
-            title = _obj_get(citation, "title")
-            label = title if isinstance(title, str) and title else url
-            seen_urls.add(url)
-            citations.append((label, url))
+            add(_obj_get(citation, "title"), _obj_get(citation, "url"))
+
+    for item in _obj_get(response, "output", []) or []:
+        if _obj_get(item, "type") == "message":
+            for block in _obj_get(item, "content", []) or []:
+                for annotation in _obj_get(block, "annotations", []) or []:
+                    if _obj_get(annotation, "type") == "url_citation":
+                        add(_obj_get(annotation, "title"), _obj_get(annotation, "url"))
+        action = _obj_get(item, "action")
+        for source in _obj_get(action, "sources", []) or []:
+            add(_obj_get(source, "title"), _obj_get(source, "url"))
+
+    for source in _obj_get(response, "sources", []) or []:
+        add(_obj_get(source, "title"), _obj_get(source, "url"))
 
     return citations
 
 
-def _extract_json_object(text: str) -> str:
-    cleaned = (text or "").strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.removeprefix("```json").removeprefix("```").strip()
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3].strip()
-    return cleaned
+def call_llm_text(
+    *,
+    prompt: str,
+    model: str,
+    api_key: str | None = None,
+    max_tokens: int = 4096,
+    system: str | None = None,
+    allowed_domains: Sequence[str] | None = None,
+    max_web_search_uses: int = 5,
+    provider: str | None = None,
+) -> tuple[str, list[tuple[str, str]], Any]:
+    resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_ANTHROPIC:
+        response = _call_anthropic_messages(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            system=system,
+            allowed_domains=allowed_domains,
+            max_web_search_uses=max_web_search_uses,
+        )
+    else:
+        response = _call_openai_response(
+            input_items=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            system=system,
+            allowed_domains=allowed_domains,
+        )
+    return extract_text(response), extract_citations(response), response
+
+
+def call_llm_pdf_text(
+    *,
+    pdf_bytes: bytes,
+    prompt: str,
+    model: str,
+    api_key: str | None = None,
+    max_tokens: int = 4096,
+    system: str | None = None,
+    filename: str = "document.pdf",
+    provider: str | None = None,
+) -> tuple[str, list[tuple[str, str]], Any]:
+    resolved_provider = _normalize_provider(provider)
+    pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    if resolved_provider == PROVIDER_ANTHROPIC:
+        response = _call_anthropic_messages(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": pdf_b64,
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            system=system,
+        )
+    else:
+        response = _call_openai_response(
+            input_items=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_file", "filename": filename, "file_data": pdf_b64},
+                        {"type": "input_text", "text": prompt},
+                    ],
+                }
+            ],
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            system=system,
+        )
+    return extract_text(response), extract_citations(response), response
 
 
 def call_claude_text(
@@ -62,12 +292,47 @@ def call_claude_text(
     allowed_domains: Sequence[str] | None = None,
     max_web_search_uses: int = 5,
 ) -> tuple[str, list[tuple[str, str]], Any]:
-    import anthropic
+    return call_llm_text(
+        prompt=prompt,
+        model=model,
+        api_key=api_key,
+        max_tokens=max_tokens,
+        system=system,
+        allowed_domains=allowed_domains,
+        max_web_search_uses=max_web_search_uses,
+    )
 
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+
+def parse_json_text(text: str) -> Any:
+    import json
+
+    cleaned = _extract_json_object(text)
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            return json.loads(cleaned[start : end + 1])
+        except Exception:
+            return None
+
+
+def _call_anthropic_messages(
+    *,
+    messages: list[dict[str, Any]],
+    model: str,
+    api_key: str | None,
+    max_tokens: int,
+    system: str | None = None,
+    allowed_domains: Sequence[str] | None = None,
+    max_web_search_uses: int = 5,
+) -> Any:
+    client = get_llm_client(PROVIDER_ANTHROPIC, api_key=api_key)
     kwargs: dict[str, Any] = {
-        "model": model,
+        "model": resolve_model(model, PROVIDER_ANTHROPIC),
         "max_tokens": max_tokens,
         "messages": messages,
     }
@@ -89,22 +354,91 @@ def call_claude_text(
         messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
         kwargs["messages"] = messages
         response = client.messages.create(**kwargs)
+    return response
 
-    return extract_text(response), extract_citations(response), response
+
+def _call_openai_response(
+    *,
+    input_items: list[dict[str, Any]],
+    model: str,
+    api_key: str | None,
+    max_tokens: int,
+    system: str | None = None,
+    allowed_domains: Sequence[str] | None = None,
+) -> Any:
+    client = get_llm_client(PROVIDER_OPENAI, api_key=api_key)
+    kwargs: dict[str, Any] = {
+        "model": resolve_model(model, PROVIDER_OPENAI),
+        "input": input_items,
+        "max_output_tokens": max_tokens,
+    }
+    if system:
+        kwargs["instructions"] = system
+    if allowed_domains is not None:
+        kwargs["tools"] = [
+            {
+                "type": "web_search",
+                "filters": {"allowed_domains": list(allowed_domains)},
+                "search_context_size": "medium",
+            }
+        ]
+        kwargs["include"] = ["web_search_call.action.sources"]
+    return client.responses.create(**kwargs)
 
 
-def parse_json_text(text: str) -> Any:
-    import json
+def _normalize_provider(provider: str | None) -> str:
+    resolved = selected_provider() if provider is None else provider.strip().lower()
+    if resolved not in PROVIDERS:
+        raise ValueError("LLM provider must be 'anthropic' or 'openai'")
+    return resolved
 
-    cleaned = _extract_json_object(text)
-    try:
-        return json.loads(cleaned)
-    except Exception:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            return json.loads(cleaned[start : end + 1])
-        except Exception:
-            return None
+
+def _normalize_tier(tier: str) -> str:
+    normalized = (tier or "").strip().lower()
+    aliases = {
+        "haiku": MODEL_LOW,
+        "low": MODEL_LOW,
+        "mini": MODEL_LOW,
+        "sonnet": MODEL_MID,
+        "mid": MODEL_MID,
+        "medium": MODEL_MID,
+        "opus": MODEL_HIGH,
+        "high": MODEL_HIGH,
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in MODEL_TIERS:
+        raise ValueError("model tier must be 'low', 'mid', or 'high'")
+    return normalized
+
+
+def _model_to_tier(model: str) -> str | None:
+    normalized = (model or "").strip()
+    lowered = normalized.lower()
+    if lowered in MODEL_TIERS:
+        return lowered
+    if lowered in {"haiku", "mini"}:
+        return MODEL_LOW
+    if lowered in {"sonnet", "medium"}:
+        return MODEL_MID
+    if lowered == "opus":
+        return MODEL_HIGH
+    return _LEGACY_MODEL_TO_TIER.get(normalized)
+
+
+def _extract_json_object(text: str) -> str:
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.removeprefix("```json").removeprefix("```").strip()
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3].strip()
+    return cleaned
+
+
+def _client_factory(provider: str) -> Any:
+    if provider == PROVIDER_ANTHROPIC:
+        import anthropic
+
+        return anthropic.Anthropic
+    from openai import OpenAI
+
+    return OpenAI
