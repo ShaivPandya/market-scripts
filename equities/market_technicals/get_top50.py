@@ -127,12 +127,12 @@ def compute_top50(period: str = "1y") -> pd.DataFrame:
     top50 = rets.sort_values(ascending=False).head(50)
 
     out = (
-        top50.rename("one_year_return")
+        top50.rename_axis("ticker")
+        .rename("one_year_return")
         .to_frame()
         .assign(one_year_return_pct=lambda d: 100 * d["one_year_return"])
         .drop(columns=["one_year_return"])
         .reset_index()
-        .rename(columns={"index": "ticker"})
     )
     out["ticker"] = out["ticker"].astype(str).str.upper()
     out.insert(1, "rank", range(1, len(out) + 1))
