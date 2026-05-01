@@ -20,6 +20,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-worker.sh` — Cloud Run worker pool running `python -m api.rq_worker`. Tunables: `WORKER_CPU`, `WORKER_MEMORY`, `WORKER_INSTANCES`, `WORKER_QUEUES`.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
+- `deploy-frontend.sh` — builds `frontend/dist` and deploys Firebase Hosting for the configured `PROJECT_ID`.
 - `deploy-all.sh` — build via Cloud Build at the current short git SHA, then roll API + worker + jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`.
 - `setup-scheduler.sh` — idempotently create/update the three Cloud Scheduler jobs (cache-warm every 5min, async-job-sweep hourly, top50-refresh weekday 23z UTC). Pulls `X-Scheduler-Secret` from Secret Manager so the value never lives in this repo.
 - `cleanup-stale.sh` — dry-runs (or `--apply` deletes) GCP resources that pre-date the current scripts and are no longer referenced.
@@ -40,7 +41,12 @@ cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
 Routine deploys:
 
 ```bash
+# backend stack
 ./infra/gcp/deploy-all.sh
+
+# frontend hosting
+./infra/gcp/deploy-frontend.sh
+
 # or roll a single component:
 ./infra/gcp/deploy-api.sh
 ./infra/gcp/deploy-worker.sh
