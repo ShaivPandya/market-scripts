@@ -25,6 +25,7 @@ WORKER_ENV_VARS=(
   "ASYNC_JOB_BACKEND=rq"
   "ASYNC_JOB_COMPLETED_TTL_SECONDS=86400"
   "ASYNC_JOB_FAILED_TTL_SECONDS=604800"
+  "LLM_PROVIDER=openai"
 )
 
 # `gcloud run worker-pools` is in beta on most projects today; drop the
