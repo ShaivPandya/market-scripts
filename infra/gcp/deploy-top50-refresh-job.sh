@@ -6,19 +6,13 @@
 #
 # Usage:
 #   IMAGE_TAG=<sha-or-tag> ./infra/gcp/deploy-top50-refresh-job.sh
+# IMAGE_TAG defaults to the current short git SHA (see lib.sh).
 #
 # Execute on demand (after deploy):
 #   gcloud run jobs execute "${TOP50_REFRESH_JOB}" \
 #     --project="${PROJECT_ID}" --region="${REGION}"
 #
-# Schedule daily (Cloud Scheduler → Cloud Run Jobs):
-#   gcloud scheduler jobs create http top50-refresh-daily \
-#     --location="${REGION}" \
-#     --schedule="0 23 * * 1-5" \
-#     --time-zone="UTC" \
-#     --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${TOP50_REFRESH_JOB}:run" \
-#     --http-method=POST \
-#     --oauth-service-account-email="${MIGRATOR_SA}"
+# Schedule the daily run with: ./infra/gcp/setup-scheduler.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -27,6 +21,8 @@ require_var REGION
 require_var TOP50_REFRESH_JOB
 require_var MIGRATOR_SA
 require_var CLOUDSQL_INSTANCE
+require_active_project
+require_image_exists
 
 TOP50_REFRESH_ENV_VARS=(
   "ENVIRONMENT=production"
@@ -49,7 +45,7 @@ gcloud run jobs deploy "${TOP50_REFRESH_JOB}" \
   --args=-m,equities.market_technicals.get_top50 \
   --set-env-vars="$(join_kv "${TOP50_REFRESH_ENV_VARS[@]}")" \
   --set-secrets="$(join_kv "${TOP50_REFRESH_SECRETS[@]}")" \
-  --cpu=1 \
-  --memory=1Gi \
-  --max-retries=1 \
-  --task-timeout=600
+  --cpu="${TOP50_CPU:-1}" \
+  --memory="${TOP50_MEMORY:-1Gi}" \
+  --max-retries="${TOP50_MAX_RETRIES:-1}" \
+  --task-timeout="${TOP50_TIMEOUT:-600}"

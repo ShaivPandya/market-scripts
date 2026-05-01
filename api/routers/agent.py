@@ -748,10 +748,7 @@ def _openai_text_type(role: object) -> str:
 def _initial_conversation(provider: str, messages: list[ChatMessage]) -> list[dict]:
     if provider == PROVIDER_ANTHROPIC:
         return [{"role": m.role, "content": m.content} for m in messages]
-    return [
-        {"role": m.role, "content": [{"type": _openai_text_type(m.role), "text": m.content}]}
-        for m in messages
-    ]
+    return [{"role": m.role, "content": [{"type": _openai_text_type(m.role), "text": m.content}]} for m in messages]
 
 
 def _openai_conversation_from_context(conversation: list[dict[str, object]]) -> list[dict]:
