@@ -25,6 +25,46 @@ _PRICE_COLUMNS = ["date", "lme_aluminum_cash", "lme_aluminum_3m", "source"]
 _STOCK_COLUMNS = ["date", "warehouse_location", "stock_tonnes", "cancelled_tonnes", "source"]
 
 
+def parse_lme_stocks_excel(path: Path) -> pd.DataFrame:
+    try:
+        df = pd.read_excel(path, header=None)
+    except Exception as exc:
+        log.warning("Failed to read Excel file %s: %s", path, exc)
+        return pd.DataFrame(columns=_STOCK_COLUMNS)
+
+    header_row_idx = None
+    for i in range(min(20, len(df))):
+        row_vals = [str(x).strip() for x in df.iloc[i].values if pd.notna(x)]
+        if "BusinessDate" in row_vals and "AH" in row_vals:
+            header_row_idx = i
+            break
+
+    if header_row_idx is None:
+        return pd.DataFrame(columns=_STOCK_COLUMNS)
+
+    df.columns = df.iloc[header_row_idx]
+    df = df.iloc[header_row_idx + 1 :].copy()
+
+    if "BusinessDate" not in df.columns or "AH" not in df.columns:
+        return pd.DataFrame(columns=_STOCK_COLUMNS)
+
+    df = df[["BusinessDate", "AH"]].dropna(subset=["BusinessDate", "AH"])
+    df["BusinessDate"] = pd.to_datetime(df["BusinessDate"], errors="coerce")
+    df = df.dropna(subset=["BusinessDate"])
+
+    out = pd.DataFrame(
+        {
+            "date": df["BusinessDate"],
+            "warehouse_location": "Global",
+            "stock_tonnes": pd.to_numeric(df["AH"], errors="coerce"),
+            "cancelled_tonnes": 0.0,
+            "source": "lme_public_excel",
+        }
+    )
+    out = out.dropna(subset=["stock_tonnes"])
+    return out[_STOCK_COLUMNS]
+
+
 def empty_lme_prices_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=_PRICE_COLUMNS)
 
@@ -175,13 +215,22 @@ def load_lme_xml_data(*, xml_dir: str | Path | None = None) -> tuple[pd.DataFram
     directory = Path(xml_dir) if xml_dir is not None else LME_XML_DIR
     files = sorted(directory.glob("*.xml")) if directory.exists() else []
     files.extend(_download_licensed_xml_if_configured())
+    excel_files = sorted(RAW_DIR.glob("Stocks*.xlsx")) if RAW_DIR.exists() else []
 
-    if not files:
-        log.warning("No LME XML files or configured licensed endpoint found; skipping optional LME data")
+    if not files and not excel_files:
+        log.warning("No LME XML files, Excel files, or configured licensed endpoint found; skipping optional LME data")
         return empty_lme_prices_frame(), empty_lme_stocks_frame()
 
     price_frames: list[pd.DataFrame] = []
     stock_frames: list[pd.DataFrame] = []
+    for path in excel_files:
+        try:
+            stocks = parse_lme_stocks_excel(path)
+            if not stocks.empty:
+                stock_frames.append(stocks)
+        except Exception as exc:
+            log.warning("Failed to parse LME Excel file %s: %s", path, exc)
+
     for path in files:
         try:
             text = path.read_text(encoding="utf-8")
