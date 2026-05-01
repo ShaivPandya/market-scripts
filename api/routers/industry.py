@@ -18,7 +18,11 @@ def get_industry_monitor(refresh: bool = False):
         from macro.industry.industry_monitor import get_data
 
         data = get_data(refresh=refresh)
+        if isinstance(data, dict) and data.get("error"):
+            raise DataFetchError(source="industry", detail=str(data.get("error")))
     except Exception as e:
+        if isinstance(e, DataFetchError):
+            raise
         raise DataFetchError(source="industry", detail=str(e)) from e
 
     result = serialize_response(data)

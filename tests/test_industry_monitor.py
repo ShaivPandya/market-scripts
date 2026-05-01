@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from api.exceptions import DataFetchError
+from api.routers import industry as industry_router
 from macro.industry import industry_monitor as im
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -31,6 +33,10 @@ def test_extract_text_from_bytes_roundtrip():
     text = im._extract_text_from_bytes(SAMPLE_PDF.read_bytes())
     assert text and text.strip()
     assert any(token in text for token in ("D.R. Horton", "Horton", "earnings"))
+
+
+def test_sanitize_transcript_text_removes_nul_bytes():
+    assert im._sanitize_transcript_text("abc\x00def\x00") == "abcdef"
 
 
 def test_parse_period_from_text_uses_explicit_quarter_and_year():
@@ -93,12 +99,86 @@ def _make_mem_db() -> sqlite3.Connection:
     return conn
 
 
+class _CaptureConn:
+    def __init__(self):
+        self.calls: list[tuple[str, tuple]] = []
+        self.commits = 0
+
+    def execute(self, sql: str, params=()):
+        self.calls.append((sql, tuple(params or ())))
+        return None
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_set_fresh_row_binds_boolean_stale_flags():
+    conn = _CaptureConn()
+
+    im._set_fresh_row(conn, "DHI", "DHI_2025_Q1")  # type: ignore[arg-type]
+
+    assert conn.calls[0][1] == (True, "DHI")
+    assert type(conn.calls[0][1][0]) is bool
+    assert conn.calls[1][1] == (False, "DHI_2025_Q1")
+    assert type(conn.calls[1][1][0]) is bool
+    assert conn.commits == 1
+
+
+def test_upsert_transcript_binds_boolean_is_stale():
+    conn = _CaptureConn()
+
+    im._upsert_transcript(
+        conn,  # type: ignore[arg-type]
+        row_id="DHI_2025_Q1",
+        ticker="DHI",
+        company_name="D.R. Horton",
+        sector="Housing",
+        sector_type="leading",
+        sub_sector="Homebuilder",
+        year=2025,
+        quarter=1,
+        transcript_text="Q1 2025 Earnings Call placeholder body text",
+        transcript_date="2025-04-30",
+        content_sha256="abc123",
+        fetched_at="2026-04-30T00:00:00+00:00",
+    )
+
+    sql, params = conn.calls[0]
+    assert params[-1] is False
+    assert type(params[-1]) is bool
+    assert "is_stale=excluded.is_stale" in sql
+    assert "is_stale=0" not in sql
+    assert conn.commits == 1
+
+
+def test_set_summary_binds_boolean_is_stale():
+    conn = _CaptureConn()
+
+    im._set_summary(conn, "DHI_2025_Q1", {"sentiment": "neutral"})  # type: ignore[arg-type]
+
+    _sql, params = conn.calls[0]
+    assert params[-2] is False
+    assert type(params[-2]) is bool
+    assert params[-1] == "DHI_2025_Q1"
+    assert conn.commits == 1
+
+
+def test_industry_route_raises_on_error_payload(monkeypatch):
+    monkeypatch.setattr(im, "get_data", lambda refresh=False: {"error": "boom"})
+
+    with pytest.raises(DataFetchError) as exc:
+        industry_router.get_industry_monitor(refresh=True)
+
+    assert exc.value.source == "industry"
+    assert exc.value.detail == "boom"
+
+
 def test_fetch_and_store_skips_missing_pdfs_without_crashing(monkeypatch):
     monkeypatch.setattr(im, "_load_pdf_bytes", lambda sector, ticker: None)
 
     conn = _make_mem_db()
     im._fetch_and_store(conn)
-    # Every ticker in SECTORS should have been marked stale (is_stale=1) but no crash.
+    # Every ticker in SECTORS should have been marked stale without crashing.
     rows = conn.execute("SELECT COUNT(*) AS n FROM transcripts").fetchone()
     assert rows["n"] == 0  # no upserts because every ticker missing
 
@@ -131,3 +211,34 @@ def test_fetch_and_store_persists_when_pdf_present(monkeypatch):
     # Sum across SECTORS — each ticker should have produced one fresh row.
     expected = sum(len(cfg["companies"]) for cfg in im.SECTORS.values())
     assert n == expected
+
+
+def test_fetch_and_store_removes_nul_bytes_before_upsert(monkeypatch):
+    monkeypatch.setattr(
+        im,
+        "SECTORS",
+        {"Housing": {"type": "leading", "companies": [("DHI", "D.R. Horton", "Homebuilder", "BMO")]}},
+    )
+    monkeypatch.setattr(im, "_load_pdf_bytes", lambda sector, ticker: (b"%PDF-FAKE", datetime(2025, 4, 30, tzinfo=UTC)))
+    monkeypatch.setattr(im, "_extract_text_from_bytes", lambda b: "Q1 2025 Earnings\x00 Call placeholder body text")
+    monkeypatch.setattr(
+        im,
+        "summarize_with_llm",
+        lambda text, meta: {
+            "summary_headline": "stub",
+            "sentiment": "neutral",
+            "business_conditions": [],
+            "demand_trends": "",
+            "pricing_commentary": "",
+            "guidance_outlook": "",
+            "macro_quotes": [],
+        },
+    )
+
+    conn = _make_mem_db()
+    im._fetch_and_store(conn)
+
+    row = conn.execute("SELECT transcript_text FROM transcripts WHERE ticker='DHI'").fetchone()
+    assert row is not None
+    assert "\x00" not in row["transcript_text"]
+    assert row["transcript_text"] == "Q1 2025 Earnings Call placeholder body text"

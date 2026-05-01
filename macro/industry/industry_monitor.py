@@ -179,6 +179,10 @@ def _extract_text_from_bytes(pdf_bytes: bytes) -> str:
     return extract_text(io.BytesIO(pdf_bytes)) or ""
 
 
+def _sanitize_transcript_text(text: str) -> str:
+    return (text or "").replace("\x00", "")
+
+
 def _load_pdf_bytes(sector: str, ticker: str) -> tuple[bytes, datetime] | None:
     """Load PDF bytes + last-modified for sector/ticker. Returns None when missing."""
     local_path, gcs_key = _get_pdf_locator(sector, ticker)
@@ -309,9 +313,9 @@ def _get_latest_row_for_ticker(conn: sqlite3.Connection, ticker: str) -> sqlite3
 
 
 def _set_fresh_row(conn: sqlite3.Connection, ticker: str, fresh_row_id: str | None) -> None:
-    conn.execute("UPDATE transcripts SET is_stale=1 WHERE ticker=?", (ticker,))
+    conn.execute("UPDATE transcripts SET is_stale=? WHERE ticker=?", (True, ticker))
     if fresh_row_id:
-        conn.execute("UPDATE transcripts SET is_stale=0 WHERE id=?", (fresh_row_id,))
+        conn.execute("UPDATE transcripts SET is_stale=? WHERE id=?", (False, fresh_row_id))
     conn.commit()
 
 
@@ -337,7 +341,7 @@ def _upsert_transcript(
             id, ticker, company_name, sector, sector_type, sub_sector, quarter, year,
             transcript_text, content_sha256, fetched_at, transcript_date, is_stale
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             ticker=excluded.ticker,
             company_name=excluded.company_name,
@@ -350,7 +354,7 @@ def _upsert_transcript(
             content_sha256=excluded.content_sha256,
             fetched_at=excluded.fetched_at,
             transcript_date=excluded.transcript_date,
-            is_stale=0
+            is_stale=excluded.is_stale
         """,
         (
             row_id,
@@ -365,6 +369,7 @@ def _upsert_transcript(
             content_sha256,
             fetched_at,
             transcript_date,
+            False,
         ),
     )
     conn.commit()
@@ -374,10 +379,10 @@ def _set_summary(conn: sqlite3.Connection, row_id: str, summary: dict) -> None:
     conn.execute(
         """
         UPDATE transcripts
-        SET summary_json=?, summarized_at=?, is_stale=0
+        SET summary_json=?, summarized_at=?, is_stale=?
         WHERE id=?
         """,
-        (json.dumps(summary, ensure_ascii=False), _now_iso(), row_id),
+        (json.dumps(summary, ensure_ascii=False), _now_iso(), False, row_id),
     )
     conn.commit()
 
@@ -727,6 +732,7 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
                     LOGGER.warning("Failed to extract text from PDF for %s: %s", ticker, ex)
                     _set_fresh_row(conn, ticker, None)
                     continue
+                transcript_text = _sanitize_transcript_text(transcript_text)
 
                 if not transcript_text.strip():
                     LOGGER.warning("No text extracted from PDF for %s", ticker)

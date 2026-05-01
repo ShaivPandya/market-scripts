@@ -32,6 +32,7 @@ export MIGRATOR_SA="migrator-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 export API_SERVICE="talisman-api"      # must match firebase.json rewrite
 export WORKER_POOL="talisman-worker"
 export MIGRATION_JOB="talisman-migrate"
+export TOP50_REFRESH_JOB="talisman-top50-refresh"
 
 # Frontend origin allowed by API CORS (Firebase Hosting URL).
 export CORS_ORIGINS="https://${PROJECT_ID}.web.app,https://${PROJECT_ID}.firebaseapp.com"

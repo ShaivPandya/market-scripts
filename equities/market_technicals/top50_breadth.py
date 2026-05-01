@@ -14,7 +14,6 @@ Usage:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, List  # noqa: UP035
 
 import pandas as pd
@@ -34,7 +33,11 @@ try:
 except ImportError:
     CONSOLE = None
 
-from equities.market_technicals.get_top50 import main as generate_top50
+from equities.market_technicals.get_top50 import (
+    _connect_db,
+    compute_top50,
+    read_top50_from_db,
+)
 
 
 def print_header() -> None:
@@ -282,23 +285,35 @@ def get_data(
         tickers = top50.index.tolist()
         df = compute_metrics(tickers, period=period, prices_df=prices_df)
     else:
-        generate_top50()
-        script_dir = Path(__file__).parent
-        csv_path = script_dir / "sp500_top50_6mo.csv"
-        csv_df = pd.read_csv(csv_path)
-        tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
+        tickers = _load_top50_tickers()
         df = compute_metrics(tickers, period=period)
     return get_summary_metrics(df)
 
 
+def _load_top50_tickers() -> list[str]:
+    """Read the daily-refreshed top-50 list from Postgres/SQLite.
+
+    Falls back to live computation if the table is empty (first deploy before the
+    refresh job has run, or a fresh dev DB). The fallback only reads — no writes
+    happen on the API request path, so the production write guard is satisfied.
+    """
+    conn = _connect_db()
+    try:
+        tickers = read_top50_from_db(conn)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if tickers:
+        return tickers
+    return compute_top50()["ticker"].astype(str).str.upper().tolist()
+
+
 def main():
     print_header()
-    print("Generating top 50 S&P 500 performers...")
-    generate_top50()
-    script_dir = Path(__file__).parent
-    csv_path = script_dir / "sp500_top50_6mo.csv"
-    csv_df = pd.read_csv(csv_path)
-    tickers = csv_df["ticker"].dropna().astype(str).str.upper().tolist()
+    print("Loading top 50 S&P 500 performers...")
+    tickers = _load_top50_tickers()
     df = compute_metrics(tickers, period="2y")
     summarize(df)
 

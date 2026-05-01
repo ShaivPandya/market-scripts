@@ -34,11 +34,11 @@ To populate the bucket from a workstation that has the local PDFs:
 
 ```sh
 # Dry run first to see what would happen.
-STATE_STORAGE_BACKEND=gcs GCS_STATE_BUCKET=talisman-prod-state \
+STATE_STORAGE_BACKEND=gcs GCS_STATE_BUCKET=talisman-state-prod \
     python -m api.industry_pdf_backfill upload --dry-run
 
 # Live upload; idempotent — re-runs skip files whose md5 already matches.
-STATE_STORAGE_BACKEND=gcs GCS_STATE_BUCKET=talisman-prod-state \
+STATE_STORAGE_BACKEND=gcs GCS_STATE_BUCKET=talisman-state-prod \
     python -m api.industry_pdf_backfill upload
 ```
 
