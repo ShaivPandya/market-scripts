@@ -61,6 +61,21 @@ TIMEFRAMES = {
 # -- Data fetching ────────────────────────────────────────────────────────────
 
 
+def _empty_payload(timeframe: str, warning: str | None = None) -> dict:
+    """Return a valid dashboard payload when live prices are unavailable."""
+    positions: dict[str, pd.Series] = {}
+    payload = {
+        "positions": positions,
+        "metadata": POSITION_META,
+        "timeframe": timeframe,
+        "timestamp": datetime.now(),
+        "analytics": compute_analytics(positions, get_positions()),
+    }
+    if warning:
+        payload["warning"] = warning
+    return payload
+
+
 def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     """
     Fetch closing-price time series for all portfolio positions.
@@ -77,6 +92,8 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
         return {"error": f"Invalid timeframe: {timeframe}"}
 
     tickers = list(POSITIONS.values())
+    if not tickers:
+        return _empty_payload(timeframe, "No portfolio positions configured.")
 
     try:
         raw = yf_download(
@@ -89,10 +106,12 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
             progress=False,
         )
     except Exception as e:
-        return {"error": f"yfinance download failed: {e}"}
+        LOGGER.warning("Portfolio yfinance download failed for %s: %s", timeframe, e)
+        return _empty_payload(timeframe, f"yfinance download failed: {e}")
 
     if raw is None or raw.empty:
-        return {"error": "No data returned from yfinance"}
+        LOGGER.warning("Portfolio yfinance download returned no rows for %s", timeframe)
+        return _empty_payload(timeframe, "No data returned from yfinance.")
 
     is_multi = isinstance(raw.columns, pd.MultiIndex)
     positions = {}
@@ -131,23 +150,31 @@ def fetch_all_timeframes_data() -> dict:
     """Fetch portfolio data for all supported timeframes."""
     results = {}
     analytics = None
+    warnings_by_timeframe = {}
     for tf_name in TIMEFRAMES:
         data = fetch_portfolio_data(timeframe=tf_name)
         if "error" in data and data["error"]:
             return data
         results[tf_name] = data
+        if data.get("warning"):
+            warnings_by_timeframe[tf_name] = data["warning"]
         # Use Weekly (2y) analytics for top-level — good 52-week coverage
         if tf_name == "Weekly":
             analytics = data.get("analytics")
-    return {
+    payload = {
         "timeframes": results,
         "timestamp": datetime.now(),
         "analytics": analytics,
     }
+    if warnings_by_timeframe:
+        unique_warnings = list(dict.fromkeys(warnings_by_timeframe.values()))
+        payload["warning"] = "; ".join(unique_warnings)
+    return payload
 
 
 def get_data(timeframe: str = "Daily", all_timeframes: bool = False) -> dict:
     """GUI-facing entry point."""
+    reload_portfolio()
     if all_timeframes:
         return fetch_all_timeframes_data()
     return fetch_portfolio_data(timeframe=timeframe)

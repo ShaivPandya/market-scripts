@@ -36,7 +36,8 @@ function formatApiError(err: unknown): string | null {
   const data = err.response?.data
   const detail = _extractDetail(data)
 
-  const prefix = status ? `${status}: ` : isTimeout ? "Timeout: " : ""
+  const prefix =
+    status === 424 ? "Dependency error: " : status ? `${status}: ` : isTimeout ? "Timeout: " : ""
 
   if (typeof detail === "string" && detail.trim()) return prefix + _truncate(detail.trim(), 500)
 
@@ -318,7 +319,7 @@ export const fetchOntologyRuns = (limit = 100) =>
     .then(r => r.data as { runs: OntologyRunSummary[] })
 
 export const queryOntology = (body: OntologyQueryBody) =>
-  client.post("/ontology/query", body, { timeout: 180_000 }).then(r => r.data as OntologyResponse)
+  runOntologyQueryAsync(body)
 
 type OntologyJobResponse =
   | { job_id: string; status: "queued" | "running" }
@@ -518,7 +519,7 @@ type AnalyzerRequest = {
 }
 
 export const runPortfolioAnalyzer = (body: AnalyzerRequest = {}) =>
-  client.post("/portfolio-analyzer", body, { timeout: 180_000 }).then(r => r.data)
+  runPortfolioAnalyzerAsync(body)
 
 type AnalyzerJobResponse =
   | { job_id: string; status: "queued" | "running" }
@@ -565,7 +566,7 @@ export async function runPortfolioOptimizerAsync(body: AnalyzerRequest = {}) {
 }
 
 export const runHedgingTool = (body: { book: number; positions: { ticker: string; weight: number }[] }) =>
-  client.post("/hedging-tool", body, { timeout: 180_000 }).then(r => r.data)
+  runHedgingToolAsync(body)
 
 type HedgingJobResponse =
   | { job_id: string; status: "queued" | "running" }

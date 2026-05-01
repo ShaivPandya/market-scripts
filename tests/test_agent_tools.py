@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pandas as pd
 
 from api import agent_tools
 
@@ -35,6 +39,36 @@ def test_cached_singleflight_fetches_once(monkeypatch):
     assert {"miss_fetch", "miss_wait"} & {v[1] for v in results}
 
 
+def test_fetch_with_cache_force_refresh_bypasses_cached_value(monkeypatch):
+    store: dict[str, object] = {}
+
+    monkeypatch.setattr("api.agent_tools.get_cached", lambda _cache, key: store.get(key))
+    monkeypatch.setattr("api.agent_tools.set_cached", lambda _cache, key, value: store.__setitem__(key, value))
+
+    calls = 0
+
+    def loader():
+        nonlocal calls
+        calls += 1
+        return {"value": calls}
+
+    cache_token = object()
+    first, first_meta = agent_tools._fetch_with_cache(cache_token, "k", loader)
+    second, second_meta = agent_tools._fetch_with_cache(cache_token, "k", loader)
+    refreshed, refreshed_meta = agent_tools._fetch_with_cache(cache_token, "k", loader, force_refresh=True)
+
+    assert first == {"value": 1}
+    assert second == {"value": 1}
+    assert refreshed == {"value": 2}
+    assert first_meta["cache"] == "miss_fetch"
+    assert second_meta["cache"] == "hit"
+    assert refreshed_meta["cache"] == "refresh"
+    assert isinstance(refreshed_meta["data_age_seconds"], int)
+    assert refreshed_meta["stale"] is False
+    assert refreshed_meta["fresh"] is True
+    assert refreshed_meta["refreshed"] is True
+
+
 def test_execute_tool_outputs_valid_json_when_compacted(monkeypatch):
     huge_payload = {
         "rows": [{"i": i, "text": "x" * 120} for i in range(3000)],
@@ -49,6 +83,93 @@ def test_execute_tool_outputs_valid_json_when_compacted(monkeypatch):
     assert "_meta" in payload
     assert payload["_meta"]["tool"] == "dummy_tool"
     assert payload["_meta"]["output_chars"] <= payload["_meta"]["max_chars"]
+
+
+def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(monkeypatch):
+    dates = pd.date_range("2026-04-24", periods=2, freq="D")
+    raw = {
+        "positions": {
+            "OKLO": pd.Series([10.0, 9.0], index=dates),
+            "CRWD": pd.Series([300.0, 315.0], index=dates),
+        },
+        "analytics": {
+            "per_position": {
+                "OKLO": {
+                    "current_price": 9.0,
+                    "unrealized_pnl_pct": 10.0,
+                    "unrealized_pnl_dollar": 1.0,
+                    "weekly_return_pct": 10.0,
+                    "monthly_return_pct": 8.0,
+                    "weekly_contribution_pct": 2.5,
+                    "monthly_contribution_pct": 2.0,
+                    "weight": 0.25,
+                    "drawdown_from_52w_pct": 0.0,
+                },
+                "CRWD": {
+                    "current_price": 315.0,
+                    "unrealized_pnl_pct": 5.0,
+                    "weekly_return_pct": 5.0,
+                    "monthly_return_pct": 4.0,
+                    "weekly_contribution_pct": 1.0,
+                    "monthly_contribution_pct": 0.8,
+                    "weight": 0.2,
+                    "drawdown_from_52w_pct": 0.0,
+                },
+            },
+            "portfolio": {"weekly_portfolio_return_pct": 3.5},
+        },
+        "timeframe": "Daily",
+        "timestamp": datetime(2026, 4, 30, tzinfo=UTC),
+    }
+    positions = [
+        {
+            "ticker": "OKLO",
+            "asset": "equity",
+            "direction": "short",
+            "contrarian": True,
+            "conviction": 4,
+            "cost_basis": 10.0,
+            "shares": 100.0,
+            "role": "position",
+        },
+        {
+            "ticker": "CRWD",
+            "asset": "equity",
+            "direction": "long",
+            "contrarian": False,
+            "conviction": 3,
+            "cost_basis": 300.0,
+            "shares": 10.0,
+            "role": "position",
+        },
+    ]
+
+    monkeypatch.setitem(
+        sys.modules, "portfolio.portfolio_dashboard", SimpleNamespace(get_data=lambda timeframe="Daily": raw)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "portfolio.portfolio_db",
+        SimpleNamespace(get_positions=lambda include_hedges=False: positions),
+    )
+    monkeypatch.setattr("api.agent_tools.get_cached", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("api.agent_tools.set_cached", lambda *_args, **_kwargs: None)
+
+    payload = json.loads(agent_tools.execute_tool("get_portfolio", {}))
+    rows = {row["ticker"]: row for row in payload["positions"]}
+    oklo = rows["OKLO"]
+
+    assert oklo["direction"] == "short"
+    assert oklo["cost_basis"] == 10.0
+    assert oklo["shares"] == 100.0
+    assert oklo["quantity"] == 100.0
+    assert oklo["conviction"] == 4
+    assert oklo["asset"] == "equity"
+    assert oklo["contrarian"] is True
+    assert oklo["role"] == "position"
+    assert oklo["raw_price_return_pct"] == -10.0
+    assert oklo["weekly_return_pct"] == 10.0
+    assert payload["semantics"]["short_price_declines_are_favorable"] is True
 
 
 def test_sentiment_snapshot_picks_latest_by_date():
@@ -140,9 +261,10 @@ def test_extract_inaccessible_domains_parses_error_message():
 
 
 def test_run_search_web_prunes_blocked_domains_and_retries(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     calls: list[list[str]] = []
 
-    def fake_call_claude_text(*, allowed_domains=None, **_kwargs):
+    def fake_call_llm_text(*, allowed_domains=None, **_kwargs):
         domains = list(allowed_domains or [])
         calls.append(domains)
         if len(calls) == 1:
@@ -152,7 +274,7 @@ def test_run_search_web_prunes_blocked_domains_and_retries(monkeypatch):
             )
         return "ok summary", [("Example", "https://example.com")], object()
 
-    monkeypatch.setattr("llm_utils.call_claude_text", fake_call_claude_text)
+    monkeypatch.setattr("llm_utils.call_llm_text", fake_call_llm_text)
 
     result = agent_tools._run_search_web("microsoft antitrust")
 

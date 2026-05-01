@@ -2,9 +2,17 @@
 fastapi>=0.100.0
 uvicorn[standard]>=0.23.0
 cachetools>=5.0.0
+redis>=5.0.0
+rq>=2.0.0
 python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.0
 python-multipart>=0.0.9
+SQLAlchemy>=2.0.0
+alembic>=1.13.0
+psycopg[binary]>=3.1.0
+pgvector>=0.2.5
+google-cloud-storage>=2.16.0
+zstandard>=0.22.0
 
 # Data fetching & processing
 beautifulsoup4>=4.12.0
@@ -33,6 +41,7 @@ nest_asyncio>=1.5.0
 
 # AI/ML
 anthropic>=0.40.0
+openai>=1.100.0
 sentence-transformers>=2.2.0
 
 # Rate limiting

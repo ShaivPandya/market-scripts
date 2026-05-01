@@ -8,13 +8,13 @@ conversations so the agent can maintain continuity across sessions.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api import memory_db
+from llm_utils import MODEL_LOW, call_llm_text, has_llm_api_key
 
 router = APIRouter()
 logger = logging.getLogger("api.memory")
@@ -176,30 +176,27 @@ def _summarize_transcript(
 
     text = "\n".join(lines[-40:])  # Last 40 messages max
 
-    api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip().strip("\"'")
-    if api_key and api_key.startswith("sk-ant-"):
+    if has_llm_api_key():
         try:
-            return _summarize_with_haiku(api_key, text)
+            return _summarize_with_haiku(text)
         except Exception:
-            logger.warning("Haiku summarization failed, using fallback", exc_info=True)
+            logger.warning("LLM summarization failed, using fallback", exc_info=True)
 
     return _summarize_deterministic(transcript)
 
 
-def _summarize_with_haiku(api_key: str, text: str) -> tuple[str, list[str], list[str]]:
+def _summarize_with_haiku(text: str) -> tuple[str, list[str], list[str]]:
     import json as json_mod
 
-    from llm_utils import MODEL_HAIKU, call_claude_text
-
-    response_text, _citations, _resp = call_claude_text(
+    response_text, _citations, _resp = call_llm_text(
         prompt=_SUMMARIZE_PROMPT + text,
-        model=MODEL_HAIKU,
-        api_key=api_key,
+        model=MODEL_LOW,
+        api_key=None,
         max_tokens=1024,
     )
 
     if not response_text:
-        raise ValueError("Empty Haiku response")
+        raise ValueError("Empty LLM response")
 
     # Parse JSON from response
     parsed = _parse_json(response_text)

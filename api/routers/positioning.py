@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from api.cache import get_cached, long_cache, set_cached
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
-from llm_utils import MODEL_HAIKU, call_claude_text
+from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
 
@@ -118,9 +118,8 @@ def _fmt(v, fmt=".1f", suffix=""):
 
 @router.post("/positioning/analyze")
 def analyze_positioning(req: PositioningAnalyzeRequest):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ConfigurationError("ANTHROPIC_API_KEY")
+    if not has_llm_api_key():
+        raise ConfigurationError(api_key_env())
 
     # Sort rows by absolute z-score descending so most extreme positions appear first
     rows = sorted(
@@ -165,14 +164,14 @@ Write 2-3 flowing paragraphs of plain text (no bullet points, no markdown, no he
 Be specific about the numbers. Write for a professional investor audience."""
 
     try:
-        analysis, _citations, _resp = call_claude_text(
+        analysis, _citations, _resp = call_llm_text(
             prompt=prompt,
-            model=MODEL_HAIKU,
-            api_key=api_key,
+            model=MODEL_LOW,
+            api_key=None,
             max_tokens=2048,
         )
         if not analysis:
-            raise ValueError("Claude returned empty response")
+            raise ValueError("LLM returned empty response")
     except Exception as exc:
         raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 

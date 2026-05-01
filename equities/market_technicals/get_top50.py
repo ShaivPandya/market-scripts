@@ -6,26 +6,40 @@ Dependencies:
   pip install pandas yfinance lxml
 
 Notes:
-- Constituents come from Wikipedia (unofficial but commonly used). :contentReference[oaicite:2]{index=2}
+- Constituents come from Wikipedia (unofficial but commonly used).
 - Prices come from Yahoo Finance via yfinance; may be rate-limited, so we download in chunks.
+- The top-50 list is persisted to a Postgres-or-SQLite table (`sp500_top50_tickers`)
+  on each refresh run. The list barely moves day-to-day, so a daily Cloud Run Job
+  refreshes it and the API reads from the table at request time.
 
-python3 get_top50.py
+Run as a daily refresh:
+  python -m equities.market_technicals.get_top50
 """
 
 from __future__ import annotations
 
-import math
+import logging
+import os
+import sqlite3
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
-from typing import List  # noqa: UP035
+from typing import Any, List  # noqa: UP035
 
 import numpy as np
 import pandas as pd
 
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
 from utils.retry import requests_get, yf_download
 
+LOGGER = logging.getLogger(__name__)
+
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+
+DB_FILENAME = "sp500_top50.sqlite3"
+TABLE_NAME = "sp500_top50_tickers"
 
 
 def get_sp500_tickers():
@@ -62,20 +76,17 @@ def download_close_prices(
             tickers=chunk,
             period=period,
             interval=interval,
-            auto_adjust=True,  # adjusted prices (splits/dividends) :contentReference[oaicite:4]{index=4}
+            auto_adjust=True,
             group_by="column",
             threads=True,
             progress=False,
         )
 
-        # For multiple tickers, yfinance typically returns a MultiIndex column:
-        # first level: ["Open","High","Low","Close","Volume"], second: ticker
         if isinstance(df.columns, pd.MultiIndex):
             if "Close" not in df.columns.get_level_values(0):
                 raise RuntimeError("Expected 'Close' in downloaded data.")
             close = df["Close"].copy()
         else:
-            # Single ticker case
             if "Close" not in df.columns:
                 raise RuntimeError("Expected 'Close' in downloaded data.")
             close = df[["Close"]].copy()
@@ -83,9 +94,7 @@ def download_close_prices(
 
         closes.append(close)
 
-    # Combine all chunks on the date index
     close_all = pd.concat(closes, axis=1)
-    # Remove any duplicate columns if a ticker appears twice for any reason
     close_all = close_all.loc[:, ~close_all.columns.duplicated()]
     return close_all
 
@@ -105,24 +114,119 @@ def total_return_from_prices(close: pd.DataFrame) -> pd.Series:
     return close.apply(one_ticker_return, axis=0)
 
 
-def main():
-    tickers = get_sp500_tickers()
-    close = download_close_prices(tickers, period="1y", interval="1d", chunk_size=100)
+def compute_top50(period: str = "1y") -> pd.DataFrame:
+    """Fetch S&P 500 prices and rank the top-50 performers in memory.
 
+    Returns a DataFrame with columns ``[ticker, rank, one_year_return_pct]``,
+    sorted by rank ascending (rank 1 = best performer). Pure compute — no I/O
+    other than the upstream HTTP/yfinance fetches.
+    """
+    tickers = get_sp500_tickers()
+    close = download_close_prices(tickers, period=period, interval="1d", chunk_size=100)
     rets = total_return_from_prices(close).dropna()
     top50 = rets.sort_values(ascending=False).head(50)
 
     out = (
-        top50.rename("one_year_return")
+        top50.rename_axis("ticker")
+        .rename("one_year_return")
         .to_frame()
         .assign(one_year_return_pct=lambda d: 100 * d["one_year_return"])
         .drop(columns=["one_year_return"])
+        .reset_index()
     )
+    out["ticker"] = out["ticker"].astype(str).str.upper()
+    out.insert(1, "rank", range(1, len(out) + 1))
+    return out
 
-    # Save to CSV in the script's directory
-    script_dir = Path(__file__).parent
-    output_path = script_dir / "sp500_top50.csv"
-    out.to_csv(output_path, index_label="ticker")
+
+def _resolve_db_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_FILENAME)
+
+
+def _init_sqlite(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+            ticker TEXT PRIMARY KEY,
+            rank INTEGER NOT NULL,
+            one_year_return_pct REAL NOT NULL,
+            refreshed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_sp500_top50_tickers_rank ON {TABLE_NAME}(rank)")
+    conn.commit()
+
+
+def _connect_db():
+    """Open a connection routed by ``use_postgres_state()``.
+
+    Production (`ENVIRONMENT=production` or `STATE_DB_BACKEND=postgres`) → Postgres
+    via :class:`PostgresCompatConnection`. Dev/test → local SQLite at
+    ``equities/market_technicals/sp500_top50.sqlite3``. The SQLite path is created
+    only outside production, so the production write guard is never tripped.
+    """
+    if use_postgres_state():
+        return PostgresCompatConnection()
+    conn = sqlite3.connect(_resolve_db_path())
+    conn.row_factory = sqlite3.Row
+    _init_sqlite(conn)
+    return conn
+
+
+def refresh_top50_in_db(conn) -> dict[str, Any]:
+    """Recompute the top-50 list and replace the table contents in one transaction.
+
+    Full replace (not upsert) keeps ranks contiguous and prunes tickers that
+    fell out of the top 50 since the last run.
+    """
+    df = compute_top50()
+    refreshed_at = datetime.now(UTC).isoformat()
+
+    conn.execute(f"DELETE FROM {TABLE_NAME}")
+    rows = [
+        (
+            str(row["ticker"]).upper(),
+            int(row["rank"]),
+            float(row["one_year_return_pct"]),
+            refreshed_at,
+        )
+        for _, row in df.iterrows()
+    ]
+    conn.executemany(
+        f"INSERT INTO {TABLE_NAME} (ticker, rank, one_year_return_pct, refreshed_at) VALUES (?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    return {"count": len(rows), "refreshed_at": refreshed_at}
+
+
+def read_top50_from_db(conn) -> list[str]:
+    """Return the cached top-50 tickers ordered by rank, or ``[]`` if empty."""
+    cur = conn.execute(f"SELECT ticker FROM {TABLE_NAME} ORDER BY rank ASC")
+    rows = cur.fetchall()
+    out: list[str] = []
+    for row in rows:
+        # PostgresCompatConnection / sqlite3.Row both support index access.
+        ticker = row[0] if not isinstance(row, dict) else row["ticker"]
+        if ticker is None:
+            continue
+        out.append(str(ticker).upper())
+    return out
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    LOGGER.info("Refreshing top-50 S&P 500 leadership list")
+    conn = _connect_db()
+    try:
+        result = refresh_top50_in_db(conn)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    LOGGER.info("Refreshed sp500_top50_tickers: %s", result)
 
 
 if __name__ == "__main__":

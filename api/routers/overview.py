@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-import base64
-import os
 import re
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
-from llm_utils import MODEL_SONNET, extract_text
+from api.state_storage import exists_text, read_text, write_text
+from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
 from paths import PROJECT_ROOT
 
 router = APIRouter()
 
 OVERVIEWS_DIR = PROJECT_ROOT / "investment_overviews"
+OVERVIEWS_GCS_PREFIX = "live/overviews"
 MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
 _MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
@@ -94,12 +93,30 @@ def _validate_ticker(ticker: str) -> None:
         raise ValidationError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
 
 
-def _extract_stop_reason(response: Any) -> str | None:
-    if isinstance(response, dict):
-        value = response.get("stop_reason")
-    else:
-        value = getattr(response, "stop_reason", None)
-    return value if isinstance(value, str) else None
+def _overview_path(ticker: str) -> Path:
+    return OVERVIEWS_DIR / f"{ticker}.md"
+
+
+def _overview_gcs_key(ticker: str) -> str:
+    return f"{OVERVIEWS_GCS_PREFIX}/{ticker}.md"
+
+
+def _overview_exists(ticker: str) -> bool:
+    return exists_text(_overview_path(ticker), _overview_gcs_key(ticker))
+
+
+def _read_overview(ticker: str) -> str:
+    return read_text(_overview_path(ticker), _overview_gcs_key(ticker), encoding="utf-8")
+
+
+def _write_overview(ticker: str, content: str) -> str:
+    return write_text(
+        _overview_path(ticker),
+        _overview_gcs_key(ticker),
+        content,
+        encoding="utf-8",
+        content_type="text/markdown; charset=utf-8",
+    )
 
 
 def _strip_outer_markdown_fence(text: str) -> str:
@@ -350,71 +367,35 @@ def _decode_markdown_upload(markdown_bytes: bytes) -> str:
     return content
 
 
-def _create_anthropic_client():
-    import anthropic
-
-    api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
-    return anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-
-
-def _run_claude_overview(*, ticker: str, messages: list[dict[str, Any]]) -> str:
-    client = _create_anthropic_client()
-    kwargs: dict[str, Any] = {
-        "model": MODEL_SONNET,
-        "max_tokens": 4096,
-        "system": _SYSTEM_PROMPT.format(ticker=ticker),
-        "messages": messages,
-    }
-    response = client.messages.create(**kwargs)
-    while _extract_stop_reason(response) == "pause_turn":
-        assistant_content = (
-            response.get("content", []) if isinstance(response, dict) else getattr(response, "content", [])
-        )
-        messages.append({"role": "assistant", "content": assistant_content})
-        messages.append({"role": "user", "content": [{"type": "text", "text": "Continue."}]})
-        kwargs["messages"] = messages
-        response = client.messages.create(**kwargs)
-
-    generated = extract_text(response)
+def _finish_llm_overview(ticker: str, generated: str) -> str:
     if not generated:
-        raise DataFetchError(source="claude", detail="Claude returned empty overview output.")
+        raise DataFetchError(source="llm", detail="LLM returned empty overview output.")
     return _normalize_overview_markdown(ticker, generated)
 
 
-def _call_claude_overview_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
-    pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
-    messages: list[dict[str, Any]] = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": pdf_b64,
-                    },
-                },
-                {"type": "text", "text": _PDF_USER_PROMPT},
-            ],
-        }
-    ]
-    return _run_claude_overview(ticker=ticker, messages=messages)
+def _call_llm_overview_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
+    generated, _citations, _response = call_llm_pdf_text(
+        pdf_bytes=pdf_bytes,
+        prompt=_PDF_USER_PROMPT,
+        model=MODEL_MID,
+        api_key=None,
+        max_tokens=4096,
+        system=_SYSTEM_PROMPT.format(ticker=ticker),
+        filename=f"{ticker}-overview.pdf",
+    )
+    return _finish_llm_overview(ticker, generated)
 
 
-def _call_claude_overview_markdown(*, ticker: str, markdown: str) -> str:
-    messages: list[dict[str, Any]] = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"{_MARKDOWN_USER_PROMPT}\n\n<uploaded_markdown>\n{markdown}\n</uploaded_markdown>",
-                }
-            ],
-        }
-    ]
-    return _run_claude_overview(ticker=ticker, messages=messages)
+def _call_llm_overview_markdown(*, ticker: str, markdown: str) -> str:
+    prompt = f"{_MARKDOWN_USER_PROMPT}\n\n<uploaded_markdown>\n{markdown}\n</uploaded_markdown>"
+    generated, _citations, _response = call_llm_text(
+        prompt=prompt,
+        model=MODEL_MID,
+        api_key=None,
+        max_tokens=4096,
+        system=_SYSTEM_PROMPT.format(ticker=ticker),
+    )
+    return _finish_llm_overview(ticker, generated)
 
 
 # ---------------------------------------------------------------------------
@@ -446,26 +427,24 @@ async def generate_overview(
         if not (has_pdf_type and has_pdf_signature):
             raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
         try:
-            content = _call_claude_overview_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
+            content = _call_llm_overview_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
         except (ValidationError, DataFetchError):
             raise
         except Exception as e:
-            raise DataFetchError(source="claude", detail=f"Failed to generate overview: {e}") from e
+            raise DataFetchError(source="llm", detail=f"Failed to generate overview: {e}") from e
     elif has_markdown_type:
         markdown = _decode_markdown_upload(upload_bytes)
         try:
-            content = _call_claude_overview_markdown(ticker=normalized_ticker, markdown=markdown)
+            content = _call_llm_overview_markdown(ticker=normalized_ticker, markdown=markdown)
         except (ValidationError, DataFetchError):
             raise
         except Exception as e:
-            raise DataFetchError(source="claude", detail=f"Failed to generate overview: {e}") from e
+            raise DataFetchError(source="llm", detail=f"Failed to generate overview: {e}") from e
     else:
         raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
-    OVERVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    overview_path = OVERVIEWS_DIR / f"{normalized_ticker}.md"
     try:
-        overview_path.write_text(content, encoding="utf-8")
+        source_path = _write_overview(normalized_ticker, content)
     except Exception as e:
         from api.exceptions import AppError
 
@@ -479,7 +458,7 @@ async def generate_overview(
             doc_type="thesis",
             content=content,
             ticker=normalized_ticker,
-            source_path=str(overview_path),
+            source_path=source_path,
             doc_id=f"overview-{normalized_ticker}",
         )
     except Exception:
@@ -502,10 +481,8 @@ def save_overview(ticker: str, body: SaveOverviewRequest):
     if not content:
         raise ValidationError("Overview content cannot be empty.")
 
-    OVERVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    overview_path = OVERVIEWS_DIR / f"{normalized_ticker}.md"
     try:
-        overview_path.write_text(content + "\n", encoding="utf-8")
+        source_path = _write_overview(normalized_ticker, content + "\n")
     except Exception as e:
         from api.exceptions import AppError
 
@@ -519,7 +496,7 @@ def save_overview(ticker: str, body: SaveOverviewRequest):
             doc_type="thesis",
             content=content,
             ticker=normalized_ticker,
-            source_path=str(overview_path),
+            source_path=source_path,
             doc_id=f"overview-{normalized_ticker}",
         )
     except Exception:
@@ -533,11 +510,10 @@ def get_overview(ticker: str):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    overview_path = OVERVIEWS_DIR / f"{normalized_ticker}.md"
-    if not overview_path.exists():
+    if not _overview_exists(normalized_ticker):
         raise NotFoundError("Overview", normalized_ticker)
     try:
-        content = overview_path.read_text(encoding="utf-8")
+        content = _read_overview(normalized_ticker)
     except Exception as e:
         from api.exceptions import AppError
 

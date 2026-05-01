@@ -39,6 +39,16 @@ class _FakeService:
         return out
 
 
+def _resolve_ontology_result(auth_client, resp):
+    assert resp.status_code in (200, 202)
+    data = resp.json()
+    if "job_id" not in data:
+        return data
+    done = _poll_ontology_job(auth_client, data["job_id"])
+    assert done["status"] == "done"
+    return done["result"]
+
+
 def test_ontology_query_requires_auth(client):
     resp = client.post("/api/v1/ontology/query", json={"intent": "portfolio_risk_exposure"})
     assert resp.status_code == 401
@@ -73,8 +83,7 @@ def test_ontology_query_structured_returns_schema(auth_client, monkeypatch):
         },
     )
 
-    assert resp.status_code == 200
-    data = resp.json()
+    data = _resolve_ontology_result(auth_client, resp)
     assert data["intent"] == "portfolio_risk_exposure"
     assert data["interpreted_query"]["source"] == "structured"
     assert isinstance(data["source_status"], dict)
@@ -104,8 +113,7 @@ def test_ontology_query_nl_path_returns_interpreted_source(auth_client, monkeypa
         json={"query": "Which positions are in deteriorating macro conditions?"},
     )
 
-    assert resp.status_code == 200
-    data = resp.json()
+    data = _resolve_ontology_result(auth_client, resp)
     assert data["intent"] == "positions_in_deteriorating_macro"
     assert data["interpreted_query"]["source"] in {"llm", "deterministic_fallback", "structured"}
 
@@ -135,8 +143,7 @@ def test_ontology_query_partial_failure_returns_200_with_degraded_confidence(aut
         json={"intent": "portfolio_risk_exposure"},
     )
 
-    assert resp.status_code == 200
-    data = resp.json()
+    data = _resolve_ontology_result(auth_client, resp)
     assert data["aggregate"]["confidence"] < 1.0
     assert data["source_status"]["vix_term_structure"]["status"] in {"error", "partial"}
 
@@ -155,10 +162,11 @@ def test_ontology_query_unknown_run_id_returns_404(auth_client, monkeypatch):
         json={"intent": "portfolio_risk_exposure", "run_id": "missing-run"},
     )
 
-    assert resp.status_code == 404
+    assert resp.status_code in (200, 202)
     body = resp.json()
-    # AppError returns {"error": ..., "type": ...} instead of {"detail": ...}
-    msg = str(body.get("error", body.get("detail", "")))
+    done = _poll_ontology_job(auth_client, body["job_id"])
+    assert done["status"] == "error"
+    msg = str(done.get("error", ""))
     assert "Ontology run" in msg
 
 
@@ -193,9 +201,9 @@ def test_ontology_query_passes_run_id(auth_client, monkeypatch):
         json={"intent": "portfolio_risk_exposure", "run_id": "run-abc"},
     )
 
-    assert resp.status_code == 200
+    data = _resolve_ontology_result(auth_client, resp)
     assert captured["run_id"] == "run-abc"
-    assert resp.json()["run_id"] == "run-abc"
+    assert data["run_id"] == "run-abc"
 
 
 def test_ontology_query_passes_refresh_snapshot(auth_client, monkeypatch):
@@ -228,7 +236,7 @@ def test_ontology_query_passes_refresh_snapshot(auth_client, monkeypatch):
         "/api/v1/ontology/query",
         json={"intent": "portfolio_risk_exposure", "refresh_snapshot": True},
     )
-    assert resp.status_code == 200
+    _resolve_ontology_result(auth_client, resp)
     assert captured["refresh_snapshot"] is True
 
 
@@ -271,7 +279,7 @@ def test_ontology_query_async_returns_done_result(auth_client, monkeypatch):
     monkeypatch.setattr(ontology_router, "_service", _AsyncService())
 
     started = auth_client.post("/api/v1/ontology/query/async", json={"query": query_text, "timeframe": "Daily"})
-    assert started.status_code == 200
+    assert started.status_code in (200, 202)
     started_payload = started.json()
     assert started_payload["status"] in {"queued", "running", "done"}
     job_id = started_payload["job_id"]
@@ -313,8 +321,8 @@ def test_ontology_query_async_dedupes_running_job(auth_client, monkeypatch):
     req = {"query": query_text, "timeframe": "Daily"}
     first = auth_client.post("/api/v1/ontology/query/async", json=req)
     second = auth_client.post("/api/v1/ontology/query/async", json=req)
-    assert first.status_code == 200
-    assert second.status_code == 200
+    assert first.status_code in (200, 202)
+    assert second.status_code in (200, 202)
     p1 = first.json()
     p2 = second.json()
     assert p2["job_id"] == p1["job_id"]
@@ -336,7 +344,7 @@ def test_ontology_query_async_surfaces_worker_error(auth_client, monkeypatch):
     monkeypatch.setattr(ontology_router, "_service", _ErrorService())
 
     started = auth_client.post("/api/v1/ontology/query/async", json={"query": query_text})
-    assert started.status_code == 200
+    assert started.status_code in (200, 202)
     job_id = started.json()["job_id"]
 
     result = _poll_ontology_job(auth_client, job_id)

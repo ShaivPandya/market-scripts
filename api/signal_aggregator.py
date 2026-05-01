@@ -876,6 +876,7 @@ def build_signal_aggregator(
     lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
     positioning_instruments: str = DEFAULT_POSITIONING_INSTRUMENTS,
     include_raw_modules: bool = False,
+    include_history: bool = True,
 ) -> dict[str, Any]:
     lookback = max(26, min(int(lookback_weeks), 520))
 
@@ -945,12 +946,26 @@ def build_signal_aggregator(
     label = _regime_label(composite)
     status = "ok" if len(valid_scores) == len(CONFIGURED_WEIGHTS) else "degraded"
 
-    history = _build_history(
-        lookback,
-        "",
-        liquidity_data,
-        vix_preloaded=vix_preloaded,
-    )
+    if include_history:
+        history = _build_history(
+            lookback,
+            "",
+            liquidity_data,
+            vix_preloaded=vix_preloaded,
+        )
+    else:
+        history = {
+            "frequency": "weekly",
+            "lookback_weeks": lookback,
+            "coverage": {
+                "included_factors": [],
+                "missing_factors": sorted(MISSING_HISTORY_FACTORS | HISTORY_CAPABLE_FACTORS),
+                "module_status": {"history": "skipped"},
+            },
+            "series": [],
+            "episodes": [],
+            "scores": [],
+        }
     history_scores = [float(s) for s in history.get("scores", [])]
     history_pct = None
     if history_scores:

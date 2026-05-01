@@ -53,8 +53,13 @@ import logging
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
+
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
 
 logger = logging.getLogger(__name__)
 
@@ -207,10 +212,10 @@ _INDEXES = [
 # ---------------------------------------------------------------------------
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+_conn: sqlite3.Connection | PostgresCompatConnection | None = None
 
 
-def _get_conn() -> sqlite3.Connection:
+def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
     global _conn
     if _conn is not None:
         try:
@@ -224,11 +229,23 @@ def _get_conn() -> sqlite3.Connection:
     if _conn is None:
         with _lock:
             if _conn is None:
-                _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-                _conn.execute("PRAGMA journal_mode=WAL")
-                _conn.row_factory = sqlite3.Row
-                _conn.execute("PRAGMA foreign_keys = ON")
-                _init_db(_conn)
+                if use_postgres_state():
+                    _conn = PostgresCompatConnection(
+                        identity_tables={
+                            "catalysts",
+                            "kill_conditions",
+                            "action_items",
+                            "watch_triggers",
+                            "research_notes",
+                            "pending_approvals",
+                        }
+                    )
+                else:
+                    _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+                    _conn.execute("PRAGMA journal_mode=WAL")
+                    _conn.row_factory = sqlite3.Row
+                    _conn.execute("PRAGMA foreign_keys = ON")
+                    _init_db(_conn)
     return _conn
 
 
@@ -252,12 +269,20 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _row_to_dict(row: sqlite3.Row | None) -> dict | None:
-    return dict(row) if row else None
+def _row_to_dict(row: Any | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return cast(dict[str, Any], dict(row))
 
 
-def _rows_to_list(rows: list[sqlite3.Row]) -> list[dict]:
-    return [dict(r) for r in rows]
+def _require_row_dict(row: Any | None) -> dict[str, Any]:
+    if row is None:
+        raise RuntimeError("Expected database row.")
+    return cast(dict[str, Any], dict(row))
+
+
+def _rows_to_list(rows: Iterable[Any]) -> list[dict[str, Any]]:
+    return [_require_row_dict(r) for r in rows]
 
 
 def _parse_json_field(d: dict, field: str) -> dict:
@@ -335,7 +360,7 @@ def update_catalyst_status(catalyst_id: int, status: str, evidence: str | None =
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM catalysts WHERE id = ?", (catalyst_id,)).fetchone()
-    return dict(updated)
+    return _require_row_dict(updated)
 
 
 # ---------------------------------------------------------------------------
@@ -391,14 +416,14 @@ def update_kill_condition_status(kc_id: int, status: str) -> dict:
         row = conn.execute("SELECT * FROM kill_conditions WHERE id = ?", (kc_id,)).fetchone()
         if not row:
             raise ValueError(f"No kill condition with id {kc_id}")
-        triggered_at = now if status == "triggered" else dict(row).get("triggered_at")
+        triggered_at = now if status == "triggered" else _require_row_dict(row).get("triggered_at")
         conn.execute(
             "UPDATE kill_conditions SET status = ?, triggered_at = ?, updated_at = ? WHERE id = ?",
             (status, triggered_at, now, kc_id),
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM kill_conditions WHERE id = ?", (kc_id,)).fetchone()
-    return dict(updated)
+    return _require_row_dict(updated)
 
 
 def delete_catalysts_by_ticker(ticker: str, *, created_by: str | None = None) -> int:
@@ -472,7 +497,7 @@ def complete_workflow_run(
         row = conn.execute("SELECT * FROM workflow_runs WHERE run_id = ?", (run_id,)).fetchone()
     if not row:
         raise ValueError(f"No workflow run with id {run_id}")
-    d = dict(row)
+    d = _require_row_dict(row)
     _parse_json_field(d, "artifacts")
     _parse_json_field(d, "tool_sections")
     return d
@@ -490,7 +515,7 @@ def fail_workflow_run(run_id: str, error: str) -> dict:
         row = conn.execute("SELECT * FROM workflow_runs WHERE run_id = ?", (run_id,)).fetchone()
     if not row:
         raise ValueError(f"No workflow run with id {run_id}")
-    return dict(row)
+    return _require_row_dict(row)
 
 
 def get_workflow_runs(
@@ -526,7 +551,7 @@ def get_workflow_run(run_id: str) -> dict | None:
         row = conn.execute("SELECT * FROM workflow_runs WHERE run_id = ?", (run_id,)).fetchone()
     if not row:
         return None
-    d = dict(row)
+    d = _require_row_dict(row)
     _parse_json_field(d, "artifacts")
     _parse_json_field(d, "tool_sections")
     return d
@@ -605,7 +630,7 @@ def complete_action_item(item_id: int, resolution_note: str = "") -> dict:
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM action_items WHERE id = ?", (item_id,)).fetchone()
-    return dict(updated)
+    return _require_row_dict(updated)
 
 
 def dismiss_action_item(item_id: int) -> dict:
@@ -621,7 +646,7 @@ def dismiss_action_item(item_id: int) -> dict:
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM action_items WHERE id = ?", (item_id,)).fetchone()
-    return dict(updated)
+    return _require_row_dict(updated)
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +721,7 @@ def fire_watch_trigger(trigger_id: int) -> dict:
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
-    return dict(updated)
+    return _require_row_dict(updated)
 
 
 def cancel_watch_trigger(trigger_id: int) -> dict:
@@ -711,7 +736,7 @@ def cancel_watch_trigger(trigger_id: int) -> dict:
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
-    return dict(updated)
+    return _require_row_dict(updated)
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +875,7 @@ def get_pending_approval(approval_id: int) -> dict | None:
         row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
     if not row:
         return None
-    d = dict(row)
+    d = _require_row_dict(row)
     _parse_json_field(d, "proposed_change")
     return d
 
@@ -869,7 +894,7 @@ def resolve_approval(approval_id: int, status: str, resolved_note: str | None = 
         row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
         if not row:
             raise ValueError(f"No pending approval with id {approval_id}")
-        current = dict(row)
+        current = _require_row_dict(row)
         if current["status"] != "pending":
             raise ValueError(f"Approval {approval_id} is already {current['status']}")
 
@@ -886,7 +911,7 @@ def resolve_approval(approval_id: int, status: str, resolved_note: str | None = 
 
     with _lock:
         updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
-    d = dict(updated)
+    d = _require_row_dict(updated)
     _parse_json_field(d, "proposed_change")
     return d
 

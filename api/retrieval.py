@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from api.postgres import open_connection, use_postgres_state
+
 logger = logging.getLogger("api.retrieval")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -276,6 +278,26 @@ def index_document(
     chunk_texts = [text for _, text in raw_chunks]
     embeddings = _embed(chunk_texts)
 
+    if use_postgres_state():
+        _pg_index_document(
+            doc_id=did,
+            doc_type=doc_type,
+            content=content,
+            ticker=ticker,
+            source_path=source_path,
+            raw_chunks=raw_chunks,
+            embeddings=embeddings,
+            updated_at=now,
+        )
+        logger.info(
+            "Indexed doc_id=%s type=%s ticker=%s chunks=%d",
+            did,
+            doc_type,
+            ticker,
+            len(raw_chunks),
+        )
+        return did
+
     with _lock:
         # Delete existing chunks if re-indexing
         conn.execute("DELETE FROM chunks WHERE doc_id = ?", (did,))
@@ -330,6 +352,9 @@ def search(
         return []
 
     query_emb = _embed_single(query)
+    if use_postgres_state():
+        return _pg_search(query_emb, doc_types=doc_types, tickers=tickers, top_k=top_k)
+
     conn = _get_conn()
 
     # Build filter clause
@@ -395,6 +420,12 @@ def search(
 
 def delete_document(doc_id: str) -> bool:
     """Delete a document and its chunks."""
+    if use_postgres_state():
+        with open_connection(register_pgvector=True) as conn:
+            cur = conn.execute("DELETE FROM retrieval_documents WHERE doc_id = %s", (doc_id,))
+            conn.commit()
+            return bool(cur.rowcount > 0)
+
     conn = _get_conn()
     with _lock:
         conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
@@ -405,6 +436,13 @@ def delete_document(doc_id: str) -> bool:
 
 def get_indexed_count() -> dict[str, int]:
     """Return count of indexed documents by type."""
+    if use_postgres_state():
+        with open_connection(register_pgvector=True) as conn:
+            rows = conn.execute(
+                "SELECT doc_type, COUNT(*) AS cnt FROM retrieval_documents GROUP BY doc_type"
+            ).fetchall()
+        return {row["doc_type"]: row["cnt"] for row in rows}
+
     conn = _get_conn()
     with _lock:
         rows = conn.execute("SELECT doc_type, COUNT(*) as cnt FROM documents GROUP BY doc_type").fetchall()
@@ -443,3 +481,95 @@ def reindex_all_theses() -> int:
 
     logger.info("Reindexed %d thesis files", count)
     return count
+
+
+def _pg_index_document(
+    *,
+    doc_id: str,
+    doc_type: str,
+    content: str,
+    ticker: str | None,
+    source_path: str | None,
+    raw_chunks: list[tuple[str | None, str]],
+    embeddings: list[list[float]],
+    updated_at: str,
+) -> None:
+    created_at = datetime.fromisoformat(updated_at)
+    rows = [
+        (str(uuid.uuid4()), doc_id, i, text, heading, emb)
+        for i, ((heading, text), emb) in enumerate(zip(raw_chunks, embeddings, strict=True))
+    ]
+    with open_connection(register_pgvector=True) as conn:
+        conn.execute("DELETE FROM retrieval_chunks WHERE doc_id = %s", (doc_id,))
+        conn.execute(
+            """
+            INSERT INTO retrieval_documents (doc_id, doc_type, source_path, ticker, content, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (doc_id) DO UPDATE SET
+                doc_type = EXCLUDED.doc_type,
+                content = EXCLUDED.content,
+                updated_at = EXCLUDED.updated_at,
+                source_path = EXCLUDED.source_path,
+                ticker = EXCLUDED.ticker
+            """,
+            (doc_id, doc_type, source_path, ticker, content, created_at, created_at),
+        )
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO retrieval_chunks (chunk_id, doc_id, chunk_index, content, heading, embedding)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                rows,
+            )
+        conn.commit()
+
+
+def _pg_search(
+    query_emb: list[float],
+    *,
+    doc_types: list[str] | None,
+    tickers: list[str] | None,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    where_parts: list[str] = []
+    params: list[Any] = [query_emb]
+    if doc_types:
+        where_parts.append("d.doc_type = ANY(%s)")
+        params.append(doc_types)
+    if tickers:
+        where_parts.append("UPPER(d.ticker) = ANY(%s)")
+        params.append([t.upper() for t in tickers])
+    where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+    params.extend([query_emb, top_k])
+
+    with open_connection(register_pgvector=True) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT c.chunk_id, c.doc_id, c.chunk_index, c.content,
+                   c.heading, d.doc_type, d.ticker, d.source_path, d.created_at,
+                   1 - (c.embedding <=> %s) AS score
+            FROM retrieval_chunks c
+            JOIN retrieval_documents d ON c.doc_id = d.doc_id
+            {where_clause}
+            ORDER BY c.embedding <=> %s
+            LIMIT %s
+            """,
+            tuple(params),
+        ).fetchall()
+
+    return [
+        {
+            "doc_type": row["doc_type"],
+            "ticker": row["ticker"],
+            "heading": row["heading"],
+            "content_snippet": row["content"][:500],
+            "relevance_score": round(float(row["score"]), 4),
+            "source_path": row["source_path"],
+            "created_at": row["created_at"].isoformat()
+            if hasattr(row["created_at"], "isoformat")
+            else row["created_at"],
+            "doc_id": row["doc_id"],
+        }
+        for row in rows
+    ]

@@ -1,6 +1,6 @@
 """
 pip install feedparser httpx beautifulsoup4 lxml readability-lxml pdfminer.six python-dotenv
-Optional (Claude): pip install anthropic
+Optional LLM support: configure LLM_PROVIDER plus provider API key
 """
 
 from __future__ import annotations
@@ -24,7 +24,9 @@ from bs4 import BeautifulSoup, Tag
 from dotenv import load_dotenv
 from readability import Document
 
-from llm_utils import MODEL_HAIKU, call_claude_text, parse_json_text
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
+from llm_utils import MODEL_LOW, call_llm_text, has_llm_api_key, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -314,13 +316,13 @@ def extract_full_text(client: httpx.Client, url: str) -> str:
 # ---------- Summarization ----------
 def summarize_with_llm(text: str, meta: dict) -> dict:
     """
-    Summarize using Claude if ANTHROPIC_API_KEY is set, otherwise fall back to naive truncation.
+    Summarize using the configured LLM provider if its API key is set, otherwise fall back to naive truncation.
     """
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if has_llm_api_key():
         try:
             return summarize_with_claude(text, meta)
         except Exception as ex:
-            LOGGER.warning("Claude summarization failed: %s", ex)
+            LOGGER.warning("LLM summarization failed: %s", ex)
     # naive fallback summary if no LLM
     first = " ".join(text.split()[:60])
     return {
@@ -359,17 +361,17 @@ Text:
 {text_in}
 """.strip()
 
-    out, _citations, _resp = call_claude_text(
+    out, _citations, _resp = call_llm_text(
         prompt=prompt,
-        model=MODEL_HAIKU,
-        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        model=MODEL_LOW,
+        api_key=None,
         max_tokens=2048,
     )
     if not out:
-        raise ValueError("Claude returned empty response")
+        raise ValueError("LLM returned empty response")
     parsed = parse_json_text(out)
     if not isinstance(parsed, dict):
-        raise ValueError("Claude returned invalid JSON")
+        raise ValueError("LLM returned invalid JSON")
     return parsed
 
 
@@ -378,6 +380,12 @@ def _resolve_db_path(db_path: str | None = None) -> str:
     if db_path:
         return db_path
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
+
+
+def _connect_db(db_path: str | None = None):
+    if db_path is None and use_postgres_state():
+        return PostgresCompatConnection(table_map={"items": "central_bank_items"})
+    return sqlite3.connect(_resolve_db_path(db_path))
 
 
 def iter_feed_items(sources: list[str] | None = None) -> Iterable[Item]:
@@ -527,10 +535,9 @@ def get_data(db_path: str | None = None, refresh: bool = False, sources: list[st
     *sources* filters which central banks to fetch/query (default: all in FEEDS).
     Returns dict with keys: items, by_source, counts, last_updated, error (on failure).
     """
-    db_path = _resolve_db_path(db_path)
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _connect_db(db_path)
         init_db(conn)
         if refresh:
             _fetch_and_store(conn, sources=sources)

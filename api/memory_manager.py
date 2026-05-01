@@ -3,11 +3,11 @@ Rolling memory manager for agent chat.
 
 Replaces the "full transcript every turn" pattern with:
   - A verbatim window of recent messages
-  - A rolling summary of older turns (incrementally updated via Haiku)
+  - A rolling summary of older turns (incrementally updated via the configured low-tier LLM)
   - Retrieval-augmented context from past sessions / theses
 
 The frontend sends only the new message + session_id; this module
-assembles the optimal context window for Claude.
+assembles the optimal context window for the configured LLM.
 """
 
 from __future__ import annotations
@@ -39,6 +39,8 @@ RETRIEVAL_TOP_K = 3  # semantic retrieval hits to include
 def build_conversation_context(
     session_id: str | None,
     new_user_message: str,
+    *,
+    enable_retrieval: bool = True,
 ) -> tuple[list[dict[str, object]], str]:
     """Build the ``messages`` list for a Claude API call.
 
@@ -66,9 +68,10 @@ def build_conversation_context(
     if rolling_summary:
         preamble_parts.append("## Conversation History (summarised)\n" + rolling_summary)
 
-    retrieval_context = _retrieve_relevant(new_user_message)
-    if retrieval_context:
-        preamble_parts.append(retrieval_context)
+    if enable_retrieval:
+        retrieval_context = _retrieve_relevant(new_user_message)
+        if retrieval_context:
+            preamble_parts.append(retrieval_context)
 
     # --- Assemble conversation ---
     conversation: list[dict[str, object]] = []
@@ -189,14 +192,15 @@ def _maybe_summarize(session_id: str) -> None:
 
         text = "\n".join(lines[-60:])  # cap input
 
-        api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip().strip("\"'")
-        if not api_key or not api_key.startswith("sk-ant-"):
+        from llm_utils import has_llm_api_key
+
+        if not has_llm_api_key():
             logger.debug("No valid API key for rolling summarization")
             return
 
         from api.routers.memory import _summarize_with_haiku
 
-        summary, tickers, topics = _summarize_with_haiku(api_key, text)
+        summary, tickers, topics = _summarize_with_haiku(text)
         memory_db.update_rolling_summary(session_id, summary)
 
         # Also index the summary for future retrieval

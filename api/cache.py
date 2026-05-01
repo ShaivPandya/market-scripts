@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from cachetools import TTLCache
+from cachetools import TTLCache  # type: ignore[import-untyped]
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -206,3 +206,10 @@ def invalidate_all() -> None:
         _invalidate_breadth()
     except Exception:
         logger.debug("api cache invalidate_all: breadth disk cleanup failed", exc_info=True)
+
+    try:
+        from api.job_queue import clear_memory_jobs
+
+        clear_memory_jobs()
+    except Exception:
+        logger.debug("api cache invalidate_all: async job cleanup failed", exc_info=True)

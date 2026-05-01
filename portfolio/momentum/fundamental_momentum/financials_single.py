@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple  # noqa: UP035
 
-from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text, parse_json_text
+from llm_utils import MODEL_LOW, MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
 from portfolio.momentum.fundamental_momentum._edgar_periods import (
     ALLOWED_ANNUAL_FORMS,
     ALLOWED_QUARTERLY_FORMS,
@@ -827,7 +827,7 @@ def _extract_breakdown_via_nlp(
     submissions: dict | None,
     wanted_axes: set[str],
 ) -> dict | None:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not has_llm_api_key():
         return None
 
     filing_url = build_filing_url(cik_str, accn, submissions=submissions)
@@ -876,12 +876,12 @@ def _extract_breakdown_via_nlp(
     )
 
     payload: dict | None = None
-    for model in (MODEL_HAIKU, MODEL_SONNET):
+    for model in (MODEL_LOW, MODEL_MID):
         try:
-            txt, _citations, _resp = call_claude_text(
+            txt, _citations, _resp = call_llm_text(
                 prompt=prompt,
                 model=model,
-                api_key=os.environ.get("ANTHROPIC_API_KEY"),
+                api_key=None,
                 max_tokens=2048,
             )
         except Exception:
@@ -1075,7 +1075,7 @@ def _build_breakdown(us_gaap: dict, cik_str: str, submissions: dict | None) -> d
 
     ai_fallback_attempted = False
     nlp_candidate: dict | None = None
-    if missing_axes and os.environ.get("ANTHROPIC_API_KEY"):
+    if missing_axes and has_llm_api_key():
         ai_fallback_attempted = True
         nlp_candidate = _extract_breakdown_via_nlp(
             cik_str=cik_str,

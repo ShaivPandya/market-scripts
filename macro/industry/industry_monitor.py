@@ -1,7 +1,7 @@
 """
 Industry earnings monitor:
 - Read earnings call transcripts from local PDF files in macro/industry/files/
-- Summarize with Claude (optional fallback if key/package is unavailable)
+- Summarize with configured LLM provider (optional fallback if key/package is unavailable)
 - Cache transcripts + summaries in SQLite
 - Return structured data for frontend consumption
 """
@@ -9,6 +9,7 @@ Industry earnings monitor:
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -16,11 +17,15 @@ import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timezone
+from pathlib import Path
 from typing import Optional, TypedDict, cast
 
 from dotenv import load_dotenv
 
-from llm_utils import MODEL_SONNET, call_claude_text, parse_json_text
+from api import state_storage
+from api.postgres import use_postgres_state
+from api.postgres_compat import PostgresCompatConnection
+from llm_utils import MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,7 +98,7 @@ SECTORS: dict[str, SectorConfig] = {
 }
 
 DB_PATH = "industry_transcripts.sqlite3"
-SUMMARY_MODEL = MODEL_SONNET
+SUMMARY_MODEL = MODEL_MID
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
 
 
@@ -106,6 +111,14 @@ def _resolve_db_path(db_path: str | None = None) -> str:
     if db_path:
         return db_path
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_PATH)
+
+
+def _connect_db(db_path: str | None = None):
+    if db_path is None and use_postgres_state():
+        return PostgresCompatConnection(table_map={"transcripts": "industry_transcripts"})
+    conn = sqlite3.connect(_resolve_db_path(db_path))
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def _make_id(ticker: str, year: int, quarter: int) -> str:
@@ -140,21 +153,44 @@ def _sentiment_value(sentiment: str) -> int:
 # ---------- PDF helpers ----------
 _TICKER_FILENAME_MAP = {"ODFL": "ODL"}
 
+INDUSTRY_TRANSCRIPTS_PREFIX = os.environ.get("INDUSTRY_TRANSCRIPTS_PREFIX", "industry-transcripts").strip("/")
 
-def _get_pdf_path(sector: str, ticker: str) -> str:
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+def _sector_dir(sector: str) -> str:
+    return sector.strip().lower().replace(" ", "_")
+
+
+def _get_pdf_locator(sector: str, ticker: str) -> tuple[Path, str]:
+    """Return (local_path, gcs_key) for a sector/ticker. Both forms apply _TICKER_FILENAME_MAP."""
     base = _TICKER_FILENAME_MAP.get(ticker, ticker)
-    sector_dir = sector.strip().lower().replace(" ", "_")
-    return os.path.join(script_dir, "files", sector_dir, f"{base}.pdf")
+    sector_dir = _sector_dir(sector)
+    script_dir = Path(__file__).resolve().parent
+    local_path = script_dir / "files" / sector_dir / f"{base}.pdf"
+    gcs_key = f"{INDUSTRY_TRANSCRIPTS_PREFIX}/{sector_dir}/{base}.pdf"
+    return local_path, gcs_key
 
 
-def _extract_text_from_pdf(pdf_path: str) -> str:
+def _extract_text_from_bytes(pdf_bytes: bytes) -> str:
     import logging
 
     from pdfminer.high_level import extract_text
 
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
-    return extract_text(pdf_path) or ""
+    return extract_text(io.BytesIO(pdf_bytes)) or ""
+
+
+def _sanitize_transcript_text(text: str) -> str:
+    return (text or "").replace("\x00", "")
+
+
+def _load_pdf_bytes(sector: str, ticker: str) -> tuple[bytes, datetime] | None:
+    """Load PDF bytes + last-modified for sector/ticker. Returns None when missing."""
+    local_path, gcs_key = _get_pdf_locator(sector, ticker)
+    updated = state_storage.object_updated(local_path, gcs_key)
+    if updated is None:
+        return None
+    pdf_bytes = state_storage.read_bytes(local_path, gcs_key)
+    return pdf_bytes, updated
 
 
 _QUARTER_WORDS = {
@@ -165,7 +201,7 @@ _QUARTER_WORDS = {
 }
 
 
-def _parse_period_from_text(text: str, pdf_path: str) -> tuple[int, int, str]:
+def _parse_period_from_text(text: str, fallback_dt: datetime) -> tuple[int, int, str]:
     header = text[:3000]
     year: int | None = None
     quarter: int | None = None
@@ -213,15 +249,12 @@ def _parse_period_from_text(text: str, pdf_path: str) -> tuple[int, int, str]:
             }
             transcript_date = f"{m.group(3)}-{month_map[m.group(1)]}-{int(m.group(2)):02d}"
 
-    if year is None or quarter is None:
-        dt = datetime.fromtimestamp(os.path.getmtime(pdf_path))
-        if year is None:
-            year = dt.year
-        if quarter is None:
-            quarter = (dt.month - 1) // 3 + 1
+    if year is None:
+        year = fallback_dt.year
+    if quarter is None:
+        quarter = (fallback_dt.month - 1) // 3 + 1
     if not transcript_date:
-        dt = datetime.fromtimestamp(os.path.getmtime(pdf_path))
-        transcript_date = dt.strftime("%Y-%m-%d")
+        transcript_date = fallback_dt.strftime("%Y-%m-%d")
 
     return year, quarter, transcript_date
 
@@ -280,9 +313,9 @@ def _get_latest_row_for_ticker(conn: sqlite3.Connection, ticker: str) -> sqlite3
 
 
 def _set_fresh_row(conn: sqlite3.Connection, ticker: str, fresh_row_id: str | None) -> None:
-    conn.execute("UPDATE transcripts SET is_stale=1 WHERE ticker=?", (ticker,))
+    conn.execute("UPDATE transcripts SET is_stale=? WHERE ticker=?", (True, ticker))
     if fresh_row_id:
-        conn.execute("UPDATE transcripts SET is_stale=0 WHERE id=?", (fresh_row_id,))
+        conn.execute("UPDATE transcripts SET is_stale=? WHERE id=?", (False, fresh_row_id))
     conn.commit()
 
 
@@ -308,7 +341,7 @@ def _upsert_transcript(
             id, ticker, company_name, sector, sector_type, sub_sector, quarter, year,
             transcript_text, content_sha256, fetched_at, transcript_date, is_stale
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             ticker=excluded.ticker,
             company_name=excluded.company_name,
@@ -321,7 +354,7 @@ def _upsert_transcript(
             content_sha256=excluded.content_sha256,
             fetched_at=excluded.fetched_at,
             transcript_date=excluded.transcript_date,
-            is_stale=0
+            is_stale=excluded.is_stale
         """,
         (
             row_id,
@@ -336,6 +369,7 @@ def _upsert_transcript(
             content_sha256,
             fetched_at,
             transcript_date,
+            False,
         ),
     )
     conn.commit()
@@ -345,10 +379,10 @@ def _set_summary(conn: sqlite3.Connection, row_id: str, summary: dict) -> None:
     conn.execute(
         """
         UPDATE transcripts
-        SET summary_json=?, summarized_at=?, is_stale=0
+        SET summary_json=?, summarized_at=?, is_stale=?
         WHERE id=?
         """,
-        (json.dumps(summary, ensure_ascii=False), _now_iso(), row_id),
+        (json.dumps(summary, ensure_ascii=False), _now_iso(), False, row_id),
     )
     conn.commit()
 
@@ -529,26 +563,26 @@ Transcript:
 {text_in}
 """.strip()
 
-    output_text, _citations, _resp = call_claude_text(
+    output_text, _citations, _resp = call_llm_text(
         prompt=prompt,
         model=SUMMARY_MODEL,
-        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        api_key=None,
         max_tokens=2048,
     )
     if not output_text:
-        raise ValueError("Claude returned empty response")
+        raise ValueError("LLM returned empty response")
     parsed = parse_json_text(output_text)
     if not isinstance(parsed, dict):
-        raise ValueError("Claude returned invalid JSON")
+        raise ValueError("LLM returned invalid JSON")
     return _normalize_summary(parsed, text, meta)
 
 
 def summarize_with_llm(text: str, meta: dict) -> dict:
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if has_llm_api_key():
         try:
             return summarize_with_claude(text, meta)
         except Exception as ex:
-            LOGGER.warning("Claude summarization failed for %s: %s", meta["ticker"], ex)
+            LOGGER.warning("LLM summarization failed for %s: %s", meta["ticker"], ex)
     return _fallback_summary(text, meta)
 
 
@@ -683,70 +717,76 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
     for sector, cfg in SECTORS.items():
         sector_type = cfg["type"]
         for ticker, company_name, sub_sector, report_time in cfg["companies"]:  # noqa: B007
-            pdf_path = _get_pdf_path(sector, ticker)
-
-            if not os.path.isfile(pdf_path):
-                LOGGER.warning("PDF file not found for %s: %s", ticker, pdf_path)
-                _set_fresh_row(conn, ticker, None)
-                continue
-
             try:
-                transcript_text = _extract_text_from_pdf(pdf_path)
-            except Exception as ex:
-                LOGGER.warning("Failed to extract text from PDF for %s: %s", ticker, ex)
-                _set_fresh_row(conn, ticker, None)
-                continue
+                loaded = _load_pdf_bytes(sector, ticker)
+                if loaded is None:
+                    LOGGER.warning("PDF not found for %s in sector %s", ticker, sector)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
 
-            if not transcript_text.strip():
-                LOGGER.warning("No text extracted from PDF for %s", ticker)
-                _set_fresh_row(conn, ticker, None)
-                continue
+                pdf_bytes, fallback_dt = loaded
 
-            try:
-                year, quarter, transcript_date = _parse_period_from_text(transcript_text, pdf_path)
-            except Exception as ex:
-                LOGGER.warning("Failed to parse period from PDF for %s: %s", ticker, ex)
-                _set_fresh_row(conn, ticker, None)
-                continue
+                try:
+                    transcript_text = _extract_text_from_bytes(pdf_bytes)
+                except Exception as ex:
+                    LOGGER.warning("Failed to extract text from PDF for %s: %s", ticker, ex)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
+                transcript_text = _sanitize_transcript_text(transcript_text)
 
-            sha = hashlib.sha256(transcript_text.encode("utf-8", errors="ignore")).hexdigest()
+                if not transcript_text.strip():
+                    LOGGER.warning("No text extracted from PDF for %s", ticker)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
 
-            row_id = _make_id(ticker, year, quarter)
-            existing = _get_row_by_id(conn, row_id)
+                try:
+                    year, quarter, transcript_date = _parse_period_from_text(transcript_text, fallback_dt)
+                except Exception as ex:
+                    LOGGER.warning("Failed to parse period from PDF for %s: %s", ticker, ex)
+                    _set_fresh_row(conn, ticker, None)
+                    continue
 
-            if existing and existing["content_sha256"] == sha and existing["summary_json"]:
+                sha = hashlib.sha256(transcript_text.encode("utf-8", errors="ignore")).hexdigest()
+
+                row_id = _make_id(ticker, year, quarter)
+                existing = _get_row_by_id(conn, row_id)
+
+                if existing and existing["content_sha256"] == sha and existing["summary_json"]:
+                    _set_fresh_row(conn, ticker, row_id)
+                    continue
+
+                now_iso = _now_iso()
+                _upsert_transcript(
+                    conn,
+                    row_id=row_id,
+                    ticker=ticker,
+                    company_name=company_name,
+                    sector=sector,
+                    sector_type=sector_type,
+                    sub_sector=sub_sector,
+                    year=year,
+                    quarter=quarter,
+                    transcript_text=transcript_text,
+                    transcript_date=transcript_date,
+                    content_sha256=sha,
+                    fetched_at=now_iso,
+                )
                 _set_fresh_row(conn, ticker, row_id)
-                continue
 
-            now_iso = _now_iso()
-            _upsert_transcript(
-                conn,
-                row_id=row_id,
-                ticker=ticker,
-                company_name=company_name,
-                sector=sector,
-                sector_type=sector_type,
-                sub_sector=sub_sector,
-                year=year,
-                quarter=quarter,
-                transcript_text=transcript_text,
-                transcript_date=transcript_date,
-                content_sha256=sha,
-                fetched_at=now_iso,
-            )
-            _set_fresh_row(conn, ticker, row_id)
-
-            meta = {
-                "ticker": ticker,
-                "company_name": company_name,
-                "sector": sector,
-                "sector_type": sector_type,
-                "sub_sector": sub_sector,
-                "quarter": quarter,
-                "year": year,
-                "transcript_date": transcript_date,
-            }
-            to_summarize.append((row_id, transcript_text, meta))
+                meta = {
+                    "ticker": ticker,
+                    "company_name": company_name,
+                    "sector": sector,
+                    "sector_type": sector_type,
+                    "sub_sector": sub_sector,
+                    "quarter": quarter,
+                    "year": year,
+                    "transcript_date": transcript_date,
+                }
+                to_summarize.append((row_id, transcript_text, meta))
+            except Exception as ex:
+                LOGGER.exception("Unexpected error processing %s in sector %s: %s", ticker, sector, ex)
+                _set_fresh_row(conn, ticker, None)
 
     # Phase 2: Summarize via LLM in parallel
     if not to_summarize:
@@ -818,11 +858,9 @@ def _query_data(conn: sqlite3.Connection) -> tuple[dict, list, dict]:
 
 
 def get_data(db_path: str | None = None, refresh: bool = False) -> dict:
-    db_path = _resolve_db_path(db_path)
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn = _connect_db(db_path)
         init_db(conn)
         if refresh:
             _fetch_and_store(conn)

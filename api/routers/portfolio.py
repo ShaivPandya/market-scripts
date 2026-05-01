@@ -48,6 +48,8 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
             "timeframes": {},
             "timestamp": data["timestamp"].isoformat() if data.get("timestamp") else None,
         }
+        if data.get("warning"):
+            result["warning"] = data["warning"]
 
         result["analytics"] = serialize_value(data.get("analytics", {}))
 
@@ -60,6 +62,8 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
                 "timestamp": tf_data["timestamp"].isoformat() if tf_data.get("timestamp") else None,
                 "position_order": position_order or list(positions_raw.keys()),
             }
+            if tf_data.get("warning"):
+                tf_result["warning"] = tf_data["warning"]
             result["timeframes"][tf_name] = tf_result
     else:
         positions_raw = data.get("positions", {})
@@ -71,6 +75,8 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
             "position_order": position_order or list(positions_raw.keys()),
             "analytics": serialize_value(data.get("analytics", {})),
         }
+        if data.get("warning"):
+            result["warning"] = data["warning"]
 
     set_cached(short_cache, key, result)
     return result

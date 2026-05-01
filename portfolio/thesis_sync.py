@@ -15,7 +15,15 @@ import logging
 import re
 from pathlib import Path
 
+from api.state_storage import exists_text, read_text, write_text
+
 logger = logging.getLogger(__name__)
+
+
+def _thesis_paths(ticker: str) -> tuple[Path, str]:
+    from paths import PROJECT_ROOT
+
+    return PROJECT_ROOT / "investment_theses" / f"{ticker}.md", f"live/theses/{ticker}.md"
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +97,6 @@ def sync_entities_from_markdown(ticker: str) -> dict[str, int]:
 
     Returns: {"catalysts": N, "kill_conditions": N}
     """
-    from paths import PROJECT_ROOT
     from portfolio.core_db import (
         create_catalyst,
         create_kill_condition,
@@ -103,11 +110,11 @@ def sync_entities_from_markdown(ticker: str) -> dict[str, int]:
     )
 
     ticker = ticker.upper()
-    thesis_path = PROJECT_ROOT / "investment_theses" / f"{ticker}.md"
-    if not thesis_path.exists():
+    thesis_path, thesis_key = _thesis_paths(ticker)
+    if not exists_text(thesis_path, thesis_key):
         return {"catalysts": 0, "kill_conditions": 0}
 
-    content = thesis_path.read_text(encoding="utf-8").strip()
+    content = read_text(thesis_path, thesis_key, encoding="utf-8").strip()
     if not content:
         return {"catalysts": 0, "kill_conditions": 0}
 
@@ -162,15 +169,14 @@ def sync_markdown_from_entities(ticker: str) -> bool:
 
     Returns True if the file was updated, False if no thesis file exists.
     """
-    from paths import PROJECT_ROOT
     from portfolio.core_db import get_catalysts, get_kill_conditions
 
     ticker = ticker.upper()
-    thesis_path = PROJECT_ROOT / "investment_theses" / f"{ticker}.md"
-    if not thesis_path.exists():
+    thesis_path, thesis_key = _thesis_paths(ticker)
+    if not exists_text(thesis_path, thesis_key):
         return False
 
-    content = thesis_path.read_text(encoding="utf-8")
+    content = read_text(thesis_path, thesis_key, encoding="utf-8")
 
     # Only include active entities in the markdown
     catalysts = get_catalysts(ticker)
@@ -186,6 +192,12 @@ def sync_markdown_from_entities(ticker: str) -> bool:
     if new_content == content:
         return False  # No changes needed
 
-    thesis_path.write_text(new_content, encoding="utf-8")
+    write_text(
+        thesis_path,
+        thesis_key,
+        new_content,
+        encoding="utf-8",
+        content_type="text/markdown; charset=utf-8",
+    )
     logger.info("thesis_sync: updated markdown for %s", ticker)
     return True

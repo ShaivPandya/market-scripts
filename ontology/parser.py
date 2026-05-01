@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
-from llm_utils import MODEL_HAIKU, MODEL_SONNET, call_claude_text
+from llm_utils import MODEL_LOW, MODEL_MID, call_llm_text, has_llm_api_key
 from ontology.models import InterpretedQuery
 
 ALLOWED_INTENTS = {
@@ -199,8 +198,7 @@ def _extract_sectors(query_lower: str, known_sectors: set[str]) -> list[str]:
 
 
 def _parse_with_llm(query: str) -> dict[str, Any] | None:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not has_llm_api_key():
         return None
 
     prompt = (
@@ -213,10 +211,10 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
     )
 
     def _parse_once(model: str) -> dict[str, Any] | None:
-        text, _citations, _resp = call_claude_text(
+        text, _citations, _resp = call_llm_text(
             prompt=prompt,
             model=model,
-            api_key=api_key,
+            api_key=None,
             max_tokens=1024,
         )
         if not text:
@@ -241,9 +239,9 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
         }
 
     try:
-        parsed = _parse_once(MODEL_HAIKU)
+        parsed = _parse_once(MODEL_LOW)
         if parsed is None:
-            parsed = _parse_once(MODEL_SONNET)
+            parsed = _parse_once(MODEL_MID)
         return parsed
     except Exception:
         return None

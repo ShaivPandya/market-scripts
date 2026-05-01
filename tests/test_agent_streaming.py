@@ -50,6 +50,9 @@ class _FakeStream:
     def get_final_message(self):
         return self._final_message
 
+    def get_final_response(self):
+        return self._final_message
+
 
 class _FakeStreamManager:
     def __init__(self, stream: _FakeStream):
@@ -85,6 +88,43 @@ class _FakeClient:
 def _install_fake_anthropic(monkeypatch, streams: list[tuple[list[Any], Any]]):
     fake_client = _FakeClient(streams)
     monkeypatch.setattr("anthropic.Anthropic", lambda *args, **kwargs: fake_client)
+    return fake_client
+
+
+def _openai_event_text_delta(text: str):
+    return SimpleNamespace(type="response.output_text.delta", delta=text)
+
+
+def _openai_event_function_call(name: str, call_id: str):
+    return SimpleNamespace(
+        type="response.output_item.added",
+        item=SimpleNamespace(type="function_call", name=name, call_id=call_id),
+    )
+
+
+class _FakeResponses:
+    def __init__(self, streams: list[tuple[list[Any], Any]]):
+        self._streams = streams
+        self.calls = 0
+        self.kwargs_history: list[dict[str, Any]] = []
+
+    def stream(self, **kwargs):
+        self.kwargs_history.append(dict(kwargs))
+        if self.calls >= len(self._streams):
+            raise AssertionError("Unexpected extra responses.stream() call")
+        events, final_response = self._streams[self.calls]
+        self.calls += 1
+        return _FakeStreamManager(_FakeStream(events, final_response))
+
+
+class _FakeOpenAIClient:
+    def __init__(self, streams: list[tuple[list[Any], Any]]):
+        self.responses = _FakeResponses(streams)
+
+
+def _install_fake_openai(monkeypatch, streams: list[tuple[list[Any], Any]]):
+    fake_client = _FakeOpenAIClient(streams)
+    monkeypatch.setattr("openai.OpenAI", lambda *args, **kwargs: fake_client)
     return fake_client
 
 
@@ -152,6 +192,65 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
     tool_results = [p for e, p in parsed if e == "tool_result"]
     assert len(tool_results) == 2
     assert all(p["status"] == "ok" for p in tool_results)
+
+
+def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+
+    streams = [
+        (
+            [_openai_event_function_call("query_ontology", "call-1")],
+            SimpleNamespace(
+                output=[
+                    {
+                        "type": "function_call",
+                        "name": "query_ontology",
+                        "call_id": "call-1",
+                        "arguments": json.dumps({"query": "A"}),
+                    }
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        (
+            [_openai_event_text_delta("analysis")],
+            SimpleNamespace(
+                output=[{"type": "message", "content": [{"type": "output_text", "text": "analysis"}]}],
+                usage=SimpleNamespace(input_tokens=2, output_tokens=3),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_openai(monkeypatch, streams)
+
+    seen_args: list[dict] = []
+
+    def fake_execute_tool(_name: str, args: dict):
+        seen_args.append(args)
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={"messages": [{"role": "user", "content": "test"}]},
+    )
+
+    assert resp.status_code == 200
+    assert fake_client.responses.kwargs_history[0]["tool_choice"] == "required"
+    assert "tool_choice" not in fake_client.responses.kwargs_history[1]
+    assert fake_client.responses.kwargs_history[0]["tools"][0]["type"] == "function"
+    assert fake_client.responses.kwargs_history[1]["input"][-1] == {
+        "type": "function_call_output",
+        "call_id": "call-1",
+        "output": json.dumps({"ok": True}),
+    }
+    assert seen_args == [{"query": "A"}]
+    parsed = _parse_sse(resp.text)
+    assert any(e == "tool_call" and p["name"] == "query_ontology" for e, p in parsed)
+    assert any(e == "tool_result" and p["status"] == "ok" for e, p in parsed)
+    assert any(e == "delta" and p["text"] == "analysis" for e, p in parsed)
 
 
 def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):
@@ -385,3 +484,77 @@ def test_agent_stream_handles_sentiment_quality_failure_without_tool_error(auth_
     assert len(tool_results) == 1
     assert tool_results[0]["status"] == "ok"
     assert any(e == "done" for e, _p in parsed)
+
+
+def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: ([{"role": "user", "content": new_user_message}], "session-1"),
+    )
+    monkeypatch.setattr("api.memory_manager.finalize_turn_async", lambda *_args, **_kwargs: None)
+
+    streams = [
+        (
+            [_event_text_delta("hi there")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "hi there"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "How is liquidity?"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("content-encoding") == "identity"
+    assert "no-transform" in resp.headers.get("cache-control", "")
+    parsed = _parse_sse(resp.text)
+    assert parsed[0][0] == "ping"
+    assert any(e == "delta" and p.get("text") == "hi there" for e, p in parsed)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "session-1"
+
+
+def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        agent_router,
+        "_build_agent_instructions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no prompt")),
+    )
+    monkeypatch.setattr(
+        "anthropic.Anthropic", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no client"))
+    )
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no retrieval/context build")),
+    )
+    monkeypatch.setattr(
+        "api.memory_db.get_or_create_session",
+        lambda _session_id=None: {"session_id": "casual-session", "server_messages": [], "rolling_summary": None},
+    )
+    finalized: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, user_msg, assistant_msg: finalized.append((user_msg, assistant_msg)),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "hello"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert parsed[0][0] == "ping"
+    assert any(e == "delta" and "portfolio" not in str(p.get("text", "")).lower() for e, p in parsed)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "casual-session"
+    assert finalized

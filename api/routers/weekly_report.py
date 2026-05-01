@@ -9,8 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.cache import delete_cached, get_cached, long_cache, set_cached
 from api.exceptions import ConfigurationError, DataFetchError
-from llm_utils import MODEL_OPUS, call_claude_text
-from llm_utils import extract_citations as _extract_claude_citations
+from llm_utils import MODEL_HIGH, api_key_env, call_llm_text, extract_citations, has_llm_api_key
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -25,7 +24,7 @@ DEFAULT_NEWS_DOMAINS = [
 
 
 def _extract_citations(response: Any) -> list[tuple[str, str]]:
-    return _extract_claude_citations(response)
+    return extract_citations(response)
 
 
 def _append_sources_section(report_md: str, citations: list[tuple[str, str]]) -> str:
@@ -515,21 +514,20 @@ Hard requirement: Do NOT include any assistant meta text like "If you want, I ca
 End the output immediately after the report content.
 """  # noqa: W291
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ConfigurationError("ANTHROPIC_API_KEY")
+    if not has_llm_api_key():
+        raise ConfigurationError(api_key_env())
 
     try:
         t0 = time.perf_counter()
-        report_md, citations, _resp = call_claude_text(
+        report_md, citations, _resp = call_llm_text(
             prompt=prompt,
-            model=MODEL_OPUS,
-            api_key=api_key,
+            model=MODEL_HIGH,
+            api_key=None,
             max_tokens=8192,
             allowed_domains=DEFAULT_NEWS_DOMAINS,
         )
         if not report_md:
-            raise ValueError("Claude returned empty response")
+            raise ValueError("LLM returned empty response")
         logger.info(
             "weekly_report LLM done in %.2fs (prompt_chars=%d output_chars=%d citations=%d)",
             time.perf_counter() - t0,

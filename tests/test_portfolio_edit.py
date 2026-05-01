@@ -130,3 +130,22 @@ def test_hedge_ticker_collision_with_position_returns_409(auth_client):
     )
     assert hedge_resp.status_code == 409
     assert "already exist as portfolio positions" in hedge_resp.json()["detail"]
+
+
+def test_normalized_rows_use_bool_for_contrarian():
+    rows = portfolio_db._normalize_position_rows(
+        [
+            {
+                "ticker": "NVDA",
+                "asset": "equity",
+                "direction": "long",
+                "contrarian": True,
+                "conviction": 4,
+                "cost_basis": 210.5,
+                "shares": 20,
+            }
+        ],
+        role="position",
+    )
+
+    assert rows[0][3] is True

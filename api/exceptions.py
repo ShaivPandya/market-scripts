@@ -17,10 +17,13 @@ class AppError(Exception):
 
 
 class DataFetchError(AppError):
-    """An external data source (yfinance, FRED, SEC, etc.) failed."""
+    """An external dependency (yfinance, FRED, SEC, LLM APIs, etc.) failed."""
 
     def __init__(self, source: str, detail: str = ""):
-        super().__init__(f"Data fetch failed: {source}", status_code=502)
+        # Avoid returning HTTP 502 from the app itself. When the API is behind
+        # Cloudflare, origin 502 responses are presented as gateway failures,
+        # which hides the real dependency error from the UI.
+        super().__init__(f"Data fetch failed: {source}", status_code=424)
         self.source = source
         self.detail = detail
 

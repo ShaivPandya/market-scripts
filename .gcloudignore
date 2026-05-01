@@ -1,0 +1,44 @@
+.git
+.DS_Store
+
+# Local Python environments and caches
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets and local-only inputs
+.env
+.env.*
+open_positions.csv
+**/open_positions.csv
+
+# Local data, caches, generated outputs, and SQLite state
+data_cache/
+**/data_cache/
+outputs/
+**/outputs/
+results/
+tmp/
+portfolio/*.db
+portfolio/*.db-*
+macro/**/*.sqlite3
+macro/**/*.sqlite3-*
+*.db
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+
+# Frontend build and dependency artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Local GCP tooling
+cloud-sql-proxy

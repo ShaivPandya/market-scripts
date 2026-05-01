@@ -13,7 +13,7 @@ class TestExceptionHierarchy:
 
     def test_data_fetch_error_defaults(self):
         err = DataFetchError(source="yfinance", detail="timeout")
-        assert err.status_code == 502
+        assert err.status_code == 424
         assert "yfinance" in err.message
         assert err.source == "yfinance"
         assert err.detail == "timeout"

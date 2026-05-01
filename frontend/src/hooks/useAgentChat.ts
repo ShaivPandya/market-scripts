@@ -44,6 +44,57 @@ interface AgentChatState {
 const STORAGE_KEY = "agent-chat"
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/, "")
 
+function truncateText(value: string, maxLen: number): string {
+  return value.length <= maxLen ? value : `${value.slice(0, maxLen - 1)}…`
+}
+
+function decodeHtmlEntities(value: string): string {
+  const textarea = document.createElement("textarea")
+  textarea.innerHTML = value
+  return textarea.value
+}
+
+function extractJsonError(data: unknown): string | null {
+  if (data == null) return null
+  if (typeof data === "string") return data.trim() || null
+  if (typeof data !== "object") return null
+
+  const rec = data as Record<string, unknown>
+  for (const key of ["detail", "message", "error"]) {
+    const value = rec[key]
+    if (typeof value === "string" && value.trim()) return value.trim()
+  }
+  return null
+}
+
+function formatChatHttpError(response: Response, body: string): string {
+  const statusPrefix = `${response.status}: `
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+  const trimmed = body.trim()
+
+  if (contentType.includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const message = extractJsonError(JSON.parse(trimmed))
+      if (message) return statusPrefix + truncateText(message, 500)
+    } catch {
+      // Fall through to text/html handling.
+    }
+  }
+
+  if (/^<!doctype html/i.test(trimmed) || /<html[\s>]/i.test(trimmed)) {
+    const title = trimmed.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+    const titleText = title
+      ? decodeHtmlEntities(title.replace(/\s+/g, " ").trim())
+      : "Upstream returned an HTML error page"
+    if (response.status === 502) {
+      return "502: Bad gateway from the API proxy/origin before the agent stream completed."
+    }
+    return statusPrefix + truncateText(titleText, 300)
+  }
+
+  return statusPrefix + truncateText(trimmed || response.statusText || "Request failed", 500)
+}
+
 function loadState(): AgentChatState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -216,7 +267,7 @@ export function useAgentChat() {
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "Request failed")
-        throw new Error(`${response.status}: ${errText}`)
+        throw new Error(formatChatHttpError(response, errText))
       }
 
       const reader = response.body!.getReader()
@@ -344,9 +395,10 @@ export function useAgentChat() {
         }))
         return
       }
+      const message = err instanceof Error ? err.message : String(err)
       setState(prev => ({
         ...prev,
-        error: String(err),
+        error: message,
         isStreaming: false,
         messages: prev.messages.map(m =>
           m.id === assistantId ? { ...m, isStreaming: false } : m,
