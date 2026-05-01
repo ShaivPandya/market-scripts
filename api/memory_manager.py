@@ -39,6 +39,8 @@ RETRIEVAL_TOP_K = 3  # semantic retrieval hits to include
 def build_conversation_context(
     session_id: str | None,
     new_user_message: str,
+    *,
+    enable_retrieval: bool = True,
 ) -> tuple[list[dict[str, object]], str]:
     """Build the ``messages`` list for a Claude API call.
 
@@ -66,9 +68,10 @@ def build_conversation_context(
     if rolling_summary:
         preamble_parts.append("## Conversation History (summarised)\n" + rolling_summary)
 
-    retrieval_context = _retrieve_relevant(new_user_message)
-    if retrieval_context:
-        preamble_parts.append(retrieval_context)
+    if enable_retrieval:
+        retrieval_context = _retrieve_relevant(new_user_message)
+        if retrieval_context:
+            preamble_parts.append(retrieval_context)
 
     # --- Assemble conversation ---
     conversation: list[dict[str, object]] = []

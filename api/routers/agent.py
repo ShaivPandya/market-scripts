@@ -229,6 +229,7 @@ MAX_API_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
 SSE_KEEPALIVE_INTERVAL_S = 15.0
 CLAUDE_MAX_TOKENS = 8_192
+CLAUDE_CHAT_MAX_TOKENS = 2_048
 ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
     {
         "name": tool["name"],
@@ -238,9 +239,27 @@ ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
     for tool in TOOL_DEFINITIONS
     if isinstance(tool.get("name"), str)
 ]
+_TOOL_DEFINITION_BY_NAME = {tool["name"]: tool for tool in ANTHROPIC_TOOL_DEFINITIONS}
 _HIGH_COST_TOOLS = {"get_sector_metrics", "query_ontology", "get_signal_aggregator"}
 _CASUAL_RX = re.compile(
     r"^\s*(hi|hello|hey|yo|thanks|thank you|cool|ok|okay|who are you|what can you do)[\s!.?]*$",
+    flags=re.IGNORECASE,
+)
+_FRESH_RX = re.compile(
+    r"\b(refresh|fresh|latest|current|right now|as of now|up[- ]?to[- ]?date|today)\b",
+    flags=re.IGNORECASE,
+)
+_RETRIEVAL_INTENT_RX = re.compile(
+    r"\b(past|previous|earlier|history|conversation|research note|notes|thesis|what did i|what have i|wrote|written)\b",
+    flags=re.IGNORECASE,
+)
+_HEDGE_CONTEXT_RX = re.compile(r"\b(hedge|hedges|hedging|beta|net exposure|gross exposure)\b", flags=re.IGNORECASE)
+_DATA_SEEKING_RX = re.compile(
+    r"\b("
+    r"portfolio|holding|position|performance|p&l|pnl|risks?|market|macro|liquidity|breadth|vix|volatility|"
+    r"positioning|sentiment|sector|yield|curve|bond|labor|housing|growth|central bank|industry|"
+    r"thesis|catalyst|kill condition|dossier|workflow|approval|action item|trigger|search|news"
+    r")\b",
     flags=re.IGNORECASE,
 )
 
@@ -319,6 +338,112 @@ def _extract_last_user_text(messages: list[ChatMessage]) -> str:
 def _is_casual(user_text: str) -> bool:
     text = (user_text or "").strip()
     return not text or bool(_CASUAL_RX.match(text))
+
+
+def _casual_response(user_text: str) -> str:
+    text = (user_text or "").strip().lower()
+    if "thank" in text or text in {"thanks", "cool", "ok", "okay"}:
+        return "Anytime."
+    if "who are you" in text or "what can you do" in text:
+        return "I'm Stan. I can help with portfolio, market, macro, thesis, and risk questions."
+    return "Hey. What are you looking at?"
+
+
+def _wants_fresh_data(user_text: str) -> bool:
+    return bool(_FRESH_RX.search(user_text or ""))
+
+
+def _should_use_retrieval(user_text: str) -> bool:
+    return bool(_RETRIEVAL_INTENT_RX.search(user_text or ""))
+
+
+def _wants_hedge_context(user_text: str) -> bool:
+    return bool(_HEDGE_CONTEXT_RX.search(user_text or ""))
+
+
+def _is_data_seeking(user_text: str) -> bool:
+    return bool(_DATA_SEEKING_RX.search(user_text or ""))
+
+
+def _select_tool_names(user_text: str) -> list[str]:
+    text = (user_text or "").lower()
+    selected: list[str] = []
+
+    def add(*names: str) -> None:
+        for name in names:
+            if name in _TOOL_DEFINITION_BY_NAME and name not in selected:
+                selected.append(name)
+
+    if re.search(r"\b(portfolio|holding|holdings|position|positions|p&l|pnl|performance|exposure|risks?)\b", text):
+        add("get_portfolio", "query_ontology")
+    if re.search(r"\b(hedge|hedges|hedging|beta|net exposure|gross exposure)\b", text):
+        add("get_portfolio", "query_ontology", "get_ontology_diff")
+    if re.search(r"\b(market|risk environment|risks?|regime|risk-on|risk-off|macro|cross[- ]?asset)\b", text):
+        add(
+            "get_signal_aggregator",
+            "get_liquidity",
+            "get_market_breadth",
+            "get_vix_term_structure",
+            "get_positioning",
+            "get_sentiment",
+        )
+    if "liquidity" in text:
+        add("get_liquidity")
+    if "breadth" in text:
+        add("get_market_breadth")
+    if re.search(r"\b(vix|volatility)\b", text):
+        add("get_vix_term_structure", "get_sentiment")
+    if "positioning" in text or "crowded" in text:
+        add("get_positioning")
+    if "sentiment" in text:
+        add("get_sentiment")
+    if "sector" in text or "rotation" in text:
+        add("get_sector_metrics")
+    if "yield" in text or "curve" in text or "bond" in text or "rates" in text:
+        add("get_yield_curve", "get_bond_dashboard")
+    if "labor" in text or "jobs" in text or "claims" in text:
+        add("get_labor_market")
+    if "housing" in text:
+        add("get_housing")
+    if "growth" in text:
+        add("get_economic_growth")
+    if "central bank" in text or "fed" in text or "ecb" in text:
+        add("get_central_banks")
+    if "industry" in text or "companies saying" in text or "management" in text:
+        add("get_industry_monitor")
+    if "breakout" in text:
+        add("get_breakout")
+    if re.search(r"\b(thesis|catalyst|kill condition|dossier|conviction)\b", text):
+        add("get_portfolio", "get_dossier", "get_thesis", "get_thesis_evaluations")
+    if re.search(r"\b(action item|approval|trigger|workflow)\b", text):
+        add("get_action_items", "get_pending_approvals", "get_watch_triggers", "get_workflow_history")
+    if re.search(r"\b(search|news|latest|catalyst status|regulatory)\b", text):
+        add("search_web", "search_knowledge_base")
+    if _should_use_retrieval(user_text):
+        add("search_knowledge_base")
+
+    stop = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO", "WHAT", "THIS", "THAT"}
+    ticker_candidates = [m for m in _TICKER_RX.findall(user_text or "") if m not in stop and len(m) >= 2]
+    if ticker_candidates:
+        add("get_portfolio", "get_dossier", "get_thesis", "search_web")
+
+    if not selected and _is_data_seeking(user_text):
+        add("get_signal_aggregator", "get_liquidity", "get_market_breadth", "get_vix_term_structure", "get_portfolio")
+
+    return selected
+
+
+def _select_tool_definitions(user_text: str) -> list[dict]:
+    return [_TOOL_DEFINITION_BY_NAME[name] for name in _select_tool_names(user_text)]
+
+
+def _execution_args(name: str, args: dict, *, force_refresh: bool, user_text: str) -> dict:
+    out = dict(args) if isinstance(args, dict) else {}
+    if force_refresh:
+        out["_force_refresh"] = True
+    if name == "get_portfolio" and _wants_hedge_context(user_text):
+        out["include_hedges"] = True
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -831,17 +956,19 @@ def agent_chat_v2(req: AgentChatRequestV2):
     assembles optimal context from a rolling summary, verbatim window,
     and retrieval hits.
     """
-    api_key = _read_anthropic_api_key()
-    instructions = _build_agent_instructions(screen_context=req.screen_context)
     casual = _is_casual(req.message)
     workflow_name, workflow_ticker = _detect_workflow(req.message)
-    tool_defs = ANTHROPIC_TOOL_DEFINITIONS
+    tool_defs = [] if casual else _select_tool_definitions(req.message)
+    force_refresh = _wants_fresh_data(req.message)
+    enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
-        "agent_v2 casual=%s workflow=%s ticker=%s tools=%d session=%s",
+        "agent_v2 casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
         casual,
         workflow_name,
         workflow_ticker,
         len(tool_defs),
+        force_refresh,
+        enable_retrieval,
         req.session_id,
     )
 
@@ -849,10 +976,26 @@ def agent_chat_v2(req: AgentChatRequestV2):
         yield _sse_ping()
         from api.memory_manager import build_conversation_context, finalize_turn_async
 
+        if casual and not workflow_name:
+            from api import memory_db
+
+            session = memory_db.get_or_create_session(req.session_id)
+            session_id = str(session["session_id"])
+            text = _casual_response(req.message)
+            yield _sse("delta", {"text": text})
+            user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
+            assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time()}
+            finalize_turn_async(session_id, user_msg, assistant_msg)
+            yield _sse("done", {"usage": {}, "session_id": session_id})
+            return
+
+        api_key = _read_anthropic_api_key()
+        instructions = _build_agent_instructions(screen_context=req.screen_context)
         client = _get_anthropic_client(api_key)
         conversation, session_id = build_conversation_context(
             req.session_id,
             req.message,
+            enable_retrieval=enable_retrieval,
         )
 
         # --- Workflow path ---
@@ -936,7 +1079,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
         has_rich_screen_data = req.screen_context is not None and (
             req.screen_context.metrics or req.screen_context.summary
         )
-        force_tool_use = not casual and not has_rich_screen_data
+        force_tool_use = bool(tool_defs) and _is_data_seeking(req.message) and not has_rich_screen_data
         tool_result_cache: dict[str, str] = {}
         continuation_round = 0
         text_parts: list[str] = []
@@ -953,12 +1096,13 @@ def agent_chat_v2(req: AgentChatRequestV2):
 
                 stream_kwargs: dict[str, object] = dict(
                     model=MODEL_SONNET,
-                    max_tokens=CLAUDE_MAX_TOKENS,
+                    max_tokens=CLAUDE_CHAT_MAX_TOKENS,
                     system=instructions,
                     messages=conversation,
-                    tools=tool_defs,
                 )
-                if force_tool_use:
+                if tool_defs:
+                    stream_kwargs["tools"] = tool_defs
+                if force_tool_use and tool_defs:
                     stream_kwargs["tool_choice"] = {"type": "any"}
 
                 for attempt in range(MAX_API_RETRIES):
@@ -995,6 +1139,13 @@ def agent_chat_v2(req: AgentChatRequestV2):
                         logger.warning("agent tool round has repeated high-cost calls: %s", repeated_high_cost)
 
                     unique_calls = _dedupe_tool_calls(deferred_calls)
+                    for call_info in unique_calls:
+                        call_info["args"] = _execution_args(
+                            call_info["name"],
+                            call_info.get("args", {}),
+                            force_refresh=force_refresh,
+                            user_text=req.message,
+                        )
                     logger.info(
                         "agent_v2_tool_round requested=%s unique=%s",
                         [c["name"] for c in deferred_calls],

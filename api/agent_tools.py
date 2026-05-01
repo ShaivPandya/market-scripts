@@ -123,6 +123,10 @@ TOOL_DEFINITIONS: list[dict] = [
                         "Default: 'SP500,NASDAQ,RUSSELL,US10Y,EUR'."
                     ),
                 },
+                "include_history": {
+                    "type": "boolean",
+                    "description": "Include weekly historical regime series. Default false for faster chat responses.",
+                },
             },
             "required": [],
         },
@@ -174,7 +178,10 @@ TOOL_DEFINITIONS: list[dict] = [
         "name": "get_portfolio",
         "description": (
             "Fetch the user's portfolio dashboard. Returns current positions with their "
-            "P&L, metadata (asset class, direction), and price data. "
+            "direction, cost basis, share quantity, conviction, P&L, contribution, and "
+            "price data. Portfolio performance fields are direction-adjusted: price declines "
+            "are favorable for short positions. Never judge a position from raw price moves "
+            "alone; combine direction, quantity, cost basis, conviction, and P&L/return fields. "
             "Use this when the user asks about their portfolio, holdings, performance, "
             "or any specific position. Pair with get_thesis for investment reasoning context."
         ),
@@ -184,6 +191,10 @@ TOOL_DEFINITIONS: list[dict] = [
                 "timeframe": {
                     "type": "string",
                     "description": "Period for returns. Options: 'This Week', 'Daily', 'Weekly', 'Monthly'. Default: 'Daily'.",
+                },
+                "include_hedges": {
+                    "type": "boolean",
+                    "description": "Include hedge rows. Default false; use only for hedge, beta, or risk-exposure questions.",
                 },
             },
             "required": [],
@@ -860,6 +871,11 @@ def _compact_portfolio_payload(payload: Any) -> Any:
     if isinstance(payload.get("error"), str):
         return payload
 
+    # Agent-native portfolio payloads are already compact and include full
+    # exposure context. Keep the shape stable for the model.
+    if isinstance(payload.get("positions"), list):
+        return payload
+
     raw_positions = payload.get("positions")
     positions = raw_positions if isinstance(raw_positions, dict) else {}
     raw_metadata = payload.get("metadata")
@@ -957,6 +973,118 @@ def _compact_portfolio_payload(payload: Any) -> Any:
     return out
 
 
+def _series_edge_point(series: Any, *, first: bool) -> dict[str, Any] | None:
+    if series is None:
+        return None
+    try:
+        clean = series.dropna() if hasattr(series, "dropna") else series
+        if hasattr(clean, "empty") and clean.empty:
+            return None
+        if isinstance(clean, list):
+            rows = [row for row in clean if isinstance(row, dict)]
+            if not rows:
+                return None
+            row = rows[0] if first else rows[-1]
+            value = _to_float(row.get("value"))
+            if value is None:
+                return None
+            return {"date": row.get("date"), "value": value}
+
+        idx = 0 if first else -1
+        value = _to_float(clean.iloc[idx])
+        if value is None:
+            return None
+        date_value = clean.index[idx]
+        if hasattr(date_value, "date"):
+            date_out = date_value.date().isoformat()
+        else:
+            date_out = str(date_value)
+        return {"date": date_out, "value": value}
+    except Exception:
+        return None
+
+
+def _build_agent_portfolio_payload(
+    raw: dict[str, Any], holdings: list[dict[str, Any]], *, include_hedges: bool
+) -> dict[str, Any]:
+    analytics = raw.get("analytics") if isinstance(raw.get("analytics"), dict) else {}
+    per_position = analytics.get("per_position") if isinstance(analytics.get("per_position"), dict) else {}
+    portfolio_summary = analytics.get("portfolio") if isinstance(analytics.get("portfolio"), dict) else {}
+    raw_positions = raw.get("positions") if isinstance(raw.get("positions"), dict) else {}
+
+    rows: list[dict[str, Any]] = []
+    for holding in holdings:
+        ticker = str(holding.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        perf = per_position.get(ticker)
+        perf = perf if isinstance(perf, dict) else {}
+        first = _series_edge_point(raw_positions.get(ticker), first=True)
+        last = _series_edge_point(raw_positions.get(ticker), first=False)
+        first_price = _to_float(first.get("value")) if isinstance(first, dict) else None
+        current_price = _to_float(perf.get("current_price"))
+        last_price = (
+            current_price
+            if current_price is not None
+            else (_to_float(last.get("value")) if isinstance(last, dict) else None)
+        )
+
+        raw_price_return_pct = None
+        if first_price is not None and last_price is not None and first_price != 0:
+            raw_price_return_pct = round(((last_price - first_price) / first_price) * 100.0, 4)
+
+        shares = holding.get("shares")
+        row = {
+            "ticker": ticker,
+            "asset": holding.get("asset"),
+            "direction": holding.get("direction"),
+            "cost_basis": holding.get("cost_basis"),
+            "shares": shares,
+            "quantity": shares,
+            "conviction": holding.get("conviction"),
+            "contrarian": bool(holding.get("contrarian")),
+            "role": holding.get("role") or "position",
+            "current_price": last_price,
+            "first_date": first.get("date") if isinstance(first, dict) else None,
+            "first_price": first_price,
+            "last_date": last.get("date") if isinstance(last, dict) else None,
+            "raw_price_return_pct": raw_price_return_pct,
+            "unrealized_pnl_pct": perf.get("unrealized_pnl_pct"),
+            "unrealized_pnl_dollar": perf.get("unrealized_pnl_dollar"),
+            "weekly_return_pct": perf.get("weekly_return_pct"),
+            "monthly_return_pct": perf.get("monthly_return_pct"),
+            "weekly_contribution_pct": perf.get("weekly_contribution_pct"),
+            "monthly_contribution_pct": perf.get("monthly_contribution_pct"),
+            "weight": perf.get("weight"),
+            "drawdown_from_52w_pct": perf.get("drawdown_from_52w_pct"),
+            "performance_basis": "direction_adjusted",
+        }
+        rows.append(row)
+
+    long_count = sum(1 for row in rows if str(row.get("direction") or "").lower() == "long")
+    short_count = sum(1 for row in rows if str(row.get("direction") or "").lower() == "short")
+    return serialize_value(
+        {
+            "timeframe": raw.get("timeframe"),
+            "timestamp": raw.get("timestamp"),
+            "context_scope": "positions_and_hedges" if include_hedges else "positions_only",
+            "semantics": {
+                "performance_fields": "direction_adjusted",
+                "raw_price_return_pct": "not direction-adjusted; do not use alone for P&L judgment",
+                "short_price_declines_are_favorable": True,
+                "quantity_field": "shares",
+            },
+            "summary": {
+                "position_count": len(rows),
+                "long_count": long_count,
+                "short_count": short_count,
+                **portfolio_summary,
+            },
+            "positions": rows,
+        }
+    )
+
+
 def _summarize_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return {"type": "dict", "keys": list(value.keys())[:40], "key_count": len(value)}
@@ -1011,7 +1139,18 @@ def _compact_tool_output(name: str, payload: Any, max_chars: int = _MAX_TOOL_RES
     return _attach_meta(compacted, meta), meta
 
 
-def _cached_singleflight(cache, key: str, loader: Callable[[], Any]) -> tuple[Any, str]:
+def _cached_singleflight(
+    cache,
+    key: str,
+    loader: Callable[[], Any],
+    *,
+    force_refresh: bool = False,
+) -> tuple[Any, str]:
+    if force_refresh:
+        value = loader()
+        set_cached(cache, key, value)
+        return value, "refresh"
+
     cached = get_cached(cache, key)
     if cached is not None:
         return cached, "hit"
@@ -1055,9 +1194,47 @@ def _cached_singleflight(cache, key: str, loader: Callable[[], Any]) -> tuple[An
     return value, "miss_refetch"
 
 
-def _fetch_with_cache(cache, key: str, loader: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
-    value, cache_status = _cached_singleflight(cache, key, loader)
-    return value, {"cache": cache_status}
+def _cache_freshness_meta(cache, value: Any, cache_status: str) -> dict[str, Any]:
+    meta: dict[str, Any] = {"cache": cache_status}
+    source_meta = value.get("_meta") if isinstance(value, dict) else None
+    if isinstance(source_meta, dict):
+        for key in ("fetched_at", "cache_ttl", "data_age_seconds", "stale"):
+            if key in source_meta:
+                meta[key] = source_meta[key]
+
+    ttl = getattr(cache, "ttl", None)
+    if "cache_ttl" not in meta and ttl is not None:
+        meta["cache_ttl"] = ttl
+    if "fetched_at" not in meta:
+        meta["fetched_at"] = datetime.now().isoformat()
+    if "fetched_at" in meta and "data_age_seconds" not in meta:
+        try:
+            fetched_at = datetime.fromisoformat(str(meta["fetched_at"]))
+            now = datetime.now(fetched_at.tzinfo) if fetched_at.tzinfo else datetime.now()
+            meta["data_age_seconds"] = max(0, round((now - fetched_at).total_seconds()))
+        except Exception:
+            pass
+    if "stale" not in meta:
+        age = _to_float(meta.get("data_age_seconds"))
+        meta["stale"] = bool(age is not None and ttl is not None and age > float(ttl))
+    if "stale" in meta:
+        meta["fresh"] = not bool(meta["stale"])
+    elif cache_status in {"hit", "miss_fetch", "miss_wait", "miss_refetch", "refresh"}:
+        meta["fresh"] = True
+    if cache_status == "refresh":
+        meta["refreshed"] = True
+    return meta
+
+
+def _fetch_with_cache(
+    cache,
+    key: str,
+    loader: Callable[[], Any],
+    *,
+    force_refresh: bool = False,
+) -> tuple[Any, dict[str, Any]]:
+    value, cache_status = _cached_singleflight(cache, key, loader, force_refresh=force_refresh)
+    return value, _cache_freshness_meta(cache, value, cache_status)
 
 
 def _extract_inaccessible_domains(exc: Exception) -> set[str]:
@@ -1375,6 +1552,11 @@ def _build_agent_sentiment_snapshot(put_call: dict, surveys: dict, volatility: l
 
 def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
     """Route a tool call to the corresponding data function."""
+    force_refresh = bool(args.get("_force_refresh"))
+    args = {k: v for k, v in args.items() if not str(k).startswith("_")}
+
+    def fetch(cache, key: str, loader: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
+        return _fetch_with_cache(cache, key, loader, force_refresh=force_refresh)
 
     if name == "get_liquidity":
         key = "agent_liquidity"
@@ -1386,7 +1568,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
             return serialize_value(filtered)
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         return data, meta
 
     if name == "get_market_breadth":
@@ -1397,7 +1579,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         return data, meta
 
     if name == "get_vix_term_structure":
@@ -1408,7 +1590,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "get_positioning":
@@ -1430,7 +1612,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             )
             return serialize_value(data)
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         return data, meta
 
     if name == "get_signal_aggregator":
@@ -1443,17 +1625,19 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         lookback_weeks = int(args.get("lookback_weeks", DEFAULT_LOOKBACK_WEEKS))
         lookback_weeks = max(26, min(lookback_weeks, 520))
         positioning_instruments = str(args.get("positioning_instruments", DEFAULT_POSITIONING_INSTRUMENTS))
-        key = f"signal_aggregator:{lookback_weeks}:{positioning_instruments}:False"
+        include_history = bool(args.get("include_history", False))
+        key = f"signal_aggregator:{lookback_weeks}:{positioning_instruments}:False:history={include_history}"
 
         def _load():
             data = build_signal_aggregator(
                 lookback_weeks=lookback_weeks,
                 positioning_instruments=positioning_instruments,
                 include_raw_modules=False,
+                include_history=include_history,
             )
             return serialize_value(data)
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         meta["high_cost"] = True
         return data, meta
 
@@ -1465,7 +1649,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "get_labor_market":
@@ -1476,7 +1660,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "get_housing":
@@ -1487,7 +1671,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "get_sector_metrics":
@@ -1498,38 +1682,24 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         meta["high_cost"] = True
         return data, meta
 
     if name == "get_portfolio":
         timeframe = args.get("timeframe", "Daily")
-        key = f"portfolio:{timeframe}"
+        include_hedges = bool(args.get("include_hedges", False))
+        key = f"portfolio:{timeframe}:hedges={include_hedges}"
 
         def _load():
             from portfolio.portfolio_dashboard import get_data
             from portfolio.portfolio_db import get_positions
 
             raw = get_data(timeframe=timeframe)
-            holdings = {
-                p["ticker"]: {
-                    "cost_basis": p.get("cost_basis"),
-                    "shares": p.get("shares"),
-                    "direction": p.get("direction"),
-                    "asset": p.get("asset"),
-                }
-                for p in get_positions()
-            }
-            return serialize_value(
-                {
-                    "holdings": holdings,
-                    "analytics": raw.get("analytics"),
-                    "timeframe": raw.get("timeframe"),
-                    "timestamp": raw.get("timestamp"),
-                }
-            )
+            holdings = get_positions(include_hedges=include_hedges)
+            return _build_agent_portfolio_payload(raw, holdings, include_hedges=include_hedges)
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "get_yield_curve":
@@ -1541,7 +1711,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data(lookback_days=lookback_days))
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "get_bond_dashboard":
@@ -1558,7 +1728,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
                     country["tenors"] = {t: v for t, v in tenors.items() if t == tenor}
             return serialize_value(data)
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "get_sentiment":
@@ -1595,7 +1765,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
                 volatility=volatility if isinstance(volatility, list) else [],
             )
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         quality = data.get("quality") if isinstance(data, dict) else {}
         if isinstance(quality, dict):
             meta["quality_ok"] = bool(quality.get("ok"))
@@ -1609,7 +1779,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         return data, meta
 
     if name == "get_industry_monitor":
@@ -1623,7 +1793,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         def _load():
             return serialize_value(get_data(refresh=False))
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         return data, meta
 
     if name == "get_breakout":
@@ -1634,7 +1804,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
             return serialize_value(get_data())
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         return data, meta
 
     if name == "query_ontology":
@@ -1686,7 +1856,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             )
             return serialize_value(result)
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         meta["high_cost"] = True
         return data, meta
 
@@ -1699,7 +1869,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         def _load():
             return _fetch_thesis(ticker_raw)
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         return data, meta
 
     if name == "get_thesis_evaluations":
@@ -1713,7 +1883,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         def _load():
             return _fetch_thesis_evaluations(ticker_raw, limit)
 
-        data, meta = _fetch_with_cache(long_cache, key, _load)
+        data, meta = fetch(long_cache, key, _load)
         return data, meta
 
     if name == "search_knowledge_base":
@@ -1779,7 +1949,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         def _load():
             return _run_search_web(query)
 
-        data, meta = _fetch_with_cache(short_cache, key, _load)
+        data, meta = fetch(short_cache, key, _load)
         meta["high_cost"] = True
         return data, meta
 

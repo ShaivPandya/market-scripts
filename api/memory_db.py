@@ -117,14 +117,15 @@ def save_session(
         conn.execute(
             """
             INSERT INTO conversation_sessions
-                (session_id, started_at, ended_at, message_count, transcript)
-            VALUES (?, ?, ?, ?, ?)
+                (session_id, started_at, ended_at, message_count, transcript, server_messages)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 ended_at = excluded.ended_at,
                 message_count = excluded.message_count,
-                transcript = excluded.transcript
+                transcript = excluded.transcript,
+                server_messages = excluded.server_messages
             """,
-            (sid, started_at, now, len(messages), transcript_json),
+            (sid, started_at, now, len(messages), transcript_json, transcript_json),
         )
         conn.commit()
 
@@ -187,8 +188,8 @@ def get_session(session_id: str) -> dict[str, Any] | None:
     with _lock:
         row = conn.execute(
             """
-            SELECT session_id, started_at, ended_at, message_count,
-                   key_tickers, key_topics, summary, transcript
+                SELECT session_id, started_at, ended_at, message_count,
+                   key_tickers, key_topics, summary, transcript, server_messages
             FROM conversation_sessions
             WHERE session_id = ?
             """,
@@ -201,6 +202,12 @@ def get_session(session_id: str) -> dict[str, Any] | None:
         result["transcript"] = json.loads(row["transcript"])
     except Exception:
         result["transcript"] = []
+    if not result["transcript"]:
+        try:
+            result["transcript"] = json.loads(row["server_messages"]) if row["server_messages"] else []
+        except Exception:
+            result["transcript"] = []
+    result.pop("server_messages", None)
     return result
 
 
@@ -269,7 +276,7 @@ def get_or_create_session(session_id: str | None = None) -> dict[str, Any]:
             row = conn.execute(
                 """
                 SELECT session_id, started_at, ended_at, message_count,
-                       rolling_summary, server_messages
+                       rolling_summary, server_messages, transcript
                 FROM conversation_sessions
                 WHERE session_id = ?
                 """,
@@ -280,6 +287,11 @@ def get_or_create_session(session_id: str | None = None) -> dict[str, Any]:
                 msgs = json.loads(row["server_messages"]) if row["server_messages"] else []
             except Exception:
                 msgs = []
+            if not msgs:
+                try:
+                    msgs = json.loads(row["transcript"]) if row["transcript"] else []
+                except Exception:
+                    msgs = []
             return {
                 "session_id": row["session_id"],
                 "started_at": row["started_at"],
@@ -315,7 +327,7 @@ def append_messages(session_id: str, messages: list[dict[str, Any]]) -> int:
     now = datetime.now(UTC).isoformat()
     with _lock:
         row = conn.execute(
-            "SELECT server_messages FROM conversation_sessions WHERE session_id = ?",
+            "SELECT server_messages, transcript FROM conversation_sessions WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         if row is None:
@@ -324,14 +336,19 @@ def append_messages(session_id: str, messages: list[dict[str, Any]]) -> int:
             existing = json.loads(row["server_messages"]) if row["server_messages"] else []
         except Exception:
             existing = []
+        if not existing:
+            try:
+                existing = json.loads(row["transcript"]) if row["transcript"] else []
+            except Exception:
+                existing = []
         existing.extend(messages)
         conn.execute(
             """
             UPDATE conversation_sessions
-            SET server_messages = ?, message_count = ?, ended_at = ?
+            SET server_messages = ?, transcript = ?, message_count = ?, ended_at = ?
             WHERE session_id = ?
             """,
-            (json.dumps(existing, default=str), len(existing), now, session_id),
+            (json.dumps(existing, default=str), json.dumps(existing, default=str), len(existing), now, session_id),
         )
         conn.commit()
     return len(existing)

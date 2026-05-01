@@ -392,7 +392,7 @@ def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeyp
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
     monkeypatch.setattr(
         "api.memory_manager.build_conversation_context",
-        lambda _session_id, new_user_message: ([{"role": "user", "content": new_user_message}], "session-1"),
+        lambda _session_id, new_user_message, **_kwargs: ([{"role": "user", "content": new_user_message}], "session-1"),
     )
     monkeypatch.setattr("api.memory_manager.finalize_turn_async", lambda *_args, **_kwargs: None)
 
@@ -410,7 +410,7 @@ def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeyp
 
     resp = auth_client.post(
         "/api/v1/agent/chat/v2",
-        json={"message": "hello"},
+        json={"message": "How is liquidity?"},
     )
 
     assert resp.status_code == 200
@@ -421,3 +421,41 @@ def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeyp
     assert any(e == "delta" and p.get("text") == "hi there" for e, p in parsed)
     done_events = [p for e, p in parsed if e == "done"]
     assert done_events[-1]["session_id"] == "session-1"
+
+
+def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        agent_router,
+        "_build_agent_instructions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no prompt")),
+    )
+    monkeypatch.setattr(
+        "anthropic.Anthropic", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no client"))
+    )
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no retrieval/context build")),
+    )
+    monkeypatch.setattr(
+        "api.memory_db.get_or_create_session",
+        lambda _session_id=None: {"session_id": "casual-session", "server_messages": [], "rolling_summary": None},
+    )
+    finalized: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, user_msg, assistant_msg: finalized.append((user_msg, assistant_msg)),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "hello"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert parsed[0][0] == "ping"
+    assert any(e == "delta" and "portfolio" not in str(p.get("text", "")).lower() for e, p in parsed)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "casual-session"
+    assert finalized
