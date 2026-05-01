@@ -186,4 +186,5 @@ def test_pdf_input_shapes(monkeypatch):
     content = fake_responses.kwargs["input"][0]["content"]
     assert content[0]["type"] == "input_file"
     assert content[0]["filename"] == "deck.pdf"
+    assert content[0]["file_data"].startswith("data:application/pdf;base64,")
     assert content[1] == {"type": "input_text", "text": "read"}

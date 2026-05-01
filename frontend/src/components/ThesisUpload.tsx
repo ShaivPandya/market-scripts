@@ -68,6 +68,7 @@ export function ThesisUpload({ ticker, status = "missing" }: ThesisUploadProps) 
     : isPopulated
       ? `Replace ${ticker} thesis from PDF or Markdown`
       : `Upload PDF or Markdown thesis for ${ticker}`
+  const label = isUploading ? "Saving…" : isPopulated ? "Replace Thesis" : "Upload Thesis"
 
   return (
     <div className="flex items-center gap-1">
@@ -75,15 +76,16 @@ export function ThesisUpload({ ticker, status = "missing" }: ThesisUploadProps) 
         type="button"
         onClick={handlePick}
         disabled={isUploading}
-        className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white transition-colors hover:bg-gray-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-app px-2.5 py-1 text-xs font-medium text-muted hover:text-app transition-colors disabled:cursor-not-allowed disabled:opacity-60"
         title={title}
         aria-label={title}
       >
         {isUploading ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-500" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <FileUp className={`h-3.5 w-3.5 ${isPopulated ? "text-green-600" : "text-gray-400"}`} />
+          <FileUp className={`h-3.5 w-3.5 ${isPopulated ? "text-green-600 dark:text-green-400" : ""}`} />
         )}
+        <span>{label}</span>
       </button>
       {notice && <span className="text-[11px] font-medium text-green-600">{notice}</span>}
       {error && <span className="text-[11px] font-medium text-red-600">{error}</span>}
