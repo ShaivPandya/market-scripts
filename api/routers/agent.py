@@ -741,10 +741,14 @@ def _model_stream_kwargs(
     return kwargs
 
 
+def _openai_text_type(role: object) -> str:
+    return "output_text" if role == "assistant" else "input_text"
+
+
 def _initial_conversation(provider: str, messages: list[ChatMessage]) -> list[dict]:
     if provider == PROVIDER_ANTHROPIC:
         return [{"role": m.role, "content": m.content} for m in messages]
-    return [{"role": m.role, "content": [{"type": "input_text", "text": m.content}]} for m in messages]
+    return [{"role": m.role, "content": [{"type": _openai_text_type(m.role), "text": m.content}]} for m in messages]
 
 
 def _openai_conversation_from_context(conversation: list[dict[str, object]]) -> list[dict]:
@@ -753,7 +757,7 @@ def _openai_conversation_from_context(conversation: list[dict[str, object]]) -> 
         role = msg.get("role")
         content = msg.get("content", "")
         if isinstance(content, str):
-            out.append({"role": role, "content": [{"type": "input_text", "text": content}]})
+            out.append({"role": role, "content": [{"type": _openai_text_type(role), "text": content}]})
         else:
             out.append({"role": role, "content": content})
     return out

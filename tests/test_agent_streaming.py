@@ -558,3 +558,86 @@ def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_cl
     done_events = [p for e, p in parsed if e == "done"]
     assert done_events[-1]["session_id"] == "casual-session"
     assert finalized
+
+
+# ---------------------------------------------------------------------------
+# Provider history shape: assistant turns must use output_text for OpenAI
+# (regression: the Responses API rejects input_text on assistant content)
+# ---------------------------------------------------------------------------
+
+
+def test_openai_initial_conversation_uses_output_text_for_assistant():
+    msgs = [
+        agent_router.ChatMessage(role="user", content="hello"),
+        agent_router.ChatMessage(role="assistant", content="hi back"),
+        agent_router.ChatMessage(role="user", content="what model are you?"),
+    ]
+    convo = agent_router._initial_conversation(agent_router.PROVIDER_OPENAI, msgs)
+    assert [m["content"][0]["type"] for m in convo] == ["input_text", "output_text", "input_text"]
+    assert [m["role"] for m in convo] == ["user", "assistant", "user"]
+
+
+def test_openai_conversation_from_context_uses_output_text_for_assistant():
+    raw = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi back"},
+        {"role": "user", "content": "follow-up"},
+    ]
+    convo = agent_router._openai_conversation_from_context(raw)
+    assert [m["content"][0]["type"] for m in convo] == ["input_text", "output_text", "input_text"]
+
+
+def test_anthropic_initial_conversation_passes_strings_through():
+    msgs = [
+        agent_router.ChatMessage(role="user", content="hello"),
+        agent_router.ChatMessage(role="assistant", content="hi"),
+    ]
+    convo = agent_router._initial_conversation(agent_router.PROVIDER_ANTHROPIC, msgs)
+    assert convo == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+    ]
+
+
+def test_agent_chat_v2_openai_replays_assistant_history_as_output_text(auth_client, monkeypatch):
+    """Multi-turn replay: prior assistant message must be sent as output_text, not input_text."""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "Hey. What are you looking at?"},
+                {"role": "user", "content": new_user_message},
+            ],
+            "session-multiturn",
+        ),
+    )
+    monkeypatch.setattr("api.memory_manager.finalize_turn_async", lambda *_args, **_kwargs: None)
+
+    streams = [
+        (
+            [_openai_event_text_delta("I'm Stan.")],
+            SimpleNamespace(
+                output=[{"type": "message", "content": [{"type": "output_text", "text": "I'm Stan."}]}],
+                usage=SimpleNamespace(input_tokens=2, output_tokens=3),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_openai(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "what model are you?"},
+    )
+
+    assert resp.status_code == 200
+    sent_input = fake_client.responses.kwargs_history[0]["input"]
+    types = [(m["role"], m["content"][0]["type"]) for m in sent_input]
+    assert types == [
+        ("user", "input_text"),
+        ("assistant", "output_text"),
+        ("user", "input_text"),
+    ]

@@ -12,24 +12,38 @@ This repository now has the code-level migration pieces for the GCP state move:
 
 - `cloudbuild.yaml` — builds the API image and pushes to Artifact Registry.
 - `config.example.sh` — copy to `config.sh` (gitignored) and fill in project / SA / bucket / VPC values.
-- `lib.sh` — shared helpers sourced by the other scripts.
-- `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL, GCS bucket, and Memorystore. (Direct VPC egress is configured per-service in the deploy scripts; no connector is provisioned.)
-- `setup-secrets.sh` — generates random secrets, prompts for the rest, creates Cloud SQL users with their generated passwords, writes everything to Secret Manager, and binds least-privilege accessor IAM to each SA.
-- `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite).
-- `deploy-worker.sh` — Cloud Run worker pool running `python -m api.rq_worker`.
+- `lib.sh` — shared helpers sourced by every other script. Defaults `IMAGE_TAG` to the current short git SHA, verifies the image exists in Artifact Registry, and refuses to run if the active gcloud project differs from `PROJECT_ID`.
+- `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL (with backups + PITR + deletion protection + require-SSL), the GCS state bucket, and Memorystore. Direct VPC egress is configured per-service in the deploy scripts; no connector is provisioned.
+- `setup-secrets.sh` — generates random secrets, prompts for the rest, creates Cloud SQL users with their generated passwords, writes everything to Secret Manager, and binds per-secret accessor IAM to each SA.
+- `iam.sh` — idempotently grants the project-, bucket-, and Cloud Run-job-level IAM bindings the deploy SAs need (cloudsql.client, logging.logWriter, bucket objectAdmin, run.invoker on the migrator's jobs).
+- `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite). Tunables: `API_CPU`, `API_MEMORY`, `API_CONCURRENCY`, `API_MIN_INSTANCES`, `API_MAX_INSTANCES`, `API_TIMEOUT`.
+- `deploy-worker.sh` — Cloud Run worker pool running `python -m api.rq_worker`. Tunables: `WORKER_CPU`, `WORKER_MEMORY`, `WORKER_INSTANCES`, `WORKER_QUEUES`.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
+- `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
+- `deploy-all.sh` — build via Cloud Build at the current short git SHA, then roll API + worker + jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`.
+- `setup-scheduler.sh` — idempotently create/update the three Cloud Scheduler jobs (cache-warm every 5min, async-job-sweep hourly, top50-refresh weekday 23z UTC). Pulls `X-Scheduler-Secret` from Secret Manager so the value never lives in this repo.
+- `cleanup-stale.sh` — dry-runs (or `--apply` deletes) GCP resources that pre-date the current scripts and are no longer referenced.
 
-Typical flow:
+First-time setup:
 
 ```bash
 cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
-./infra/gcp/bootstrap.sh                              # provision foundation infra
-./infra/gcp/setup-secrets.sh                          # SQL users, Secret Manager, IAM bindings
-# (still need: bucket-scoped IAM for SAs, CREATE EXTENSION vector, alembic upgrade)
-gcloud builds submit --config=infra/gcp/cloudbuild.yaml .
-IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-api.sh
-IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-worker.sh
-IMAGE_TAG="$(git rev-parse --short HEAD)" ./infra/gcp/deploy-migration-job.sh
+./infra/gcp/bootstrap.sh           # provision foundation infra
+./infra/gcp/setup-secrets.sh       # SQL users + Secret Manager + per-secret IAM
+./infra/gcp/iam.sh                 # project + bucket + run-job IAM
+# (still need: CREATE EXTENSION vector + alembic upgrade head as the migrator)
+./infra/gcp/deploy-all.sh          # build + deploy everything at the current SHA
+./infra/gcp/iam.sh                 # re-run to bind run.invoker on the now-deployed jobs
+./infra/gcp/setup-scheduler.sh     # wire up Cloud Scheduler
+```
+
+Routine deploys:
+
+```bash
+./infra/gcp/deploy-all.sh
+# or roll a single component:
+./infra/gcp/deploy-api.sh
+./infra/gcp/deploy-worker.sh
 ```
 
 ## Cloud SQL

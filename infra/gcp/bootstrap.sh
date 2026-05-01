@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # One-shot, idempotent provisioning of the foundation GCP resources.
 #
-# Covers steps 1-7 from the GCP setup list:
+# Covers:
 #   1. Enable APIs
 #   2. Artifact Registry repo
 #   3. Service accounts (api-sa, worker-sa, migrator-sa)
 #   4. Cloud SQL instance + database (users are created separately;
-#      passwords belong in Secret Manager)
+#      passwords belong in Secret Manager). New instances are created with
+#      backups + PITR + deletion protection + require-SSL.
 #   5. Cloud Storage state bucket
 #   6. Memorystore for Valkey
-#   7. Serverless VPC Access connector
 #
-# Re-running is safe: every step skips if the resource already exists.
+# Cloud Run reaches Memorystore via Direct VPC egress configured per-service
+# in the deploy-*.sh scripts; no Serverless VPC connector is provisioned.
+#
+# Re-running is safe: every step skips if the resource already exists. Hardening
+# flags only apply at create time — to upgrade an existing instance, see the
+# follow-up notes printed at the end.
+#
 # Cloud SQL + Memorystore creation each take several minutes; the script
 # waits on them.
 
@@ -22,6 +28,7 @@ require_var REGION
 require_var ARTIFACT_REPO
 require_var CLOUDSQL_INSTANCE
 require_var GCS_STATE_BUCKET
+require_active_project
 
 # Cloud SQL instance name is the third segment of CLOUDSQL_INSTANCE.
 SQL_INSTANCE="${CLOUDSQL_INSTANCE##*:}"
@@ -96,7 +103,14 @@ else
     --region="${REGION}" \
     --tier="${SQL_TIER}" \
     --database-flags=cloudsql.enable_pgvector=on \
-    --storage-auto-increase
+    --storage-auto-increase \
+    --backup \
+    --backup-start-time="07:00" \
+    --enable-point-in-time-recovery \
+    --retained-backups-count=14 \
+    --retained-transaction-log-days=7 \
+    --deletion-protection \
+    --require-ssl
 fi
 
 log "Cloud SQL database: ${SQL_DATABASE}"
@@ -141,42 +155,35 @@ else
 fi
 
 ###############################################################################
-# 7. (Direct VPC egress — no Serverless VPC connector needed)
-###############################################################################
-# Cloud Run reaches Memorystore over the default VPC via Direct VPC egress
-# (configured per-service in deploy-api.sh / deploy-worker.sh). Nothing to
-# provision here.
-
-###############################################################################
 # Done. Print follow-up steps.
 ###############################################################################
 log "Bootstrap complete. Still to do (not handled by this script):"
 cat <<EOF
-  - Cloud SQL users (talisman_app, talisman_worker, talisman_migrator):
-      gcloud sql users create talisman_app       --instance=${SQL_INSTANCE} --password=...
-      gcloud sql users create talisman_worker    --instance=${SQL_INSTANCE} --password=...
-      gcloud sql users create talisman_migrator  --instance=${SQL_INSTANCE} --password=...
-    Store each password in Secret Manager (DATABASE_URL_API/_WORKER/_MIGRATION)
-    using the URL format from infra/gcp/README.md.
+  - Cloud SQL users + secrets:  ./infra/gcp/setup-secrets.sh
+      Generates passwords, creates talisman_app / talisman_worker /
+      talisman_migrator users, writes DATABASE_URL_* and the rest into
+      Secret Manager, and binds least-privilege accessor IAM.
+
+  - Project / bucket / Cloud Run IAM bindings:  ./infra/gcp/iam.sh
+      cloudsql.client + logging.logWriter for the SAs, run.invoker for
+      api-sa, bucket objectAdmin on \${GCS_STATE_BUCKET}, scheduler
+      run.invoker on the Cloud Run jobs.
 
   - CREATE EXTENSION vector;  (run as the migrator user via cloud-sql-proxy)
 
-  - Populate the remaining Secret Manager entries listed in
-    infra/gcp/config.example.sh (REDIS_URL, AUTH_PASSWORD_HASH, JWT_SECRET,
-    API_PROXY_SECRET, SCHEDULER_SECRET, ANTHROPIC_API_KEY, FRED_API_KEY,
-    ESTAT_APP_ID, SODA_APP_TOKEN). Memorystore IP is shown by:
-      gcloud redis instances describe ${REDIS_INSTANCE} --region=${REGION} \\
-        --format='value(host)'
+  - alembic upgrade head as the migrator user.
 
-  - Grant per-resource IAM bindings to api-sa / worker-sa / migrator-sa
-    (bucket access, secret accessor on the right secrets, cloudsql.client,
-    redis.editor, run.invoker for api-sa).
+  - Build + deploy:  ./infra/gcp/deploy-all.sh
+      (or run cloudbuild + deploy-{api,worker,migration-job}.sh manually)
 
-  - Run alembic upgrade head as the migrator user.
+  - Cloud Scheduler jobs:  ./infra/gcp/setup-scheduler.sh
+      cache-warm (5min), async-job-sweep (hourly), top50-refresh (weekday 23z).
 
-  - Build the image and run the deploy scripts:
-      gcloud builds submit --config=infra/gcp/cloudbuild.yaml .
-      IMAGE_TAG=\$(git rev-parse --short HEAD) ./infra/gcp/deploy-api.sh
-      IMAGE_TAG=\$(git rev-parse --short HEAD) ./infra/gcp/deploy-worker.sh
-      IMAGE_TAG=\$(git rev-parse --short HEAD) ./infra/gcp/deploy-migration-job.sh
+  - If you already have an existing Cloud SQL instance that pre-dates the
+    hardening flags, apply them in place:
+      gcloud sql instances patch ${SQL_INSTANCE} \\
+        --backup --backup-start-time=07:00 \\
+        --enable-point-in-time-recovery \\
+        --retained-backups-count=14 --retained-transaction-log-days=7 \\
+        --deletion-protection --require-ssl
 EOF
