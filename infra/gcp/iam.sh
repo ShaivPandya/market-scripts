@@ -41,7 +41,8 @@ bind_bucket() {
   local member="$1" role="$2"
   gcloud storage buckets add-iam-policy-binding "gs://${GCS_STATE_BUCKET}" \
     --member="serviceAccount:${member}" \
-    --role="${role}" >/dev/null
+    --role="${role}" \
+    --condition=None >/dev/null
   echo "  gs://${GCS_STATE_BUCKET} ${role} -> ${member}"
 }
 
