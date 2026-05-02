@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 DEFAULT_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024
+MULTIPART_FORM_DATA_OVERHEAD_BYTES = 1024 * 1024
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
 
@@ -121,7 +122,7 @@ async def read_upload_file_bytes(
         if total > limit_bytes:
             label = limit_label or format_bytes(limit_bytes)
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=413,
                 detail=f"Uploaded file exceeds the {label} limit.",
             )
         chunks.append(chunk)

@@ -23,7 +23,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from api.exceptions import AppError, DataFetchError
 from api.logging_config import configure_logging, generate_request_id, request_id_var
-from api.request_limits import BodySizeLimitMiddleware
+from api.request_limits import MULTIPART_FORM_DATA_OVERHEAD_BYTES, BodySizeLimitMiddleware
 from api.safe_import import get_degraded_modules, safe_import_router
 
 # ---------------------------------------------------------------------------
@@ -122,11 +122,16 @@ def _rate_limit_exception_handler(request: Request, exc: Exception):
 
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exception_handler)
 
+
+def _multipart_request_body_limit(file_limit_bytes: int) -> int:
+    return file_limit_bytes + MULTIPART_FORM_DATA_OVERHEAD_BYTES
+
+
 _ENDPOINT_BODY_LIMITS = {
-    "/api/v1/thesis/generate": 30 * 1024 * 1024,
-    "/api/v1/overview/generate": 30 * 1024 * 1024,
-    "/api/v1/economic-growth/crb-file": 10 * 1024 * 1024,
-    "/api/v1/portfolio-news": 10 * 1024 * 1024,
+    "/api/v1/thesis/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/v1/overview/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/v1/economic-growth/crb-file": _multipart_request_body_limit(10 * 1024 * 1024),
+    "/api/v1/portfolio-news": _multipart_request_body_limit(10 * 1024 * 1024),
 }
 
 app.add_middleware(BodySizeLimitMiddleware, path_limits=_ENDPOINT_BODY_LIMITS)
