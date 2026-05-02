@@ -443,6 +443,9 @@ export const analyzeSectorMetrics = (body: {
 export const fetchIndustryMonitor = (refresh = false) =>
   client.get(`/industry-monitor?refresh=${refresh}`).then(r => r.data)
 
+export const industryTranscriptPdfUrl = (ticker: string) =>
+  `${client.defaults.baseURL}/industry-monitor/transcripts/${encodeURIComponent(ticker)}/pdf`
+
 export const fetchYieldCurve = (lookback_days = 90) =>
   client.get(`/yield-curve?lookback_days=${lookback_days}`).then(r => r.data)
 

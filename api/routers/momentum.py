@@ -25,7 +25,10 @@ def get_momentum():
         import pandas as pd
 
         if isinstance(v, pd.DataFrame):
-            result[k] = serialize_dataframe(v.reset_index())
+            df = v.reset_index()
+            if "avg20_vol_roc63" in df.columns:
+                df = df.drop(columns=["avg20_vol_roc63"])
+            result[k] = serialize_dataframe(df)
         else:
             result[k] = serialize_value(v)
 

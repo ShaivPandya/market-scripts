@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from api.exceptions import DataFetchError
 from api.routers import industry as industry_router
@@ -46,6 +49,58 @@ def test_parse_period_from_text_uses_explicit_quarter_and_year():
     assert year == 2024
     assert quarter == 3
     assert transcript_date == "2024-07-18"
+
+
+def test_parse_period_handles_abbreviated_month_and_infers_reporting_quarter():
+    text = "DATE Thursday, Apr. 23, 2026 at 8:30 a.m. ET CALL PARTICIPANTS"
+    fallback = datetime(2030, 1, 1, tzinfo=UTC)
+    year, quarter, transcript_date = im._parse_period_from_text(text, fallback)
+    assert year == 2026
+    assert quarter == 1
+    assert transcript_date == "2026-04-23"
+
+
+def test_parse_period_handles_factset_day_month_date():
+    text = "Corrected Transcript 18-Feb-2026 Toll Brothers, Inc. (TOL) Q1 2026 Earnings Call"
+    fallback = datetime(2030, 1, 1, tzinfo=UTC)
+    year, quarter, transcript_date = im._parse_period_from_text(text, fallback)
+    assert year == 2026
+    assert quarter == 1
+    assert transcript_date == "2026-02-18"
+
+
+def test_parse_period_handles_spaced_slide_date():
+    text = "Q1 2026 Earnings Presentation P E T E R J A C K S O N A p r i l   3 0 ,   2 0 2 6"
+    fallback = datetime(2030, 1, 1, tzinfo=UTC)
+    year, quarter, transcript_date = im._parse_period_from_text(text, fallback)
+    assert year == 2026
+    assert quarter == 1
+    assert transcript_date == "2026-04-30"
+
+
+def test_parse_period_handles_fourth_quarter_results_after_year_end():
+    text = (
+        "Financial Release Saia Reports Fourth Quarter Results "
+        "JOHNS CREEK, Ga., Feb. 10, 2026 -- Saia reported fourth quarter 2025 financial results."
+    )
+    fallback = datetime(2030, 1, 1, tzinfo=UTC)
+    year, quarter, transcript_date = im._parse_period_from_text(text, fallback)
+    assert year == 2025
+    assert quarter == 4
+    assert transcript_date == "2026-02-10"
+
+
+def test_parse_period_ignores_metric_quarter_references():
+    text = (
+        "DATE Tuesday, April 21, 2026 at 5 p.m. ET CALL PARTICIPANTS "
+        "TAKEAWAYS Revenue -- Decreased 2% sequentially from Q4 2025; "
+        "Brex Acquisition -- anticipated to decrease CET1 by just over 40 basis points in Q2 2026."
+    )
+    fallback = datetime(2030, 1, 1, tzinfo=UTC)
+    year, quarter, transcript_date = im._parse_period_from_text(text, fallback)
+    assert year == 2026
+    assert quarter == 1
+    assert transcript_date == "2026-04-21"
 
 
 def test_parse_period_falls_back_to_injected_dt(monkeypatch):
@@ -90,6 +145,27 @@ def test_load_pdf_bytes_routes_through_state_storage(monkeypatch):
     assert result == (canned_bytes, canned_dt)
     assert seen["updated_key"].endswith("/banks/JPM.pdf")
     assert seen["read_key"] == seen["updated_key"]
+
+
+def test_industry_pdf_route_returns_pdf(monkeypatch):
+    monkeypatch.setattr(
+        im,
+        "_load_pdf_bytes",
+        lambda sector, ticker: (b"%PDF-FAKE", datetime(2026, 4, 23, tzinfo=UTC)),
+    )
+
+    response = industry_router.get_industry_transcript_pdf("jpm")
+
+    assert response.media_type == "application/pdf"
+    assert response.body == b"%PDF-FAKE"
+    assert 'filename="JPM.pdf"' in response.headers["content-disposition"]
+
+
+def test_industry_pdf_route_returns_404_for_unknown_ticker():
+    with pytest.raises(HTTPException) as exc:
+        industry_router.get_industry_transcript_pdf("NOPE")
+
+    assert exc.value.status_code == 404
 
 
 def _make_mem_db() -> sqlite3.Connection:
@@ -242,3 +318,118 @@ def test_fetch_and_store_removes_nul_bytes_before_upsert(monkeypatch):
     assert row is not None
     assert "\x00" not in row["transcript_text"]
     assert row["transcript_text"] == "Q1 2025 Earnings Call placeholder body text"
+
+
+def test_fetch_and_store_reuses_same_content_summary_after_reparse(monkeypatch):
+    text = "DATE Thursday, Apr. 23, 2026 at 8:30 a.m. ET CALL PARTICIPANTS"
+    sha = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+    monkeypatch.setattr(
+        im,
+        "SECTORS",
+        {"Banks": {"type": "coincident", "companies": [("AXP", "American Express", "Card Issuer", "AMC")]}},
+    )
+    monkeypatch.setattr(im, "_load_pdf_bytes", lambda sector, ticker: (b"%PDF-FAKE", datetime(2026, 4, 30, tzinfo=UTC)))
+    monkeypatch.setattr(im, "_extract_text_from_bytes", lambda b: text)
+
+    def _must_not_summarize(*_args, **_kwargs):
+        raise AssertionError("summary should be reused from same-content row")
+
+    monkeypatch.setattr(im, "summarize_with_llm", _must_not_summarize)
+    conn = _make_mem_db()
+    im._upsert_transcript(
+        conn,
+        row_id="AXP_2026_Q2",
+        ticker="AXP",
+        company_name="American Express",
+        sector="Banks",
+        sector_type="coincident",
+        sub_sector="Card Issuer",
+        year=2026,
+        quarter=2,
+        transcript_text=text,
+        transcript_date="2026-04-23",
+        content_sha256=sha,
+        fetched_at="2026-05-01T00:00:00+00:00",
+    )
+    im._set_summary(conn, "AXP_2026_Q2", {"summary_headline": "prior summary", "sentiment": "bullish"})
+
+    im._fetch_and_store(conn)
+
+    row = conn.execute("SELECT summary_json FROM transcripts WHERE id='AXP_2026_Q1'").fetchone()
+    assert row is not None
+    assert json.loads(row["summary_json"])["summary_headline"] == "prior summary"
+
+
+def test_latest_row_prefers_non_superseded_row_over_wrong_higher_quarter():
+    conn = _make_mem_db()
+    for row_id, year, quarter, internal_stale in (
+        ("AXP_2026_Q2", 2026, 2, True),
+        ("AXP_2026_Q1", 2026, 1, False),
+    ):
+        im._upsert_transcript(
+            conn,
+            row_id=row_id,
+            ticker="AXP",
+            company_name="American Express",
+            sector="Banks",
+            sector_type="coincident",
+            sub_sector="Card Issuer",
+            year=year,
+            quarter=quarter,
+            transcript_text="Q1 2026 Earnings Call placeholder body text",
+            transcript_date="2026-04-23",
+            content_sha256=row_id,
+            fetched_at="2026-05-01T00:00:00+00:00",
+        )
+        conn.execute("UPDATE transcripts SET is_stale=? WHERE id=?", (internal_stale, row_id))
+    conn.commit()
+
+    row = im._get_latest_row_for_ticker(conn, "AXP")
+
+    assert row is not None
+    assert row["id"] == "AXP_2026_Q1"
+
+
+def test_company_stale_uses_ninety_day_age_rule(monkeypatch):
+    monkeypatch.setattr(im, "_today_utc", lambda: date(2026, 5, 1))
+    conn = _make_mem_db()
+    im._upsert_transcript(
+        conn,
+        row_id="AXP_2026_Q1",
+        ticker="AXP",
+        company_name="American Express",
+        sector="Banks",
+        sector_type="coincident",
+        sub_sector="Card Issuer",
+        year=2026,
+        quarter=1,
+        transcript_text="Q1 2026 Earnings Call placeholder body text",
+        transcript_date="2026-04-23",
+        content_sha256="fresh",
+        fetched_at="2026-05-01T00:00:00+00:00",
+    )
+
+    row = conn.execute("SELECT * FROM transcripts WHERE id='AXP_2026_Q1'").fetchone()
+    item = im._company_from_row(
+        row,
+        ticker="AXP",
+        company_name="American Express",
+        sector="Banks",
+        sector_type="coincident",
+        sub_sector="Card Issuer",
+    )
+    assert item["age_days"] == 8
+    assert item["is_stale"] is False
+
+    conn.execute("UPDATE transcripts SET transcript_date='2026-01-01' WHERE id='AXP_2026_Q1'")
+    old_row = conn.execute("SELECT * FROM transcripts WHERE id='AXP_2026_Q1'").fetchone()
+    old_item = im._company_from_row(
+        old_row,
+        ticker="AXP",
+        company_name="American Express",
+        sector="Banks",
+        sector_type="coincident",
+        sub_sector="Card Issuer",
+    )
+    assert old_item["age_days"] == 120
+    assert old_item["is_stale"] is True

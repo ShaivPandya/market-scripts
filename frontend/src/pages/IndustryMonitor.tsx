@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchIndustryMonitor } from "@/lib/api"
+import { fetchIndustryMonitor, industryTranscriptPdfUrl } from "@/lib/api"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { colorEconomicSignal, colorSentiment } from "@/lib/colors"
+import { colorSentiment } from "@/lib/colors"
 
 const SIGNAL_CLASSES: Record<string, string> = {
   expanding: "bg-green-100 text-green-700",
@@ -33,7 +33,9 @@ interface Company {
   guidance_outlook: string
   macro_quotes: string[]
   price_reaction_2d: number | null
+  age_days: number | null
   is_stale: boolean
+  missing_data?: boolean
 }
 
 interface SectorSummary {
@@ -188,12 +190,24 @@ function CompanyRow({ company }: { company: Company }) {
         <p className="text-xs text-gray-600 mt-1">{company.summary_headline}</p>
       )}
 
-      <button
-        onClick={() => setExpanded(e => !e)}
-        className="text-xs text-blue-400 hover:underline mt-1"
-      >
-        {expanded ? "Less" : "More"}
-      </button>
+      <div className="mt-1 flex items-center gap-3">
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="text-xs text-blue-400 hover:underline"
+        >
+          {expanded ? "Less" : "More"}
+        </button>
+        {!company.missing_data && (
+          <a
+            href={industryTranscriptPdfUrl(company.ticker)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-blue-400 hover:underline"
+          >
+            PDF
+          </a>
+        )}
+      </div>
 
       {expanded && (
         <div className="mt-2 space-y-1 text-xs text-gray-600">

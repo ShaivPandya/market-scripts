@@ -249,43 +249,14 @@ def load_theses() -> dict[str, str | None]:
     """Load investment thesis markdown files for all portfolio tickers."""
     from portfolio.portfolio_db import get_positions
 
-    default_project_root = SCRIPT_DIR.parent
-
-    def _load_tickers_from_csv() -> list[str]:
-        import csv
-
-        csv_path = PROJECT_ROOT / "portfolio" / "portfolio.csv"
-        if not csv_path.exists():
-            return []
-        tickers_from_csv: list[str] = []
-        try:
-            with csv_path.open("r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    t = str((row or {}).get("ticker", "")).strip()
-                    if t:
-                        tickers_from_csv.append(t)
-        except Exception as e:
-            log.warning("Failed to read portfolio CSV at %s: %s", csv_path, e)
-            return []
-        return tickers_from_csv
-
-    # In tests PROJECT_ROOT is often monkeypatched to a temp directory
-    # with a fixture CSV. Prefer that CSV in that scenario.
-    if PROJECT_ROOT != default_project_root:
-        tickers = _load_tickers_from_csv()
-    else:
-        tickers = []
-        try:
-            for row in get_positions():
-                t = str(row.get("ticker", "")).strip()
-                if t:
-                    tickers.append(t)
-        except Exception as e:
-            log.warning("Failed to read positions from portfolio_db: %s", e)
-
-        if not tickers:
-            tickers = _load_tickers_from_csv()
+    tickers: list[str] = []
+    try:
+        for row in get_positions():
+            t = str(row.get("ticker", "")).strip()
+            if t:
+                tickers.append(t)
+    except Exception as e:
+        log.warning("Failed to read positions from portfolio_db: %s", e)
 
     theses: dict[str, str | None] = {}
     for ticker in tickers:
@@ -339,8 +310,6 @@ def filter_news_7day(news_data: dict) -> dict[str, list[dict]]:
 
 def collect_thesis_data() -> dict:
     """Collect all data needed for thesis monitoring."""
-    import csv
-
     results: dict = {}
 
     # 1. Load theses

@@ -16,7 +16,7 @@ import os
 import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Optional, TypedDict, cast
 
@@ -100,6 +100,7 @@ SECTORS: dict[str, SectorConfig] = {
 DB_PATH = "industry_transcripts.sqlite3"
 SUMMARY_MODEL = MODEL_MID
 SUMMARY_MAX_CHARS = int(os.environ.get("INDUSTRY_SUMMARY_MAX_CHARS", "32000"))
+TRANSCRIPT_STALE_DAYS = int(os.environ.get("INDUSTRY_TRANSCRIPT_STALE_DAYS", "90"))
 
 
 # ---------- Helpers ----------
@@ -193,6 +194,28 @@ def _load_pdf_bytes(sector: str, ticker: str) -> tuple[bytes, datetime] | None:
     return pdf_bytes, updated
 
 
+def _find_company(ticker: str) -> tuple[str, str, str, str, str] | None:
+    normalized = (ticker or "").strip().upper()
+    for sector, cfg in SECTORS.items():
+        for company_ticker, company_name, sub_sector, report_time in cfg["companies"]:
+            if company_ticker == normalized:
+                return sector, company_ticker, company_name, sub_sector, report_time
+    return None
+
+
+def load_pdf_for_ticker(ticker: str) -> tuple[str, bytes] | None:
+    """Return (download filename, PDF bytes) for a configured ticker."""
+    found = _find_company(ticker)
+    if found is None:
+        return None
+    sector, normalized, _company_name, _sub_sector, _report_time = found
+    loaded = _load_pdf_bytes(sector, normalized)
+    if loaded is None:
+        return None
+    local_path, _gcs_key = _get_pdf_locator(sector, normalized)
+    return local_path.name, loaded[0]
+
+
 _QUARTER_WORDS = {
     "first": 1,
     "second": 2,
@@ -200,63 +223,192 @@ _QUARTER_WORDS = {
     "fourth": 4,
 }
 
+_MONTH_ALIASES = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+_MONTH_PATTERN = "|".join(sorted((re.escape(k) for k in _MONTH_ALIASES), key=len, reverse=True))
+_QUARTER_CONTEXT_RE = re.compile(
+    r"\b(earnings?|call|transcript|results?|reports?|announcement|presentation|release)\b",
+    re.IGNORECASE,
+)
+_QUARTER_NOISE_RE = re.compile(
+    r"\b(sequentially\s+from|compared\s+(?:to|with)|prior\s+quarter|previous\s+quarter|anticipated\s+to|expected\s+to)\b",
+    re.IGNORECASE,
+)
+
+
+def _compact_spaced_token(match: re.Match[str]) -> str:
+    return re.sub(r"\s+", "", match.group(0))
+
+
+def _collapse_spaced_months(text: str) -> str:
+    out = text
+    for month in sorted(_MONTH_ALIASES, key=len, reverse=True):
+        pattern = r"\b" + r"\s+".join(re.escape(ch) for ch in month) + r"\b"
+        out = re.sub(pattern, month, out, flags=re.IGNORECASE)
+    return out
+
+
+def _canonicalize_header_text(text: str) -> str:
+    out = (text or "").replace("\x00", " ")
+    out = _collapse_spaced_months(out)
+    out = re.sub(r"\b(?:\d\s+){1,3}\d\b", _compact_spaced_token, out)
+    out = out.replace("\u2010", "-").replace("\u2011", "-").replace("\u2012", "-")
+    out = out.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
+    return re.sub(r"\s+", " ", out).strip()
+
+
+def _safe_date(year: int, month: int, day: int) -> date | None:
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _month_number(value: str) -> int | None:
+    return _MONTH_ALIASES.get((value or "").strip().rstrip(".").lower())
+
+
+def _normalize_year(value: str) -> int:
+    year = int(value)
+    if year < 100:
+        year += 2000
+    return year
+
+
+def _date_candidates(header: str) -> list[tuple[int, date]]:
+    candidates: list[tuple[int, date]] = []
+
+    def add(start: int, year: int, month: int, day: int) -> None:
+        parsed = _safe_date(year, month, day)
+        if parsed is not None:
+            candidates.append((start, parsed))
+
+    for m in re.finditer(r"\b(20[2-3]\d)-(\d{1,2})-(\d{1,2})\b", header):
+        add(m.start(), int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+    month_day_year = rf"\b({_MONTH_PATTERN})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*,?\s+(20[2-3]\d)\b"
+    for m in re.finditer(month_day_year, header, flags=re.IGNORECASE):
+        month = _month_number(m.group(1))
+        if month is not None:
+            add(m.start(), int(m.group(3)), month, int(m.group(2)))
+
+    day_month_year = rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s*-\s*({_MONTH_PATTERN})\.?\s*-\s*(20[2-3]\d)\b"
+    for m in re.finditer(day_month_year, header, flags=re.IGNORECASE):
+        month = _month_number(m.group(2))
+        if month is not None:
+            add(m.start(), int(m.group(3)), month, int(m.group(1)))
+
+    numeric_month_day_year = r"\b(\d{1,2})\s*[-/]\s*(\d{1,2})\s*[-/]\s*(\d{2}|20[2-3]\d)\b"
+    for m in re.finditer(numeric_month_day_year, header):
+        add(m.start(), _normalize_year(m.group(3)), int(m.group(1)), int(m.group(2)))
+
+    return sorted(candidates, key=lambda item: item[0])
+
+
+def _infer_reporting_period_from_date(call_date: date) -> tuple[int, int]:
+    if call_date.month <= 3:
+        return call_date.year - 1, 4
+    if call_date.month <= 6:
+        return call_date.year, 1
+    if call_date.month <= 9:
+        return call_date.year, 2
+    return call_date.year, 3
+
+
+def _infer_year_for_quarter(call_date: date, quarter: int) -> int:
+    if quarter == 4 and call_date.month <= 3:
+        return call_date.year - 1
+    return call_date.year
+
+
+def _quarter_score(header: str, start: int, end: int, has_year: bool) -> int | None:
+    context = header[max(0, start - 140) : min(len(header), end + 160)]
+    if not _QUARTER_CONTEXT_RE.search(context):
+        return None
+    score = 10
+    if has_year:
+        score += 2
+    if start < 1200:
+        score += 2
+    if start < 300:
+        score += 1
+    if _QUARTER_NOISE_RE.search(context):
+        return None
+    if score < 8:
+        return None
+    return score
+
+
+def _quarter_candidates(header: str, call_date: date) -> list[tuple[int, int, int, int]]:
+    candidates: list[tuple[int, int, int, int]] = []
+
+    def add(start: int, end: int, quarter: int, year: int | None) -> None:
+        score = _quarter_score(header, start, end, year is not None)
+        if score is None:
+            return
+        candidates.append((score, start, quarter, year if year is not None else _infer_year_for_quarter(call_date, quarter)))
+
+    for m in re.finditer(r"\bQ([1-4])\s*(?:FY\s*)?(20[2-3]\d)\b", header, flags=re.IGNORECASE):
+        add(m.start(), m.end(), int(m.group(1)), int(m.group(2)))
+
+    for m in re.finditer(r"\b(20[2-3]\d)\s*Q([1-4])\b", header, flags=re.IGNORECASE):
+        add(m.start(), m.end(), int(m.group(2)), int(m.group(1)))
+
+    for m in re.finditer(r"\bQ([1-4])\s*[’']\s*(\d{2})\b", header, flags=re.IGNORECASE):
+        add(m.start(), m.end(), int(m.group(1)), 2000 + int(m.group(2)))
+
+    word_pattern = (
+        r"\b(first|second|third|fourth)\s+quarter"
+        r"(?:\s+(?:(?:and\s+)?(?:full[-\s]?year|fiscal\s+year)\s+|fiscal\s+|fy\s*|of\s+)?(20[2-3]\d))?\b"
+    )
+    for m in re.finditer(word_pattern, header, flags=re.IGNORECASE):
+        quarter = _QUARTER_WORDS[m.group(1).lower()]
+        year = int(m.group(2)) if m.group(2) else None
+        add(m.start(), m.end(), quarter, year)
+
+    return sorted(candidates, key=lambda item: (-item[0], item[1]))
+
 
 def _parse_period_from_text(text: str, fallback_dt: datetime) -> tuple[int, int, str]:
-    header = text[:3000]
-    year: int | None = None
-    quarter: int | None = None
-    transcript_date = ""
+    header = _canonicalize_header_text(text[:5000])
+    dates = _date_candidates(header)
+    call_date = dates[0][1] if dates else fallback_dt.date()
+    transcript_date = call_date.isoformat()
 
-    m = re.search(r"Q([1-4])\s+(\d{4})", header)
-    if m:
-        quarter, year = int(m.group(1)), int(m.group(2))
-    else:
-        m = re.search(r"(\d{4})\s+Q([1-4])", header)
-        if m:
-            year, quarter = int(m.group(1)), int(m.group(2))
+    quarter_matches = _quarter_candidates(header, call_date)
+    if quarter_matches:
+        _score, _start, quarter, year = quarter_matches[0]
+        return year, quarter, transcript_date
 
-    if quarter is None:
-        for word, num in _QUARTER_WORDS.items():
-            if re.search(rf"\b{word}\s+quarter", header, re.IGNORECASE):
-                quarter = num
-                break
+    if dates:
+        year, quarter = _infer_reporting_period_from_date(call_date)
+        return year, quarter, transcript_date
 
-    if year is None:
-        m = re.search(r"\b(20[2-3]\d)\b", header)
-        if m:
-            year = int(m.group(1))
-
-    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", header)
-    if m:
-        transcript_date = m.group(0)
-    else:
-        months = "January|February|March|April|May|June|July|August|September|October|November|December"
-        m = re.search(rf"({months})\s+(\d{{1,2}}),?\s+(\d{{4}})", header)
-        if m:
-            month_map = {
-                "January": "01",
-                "February": "02",
-                "March": "03",
-                "April": "04",
-                "May": "05",
-                "June": "06",
-                "July": "07",
-                "August": "08",
-                "September": "09",
-                "October": "10",
-                "November": "11",
-                "December": "12",
-            }
-            transcript_date = f"{m.group(3)}-{month_map[m.group(1)]}-{int(m.group(2)):02d}"
-
-    if year is None:
-        year = fallback_dt.year
-    if quarter is None:
-        quarter = (fallback_dt.month - 1) // 3 + 1
-    if not transcript_date:
-        transcript_date = fallback_dt.strftime("%Y-%m-%d")
-
-    return year, quarter, transcript_date
+    return fallback_dt.year, (fallback_dt.month - 1) // 3 + 1, transcript_date
 
 
 # ---------- Storage ----------
@@ -297,14 +449,31 @@ def _get_row_by_id(conn: sqlite3.Connection, row_id: str) -> sqlite3.Row | None:
     return cast(sqlite3.Row | None, conn.execute("SELECT * FROM transcripts WHERE id=?", (row_id,)).fetchone())
 
 
+def _get_rows_by_content_sha(conn: sqlite3.Connection, ticker: str, content_sha256: str) -> list[sqlite3.Row]:
+    return cast(
+        list[sqlite3.Row],
+        conn.execute(
+            """
+        SELECT * FROM transcripts
+        WHERE ticker=? AND content_sha256=? AND summary_json IS NOT NULL
+        """,
+            (ticker, content_sha256),
+        ).fetchall(),
+    )
+
+
 def _get_latest_row_for_ticker(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | None:
     return cast(
         sqlite3.Row | None,
         conn.execute(
             """
         SELECT * FROM transcripts
-        WHERE ticker=?
-        ORDER BY year DESC, quarter DESC
+        WHERE ticker=? AND COALESCE(transcript_text, '') != ''
+        ORDER BY
+            CASE WHEN is_stale THEN 1 ELSE 0 END ASC,
+            COALESCE(transcript_date, '') DESC,
+            year DESC,
+            quarter DESC
         LIMIT 1
         """,
             (ticker,),
@@ -354,6 +523,11 @@ def _upsert_transcript(
             content_sha256=excluded.content_sha256,
             fetched_at=excluded.fetched_at,
             transcript_date=excluded.transcript_date,
+            price_reaction_2d=CASE
+                WHEN COALESCE(transcripts.transcript_date, '') != COALESCE(excluded.transcript_date, '')
+                THEN NULL
+                ELSE transcripts.price_reaction_2d
+            END,
             is_stale=excluded.is_stale
         """,
         (
@@ -385,6 +559,65 @@ def _set_summary(conn: sqlite3.Connection, row_id: str, summary: dict) -> None:
         (json.dumps(summary, ensure_ascii=False), _now_iso(), False, row_id),
     )
     conn.commit()
+
+
+def _summary_looks_like_fallback(summary_json: str | None, company_name: str) -> bool:
+    if not summary_json:
+        return False
+    try:
+        summary = json.loads(summary_json)
+    except Exception:
+        return False
+    headline = str(summary.get("summary_headline") or "").strip()
+    return headline == f"{company_name} commentary is mixed; monitor demand and guidance closely."
+
+
+def _choose_reusable_summary_row(
+    conn: sqlite3.Connection,
+    *,
+    ticker: str,
+    company_name: str,
+    content_sha256: str,
+    target_row_id: str,
+) -> sqlite3.Row | None:
+    rows = _get_rows_by_content_sha(conn, ticker, content_sha256)
+    if not rows:
+        return None
+
+    def sort_key(row: sqlite3.Row) -> tuple[int, str]:
+        same_row = row["id"] == target_row_id
+        fallback = _summary_looks_like_fallback(row["summary_json"], company_name)
+        priority = 2 if same_row else 1 if fallback else 0
+        return priority, str(row["summarized_at"] or "")
+
+    return sorted(rows, key=sort_key)[0]
+
+
+def _copy_summary(conn: sqlite3.Connection, *, source_row: sqlite3.Row, target_row_id: str) -> None:
+    conn.execute(
+        """
+        UPDATE transcripts
+        SET summary_json=?, summarized_at=?
+        WHERE id=?
+        """,
+        (source_row["summary_json"], source_row["summarized_at"], target_row_id),
+    )
+    conn.commit()
+
+
+def _today_utc() -> date:
+    return datetime.now(UTC).date()
+
+
+def _transcript_age_days(transcript_date: str) -> int | None:
+    raw = (transcript_date or "").strip()
+    if not raw:
+        return None
+    try:
+        call_date = date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+    return max((_today_utc() - call_date).days, 0)
 
 
 # ---------- Price reaction ----------
@@ -663,6 +896,7 @@ def _company_from_row(
             "guidance_outlook": "",
             "macro_quotes": [],
             "price_reaction_2d": None,
+            "age_days": None,
             "is_stale": True,
             "missing_data": True,
         }
@@ -685,6 +919,8 @@ def _company_from_row(
         except Exception:
             raw_summary = {}
     summary = _normalize_summary(raw_summary, text, meta)
+    age_days = _transcript_age_days(row["transcript_date"] or "")
+    is_age_stale = age_days is None or age_days > TRANSCRIPT_STALE_DAYS
 
     return {
         "ticker": ticker,
@@ -704,7 +940,8 @@ def _company_from_row(
         "guidance_outlook": summary["guidance_outlook"],
         "macro_quotes": summary["macro_quotes"],
         "price_reaction_2d": (float(row["price_reaction_2d"]) if row["price_reaction_2d"] is not None else None),
-        "is_stale": bool(row["is_stale"]),
+        "age_days": age_days,
+        "is_stale": bool(row["is_stale"]) or is_age_stale,
         "missing_data": False,
     }
 
@@ -750,10 +987,13 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
 
                 row_id = _make_id(ticker, year, quarter)
                 existing = _get_row_by_id(conn, row_id)
-
-                if existing and existing["content_sha256"] == sha and existing["summary_json"]:
-                    _set_fresh_row(conn, ticker, row_id)
-                    continue
+                reusable_summary = _choose_reusable_summary_row(
+                    conn,
+                    ticker=ticker,
+                    company_name=company_name,
+                    content_sha256=sha,
+                    target_row_id=row_id,
+                )
 
                 now_iso = _now_iso()
                 _upsert_transcript(
@@ -771,7 +1011,14 @@ def _fetch_and_store(conn: sqlite3.Connection) -> None:
                     content_sha256=sha,
                     fetched_at=now_iso,
                 )
+                if reusable_summary is not None and reusable_summary["id"] != row_id:
+                    _copy_summary(conn, source_row=reusable_summary, target_row_id=row_id)
                 _set_fresh_row(conn, ticker, row_id)
+
+                if existing and existing["content_sha256"] == sha and existing["summary_json"]:
+                    continue
+                if reusable_summary is not None:
+                    continue
 
                 meta = {
                     "ticker": ticker,
