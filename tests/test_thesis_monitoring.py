@@ -1,7 +1,6 @@
 """Tests for thesis monitoring functions in auto_weekly_report."""
 
 import json
-from datetime import UTC, datetime, timedelta
 
 import auto_report.auto_weekly_report as weekly
 
@@ -48,31 +47,6 @@ def test_load_theses_empty_file(tmp_path, monkeypatch):
 
     result = weekly.load_theses()
     assert result["XYZ"] is None
-
-
-def test_filter_news_7day():
-    """Only articles within 7 days are kept."""
-    now_utc = datetime.now(UTC)
-    articles = [
-        {"ticker": "X", "title": "recent", "seendate": (now_utc - timedelta(days=1)).isoformat()},
-        {"ticker": "X", "title": "old", "seendate": (now_utc - timedelta(days=15)).isoformat()},
-        {"ticker": "X", "title": "edge", "seendate": (now_utc - timedelta(days=6, hours=23)).isoformat()},
-    ]
-    news_data = {"by_ticker": {"X": articles}}
-    result = weekly.filter_news_7day(news_data)
-    assert len(result["X"]) == 2
-    titles = {a["title"] for a in result["X"]}
-    assert "recent" in titles
-    assert "edge" in titles
-    assert "old" not in titles
-
-
-def test_filter_news_7day_empty():
-    """Empty input returns empty output."""
-    result = weekly.filter_news_7day({})
-    assert result == {}
-    result2 = weekly.filter_news_7day({"by_ticker": {}})
-    assert result2 == {}
 
 
 def test_parse_thesis_response_valid():
@@ -156,7 +130,18 @@ def test_merge_thesis_into_summary():
 def test_build_thesis_prompt_includes_web_search_instruction():
     thesis_data = {
         "theses": {"CRWD": "Own the category leader."},
-        "news_7day": {"CRWD": []},
+        "news_digests": {
+            "window_days": 8,
+            "fallback_used": False,
+            "counts": {"digests": 1, "stories": 1},
+            "digests": [
+                {
+                    "title": "User Digest",
+                    "generated_date": "2026-05-01",
+                    "sections": [{"name": "software", "stories": [{"headline": "CRWD earnings beat", "notes": []}]}],
+                }
+            ],
+        },
         "technical_analysis": {},
         "momentum": {},
         "portfolio": [
@@ -172,7 +157,9 @@ def test_build_thesis_prompt_includes_web_search_instruction():
 
     _, user_msg = weekly._build_thesis_prompt(thesis_data, web_search=True)
 
-    assert "Supplement the ticker-level RSS/IBKR headlines above with web search" in user_msg
+    assert "User-Curated News Digests" in user_msg
+    assert "CRWD earnings beat" in user_msg
+    assert "Supplement the user-curated digest excerpts above with web search" in user_msg
 
 
 def test_append_sources_section_dedupes_urls():

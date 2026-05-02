@@ -136,6 +136,25 @@ def upload_file(
     return _gs_uri(gcs_key)
 
 
+def delete_file(local_path: Path, gcs_key: str) -> bool:
+    """Delete an object from the configured state backend.
+
+    Returns True when an object/file existed and was removed.
+    """
+    if use_gcs_state():
+        blob = _bucket().blob(gcs_key)
+        if not blob.exists():
+            return False
+        blob.delete()
+        return True
+
+    if not local_path.exists():
+        return False
+    assert_project_write_allowed(local_path, operation="unlink")
+    local_path.unlink()
+    return True
+
+
 def object_metadata(gcs_key: str) -> dict[str, Any] | None:
     if not use_gcs_state():
         return None

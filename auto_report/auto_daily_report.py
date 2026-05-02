@@ -36,6 +36,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from auto_report.auto_weekly_report import (
+    DAILY_NEWS_DIGEST_DAYS,
     DEFAULT_NEWS_SOURCES,
     RULES_TEXT,
     _prepare_prompt_bundle,
@@ -578,6 +579,8 @@ Before writing the analysis, use the web search tool to find the key market-movi
 news from the past 24 hours (Fed speakers, economic releases, geopolitical events,
 major premarket moves, overnight developments) that are relevant to today's session.
 Weave this context into your analysis and cite sources for news-driven claims.
+Treat the news_digests block as user-curated high-signal leads from uploaded digest
+files; use web search to verify and cite claims rather than citing the uploaded digest itself.
 
 Analyze the market environment through the lens of the investment philosophy and produce:
 
@@ -604,6 +607,7 @@ level within the stance — e.g., a borderline Offensive environment might warra
 
 Constraints:
 - Cite specific metrics from the data and news search.
+- Use news_digests explicitly when it changes the assessment of market character, macro risk, or portfolio risk.
 - Use labor_market, housing, central_banks, yield_curve, bond_dashboard, and country_dashboard explicitly when they inform Macro Momentum, Liquidity/Rates, Risk Sentiment, or Cycle Position.
 - Assess the context for a long/short equity portfolio — not generic market commentary.
 - Be direct and concise. No filler.
@@ -965,7 +969,7 @@ def main():
     # ---------------------------------------------------------------
     log.info("Collecting market data (12 sources)...")
     t_collect = time.perf_counter()
-    market_data = collect_market_data()
+    market_data = collect_market_data(news_digest_days=DAILY_NEWS_DIGEST_DAYS)
     log.info("Market data collected in %.2fs", time.perf_counter() - t_collect)
 
     # ---------------------------------------------------------------

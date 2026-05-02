@@ -60,6 +60,12 @@ EQUITIES = {
     "MSCI Korea": "EWY",  # iShares MSCI South Korea ETF
 }
 
+EQUITY_BENCHMARK_DEFAULT = "S&P 500"
+EQUITY_BENCHMARKS = {
+    "Europe Banks": "STOXX 600",
+}
+EQUITY_BENCHMARK_ROWS = {EQUITY_BENCHMARK_DEFAULT, "STOXX 600"}
+
 CURRENCIES = {
     "AUD/JPY": "AUDJPY=X",
     "CAD/JPY": "CADJPY=X",
@@ -313,6 +319,34 @@ def format_return(value, benchmark=None, is_benchmark=False):
             return Text(text, style="yellow")
 
 
+def get_equity_benchmark(name):
+    """Return the benchmark name used for an equity row."""
+    return EQUITY_BENCHMARKS.get(name, EQUITY_BENCHMARK_DEFAULT)
+
+
+def calculate_equity_relative_returns(results, periods):
+    """Calculate equity return spreads versus each row's benchmark."""
+    relative_returns = {}
+
+    for name, returns in results.items():
+        if name in EQUITY_BENCHMARK_ROWS:
+            relative_returns[name] = {period: None for period in periods}
+            continue
+
+        benchmark_name = get_equity_benchmark(name)
+        benchmark_returns = results.get(benchmark_name, {})
+        row = {}
+
+        for period in periods:
+            value = returns.get(period)
+            benchmark = benchmark_returns.get(period)
+            row[period] = round(value - benchmark, 1) if value is not None and benchmark is not None else None
+
+        relative_returns[name] = row
+
+    return relative_returns
+
+
 def create_commodities_table(results, periods):
     """Create commodities performance table."""
     table = Table(
@@ -352,15 +386,15 @@ def create_equities_table(results, periods):
     for period in periods.keys():
         table.add_column(period, justify="right", min_width=8)
 
-    sp500_returns = results.get("S&P 500", {})
+    sp500_returns = results.get(EQUITY_BENCHMARK_DEFAULT, {})
     stoxx600_returns = results.get("STOXX 600", {})
 
     for name, returns in results.items():
         row = [name]
-        is_benchmark = name == "S&P 500" or name == "STOXX 600"
+        is_benchmark = name in EQUITY_BENCHMARK_ROWS
 
         # Europe Banks compared to STOXX 600, others to S&P 500
-        if name == "Europe Banks":
+        if get_equity_benchmark(name) == "STOXX 600":
             benchmark_returns = stoxx600_returns
         else:
             benchmark_returns = sp500_returns
@@ -524,16 +558,18 @@ def get_data(crb_file: str | None = None) -> dict:
     commodities_results = fetch_all_returns(COMMODITIES, EQUITY_PERIODS, "Commodities", crb_returns)
     equities_results = fetch_all_returns(EQUITIES, EQUITY_PERIODS, "Equities")
     currency_results = fetch_all_returns(CURRENCIES, CURRENCY_PERIODS, "Currencies")
+    equity_relative_returns = calculate_equity_relative_returns(equities_results, EQUITY_PERIODS)
 
     return {
         "commodities": commodities_results,
         "equities": equities_results,
+        "equity_relative_returns": equity_relative_returns,
         "currencies": currency_results,
         "crb_available": crb_available,
         "timestamp": datetime.now(),
         "benchmarks": {
-            "default": "S&P 500",
-            "Europe Banks": "STOXX 600",
+            "default": EQUITY_BENCHMARK_DEFAULT,
+            **EQUITY_BENCHMARKS,
         },
         "equity_periods": list(EQUITY_PERIODS.keys()),
         "currency_periods": list(CURRENCY_PERIODS.keys()),

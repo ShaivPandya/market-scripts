@@ -70,6 +70,8 @@ DEFAULT_NEWS_SOURCES = [
     "cnbc.com",
     "federalreserve.gov",
 ]
+WEEKLY_NEWS_DIGEST_DAYS = 8
+DAILY_NEWS_DIGEST_DAYS = 2
 
 RULES_TEXT = """
 STRICT FORMATTING RULES (Apply these to the data provided below):
@@ -274,38 +276,25 @@ def load_theses() -> dict[str, str | None]:
     return theses
 
 
-def filter_news_7day(news_data: dict) -> dict[str, list[dict]]:
-    """Filter portfolio news to last 7 calendar days, grouped by ticker."""
-    import email.utils
-    from datetime import UTC
+def collect_news_digest_context(days: int) -> dict:
+    """Load user-curated news digest excerpts for report prompts."""
+    try:
+        from portfolio.news_digests import get_report_context
 
-    now_utc = datetime.now(UTC)
-    cutoff = now_utc - timedelta(days=7)
-
-    by_ticker = news_data.get("by_ticker", {})
-    filtered: dict[str, list[dict]] = {}
-    for ticker, articles in by_ticker.items():
-        recent: list[dict] = []
-        for article in articles:
-            seendate = article.get("seendate", "")
-            if not seendate:
-                continue
-            parsed = None
-            try:
-                parsed = datetime.fromisoformat(seendate.replace("Z", "+00:00"))
-            except Exception:
-                try:
-                    parsed = email.utils.parsedate_to_datetime(seendate)
-                except Exception:
-                    continue
-            if parsed is None:
-                continue
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            if parsed >= cutoff:
-                recent.append(article)
-        filtered[ticker] = recent
-    return filtered
+        t0 = time.perf_counter()
+        context = get_report_context(days=days)
+        log.info(
+            "news digests loaded in %.2fs (days=%d digests=%d stories=%d fallback=%s)",
+            time.perf_counter() - t0,
+            days,
+            context.get("counts", {}).get("digests", 0),
+            context.get("counts", {}).get("stories", 0),
+            context.get("fallback_used", False),
+        )
+        return context
+    except Exception as e:
+        log.warning("news digest fetch failed: %s", e, exc_info=True)
+        return {"error": str(e), "window_days": days, "digests": [], "counts": {"digests": 0, "stories": 0}}
 
 
 def collect_thesis_data() -> dict:
@@ -322,17 +311,8 @@ def collect_thesis_data() -> dict:
 
     tickers = [p["ticker"] for p in results["portfolio"]]
 
-    # 3. Portfolio news (7-day filtered)
-    try:
-        from portfolio.portfolio_news import get_data as get_news_data
-
-        t0 = time.perf_counter()
-        news_data = get_news_data(refresh=False)
-        results["news_7day"] = filter_news_7day(news_data)
-        log.info("thesis news fetched and filtered in %.2fs", time.perf_counter() - t0)
-    except Exception as e:
-        log.warning("thesis news fetch failed: %s", e, exc_info=True)
-        results["news_7day"] = {}
+    # 3. User-curated news digest excerpts
+    results["news_digests"] = collect_news_digest_context(days=WEEKLY_NEWS_DIGEST_DAYS)
 
     # 4. Technical analysis (per-ticker summaries)
     try:
@@ -372,7 +352,7 @@ def collect_thesis_data() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def collect_data() -> dict:
+def collect_data(news_digest_days: int = WEEKLY_NEWS_DIGEST_DAYS) -> dict:
     results = {}
     week_start = (datetime.now() - timedelta(days=7)).date().isoformat()
 
@@ -649,6 +629,9 @@ def collect_data() -> dict:
     except Exception as e:
         log.warning("sentiment fetch failed: %s", e, exc_info=True)
         results["sentiment"] = {"error": str(e)}
+
+    # 20. User-curated news digest excerpts
+    results["news_digests"] = collect_news_digest_context(days=news_digest_days)
 
     return results
 
@@ -956,6 +939,8 @@ Before writing the report, use the web search tool to find the key market-moving
 news from the past week (Fed decisions, economic data releases, geopolitical events,
 major earnings, trade policy) that explain the moves in the data below. Weave this
 context into each relevant section and cite your sources for news-driven claims.
+Treat the news_digests block as user-curated high-signal leads; use web search to
+verify and cite claims rather than citing the uploaded digest itself.
 """
 
     return f"""Here is this week's market data bundle:
@@ -968,7 +953,8 @@ context into each relevant section and cite your sources for news-driven claims.
 
 {RULES_TEXT}
 {search_instruction}
-Use labor_market, housing, central_banks, yield_curve, bond_dashboard, and
+Use news_digests as curated news context. Use labor_market, housing,
+central_banks, yield_curve, bond_dashboard, and
 country_dashboard as macro/cycle evidence when assessing policy, rates, growth,
 labor slack, housing momentum, and cross-country inflation/GDP/unemployment.
 
@@ -1042,22 +1028,72 @@ def parse_response(text: str) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 
 
+def _format_news_digest_context(news_digests: dict) -> str:
+    if not isinstance(news_digests, dict) or news_digests.get("error"):
+        return "**User-Curated News Digests:** _Not available._"
+
+    digests = news_digests.get("digests")
+    if not isinstance(digests, list) or not digests:
+        return "**User-Curated News Digests:** _No uploaded digest excerpts available._"
+
+    counts = news_digests.get("counts") if isinstance(news_digests.get("counts"), dict) else {}
+    lines = [
+        (
+            "**User-Curated News Digests** "
+            f"(window_days={news_digests.get('window_days')}, "
+            f"digests={counts.get('digests', len(digests))}, "
+            f"stories={counts.get('stories', 'n/a')}, "
+            f"fallback_used={news_digests.get('fallback_used', False)}):"
+        )
+    ]
+    for digest in digests:
+        if not isinstance(digest, dict):
+            continue
+        title = digest.get("title") or digest.get("id") or "Untitled Digest"
+        generated_date = digest.get("generated_date") or "unknown date"
+        lines.append(f"\n### {title} ({generated_date})")
+        sections = digest.get("sections")
+        if not isinstance(sections, list):
+            continue
+        for section in sections:
+            if not isinstance(section, dict):
+                continue
+            section_name = section.get("name") or "Uncategorized"
+            stories = section.get("stories")
+            if not isinstance(stories, list) or not stories:
+                continue
+            lines.append(f"- {section_name}")
+            for story in stories:
+                if not isinstance(story, dict):
+                    continue
+                headline = story.get("headline") or ""
+                if headline:
+                    lines.append(f"  - {headline}")
+                notes = story.get("notes")
+                if isinstance(notes, list):
+                    for note in notes:
+                        lines.append(f"    - {note}")
+    return "\n".join(lines)
+
+
 def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[str, str]:
     """Build (system_msg, user_msg) for the thesis monitoring Claude call."""
     system_msg = (
         "You are an investment analyst evaluating portfolio positions against their "
         "original investment theses. For each position, determine whether recent data "
-        "(news, technicals, momentum) supports, challenges, or is neutral to the thesis. "
+        "(user-curated news digests, technicals, momentum) supports, challenges, or is neutral to the thesis. "
         "Be specific about which data points matter and why. Focus on material developments "
         "that could change the thesis, not noise. Pay special attention to any earnings-related "
-        "developments in the news flow."
+        "developments in the news flow. Treat uploaded digest excerpts as high-signal leads and "
+        "use web search to verify/cite any external factual claim when search is enabled."
     )
 
     theses = thesis_data.get("theses", {})
-    news_7day = thesis_data.get("news_7day", {})
+    news_digests = thesis_data.get("news_digests", {})
     ta = thesis_data.get("technical_analysis", {})
     momentum_data = thesis_data.get("momentum", {})
     portfolio = thesis_data.get("portfolio", [])
+    digest_context = _format_news_digest_context(news_digests)
 
     # Build momentum lookup: ticker -> metrics
     momentum_by_ticker: dict = {}
@@ -1098,22 +1134,9 @@ def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[s
         else:
             section_parts.append("\n**Investment Thesis:** _No thesis file provided._")
 
-        # News (7-day)
-        ticker_news = news_7day.get(ticker, []) if isinstance(news_7day, dict) else []
-        if ticker_news:
-            news_lines = [f"\n**Recent News (7-day, {len(ticker_news)} articles):**"]
-            for article in ticker_news[:10]:  # Cap at 10 per ticker for token control
-                date_str = article.get("seendate", "")[:10]
-                source = article.get("source", "Unknown")
-                title = article.get("title", "No title")
-                url = article.get("url", "")
-                line = f"- [{date_str}] [{source}] {title}"
-                if url:
-                    line += f" ({url})"
-                news_lines.append(line)
-            section_parts.append("\n".join(news_lines))
-        else:
-            section_parts.append("\n**Recent News (7-day):** _No articles found._")
+        section_parts.append(
+            "\n**Recent News:** Use the global user-curated digest context above; supplement with search when needed."
+        )
 
         # Technical Analysis
         ticker_ta = ta.get(ticker) if isinstance(ta, dict) else None
@@ -1156,7 +1179,7 @@ def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[s
     search_instruction = ""
     if web_search:
         search_instruction = """
-Supplement the ticker-level RSS/IBKR headlines above with web search when needed to find
+Supplement the user-curated digest excerpts above with web search when needed to find
 material developments from the past week, especially earnings, guidance changes, financings,
 regulatory actions, M&A, or other thesis-relevant company news. Cite sources for any claim
 that depends on web search.
@@ -1166,6 +1189,10 @@ that depends on web search.
 
 **Tickers with thesis files:** {", ".join(tickers_with_theses) or "None"}
 **Tickers without thesis files:** {", ".join(tickers_without) or "None"}
+
+---
+
+{digest_context}
 
 ---
 

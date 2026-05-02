@@ -394,8 +394,8 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "name": "search_knowledge_base",
         "description": (
-            "Search across all indexed research documents — investment theses, weekly reports, "
-            "daily reports, and past conversation summaries — using semantic similarity. "
+            "Search across all indexed research documents — investment theses, uploaded news digests, "
+            "weekly reports, daily reports, and past conversation summaries — using semantic similarity. "
             "Use this when the user asks what they wrote about a topic, references past research, "
             "wants to find previous analysis on a ticker or theme, or asks 'what did I say about X'. "
             "Returns ranked snippets with source attribution."
@@ -410,8 +410,8 @@ TOOL_DEFINITIONS: list[dict] = [
                 "doc_types": {
                     "type": "string",
                     "description": (
-                        "Comma-separated document types to search. Options: thesis, weekly_report, "
-                        "daily_report, conversation_summary. Leave empty to search all."
+                        "Comma-separated document types to search. Options: thesis, news_digest, "
+                        "weekly_report, daily_report, conversation_summary. Leave empty to search all."
                     ),
                 },
                 "tickers": {
