@@ -8,7 +8,6 @@ substitutions:
   _TAG: latest
 
 options:
-  machineType: E2_HIGHCPU_8
   logging: CLOUD_LOGGING_ONLY
 
 images:
