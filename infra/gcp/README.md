@@ -11,17 +11,18 @@ This repository now has the code-level migration pieces for the GCP state move:
 ## Deploy automation (this directory)
 
 - `cloudbuild.yaml` — builds the API image and pushes to Artifact Registry.
-- `config.example.sh` — copy to `config.sh` (gitignored) and fill in project / SA / bucket / VPC values.
+- `config.example.sh` — copy to `config.sh` (gitignored) and fill in project / SA / bucket values.
 - `lib.sh` — shared helpers sourced by every other script. Defaults `IMAGE_TAG` to the current short git SHA, verifies the image exists in Artifact Registry, and refuses to run if the active gcloud project differs from `PROJECT_ID`.
-- `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL (with backups + PITR + deletion protection + require-SSL), the GCS state bucket, and Memorystore. Direct VPC egress is configured per-service in the deploy scripts; no connector is provisioned.
+- `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL (with backups + PITR + deletion protection + require-SSL), and the GCS state bucket.
 - `setup-secrets.sh` — generates random secrets, prompts for the rest, creates Cloud SQL users with their generated passwords, writes everything to Secret Manager, and binds per-secret accessor IAM to each SA.
-- `iam.sh` — idempotently grants the project-, bucket-, and Cloud Run-job-level IAM bindings the deploy SAs need (cloudsql.client, logging.logWriter, bucket objectAdmin, run.invoker on the migrator's jobs).
+- `iam.sh` — idempotently grants the project-, bucket-, and Cloud Run-job-level IAM bindings the deploy SAs need (cloudsql.client, logging.logWriter, bucket objectAdmin, job executor on scheduled jobs, and job executor with overrides on the async runner).
 - `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite). Tunables: `API_CPU`, `API_MEMORY`, `API_CONCURRENCY`, `API_MIN_INSTANCES`, `API_MAX_INSTANCES`, `API_TIMEOUT`.
-- `deploy-worker.sh` — Cloud Run worker pool running `python -m api.rq_worker`. Tunables: `WORKER_CPU`, `WORKER_MEMORY`, `WORKER_INSTANCES`, `WORKER_QUEUES`.
+- `deploy-async-job.sh` — generic Cloud Run Job running `python -m api.async_job_runner run`. Tunables: `ASYNC_JOB_CPU`, `ASYNC_JOB_MEMORY`, `ASYNC_JOB_TIMEOUT`, `ASYNC_JOB_MAX_RETRIES`.
+- `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
 - `deploy-frontend.sh` — builds `frontend/dist` and deploys Firebase Hosting for the configured `PROJECT_ID`.
-- `deploy-all.sh` — build via Cloud Build at the current short git SHA, then roll API + worker + jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`.
+- `deploy-all.sh` — build via Cloud Build at the current short git SHA, then roll API + Cloud Run Jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`.
 - `setup-scheduler.sh` — idempotently create/update the three Cloud Scheduler jobs (cache-warm every 5min, async-job-sweep hourly, top50-refresh weekday 23z UTC). Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo.
 - `cleanup-stale.sh` — dry-runs (or `--apply` deletes) GCP resources that pre-date the current scripts and are no longer referenced.
 
@@ -34,7 +35,7 @@ cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
 ./infra/gcp/iam.sh                 # project + bucket + run-job IAM
 # (still need: CREATE EXTENSION vector + alembic upgrade head as the migrator)
 ./infra/gcp/deploy-all.sh          # build + deploy everything at the current SHA
-./infra/gcp/iam.sh                 # re-run to bind run.invoker on the now-deployed jobs
+./infra/gcp/iam.sh                 # re-run to bind job executor roles on the now-deployed jobs
 ./infra/gcp/setup-scheduler.sh     # wire up Cloud Scheduler
 ```
 
@@ -49,7 +50,7 @@ Routine deploys:
 
 # or roll a single component:
 ./infra/gcp/deploy-api.sh
-./infra/gcp/deploy-worker.sh
+./infra/gcp/deploy-async-job.sh
 ```
 
 ## Cloud SQL
@@ -71,13 +72,14 @@ Cloud Run services and jobs must include:
 
 ## Async Jobs
 
-Production async work uses RQ workers, Memorystore for Valkey, and the
-`async_jobs` Postgres table.
+Production async work uses one generic Cloud Run Job for on-demand execution and
+the `async_jobs` Postgres table for durable status, progress, results, and
+dedupe.
 
 Required services:
 
 - Cloud Run service `api`: `uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8080}`
-- Cloud Run worker pool `worker`: `python -m api.rq_worker default screens reports`
+- Cloud Run Job `talisman-async-job`: `python -m api.async_job_runner run`
 - Cloud Scheduler jobs:
   - every 5 minutes: `POST /api/v1/admin/jobs/enqueue-cache-warm`
   - hourly: `POST /api/v1/admin/jobs/enqueue-async-job-sweep`
@@ -86,31 +88,36 @@ Cloud Scheduler should send both `X-Scheduler-Secret: $SCHEDULER_SECRET` and
 `X-Api-Proxy-Secret: $API_PROXY_SECRET` when it calls the API service directly.
 The setup script pulls both values from Secret Manager.
 
-Memorystore connectivity:
-
-- Create Memorystore in the same region as Cloud Run on the `default` VPC.
-- Use Direct VPC egress on Cloud Run (no Serverless VPC Access connector
-  required). The deploy scripts pass `--network=default --subnet=default
-  --vpc-egress=private-ranges-only`, which gives the service a network
-  interface in the default subnet that can reach Memorystore's private IP.
-
 ```bash
---network="${VPC_NETWORK}" \
---subnet="${VPC_SUBNET}" \
---vpc-egress=private-ranges-only \
 --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}"
 ```
 
 Required async env/secrets:
 
 ```bash
-REDIS_URL="redis://MEMORYSTORE_PRIVATE_IP:6379/0"
-ASYNC_JOB_BACKEND="rq"
-ASYNC_WORKER_QUEUES="default,screens,reports"
+ASYNC_JOB_BACKEND="cloud_run_jobs"
+ASYNC_CLOUD_RUN_JOB="talisman-async-job"
 ASYNC_JOB_COMPLETED_TTL_SECONDS="86400"
 ASYNC_JOB_FAILED_TTL_SECONDS="604800"
+ASYNC_JOB_STALE_GRACE_SECONDS="300"
 SCHEDULER_SECRET="..."
 ```
+
+The API service account needs `roles/run.jobsExecutorWithOverrides` on the async
+Cloud Run Job because dispatch passes `ASYNC_JOB_ID` as a per-execution env
+override. `iam.sh` applies that binding after the job exists.
+
+Legacy cleanup after cutover:
+
+```bash
+gcloud beta run worker-pools delete talisman-worker --region="${REGION}" --project="${PROJECT_ID}"
+gcloud redis instances delete talisman --region="${REGION}" --project="${PROJECT_ID}"
+gcloud secrets delete REDIS_URL --project="${PROJECT_ID}"
+```
+
+Only run those deletes after a deployed API revision with
+`ASYNC_JOB_BACKEND=cloud_run_jobs` is receiving traffic and async polling shows
+no old active jobs.
 
 ## Database Migrations
 

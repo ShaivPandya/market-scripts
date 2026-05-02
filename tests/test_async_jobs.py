@@ -4,7 +4,6 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 
 def test_async_jobs_migration_contract():
@@ -51,102 +50,197 @@ def test_async_job_storage_defaults_postgres_in_production(monkeypatch):
     assert postgres_jobs_enabled() is True
 
 
-def test_rq_enqueue_uses_enqueue_call_not_function_kwargs(monkeypatch):
-    from api import async_job_runner
-
-    calls: list[dict] = []
-    rq_ids: list[tuple[str, str]] = []
-
-    class FakeQueue:
-        def enqueue(self, *_args, **_kwargs):
-            raise AssertionError("Queue.enqueue would pass timeout/result_ttl as function kwargs in rq 2.x")
-
-        def enqueue_call(self, **kwargs):
-            calls.append(kwargs)
-            return SimpleNamespace(id=f"rq-{kwargs['job_id']}")
-
-    monkeypatch.setattr(async_job_runner, "_rq_queue", lambda _queue_name, _timeout_s: FakeQueue())
-    monkeypatch.setattr(async_job_runner, "set_rq_job_id", lambda job_id, rq_job_id: rq_ids.append((job_id, rq_job_id)))
-
-    async_job_runner._enqueue_rq_job("sizer", "job-123")
-
-    assert calls[0]["func"] is async_job_runner.perform_job
-    assert calls[0]["args"] == ("job-123",)
-    assert calls[0]["timeout"] == 180
-    assert calls[0]["job_id"] == "job-123"
-    assert rq_ids == [("job-123", "rq-job-123")]
-
-
-def test_poll_registered_job_syncs_failed_rq_status(monkeypatch):
-    from api import cache
-    from api.async_job_runner import poll_registered_job
-    from api.job_queue import create_or_reuse_job, get_job, set_rq_job_id
-
-    cache.invalidate_all()
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
-    row, _disposition = create_or_reuse_job(
-        "analyzer",
-        payload={},
-        cache_key="failed-rq-job",
-        queue_name="default",
-    )
-    set_rq_job_id(row["job_id"], "rq-failed")
-
-    fake_job = SimpleNamespace(
-        exc_info="TypeError: perform_job() got an unexpected keyword argument 'timeout'",
-        get_status=lambda refresh=True: "failed",
-    )
-
-    monkeypatch.setenv("ASYNC_JOB_BACKEND", "rq")
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setattr("redis.Redis.from_url", lambda _url: object())
-    monkeypatch.setattr("rq.job.Job.fetch", lambda _job_id, connection: fake_job)
-
-    payload = poll_registered_job(row["job_id"])
-
-    assert payload["status"] == "error"
-    assert "unexpected keyword argument 'timeout'" in payload["error"]
-    assert get_job(row["job_id"])["status"] == "failed"
-
-
-def test_enqueue_registered_job_replaces_failed_rq_active_job(monkeypatch):
+def test_cloud_run_enqueue_dispatches_existing_job_once(monkeypatch):
     from api import async_job_runner, cache
-    from api.job_queue import create_or_reuse_job, get_job, set_rq_job_id
+    from api.job_queue import get_job
 
     cache.invalidate_all()
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
-    old_row, _disposition = create_or_reuse_job(
-        "analyzer",
-        payload={},
-        cache_key="recover-rq-job",
-        queue_name="default",
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    dispatched: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda job_type, job_id: dispatched.append((job_type, job_id)),
     )
-    set_rq_job_id(old_row["job_id"], "rq-failed")
 
-    fake_job = SimpleNamespace(
-        exc_info="TypeError: perform_job() got an unexpected keyword argument 'timeout'",
-        get_status=lambda refresh=True: "failed",
-    )
-    enqueued: list[str] = []
-
-    monkeypatch.setenv("ASYNC_JOB_BACKEND", "rq")
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setattr("redis.Redis.from_url", lambda _url: object())
-    monkeypatch.setattr("rq.job.Job.fetch", lambda _job_id, connection: fake_job)
-    monkeypatch.setattr(async_job_runner, "_enqueue_rq_job", lambda _job_type, job_id: enqueued.append(job_id))
-
-    new_row, disposition = async_job_runner.enqueue_registered_job(
-        "analyzer",
-        {},
-        cache_key="recover-rq-job",
-    )
+    row, disposition = async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="cloud-run-dispatch")
 
     assert disposition == "created"
-    assert new_row["job_id"] != old_row["job_id"]
-    assert enqueued == [new_row["job_id"]]
-    assert get_job(old_row["job_id"])["status"] == "failed"
+    assert dispatched == [("analyzer", row["job_id"])]
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "queued"
+
+
+def test_cloud_run_dedupe_reuses_active_and_completed_jobs(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import complete_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    dispatched: list[str] = []
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda _job_type, job_id: dispatched.append(job_id),
+    )
+
+    first, first_disposition = async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="cloud-run-dedupe")
+    second, second_disposition = async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="cloud-run-dedupe")
+
+    assert first_disposition == "created"
+    assert second_disposition == "active"
+    assert second["job_id"] == first["job_id"]
+    assert dispatched == [first["job_id"]]
+
+    complete_job(first["job_id"], {"ok": True})
+    completed, completed_disposition = async_job_runner.enqueue_registered_job(
+        "analyzer",
+        {},
+        cache_key="cloud-run-dedupe",
+    )
+
+    assert completed_disposition == "completed"
+    assert completed["job_id"] == first["job_id"]
+    assert completed["result_json"] == {"ok": True}
+    assert dispatched == [first["job_id"]]
+
+
+def test_cloud_run_dispatch_failure_marks_job_failed(monkeypatch):
+    import pytest
+
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    attempted: list[str] = []
+
+    def fail_dispatch(_job_type, job_id):
+        attempted.append(job_id)
+        raise RuntimeError("run api unavailable")
+
+    monkeypatch.setattr(async_job_runner, "_enqueue_cloud_run_job", fail_dispatch)
+
+    with pytest.raises(RuntimeError, match="run api unavailable"):
+        async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="cloud-run-fail")
+
+    failed = get_job(attempted[0])
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert "run api unavailable" in failed["error"]
+
+
+def test_dispatch_cloud_run_job_invokes_generic_runner(monkeypatch):
+    from api import cache
+    from api.cloud_run_jobs import dispatch_cloud_run_job
+    from api.job_queue import create_or_reuse_job, get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("CLOUD_RUN_REGION", "us-central1")
+    monkeypatch.setenv("ASYNC_CLOUD_RUN_JOB", "talisman-async-job")
+    row, _disposition = create_or_reuse_job("analyzer", payload={}, cache_key="cloud-run-helper")
+    calls: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def __init__(self, credentials):
+            self.credentials = credentials
+
+        def post(self, url, *, json, timeout):
+            calls.append({"url": url, "json": json, "timeout": timeout, "credentials": self.credentials})
+            return FakeResponse()
+
+    monkeypatch.setattr("google.auth.default", lambda scopes: ("creds", "ignored-project"))
+    monkeypatch.setattr("google.auth.transport.requests.AuthorizedSession", FakeSession)
+
+    job_name = dispatch_cloud_run_job("analyzer", row["job_id"])
+
+    assert job_name == "talisman-async-job"
+    assert get_job(row["job_id"])["cloud_run_job_name"] == "talisman-async-job"
+    assert calls[0]["url"] == (
+        "https://run.googleapis.com/v2/projects/test-project/locations/us-central1/jobs/talisman-async-job:run"
+    )
+    env = calls[0]["json"]["overrides"]["containerOverrides"][0]["env"]
+    assert {"name": "ASYNC_JOB_ID", "value": row["job_id"]} in env
+    assert {"name": "ASYNC_JOB_TYPE", "value": "analyzer"} in env
+
+
+def test_async_job_runner_cli_completes_job(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import create_or_reuse_job, get_job
+    from api.routers import analyzer
+
+    cache.invalidate_all()
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    monkeypatch.setattr(analyzer, "_compute_analyzer_result", lambda _req: {"ok": True})
+    row, _disposition = create_or_reuse_job("analyzer", payload={}, cache_key="cli-complete", queue_name="default")
+
+    assert async_job_runner.main(["run", row["job_id"]]) == 0
+
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "completed"
+    assert persisted["result_json"] == {"ok": True}
+
+
+def test_async_job_runner_cli_marks_failure(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import create_or_reuse_job, get_job
+    from api.routers import analyzer
+
+    cache.invalidate_all()
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+
+    def fail_compute(_req):
+        raise RuntimeError("worker crashed")
+
+    monkeypatch.setattr(analyzer, "_compute_analyzer_result", fail_compute)
+    row, _disposition = create_or_reuse_job("analyzer", payload={}, cache_key="cli-fail", queue_name="default")
+
+    assert async_job_runner.main(["run", row["job_id"]]) == 1
+
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "failed"
+    assert "worker crashed" in persisted["error"]
+
+
+def test_stale_active_job_is_failed_and_no_longer_blocks_dedupe(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_JOB_STALE_GRACE_SECONDS", "0")
+    dispatched: list[str] = []
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda _job_type, job_id: dispatched.append(job_id),
+    )
+
+    first, _disposition = async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="stale-job")
+    stale_count = async_job_runner.fail_stale_active_jobs(datetime.now(UTC) + timedelta(seconds=181))
+
+    assert stale_count == 1
+    assert get_job(first["job_id"])["status"] == "failed"
+
+    second, second_disposition = async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="stale-job")
+
+    assert second_disposition == "created"
+    assert second["job_id"] != first["job_id"]
+    assert dispatched == [first["job_id"], second["job_id"]]
 
 
 def test_local_async_jobs_dedupe_concurrent_active(monkeypatch):

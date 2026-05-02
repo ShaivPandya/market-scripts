@@ -10,7 +10,6 @@
 #     never lands on disk.
 #   - User-provided secrets (ANTHROPIC_API_KEY, FRED_API_KEY,
 #     AUTH_PASSWORD_HASH source, optional vendor tokens) are read silently.
-#   - REDIS_URL is derived from the Memorystore instance host.
 #   - Each secret is created on first run and skipped on re-run; delete a
 #     secret with `gcloud secrets delete` to force regeneration.
 #   - IAM bindings are added with --condition=None and are no-ops on re-run.
@@ -26,7 +25,6 @@ require_var WORKER_SA
 require_var MIGRATOR_SA
 
 SQL_INSTANCE="${CLOUDSQL_INSTANCE##*:}"
-REDIS_INSTANCE="${REDIS_INSTANCE:-talisman}"
 
 log() { printf '\n[secrets] %s\n' "$*"; }
 
@@ -115,23 +113,7 @@ create_db_url_secret DATABASE_URL_WORKER    talisman_worker
 create_db_url_secret DATABASE_URL_MIGRATION talisman_migrator
 
 ###############################################################################
-# 2. REDIS_URL (derive from Memorystore host)
-###############################################################################
-log "REDIS_URL"
-if secret_exists REDIS_URL; then
-  echo "  REDIS_URL: exists, leaving alone"
-else
-  REDIS_HOST="$(gcloud redis instances describe "${REDIS_INSTANCE}" \
-    --region="${REGION}" --project="${PROJECT_ID}" --format='value(host)')"
-  if [[ -z "${REDIS_HOST}" ]]; then
-    echo "  Memorystore instance ${REDIS_INSTANCE} has no host yet; skipping" >&2
-  else
-    printf 'redis://%s:6379/0' "${REDIS_HOST}" | create_if_missing REDIS_URL
-  fi
-fi
-
-###############################################################################
-# 3. Random tokens
+# 2. Random tokens
 ###############################################################################
 log "Random tokens"
 random_token | create_if_missing JWT_SECRET
@@ -139,7 +121,7 @@ random_token | create_if_missing API_PROXY_SECRET
 random_token | create_if_missing SCHEDULER_SECRET
 
 ###############################################################################
-# 4. AUTH_PASSWORD_HASH (bcrypt of an admin password the user picks)
+# 3. AUTH_PASSWORD_HASH (bcrypt of an admin password the user picks)
 ###############################################################################
 log "AUTH_PASSWORD_HASH"
 if secret_exists AUTH_PASSWORD_HASH; then
@@ -159,7 +141,7 @@ else
 fi
 
 ###############################################################################
-# 5. User-provided API keys
+# 4. User-provided API keys
 ###############################################################################
 log "User-provided API keys"
 if ! secret_exists ANTHROPIC_API_KEY; then
@@ -207,11 +189,11 @@ fi
 # 6. IAM bindings — least-privilege per service account
 ###############################################################################
 API_ALLOWED=(
-  DATABASE_URL_API REDIS_URL AUTH_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
+  DATABASE_URL_API AUTH_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
   SCHEDULER_SECRET ANTHROPIC_API_KEY FRED_API_KEY ESTAT_APP_ID SODA_APP_TOKEN
 )
 WORKER_ALLOWED=(
-  DATABASE_URL_WORKER REDIS_URL ANTHROPIC_API_KEY FRED_API_KEY
+  DATABASE_URL_WORKER ANTHROPIC_API_KEY FRED_API_KEY
   ESTAT_APP_ID SODA_APP_TOKEN
 )
 MIGRATOR_ALLOWED=( DATABASE_URL_MIGRATION )

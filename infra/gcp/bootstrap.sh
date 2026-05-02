@@ -9,17 +9,12 @@
 #      passwords belong in Secret Manager). New instances are created with
 #      backups + PITR + deletion protection + require-SSL.
 #   5. Cloud Storage state bucket
-#   6. Memorystore for Valkey
-#
-# Cloud Run reaches Memorystore via Direct VPC egress configured per-service
-# in the deploy-*.sh scripts; no Serverless VPC connector is provisioned.
 #
 # Re-running is safe: every step skips if the resource already exists. Hardening
 # flags only apply at create time — to upgrade an existing instance, see the
 # follow-up notes printed at the end.
 #
-# Cloud SQL + Memorystore creation each take several minutes; the script
-# waits on them.
+# Cloud SQL creation can take several minutes; the script waits on it.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -33,12 +28,7 @@ require_active_project
 # Cloud SQL instance name is the third segment of CLOUDSQL_INSTANCE.
 SQL_INSTANCE="${CLOUDSQL_INSTANCE##*:}"
 SQL_DATABASE="talisman"
-VPC_NETWORK="${VPC_NETWORK:-default}"
 SQL_TIER="${SQL_TIER:-db-custom-2-7680}"
-REDIS_INSTANCE="${REDIS_INSTANCE:-talisman}"
-REDIS_SIZE_GB="${REDIS_SIZE_GB:-1}"
-REDIS_TIER="${REDIS_TIER:-basic}"
-REDIS_VERSION="${REDIS_VERSION:-redis_7_2}"
 
 log() { printf '\n[bootstrap] %s\n' "$*"; }
 
@@ -52,7 +42,6 @@ gcloud services enable \
   secretmanager.googleapis.com \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
-  redis.googleapis.com \
   compute.googleapis.com \
   cloudscheduler.googleapis.com \
   storage.googleapis.com \
@@ -138,23 +127,6 @@ else
 fi
 
 ###############################################################################
-# 6. Memorystore for Valkey
-###############################################################################
-log "Memorystore (Valkey): ${REDIS_INSTANCE}"
-if gcloud redis instances describe "${REDIS_INSTANCE}" \
-      --region="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
-  echo "  exists"
-else
-  gcloud redis instances create "${REDIS_INSTANCE}" \
-    --project="${PROJECT_ID}" \
-    --region="${REGION}" \
-    --tier="${REDIS_TIER}" \
-    --size="${REDIS_SIZE_GB}" \
-    --redis-version="${REDIS_VERSION}" \
-    --network="${VPC_NETWORK}"
-fi
-
-###############################################################################
 # Done. Print follow-up steps.
 ###############################################################################
 log "Bootstrap complete. Still to do (not handled by this script):"
@@ -165,16 +137,16 @@ cat <<EOF
       Secret Manager, and binds least-privilege accessor IAM.
 
   - Project / bucket / Cloud Run IAM bindings:  ./infra/gcp/iam.sh
-      cloudsql.client + logging.logWriter for the SAs, run.invoker for
-      api-sa, bucket objectAdmin on \${GCS_STATE_BUCKET}, scheduler
-      run.invoker on the Cloud Run jobs.
+      cloudsql.client + logging.logWriter for the SAs, bucket objectAdmin on
+      \${GCS_STATE_BUCKET}, and Cloud Run Jobs executor roles for Scheduler
+      and API dispatch.
 
   - CREATE EXTENSION vector;  (run as the migrator user via cloud-sql-proxy)
 
   - alembic upgrade head as the migrator user.
 
   - Build + deploy:  ./infra/gcp/deploy-all.sh
-      (or run cloudbuild + deploy-{api,worker,migration-job}.sh manually)
+      (or run cloudbuild + deploy-{api,async-job,migration-job}.sh manually)
 
   - Cloud Scheduler jobs:  ./infra/gcp/setup-scheduler.sh
       cache-warm (5min), async-job-sweep (hourly), top50-refresh (weekday 23z).

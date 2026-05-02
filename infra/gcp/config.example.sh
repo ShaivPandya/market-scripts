@@ -14,12 +14,6 @@ export IMAGE_TAG="${IMAGE_TAG:-latest}"
 # Cloud SQL (Postgres). Format: PROJECT_ID:REGION:INSTANCE_ID
 export CLOUDSQL_INSTANCE="${PROJECT_ID}:${REGION}:talisman"
 
-# Direct VPC egress for Memorystore access (replaces Serverless VPC Access connector).
-# Cloud Run gets a network interface in this subnet and reaches Memorystore's
-# private IP directly. Default subnet works for the default network.
-export VPC_NETWORK="default"
-export VPC_SUBNET="default"
-
 # Cloud Storage bucket holding production state (theses, overviews, backups).
 export GCS_STATE_BUCKET="talisman-state-prod"
 
@@ -30,7 +24,7 @@ export MIGRATOR_SA="migrator-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Cloud Run service / job names.
 export API_SERVICE="talisman-api"      # must match firebase.json rewrite
-export WORKER_POOL="talisman-worker"
+export ASYNC_JOB_RUNNER_JOB="talisman-async-job"
 export MIGRATION_JOB="talisman-migrate"
 export TOP50_REFRESH_JOB="talisman-top50-refresh"
 
@@ -41,7 +35,6 @@ export CORS_ORIGINS="https://${PROJECT_ID}.web.app,https://${PROJECT_ID}.firebas
 # These names must already exist in Secret Manager.
 export API_SECRETS=(
   "DATABASE_URL=DATABASE_URL_API:latest"
-  "REDIS_URL=REDIS_URL:latest"
   "AUTH_PASSWORD_HASH=AUTH_PASSWORD_HASH:latest"
   "JWT_SECRET=JWT_SECRET:latest"
   "API_PROXY_SECRET=API_PROXY_SECRET:latest"
@@ -54,7 +47,6 @@ export API_SECRETS=(
 
 export WORKER_SECRETS=(
   "DATABASE_URL=DATABASE_URL_WORKER:latest"
-  "REDIS_URL=REDIS_URL:latest"
   "ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
   "OPENAI_API_KEY=OPENAI_API_KEY:latest"
   "FRED_API_KEY=FRED_API_KEY:latest"

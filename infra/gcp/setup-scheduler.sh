@@ -8,8 +8,8 @@
 #   top50-refresh-daily       0 23 * * 1-5  POST  Cloud Run Jobs run -> ${TOP50_REFRESH_JOB}
 #
 # Prereqs: deploy-api.sh has run (so the API URL is resolvable), deploy-top50-
-# refresh-job.sh has run (so the job exists), and iam.sh has bound run.invoker
-# for migrator-sa on the job.
+# refresh-job.sh has run (so the job exists), and iam.sh has bound
+# roles/run.jobsExecutor for migrator-sa on the job.
 #
 # The X-Scheduler-Secret and X-Api-Proxy-Secret headers are pulled from Secret
 # Manager so the values never live in this repo.
@@ -79,8 +79,8 @@ upsert_api_job() {
 }
 
 # Create-or-update an HTTP scheduler job that runs a Cloud Run Job via the
-# admin API, authenticated as migrator-sa (which needs run.invoker on the job;
-# iam.sh provides that binding).
+# admin API, authenticated as migrator-sa (which needs roles/run.jobsExecutor on
+# the job; iam.sh provides that binding).
 upsert_run_job_trigger() {
   local name="$1" schedule="$2" job="$3"
   local uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${job}:run"

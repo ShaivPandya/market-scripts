@@ -31,8 +31,10 @@ def warm_caches(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def sweep_async_jobs(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    from api.async_job_runner import fail_stale_active_jobs
     from api.job_queue import sweep_expired_jobs
 
+    stale_failed = fail_stale_active_jobs()
     deleted = sweep_expired_jobs()
-    logger.info("async_job_sweep deleted=%d", deleted)
-    return {"deleted": deleted}
+    logger.info("async_job_sweep stale_failed=%d deleted=%d", stale_failed, deleted)
+    return {"stale_failed": stale_failed, "deleted": deleted}

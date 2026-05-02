@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
-from api.job_queue import cloud_run_job_name, create_job
+from api.job_queue import cloud_run_job_name, set_cloud_run_job_name
 
 
 class CloudRunJobConfigError(RuntimeError):
@@ -33,10 +32,10 @@ def _region() -> str:
     return region
 
 
-def dispatch_cloud_run_job(job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Create an async_jobs row and invoke the configured Cloud Run Job."""
+def dispatch_cloud_run_job(job_type: str, job_id: str) -> str:
+    """Invoke the generic async Cloud Run Job for an existing async_jobs row."""
     job_name = cloud_run_job_name(job_type)
-    job = create_job(job_type, payload=payload, cloud_run_job_name=job_name)
+    set_cloud_run_job_name(job_id, job_name)
 
     try:
         import google.auth
@@ -54,7 +53,7 @@ def dispatch_cloud_run_job(job_type: str, payload: dict[str, Any]) -> dict[str, 
                 "containerOverrides": [
                     {
                         "env": [
-                            {"name": "ASYNC_JOB_ID", "value": job["job_id"]},
+                            {"name": "ASYNC_JOB_ID", "value": job_id},
                             {"name": "ASYNC_JOB_TYPE", "value": job_type},
                         ]
                     }
@@ -64,4 +63,4 @@ def dispatch_cloud_run_job(job_type: str, payload: dict[str, Any]) -> dict[str, 
         timeout=30,
     )
     response.raise_for_status()
-    return job
+    return job_name
