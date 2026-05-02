@@ -43,6 +43,7 @@ import { ThesisManager } from "@/pages/ThesisManager"
 import { Workspace } from "@/pages/Workspace"
 import { PositionDossier } from "@/pages/PositionDossier"
 import { DCFModel } from "@/pages/DCFModel"
+import { AISettings } from "@/pages/AISettings"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -117,6 +118,7 @@ function AppRoutes() {
           <Route path="/commodity-research" element={<CommodityResearch />} />
           <Route path="/portfolio-news" element={<PortfolioNews />} />
           <Route path="/weekly-report" element={<WeeklyReport />} />
+          <Route path="/settings/ai" element={<AISettings />} />
         </Route>
       </Route>
     </Routes>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
-import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2, History, ArrowLeft, Zap, ChevronDown, SquarePen } from "lucide-react"
+import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2, History, ArrowLeft, Zap, ChevronDown, SquarePen, SlidersHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useAgentChat, fetchSessionHistory, deleteSession, type SessionSummary } from "@/hooks/useAgentChat"
+import { useAgentChat, fetchSessionHistory, deleteSession, type AgentPreferenceLevel, type AgentResponsePreferences, type SessionSummary } from "@/hooks/useAgentChat"
 import { AgentMessage } from "./AgentMessage"
 import type { ScreenContext } from "@/contexts/ScreenContext"
 
@@ -16,6 +16,45 @@ const QUICK_PROMPTS = [
   "What does positioning data say about crowded trades?",
   "Given current positioning data, macro liquidity, and my portfolio's sector tilts, what are my top 3 risks?",
 ]
+
+const PREFERENCES_STORAGE_KEY = "agent-response-preferences"
+
+const DEFAULT_RESPONSE_PREFERENCES: AgentResponsePreferences = {
+  personality: "pragmatic",
+  warmth: "less",
+  enthusiasm: "less",
+  headers_lists: "less",
+  emoji: "less",
+  fast_answers: true,
+  custom_instructions: "",
+}
+
+const LEVEL_OPTIONS: { value: AgentPreferenceLevel; label: string }[] = [
+  { value: "less", label: "Less" },
+  { value: "balanced", label: "Balanced" },
+  { value: "more", label: "More" },
+]
+
+function loadResponsePreferences(): AgentResponsePreferences {
+  try {
+    const raw = localStorage.getItem(PREFERENCES_STORAGE_KEY)
+    if (!raw) return DEFAULT_RESPONSE_PREFERENCES
+    const parsed = JSON.parse(raw) as Partial<AgentResponsePreferences>
+    return {
+      ...DEFAULT_RESPONSE_PREFERENCES,
+      ...parsed,
+    }
+  } catch {
+    return DEFAULT_RESPONSE_PREFERENCES
+  }
+}
+
+function normalizePreferences(prefs: AgentResponsePreferences): AgentResponsePreferences {
+  return {
+    ...prefs,
+    custom_instructions: prefs.custom_instructions?.trim() || "",
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Workflow definitions (mirrors backend AVAILABLE_WORKFLOWS)
@@ -49,10 +88,13 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const [input, setInput] = useState("")
   const [isWide, setIsWide] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [showPreferences, setShowPreferences] = useState(false)
   const [history, setHistory] = useState<SessionSummary[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [workflowTicker, setWorkflowTicker] = useState("")
   const [showWorkflows, setShowWorkflows] = useState(false)
+  const [preferences, setPreferences] = useState<AgentResponsePreferences>(loadResponsePreferences)
+  const [draftPreferences, setDraftPreferences] = useState<AgentResponsePreferences>(preferences)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -72,7 +114,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     const trimmed = input.trim()
     if (!trimmed || isStreaming) return
     setInput("")
-    sendMessage(trimmed, screenContext)
+    sendMessage(trimmed, screenContext, preferences)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -83,7 +125,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   }
 
   function handleQuickPrompt(prompt: string) {
-    sendMessage(prompt, screenContext)
+    sendMessage(prompt, screenContext, preferences)
   }
 
   function handleWorkflow(wf: WorkflowDef) {
@@ -92,17 +134,50 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     const cmd = wf.requiresTicker
       ? `/workflow:${wf.name}:${ticker}`
       : `/workflow:${wf.name}`
-    sendMessage(cmd, screenContext)
+    sendMessage(cmd, screenContext, preferences)
     setWorkflowTicker("")
     setShowWorkflows(false)
   }
 
   async function handleShowHistory() {
     setShowHistory(true)
+    setShowPreferences(false)
     setHistoryLoading(true)
     const sessions = await fetchSessionHistory(30)
     setHistory(sessions)
     setHistoryLoading(false)
+  }
+
+  function handleShowPreferences() {
+    setDraftPreferences(preferences)
+    setShowHistory(false)
+    setShowPreferences(true)
+  }
+
+  function handleSavePreferences() {
+    const next = normalizePreferences(draftPreferences)
+    setPreferences(next)
+    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(next))
+    setShowPreferences(false)
+  }
+
+  type LevelPreferenceKey = "warmth" | "enthusiasm" | "headers_lists" | "emoji"
+
+  function renderLevelSelect(label: string, key: LevelPreferenceKey) {
+    return (
+      <label className="flex items-center justify-between gap-3 py-2">
+        <span className="text-sm text-app">{label}</span>
+        <select
+          value={draftPreferences[key]}
+          onChange={e => setDraftPreferences(prev => ({ ...prev, [key]: e.target.value as AgentPreferenceLevel }))}
+          className="w-28 rounded-md border border-app bg-app px-2 py-1.5 text-sm text-app focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+        >
+          {LEVEL_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </label>
+    )
   }
 
   async function handleLoadSession(sessionId: string) {
@@ -160,7 +235,15 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
           <div className="flex items-center gap-2">
             {showHistory ? (
               <button
-                onClick={() => setShowHistory(false)}
+                onClick={() => { setShowHistory(false); setShowPreferences(false) }}
+                className="p-1 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+                title="Back to chat"
+              >
+                <ArrowLeft size={16} />
+              </button>
+            ) : showPreferences ? (
+              <button
+                onClick={() => setShowPreferences(false)}
                 className="p-1 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
                 title="Back to chat"
               >
@@ -170,11 +253,20 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
               <MessageCircle size={16} className="text-blue-500" />
             )}
             <span className="text-sm font-semibold text-app">
-              {showHistory ? "History" : "Stan"}
+              {showHistory ? "History" : showPreferences ? "Preferences" : "Stan"}
             </span>
           </div>
           <div className="flex items-center gap-1">
-            {!showHistory && (
+            {!showHistory && !showPreferences && (
+              <button
+                onClick={handleShowPreferences}
+                className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+                title="Response preferences"
+              >
+                <SlidersHorizontal size={14} />
+              </button>
+            )}
+            {!showHistory && !showPreferences && (
               <button
                 onClick={handleShowHistory}
                 className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
@@ -191,7 +283,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
             >
               {isWide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
-            {!showHistory && (
+            {!showHistory && !showPreferences && (
               <button
                 onClick={clearChat}
                 disabled={messages.length === 0}
@@ -269,6 +361,73 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                 ))}
               </div>
             )}
+          </div>
+        ) : showPreferences ? (
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="space-y-5">
+              <section>
+                <label className="flex items-center justify-between gap-3">
+                  <span>
+                    <span className="block text-sm font-medium text-app">Personality</span>
+                    <span className="block text-xs text-muted">Default tone for Stan responses</span>
+                  </span>
+                  <select
+                    value={draftPreferences.personality}
+                    onChange={e => setDraftPreferences(prev => ({
+                      ...prev,
+                      personality: e.target.value as AgentResponsePreferences["personality"],
+                    }))}
+                    className="w-32 rounded-md border border-app bg-app px-2 py-1.5 text-sm text-app focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  >
+                    <option value="pragmatic">Pragmatic</option>
+                    <option value="friendly">Friendly</option>
+                  </select>
+                </label>
+              </section>
+
+              <section className="divide-y divide-app">
+                {renderLevelSelect("Warm", "warmth")}
+                {renderLevelSelect("Enthusiastic", "enthusiasm")}
+                {renderLevelSelect("Headers & Lists", "headers_lists")}
+                {renderLevelSelect("Emoji", "emoji")}
+              </section>
+
+              <section>
+                <label className="flex items-center justify-between gap-3">
+                  <span>
+                    <span className="block text-sm font-medium text-app">Fast Answers</span>
+                    <span className="block text-xs text-muted">Prefer direct answers for simple questions</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={draftPreferences.fast_answers}
+                    onChange={e => setDraftPreferences(prev => ({ ...prev, fast_answers: e.target.checked }))}
+                    className="h-4 w-4 accent-blue-600"
+                  />
+                </label>
+              </section>
+
+              <section>
+                <label className="block text-sm font-medium text-app mb-2">Custom Instructions</label>
+                <textarea
+                  value={draftPreferences.custom_instructions ?? ""}
+                  onChange={e => setDraftPreferences(prev => ({ ...prev, custom_instructions: e.target.value }))}
+                  placeholder="End responses after answering. Do not ask follow-up questions."
+                  rows={6}
+                  maxLength={2000}
+                  className="w-full resize-none rounded-lg border border-app bg-app px-3 py-2 text-sm text-app placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                />
+              </section>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSavePreferences}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
           </div>
         ) : (
           <>

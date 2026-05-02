@@ -83,6 +83,31 @@ export const authApi = {
   me: () => client.get("/auth/me").then(r => r.data),
 }
 
+export type LLMProvider = "anthropic" | "openai"
+
+export interface LLMProviderStatus {
+  provider: LLMProvider
+  label: string
+  configured: boolean
+  api_key_env: string
+}
+
+export interface LLMSettings {
+  provider: LLMProvider
+  available_providers: LLMProviderStatus[]
+  models: {
+    low: string
+    mid: string
+    high: string
+  }
+}
+
+export const fetchLLMSettings = () =>
+  client.get("/settings/llm").then(r => r.data as LLMSettings)
+
+export const updateLLMSettings = (provider: LLMProvider) =>
+  client.put("/settings/llm", { provider }).then(r => r.data as LLMSettings)
+
 // ─── GET endpoints ───────────────────────────────────────────────────────────
 
 export const fetchPortfolio = (timeframe: string) =>

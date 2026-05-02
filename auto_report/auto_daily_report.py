@@ -61,7 +61,7 @@ from auto_report.recommendations import (  # noqa: E402
     stable_hash,
 )
 from auto_report.shared import (  # noqa: E402
-    call_claude,
+    call_report_llm,
     create_github_issue,
     load_prompt_file,
     serialize_bundle,
@@ -88,7 +88,7 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs" / "daily"
 HISTORY_DIR = OUTPUT_DIR / "history"
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
 
-# Separators for parsing Claude responses
+# Separators for parsing LLM responses
 PASS1_SUMMARY_SEPARATOR = "<!-- PASS1_STANCE_JSON -->"
 DAILY_SUMMARY_SEPARATOR = "<!-- DAILY_SUMMARY_JSON -->"
 
@@ -119,7 +119,7 @@ def _format_currency(amount: float) -> str:
 
 
 def validate_and_clamp_leverage(leverage: float, stance: str) -> float:
-    """Clamp Claude's chosen leverage to the valid range for the given stance."""
+    """Clamp the LLM's chosen leverage to the valid range for the given stance."""
     bounds = STANCE_LEVERAGE_MAP.get(stance)
     if bounds is None:
         log.warning("Unknown stance %r — using DEFAULT_LEVERAGE", stance)
@@ -801,7 +801,7 @@ def _fallback_daily_summary() -> dict:
 
 
 def parse_daily_response(text: str) -> tuple[str, dict]:
-    """Parse Claude response into (report_md, summary_dict)."""
+    """Parse LLM response into (report_md, summary_dict)."""
     if DAILY_SUMMARY_SEPARATOR in text:
         parts = text.split(DAILY_SUMMARY_SEPARATOR, 1)
         report_md = parts[0].strip()
@@ -877,7 +877,7 @@ def _generate_daily_recommendations(
         extra_context_md=_build_recommendations_extra_context(risk_summary_md, adjustments_md),
     )
     try:
-        raw_text, _ = call_claude(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
+        raw_text, _ = call_report_llm(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
         try:
             memo_md, payload = parse_recommendations_response(
                 raw_text,
@@ -1133,7 +1133,7 @@ def main():
     pass1_citations = []
 
     try:
-        pass1_text, pass1_citations = call_claude(
+        pass1_text, pass1_citations = call_report_llm(
             system_msg=pass1_system,
             user_msg=pass1_user,
             allowed_domains=allowed_domains_pass1,
@@ -1212,7 +1212,7 @@ def main():
     pass2_citations = []
 
     try:
-        pass2_text, pass2_citations = call_claude(
+        pass2_text, pass2_citations = call_report_llm(
             system_msg=pass2_system,
             user_msg=pass2_user,
             allowed_domains=None,  # no web search in Pass 2

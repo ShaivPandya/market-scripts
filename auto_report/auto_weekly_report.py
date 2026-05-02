@@ -46,7 +46,7 @@ from auto_report.recommendations import (  # noqa: E402
     stable_hash,
 )
 from auto_report.shared import (  # noqa: E402
-    call_claude,
+    call_report_llm,
     create_github_issue,
     load_prompt_file,
     serialize_bundle,
@@ -752,12 +752,12 @@ def build_performance_markdown(raw_data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Prepare bundle for Claude prompt (strip bulky fields)
+# Prepare bundle for LLM prompt (strip bulky fields)
 # ---------------------------------------------------------------------------
 
 
 def _prepare_prompt_bundle(bundle: dict) -> dict:
-    """Return a slimmed copy of the bundle for the Claude prompt.
+    """Return a slimmed copy of the bundle for the LLM prompt.
 
     Strips bulky intraday series (indices/fx/commodities) down to
     start+latest values, and removes heavy fields from top50.
@@ -770,7 +770,7 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
     # The serialized bundle contains full 15-min intraday Series
     # (~130 points per instrument) which bloat the prompt.  The
     # performance markdown table already captures start/latest, so
-    # Claude only needs summary values per instrument.
+    # the LLM only needs summary values per instrument.
     _SERIES_KEYS = {
         "indices": "indices",
         "fx": "pairs",
@@ -791,7 +791,7 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
                 first = series_list[0]
                 last = series_list[-1]
                 series_map[name] = {"start": first, "latest": last}
-        # Drop the order list — not needed by Claude
+        # Drop the order list — not needed by the LLM
         block.pop("order", None)
 
     # --- Strip heavy fields from top50 ---
@@ -918,7 +918,7 @@ def _prepare_prompt_bundle(bundle: dict) -> dict:
     return prompt_bundle
 
 
-# call_claude is imported from auto_report.shared
+# call_report_llm is imported from auto_report.shared
 
 
 def _dedupe_citations(citations: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -1029,10 +1029,10 @@ def parse_response(text: str) -> tuple[str, dict]:
         try:
             summary = json.loads(json_part)
         except json.JSONDecodeError:
-            log.warning("Failed to parse summary JSON from Claude response")
+            log.warning("Failed to parse summary JSON from LLM response")
             summary = _fallback_summary()
     else:
-        log.warning("No summary separator found in Claude response")
+        log.warning("No summary separator found in LLM response")
         report_md = text.strip()
         summary = _fallback_summary()
     if summary.get("stance") not in STANCE_OPTIONS:
@@ -1085,7 +1085,7 @@ def _generate_weekly_recommendations(
         extra_context_md=f"## Deterministic Weekly Performance Tables\n\n{perf_md}",
     )
     try:
-        raw_text, _ = call_claude(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
+        raw_text, _ = call_report_llm(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
         try:
             memo_md, payload = parse_recommendations_response(
                 raw_text,
@@ -1174,7 +1174,7 @@ def _format_news_digest_context(news_digests: dict) -> str:
 
 
 def _build_thesis_prompt(thesis_data: dict, web_search: bool = False) -> tuple[str, str]:
-    """Build (system_msg, user_msg) for the thesis monitoring Claude call."""
+    """Build (system_msg, user_msg) for the thesis monitoring LLM call."""
     system_msg = (
         "You are an investment analyst evaluating portfolio positions against their "
         "original investment theses. For each position, determine whether recent data "
@@ -1359,7 +1359,7 @@ def _fallback_thesis_summary() -> dict:
 
 
 def parse_thesis_response(text: str) -> tuple[str, dict]:
-    """Parse thesis monitoring Claude response into (markdown, summary_dict)."""
+    """Parse thesis monitoring LLM response into (markdown, summary_dict)."""
     if THESIS_SEPARATOR in text:
         parts = text.split(THESIS_SEPARATOR, 1)
         thesis_md = parts[0].strip()
@@ -1504,7 +1504,7 @@ def main():
         allowed_domains = None
         log.info("Web search disabled")
 
-    # 7. Call Claude for weekly commentary
+    # 7. Call the configured LLM for weekly commentary
     user_msg = _build_user_message(bundle, perf_md, web_search=use_search)
     report_md = None
     summary = None
@@ -1512,14 +1512,14 @@ def main():
     citations: list[tuple[str, str]] = []
 
     try:
-        response_text, citations = call_claude(system_msg, user_msg, allowed_domains=allowed_domains)
+        response_text, citations = call_report_llm(system_msg, user_msg, allowed_domains=allowed_domains)
         report_md, summary = parse_response(response_text)
         report_md = _insert_weekly_performance(report_md, perf_md)
         report_md = strip_llm_meta(report_md)
     except Exception as e:
-        log.error("Claude call failed: %s", e, exc_info=True)
+        log.error("LLM call failed: %s", e, exc_info=True)
         error_msg = str(e)
-        report_md = f"# Weekly Report — {today_str}\n\n**Error**: Claude generation failed.\n\n```\n{error_msg}\n```"
+        report_md = f"# Weekly Report — {today_str}\n\n**Error**: LLM generation failed.\n\n```\n{error_msg}\n```"
         summary = _fallback_summary()
         summary["error"] = error_msg
 
@@ -1534,7 +1534,7 @@ def main():
             thesis_data = collect_thesis_data()
             thesis_system, thesis_user = _build_thesis_prompt(thesis_data, web_search=use_search)
 
-            thesis_text, thesis_citations = call_claude(
+            thesis_text, thesis_citations = call_report_llm(
                 system_msg=thesis_system,
                 user_msg=thesis_user,
                 allowed_domains=allowed_domains,

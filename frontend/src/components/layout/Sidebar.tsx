@@ -70,6 +70,12 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Commodity Proxy Screener", path: "/commodity-research" },
     ],
   },
+  {
+    label: "Settings",
+    pages: [
+      { label: "AI Settings", path: "/settings/ai" },
+    ],
+  },
 ]
 
 interface SidebarProps {

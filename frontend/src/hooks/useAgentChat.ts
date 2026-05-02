@@ -30,6 +30,19 @@ export interface SessionSummary {
   summary: string | null
 }
 
+export type AgentPreferenceLevel = "less" | "balanced" | "more"
+export type AgentPersonality = "friendly" | "pragmatic"
+
+export interface AgentResponsePreferences {
+  personality: AgentPersonality
+  warmth: AgentPreferenceLevel
+  enthusiasm: AgentPreferenceLevel
+  headers_lists: AgentPreferenceLevel
+  emoji: AgentPreferenceLevel
+  fast_answers: boolean
+  custom_instructions?: string | null
+}
+
 interface AgentChatState {
   messages: AgentMessage[]
   isStreaming: boolean
@@ -213,7 +226,11 @@ export function useAgentChat() {
   }, [state.messages, state.sessionId])
 
   // ------ sendMessage ------
-  const sendMessage = useCallback(async (content: string, screenContext?: ScreenContext | null) => {
+  const sendMessage = useCallback(async (
+    content: string,
+    screenContext?: ScreenContext | null,
+    responsePreferences?: AgentResponsePreferences | null,
+  ) => {
     const userMsg: AgentMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -260,6 +277,9 @@ export function useAgentChat() {
               summary: screenContext.summary ?? null,
               corresponding_tools: screenContext.correspondingTools ?? null,
             },
+          }),
+          ...(responsePreferences && {
+            response_preferences: responsePreferences,
           }),
         }),
         signal: controller.signal,
