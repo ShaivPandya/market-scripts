@@ -185,16 +185,29 @@ else
   echo "  SODA_APP_TOKEN: exists, leaving alone"
 fi
 
+if ! secret_exists EIA_API_KEY; then
+  v="$(prompt_optional 'EIA_API_KEY')"
+  if [[ -n "${v}" ]]; then
+    printf '%s' "${v}" | create_if_missing EIA_API_KEY
+  else
+    echo "  EIA_API_KEY: skipped (remove from API_SECRETS/WORKER_SECRETS in config.sh until added)"
+  fi
+  unset v
+else
+  echo "  EIA_API_KEY: exists, leaving alone"
+fi
+
 ###############################################################################
 # 6. IAM bindings — least-privilege per service account
 ###############################################################################
 API_ALLOWED=(
   DATABASE_URL_API AUTH_PASSWORD_HASH JWT_SECRET API_PROXY_SECRET
-  SCHEDULER_SECRET ANTHROPIC_API_KEY FRED_API_KEY ESTAT_APP_ID SODA_APP_TOKEN
+  SCHEDULER_SECRET ANTHROPIC_API_KEY FRED_API_KEY
+  ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY
 )
 WORKER_ALLOWED=(
   DATABASE_URL_WORKER ANTHROPIC_API_KEY FRED_API_KEY
-  ESTAT_APP_ID SODA_APP_TOKEN
+  ESTAT_APP_ID SODA_APP_TOKEN EIA_API_KEY
 )
 MIGRATOR_ALLOWED=( DATABASE_URL_MIGRATION )
 
