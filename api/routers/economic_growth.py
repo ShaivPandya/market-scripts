@@ -1,15 +1,27 @@
-import os
+import json
+from datetime import UTC, datetime
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
 
-from api.cache import get_cached, set_cached, short_cache
-from api.exceptions import ConfigurationError, DataFetchError
+from api.cache import delete_cached, get_cached, set_cached, short_cache
+from api.exceptions import ConfigurationError, DataFetchError, ValidationError
 from api.serializers import serialize_response
+from api.state_storage import exists_text, read_bytes, read_text, write_bytes, write_text
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
+from paths import PROJECT_ROOT
 
 router = APIRouter()
 REQUIRED_CURRENCY_PERIODS = ["1-mo", "3-mo", "6-mo", "1-yr"]
+ECONOMIC_GROWTH_CACHE_KEY = "economic_growth"
+
+CRB_LOCAL_PATH = PROJECT_ROOT / "data_cache" / "economic_growth" / "crb.xlsx"
+CRB_METADATA_LOCAL_PATH = PROJECT_ROOT / "data_cache" / "economic_growth" / "crb.json"
+CRB_GCS_KEY = "live/economic_growth/crb.xlsx"
+CRB_METADATA_GCS_KEY = "live/economic_growth/crb.json"
+MAX_CRB_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
+_EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 
 
 def _normalize_currency_payload(payload: dict) -> dict:
@@ -29,21 +41,117 @@ def _normalize_currency_payload(payload: dict) -> dict:
     return payload
 
 
+def _is_excel_upload(file: UploadFile) -> bool:
+    filename = Path(file.filename or "").name
+    return Path(filename).suffix.lower() in _EXCEL_EXTENSIONS
+
+
+def _crb_content_type(filename: str) -> str:
+    return (
+        "application/vnd.ms-excel"
+        if filename.lower().endswith(".xls")
+        else ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    )
+
+
+def _read_crb_metadata() -> dict:
+    if not exists_text(CRB_METADATA_LOCAL_PATH, CRB_METADATA_GCS_KEY):
+        return {}
+    try:
+        raw = read_text(CRB_METADATA_LOCAL_PATH, CRB_METADATA_GCS_KEY, encoding="utf-8")
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_managed_crb() -> tuple[bytes | None, dict]:
+    if not exists_text(CRB_LOCAL_PATH, CRB_GCS_KEY):
+        return None, {}
+    return read_bytes(CRB_LOCAL_PATH, CRB_GCS_KEY), _read_crb_metadata()
+
+
+def _crb_metadata_from_upload(payload: bytes, filename: str) -> dict:
+    from macro.economic_growth.economic_growth import read_crb_from_xls
+
+    df = read_crb_from_xls(payload, filename=filename)
+    if df is None or df.empty:
+        raise ValidationError("Uploaded CRB workbook does not contain valid date/value rows.")
+
+    latest = df.iloc[-1]
+    return {
+        "filename": filename,
+        "uploaded_at": datetime.now(UTC).isoformat(),
+        "rows": int(len(df)),
+        "latest_date": latest["date"].date().isoformat(),
+        "latest_value": float(latest["value"]),
+        "size_bytes": len(payload),
+    }
+
+
+def _write_managed_crb(payload: bytes, metadata: dict) -> None:
+    filename = str(metadata.get("filename") or "crb.xlsx")
+    string_metadata = {key: str(value) for key, value in metadata.items() if value is not None}
+    write_bytes(
+        CRB_LOCAL_PATH,
+        CRB_GCS_KEY,
+        payload,
+        content_type=_crb_content_type(filename),
+        metadata=string_metadata,
+    )
+    write_text(
+        CRB_METADATA_LOCAL_PATH,
+        CRB_METADATA_GCS_KEY,
+        json.dumps(metadata, sort_keys=True),
+        content_type="application/json; charset=utf-8",
+    )
+
+
 @router.get("/economic-growth")
 def get_economic_growth():
-    key = "economic_growth"
+    key = ECONOMIC_GROWTH_CACHE_KEY
     cached = get_cached(short_cache, key)
     if cached is not None:
         return _normalize_currency_payload(cached)
     try:
         from macro.economic_growth.economic_growth import get_data
 
-        data = get_data()
+        crb_bytes, crb_metadata = _load_managed_crb()
+        if crb_bytes is not None:
+            data = get_data(
+                crb_bytes=crb_bytes,
+                crb_filename=crb_metadata.get("filename") if isinstance(crb_metadata.get("filename"), str) else None,
+                crb_uploaded_at=(
+                    crb_metadata.get("uploaded_at") if isinstance(crb_metadata.get("uploaded_at"), str) else None
+                ),
+            )
+        else:
+            data = get_data()
     except Exception as e:
         raise DataFetchError(source="economic_growth", detail=str(e)) from e
     result = _normalize_currency_payload(serialize_response(data))
     set_cached(short_cache, key, result)
     return result
+
+
+@router.post("/economic-growth/crb-file")
+async def upload_economic_growth_crb_file(
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
+):
+    if not _is_excel_upload(file):
+        raise ValidationError("File must be an Excel workbook (.xlsx or .xls).")
+
+    payload = await file.read()
+    if not payload:
+        raise ValidationError("Uploaded file is empty.")
+    if len(payload) > MAX_CRB_UPLOAD_SIZE_BYTES:
+        raise ValidationError("Uploaded CRB workbook exceeds 10MB limit.")
+
+    filename = Path(file.filename or "crb.xlsx").name
+    metadata = _crb_metadata_from_upload(payload, filename)
+    _write_managed_crb(payload, metadata)
+    delete_cached(short_cache, ECONOMIC_GROWTH_CACHE_KEY)
+    return serialize_response({"status": "ok", "crb": metadata})
 
 
 class EconomicGrowthAnalyzeRequest(BaseModel):

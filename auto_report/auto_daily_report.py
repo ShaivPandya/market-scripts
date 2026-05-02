@@ -36,6 +36,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from auto_report.auto_weekly_report import (
+    DAILY_NEWS_DIGEST_DAYS,
     DEFAULT_NEWS_SOURCES,
     RULES_TEXT,
     _prepare_prompt_bundle,
@@ -72,7 +73,6 @@ ET = ZoneInfo("America/New_York")
 OUTPUT_DIR = SCRIPT_DIR / "outputs" / "daily"
 HISTORY_DIR = OUTPUT_DIR / "history"
 PROMPTS_DIR = SCRIPT_DIR / "prompts"
-OPEN_POSITIONS_CSV = PROJECT_ROOT / "portfolio" / "open_positions.csv"
 
 # Separators for parsing Claude responses
 PASS1_SUMMARY_SEPARATOR = "<!-- PASS1_STANCE_JSON -->"
@@ -165,27 +165,13 @@ def _is_weekday_morning_et() -> bool:
 
 
 def load_portfolio():
-    """Load portfolio positions and return a pandas DataFrame."""
-    import pandas as pd
-
+    """Load portfolio positions from the portfolio db and return a DataFrame."""
     from portfolio.portfolio_db import get_positions_df
 
-    df = get_positions_df(fallback_to_csv=True)
+    df = get_positions_df()
     df["ticker"] = df["ticker"].str.strip().str.upper()
     df["direction"] = df["direction"].fillna("").str.strip().str.lower()
     df["conviction"] = df["conviction"].fillna(3).astype(int)
-    return df
-
-
-def load_open_positions():
-    """Load open_positions.csv (IBKR export). Returns empty DataFrame if missing."""
-    import pandas as pd
-
-    if not OPEN_POSITIONS_CSV.exists():
-        log.warning("open_positions.csv not found at %s", OPEN_POSITIONS_CSV)
-        return pd.DataFrame()
-    df = pd.read_csv(OPEN_POSITIONS_CSV)
-    df.columns = df.columns.str.strip()
     return df
 
 
@@ -220,7 +206,7 @@ def collect_risk_data(portfolio_df) -> dict:
         log.warning("technical analysis fetch failed: %s", e, exc_info=True)
         results["technical_analysis"] = {"error": str(e)}
 
-    # 2. Price momentum (batch — uses portfolio.csv)
+    # 2. Price momentum (batch)
     try:
         from portfolio.momentum.price_momentum.momentum import get_data as get_momentum_data
 
@@ -322,8 +308,8 @@ def run_sizer(portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERA
 # ---------------------------------------------------------------------------
 
 
-def compute_adjustments(sizer_result: dict, open_positions_df) -> pd.DataFrame:
-    """Compare sizer target shares to current open positions.
+def compute_adjustments(sizer_result: dict, portfolio_df) -> pd.DataFrame:
+    """Compare sizer target shares to current shares from the portfolio db.
 
     Returns DataFrame with columns: ticker, direction, target_shares,
     current_shares, delta, action, price, dollar_value.
@@ -352,16 +338,20 @@ def compute_adjustments(sizer_result: dict, open_positions_df) -> pd.DataFrame:
                 "direction": "hedge",
             }
 
-    # Build current holdings map from open_positions.csv
+    # Build current holdings map from the portfolio db
     current: dict[str, int] = {}
-    if not open_positions_df.empty:
-        for _, row in open_positions_df.iterrows():
-            symbol = str(row.get("Symbol", "")).strip().upper()
-            qty = int(row.get("Quantity", 0))
-            side = str(row.get("Side", "")).strip().lower()
-            if side == "short":
-                qty = -abs(qty)
-            current[symbol] = qty
+    for _, row in portfolio_df.iterrows():
+        symbol = str(row.get("ticker", "")).strip().upper()
+        if not symbol:
+            continue
+        shares = row.get("shares")
+        if shares is None or pd.isna(shares):
+            continue
+        qty = int(shares)
+        direction = str(row.get("direction", "")).strip().lower()
+        if direction == "short":
+            qty = -abs(qty)
+        current[symbol] = qty
 
     all_tickers = sorted(set(list(target.keys()) + list(current.keys())))
 
@@ -589,6 +579,8 @@ Before writing the analysis, use the web search tool to find the key market-movi
 news from the past 24 hours (Fed speakers, economic releases, geopolitical events,
 major premarket moves, overnight developments) that are relevant to today's session.
 Weave this context into your analysis and cite sources for news-driven claims.
+Treat the news_digests block as user-curated high-signal leads from uploaded digest
+files; use web search to verify and cite claims rather than citing the uploaded digest itself.
 
 Analyze the market environment through the lens of the investment philosophy and produce:
 
@@ -615,6 +607,7 @@ level within the stance — e.g., a borderline Offensive environment might warra
 
 Constraints:
 - Cite specific metrics from the data and news search.
+- Use news_digests explicitly when it changes the assessment of market character, macro risk, or portfolio risk.
 - Use labor_market, housing, central_banks, yield_curve, bond_dashboard, and country_dashboard explicitly when they inform Macro Momentum, Liquidity/Rates, Risk Sentiment, or Cycle Position.
 - Assess the context for a long/short equity portfolio — not generic market commentary.
 - Be direct and concise. No filler.
@@ -922,7 +915,7 @@ def main():
         "--book",
         type=float,
         default=None,
-        help="Book size in USD (default: sum of abs(PositionValue) from open_positions.csv)",
+        help="Book size in USD (default: sum of abs(shares * cost_basis) from the portfolio db)",
     )
     parser.add_argument(
         "--no-search",
@@ -939,27 +932,28 @@ def main():
     log.info("=== Daily risk report run starting (%s) ===", today_str)
 
     # ---------------------------------------------------------------
-    # STEP 1: Load portfolio + open positions
+    # STEP 1: Load portfolio from db
     # ---------------------------------------------------------------
     portfolio_df = load_portfolio()
-    open_positions_df = load_open_positions()
-    log.info(
-        "Loaded %d portfolio positions, %d open positions",
-        len(portfolio_df),
-        len(open_positions_df),
-    )
+    log.info("Loaded %d portfolio positions from db", len(portfolio_df))
 
     # ---------------------------------------------------------------
     # STEP 2: Determine book size
     # ---------------------------------------------------------------
     if args.book:
         book = args.book
-    elif not open_positions_df.empty and "PositionValue" in open_positions_df.columns:
-        book = float(open_positions_df["PositionValue"].abs().sum())
-        log.info("Book size from open_positions.csv: $%s", _format_currency(book))
     else:
-        book = 100_000.0
-        log.info("Using default book size: $%s", _format_currency(book))
+        import pandas as pd
+
+        shares = pd.to_numeric(portfolio_df.get("shares"), errors="coerce")
+        cost_basis = pd.to_numeric(portfolio_df.get("cost_basis"), errors="coerce")
+        position_values = (shares.abs() * cost_basis).dropna()
+        if not position_values.empty and float(position_values.sum()) > 0:
+            book = float(position_values.sum())
+            log.info("Book size from portfolio db (shares * cost_basis): $%s", _format_currency(book))
+        else:
+            book = 100_000.0
+            log.info("Using default book size: $%s", _format_currency(book))
 
     # ---------------------------------------------------------------
     # STEP 3: Load previous-day summary (feeds Pass 1 context)
@@ -975,7 +969,7 @@ def main():
     # ---------------------------------------------------------------
     log.info("Collecting market data (12 sources)...")
     t_collect = time.perf_counter()
-    market_data = collect_market_data()
+    market_data = collect_market_data(news_digest_days=DAILY_NEWS_DIGEST_DAYS)
     log.info("Market data collected in %.2fs", time.perf_counter() - t_collect)
 
     # ---------------------------------------------------------------
@@ -1044,7 +1038,7 @@ def main():
     # ---------------------------------------------------------------
     # STEP 9: Compute share adjustments (deterministic)
     # ---------------------------------------------------------------
-    adjustments_df = compute_adjustments(sizer_result, open_positions_df)
+    adjustments_df = compute_adjustments(sizer_result, portfolio_df)
 
     # ---------------------------------------------------------------
     # STEP 10: Build deterministic Markdown sections

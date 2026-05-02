@@ -16,7 +16,7 @@ import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -768,7 +768,7 @@ def _openai_user_prompt(prompt: str) -> list[dict]:
 
 
 def _stream_llm_response(
-    client: object, provider: str, stream_kwargs: dict[str, object], text_parts: list[str] | None = None
+    client: Any, provider: str, stream_kwargs: dict[str, object], text_parts: list[str] | None = None
 ):
     if provider == PROVIDER_ANTHROPIC:
         with client.messages.stream(**stream_kwargs) as stream:

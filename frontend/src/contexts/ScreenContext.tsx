@@ -53,7 +53,7 @@ const ROUTE_PAGE_MAP: Record<string, RouteEntry> = {
   "/signal-aggregator": { pageName: "Signal Aggregator", tools: ["get_signal_aggregator"] },
   "/ontology": { pageName: "Ontology Workbench", tools: ["query_ontology"] },
   "/market-technicals": { pageName: "Market Technicals", tools: ["get_market_breadth", "get_vix_term_structure"] },
-  "/portfolio-news": { pageName: "Portfolio News" },
+  "/portfolio-news": { pageName: "News Digests" },
   "/breakout": { pageName: "Breakout", tools: ["get_breakout"] },
   "/sentiment": { pageName: "Sentiment", tools: ["get_sentiment"] },
   "/positioning": { pageName: "Positioning", tools: ["get_positioning"] },

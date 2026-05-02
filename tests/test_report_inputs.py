@@ -92,6 +92,7 @@ def test_collect_data_includes_expanded_macro_sources(monkeypatch):
         "country_dashboard",
         "industry",
         "sentiment",
+        "news_digests",
     }
     assert expected.issubset(data.keys())
     assert data["country_dashboard"]["Inflation"]["metric"] == "Inflation"
@@ -203,13 +204,34 @@ def test_weekly_and_daily_prompts_call_out_expanded_macro_sources():
         "yield_curve": {},
         "bond_dashboard": {},
         "country_dashboard": {},
+        "news_digests": {
+            "window_days": 8,
+            "digests": [
+                {
+                    "title": "User Digest",
+                    "generated_date": "2026-05-01",
+                    "sections": [{"name": "macro", "stories": [{"headline": "Fed story", "notes": []}]}],
+                }
+            ],
+            "counts": {"digests": 1, "stories": 1},
+        },
     }
 
     weekly_msg = auto_weekly_report._build_user_message(bundle, "## Weekly Performance", web_search=False)
     daily_msg = auto_daily_report._build_pass1_user_message(bundle, "## Weekly Performance")
 
-    for key in ("labor_market", "housing", "central_banks", "yield_curve", "bond_dashboard", "country_dashboard"):
+    for key in (
+        "labor_market",
+        "housing",
+        "central_banks",
+        "yield_curve",
+        "bond_dashboard",
+        "country_dashboard",
+        "news_digests",
+    ):
         assert key in weekly_msg
         assert key in daily_msg
     assert "policy, rates, growth" in weekly_msg
     assert "Liquidity/Rates" in daily_msg
+    assert "curated news context" in weekly_msg
+    assert "user-curated high-signal leads" in daily_msg

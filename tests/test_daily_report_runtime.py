@@ -5,7 +5,7 @@ import pytest
 
 import portfolio.portfolio_db as portfolio_db
 from auto_report import auto_daily_report
-from macro.economic_growth.economic_growth import calculate_return
+from macro.economic_growth.economic_growth import calculate_equity_relative_returns, calculate_return
 from portfolio.portfolio_optimizer import portfolio_sizer as portfolio_sizer_module
 
 
@@ -85,3 +85,19 @@ def test_calculate_return_handles_lower_precision_datetime_index():
     )
 
     assert result == pytest.approx(10.0)
+
+
+def test_calculate_equity_relative_returns_uses_row_benchmarks():
+    results = {
+        "S&P 500": {"1-mo": 5.0, "3-mo": 4.0},
+        "Russell 2000": {"1-mo": 7.5, "3-mo": 3.0},
+        "STOXX 600": {"1-mo": 2.0, "3-mo": 1.0},
+        "Europe Banks": {"1-mo": 6.0, "3-mo": -1.0},
+    }
+
+    relative = calculate_equity_relative_returns(results, ["1-mo", "3-mo"])
+
+    assert relative["S&P 500"] == {"1-mo": None, "3-mo": None}
+    assert relative["STOXX 600"] == {"1-mo": None, "3-mo": None}
+    assert relative["Russell 2000"] == {"1-mo": 2.5, "3-mo": -1.0}
+    assert relative["Europe Banks"] == {"1-mo": 4.0, "3-mo": -2.0}

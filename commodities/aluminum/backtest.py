@@ -253,14 +253,14 @@ def compute_factor_diagnostics(features: pd.DataFrame) -> pd.DataFrame:
         spearman = float(subset[feature].corr(subset[TARGET_COLUMN], method="spearman")) if obs >= 3 else float("nan")
 
         low_mean = high_mean = spread = float("nan")
-        if obs >= 12 and subset[feature].nunique() >= 3:
+        if obs >= 6 and subset[feature].nunique() >= 3:
             low = subset[feature].quantile(1.0 / 3.0)
             high = subset[feature].quantile(2.0 / 3.0)
             low_mean = float(subset.loc[subset[feature] <= low, TARGET_COLUMN].mean())
             high_mean = float(subset.loc[subset[feature] >= high, TARGET_COLUMN].mean())
             spread = high_mean - low_mean
 
-        if obs < 24 or not bool(meta.loc[feature, "available"]):
+        if obs < 6 or not bool(meta.loc[feature, "available"]):
             classification = "unavailable"
         elif math.isfinite(spearman) and abs(spearman) >= 0.05 and math.isfinite(spread) and abs(spread) >= 0.002:
             classification = "useful" if spearman * spread >= 0 else "unstable"

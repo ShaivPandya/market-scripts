@@ -358,6 +358,24 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: Ab
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)
 
+export const uploadEconomicGrowthCrbFile = (file: File) => {
+  const formData = new FormData()
+  formData.append("file", file)
+  return client
+    .post("/economic-growth/crb-file", formData, { timeout: 120_000 })
+    .then(r => r.data as {
+      status: "ok"
+      crb: {
+        filename: string
+        uploaded_at: string
+        rows: number
+        latest_date: string
+        latest_value: number
+        size_bytes: number
+      }
+    })
+}
+
 export const fetchWeeklyReport = () =>
   client.get("/weekly-report", { timeout: 180_000 }).then(r => r.data)
 
@@ -429,8 +447,69 @@ export const fetchBreakout = () =>
 export const fetchCentralBanks = (refresh = false) =>
   client.get(`/central-banks?refresh=${refresh}`).then(r => r.data)
 
-export const fetchPortfolioNews = (refresh = false) =>
-  client.get(`/portfolio-news?refresh=${refresh}`).then(r => r.data)
+export interface NewsDigestStory {
+  id: string
+  section: string
+  headline: string
+  notes: string[]
+  digest_id?: string
+  digest_title?: string
+  generated_date?: string
+}
+
+export interface NewsDigestSummary {
+  id: string
+  title: string
+  slug: string
+  filename: string
+  generated_date: string
+  uploaded_at: string
+  updated_at: string
+  content_hash: string
+  story_count: number
+  section_count: number
+  sections: Array<{ name: string; story_count: number }>
+}
+
+export interface NewsDigestListResponse {
+  items: NewsDigestSummary[]
+  stories: NewsDigestStory[]
+  counts: { digests: number; stories: number }
+}
+
+export interface NewsDigestDetail extends NewsDigestSummary {
+  content: string
+  parsed: {
+    title: string
+    slug: string
+    generated_date: string
+    story_count: number
+    section_count: number
+    sections: Array<{ name: string; stories: NewsDigestStory[] }>
+    stories: NewsDigestStory[]
+  }
+}
+
+export const fetchPortfolioNews = () =>
+  client.get("/portfolio-news").then(r => r.data as NewsDigestListResponse)
+
+export const fetchPortfolioNewsDigest = (digestId: string) =>
+  client
+    .get(`/portfolio-news/${encodeURIComponent(digestId)}`)
+    .then(r => r.data as NewsDigestDetail)
+
+export const uploadPortfolioNewsDigest = (file: File) => {
+  const formData = new FormData()
+  formData.append("file", file)
+  return client
+    .post("/portfolio-news", formData, { timeout: 120_000 })
+    .then(r => r.data as { status: "ok"; digest: NewsDigestDetail })
+}
+
+export const deletePortfolioNewsDigest = (digestId: string) =>
+  client
+    .delete(`/portfolio-news/${encodeURIComponent(digestId)}`)
+    .then(r => r.data as { status: "ok"; deleted: boolean; id: string })
 
 export const fetchSectorMetrics = () =>
   client.get("/sector-metrics").then(r => r.data)
@@ -442,6 +521,9 @@ export const analyzeSectorMetrics = (body: {
 
 export const fetchIndustryMonitor = (refresh = false) =>
   client.get(`/industry-monitor?refresh=${refresh}`).then(r => r.data)
+
+export const industryTranscriptPdfUrl = (ticker: string) =>
+  `${client.defaults.baseURL}/industry-monitor/transcripts/${encodeURIComponent(ticker)}/pdf`
 
 export const fetchYieldCurve = (lookback_days = 90) =>
   client.get(`/yield-curve?lookback_days=${lookback_days}`).then(r => r.data)

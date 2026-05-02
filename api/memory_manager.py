@@ -149,7 +149,7 @@ def _retrieve_relevant(query: str) -> str | None:
 
         hits = retrieval_search(
             query=query,
-            doc_types=["conversation_summary", "thesis"],
+            doc_types=["conversation_summary", "thesis", "news_digest"],
             top_k=RETRIEVAL_TOP_K,
         )
         if not hits:

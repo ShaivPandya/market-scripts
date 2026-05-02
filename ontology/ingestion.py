@@ -391,7 +391,7 @@ def _build_fetchers(
     )
     from api.routers.momentum import get_momentum
     from api.routers.portfolio import get_portfolio
-    from api.routers.portfolio_news import get_portfolio_news
+    from api.routers.portfolio_news import list_portfolio_news
     from api.routers.positioning import get_positioning_summary
     from api.routers.sector_metrics import get_sector_metrics
     from api.routers.sentiment import get_put_call, get_surveys, get_volatility
@@ -428,7 +428,7 @@ def _build_fetchers(
         "yield_curve": lambda: get_yield_curve(lookback_days=90),
         "central_banks": lambda: get_central_banks(refresh=False),
         "industry_monitor": lambda: get_industry_monitor(refresh=False),
-        "portfolio_news": lambda: get_portfolio_news(refresh=False),
+        "portfolio_news": lambda: list_portfolio_news(refresh=False),
         "commodities_curve": lambda: get_commodities_curve(commodity="CL", lookback_days=30),
         "fx_model_pairs": list_pairs,
     }

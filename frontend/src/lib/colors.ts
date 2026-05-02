@@ -64,6 +64,13 @@ export function colorReturnVsBenchmark(val: unknown): string {
   if (typeof val === "string") {
     if (val.includes("(+)")) return `${GREEN_BOLD}; font-weight: bold`
     if (val.includes("(-)")) return `${RED_BOLD}; font-weight: bold`
+    const relativeMatch = val.match(/\(([+-]?\d+(?:\.\d+)?)\s*pp\)/)
+    if (relativeMatch) {
+      const relative = parseFloat(relativeMatch[1])
+      if (relative > 0) return `${GREEN_BOLD}; font-weight: bold`
+      if (relative < 0) return `${RED_BOLD}; font-weight: bold`
+      return YELLOW
+    }
     // Plain numeric
     try {
       const num = parseFloat(val.replace(/%/g, "").replace(/\+/g, "").split(" ")[0])

@@ -39,7 +39,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Signal Aggregator", path: "/signal-aggregator" },
       { label: "Ontology Workbench", path: "/ontology" },
       { label: "Market Technicals", path: "/market-technicals" },
-      { label: "Portfolio News", path: "/portfolio-news" },
+      { label: "News Digests", path: "/portfolio-news" },
       { label: "Breakout", path: "/breakout" },
       { label: "Sentiment", path: "/sentiment" },
       { label: "Positioning", path: "/positioning" },

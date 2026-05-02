@@ -19,6 +19,7 @@ from typing import Any
 
 import pandas as pd
 
+from commodities.aluminum.sources.eia import fetch_eia_power_proxy
 from commodities.commodities_dashboard import COMMODITIES, fetch_commodities_data
 
 logger = logging.getLogger("api.commodity_research")
@@ -75,6 +76,13 @@ FACTOR_CONFIG: dict[str, dict[str, Any]] = {
         "category": "overlay",
         "source": "overlay",
         "ranked": False,
+    },
+    "input_costs": {
+        "configured_weight": 0.15,
+        "display_label": "US Industrial Power Proxy",
+        "category": "fundamental",
+        "source": "eia",
+        "ranked": True,
     },
 }
 
@@ -444,6 +452,34 @@ def _extract_macro_overlay(macro: dict | None) -> dict[str, Any]:
     return overlay
 
 
+def _score_input_costs(eia_df: pd.DataFrame | None) -> tuple[float | None, float | None]:
+    if eia_df is None or eia_df.empty:
+        return None, None
+
+    # Sort just in case to get the latest values
+    df_sorted = eia_df.sort_values("date")
+    s = pd.to_numeric(df_sorted["value"], errors="coerce").dropna()
+    if len(s) < 4:
+        return None, None
+
+    end_val = float(s.iloc[-1])
+    start_val = float(s.iloc[-4])
+
+    if start_val == 0:
+        return None, None
+
+    pct_change = (end_val / start_val - 1.0) * 100.0
+
+    if pct_change >= 5.0:
+        score = 0.0
+    elif pct_change <= -5.0:
+        score = 100.0
+    else:
+        score = 50.0 - (pct_change * 10.0)
+
+    return round(score, 1), round(pct_change, 2)
+
+
 def _quality_ratio(data_quality: dict[str, str]) -> float:
     relevant = [
         QUALITY_SCORES[value] for source, value in data_quality.items() if source != "macro_overlay" and value != "n/a"
@@ -519,6 +555,7 @@ def _generate_rationale(
     curve_analysis: dict[str, Any] | None,
     relative_strength_score: float | None,
     macro_overlay: dict[str, Any],
+    input_costs_change: float | None = None,
 ) -> list[str]:
     bullets: list[str] = []
 
@@ -546,6 +583,16 @@ def _generate_rationale(
         bullets.append(
             f"Market stress overlay is {macro_overlay['label']} with {macro_overlay.get('forward_outlook') or 'n/a'} outlook; overlay is informational only"
         )
+
+    if input_costs_change is not None:
+        if input_costs_change >= 2.0:
+            bullets.append(
+                f"US industrial power costs rose {input_costs_change:.1f}% over 3M, historically predicting negative forward returns"
+            )
+        elif input_costs_change <= -2.0:
+            bullets.append(
+                f"US industrial power costs fell {abs(input_costs_change):.1f}% over 3M, historically predicting positive forward returns"
+            )
 
     if bias != "neutral":
         bullets.append(f"Current proxy signal mix supports a {bias} bias")
@@ -653,7 +700,7 @@ def _fetch_macro() -> dict | None:
         return None
 
 
-def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None]:
+def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None, pd.DataFrame | None]:
     # All four fetches are serialized. Prices, curves, and macro all hit
     # yfinance, which maintains a single shared crumb/session globally; running
     # them in parallel produces "HTTP 401 Invalid Crumb" failures that drop
@@ -662,15 +709,24 @@ def _fetch_all() -> tuple[dict | None, dict | None, dict[str, dict], dict | None
     monthly = _fetch_monthly_prices()
     curves = _fetch_curves()
     macro = _fetch_macro()
-    return daily, monthly, curves, macro
+    try:
+        eia_df = fetch_eia_power_proxy()
+    except Exception:
+        logger.exception("eia power proxy fetch failed")
+        eia_df = None
+    return daily, monthly, curves, macro, eia_df
 
 
 def build_commodity_research() -> dict[str, Any]:
-    daily, monthly, curves, macro = _fetch_all()
+    daily, monthly, curves, macro, eia_df = _fetch_all()
 
     daily_prices = daily.get("commodities", {}) if daily else {}
     monthly_prices = monthly.get("commodities", {}) if monthly else {}
     macro_overlay = _extract_macro_overlay(macro)
+
+    input_costs_score, input_costs_change = _score_input_costs(eia_df)
+    eia_s = eia_df.set_index("date")["value"] if eia_df is not None and not eia_df.empty else None
+    eia_quality = _check_series_quality(eia_s, MONTHLY_STALE_DAYS * 3)
 
     risk_adjusted_by_family: dict[str, dict[str, float]] = {"metals": {}, "energy": {}}
     returns_cache: dict[str, dict[str, float | None]] = {}
@@ -712,6 +768,7 @@ def build_commodity_research() -> dict[str, Any]:
             "prices_monthly": _check_series_quality(monthly_s, MONTHLY_STALE_DAYS),
             "curve": curve_quality,
             "macro_overlay": macro_overlay["quality"],
+            "eia_power": eia_quality if name in {"Aluminum", "Copper", "Zinc"} else "n/a",
         }
 
         returns = returns_cache[name]
@@ -732,11 +789,14 @@ def build_commodity_research() -> dict[str, Any]:
             "acceleration": acceleration_score,
             "curve_structure": curve_score,
             "market_stress_overlay": overlay_score,
+            "input_costs": input_costs_score if name in {"Aluminum", "Copper", "Zinc"} else None,
         }
 
         eligible_factor_keys = ["trend", "relative_strength", "acceleration"]
         if name in CURVE_CODES:
             eligible_factor_keys.append("curve_structure")
+        if name in {"Aluminum", "Copper", "Zinc"}:
+            eligible_factor_keys.append("input_costs")
 
         score_for_composite = dict(factor_scores)
         if curve_quality in ("missing", "error"):
@@ -755,6 +815,7 @@ def build_commodity_research() -> dict[str, Any]:
             "acceleration": data_quality["prices_daily"] if acceleration_score is not None else "missing",
             "curve_structure": curve_quality,
             "market_stress_overlay": data_quality["macro_overlay"] if overlay_score is not None else "error",
+            "input_costs": data_quality["eia_power"] if name in {"Aluminum", "Copper", "Zinc"} else "missing",
         }
 
         factors = {
@@ -770,6 +831,7 @@ def build_commodity_research() -> dict[str, Any]:
             curve_analysis=curve_analysis,
             relative_strength_score=relative_strength_score,
             macro_overlay=macro_overlay,
+            input_costs_change=input_costs_change if name in {"Aluminum", "Copper", "Zinc"} else None,
         )
 
         commodities.append(

@@ -17,14 +17,13 @@ export function Momentum() {
   const COLUMN_LABELS: Record<string, string> = {
     ticker:          "Ticker",
     avg20_roc63:     "20D Avg ROC (63d)",
-    avg20_vol_roc63: "20D Avg Vol ROC (63d)",
     rel_roc42:       "Rel ROC (42d)",
     avg10_rel_roc:   "10D Avg Rel ROC",
     benchmark:       "Benchmark",
     direction:       "Direction",
   }
 
-  const HIDDEN_COLUMNS = new Set(["date", "close", "direction"])
+  const HIDDEN_COLUMNS = new Set(["date", "close", "direction", "avg20_vol_roc63"])
 
   // Dynamically build columns from first row
   const buildColumns = (sample: Record<string, unknown>): ColumnDef[] =>
