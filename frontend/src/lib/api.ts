@@ -209,8 +209,12 @@ export interface ThesisEvaluation {
 export interface ThesisMeta {
   ticker: string
   status: ThesisStatusValue
-  created_at: string
-  updated_at: string
+  created_at: string | null
+  updated_at: string | null
+  direction?: "long" | "short" | string | null
+  asset?: string | null
+  conviction?: number | string | null
+  last_evaluated?: string | null
   latest_evaluation?: ThesisEvaluation | null
 }
 

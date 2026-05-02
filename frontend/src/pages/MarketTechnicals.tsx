@@ -21,10 +21,28 @@ import { colorPositiveNegative, colorSignalFlag, colorVixSignal } from "@/lib/co
 type Tab = "VIX Term Structure" | "Market Breadth" | "Top 50 Breadth" | "Price/Volume Signals"
 const TABS: Tab[] = ["VIX Term Structure", "Market Breadth", "Top 50 Breadth", "Price/Volume Signals"]
 
+function snapshotLine(data: Record<string, unknown> | undefined | null): string | null {
+  const meta = data?._meta as { snapshot?: { as_of?: string | null; stale?: boolean; refresh_status?: string; error?: string | null } } | undefined
+  const snapshot = meta?.snapshot
+  if (!snapshot) return null
+  const parts = [`As of ${snapshot.as_of ?? "unknown"}`]
+  if (snapshot.stale) parts.push("stale")
+  if (snapshot.refresh_status && snapshot.refresh_status !== "ok") parts.push(`refresh ${snapshot.refresh_status}`)
+  if (snapshot.error) parts.push(snapshot.error)
+  return parts.join(" · ")
+}
+
+function SnapshotNote({ data }: { data: Record<string, unknown> | undefined | null }) {
+  const line = snapshotLine(data)
+  if (!line) return null
+  const stale = Boolean((data?._meta as { snapshot?: { stale?: boolean } } | undefined)?.snapshot?.stale)
+  return <p className={`mb-3 text-xs ${stale ? "text-amber-600" : "text-gray-400"}`}>{line}</p>
+}
+
 // ─── Sub-views ────────────────────────────────────────────────────────────────
 
 function MarketBreadthTab() {
-  const { data, isLoading, error } = useApiQuery(["market-breadth"], fetchMarketBreadth)
+  const { data, isLoading, error } = useApiQuery(["market-breadth"], fetchMarketBreadth, 30 * 60 * 1000)
   if (isLoading) return <LoadingSpinner />
   if (error || !data) return <ErrorMessage message={String(error)} />
 
@@ -44,6 +62,7 @@ function MarketBreadthTab() {
   return (
     <div>
       <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-4">S&P 500 Market Breadth</p>
+      <SnapshotNote data={data} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {metrics.map(m => {
           const pct: number = data[m.pctKey] ?? 0
@@ -66,7 +85,7 @@ function MarketBreadthTab() {
 }
 
 function Top50BreadthTab() {
-  const { data, isLoading, error } = useApiQuery(["top50-breadth"], fetchTop50Breadth)
+  const { data, isLoading, error } = useApiQuery(["top50-breadth"], fetchTop50Breadth, 30 * 60 * 1000)
   if (isLoading) return <LoadingSpinner />
   if (error || !data) return <ErrorMessage message={String(error)} />
   if (data.universe_size === 0) return <p className="text-gray-400 text-sm">No tickers with sufficient data.</p>
@@ -76,6 +95,7 @@ function Top50BreadthTab() {
       <p className="text-xs font-semibold tracking-widest uppercase text-gray-400 mb-4">
         Top 50 S&P 500 Performers — Breadth
       </p>
+      <SnapshotNote data={data} />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         {[
           { key: "pct_below_50dma", label: "% Below 50-DMA", tickersKey: "tickers_below_50dma" },

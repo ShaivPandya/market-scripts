@@ -36,6 +36,7 @@ except ImportError:
 from equities.market_technicals.get_top50 import (
     _connect_db,
     compute_top50,
+    compute_top50_from_close,
     read_top50_from_db,
 )
 
@@ -274,15 +275,10 @@ def get_data(
             close = prices_df["Close"] if "Close" in prices_df.columns.get_level_values(0) else pd.DataFrame()
         else:
             close = prices_df
-        # Use ~6 months (126 trading days) of returns to pick top 50
-        close_window = close.tail(126)
-        if close_window.empty or len(close_window) < 2:
+        if close.empty or len(close) < 2:
             return get_summary_metrics(pd.DataFrame())
-        first = close_window.iloc[0]
-        last = close_window.iloc[-1]
-        returns = ((last - first) / first).dropna()
-        top50 = returns.sort_values(ascending=False).head(50)
-        tickers = top50.index.tolist()
+        top50 = compute_top50_from_close(close)
+        tickers = top50["ticker"].astype(str).tolist()
         df = compute_metrics(tickers, period=period, prices_df=prices_df)
     else:
         tickers = _load_top50_tickers()

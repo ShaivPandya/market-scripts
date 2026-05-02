@@ -39,12 +39,17 @@ def get_workspace():
     def _fetch_regime():
         nonlocal regime_data
         try:
-            import json
+            from api.signal_snapshot import get_signal_aggregator_snapshot_response
+            from api.snapshot_store import snapshots_required
 
-            from api.agent_tools import execute_tool
+            regime_data = get_signal_aggregator_snapshot_response(
+                lookback_weeks=156,
+                include_raw_modules=False,
+            )
+            if regime_data is None and not snapshots_required():
+                from api.signal_aggregator import build_signal_aggregator
 
-            raw = execute_tool("get_signal_aggregator", {})
-            regime_data = json.loads(raw) if isinstance(raw, str) else raw
+                regime_data = build_signal_aggregator(include_history=False)
         except Exception:
             regime_data = None
 
@@ -81,10 +86,16 @@ def get_workspace():
                 signal = regime_val.get("label")
             regime_val = regime_val.get("label", str(regime_val))
 
+        snapshot_meta = None
+        meta = regime_data.get("_meta")
+        if isinstance(meta, dict) and isinstance(meta.get("snapshot"), dict):
+            snapshot_meta = meta["snapshot"]
+
         regime_summary = {
             "regime": regime_val,
             "composite_score": composite_score,
             "signal": signal,
+            "snapshot": snapshot_meta,
         }
 
     # Portfolio summary

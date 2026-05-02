@@ -145,7 +145,10 @@ def get_cached(cache: TTLCache, key: str):
 
 def set_cached(cache: TTLCache, key: str, value) -> None:
     if isinstance(value, dict):
+        raw_meta = value.get("_meta")
+        existing_meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
         value["_meta"] = {
+            **existing_meta,
             "fetched_at": datetime.now().isoformat(),
             "cache_ttl": getattr(cache, "ttl", None),
         }

@@ -29,7 +29,9 @@ from llm_utils import (
     MODEL_MID,
     PROVIDER_ANTHROPIC,
     PROVIDER_OPENAI,
+    REASONING_MEDIUM,
     api_key_env,
+    apply_reasoning_config,
     get_llm_client,
     resolve_model,
     selected_provider,
@@ -240,6 +242,7 @@ class AgentResponsePreferences(BaseModel):
     headers_lists: PreferenceLevel = "less"
     emoji: PreferenceLevel = "less"
     fast_answers: bool = True
+    thinking_enabled: bool = False
     custom_instructions: CustomInstructionText | None = None
 
 
@@ -413,6 +416,10 @@ def _is_casual(user_text: str) -> bool:
 def _prefers_no_followups(prefs: AgentResponsePreferences | None) -> bool:
     custom = (prefs.custom_instructions or "").lower() if prefs else ""
     return "no follow-up" in custom or "do not ask follow" in custom or "don't ask follow" in custom
+
+
+def _chat_reasoning_effort(prefs: AgentResponsePreferences | None) -> str | None:
+    return REASONING_MEDIUM if prefs and prefs.thinking_enabled else None
 
 
 def _casual_response(user_text: str, prefs: AgentResponsePreferences | None = None) -> str:
@@ -867,26 +874,43 @@ def _model_stream_kwargs(
     max_tokens: int,
     tool_defs: list[dict] | None = None,
     force_tool_use: bool = False,
+    reasoning_effort: str | None = None,
 ) -> dict[str, object]:
     if provider == PROVIDER_ANTHROPIC:
+        resolved_model = resolve_model(MODEL_MID, PROVIDER_ANTHROPIC)
         kwargs: dict[str, object] = {
-            "model": resolve_model(MODEL_MID, PROVIDER_ANTHROPIC),
+            "model": resolved_model,
             "max_tokens": max_tokens,
             "system": instructions,
             "messages": conversation,
         }
+        apply_reasoning_config(
+            kwargs,
+            provider=PROVIDER_ANTHROPIC,
+            model=resolved_model,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
         if tool_defs:
             kwargs["tools"] = tool_defs
-        if force_tool_use and tool_defs:
+        if force_tool_use and tool_defs and reasoning_effort is None:
             kwargs["tool_choice"] = {"type": "any"}
         return kwargs
 
+    resolved_model = resolve_model(MODEL_MID, PROVIDER_OPENAI)
     kwargs = {
-        "model": resolve_model(MODEL_MID, PROVIDER_OPENAI),
+        "model": resolved_model,
         "max_output_tokens": max_tokens,
         "instructions": instructions,
         "input": conversation,
     }
+    apply_reasoning_config(
+        kwargs,
+        provider=PROVIDER_OPENAI,
+        model=resolved_model,
+        max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
+    )
     if tool_defs:
         kwargs["tools"] = tool_defs
     if force_tool_use and tool_defs:
@@ -989,6 +1013,7 @@ def _usage_dict(message: object) -> dict:
 @router.post("/agent/chat")
 def agent_chat(req: AgentChatRequest):
     provider, api_key = _read_llm_api_key()
+    reasoning_effort = _chat_reasoning_effort(req.response_preferences)
     instructions = _with_response_preferences(
         _build_agent_instructions(screen_context=req.screen_context),
         req.response_preferences,
@@ -1044,6 +1069,7 @@ def agent_chat(req: AgentChatRequest):
                             instructions=instructions,
                             conversation=synthesis_conversation,
                             max_tokens=LLM_MAX_TOKENS,
+                            reasoning_effort=reasoning_effort,
                         )
                         final_message = yield from _stream_llm_response(
                             client,
@@ -1126,6 +1152,7 @@ def agent_chat(req: AgentChatRequest):
                     max_tokens=LLM_MAX_TOKENS,
                     tool_defs=tool_defs,
                     force_tool_use=force_tool_use,
+                    reasoning_effort=reasoning_effort,
                 )
 
                 for attempt in range(MAX_API_RETRIES):
@@ -1327,6 +1354,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
             return
 
         provider, api_key = _read_llm_api_key()
+        reasoning_effort = _chat_reasoning_effort(req.response_preferences)
         instructions = _with_response_preferences(
             _build_agent_instructions(screen_context=req.screen_context),
             req.response_preferences,
@@ -1373,6 +1401,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
                             instructions=instructions,
                             conversation=synthesis_conversation,
                             max_tokens=LLM_MAX_TOKENS,
+                            reasoning_effort=reasoning_effort,
                         )
                         final_message = yield from _stream_llm_response(
                             client,
@@ -1445,6 +1474,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
                     max_tokens=LLM_CHAT_MAX_TOKENS,
                     tool_defs=tool_defs,
                     force_tool_use=force_tool_use,
+                    reasoning_effort=reasoning_effort,
                 )
 
                 for attempt in range(MAX_API_RETRIES):

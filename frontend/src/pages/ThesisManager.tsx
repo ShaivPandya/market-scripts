@@ -41,6 +41,12 @@ const STATUS_LABELS: Record<string, string> = {
 
 const LIST_COLUMNS: ColumnDef[] = [
   { key: "ticker", header: "Ticker" },
+  { key: "position_direction", header: "Position", colorFn: (v) => {
+    const s = String(v).toLowerCase()
+    if (s === "long") return "#00c853"
+    if (s === "short") return "#ff1744"
+    return ""
+  }},
   { key: "status_label", header: "Status", colorFn: (v) => {
     const s = String(v).toLowerCase()
     if (s === "active") return "#00c853"
@@ -50,10 +56,22 @@ const LIST_COLUMNS: ColumnDef[] = [
     return ""
   }},
   { key: "eval_date", header: "Last Eval" },
-  { key: "eval_direction", header: "Direction", colorFn: evalDirectionColor },
+  { key: "eval_direction", header: "Thesis", colorFn: evalDirectionColor },
   { key: "eval_action", header: "Action", colorFn: evalActionColor },
   { key: "eval_confidence", header: "Confidence" },
 ]
+
+function formatDateTime(value: unknown) {
+  if (!value) return "-"
+  const d = new Date(String(value))
+  if (Number.isNaN(d.getTime())) return String(value)
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
 
 function ThesisList({ onSelect }: { onSelect: (ticker: string) => void }) {
   const { data, isLoading, error } = useApiQuery<ThesisMeta[]>(
@@ -76,8 +94,9 @@ function ThesisList({ onSelect }: { onSelect: (ticker: string) => void }) {
       const ev = m.latest_evaluation
       return {
         ticker: m.ticker,
+        position_direction: m.direction ?? "-",
         status_label: STATUS_LABELS[m.status] ?? m.status,
-        eval_date: ev?.evaluated_at ?? "-",
+        eval_date: formatDateTime(ev?.evaluated_at ?? m.last_evaluated),
         eval_direction: ev?.thesis_status ?? "-",
         eval_action: ev?.action ?? "-",
         eval_confidence: ev?.confidence ?? "-",

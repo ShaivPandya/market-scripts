@@ -241,25 +241,47 @@ def get_thesis_meta_all():
     from portfolio.portfolio_db import get_positions
     from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
 
-    held = {_normalize_ticker(str(row.get("ticker", ""))) for row in get_positions()}
-    held.discard("")
+    positions = {}
+    for row in get_positions():
+        ticker = _normalize_ticker(str(row.get("ticker", "")))
+        if ticker and ticker not in positions:
+            positions[ticker] = row
 
-    meta = [m for m in get_all_thesis_meta() if _normalize_ticker(m["ticker"]) in held]
-    covered = {_normalize_ticker(m["ticker"]) for m in meta}
-    for ticker in sorted(held - covered):
-        meta.append(
-            {
-                "ticker": ticker,
-                "status": "missing",
-                "created_at": None,
-                "updated_at": None,
-            }
+    meta_by_ticker = {}
+    for row in get_all_thesis_meta():
+        ticker = _normalize_ticker(str(row.get("ticker", "")))
+        if ticker in positions and ticker not in meta_by_ticker:
+            meta_by_ticker[ticker] = dict(row)
+
+    meta = []
+    for ticker in sorted(positions):
+        row = dict(
+            meta_by_ticker.get(
+                ticker,
+                {
+                    "ticker": ticker,
+                    "status": "missing",
+                    "created_at": None,
+                    "updated_at": None,
+                },
+            )
         )
-    meta.sort(key=lambda m: m["ticker"])
+        row["ticker"] = ticker
+        pos = positions[ticker]
+        row["direction"] = pos.get("direction")
+        row["asset"] = pos.get("asset")
+        row["conviction"] = pos.get("conviction")
+        meta.append(row)
 
-    latest = {e["ticker"]: e for e in get_latest_evaluations()}
+    latest = {_normalize_ticker(str(e.get("ticker", ""))): e for e in get_latest_evaluations()}
     for m in meta:
-        m["latest_evaluation"] = latest.get(m["ticker"])
+        ticker = _normalize_ticker(str(m["ticker"]))
+        ev = latest.get(ticker)
+        if ev:
+            ev = dict(ev)
+            ev["ticker"] = ticker
+        m["latest_evaluation"] = ev
+        m["last_evaluated"] = ev.get("evaluated_at") if ev else None
     return meta
 
 
