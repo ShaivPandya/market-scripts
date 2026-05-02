@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Top 50 S&P 500 performers over the past year (total return proxy via adjusted prices).
+Top 50 S&P 500 performers over the past 126 trading sessions.
 
 Dependencies:
   pip install pandas yfinance lxml
@@ -40,6 +40,7 @@ WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
 DB_FILENAME = "sp500_top50.sqlite3"
 TABLE_NAME = "sp500_top50_tickers"
+TOP50_LOOKBACK_SESSIONS = 126
 
 
 def get_sp500_tickers():
@@ -99,11 +100,12 @@ def download_close_prices(
     return close_all
 
 
-def total_return_from_prices(close: pd.DataFrame) -> pd.Series:
+def total_return_from_prices(close: pd.DataFrame, lookback_sessions: int = TOP50_LOOKBACK_SESSIONS) -> pd.Series:
     """
     Computes total return proxy per ticker:
-      (last_valid_price / first_valid_price) - 1
+      (last_valid_price / first_valid_price within the lookback window) - 1
     """
+    window = close.tail(max(2, int(lookback_sessions)))
 
     def one_ticker_return(s: pd.Series) -> float:
         s2 = s.dropna()
@@ -111,32 +113,40 @@ def total_return_from_prices(close: pd.DataFrame) -> pd.Series:
             return np.nan
         return float((s2.iloc[-1] / s2.iloc[0]) - 1.0)
 
-    return close.apply(one_ticker_return, axis=0)
+    return window.apply(one_ticker_return, axis=0)
 
 
-def compute_top50(period: str = "1y") -> pd.DataFrame:
-    """Fetch S&P 500 prices and rank the top-50 performers in memory.
-
-    Returns a DataFrame with columns ``[ticker, rank, one_year_return_pct]``,
-    sorted by rank ascending (rank 1 = best performer). Pure compute — no I/O
-    other than the upstream HTTP/yfinance fetches.
-    """
-    tickers = get_sp500_tickers()
-    close = download_close_prices(tickers, period=period, interval="1d", chunk_size=100)
-    rets = total_return_from_prices(close).dropna()
+def compute_top50_from_close(
+    close: pd.DataFrame,
+    lookback_sessions: int = TOP50_LOOKBACK_SESSIONS,
+) -> pd.DataFrame:
+    """Rank the top-50 tickers from an existing close-price matrix."""
+    rets = total_return_from_prices(close, lookback_sessions=lookback_sessions).dropna()
     top50 = rets.sort_values(ascending=False).head(50)
 
     out = (
         top50.rename_axis("ticker")
-        .rename("one_year_return")
+        .rename("six_month_return")
         .to_frame()
-        .assign(one_year_return_pct=lambda d: 100 * d["one_year_return"])
-        .drop(columns=["one_year_return"])
+        .assign(six_month_return_pct=lambda d: 100 * d["six_month_return"])
+        .drop(columns=["six_month_return"])
         .reset_index()
     )
     out["ticker"] = out["ticker"].astype(str).str.upper()
     out.insert(1, "rank", range(1, len(out) + 1))
     return out
+
+
+def compute_top50(period: str = "1y") -> pd.DataFrame:
+    """Fetch S&P 500 prices and rank the top-50 performers in memory.
+
+    Returns a DataFrame with columns ``[ticker, rank, six_month_return_pct]``,
+    sorted by rank ascending (rank 1 = best performer). Pure compute — no I/O
+    other than the upstream HTTP/yfinance fetches.
+    """
+    tickers = get_sp500_tickers()
+    close = download_close_prices(tickers, period=period, interval="1d", chunk_size=100)
+    return compute_top50_from_close(close)
 
 
 def _resolve_db_path() -> str:
@@ -188,7 +198,7 @@ def refresh_top50_in_db(conn) -> dict[str, Any]:
         (
             str(row["ticker"]).upper(),
             int(row["rank"]),
-            float(row["one_year_return_pct"]),
+            float(row["six_month_return_pct"]),
             refreshed_at,
         )
         for _, row in df.iterrows()

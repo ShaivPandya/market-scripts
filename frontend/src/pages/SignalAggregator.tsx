@@ -70,6 +70,14 @@ interface SignalAggregatorResponse {
     series: HistoryPoint[]
     episodes: HistoryEpisode[]
   }
+  _meta?: {
+    snapshot?: {
+      as_of?: string | null
+      stale?: boolean
+      refresh_status?: string
+      error?: string | null
+    }
+  }
 }
 
 function signalForRegime(label?: string): "success" | "warning" | "error" | "info" {
@@ -108,7 +116,7 @@ export function SignalAggregator() {
         lookback_weeks: appliedLookback,
         positioning_instruments: appliedInstruments,
       }),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 30 * 60 * 1000,
     retry: 1,
     enabled: hasAppliedFilters,
   })
@@ -280,6 +288,7 @@ export function SignalAggregator() {
     .slice(0, 3)
 
   const regime = data?.regime
+  const snapshot = data?._meta?.snapshot
 
   function applyControls() {
     const parsed = Number.parseInt(lookbackInput, 10)
@@ -312,6 +321,14 @@ export function SignalAggregator() {
               stress historically precedes higher forward returns (mean reversion). Liquidity is the
               exception: it is <strong>same-direction</strong>, where tight conditions genuinely predict lower returns.
               The Forward Outlook translates the composite into a predictive label based on 10-year backtested spreads.
+            </p>
+          )}
+          {snapshot && (
+            <p className={`mt-2 text-xs ${snapshot.stale ? "text-amber-600" : "text-gray-400"}`}>
+              As of {snapshot.as_of ?? "unknown"}
+              {snapshot.stale ? " · stale" : ""}
+              {snapshot.refresh_status && snapshot.refresh_status !== "ok" ? ` · refresh ${snapshot.refresh_status}` : ""}
+              {snapshot.error ? ` · ${snapshot.error}` : ""}
             </p>
           )}
         </div>

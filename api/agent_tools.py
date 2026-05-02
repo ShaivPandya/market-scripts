@@ -2245,6 +2245,16 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         key = "agent_market_breadth"
 
         def _load():
+            from api.exceptions import SnapshotUnavailableError
+            from api.snapshot_keys import SNAPSHOT_MARKET_BREADTH
+            from api.snapshot_store import get_snapshot_response, snapshots_required
+
+            snapshot = get_snapshot_response(SNAPSHOT_MARKET_BREADTH)
+            if snapshot is not None:
+                return serialize_value(snapshot)
+            if snapshots_required():
+                raise SnapshotUnavailableError(SNAPSHOT_MARKET_BREADTH)
+
             from equities.market_technicals.market_breadth import get_data
 
             return serialize_value(get_data())
@@ -2296,9 +2306,36 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         lookback_weeks = max(26, min(lookback_weeks, 520))
         positioning_instruments = str(args.get("positioning_instruments", DEFAULT_POSITIONING_INSTRUMENTS))
         include_history = bool(args.get("include_history", False))
-        key = f"signal_aggregator:{lookback_weeks}:{positioning_instruments}:False:history={include_history}"
+        key = f"signal_aggregator:{lookback_weeks}:False:history={include_history}"
 
         def _load():
+            from api.exceptions import SnapshotUnavailableError
+            from api.signal_snapshot import get_signal_aggregator_snapshot_response
+            from api.snapshot_keys import SNAPSHOT_SIGNAL_AGGREGATOR
+            from api.snapshot_store import snapshots_required
+
+            snapshot = get_signal_aggregator_snapshot_response(
+                lookback_weeks=lookback_weeks,
+                include_raw_modules=False,
+            )
+            if snapshot is not None:
+                if not include_history:
+                    snapshot = dict(snapshot)
+                    snapshot["history"] = {
+                        "frequency": "weekly",
+                        "lookback_weeks": lookback_weeks,
+                        "coverage": {
+                            "included_factors": [],
+                            "missing_factors": [],
+                            "module_status": {"history": "skipped"},
+                        },
+                        "series": [],
+                        "episodes": [],
+                    }
+                return serialize_value(snapshot)
+            if snapshots_required():
+                raise SnapshotUnavailableError(SNAPSHOT_SIGNAL_AGGREGATOR)
+
             data = build_signal_aggregator(
                 lookback_weeks=lookback_weeks,
                 positioning_instruments=positioning_instruments,

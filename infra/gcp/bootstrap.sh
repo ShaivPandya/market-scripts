@@ -149,7 +149,8 @@ cat <<EOF
       (or run cloudbuild + deploy-{api,async-job,migration-job}.sh manually)
 
   - Cloud Scheduler jobs:  ./infra/gcp/setup-scheduler.sh
-      async-job-sweep (hourly), top50-refresh (weekday 23z), optional cache-warm.
+      async-job-sweep (hourly), top50-refresh (weekday 23z),
+      market-snapshot-refresh (weekday 23:15z), optional cache-warm.
 
   - If you already have an existing Cloud SQL instance that pre-dates the
     hardening flags, apply them in place:

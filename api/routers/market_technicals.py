@@ -5,8 +5,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.cache import get_cached, set_cached, short_cache
-from api.exceptions import ConfigurationError, DataFetchError
+from api.exceptions import ConfigurationError, DataFetchError, SnapshotUnavailableError
 from api.serializers import serialize_response
+from api.snapshot_keys import SNAPSHOT_MARKET_BREADTH, SNAPSHOT_TOP50_BREADTH
+from api.snapshot_store import get_snapshot_response, snapshots_required
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
@@ -18,6 +20,12 @@ def get_market_breadth():
     cached = get_cached(short_cache, key)
     if cached is not None:
         return cached
+    snapshot = get_snapshot_response(SNAPSHOT_MARKET_BREADTH)
+    if snapshot is not None:
+        set_cached(short_cache, key, snapshot)
+        return snapshot
+    if snapshots_required():
+        raise SnapshotUnavailableError(SNAPSHOT_MARKET_BREADTH)
     try:
         from equities.market_technicals.market_breadth import get_data
 
@@ -35,6 +43,12 @@ def get_top50_breadth():
     cached = get_cached(short_cache, key)
     if cached is not None:
         return cached
+    snapshot = get_snapshot_response(SNAPSHOT_TOP50_BREADTH)
+    if snapshot is not None:
+        set_cached(short_cache, key, snapshot)
+        return snapshot
+    if snapshots_required():
+        raise SnapshotUnavailableError(SNAPSHOT_TOP50_BREADTH)
     try:
         from equities.market_technicals.top50_breadth import get_data
 

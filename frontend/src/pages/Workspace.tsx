@@ -14,6 +14,12 @@ interface WorkspaceData {
     regime: string
     composite_score: number
     signal: string
+    snapshot?: {
+      as_of?: string | null
+      stale?: boolean
+      refresh_status?: string
+      error?: string | null
+    } | null
   } | null
   portfolio: {
     position_count: number
@@ -177,6 +183,11 @@ export function Workspace() {
 
   const regime = data.regime
   const regimeInfo = regime?.signal ? REGIME_SIGNAL_MAP[regime.signal.toLowerCase()] : null
+  const regimeSubtitle = [
+    regime?.composite_score != null ? `Score: ${regime.composite_score}` : null,
+    regime?.snapshot?.as_of ? `As of ${regime.snapshot.as_of}` : null,
+    regime?.snapshot?.stale ? "Stale" : null,
+  ].filter(Boolean).join(" · ")
 
   return (
     <div>
@@ -190,7 +201,7 @@ export function Workspace() {
         <MetricCard
           title="Market Regime"
           value={regime?.regime ?? "--"}
-          subtitle={regime?.composite_score != null ? `Score: ${regime.composite_score}` : undefined}
+          subtitle={regimeSubtitle || undefined}
           signal={regimeInfo?.signal ?? null}
           signalLabel={regimeInfo?.label}
         />

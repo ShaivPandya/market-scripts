@@ -55,6 +55,17 @@ def enqueue_async_job_sweep(_sub: str = Depends(require_scheduler_or_job_admin))
     return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
 
 
+@router.post("/admin/jobs/enqueue-market-snapshot-refresh")
+def enqueue_market_snapshot_refresh(_sub: str = Depends(require_scheduler_or_job_admin)):
+    row, _disposition = enqueue_registered_job(
+        "market_snapshot_refresh",
+        {"source": "scheduler"},
+        cache_key="maintenance:market_snapshot_refresh:v1",
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+
+
 @router.get("/admin/jobs/{job_id}")
 def get_admin_job(job_id: str, _sub: str = Depends(require_job_admin)):
     try:

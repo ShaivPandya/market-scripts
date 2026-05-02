@@ -28,6 +28,14 @@ class DataFetchError(AppError):
         self.detail = detail
 
 
+class SnapshotUnavailableError(AppError):
+    """A production endpoint needs a precomputed snapshot that is not available."""
+
+    def __init__(self, snapshot_key: str):
+        super().__init__(f"Snapshot unavailable: {snapshot_key}", status_code=503)
+        self.snapshot_key = snapshot_key
+
+
 class ConfigurationError(AppError):
     """A required environment variable or configuration value is missing."""
 
