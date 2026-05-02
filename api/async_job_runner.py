@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
+from api.exceptions import AsyncJobDispatchError
 from api.job_queue import (
     ACTIVE_STATUSES,
     complete_job,
@@ -19,7 +20,6 @@ from api.job_queue import (
     get_job,
     list_active_jobs,
     mark_job_running,
-    postgres_jobs_enabled,
     update_job_progress,
 )
 from api.job_registry import cache_key_for_payload, get_job_spec, import_string, parse_request
@@ -37,7 +37,8 @@ def _env_backend() -> str:
         if explicit == "rq":
             return "cloud_run_jobs"
         return explicit
-    if postgres_jobs_enabled():
+    cloud_run_enabled = (os.getenv("CLOUD_RUN_JOBS_ENABLED") or "").strip().lower()
+    if cloud_run_enabled in {"1", "true", "yes"}:
         return "cloud_run_jobs"
     return "local"
 
@@ -164,8 +165,9 @@ def enqueue_registered_job(
         else:
             _enqueue_local_job(str(row["job_id"]))
     except Exception as exc:
-        fail_job(str(row["job_id"]), str(exc) or "Failed to enqueue async job", result_ttl_seconds=spec.failed_ttl_s)
-        raise
+        detail = str(exc) or "Failed to enqueue async job"
+        fail_job(str(row["job_id"]), detail, result_ttl_seconds=spec.failed_ttl_s)
+        raise AsyncJobDispatchError(detail) from exc
     return row, disposition
 
 

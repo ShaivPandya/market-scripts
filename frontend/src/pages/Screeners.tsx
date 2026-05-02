@@ -33,6 +33,10 @@ const BENCHMARK_OPTIONS = [
   "VHT — Health Care", "VCR — Consumer Discretionary",
 ]
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function formatHeader(key: string): string {
   const map: Record<string, string> = {
     index: "Ticker", eps: "EPS", rev: "Revenue", yoy: "YoY",
@@ -173,7 +177,7 @@ function QualityPanel() {
       </ControlPanel>
 
       {isRunning && <LoadingSpinner message="Running quality screen..." />}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {mutation.isError && <ErrorMessage message={errorMessage(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (
         <>
@@ -497,7 +501,7 @@ function ShortPanel() {
           )}
         />
       )}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {mutation.isError && <ErrorMessage message={errorMessage(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (
         <>
@@ -825,7 +829,7 @@ function LongPanel() {
           )}
         />
       )}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {mutation.isError && <ErrorMessage message={errorMessage(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (
         <>
@@ -947,7 +951,7 @@ function FundamentalMomentumPanel() {
       </ControlPanel>
 
       {isRunning && <LoadingSpinner message="Running fundamental momentum screen..." />}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {mutation.isError && <ErrorMessage message={errorMessage(mutation.error)} />}
 
       {mutation.data && !mutation.isPending && (
         <div className="space-y-6">

@@ -50,6 +50,41 @@ def test_async_job_storage_defaults_postgres_in_production(monkeypatch):
     assert postgres_jobs_enabled() is True
 
 
+def test_async_job_execution_defaults_local_without_cloud_run_opt_in(monkeypatch):
+    from api import async_job_runner
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("ASYNC_JOB_BACKEND", raising=False)
+    monkeypatch.delenv("CLOUD_RUN_JOBS_ENABLED", raising=False)
+
+    assert async_job_runner._env_backend() == "local"
+
+
+def test_async_job_execution_uses_cloud_run_when_enabled(monkeypatch):
+    from api import async_job_runner
+
+    monkeypatch.delenv("ASYNC_JOB_BACKEND", raising=False)
+    monkeypatch.setenv("CLOUD_RUN_JOBS_ENABLED", "true")
+
+    assert async_job_runner._env_backend() == "cloud_run_jobs"
+
+
+def test_cloud_run_jobs_enabled_matches_explicit_opt_in(monkeypatch):
+    from api.cloud_run_jobs import cloud_run_jobs_enabled
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("ASYNC_JOB_BACKEND", raising=False)
+    monkeypatch.delenv("CLOUD_RUN_JOBS_ENABLED", raising=False)
+
+    assert cloud_run_jobs_enabled() is False
+
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("CLOUD_RUN_JOBS_ENABLED", "false")
+
+    assert cloud_run_jobs_enabled() is True
+
+
 def test_cloud_run_enqueue_dispatches_existing_job_once(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import get_job
@@ -112,6 +147,7 @@ def test_cloud_run_dispatch_failure_marks_job_failed(monkeypatch):
     import pytest
 
     from api import async_job_runner, cache
+    from api.exceptions import AsyncJobDispatchError
     from api.job_queue import get_job
 
     cache.invalidate_all()
@@ -125,7 +161,7 @@ def test_cloud_run_dispatch_failure_marks_job_failed(monkeypatch):
 
     monkeypatch.setattr(async_job_runner, "_enqueue_cloud_run_job", fail_dispatch)
 
-    with pytest.raises(RuntimeError, match="run api unavailable"):
+    with pytest.raises(AsyncJobDispatchError, match="run api unavailable"):
         async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="cloud-run-fail")
 
     failed = get_job(attempted[0])
@@ -173,6 +209,42 @@ def test_dispatch_cloud_run_job_invokes_generic_runner(monkeypatch):
     env = calls[0]["json"]["overrides"]["containerOverrides"][0]["env"]
     assert {"name": "ASYNC_JOB_ID", "value": row["job_id"]} in env
     assert {"name": "ASYNC_JOB_TYPE", "value": "analyzer"} in env
+
+
+def test_dispatch_cloud_run_job_uses_adc_project_when_env_unset(monkeypatch):
+    from api import cache
+    from api.cloud_run_jobs import dispatch_cloud_run_job
+    from api.job_queue import create_or_reuse_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GCP_PROJECT", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    monkeypatch.setenv("CLOUD_RUN_REGION", "us-central1")
+    monkeypatch.setenv("ASYNC_CLOUD_RUN_JOB", "talisman-async-job")
+    row, _disposition = create_or_reuse_job("analyzer", payload={}, cache_key="cloud-run-adc-project")
+    calls: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def __init__(self, credentials):
+            self.credentials = credentials
+
+        def post(self, url, *, json, timeout):
+            calls.append({"url": url, "json": json, "timeout": timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("google.auth.default", lambda scopes: ("creds", "adc-project"))
+    monkeypatch.setattr("google.auth.transport.requests.AuthorizedSession", FakeSession)
+
+    dispatch_cloud_run_job("analyzer", row["job_id"])
+
+    assert calls[0]["url"] == (
+        "https://run.googleapis.com/v2/projects/adc-project/locations/us-central1/jobs/talisman-async-job:run"
+    )
 
 
 def test_async_job_runner_cli_completes_job(monkeypatch):
@@ -353,3 +425,26 @@ def test_core_async_endpoints_use_persisted_job_contract(auth_client, monkeypatc
             time.sleep(0.05)
         else:
             raise AssertionError(f"{path} did not complete")
+
+
+def test_fundamental_momentum_dispatch_error_returns_structured_503(auth_client, monkeypatch):
+    from api.exceptions import AsyncJobDispatchError
+    from api.routers import fundamental_momentum
+
+    def fail_enqueue(*_args, **_kwargs):
+        raise AsyncJobDispatchError("run api unavailable")
+
+    monkeypatch.setattr(fundamental_momentum, "enqueue_registered_job", fail_enqueue)
+
+    resp = auth_client.post(
+        "/api/v1/fundamental-momentum/async",
+        json={
+            "input_mode": "Custom Tickers",
+            "tickers": "FTI, INVX",
+            "screen_type": "Both",
+            "benchmark": "Same as Input",
+        },
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "Async job dispatch failed: run api unavailable"

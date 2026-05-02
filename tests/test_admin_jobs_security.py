@@ -63,3 +63,18 @@ def test_authenticated_admin_can_poll_job_result(auth_client):
 
     assert resp.status_code == 200
     assert resp.json()["result"] == {"secret_result": "value"}
+
+
+def test_admin_enqueue_dispatch_error_returns_structured_503(auth_client, monkeypatch):
+    from api.exceptions import AsyncJobDispatchError
+    from api.routers import admin_jobs
+
+    def fail_enqueue(*_args, **_kwargs):
+        raise AsyncJobDispatchError("run api unavailable")
+
+    monkeypatch.setattr(admin_jobs, "enqueue_registered_job", fail_enqueue)
+
+    resp = auth_client.post("/api/v1/admin/jobs/enqueue-market-snapshot-refresh")
+
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "Async job dispatch failed: run api unavailable"

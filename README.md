@@ -187,7 +187,7 @@ State backends:
 
 - Local development defaults to SQLite databases and local markdown/file storage.
 - Production uses `STATE_DB_BACKEND=postgres`, `STATE_STORAGE_BACKEND=gcs`, `DATABASE_URL`, and `GCS_STATE_BUCKET`.
-- Async work runs locally with `ASYNC_JOB_BACKEND=local`; production dispatches to the generic Cloud Run Job configured by `ASYNC_JOB_BACKEND=cloud_run_jobs` and `ASYNC_CLOUD_RUN_JOB=talisman-async-job`.
+- Async work runs locally unless `ASYNC_JOB_BACKEND=cloud_run_jobs` or `CLOUD_RUN_JOBS_ENABLED=true` opts into dispatching the generic Cloud Run Job configured by `ASYNC_CLOUD_RUN_JOB=talisman-async-job`.
 
 ## Development Commands
 

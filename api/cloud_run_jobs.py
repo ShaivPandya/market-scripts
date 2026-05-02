@@ -12,14 +12,17 @@ class CloudRunJobConfigError(RuntimeError):
 
 
 def cloud_run_jobs_enabled() -> bool:
+    backend = os.getenv("ASYNC_JOB_BACKEND", "").strip().lower().replace("-", "_")
+    if backend in {"cloud_run_jobs", "cloudrunjobs", "rq"}:
+        return True
     value = os.getenv("CLOUD_RUN_JOBS_ENABLED", "").strip().lower()
     if value:
         return value in ("1", "true", "yes")
-    return os.getenv("ENVIRONMENT", "development").strip().lower() == "production"
+    return False
 
 
-def _project_id() -> str:
-    project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT") or ""
+def _project_id(default_project: str | None = None) -> str:
+    project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT") or default_project or ""
     if not project:
         raise CloudRunJobConfigError("GOOGLE_CLOUD_PROJECT or GCP_PROJECT is required for Cloud Run Job dispatch.")
     return project
@@ -43,9 +46,9 @@ def dispatch_cloud_run_job(job_type: str, job_id: str) -> str:
     except ImportError as exc:
         raise CloudRunJobConfigError("google-auth is required for Cloud Run Job dispatch.") from exc
 
-    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    credentials, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     session = AuthorizedSession(credentials)
-    url = f"https://run.googleapis.com/v2/projects/{_project_id()}/locations/{_region()}/jobs/{job_name}:run"
+    url = f"https://run.googleapis.com/v2/projects/{_project_id(project)}/locations/{_region()}/jobs/{job_name}:run"
     response = session.post(
         url,
         json={
