@@ -51,6 +51,8 @@ outputs/
 **/outputs/
 results/aluminum/
 
+equities/sector_metrics/.sector_metrics_marketdata_cache.csv
+
 # Industry transcript artifacts are stored in Cloud Storage for deployed envs.
 macro/industry/files/**/*.pdf
 
