@@ -17,7 +17,7 @@ from typing import Any, cast
 import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -130,7 +130,7 @@ def require_auth(access_token: str | None = Cookie(default=None, alias="__sessio
 
 
 class LoginRequest(BaseModel):
-    password: str
+    password: str = Field(..., min_length=1, max_length=512)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

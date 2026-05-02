@@ -153,6 +153,24 @@ def test_crb_upload_rejects_invalid_or_empty_file_without_replacing_existing(aut
     assert router.CRB_LOCAL_PATH.read_bytes() == valid_payload
 
 
+def test_crb_upload_rejects_endpoint_oversized_file(auth_client, monkeypatch, tmp_path):
+    router = _isolate_crb_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(router, "MAX_CRB_UPLOAD_SIZE_BYTES", 4)
+
+    upload = auth_client.post(
+        "/api/v1/economic-growth/crb-file",
+        files={
+            "file": (
+                "crb.xlsx",
+                b"12345",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+    assert upload.status_code == 413
+
+
 def test_economic_growth_get_falls_back_to_bundled_crb_when_no_managed_file(auth_client, monkeypatch, tmp_path):
     router = _isolate_crb_store(monkeypatch, tmp_path)
     eg = _stub_market_fetch(monkeypatch)

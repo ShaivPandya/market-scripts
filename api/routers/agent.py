@@ -16,11 +16,11 @@ import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.agent_tools import AGENT_CAPABILITY_BY_NAME, TOOL_DEFINITIONS, execute_tool, list_agent_capabilities
 from api.exceptions import ConfigurationError
@@ -172,33 +172,37 @@ def _build_memory_context() -> str:
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+ChatText = Annotated[str, Field(min_length=1, max_length=64 * 1024)]
+ScreenShortText = Annotated[str, Field(max_length=512)]
+ScreenValueText = Annotated[str, Field(max_length=4096)]
+ToolNameText = Annotated[str, Field(max_length=128)]
 
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: ChatText
 
 
 class ScreenContextModel(BaseModel):
-    page_name: str
-    route: str
-    ticker: str | None = None
-    metrics: dict[str, str] | None = None
-    filters: dict[str, str] | None = None
-    summary: str | None = None
-    corresponding_tools: list[str] | None = None
+    page_name: ScreenShortText
+    route: ScreenShortText
+    ticker: ScreenShortText | None = None
+    metrics: dict[ScreenShortText, ScreenValueText] | None = Field(default=None, max_length=100)
+    filters: dict[ScreenShortText, ScreenValueText] | None = Field(default=None, max_length=100)
+    summary: ScreenValueText | None = None
+    corresponding_tools: list[ToolNameText] | None = Field(default=None, max_length=50)
 
 
 class AgentChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=50)
     screen_context: ScreenContextModel | None = None
 
 
 class AgentChatRequestV2(BaseModel):
     """V2 request: frontend sends only the new message + session ID."""
 
-    session_id: str | None = None
-    message: str
+    session_id: ScreenShortText | None = None
+    message: ChatText
     screen_context: ScreenContextModel | None = None
 
 

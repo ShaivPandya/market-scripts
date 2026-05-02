@@ -29,6 +29,7 @@ FILES_GCS_PREFIX = f"{DIGESTS_GCS_PREFIX}/files"
 _DEFAULT_TITLE = "Untitled Digest"
 _MAX_TITLE_LEN = 180
 _MAX_SLUG_LEN = 90
+_DIGEST_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9-]{1,90}$")
 
 
 def _now_utc() -> datetime:
@@ -49,6 +50,25 @@ def _safe_title(value: str | None, fallback: str = _DEFAULT_TITLE) -> str:
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return (slug or "digest")[:_MAX_SLUG_LEN].strip("-") or "digest"
+
+
+def validate_digest_id(digest_id: str) -> str:
+    value = str(digest_id or "").strip()
+    if not _DIGEST_ID_RE.match(value):
+        raise ValueError("Invalid news digest id")
+    try:
+        date.fromisoformat(value[:10])
+    except ValueError as exc:
+        raise ValueError("Invalid news digest id") from exc
+    return value
+
+
+def _is_manifest_digest_id(digest_id: str) -> bool:
+    try:
+        validate_digest_id(digest_id)
+        return True
+    except ValueError:
+        return False
 
 
 def _parse_date(value: str) -> date | None:
@@ -184,6 +204,17 @@ def _digest_local_path(digest_id: str) -> Path:
     return FILES_DIR / f"{digest_id}.md"
 
 
+def _safe_digest_local_path(digest_id: str) -> Path:
+    normalized = validate_digest_id(digest_id)
+    base = FILES_DIR.resolve(strict=False)
+    path = (FILES_DIR / f"{normalized}.md").resolve(strict=False)
+    try:
+        path.relative_to(base)
+    except ValueError as exc:
+        raise ValueError("Digest path escapes storage directory") from exc
+    return path
+
+
 def _digest_gcs_key(digest_id: str) -> str:
     return f"{FILES_GCS_PREFIX}/{digest_id}.md"
 
@@ -264,7 +295,10 @@ def save_digest(markdown: str, *, filename: str | None = None) -> dict[str, Any]
     content_hash = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
 
     manifest = _load_manifest()
-    existing = next((item for item in manifest["digests"] if item.get("id") == digest_id), None)
+    existing = next(
+        (item for item in manifest["digests"] if isinstance(item, dict) and item.get("id") == digest_id),
+        None,
+    )
     uploaded_at = str(existing.get("uploaded_at")) if existing else now_iso
 
     write_text(
@@ -289,7 +323,9 @@ def save_digest(markdown: str, *, filename: str | None = None) -> dict[str, Any]
         content_hash=content_hash,
     )
 
-    manifest["digests"] = [item for item in manifest["digests"] if item.get("id") != digest_id]
+    manifest["digests"] = [
+        item for item in manifest["digests"] if not isinstance(item, dict) or item.get("id") != digest_id
+    ]
     manifest["digests"].append(summary)
     manifest["digests"] = _sort_summaries(manifest["digests"])
     _write_manifest(manifest)
@@ -298,13 +334,20 @@ def save_digest(markdown: str, *, filename: str | None = None) -> dict[str, Any]
 
 
 def _read_digest_content(digest_id: str) -> str:
-    return read_text(_digest_local_path(digest_id), _digest_gcs_key(digest_id), encoding="utf-8")
+    normalized = validate_digest_id(digest_id)
+    return read_text(_safe_digest_local_path(normalized), _digest_gcs_key(normalized), encoding="utf-8")
 
 
 def list_digests() -> dict[str, Any]:
     """Return digest summaries plus parsed story metadata for the library UI."""
     manifest = _load_manifest()
-    summaries = _sort_summaries([item for item in manifest.get("digests", []) if isinstance(item, dict)])
+    summaries = _sort_summaries(
+        [
+            item
+            for item in manifest.get("digests", [])
+            if isinstance(item, dict) and _is_manifest_digest_id(str(item.get("id") or ""))
+        ]
+    )
 
     flat_stories: list[dict[str, Any]] = []
     for summary in summaries:
@@ -338,6 +381,7 @@ def list_digests() -> dict[str, Any]:
 
 
 def get_digest(digest_id: str) -> dict[str, Any]:
+    digest_id = validate_digest_id(digest_id)
     manifest = _load_manifest()
     summary = next((item for item in manifest.get("digests", []) if item.get("id") == digest_id), None)
     if not summary:
@@ -349,11 +393,15 @@ def get_digest(digest_id: str) -> dict[str, Any]:
 
 
 def delete_digest(digest_id: str) -> bool:
+    digest_id = validate_digest_id(digest_id)
     manifest = _load_manifest()
-    before = len(manifest.get("digests", []))
-    manifest["digests"] = [item for item in manifest.get("digests", []) if item.get("id") != digest_id]
+    digests = [item for item in manifest.get("digests", []) if isinstance(item, dict)]
+    if not any(item.get("id") == digest_id for item in digests):
+        return False
+    before = len(digests)
+    manifest["digests"] = [item for item in digests if item.get("id") != digest_id]
     removed_manifest = len(manifest["digests"]) != before
-    removed_file = delete_file(_digest_local_path(digest_id), _digest_gcs_key(digest_id))
+    removed_file = delete_file(_safe_digest_local_path(digest_id), _digest_gcs_key(digest_id))
     if removed_manifest:
         _write_manifest(manifest)
     return removed_manifest or removed_file
@@ -381,7 +429,13 @@ def get_report_context(
 ) -> dict[str, Any]:
     """Build a compact, deterministic digest context for report prompts."""
     manifest = _load_manifest()
-    summaries = _sort_summaries([item for item in manifest.get("digests", []) if isinstance(item, dict)])
+    summaries = _sort_summaries(
+        [
+            item
+            for item in manifest.get("digests", [])
+            if isinstance(item, dict) and _is_manifest_digest_id(str(item.get("id") or ""))
+        ]
+    )
     if not summaries:
         return {"window_days": days, "digests": [], "counts": {"digests": 0, "stories": 0}, "fallback_used": False}
 

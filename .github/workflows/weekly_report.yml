@@ -54,7 +54,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.ny_gate.outputs.should_run == 'true'
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -c requirements-lock.txt
 
       - name: Generate weekly report
         if: steps.ny_gate.outputs.should_run == 'true'

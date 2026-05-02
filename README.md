@@ -17,7 +17,7 @@ This repo is intentionally “flat”: most analysis modules are plain Python fi
 ### 1) Install Python dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -c requirements-lock.txt
 ```
 
 Optional extras (needed for some web pages / endpoints):

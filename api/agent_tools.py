@@ -3083,9 +3083,16 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         ), {"cache": "n/a"}
 
     if name == "propose_news_digest_delete":
+        from portfolio.news_digests import get_digest, validate_digest_id
+
+        digest_id = validate_digest_id(str(args["digest_id"]).strip())
+        try:
+            get_digest(digest_id)
+        except FileNotFoundError as exc:
+            raise ValueError(f"Unknown news digest id: {digest_id}") from exc
         return _create_pending(
             "news_digest_delete",
-            {"digest_id": str(args["digest_id"]).strip()},
+            {"digest_id": digest_id},
             reason=str(args["reason"]),
         ), {"cache": "n/a"}
 

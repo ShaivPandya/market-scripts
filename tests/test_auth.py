@@ -3,6 +3,7 @@
 import os
 
 import pytest
+from fastapi.responses import JSONResponse
 
 
 def test_login_success(client):
@@ -45,8 +46,58 @@ def test_me_authenticated(auth_client):
 def test_health_no_auth_required(client):
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    data = resp.json()
-    assert "status" in data
+    assert resp.json() == {"status": "ok"}
+
+
+def test_public_health_is_diagnostic_safe(client):
+    resp = client.get("/api/health")
+
+    assert resp.status_code == 200
+    text = resp.text.lower()
+    for forbidden in ("portfolio_db", "thesis_db", "core_db", "fred", "sqlite", "traceback", "/users/", "error:"):
+        assert forbidden not in text
+
+
+def test_admin_health_requires_auth(client, monkeypatch):
+    import api.main as main
+
+    monkeypatch.setattr(main, "_detailed_health_response", lambda: JSONResponse({"status": "ok", "checks": {}}))
+
+    unauthenticated = client.get("/api/v1/admin/health")
+    assert unauthenticated.status_code == 401
+
+    login = client.post("/api/v1/auth/login", json={"password": "testpass"})
+    assert login.status_code == 200
+    authenticated = client.get("/api/v1/admin/health")
+    assert authenticated.status_code in {200, 503}
+    assert "checks" in authenticated.json()
+
+
+def test_openapi_moved_under_api_prefix_in_development(client):
+    assert client.get("/api/openapi.json").status_code == 200
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_production_docs_and_schema_are_disabled(client, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    for path in ("/api/openapi.json", "/api/docs", "/api/redoc"):
+        resp = client.get(path)
+        assert resp.status_code == 404
+
+
+def test_global_request_body_limit_rejects_large_json_before_login_parse(client, monkeypatch):
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "64")
+
+    resp = client.post("/api/v1/auth/login", json={"password": "x" * 100})
+
+    assert resp.status_code == 413
+
+
+def test_login_password_length_is_limited(client):
+    resp = client.post("/api/v1/auth/login", json={"password": "x" * 513})
+
+    assert resp.status_code == 422
 
 
 def test_password_mode_does_not_require_proxy_secret_for_login(client, monkeypatch):
