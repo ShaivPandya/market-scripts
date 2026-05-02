@@ -96,7 +96,7 @@ def refresh_market_snapshots(_payload: dict[str, Any] | None = None) -> dict[str
             )
             results.append({"snapshot_key": snapshot_key, "status": "ok", "as_of": record.as_of_date})
         else:
-            record = write_snapshot_failure(
+            failure_record = write_snapshot_failure(
                 snapshot_key, error or "missing module payload", version=SNAPSHOT_SCHEMA_VERSION
             )
             results.append(
@@ -104,7 +104,7 @@ def refresh_market_snapshots(_payload: dict[str, Any] | None = None) -> dict[str
                     "snapshot_key": snapshot_key,
                     "status": "error",
                     "error": error or "missing module payload",
-                    "as_of": record.as_of_date if record else None,
+                    "as_of": failure_record.as_of_date if failure_record else None,
                 }
             )
 

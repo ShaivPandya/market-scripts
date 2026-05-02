@@ -210,7 +210,8 @@ def attach_snapshot_meta(
     max_age_seconds: int = DEFAULT_SNAPSHOT_MAX_AGE_SECONDS,
 ) -> dict[str, Any]:
     out = copy.deepcopy(payload)
-    meta = out.get("_meta") if isinstance(out.get("_meta"), dict) else {}
+    raw_meta = out.get("_meta")
+    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
     try:
         age_seconds = max(0, round((datetime.now() - _parse_dt(record.fetched_at)).total_seconds()))
     except Exception:

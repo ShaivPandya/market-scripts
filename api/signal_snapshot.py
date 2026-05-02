@@ -35,7 +35,10 @@ def _slice_history(data: dict[str, Any], lookback_weeks: int) -> None:
     if not isinstance(regime, dict):
         return
     try:
-        composite = float(regime.get("score"))
+        regime_score = regime.get("score")
+        if regime_score is None:
+            return
+        composite = float(regime_score)
     except (TypeError, ValueError):
         return
     scores = [score for score in (_history_score(row) for row in rows) if score is not None]
