@@ -59,7 +59,15 @@ jobs:
       - name: Generate weekly report
         if: steps.ny_gate.outputs.should_run == 'true'
         env:
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_MODEL_LOW: ${{ vars.ANTHROPIC_MODEL_LOW }}
+          ANTHROPIC_MODEL_MID: ${{ vars.ANTHROPIC_MODEL_MID }}
+          ANTHROPIC_MODEL_HIGH: ${{ vars.ANTHROPIC_MODEL_HIGH }}
+          OPENAI_MODEL_LOW: ${{ vars.OPENAI_MODEL_LOW }}
+          OPENAI_MODEL_MID: ${{ vars.OPENAI_MODEL_MID }}
+          OPENAI_MODEL_HIGH: ${{ vars.OPENAI_MODEL_HIGH }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           SODA_APP_TOKEN: ${{ secrets.SODA_APP_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

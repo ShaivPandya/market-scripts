@@ -205,7 +205,7 @@ The production stack runs on Google Cloud:
 - **Cloud SQL (Postgres + pgvector)** — application state
 - **Cloud Storage** — generated documents (theses, overviews) and pre-migration backups
 - **Cloud Run Jobs** — long-running batch work and the state migration entrypoint
-- **Cloud Scheduler** — periodic cache warm + async-job sweep
+- **Cloud Scheduler** — async-job sweep and daily top-50 refresh; cache warm is manual/optional
 - **Firebase Hosting** — serves the built frontend and rewrites `/api/**` to Cloud Run
 
 See `infra/gcp/README.md` for the full runbook (env vars, service accounts, cutover checks).

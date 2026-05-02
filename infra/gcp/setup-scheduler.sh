@@ -3,9 +3,17 @@
 # Cloud Run Jobs. Re-run anytime; existing jobs are updated in place.
 #
 # Jobs:
-#   enqueue-cache-warm        */5 * * * *   POST  /api/v1/admin/jobs/enqueue-cache-warm
 #   enqueue-async-job-sweep   0 * * * *     POST  /api/v1/admin/jobs/enqueue-async-job-sweep
 #   top50-refresh-daily       0 23 * * 1-5  POST  Cloud Run Jobs run -> ${TOP50_REFRESH_JOB}
+#
+# Optional:
+#   enqueue-cache-warm        0 * * * *     POST  /api/v1/admin/jobs/enqueue-cache-warm
+#
+# Scheduled cache warming is disabled by default. The warm job runs in the
+# generic async Cloud Run Job, which does not share the API service's in-memory
+# cache or local filesystem cache, so a 5-minute warm cadence adds many API/job
+# executions without materially improving interactive cold-start behavior. Set
+# SCHEDULE_CACHE_WARM=1 to recreate it at the lower CACHE_WARM_SCHEDULE cadence.
 #
 # Prereqs: deploy-api.sh has run (so the API URL is resolvable), deploy-top50-
 # refresh-job.sh has run (so the job exists), and iam.sh has bound
@@ -25,6 +33,15 @@ require_var TOP50_REFRESH_JOB
 require_active_project
 
 log() { printf '\n[scheduler] %s\n' "$*"; }
+
+is_truthy() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 API_URL="$(gcloud run services describe "${API_SERVICE}" \
   --project="${PROJECT_ID}" --region="${REGION}" \
@@ -78,6 +95,20 @@ upsert_api_job() {
     --quiet >/dev/null
 }
 
+delete_scheduler_job_if_present() {
+  local name="$1"
+  if gcloud scheduler jobs describe "${name}" \
+        --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    log "delete ${name} (disabled)"
+    gcloud scheduler jobs delete "${name}" \
+      --project="${PROJECT_ID}" \
+      --location="${REGION}" \
+      --quiet >/dev/null
+  else
+    log "skip ${name} (not configured)"
+  fi
+}
+
 # Create-or-update an HTTP scheduler job that runs a Cloud Run Job via the
 # admin API, authenticated as migrator-sa (which needs roles/run.jobsExecutor on
 # the job; iam.sh provides that binding).
@@ -101,8 +132,13 @@ upsert_run_job_trigger() {
     --quiet >/dev/null
 }
 
-upsert_api_job enqueue-cache-warm      "*/5 * * * *" /api/v1/admin/jobs/enqueue-cache-warm
 upsert_api_job enqueue-async-job-sweep "0 * * * *"   /api/v1/admin/jobs/enqueue-async-job-sweep
 upsert_run_job_trigger top50-refresh-daily "0 23 * * 1-5" "${TOP50_REFRESH_JOB}"
+
+if is_truthy "${SCHEDULE_CACHE_WARM:-0}"; then
+  upsert_api_job enqueue-cache-warm "${CACHE_WARM_SCHEDULE:-0 * * * *}" /api/v1/admin/jobs/enqueue-cache-warm
+else
+  delete_scheduler_job_if_present enqueue-cache-warm
+fi
 
 log "Scheduler sync complete."

@@ -4,7 +4,7 @@
 # IMAGE_TAG defaults to the current short git SHA (see lib.sh).
 #
 # Tunables (override via environment):
-#   API_CPU=2  API_MEMORY=2Gi  API_CONCURRENCY=40
+#   API_CPU=1  API_MEMORY=1Gi  API_CONCURRENCY=20
 #   API_MIN_INSTANCES=0  API_MAX_INSTANCES=10  API_TIMEOUT=300
 #   ASYNC_JOB_RUNNER_JOB=talisman-async-job
 
@@ -20,6 +20,14 @@ require_active_project
 require_image_exists
 
 ASYNC_JOB_RUNNER_JOB="${ASYNC_JOB_RUNNER_JOB:-talisman-async-job}"
+
+# The API service is now primarily request routing, short interactive reads, and
+# async job dispatch/polling; heavier analysis runs in Cloud Run Jobs. Default to
+# one vCPU and 1Gi with moderate concurrency so a single instance is not
+# overcommitted, while max instances can still absorb interactive bursts.
+API_CPU="${API_CPU:-1}"
+API_MEMORY="${API_MEMORY:-1Gi}"
+API_CONCURRENCY="${API_CONCURRENCY:-20}"
 
 mapfile -t COMMON_ENV < <(common_env_vars)
 
@@ -47,9 +55,9 @@ gcloud run deploy "${API_SERVICE}" \
   --add-cloudsql-instances="${CLOUDSQL_INSTANCE}" \
   --set-env-vars="$(join_kv "${API_ENV_VARS[@]}")" \
   --set-secrets="$(join_kv "${API_DEPLOY_SECRETS[@]}")" \
-  --cpu="${API_CPU:-2}" \
-  --memory="${API_MEMORY:-2Gi}" \
-  --concurrency="${API_CONCURRENCY:-40}" \
+  --cpu="${API_CPU}" \
+  --memory="${API_MEMORY}" \
+  --concurrency="${API_CONCURRENCY}" \
   --min-instances="${API_MIN_INSTANCES:-0}" \
   --max-instances="${API_MAX_INSTANCES:-10}" \
   --timeout="${API_TIMEOUT:-300}" \

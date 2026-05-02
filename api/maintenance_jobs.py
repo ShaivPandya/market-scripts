@@ -1,4 +1,9 @@
-"""Background maintenance jobs enqueued by Cloud Scheduler."""
+"""Background maintenance jobs enqueued by Cloud Scheduler.
+
+Only the async-job sweep is scheduled by default. Cache warming is kept as an
+admin/manual job because the generic Cloud Run Job does not share the API
+service's in-memory TTL cache or local filesystem cache.
+"""
 
 from __future__ import annotations
 

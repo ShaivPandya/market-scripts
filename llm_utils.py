@@ -66,8 +66,17 @@ def _obj_get(value: Any, key: str, default: Any = None) -> Any:
     return getattr(value, key, default)
 
 
+def _stored_provider() -> str | None:
+    try:
+        from api.llm_settings import get_llm_provider_setting
+
+        return get_llm_provider_setting()
+    except Exception:
+        return None
+
+
 def selected_provider() -> str:
-    provider = (os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
+    provider = (_stored_provider() or os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
     if provider not in PROVIDERS:
         raise ValueError("LLM_PROVIDER must be 'anthropic' or 'openai'")
     return provider

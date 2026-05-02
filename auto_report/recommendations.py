@@ -565,7 +565,7 @@ def repair_recommendations_response(
     stance: str,
     data_quality: dict,
 ) -> tuple[str, dict]:
-    from auto_report.shared import call_claude
+    from auto_report.shared import call_report_llm
 
     prompt = f"""Repair the recommendations output so it strictly matches the JSON contract.
 
@@ -578,7 +578,7 @@ Original output:
 ```
 
 Return a concise memo, then `{RECOMMENDATIONS_SEPARATOR}`, then valid JSON only. Do not add meta text."""
-    repaired, _ = call_claude(
+    repaired, _ = call_report_llm(
         system_msg="You repair malformed investment recommendation JSON. Do not change the intent unless required by schema or blocked data-quality rules.",
         user_msg=prompt,
         allowed_domains=None,

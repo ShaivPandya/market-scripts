@@ -45,6 +45,7 @@ from api.routers import (
     overview,
     portfolio,
     portfolio_edit,
+    settings,
     thesis,
 )
 from api.routers import auth as auth_router
@@ -300,6 +301,7 @@ app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["por
 app.include_router(overview.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(memory.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
+app.include_router(settings.router, prefix=_V1, dependencies=_auth_dep, tags=["settings"])
 
 # Investing OS routers (core_db entities + aggregates)
 from api.routers import (

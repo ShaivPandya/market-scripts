@@ -122,6 +122,41 @@ def _build_agent_instructions(screen_context: ScreenContextModel | None = None) 
     return base
 
 
+def _with_response_preferences(base: str, prefs: AgentResponsePreferences | None) -> str:
+    preference_section = _build_response_preferences_section(prefs)
+    if not preference_section:
+        return base
+    return base + "\n\n---\n\n" + preference_section
+
+
+def _build_response_preferences_section(prefs: AgentResponsePreferences | None) -> str:
+    if prefs is None:
+        return ""
+
+    lines = [
+        "## User Response Preferences",
+        "",
+        "Apply these preferences to response style only. They do not override tool-use, data-quality, approval-gating, or investment-process instructions.",
+        f"- Personality: {prefs.personality}",
+        f"- Warmth: {prefs.warmth}",
+        f"- Enthusiasm: {prefs.enthusiasm}",
+        f"- Headers and lists: {prefs.headers_lists}",
+        f"- Emoji: {prefs.emoji}",
+        f"- Fast answers: {'yes' if prefs.fast_answers else 'no'}",
+    ]
+    if prefs.fast_answers:
+        lines.append("- For simple questions, answer directly and keep supporting detail minimal.")
+    if prefs.custom_instructions:
+        lines.extend(
+            [
+                "",
+                "Custom response instructions:",
+                prefs.custom_instructions.strip(),
+            ]
+        )
+    return "\n".join(lines)
+
+
 _memory_cache: tuple[float, str] | None = None
 _MEMORY_CACHE_TTL = 60.0
 
@@ -193,9 +228,25 @@ class ScreenContextModel(BaseModel):
     corresponding_tools: list[ToolNameText] | None = Field(default=None, max_length=50)
 
 
+PreferenceLevel = Literal["less", "balanced", "more"]
+Personality = Literal["friendly", "pragmatic"]
+CustomInstructionText = Annotated[str, Field(max_length=2000)]
+
+
+class AgentResponsePreferences(BaseModel):
+    personality: Personality = "pragmatic"
+    warmth: PreferenceLevel = "less"
+    enthusiasm: PreferenceLevel = "less"
+    headers_lists: PreferenceLevel = "less"
+    emoji: PreferenceLevel = "less"
+    fast_answers: bool = True
+    custom_instructions: CustomInstructionText | None = None
+
+
 class AgentChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1, max_length=50)
     screen_context: ScreenContextModel | None = None
+    response_preferences: AgentResponsePreferences | None = None
 
 
 class AgentChatRequestV2(BaseModel):
@@ -204,6 +255,7 @@ class AgentChatRequestV2(BaseModel):
     session_id: ScreenShortText | None = None
     message: ChatText
     screen_context: ScreenContextModel | None = None
+    response_preferences: AgentResponsePreferences | None = None
 
 
 @router.get("/agent/workflows")
@@ -358,12 +410,19 @@ def _is_casual(user_text: str) -> bool:
     return not text or bool(_CASUAL_RX.match(text))
 
 
-def _casual_response(user_text: str) -> str:
+def _prefers_no_followups(prefs: AgentResponsePreferences | None) -> bool:
+    custom = (prefs.custom_instructions or "").lower() if prefs else ""
+    return "no follow-up" in custom or "do not ask follow" in custom or "don't ask follow" in custom
+
+
+def _casual_response(user_text: str, prefs: AgentResponsePreferences | None = None) -> str:
     text = (user_text or "").strip().lower()
     if "thank" in text or text in {"thanks", "cool", "ok", "okay"}:
         return "Anytime."
     if "who are you" in text or "what can you do" in text:
         return "I'm Stan. I can help with portfolio, market, macro, thesis, and risk questions."
+    if _prefers_no_followups(prefs):
+        return "Hey."
     return "Hey. What are you looking at?"
 
 
@@ -930,7 +989,10 @@ def _usage_dict(message: object) -> dict:
 @router.post("/agent/chat")
 def agent_chat(req: AgentChatRequest):
     provider, api_key = _read_llm_api_key()
-    instructions = _build_agent_instructions(screen_context=req.screen_context)
+    instructions = _with_response_preferences(
+        _build_agent_instructions(screen_context=req.screen_context),
+        req.response_preferences,
+    )
     latest_user_text = _extract_last_user_text(req.messages)
     casual = _is_casual(latest_user_text)
     workflow_name, workflow_ticker = _detect_workflow(latest_user_text)
@@ -1256,7 +1318,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
 
             session = memory_db.get_or_create_session(req.session_id)
             session_id = str(session["session_id"])
-            text = _casual_response(req.message)
+            text = _casual_response(req.message, req.response_preferences)
             yield _sse("delta", {"text": text})
             user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
             assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time()}
@@ -1265,7 +1327,10 @@ def agent_chat_v2(req: AgentChatRequestV2):
             return
 
         provider, api_key = _read_llm_api_key()
-        instructions = _build_agent_instructions(screen_context=req.screen_context)
+        instructions = _with_response_preferences(
+            _build_agent_instructions(screen_context=req.screen_context),
+            req.response_preferences,
+        )
         client = _get_provider_client(provider, api_key)
         raw_conversation, session_id = build_conversation_context(
             req.session_id,

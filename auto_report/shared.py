@@ -134,14 +134,14 @@ def slim_error(value):
 # ---------------------------------------------------------------------------
 
 
-def call_claude(
+def call_report_llm(
     system_msg: str,
     user_msg: str,
     allowed_domains: list[str] | None = None,
     model: str = MODEL_HIGH,
     max_tokens: int = 16384,
 ) -> tuple[str, list[tuple[str, str]]]:
-    """Call the configured LLM provider, optionally with web search.
+    """Call the configured report LLM provider, optionally with web search.
 
     Returns (text, citations) where citations is a list of (title, url) tuples.
     """
