@@ -1,0 +1,804 @@
+"""Shared recommendation contract, quality gates, and persistence helpers."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import re
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+
+log = logging.getLogger("auto_report.recommendations")
+
+RECOMMENDATIONS_SEPARATOR = "<!-- RECOMMENDATIONS_JSON -->"
+
+STANCE_OPTIONS = (
+    "Aggressively Offensive",
+    "Offensive",
+    "Neutral / Watchful",
+    "Defensive",
+    "Aggressively Defensive",
+)
+
+ACTION_OPTIONS = (
+    "buy",
+    "sell",
+    "hold",
+    "watch",
+    "avoid",
+    "reduce",
+    "exit",
+    "rebalance",
+    "hedge",
+    "do_nothing",
+)
+
+ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+NON_APPROVAL_ACTIONS = {"hold", "watch", "avoid", "do_nothing"}
+QUALITY_OPTIONS = ("ok", "degraded", "stale", "failed")
+RECOMMENDATION_STATUSES = ("clear", "blocked", "error")
+
+CRITICAL_SOURCES = {
+    "daily": {
+        "portfolio_positions",
+        "risk_data",
+        "sizer_summary",
+        "indices",
+        "breadth",
+        "vix",
+        "liquidity",
+        "yield_curve",
+    },
+    "weekly": {
+        "indices",
+        "breadth",
+        "vix",
+        "liquidity",
+        "yield_curve",
+        "economic_growth",
+        "labor_market",
+        "housing",
+        "portfolio_context",
+    },
+}
+
+MAX_SOURCE_AGE_DAYS = {
+    "indices": 7,
+    "breadth": 7,
+    "vix": 7,
+    "liquidity": 14,
+    "yield_curve": 7,
+    "economic_growth": 14,
+    "labor_market": 45,
+    "housing": 75,
+    "portfolio_positions": 30,
+    "portfolio_context": 30,
+    "risk_data": 7,
+    "sizer_summary": 7,
+}
+
+
+class RecommendationValidationError(ValueError):
+    """Raised when an LLM recommendation payload violates the contract."""
+
+
+def stable_hash(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _strip_json_fence(value: str) -> str:
+    text = value.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _as_list(value: Any) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, out))
+
+
+def _parse_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _collect_dates(value: Any, *, depth: int = 0) -> list[date]:
+    if depth > 5:
+        return []
+    dates: list[date] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_l = str(key).lower()
+            if any(token in key_l for token in ("date", "as_of", "timestamp", "fetched_at", "latest")):
+                parsed = _parse_date(item)
+                if parsed is not None:
+                    dates.append(parsed)
+            if isinstance(item, (dict, list)):
+                dates.extend(_collect_dates(item, depth=depth + 1))
+    elif isinstance(value, list):
+        for item in value[:25]:
+            dates.extend(_collect_dates(item, depth=depth + 1))
+    return dates
+
+
+def _has_nested_error(value: Any, *, depth: int = 0) -> bool:
+    if depth > 4:
+        return False
+    if isinstance(value, dict):
+        err = value.get("error")
+        if isinstance(err, str) and err.strip():
+            return True
+        return any(_has_nested_error(v, depth=depth + 1) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_nested_error(v, depth=depth + 1) for v in value[:25])
+    return False
+
+
+def _extract_source_map(raw: dict) -> dict[str, Any]:
+    sources: dict[str, Any] = {}
+    if not isinstance(raw, dict):
+        return sources
+    for key, value in raw.items():
+        if key == "market_data" and isinstance(value, dict):
+            sources.update(value)
+        else:
+            sources[key] = value
+    return sources
+
+
+def assess_report_data_quality(raw: dict, report_type: str) -> dict:
+    """Return source-level status plus a critical gate for recommendations."""
+    sources = _extract_source_map(raw)
+    critical = CRITICAL_SOURCES.get(report_type, set())
+    today = datetime.now(UTC).date()
+    entries: list[dict[str, Any]] = []
+    blocked_reasons: list[str] = []
+
+    for name in sorted(set(sources) | critical):
+        value = sources.get(name)
+        is_critical = name in critical
+        status = "ok"
+        error = None
+        latest = None
+        freshness_days = None
+
+        if value is None or value == [] or value == {}:
+            status = "failed" if is_critical else "degraded"
+            error = "missing or empty source"
+        elif isinstance(value, dict) and isinstance(value.get("error"), str):
+            status = "failed"
+            error = value.get("error")
+        elif _has_nested_error(value):
+            status = "degraded"
+            error = "nested source error"
+
+        dates = _collect_dates(value)
+        if dates:
+            latest = max(dates).isoformat()
+            freshness_days = (today - max(dates)).days
+            max_age = MAX_SOURCE_AGE_DAYS.get(name)
+            if max_age is not None and freshness_days > max_age and status != "failed":
+                status = "stale"
+                error = f"latest observation {freshness_days} days old"
+
+        if is_critical and status in {"failed", "stale"}:
+            blocked_reasons.append(f"{name}: {error or status}")
+
+        entries.append(
+            {
+                "module": name,
+                "status": status,
+                "as_of": latest,
+                "freshness_days": freshness_days,
+                "critical": is_critical,
+                "error": error,
+            }
+        )
+
+    critical_entries = [e for e in entries if e["critical"]]
+    if any(e["status"] == "failed" for e in critical_entries):
+        critical_status = "failed"
+    elif any(e["status"] == "stale" for e in critical_entries):
+        critical_status = "stale"
+    elif any(e["status"] == "degraded" for e in critical_entries):
+        critical_status = "degraded"
+    else:
+        critical_status = "ok"
+
+    if critical_status in {"failed", "stale"}:
+        overall = critical_status
+    elif any(e["status"] in {"failed", "stale", "degraded"} for e in entries):
+        overall = "degraded"
+    else:
+        overall = "ok"
+
+    return {
+        "overall_status": overall,
+        "critical_data_quality": critical_status,
+        "recommendations_blocked": bool(blocked_reasons),
+        "blocked_reasons": blocked_reasons,
+        "sources": entries,
+    }
+
+
+def fallback_recommendations_payload(
+    report_type: str,
+    as_of: str,
+    stance: str,
+    data_quality: dict,
+    *,
+    status: str | None = None,
+    reason: str | None = None,
+) -> dict:
+    recommendation_status = status or ("blocked" if data_quality.get("recommendations_blocked") else "error")
+    quality = data_quality.get("critical_data_quality", "failed")
+    blocked_reasons = list(data_quality.get("blocked_reasons") or [])
+    if reason:
+        blocked_reasons.append(reason)
+    rationale = reason or "Critical inputs are unavailable or the recommendation payload could not be validated."
+    return {
+        "report_type": report_type,
+        "as_of": as_of,
+        "stance": stance if stance in STANCE_OPTIONS else "Neutral / Watchful",
+        "recommendation_status": recommendation_status,
+        "critical_data_quality": quality if quality in QUALITY_OPTIONS else "failed",
+        "blocked_reasons": blocked_reasons,
+        "do_nothing_rationale": rationale,
+        "what_changed": [],
+        "recommended_actions": [
+            {
+                "action": "do_nothing",
+                "ticker": None,
+                "instrument": "portfolio",
+                "horizon": "1 trading day" if report_type == "daily" else "1 week",
+                "target_change": "none",
+                "rationale": rationale,
+                "evidence": blocked_reasons,
+                "disconfirming_evidence": [],
+                "catalyst": "",
+                "invalidation": "Data quality restored and a fresh recommendation pass is valid.",
+                "expected_onset_window": "",
+                "confidence": 1.0 if recommendation_status == "blocked" else 0.0,
+                "source_quality": quality if quality in QUALITY_OPTIONS else "failed",
+                "approval_required": False,
+            }
+        ],
+        "alternatives": [],
+        "opportunity_cost": [],
+    }
+
+
+def validate_recommendations_payload(
+    payload: dict,
+    *,
+    report_type: str,
+    as_of: str,
+    stance: str,
+    data_quality: dict,
+) -> dict:
+    if not isinstance(payload, dict):
+        raise RecommendationValidationError("Recommendation payload must be a JSON object.")
+
+    required_top_level = {
+        "report_type",
+        "as_of",
+        "stance",
+        "recommendation_status",
+        "critical_data_quality",
+        "blocked_reasons",
+        "do_nothing_rationale",
+        "what_changed",
+        "recommended_actions",
+        "alternatives",
+        "opportunity_cost",
+    }
+    errors: list[str] = []
+    missing_top_level = sorted(required_top_level - set(payload))
+    if missing_top_level:
+        errors.append(f"missing required top-level fields: {', '.join(missing_top_level)}")
+
+    normalized = dict(payload)
+    normalized["report_type"] = normalized.get("report_type") or report_type
+    normalized["as_of"] = normalized.get("as_of") or as_of
+    normalized["stance"] = normalized.get("stance") or stance
+    normalized["critical_data_quality"] = normalized.get("critical_data_quality") or data_quality.get(
+        "critical_data_quality", "ok"
+    )
+    normalized["recommendation_status"] = normalized.get("recommendation_status") or "clear"
+
+    if normalized["report_type"] not in {"daily", "weekly"}:
+        errors.append("report_type must be daily or weekly")
+    elif normalized["report_type"] != report_type:
+        errors.append(f"report_type must match pipeline report_type {report_type!r}")
+    if str(normalized["as_of"]) != str(as_of):
+        errors.append(f"as_of must match pipeline as_of {as_of!r}")
+    if normalized["stance"] not in STANCE_OPTIONS:
+        errors.append(f"stance must be one of {', '.join(STANCE_OPTIONS)}")
+    elif normalized["stance"] != stance:
+        errors.append(f"stance must match pipeline stance {stance!r}")
+    if normalized["recommendation_status"] not in RECOMMENDATION_STATUSES:
+        errors.append("recommendation_status must be clear, blocked, or error")
+    if normalized["critical_data_quality"] not in QUALITY_OPTIONS:
+        errors.append("critical_data_quality must be ok, degraded, stale, or failed")
+
+    blocked_reasons = _as_list(normalized.get("blocked_reasons"))
+    if data_quality.get("recommendations_blocked"):
+        normalized["recommendation_status"] = "blocked"
+        normalized["critical_data_quality"] = data_quality.get("critical_data_quality", "failed")
+        for reason in data_quality.get("blocked_reasons", []):
+            if reason not in blocked_reasons:
+                blocked_reasons.append(reason)
+    normalized["blocked_reasons"] = [str(x) for x in blocked_reasons if str(x).strip()]
+    normalized["what_changed"] = [str(x) for x in _as_list(normalized.get("what_changed")) if str(x).strip()]
+    normalized["alternatives"] = _as_list(normalized.get("alternatives"))
+    normalized["opportunity_cost"] = _as_list(normalized.get("opportunity_cost"))
+    normalized["do_nothing_rationale"] = str(normalized.get("do_nothing_rationale") or "")
+
+    actions = normalized.get("recommended_actions")
+    if not isinstance(actions, list) or not actions:
+        errors.append("recommended_actions must be a non-empty list")
+        actions = []
+
+    normalized_actions: list[dict[str, Any]] = []
+    required_action_fields = {
+        "action",
+        "ticker",
+        "instrument",
+        "horizon",
+        "target_change",
+        "rationale",
+        "evidence",
+        "disconfirming_evidence",
+        "catalyst",
+        "invalidation",
+        "expected_onset_window",
+        "confidence",
+        "source_quality",
+        "approval_required",
+    }
+    for idx, raw_action in enumerate(actions):
+        if not isinstance(raw_action, dict):
+            errors.append(f"recommended_actions[{idx}] must be an object")
+            continue
+        missing_action_fields = sorted(required_action_fields - set(raw_action))
+        if missing_action_fields:
+            errors.append(f"recommended_actions[{idx}] missing required fields: {', '.join(missing_action_fields)}")
+        action = str(raw_action.get("action") or "").lower()
+        if action not in ACTION_OPTIONS:
+            errors.append(f"recommended_actions[{idx}].action is invalid: {action!r}")
+            continue
+        if normalized["recommendation_status"] in {"blocked", "error"} and action not in {"watch", "do_nothing"}:
+            errors.append("blocked/error recommendations may only use watch or do_nothing actions")
+            continue
+        ticker = raw_action.get("ticker")
+        if isinstance(ticker, str):
+            ticker = ticker.strip().upper() or None
+        else:
+            ticker = None
+        approval_required = bool(raw_action.get("approval_required"))
+        if normalized["recommendation_status"] == "clear" and action in ACTIONABLE_ACTIONS:
+            approval_required = True
+        else:
+            approval_required = False
+        normalized_actions.append(
+            {
+                "action": action,
+                "ticker": ticker,
+                "instrument": str(raw_action.get("instrument") or ticker or "portfolio"),
+                "horizon": str(raw_action.get("horizon") or ("1 trading day" if report_type == "daily" else "1 week")),
+                "target_change": str(raw_action.get("target_change") or ""),
+                "rationale": str(raw_action.get("rationale") or ""),
+                "evidence": [str(x) for x in _as_list(raw_action.get("evidence")) if str(x).strip()],
+                "disconfirming_evidence": [
+                    str(x) for x in _as_list(raw_action.get("disconfirming_evidence")) if str(x).strip()
+                ],
+                "catalyst": str(raw_action.get("catalyst") or ""),
+                "invalidation": str(raw_action.get("invalidation") or ""),
+                "expected_onset_window": str(raw_action.get("expected_onset_window") or ""),
+                "confidence": _as_float(raw_action.get("confidence"), 0.0),
+                "source_quality": raw_action.get("source_quality")
+                if raw_action.get("source_quality") in QUALITY_OPTIONS
+                else normalized["critical_data_quality"],
+                "approval_required": approval_required,
+            }
+        )
+
+    if not normalized_actions and not errors:
+        errors.append("recommended_actions contains no valid actions")
+
+    if errors:
+        raise RecommendationValidationError("; ".join(errors))
+
+    normalized["recommended_actions"] = normalized_actions
+    return normalized
+
+
+def parse_recommendations_response(
+    text: str,
+    *,
+    report_type: str,
+    as_of: str,
+    stance: str,
+    data_quality: dict,
+) -> tuple[str, dict]:
+    if RECOMMENDATIONS_SEPARATOR not in text:
+        raise RecommendationValidationError("No recommendations JSON separator found.")
+    md, raw_json = text.split(RECOMMENDATIONS_SEPARATOR, 1)
+    try:
+        payload = json.loads(_strip_json_fence(raw_json))
+    except json.JSONDecodeError as exc:
+        raise RecommendationValidationError(f"Invalid recommendations JSON: {exc}") from exc
+    return md.strip(), validate_recommendations_payload(
+        payload,
+        report_type=report_type,
+        as_of=as_of,
+        stance=stance,
+        data_quality=data_quality,
+    )
+
+
+def build_recommendations_user_message(
+    *,
+    report_type: str,
+    as_of: str,
+    stance: str,
+    data_quality: dict,
+    evidence_bundle: dict,
+    commentary_md: str,
+    extra_context_md: str = "",
+) -> str:
+    horizon = "today / next 1-5 trading days" if report_type == "daily" else "next week / next 1-3 months"
+    bundle_json = json.dumps(evidence_bundle, indent=2, default=str)
+    quality_json = json.dumps(data_quality, indent=2, default=str)
+    stance_options = " | ".join(STANCE_OPTIONS)
+    action_options = " | ".join(ACTION_OPTIONS)
+    return f"""Produce the {report_type} recommendations report for {as_of}.
+
+Current stance: {stance}
+Decision horizon: {horizon}
+
+## Data Quality
+
+```json
+{quality_json}
+```
+
+## Evidence Bundle
+
+```json
+{bundle_json}
+```
+
+## Commentary Context
+
+{commentary_md}
+
+{extra_context_md}
+
+Write a short recommendations memo first. The memo must be decision-oriented and may not repeat the commentary.
+
+Hard rules:
+- If critical data quality is stale or failed, set recommendation_status to blocked and use only watch or do_nothing.
+- Commentary is context only; it cannot by itself justify an action.
+- do_nothing is an active recommendation when no fat pitch exists.
+- New entries normally start at one-third intended size.
+- Adds require validation from price action, news, and/or fundamentals.
+- If the expected onset window failed, recommend reduce, exit, or review.
+- Default hedge is position reduction. Hedge overlays require explicit justification.
+- Use the shared stance enum exactly: {stance_options}.
+- Use only these actions: {action_options}.
+
+After the memo, output the separator `{RECOMMENDATIONS_SEPARATOR}` on its own line, then a JSON block matching this contract:
+```json
+{{
+  "report_type": "{report_type}",
+  "as_of": "{as_of}",
+  "stance": "<{stance_options}>",
+  "recommendation_status": "<clear|blocked|error>",
+  "critical_data_quality": "<ok|degraded|stale|failed>",
+  "blocked_reasons": [],
+  "do_nothing_rationale": "",
+  "what_changed": [],
+  "recommended_actions": [
+    {{
+      "action": "<{action_options}>",
+      "ticker": null,
+      "instrument": "portfolio",
+      "horizon": "{"1 trading day" if report_type == "daily" else "1 week"}",
+      "target_change": "",
+      "rationale": "",
+      "evidence": [],
+      "disconfirming_evidence": [],
+      "catalyst": "",
+      "invalidation": "",
+      "expected_onset_window": "",
+      "confidence": 0.0,
+      "source_quality": "<ok|degraded|stale|failed>",
+      "approval_required": false
+    }}
+  ],
+  "alternatives": [],
+  "opportunity_cost": []
+}}
+```
+
+End immediately after the JSON. No assistant meta text."""
+
+
+def repair_recommendations_response(
+    raw_text: str,
+    validation_error: str,
+    *,
+    report_type: str,
+    as_of: str,
+    stance: str,
+    data_quality: dict,
+) -> tuple[str, dict]:
+    from auto_report.shared import call_claude
+
+    prompt = f"""Repair the recommendations output so it strictly matches the JSON contract.
+
+Validation error:
+{validation_error}
+
+Original output:
+```
+{raw_text}
+```
+
+Return a concise memo, then `{RECOMMENDATIONS_SEPARATOR}`, then valid JSON only. Do not add meta text."""
+    repaired, _ = call_claude(
+        system_msg="You repair malformed investment recommendation JSON. Do not change the intent unless required by schema or blocked data-quality rules.",
+        user_msg=prompt,
+        allowed_domains=None,
+        max_tokens=4096,
+    )
+    return parse_recommendations_response(
+        repaired,
+        report_type=report_type,
+        as_of=as_of,
+        stance=stance,
+        data_quality=data_quality,
+    )
+
+
+def format_recommendations_markdown(payload: dict) -> str:
+    lines = [
+        "## Recommendation Status",
+        f"- Status: **{payload.get('recommendation_status', 'unknown')}**",
+        f"- Critical data quality: **{payload.get('critical_data_quality', 'unknown')}**",
+        f"- Stance: **{payload.get('stance', 'unknown')}**",
+    ]
+    blocked = payload.get("blocked_reasons") or []
+    if blocked:
+        lines.append("- Blocked reasons:")
+        lines.extend(f"  - {reason}" for reason in blocked)
+    if payload.get("do_nothing_rationale"):
+        lines.extend(["", "## Do Nothing Rationale", str(payload["do_nothing_rationale"])])
+    if payload.get("what_changed"):
+        lines.append("")
+        lines.append("## What Changed")
+        lines.extend(f"- {item}" for item in payload["what_changed"])
+    lines.append("")
+    lines.append("## Recommended Actions")
+    for action in payload.get("recommended_actions", []):
+        label = action.get("instrument") or action.get("ticker") or "portfolio"
+        lines.append("")
+        lines.append(f"### {str(action.get('action', '')).replace('_', ' ').title()} - {label}")
+        lines.append(f"- Horizon: {action.get('horizon', '')}")
+        lines.append(f"- Target change: {action.get('target_change') or 'none'}")
+        lines.append(f"- Confidence: {action.get('confidence', 0):.2f}")
+        lines.append(f"- Approval required: {'yes' if action.get('approval_required') else 'no'}")
+        lines.append(f"- Rationale: {action.get('rationale', '')}")
+        if action.get("invalidation"):
+            lines.append(f"- Invalidation: {action['invalidation']}")
+        if action.get("evidence"):
+            lines.append("- Evidence: " + "; ".join(action["evidence"]))
+        if action.get("disconfirming_evidence"):
+            lines.append("- Disconfirming evidence: " + "; ".join(action["disconfirming_evidence"]))
+    return "\n".join(lines).strip()
+
+
+def _approval_action_type(action: str) -> str:
+    if action == "buy":
+        return "enter"
+    if action == "exit":
+        return "exit"
+    if action == "hedge":
+        return "hedge"
+    if action in {"sell", "reduce", "rebalance"}:
+        return "resize"
+    return "review"
+
+
+def persist_recommendations(
+    payload: dict,
+    *,
+    source_report_path: str,
+    source_json_path: str,
+    prompt_metadata: dict | None = None,
+) -> list[dict]:
+    from portfolio.core_db import create_pending_approval, create_recommendation, update_recommendation_approval
+
+    prompt_metadata = prompt_metadata or {}
+    persisted: list[dict] = []
+    for action in payload.get("recommended_actions", []):
+        record = {
+            **action,
+            "report_type": payload["report_type"],
+            "as_of": payload["as_of"],
+            "source_report_path": source_report_path,
+            "source_json_path": source_json_path,
+            "stance": payload["stance"],
+            "recommendation_status": payload["recommendation_status"],
+            "critical_data_quality": payload["critical_data_quality"],
+            "blocked_reasons": payload.get("blocked_reasons", []),
+            "what_changed": payload.get("what_changed", []),
+            "do_nothing_rationale": payload.get("do_nothing_rationale", ""),
+            "alternatives": payload.get("alternatives", []),
+            "opportunity_cost": payload.get("opportunity_cost", []),
+            "status": "blocked"
+            if payload["recommendation_status"] == "blocked"
+            else "error"
+            if payload["recommendation_status"] == "error"
+            else "open",
+            "approval_status": "none",
+            "outcome_status": "pending",
+            **prompt_metadata,
+        }
+        rec = create_recommendation(record)
+        if payload["recommendation_status"] == "clear" and action["action"] in ACTIONABLE_ACTIONS:
+            description = f"{action['action'].replace('_', ' ').title()} {action.get('instrument') or action.get('ticker') or 'portfolio'}"
+            if action.get("target_change"):
+                description += f" ({action['target_change']})"
+            approval = create_pending_approval(
+                entity_type="action_item",
+                proposed_change={
+                    "recommendation_id": rec["id"],
+                    "ticker": action.get("ticker"),
+                    "description": description,
+                    "action_type": _approval_action_type(action["action"]),
+                    "urgency": "high" if action["action"] in {"exit", "reduce"} else "normal",
+                    "reason": action.get("rationale", ""),
+                },
+                ticker=action.get("ticker"),
+                reason=action.get("rationale", ""),
+                source_type="workflow",
+                source_id=f"{payload['report_type']}:{payload['as_of']}",
+            )
+            rec = update_recommendation_approval(rec["id"], approval["id"], "pending")
+        persisted.append(rec)
+    return persisted
+
+
+def _horizon_days(horizon: str | None) -> int:
+    text = (horizon or "").lower()
+    if "trading day" in text or "1 day" in text:
+        return 1
+    if "week" in text:
+        return 7
+    if "month" in text:
+        return 30
+    return 7
+
+
+def _expected_direction(action: str) -> str | None:
+    if action == "buy":
+        return "up"
+    if action in {"sell", "reduce", "exit", "avoid"}:
+        return "down"
+    return None
+
+
+def evaluate_due_recommendations(limit: int = 50) -> dict:
+    from portfolio.core_db import get_recommendations, update_recommendation_outcome
+
+    today = datetime.now(UTC).date()
+    checked = 0
+    updated = 0
+    unavailable = 0
+    for rec in get_recommendations(outcome_status="pending", limit=limit):
+        checked += 1
+        as_of = _parse_date(rec.get("as_of"))
+        if as_of is None:
+            update_recommendation_outcome(rec["id"], "unavailable", {"reason": "missing as_of date"})
+            unavailable += 1
+            continue
+        if today < as_of + timedelta(days=_horizon_days(rec.get("horizon"))):
+            continue
+        action = rec.get("action")
+        if action == "do_nothing":
+            update_recommendation_outcome(
+                rec["id"],
+                "evaluated",
+                {
+                    "evaluation_authority": "ai_draft_user_final",
+                    "final_label_status": "draft",
+                    "draft_postmortem": "No-action recommendation reached its review horizon. User should confirm whether inaction preserved optionality or missed an actionable opportunity.",
+                    "objective_score_available": False,
+                },
+            )
+            updated += 1
+            continue
+        ticker = rec.get("ticker")
+        direction = _expected_direction(str(action))
+        if not ticker or direction is None:
+            update_recommendation_outcome(
+                rec["id"],
+                "unavailable",
+                {"reason": "broad or non-directional recommendation; manual review required"},
+            )
+            unavailable += 1
+            continue
+        try:
+            import yfinance as yf
+
+            hist = yf.download(
+                ticker,
+                start=as_of.isoformat(),
+                end=(today + timedelta(days=1)).isoformat(),
+                progress=False,
+                auto_adjust=True,
+            )
+            if hist is None or hist.empty or "Close" not in hist:
+                raise RuntimeError("no close price history")
+            close = hist["Close"].dropna()
+            if close.empty:
+                raise RuntimeError("empty close series")
+            start = float(close.iloc[0])
+            end = float(close.iloc[-1])
+            forward_return = (end / start - 1.0) * 100.0
+            running = (close / start - 1.0) * 100.0
+            max_adverse = float(running.min() if direction == "up" else running.max())
+            directionally_right = forward_return > 0 if direction == "up" else forward_return < 0
+            update_recommendation_outcome(
+                rec["id"],
+                "evaluated",
+                {
+                    "evaluation_authority": "ai_draft_user_final",
+                    "final_label_status": "draft",
+                    "start_price": start,
+                    "end_price": end,
+                    "forward_return_pct": round(forward_return, 2),
+                    "max_adverse_move_pct": round(max_adverse, 2),
+                    "expected_direction": direction,
+                    "directionally_right": directionally_right,
+                    "draft_postmortem": "Objective price outcome computed. User should confirm whether the recommendation reflected good process.",
+                },
+            )
+            updated += 1
+        except Exception as exc:
+            update_recommendation_outcome(rec["id"], "unavailable", {"reason": str(exc)})
+            unavailable += 1
+    return {"checked": checked, "updated": updated, "unavailable": unavailable}

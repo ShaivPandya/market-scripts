@@ -2491,7 +2491,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
                 filters = {}
         else:
             filters = {}
-        query = args.get("query")
+        ontology_query = str(args.get("query") or "").strip()
         intent = args.get("intent")
         timeframe = args.get("timeframe", "Daily")
         include_graph = bool(args.get("include_graph", False))
@@ -2500,7 +2500,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
         cache_token = json.dumps(
             {
-                "query": query,
+                "query": ontology_query,
                 "intent": intent,
                 "filters": filters,
                 "timeframe": timeframe,
@@ -2516,7 +2516,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         def _load():
             service = OntologyQueryService()
             result = service.query(
-                query=str(query) if isinstance(query, str) else None,
+                query=ontology_query or None,
                 intent=str(intent) if isinstance(intent, str) else None,
                 filters=filters,
                 timeframe=str(timeframe) if isinstance(timeframe, str) else "Daily",
@@ -2925,57 +2925,62 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         return run_quality_screen(req), {"cache": "n/a"}
 
     if name == "run_short_screen":
-        from api.routers.short_screen import ShortScreenRequest, _cache_key
+        from api.routers.short_screen import ShortScreenRequest
+        from api.routers.short_screen import _cache_key as short_screen_cache_key
 
         req = _model_validate(ShortScreenRequest, args)
         return _run_registered_job_for_agent(
             "short_screen",
             req.model_dump(),
-            cache_key=_cache_key(req),
+            cache_key=short_screen_cache_key(req),
             poll_path="/api/v1/short-screen/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_long_screen":
-        from api.routers.long_screen import LongScreenRequest, _cache_key
+        from api.routers.long_screen import LongScreenRequest
+        from api.routers.long_screen import _cache_key as long_screen_cache_key
 
         req = _model_validate(LongScreenRequest, args)
         return _run_registered_job_for_agent(
             "long_screen",
             req.model_dump(),
-            cache_key=_cache_key(req),
+            cache_key=long_screen_cache_key(req),
             poll_path="/api/v1/long-screen/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_fundamental_momentum":
-        from api.routers.fundamental_momentum import FMRequest, _cache_key
+        from api.routers.fundamental_momentum import FMRequest
+        from api.routers.fundamental_momentum import _cache_key as fundamental_momentum_cache_key
 
         req = _model_validate(FMRequest, args)
         return _run_registered_job_for_agent(
             "fundamental_momentum",
             req.model_dump(),
-            cache_key=_cache_key(req),
+            cache_key=fundamental_momentum_cache_key(req),
             poll_path="/api/v1/fundamental-momentum/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_portfolio_analyzer":
-        from api.routers.analyzer import AnalyzerRequest, _cache_key
+        from api.routers.analyzer import AnalyzerRequest
+        from api.routers.analyzer import _cache_key as analyzer_cache_key
 
         req = _model_validate(AnalyzerRequest, args)
         return _run_registered_job_for_agent(
             "analyzer",
             req.model_dump(),
-            cache_key=_cache_key(req),
+            cache_key=analyzer_cache_key(req),
             poll_path="/api/v1/portfolio-analyzer/async/{job_id}",
         ), {"cache": "n/a"}
 
     if name == "run_portfolio_sizer":
-        from api.routers.sizer import SizerRequest, _cache_key
+        from api.routers.sizer import SizerRequest
+        from api.routers.sizer import _cache_key as sizer_cache_key
 
         req = _model_validate(SizerRequest, args)
         return _run_registered_job_for_agent(
             "sizer",
             req.model_dump(),
-            cache_key=_cache_key(req),
+            cache_key=sizer_cache_key(req),
             poll_path="/api/v1/portfolio-sizer/async/{job_id}",
         ), {"cache": "n/a"}
 
@@ -2985,13 +2990,14 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         return get_sizer_prefill(), {"cache": "n/a"}
 
     if name == "run_hedging_tool":
-        from api.routers.hedging import HedgingRequest, _cache_key
+        from api.routers.hedging import HedgingRequest
+        from api.routers.hedging import _cache_key as hedging_cache_key
 
         req = _model_validate(HedgingRequest, args)
         return _run_registered_job_for_agent(
             "hedging",
             req.model_dump(),
-            cache_key=_cache_key(req),
+            cache_key=hedging_cache_key(req),
             poll_path="/api/v1/hedging-tool/async/{job_id}",
         ), {"cache": "n/a"}
 

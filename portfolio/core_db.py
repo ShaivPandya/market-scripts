@@ -44,6 +44,14 @@ Public API:
     get_pending_approvals(status, ticker)              -> list[dict]
     get_pending_approval(id)                           -> dict | None
     resolve_approval(id, status, resolved_note)        -> dict
+
+  Recommendations:
+    create_recommendation(record)                      -> dict
+    get_recommendations(report_type, status, ticker)   -> list[dict]
+    get_recommendation(id)                             -> dict | None
+    get_latest_recommendation(report_type)             -> dict | None
+    update_recommendation_approval(id, approval_id, status) -> dict
+    update_recommendation_outcome(id, status, outcome) -> dict
 """
 
 from __future__ import annotations
@@ -192,6 +200,56 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
 )
 """
 
+_CREATE_RECOMMENDATIONS = """
+CREATE TABLE IF NOT EXISTS recommendations (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_type                 TEXT NOT NULL
+                                CHECK (report_type IN ('daily', 'weekly')),
+    as_of                       TEXT NOT NULL,
+    created_at                  TEXT NOT NULL,
+    source_report_path          TEXT,
+    source_json_path            TEXT,
+    stance                      TEXT NOT NULL,
+    recommendation_status       TEXT NOT NULL
+                                CHECK (recommendation_status IN ('clear', 'blocked', 'error')),
+    critical_data_quality       TEXT NOT NULL
+                                CHECK (critical_data_quality IN ('ok', 'degraded', 'stale', 'failed')),
+    blocked_reasons_json        TEXT,
+    what_changed_json           TEXT,
+    do_nothing_rationale        TEXT,
+    action                      TEXT NOT NULL
+                                CHECK (action IN ('buy', 'sell', 'hold', 'watch', 'avoid', 'reduce', 'exit', 'rebalance', 'hedge', 'do_nothing')),
+    ticker                      TEXT,
+    instrument                  TEXT NOT NULL,
+    horizon                     TEXT,
+    target_change               TEXT,
+    rationale                   TEXT NOT NULL,
+    confidence                  REAL,
+    source_quality              TEXT NOT NULL
+                                CHECK (source_quality IN ('ok', 'degraded', 'stale', 'failed')),
+    status                      TEXT NOT NULL DEFAULT 'open'
+                                CHECK (status IN ('open', 'blocked', 'error', 'superseded', 'closed')),
+    evidence_json               TEXT,
+    disconfirming_evidence_json TEXT,
+    catalyst                    TEXT,
+    invalidation                TEXT,
+    expected_onset_window       TEXT,
+    alternatives_json           TEXT,
+    opportunity_cost_json       TEXT,
+    approval_id                 INTEGER,
+    approval_status             TEXT NOT NULL DEFAULT 'none'
+                                CHECK (approval_status IN ('none', 'pending', 'approved', 'rejected')),
+    outcome_status              TEXT NOT NULL DEFAULT 'pending'
+                                CHECK (outcome_status IN ('pending', 'evaluated', 'unavailable')),
+    outcome_json                TEXT,
+    model                       TEXT,
+    prompt_hash                 TEXT,
+    input_hash                  TEXT,
+    validation_status           TEXT,
+    source_quality_summary_json TEXT
+)
+"""
+
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_catalysts_ticker ON catalysts(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_kill_conditions_ticker ON kill_conditions(ticker)",
@@ -205,6 +263,11 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_research_notes_ticker ON research_notes(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_ticker ON pending_approvals(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_report ON recommendations(report_type, as_of DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_ticker ON recommendations(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_status ON recommendations(status)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_approval ON recommendations(approval_status)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_outcome ON recommendations(outcome_status)",
 ]
 
 # ---------------------------------------------------------------------------
@@ -238,6 +301,7 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "watch_triggers",
                             "research_notes",
                             "pending_approvals",
+                            "recommendations",
                         }
                     )
                 else:
@@ -258,6 +322,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_WATCH_TRIGGERS,
         _CREATE_RESEARCH_NOTES,
         _CREATE_PENDING_APPROVALS,
+        _CREATE_RECOMMENDATIONS,
     ]:
         conn.execute(stmt)
     for idx in _INDEXES:
@@ -795,6 +860,180 @@ def get_research_notes(
 
 
 # ---------------------------------------------------------------------------
+# Recommendations
+# ---------------------------------------------------------------------------
+
+_RECOMMENDATION_JSON_FIELDS = (
+    "blocked_reasons_json",
+    "what_changed_json",
+    "evidence_json",
+    "disconfirming_evidence_json",
+    "alternatives_json",
+    "opportunity_cost_json",
+    "outcome_json",
+    "source_quality_summary_json",
+)
+
+
+def _encode_json(value: Any) -> str:
+    return json.dumps(value if value is not None else [], default=str)
+
+
+def _parse_recommendation_json_fields(d: dict) -> dict:
+    for field in _RECOMMENDATION_JSON_FIELDS:
+        _parse_json_field(d, field)
+    return d
+
+
+def create_recommendation(record: dict) -> dict:
+    conn = _get_conn()
+    now = record.get("created_at") or _now()
+    ticker = record.get("ticker")
+    status = record.get("status") or (
+        "blocked"
+        if record.get("recommendation_status") == "blocked"
+        else "error"
+        if record.get("recommendation_status") == "error"
+        else "open"
+    )
+    params = {
+        "report_type": record["report_type"],
+        "as_of": record["as_of"],
+        "created_at": now,
+        "source_report_path": record.get("source_report_path"),
+        "source_json_path": record.get("source_json_path"),
+        "stance": record["stance"],
+        "recommendation_status": record.get("recommendation_status", "clear"),
+        "critical_data_quality": record.get("critical_data_quality", "ok"),
+        "blocked_reasons_json": _encode_json(record.get("blocked_reasons", [])),
+        "what_changed_json": _encode_json(record.get("what_changed", [])),
+        "do_nothing_rationale": record.get("do_nothing_rationale", ""),
+        "action": record["action"],
+        "ticker": ticker.upper() if isinstance(ticker, str) and ticker else None,
+        "instrument": record.get("instrument") or "portfolio",
+        "horizon": record.get("horizon"),
+        "target_change": record.get("target_change"),
+        "rationale": record.get("rationale") or "",
+        "confidence": record.get("confidence"),
+        "source_quality": record.get("source_quality", "ok"),
+        "status": status,
+        "evidence_json": _encode_json(record.get("evidence", [])),
+        "disconfirming_evidence_json": _encode_json(record.get("disconfirming_evidence", [])),
+        "catalyst": record.get("catalyst"),
+        "invalidation": record.get("invalidation"),
+        "expected_onset_window": record.get("expected_onset_window"),
+        "alternatives_json": _encode_json(record.get("alternatives", [])),
+        "opportunity_cost_json": _encode_json(record.get("opportunity_cost", [])),
+        "approval_id": record.get("approval_id"),
+        "approval_status": record.get("approval_status", "none"),
+        "outcome_status": record.get("outcome_status", "pending"),
+        "outcome_json": _encode_json(record.get("outcome", {})),
+        "model": record.get("model"),
+        "prompt_hash": record.get("prompt_hash"),
+        "input_hash": record.get("input_hash"),
+        "validation_status": record.get("validation_status"),
+        "source_quality_summary_json": _encode_json(record.get("source_quality_summary", {})),
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    with _lock:
+        cur = conn.execute(
+            f"INSERT INTO recommendations ({columns}) VALUES ({placeholders})",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_recommendation_json_fields(_require_row_dict(row))
+
+
+def get_recommendations(
+    report_type: str | None = None,
+    status: str | None = None,
+    ticker: str | None = None,
+    approval_status: str | None = None,
+    outcome_status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if report_type:
+        clauses.append("report_type = ?")
+        params.append(report_type)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if ticker:
+        clauses.append("ticker = ?")
+        params.append(ticker.upper())
+    if approval_status:
+        clauses.append("approval_status = ?")
+        params.append(approval_status)
+    if outcome_status:
+        clauses.append("outcome_status = ?")
+        params.append(outcome_status)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM recommendations{where} ORDER BY as_of DESC, created_at DESC, id DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+    return [_parse_recommendation_json_fields(d) for d in _rows_to_list(rows)]
+
+
+def get_recommendation(recommendation_id: int) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
+    if not row:
+        return None
+    return _parse_recommendation_json_fields(_require_row_dict(row))
+
+
+def get_latest_recommendation(report_type: str | None = None) -> dict | None:
+    results = get_recommendations(report_type=report_type, limit=1)
+    return results[0] if results else None
+
+
+def update_recommendation_approval(
+    recommendation_id: int,
+    approval_id: int | None,
+    approval_status: str,
+) -> dict:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
+        if not row:
+            raise ValueError(f"No recommendation with id {recommendation_id}")
+        conn.execute(
+            "UPDATE recommendations SET approval_id = COALESCE(?, approval_id), approval_status = ? WHERE id = ?",
+            (approval_id, approval_status, recommendation_id),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
+    return _parse_recommendation_json_fields(_require_row_dict(updated))
+
+
+def update_recommendation_outcome(
+    recommendation_id: int,
+    outcome_status: str,
+    outcome: dict,
+) -> dict:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
+        if not row:
+            raise ValueError(f"No recommendation with id {recommendation_id}")
+        conn.execute(
+            "UPDATE recommendations SET outcome_status = ?, outcome_json = ? WHERE id = ?",
+            (outcome_status, json.dumps(outcome, default=str), recommendation_id),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
+    return _parse_recommendation_json_fields(_require_row_dict(updated))
+
+
+# ---------------------------------------------------------------------------
 # Pending Approvals
 # ---------------------------------------------------------------------------
 
@@ -904,9 +1143,16 @@ def resolve_approval(approval_id: int, status: str, resolved_note: str | None = 
         )
         conn.commit()
 
+    _parse_json_field(current, "proposed_change")
+    change = current.get("proposed_change")
+    if isinstance(change, dict) and change.get("recommendation_id") is not None:
+        try:
+            update_recommendation_approval(int(change["recommendation_id"]), approval_id, status)
+        except Exception:
+            logger.warning("Failed to update recommendation approval status", exc_info=True)
+
     # Apply side effect if approved
     if status == "approved":
-        _parse_json_field(current, "proposed_change")
         _apply_approval_side_effect(current)
 
     with _lock:

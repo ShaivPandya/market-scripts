@@ -148,8 +148,7 @@ ECB_SDMX_TIMEOUT_SECONDS = 12.0
 def get_fred_client():
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
-        LOGGER.error("Missing FRED_API_KEY environment variable.")
-        sys.exit(1)
+        raise RuntimeError("Missing FRED_API_KEY environment variable.")
     return Fred(api_key=api_key)
 
 
@@ -168,7 +167,7 @@ def fetch_fred_series(fred):
     if errors:
         for err in errors:
             LOGGER.error("Data fetch error: %s", err)
-        sys.exit(1)
+        raise RuntimeError("; ".join(errors))
     df = pd.concat(data, axis=1)
     df.index = pd.to_datetime(df.index)
     df = df.sort_index()

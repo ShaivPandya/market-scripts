@@ -193,6 +193,15 @@ def _sqlite_count(db_path: Path, table: str) -> int:
         return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
+def _sqlite_table_exists(db_path: Path, table: str) -> bool:
+    with sqlite3.connect(str(db_path)) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+
 def _parse_datetime(value: str | None) -> datetime:
     if not value:
         return datetime.now(UTC)
@@ -489,7 +498,47 @@ class StateMigrator:
                 "resolved_at",
                 "resolved_note",
             ],
+            "recommendations": [
+                "id",
+                "report_type",
+                "as_of",
+                "created_at",
+                "source_report_path",
+                "source_json_path",
+                "stance",
+                "recommendation_status",
+                "critical_data_quality",
+                "blocked_reasons_json",
+                "what_changed_json",
+                "do_nothing_rationale",
+                "action",
+                "ticker",
+                "instrument",
+                "horizon",
+                "target_change",
+                "rationale",
+                "confidence",
+                "source_quality",
+                "status",
+                "evidence_json",
+                "disconfirming_evidence_json",
+                "catalyst",
+                "invalidation",
+                "expected_onset_window",
+                "alternatives_json",
+                "opportunity_cost_json",
+                "approval_id",
+                "approval_status",
+                "outcome_status",
+                "outcome_json",
+                "model",
+                "prompt_hash",
+                "input_hash",
+                "validation_status",
+                "source_quality_summary_json",
+            ],
         }
+        tables = {table: columns for table, columns in tables.items() if _sqlite_table_exists(db, table)}
         counts = {table: _sqlite_count(db, table) for table in tables}
         if self._source_completed("core", source_hash):
             return SourceResult("core", source_hash, counts)

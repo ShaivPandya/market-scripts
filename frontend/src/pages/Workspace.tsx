@@ -29,6 +29,18 @@ interface WorkspaceData {
     evaluated_at: string
   }[]
   pending_approvals: { count: number; items: Approval[] }
+  recommendations: {
+    latest_daily: Recommendation | null
+    latest_weekly: Recommendation | null
+    pending_actionable: { count: number; items: Recommendation[] }
+    blocked_warnings: {
+      report_type: string
+      as_of: string
+      critical_data_quality: string
+      blocked_reasons: string[]
+    }[]
+    pending_approval_count: number
+  }
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
   recent_workflow_runs: WorkflowRun[]
@@ -67,6 +79,22 @@ interface WorkflowRun {
   status: string
   started_at: string
   completed_at: string | null
+}
+
+interface Recommendation {
+  id: number
+  report_type: string
+  as_of: string
+  stance: string
+  recommendation_status: string
+  critical_data_quality: string
+  action: string
+  ticker: string | null
+  instrument: string
+  rationale: string
+  confidence: number | null
+  approval_status: string
+  blocked_reasons_json?: string[]
 }
 
 const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error"; label: string }> = {
@@ -178,13 +206,77 @@ export function Workspace() {
           signalLabel={data.pending_approvals.count > 0 ? "Needs Review" : undefined}
         />
         <MetricCard
-          title="Open Actions"
-          value={data.open_actions.count}
-          subtitle={`${data.active_triggers.count} active trigger${data.active_triggers.count !== 1 ? "s" : ""}`}
+          title="Recommendations"
+          value={data.recommendations.pending_actionable.count}
+          subtitle={`${data.recommendations.pending_approval_count} approval${data.recommendations.pending_approval_count !== 1 ? "s" : ""}`}
+          signal={data.recommendations.blocked_warnings.length > 0 ? "warning" : null}
+          signalLabel={data.recommendations.blocked_warnings.length > 0 ? "Blocked" : undefined}
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recommendation Summary */}
+        {(data.recommendations.latest_daily || data.recommendations.latest_weekly || data.recommendations.blocked_warnings.length > 0) && (
+          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <AlertTriangle size={14} className={data.recommendations.blocked_warnings.length ? "text-amber-500" : "text-blue-500"} />
+              Recommendation Ledger
+              <span className="ml-auto text-xs text-subtle">{data.recommendations.pending_actionable.count} pending action{data.recommendations.pending_actionable.count !== 1 ? "s" : ""}</span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[data.recommendations.latest_daily, data.recommendations.latest_weekly].filter(Boolean).map(rec => (
+                <div key={`${rec!.report_type}-${rec!.id}`} className="rounded-lg border border-app px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-app capitalize">{rec!.report_type}</span>
+                    <span className="text-xs text-subtle">{rec!.as_of}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">{rec!.stance}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">{rec!.action.replace(/_/g, " ")}</span>
+                    <span className={cn(
+                      "text-xs px-1.5 py-0.5 rounded font-medium",
+                      rec!.recommendation_status === "blocked" || rec!.critical_data_quality === "failed"
+                        ? "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
+                        : "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
+                    )}>
+                      {rec!.critical_data_quality}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted line-clamp-2">{rec!.rationale}</p>
+                </div>
+              ))}
+            </div>
+            {data.recommendations.blocked_warnings.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                {data.recommendations.blocked_warnings.map(w => (
+                  <div key={`${w.report_type}-${w.as_of}`}>
+                    <span className="font-medium capitalize">{w.report_type}</span> recommendations blocked by {w.critical_data_quality}: {w.blocked_reasons.join("; ") || "critical data unavailable"}
+                  </div>
+                ))}
+              </div>
+            )}
+            {data.recommendations.pending_actionable.items.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {data.recommendations.pending_actionable.items.map(rec => (
+                  <div key={`pending-rec-${rec.id}`} className="rounded-lg border border-app px-3 py-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-app">{rec.action.replace(/_/g, " ")}</span>
+                      <span className="text-xs text-subtle">{rec.instrument}</span>
+                      {rec.ticker && (
+                        <Link to={`/dossier/${rec.ticker}`} state={{ from: "workspace" }} className="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400">
+                          {rec.ticker}
+                        </Link>
+                      )}
+                      <span className="ml-auto text-xs text-subtle">{rec.approval_status}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted line-clamp-2">{rec.rationale}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Thesis Pressure */}
         {data.thesis_pressure.length > 0 && (
           <section className="theme-surface rounded-xl p-4">
@@ -386,6 +478,10 @@ export function Workspace() {
 
       {/* Empty state */}
       {!data.thesis_pressure.length &&
+        !data.recommendations.latest_daily &&
+        !data.recommendations.latest_weekly &&
+        !data.recommendations.pending_actionable.count &&
+        !data.recommendations.blocked_warnings.length &&
         !data.pending_approvals.count &&
         !data.open_actions.count &&
         !data.active_triggers.count &&

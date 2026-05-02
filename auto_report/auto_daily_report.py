@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Automated daily portfolio risk report — two-pass architecture.
+Automated daily portfolio report — commentary plus recommendations.
 
 Pass 1: Market analysis using all 12 data sources + news search → stance + leverage.
-Pass 2: Portfolio risk analysis with stance-driven target leverage.
+Pass 2: Portfolio risk commentary with stance-driven target leverage.
+Pass 3: Decision recommendations with data-quality gates and approval persistence.
 
 Run:
     python -m auto_report.auto_daily_report --force   # bypass weekday-morning gate
@@ -47,6 +48,18 @@ from auto_report.auto_weekly_report import (
 from auto_report.auto_weekly_report import (  # noqa: E402
     collect_data as collect_market_data,
 )
+from auto_report.recommendations import (  # noqa: E402
+    RECOMMENDATIONS_SEPARATOR,
+    assess_report_data_quality,
+    build_recommendations_user_message,
+    evaluate_due_recommendations,
+    fallback_recommendations_payload,
+    format_recommendations_markdown,
+    parse_recommendations_response,
+    persist_recommendations,
+    repair_recommendations_response,
+    stable_hash,
+)
 from auto_report.shared import (  # noqa: E402
     call_claude,
     create_github_issue,
@@ -55,6 +68,7 @@ from auto_report.shared import (  # noqa: E402
     strip_llm_meta,
     write_bundle,
 )
+from llm_utils import MODEL_HIGH  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -82,12 +96,12 @@ DAILY_SUMMARY_SEPARATOR = "<!-- DAILY_SUMMARY_JSON -->"
 STANCE_LEVERAGE_MAP = {
     "Aggressively Offensive": {"base": 3.0, "low": 2.75, "high": 3.0},
     "Offensive": {"base": 2.5, "low": 2.25, "high": 2.75},
-    "Neutral": {"base": 2.0, "low": 1.75, "high": 2.25},
+    "Neutral / Watchful": {"base": 2.0, "low": 1.75, "high": 2.25},
     "Defensive": {"base": 1.25, "low": 1.0, "high": 1.5},
     "Aggressively Defensive": {"base": 0.5, "low": 0.5, "high": 0.75},
 }
 DEFAULT_LEVERAGE = 2.0
-DEFAULT_STANCE = "Neutral"
+DEFAULT_STANCE = "Neutral / Watchful"
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +684,9 @@ def parse_pass1_response(text: str) -> tuple[str, dict]:
         raw_leverage = DEFAULT_LEVERAGE
 
     stance = stance_dict.get("stance", DEFAULT_STANCE)
+    if stance == "Neutral":
+        stance = DEFAULT_STANCE
+        stance_dict["stance"] = stance
     if stance not in STANCE_LEVERAGE_MAP:
         log.warning("Unknown stance %r — defaulting to %r", stance, DEFAULT_STANCE)
         stance = DEFAULT_STANCE
@@ -753,7 +770,7 @@ Constraints:
 - Cite specific metrics from the data (vol, beta, drawdown %, ROC, MA signals).
 - Be direct and concise. No filler.
 - Focus on what changed or what is abnormal.
-- The share adjustments table is deterministic -- do not second-guess the sizer, but flag if any adjustment is unusually large.
+- The share adjustments table is deterministic input, not a final recommendation. Flag unusual adjustments and any source-quality, liquidity, or portfolio-risk reason the recommendations pass should reject or block them.
 
 After the report, output the separator `{DAILY_SUMMARY_SEPARATOR}` on its own line, then a JSON block:
 ```json
@@ -807,13 +824,108 @@ def parse_daily_response(text: str) -> tuple[str, dict]:
 
 
 # ---------------------------------------------------------------------------
+# Recommendations pass
+# ---------------------------------------------------------------------------
+
+
+def _build_recommendations_system_message() -> str:
+    core_md = load_prompt_file(PROMPTS_DIR / "system.md", "prompts/system.md")
+    rec_md = load_prompt_file(PROMPTS_DIR / "recommendations_system.md", "prompts/recommendations_system.md")
+    return f"{core_md}\n\n---\n\n{rec_md}"
+
+
+def _build_recommendations_extra_context(risk_summary_md: str, adjustments_md: str) -> str:
+    return f"""## Deterministic Risk Tables
+
+{risk_summary_md}
+
+{adjustments_md}
+
+Use the sizer and adjustment table as evidence, not as authority. Reject or block actions that fail source-quality, thesis, liquidity, or portfolio-risk gates."""
+
+
+def _generate_daily_recommendations(
+    *,
+    today_str: str,
+    stance_dict: dict,
+    data_quality: dict,
+    evidence_bundle: dict,
+    commentary_md: str,
+    risk_summary_md: str,
+    adjustments_md: str,
+) -> tuple[str, dict]:
+    stance = stance_dict.get("stance", DEFAULT_STANCE)
+    if data_quality.get("recommendations_blocked"):
+        payload = fallback_recommendations_payload(
+            "daily",
+            today_str,
+            stance,
+            data_quality,
+            status="blocked",
+            reason="Critical data quality blocks actionable daily recommendations.",
+        )
+        return format_recommendations_markdown(payload), payload
+
+    system_msg = _build_recommendations_system_message()
+    user_msg = build_recommendations_user_message(
+        report_type="daily",
+        as_of=today_str,
+        stance=stance,
+        data_quality=data_quality,
+        evidence_bundle=evidence_bundle,
+        commentary_md=commentary_md,
+        extra_context_md=_build_recommendations_extra_context(risk_summary_md, adjustments_md),
+    )
+    try:
+        raw_text, _ = call_claude(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
+        try:
+            memo_md, payload = parse_recommendations_response(
+                raw_text,
+                report_type="daily",
+                as_of=today_str,
+                stance=stance,
+                data_quality=data_quality,
+            )
+        except Exception as exc:
+            log.warning("Daily recommendations validation failed; attempting repair: %s", exc)
+            memo_md, payload = repair_recommendations_response(
+                raw_text,
+                str(exc),
+                report_type="daily",
+                as_of=today_str,
+                stance=stance,
+                data_quality=data_quality,
+            )
+        memo_md = strip_llm_meta(memo_md)
+        formatted = format_recommendations_markdown(payload)
+        return "\n\n".join(part for part in [memo_md, formatted] if part).strip(), payload
+    except Exception as exc:
+        log.error("Daily recommendations generation failed: %s", exc, exc_info=True)
+        payload = fallback_recommendations_payload(
+            "daily",
+            today_str,
+            stance,
+            data_quality,
+            status="error",
+            reason=f"Recommendation generation failed: {exc}",
+        )
+        return format_recommendations_markdown(payload), payload
+
+
+# ---------------------------------------------------------------------------
 # Summary merging + stance header
 # ---------------------------------------------------------------------------
 
 
-def _merge_summary(stance_dict: dict, risk_summary: dict) -> dict:
+def _merge_summary(
+    stance_dict: dict,
+    risk_summary: dict,
+    recommendation_payload: dict | None = None,
+    data_quality: dict | None = None,
+    persisted_recommendations: list[dict] | None = None,
+) -> dict:
     """Merge Pass 1 stance dict with Pass 2 risk summary into final summary.json."""
-    return {
+    summary = {
         # Stance fields (from Pass 1)
         "stance": stance_dict.get("stance", DEFAULT_STANCE),
         "target_leverage": stance_dict.get("target_leverage", DEFAULT_LEVERAGE),
@@ -830,6 +942,21 @@ def _merge_summary(stance_dict: dict, risk_summary: dict) -> dict:
         "largest_adjustments": risk_summary.get("largest_adjustments", []),
         "pass2_parse_error": risk_summary.get("parse_error", False),
     }
+    if recommendation_payload:
+        summary["recommendations"] = {
+            "status": recommendation_payload.get("recommendation_status"),
+            "critical_data_quality": recommendation_payload.get("critical_data_quality"),
+            "blocked_reasons": recommendation_payload.get("blocked_reasons", []),
+            "action_count": len(recommendation_payload.get("recommended_actions", [])),
+            "actionable_count": sum(
+                1 for action in recommendation_payload.get("recommended_actions", []) if action.get("approval_required")
+            ),
+            "persisted_ids": [r.get("id") for r in persisted_recommendations or []],
+            "separator": RECOMMENDATIONS_SEPARATOR,
+        }
+    if data_quality:
+        summary["data_quality"] = data_quality
+    return summary
 
 
 def _build_stance_header_markdown(stance_dict: dict) -> str:
@@ -863,6 +990,9 @@ def _build_stance_header_markdown(stance_dict: dict) -> str:
 
 def write_daily_outputs(
     report_md: str,
+    commentary_md: str,
+    recommendations_md: str,
+    recommendations_payload: dict,
     summary: dict,
     bundle: dict,
     adjustments_df,
@@ -873,6 +1003,12 @@ def write_daily_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     (output_dir / "report.md").write_text(report_md, encoding="utf-8")
+    (output_dir / "commentary.md").write_text(commentary_md, encoding="utf-8")
+    (output_dir / "recommendations.md").write_text(recommendations_md, encoding="utf-8")
+    (output_dir / "recommendations.json").write_text(
+        json.dumps(recommendations_payload, indent=2, default=str),
+        encoding="utf-8",
+    )
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     write_bundle(bundle, output_dir / "daily_bundle.json")
     if not adjustments_df.empty:
@@ -896,6 +1032,12 @@ def write_daily_outputs(
     archive_dir = output_dir / "history" / today
     archive_dir.mkdir(parents=True, exist_ok=True)
     (archive_dir / "report.md").write_text(report_md, encoding="utf-8")
+    (archive_dir / "commentary.md").write_text(commentary_md, encoding="utf-8")
+    (archive_dir / "recommendations.md").write_text(recommendations_md, encoding="utf-8")
+    (archive_dir / "recommendations.json").write_text(
+        json.dumps(recommendations_payload, indent=2, default=str),
+        encoding="utf-8",
+    )
     (archive_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     write_bundle(bundle, archive_dir / "daily_bundle.json")
     if not adjustments_df.empty:
@@ -1088,16 +1230,16 @@ def main():
         risk_summary_dict["error"] = str(e)
 
     # ---------------------------------------------------------------
-    # STEP 13: Compose final report
+    # STEP 13: Compose commentary report
     # ---------------------------------------------------------------
     stance_header_md = _build_stance_header_markdown(stance_dict)
 
     # Collect all citations
     all_citations = pass1_citations + pass2_citations
 
-    report_md = "\n\n".join(
+    commentary_md = "\n\n".join(
         [
-            f"# Daily Portfolio Report — {today_str}",
+            f"# Daily Commentary Report — {today_str}",
             "---",
             "## Market Stance",
             stance_header_md,
@@ -1122,31 +1264,106 @@ def main():
             if url not in seen:
                 seen.add(url)
                 sources_lines.append(f"- [{title}]({url})")
-        report_md += "\n".join(sources_lines)
+        commentary_md += "\n".join(sources_lines)
 
     # ---------------------------------------------------------------
-    # STEP 14: Merge summary, write outputs, create GitHub Issue
+    # STEP 14: Data quality + recommendations
     # ---------------------------------------------------------------
-    merged_summary = _merge_summary(stance_dict, risk_summary_dict)
+    raw_recommendation_bundle = {
+        "market_data": market_data,
+        "portfolio_positions": portfolio_df.to_dict(orient="records"),
+        "risk_data": risk_data,
+        "sizer_summary": {k: v for k, v in sizer_result.items() if k not in ("weights_df", "hedges_df", "max_scaled")},
+        "risk_summary": risk_summary_dict,
+        "stance": stance_dict,
+    }
+    data_quality = assess_report_data_quality(raw_recommendation_bundle, "daily")
+    recommendation_evidence_bundle = serialize_bundle(
+        {
+            **raw_recommendation_bundle,
+            "data_quality": data_quality,
+        }
+    )
+
+    recommendations_md, recommendations_payload = _generate_daily_recommendations(
+        today_str=today_str,
+        stance_dict=stance_dict,
+        data_quality=data_quality,
+        evidence_bundle=recommendation_evidence_bundle,
+        commentary_md=commentary_md,
+        risk_summary_md=risk_summary_md,
+        adjustments_md=adjustments_md,
+    )
+
+    persisted_recommendations = persist_recommendations(
+        recommendations_payload,
+        source_report_path=str(OUTPUT_DIR / "recommendations.md"),
+        source_json_path=str(OUTPUT_DIR / "recommendations.json"),
+        prompt_metadata={
+            "model": MODEL_HIGH,
+            "prompt_hash": stable_hash(
+                {
+                    "system": _build_recommendations_system_message(),
+                    "separator": RECOMMENDATIONS_SEPARATOR,
+                }
+            ),
+            "input_hash": stable_hash(recommendation_evidence_bundle),
+            "validation_status": "ok" if recommendations_payload.get("recommendation_status") != "error" else "error",
+            "source_quality_summary": data_quality,
+        },
+    )
+
+    report_md = "\n\n".join(
+        [
+            f"# Daily Portfolio Report — {today_str}",
+            "---",
+            commentary_md,
+            "---",
+            f"# Daily Recommendations — {today_str}",
+            recommendations_md,
+        ]
+    )
+
+    merged_summary = _merge_summary(
+        stance_dict,
+        risk_summary_dict,
+        recommendations_payload,
+        data_quality,
+        persisted_recommendations,
+    )
 
     # Full bundle for archive includes both market + risk data
     full_bundle = serialize_bundle(
         {
-            "market_data": market_data,
-            "risk_data": risk_data,
-            "sizer_summary": {
-                k: v for k, v in sizer_result.items() if k not in ("weights_df", "hedges_df", "max_scaled")
-            },
+            **raw_recommendation_bundle,
+            "data_quality": data_quality,
+            "recommendations": recommendations_payload,
         }
     )
 
-    write_daily_outputs(report_md, merged_summary, full_bundle, adjustments_df, OUTPUT_DIR, today_str)
+    write_daily_outputs(
+        report_md,
+        commentary_md,
+        recommendations_md,
+        recommendations_payload,
+        merged_summary,
+        full_bundle,
+        adjustments_df,
+        OUTPUT_DIR,
+        today_str,
+    )
 
     issue_title = f"Daily Report — {today_str} | {stance_dict['stance']}"
     try:
         create_github_issue(issue_title, report_md)
     except Exception as e:
         log.error("GitHub Issue creation failed: %s", e, exc_info=True)
+
+    try:
+        outcome_summary = evaluate_due_recommendations()
+        log.info("Recommendation outcome evaluation: %s", outcome_summary)
+    except Exception:
+        log.warning("Recommendation outcome evaluation failed", exc_info=True)
 
     log.info("=== Daily risk report run complete ===")
 
