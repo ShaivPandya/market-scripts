@@ -51,5 +51,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pip-audit
-      # Ignore rationale, owner, and expiry are tracked in security/pip-audit-allowlist.md.
-      - run: pip-audit -r requirements-audit.txt --ignore-vuln CVE-2024-23342 --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-33752
+      - run: pip-audit -r requirements-audit.txt
