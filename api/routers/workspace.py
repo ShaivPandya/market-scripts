@@ -39,10 +39,10 @@ def get_workspace():
     def _fetch_regime():
         nonlocal regime_data
         try:
-            from api.signal_snapshot import get_signal_aggregator_snapshot_response
+            from api.signal_snapshot import get_signal_aggregator_snapshot_or_module_response
             from api.snapshot_store import snapshots_required
 
-            regime_data = get_signal_aggregator_snapshot_response(
+            regime_data = get_signal_aggregator_snapshot_or_module_response(
                 lookback_weeks=156,
                 include_raw_modules=False,
             )

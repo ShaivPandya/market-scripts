@@ -2,7 +2,7 @@ import { useMemo, useState } from "react"
 import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useQuery } from "@tanstack/react-query"
 import { Info } from "lucide-react"
-import { fetchSignalAggregator } from "@/lib/api"
+import { fetchSignalAggregator, refreshMarketSnapshots } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesChart"
@@ -108,6 +108,7 @@ export function SignalAggregator() {
   const [appliedLookback, setAppliedLookback] = useState(156)
   const [appliedInstruments, setAppliedInstruments] = useState(DEFAULT_INSTRUMENTS)
   const [hasAppliedFilters, setHasAppliedFilters] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
 
   const { data, isLoading, error } = useQuery<SignalAggregatorResponse>({
     queryKey: ["signal-aggregator", appliedLookback, appliedInstruments],
@@ -333,9 +334,19 @@ export function SignalAggregator() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <RefreshButton queryKeys={[["signal-aggregator", appliedLookback, appliedInstruments]]} />
+          <RefreshButton
+            queryKeys={[["signal-aggregator", appliedLookback, appliedInstruments]]}
+            beforeRefetch={refreshMarketSnapshots}
+            onSuccess={() => setRefreshError(null)}
+            onError={err => setRefreshError(err instanceof Error ? err.message : String(err))}
+          />
         </div>
       </div>
+      {refreshError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Refresh failed: {refreshError}
+        </div>
+      )}
 
       <div className="theme-surface mb-6 grid grid-cols-1 gap-3 rounded-xl p-4 md:grid-cols-3">
         <SelectInput

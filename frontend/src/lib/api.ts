@@ -1011,6 +1011,37 @@ export const analyzeSentiment = (body: {
 
 export const clearCache = () => client.delete("/cache").then(r => r.data)
 
+type AdminJobResponse =
+  | { job_id: string; status: "queued" | "running" }
+  | { job_id: string; status: "error"; error?: string }
+  | { job_id: string; status: "done"; result?: unknown }
+
+export const startMarketSnapshotRefresh = () =>
+  client.post("/admin/jobs/enqueue-market-snapshot-refresh", {}, { timeout: 30_000 }).then(r => r.data as AdminJobResponse)
+
+export const fetchAdminJob = (job_id: string) =>
+  client.get(`/admin/jobs/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as AdminJobResponse)
+
+export async function refreshMarketSnapshots(): Promise<unknown> {
+  const started = await startMarketSnapshotRefresh()
+  if (started.status === "done" && "result" in started) return started.result
+  if (started.status === "error") throw new Error(started.error || "Market snapshot refresh failed")
+
+  const deadline = Date.now() + 15 * 60_000
+  const job_id = started.job_id
+
+  for (; ;) {
+    if (Date.now() > deadline) {
+      throw new Error("Timeout: market snapshot refresh is still running. Try again in a few minutes.")
+    }
+
+    await new Promise(r => setTimeout(r, 2000))
+    const job = await fetchAdminJob(job_id)
+    if (job.status === "done") return "result" in job ? job.result : undefined
+    if (job.status === "error") throw new Error(job.error || "Market snapshot refresh failed")
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Investing OS APIs
 // ---------------------------------------------------------------------------

@@ -4,9 +4,12 @@ import { clearCache } from "@/lib/api"
 
 interface RefreshButtonProps {
   queryKeys?: unknown[][]
+  beforeRefetch?: () => Promise<unknown>
+  onError?: (error: unknown) => void
+  onSuccess?: () => void
 }
 
-export function RefreshButton({ queryKeys }: RefreshButtonProps) {
+export function RefreshButton({ queryKeys, beforeRefetch, onError, onSuccess }: RefreshButtonProps) {
   const qc = useQueryClient()
   const [isRefreshing, setIsRefreshing] = useState(false)
 
@@ -17,12 +20,19 @@ export function RefreshButton({ queryKeys }: RefreshButtonProps) {
     } catch {
       // ignore cache clear errors — still refetch
     }
-    if (queryKeys && queryKeys.length > 0) {
-      await Promise.all(queryKeys.map(key => qc.refetchQueries({ queryKey: key })))
-    } else {
-      await qc.refetchQueries()
+    try {
+      if (beforeRefetch) await beforeRefetch()
+      if (queryKeys && queryKeys.length > 0) {
+        await Promise.all(queryKeys.map(key => qc.refetchQueries({ queryKey: key })))
+      } else {
+        await qc.refetchQueries()
+      }
+      onSuccess?.()
+    } catch (err) {
+      onError?.(err)
+    } finally {
+      setIsRefreshing(false)
     }
-    setIsRefreshing(false)
   }
 
   return (

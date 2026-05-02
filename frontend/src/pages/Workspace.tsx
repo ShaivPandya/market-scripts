@@ -2,7 +2,7 @@ import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { CheckCircle, AlertTriangle, Eye, Play, Clock } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchWorkspace, approveItem, rejectItem, completeAction, dismissAction } from "@/lib/api"
+import { fetchWorkspace, approveItem, rejectItem, completeAction, dismissAction, refreshMarketSnapshots } from "@/lib/api"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -106,6 +106,7 @@ interface Recommendation {
 const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error"; label: string }> = {
   bullish: { signal: "success", label: "Bullish" },
   neutral: { signal: "warning", label: "Neutral" },
+  transitional: { signal: "warning", label: "Transitional" },
   bearish: { signal: "error", label: "Bearish" },
   "risk-off": { signal: "error", label: "Risk-Off" },
   "risk-on": { signal: "success", label: "Risk-On" },
@@ -143,6 +144,7 @@ export function Workspace() {
 
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [refreshError, setRefreshError] = useState<string | null>(null)
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
@@ -193,8 +195,18 @@ export function Workspace() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-app">Workspace</h1>
-        <RefreshButton queryKeys={[["workspace"]]} />
+        <RefreshButton
+          queryKeys={[["workspace"]]}
+          beforeRefetch={refreshMarketSnapshots}
+          onSuccess={() => setRefreshError(null)}
+          onError={err => setRefreshError(err instanceof Error ? err.message : String(err))}
+        />
       </div>
+      {refreshError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Refresh failed: {refreshError}
+        </div>
+      )}
 
       {/* Top metrics row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

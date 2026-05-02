@@ -51,13 +51,18 @@ def test_workspace_includes_recommendation_summary(auth_client, tmp_path, monkey
     import api.agent_tools as agent_tools
 
     def fake_execute_tool(name, _args):
-        if name == "get_signal_aggregator":
-            return {"regime": "neutral", "composite_score": 0, "signal": "neutral"}
         if name == "get_portfolio":
             return {"positions": [], "total_pnl": None, "total_pnl_pct": None}
         return {}
 
     monkeypatch.setattr(agent_tools, "execute_tool", fake_execute_tool)
+    monkeypatch.setattr(
+        "api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response",
+        lambda **kwargs: {
+            "regime": {"label": "neutral", "score": 0, "confidence": 1.0},
+            "_meta": {"snapshot": {"as_of": "2026-05-02", "stale": False}},
+        },
+    )
 
     resp = auth_client.get("/api/v1/workspace")
 

@@ -8,7 +8,7 @@ from api.signal_aggregator import (
     DEFAULT_POSITIONING_INSTRUMENTS,
     build_signal_aggregator,
 )
-from api.signal_snapshot import get_signal_aggregator_snapshot_response
+from api.signal_snapshot import get_signal_aggregator_snapshot_or_module_response
 from api.snapshot_keys import SNAPSHOT_SIGNAL_AGGREGATOR
 from api.snapshot_store import snapshots_required
 
@@ -26,7 +26,7 @@ def get_signal_aggregator(
     if cached is not None:
         return cached
 
-    snapshot = get_signal_aggregator_snapshot_response(
+    snapshot = get_signal_aggregator_snapshot_or_module_response(
         lookback_weeks=lookback_weeks,
         include_raw_modules=include_raw_modules,
     )

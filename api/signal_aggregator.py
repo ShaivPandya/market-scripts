@@ -137,6 +137,20 @@ def _touch_sp500_cache_meta(meta: dict[str, Any]) -> None:
         pass
 
 
+def invalidate_sp500_price_cache() -> None:
+    """Delete the shared S&P 500 price cache used by the signal aggregator."""
+    for path in (
+        _SP500_CACHE_DATA,
+        _SP500_CACHE_META,
+        _SP500_CACHE_DATA.with_suffix(".tmp"),
+        _SP500_CACHE_META.with_suffix(".tmp"),
+    ):
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            _log.debug("Failed to delete S&P 500 price cache path %s", str(path), exc_info=True)
+
+
 def _latest_market_close_date() -> str | None:
     """Probe the latest available close date via a lightweight SPY download."""
     from utils.retry import yf_download
@@ -872,15 +886,18 @@ def _fetch_current_modules(
     return raw, module_status
 
 
-def build_signal_aggregator(
+def build_signal_aggregator_from_payloads(
+    raw: dict[str, Any],
+    module_status: dict[str, dict[str, Any]],
+    *,
     lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
     positioning_instruments: str = DEFAULT_POSITIONING_INSTRUMENTS,
     include_raw_modules: bool = False,
     include_history: bool = True,
 ) -> dict[str, Any]:
+    """Build a signal-aggregator response from already-fetched module payloads."""
     lookback = max(26, min(int(lookback_weeks), 520))
 
-    raw, module_status = _fetch_current_modules(lookback_weeks=lookback)
     vix_data = _as_dict(raw.get("vix_term_structure"))
     breadth_data = _as_dict(raw.get("market_breadth"))
     top50_data = _as_dict(raw.get("top50_breadth"))
@@ -949,7 +966,7 @@ def build_signal_aggregator(
     if include_history:
         history = _build_history(
             lookback,
-            "",
+            positioning_instruments,
             liquidity_data,
             vix_preloaded=vix_preloaded,
         )
@@ -1045,3 +1062,21 @@ def build_signal_aggregator(
         response["raw_modules"] = raw_modules
 
     return response
+
+
+def build_signal_aggregator(
+    lookback_weeks: int = DEFAULT_LOOKBACK_WEEKS,
+    positioning_instruments: str = DEFAULT_POSITIONING_INSTRUMENTS,
+    include_raw_modules: bool = False,
+    include_history: bool = True,
+) -> dict[str, Any]:
+    lookback = max(26, min(int(lookback_weeks), 520))
+    raw, module_status = _fetch_current_modules(lookback_weeks=lookback)
+    return build_signal_aggregator_from_payloads(
+        raw,
+        module_status,
+        lookback_weeks=lookback,
+        positioning_instruments=positioning_instruments,
+        include_raw_modules=include_raw_modules,
+        include_history=include_history,
+    )

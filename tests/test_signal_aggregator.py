@@ -101,7 +101,7 @@ def test_signal_aggregator_endpoint_uses_query_params(auth_client, monkeypatch):
 
     monkeypatch.setattr(signal_router, "get_cached", lambda *args, **kwargs: None)
     monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_response", lambda **kwargs: None)
+    monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
     resp = auth_client.get(
@@ -138,7 +138,7 @@ def test_signal_aggregator_endpoint_degraded_payload(auth_client, monkeypatch):
 
     monkeypatch.setattr(signal_router, "get_cached", lambda *args, **kwargs: None)
     monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_response", lambda **kwargs: None)
+    monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
     resp = auth_client.get("/api/v1/signal-aggregator", params={"lookback_weeks": 157})

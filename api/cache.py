@@ -211,6 +211,13 @@ def invalidate_all() -> None:
         logger.debug("api cache invalidate_all: breadth disk cleanup failed", exc_info=True)
 
     try:
+        from api.signal_aggregator import invalidate_sp500_price_cache
+
+        invalidate_sp500_price_cache()
+    except Exception:
+        logger.debug("api cache invalidate_all: signal aggregator price cache cleanup failed", exc_info=True)
+
+    try:
         from api.job_queue import clear_memory_jobs
 
         clear_memory_jobs()
