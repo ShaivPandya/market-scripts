@@ -52,6 +52,8 @@ if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   log "Building image via Cloud Build"
   gcloud builds submit "${_repo_root}" \
     --project="${PROJECT_ID}" \
+    --region="${REGION}" \
+    --default-buckets-behavior=regional-user-owned-bucket \
     --config="${_repo_root}/infra/gcp/cloudbuild.yaml" \
     --substitutions="_TAG=${IMAGE_TAG}"
 else

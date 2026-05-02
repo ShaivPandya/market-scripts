@@ -6,10 +6,13 @@
 #   Cloud Run service:        talisman-service        (uses old app-sa, image talisman:*)
 #   Cloud Run job:            talisman-job            (uses old app-sa)
 #   Service account:          app-sa@…                (only used by the two above)
-#   Memorystore:              market-scripts-redis    (replaced by redis instance "talisman")
+#   Memorystore:              market-scripts-redis    (no longer used)
+#   Memorystore:              talisman                (no longer used)
 #   Artifact Registry repo:   my-docker-repo          (empty leftover)
+#   Artifact Registry image:  talisman                (used only by stale Cloud Run resources)
 #   Secret:                   db-password             (replaced by DATABASE_URL_*)
 #   Secret:                   scheduler-secret        (lowercase; replaced by SCHEDULER_SECRET)
+#   Secret:                   REDIS_URL               (Redis no longer used)
 #
 # Usage:
 #   ./infra/gcp/cleanup-stale.sh           # dry-run; just print what would be deleted
@@ -77,14 +80,16 @@ if gcloud iam service-accounts describe "${APP_SA_EMAIL}" \
       --project="${PROJECT_ID}" --quiet
 fi
 
-# --- Memorystore: market-scripts-redis -------------------------------------
-if gcloud redis instances describe market-scripts-redis \
-      --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
-  echo "[memorystore] market-scripts-redis exists"
-  run "redis instance market-scripts-redis" \
-    gcloud redis instances delete market-scripts-redis \
-      --project="${PROJECT_ID}" --region="${REGION}" --quiet
-fi
+# --- Memorystore: no longer used -------------------------------------------
+for instance in market-scripts-redis talisman; do
+  if gcloud redis instances describe "${instance}" \
+        --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
+    echo "[memorystore] ${instance} exists"
+    run "redis instance ${instance}" \
+      gcloud redis instances delete "${instance}" \
+        --project="${PROJECT_ID}" --region="${REGION}" --quiet
+  fi
+done
 
 # --- Artifact Registry: my-docker-repo -------------------------------------
 if gcloud artifacts repositories describe my-docker-repo \
@@ -95,8 +100,18 @@ if gcloud artifacts repositories describe my-docker-repo \
       --project="${PROJECT_ID}" --location="${REGION}" --quiet
 fi
 
-# --- Secrets: db-password, scheduler-secret --------------------------------
-for s in db-password scheduler-secret; do
+# --- Artifact Registry image package: talisman ------------------------------
+STALE_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO:-talisman}/talisman"
+if gcloud artifacts docker images list "${STALE_IMAGE}" \
+      --project="${PROJECT_ID}" --format='value(version)' --limit=1 | grep -q .; then
+  echo "[artifact registry image] talisman exists"
+  run "artifact registry image ${STALE_IMAGE}" \
+    gcloud artifacts docker images delete "${STALE_IMAGE}" \
+      --project="${PROJECT_ID}" --delete-tags --quiet
+fi
+
+# --- Secrets: stale / replaced ---------------------------------------------
+for s in REDIS_URL db-password scheduler-secret; do
   if gcloud secrets describe "${s}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
     echo "[secret] ${s} exists"
     run "secret ${s}" \

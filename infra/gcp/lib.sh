@@ -56,7 +56,7 @@ require_image_exists() {
   if ! gcloud artifacts docker images describe "$(image_uri)" \
         --project="${PROJECT_ID}" >/dev/null 2>&1; then
     echo "Image $(image_uri) not found in Artifact Registry." >&2
-    echo "Build it first: gcloud builds submit --config=infra/gcp/cloudbuild.yaml --substitutions=_TAG=${IMAGE_TAG} ." >&2
+    echo "Build it first: gcloud builds submit --region=${REGION} --default-buckets-behavior=regional-user-owned-bucket --config=infra/gcp/cloudbuild.yaml --substitutions=_TAG=${IMAGE_TAG} ." >&2
     exit 1
   fi
 }

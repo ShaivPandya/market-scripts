@@ -1,0 +1,19 @@
+[
+  {
+    "name": "delete-api-older-than-1h",
+    "action": { "type": "Delete" },
+    "condition": {
+      "tagState": "any",
+      "packageNamePrefixes": ["api"],
+      "olderThan": "1h"
+    }
+  },
+  {
+    "name": "keep-api-two-builds",
+    "action": { "type": "Keep" },
+    "mostRecentVersions": {
+      "packageNamePrefixes": ["api"],
+      "keepCount": 6
+    }
+  }
+]
