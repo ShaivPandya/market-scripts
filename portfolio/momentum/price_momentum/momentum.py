@@ -293,6 +293,7 @@ def analyze_ticker(
         "ticker": ticker,
         "date": combined.index[-1],
         "close": float(prices.iloc[-1]),
+        "roc63": float(roc63.iloc[-1]),
         "avg20_roc63": float(avg20_roc63.iloc[-1]),
         "avg20_vol_roc63": avg20_vol_roc63,
         "rel_roc42": float(rel_roc42.iloc[-1]),
@@ -471,6 +472,7 @@ def main() -> int:
             print(f"Benchmark: {r['benchmark']}")
             print(f"As of: {r['date'].date().isoformat()}")
         print(f"Ticker: {r['ticker']:<6}  Close: {r['close']:.4f}")
+        print(f"  63-day ROC (%):                         {colorize(r['roc63'], 0)}")
         print(f"  20-day avg of 63-day ROC (%):        {colorize(r['avg20_roc63'], 1.5)}")
         vol_str = colorize(r["avg20_vol_roc63"], 0) if r.get("avg20_vol_roc63") is not None else "N/A"
         print(f"  20-day avg of 63-day vol ROC (%):    {vol_str}")

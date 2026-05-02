@@ -5,7 +5,9 @@ import {
   runShortScreen,
   runLongScreen,
   runFundamentalMomentum,
+  runPriceMomentum,
   type LongScreenRequest,
+  type PriceMomentumRequest,
   type ScreenJobProgress,
   type ShortScreenRequest,
 } from "@/lib/api"
@@ -31,6 +33,15 @@ const BENCHMARK_OPTIONS = [
   "VFH — Financials", "VIS — Industrials", "VGT — Technology",
   "VDC — Consumer Staples", "VNQ — Real Estate", "VPU — Utilities",
   "VHT — Health Care", "VCR — Consumer Discretionary",
+]
+
+const PRICE_MOMENTUM_BENCHMARK_OPTIONS = [
+  "Same as Input", "S&P 500", "Russell 2000", "S&P 400",
+  "VAW — Materials", "VOX — Communication Services", "VDE — Energy",
+  "VFH — Financials", "VIS — Industrials", "VGT — Technology",
+  "VDC — Consumer Staples", "VNQ — Real Estate", "VPU — Utilities",
+  "VHT — Health Care", "VCR — Consumer Discretionary",
+  "SPY", "IWM", "QQQ",
 ]
 
 function errorMessage(error: unknown): string {
@@ -60,6 +71,16 @@ function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {
         ? `${v >= 0 ? "+" : ""}${v.toFixed(2)}`
         : String(v ?? "N/A"),
   }))
+}
+
+function formatSignedPercent(v: unknown): string {
+  const n = Number(v)
+  return Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "N/A"
+}
+
+function formatPlainNumber(v: unknown, digits = 2): string {
+  const n = Number(v)
+  return Number.isFinite(n) ? n.toFixed(digits) : "N/A"
 }
 
 function formatScreenProgress(progress: ScreenJobProgress | undefined, fallback: string): string {
@@ -857,6 +878,137 @@ function LongPanel() {
   )
 }
 
+/* ─── Price Momentum ─── */
+
+const PRICE_MOMENTUM_COLUMNS: ColumnDef[] = [
+  { key: "ticker", header: "Ticker" },
+  { key: "close", header: "Close", format: v => formatPlainNumber(v, 2) },
+  {
+    key: "avg20_roc63",
+    header: "20D Avg ROC (63D)",
+    format: formatSignedPercent,
+    colorFn: colorPositiveNegative,
+  },
+  {
+    key: "roc63",
+    header: "3M ROC",
+    format: formatSignedPercent,
+    colorFn: colorPositiveNegative,
+  },
+  {
+    key: "rel_roc42",
+    header: "Rel ROC (42D)",
+    format: formatSignedPercent,
+    colorFn: colorPositiveNegative,
+  },
+  {
+    key: "avg10_rel_roc",
+    header: "10D Avg Rel ROC",
+    format: formatSignedPercent,
+    colorFn: colorPositiveNegative,
+  },
+  { key: "benchmark", header: "Benchmark" },
+]
+
+function PriceMomentumPanel() {
+  const [inputMode, setInputMode] = useState<"Universe" | "Custom Tickers">("Universe")
+  const [universe, setUniverse] = useState("S&P 500")
+  const [tickers, setTickers] = useState("")
+  const [benchmark, setBenchmark] = useState("Same as Input")
+  const [progress, setProgress] = useState<ScreenJobProgress | undefined>(undefined)
+
+  const mutation = useMutation({
+    mutationFn: (body: PriceMomentumRequest) => runPriceMomentum(body, setProgress),
+  })
+
+  function handleRun() {
+    setProgress({ phase: "queued", done: 0, total: 0 })
+    mutation.mutate({
+      input_mode: inputMode,
+      universe,
+      tickers,
+      benchmark,
+    })
+  }
+
+  const rows: Record<string, unknown>[] = mutation.data?.results_df ?? []
+
+  return (
+    <>
+      <ControlPanel maxWidth="max-w-lg">
+        <SegmentedControl
+          options={[
+            { value: "Universe" as const, label: "Universe" },
+            { value: "Custom Tickers" as const, label: "Custom Tickers" },
+          ]}
+          value={inputMode}
+          onChange={setInputMode}
+        />
+
+        {inputMode === "Universe" ? (
+          <SelectInput
+            label="Universe"
+            value={universe}
+            onChange={setUniverse}
+            options={UNIVERSE_OPTIONS.map(o => ({ value: o, label: o }))}
+          />
+        ) : (
+          <TextInput
+            label="Tickers"
+            value={tickers}
+            onChange={setTickers}
+            placeholder="AAPL, MSFT, GOOG"
+          />
+        )}
+
+        <SelectInput
+          label="Benchmark"
+          value={benchmark}
+          onChange={setBenchmark}
+          options={PRICE_MOMENTUM_BENCHMARK_OPTIONS.map(o => ({ value: o, label: o }))}
+        />
+
+        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Running price momentum...">
+          Run Screen
+        </ActionButton>
+      </ControlPanel>
+
+      {mutation.isPending && (
+        <LoadingSpinner
+          message={formatScreenProgress(
+            progress,
+            `Running price momentum for ${inputMode === "Custom Tickers" ? "custom tickers" : universe}...`,
+          )}
+        />
+      )}
+      {mutation.isError && <ErrorMessage message={errorMessage(mutation.error)} />}
+
+      {mutation.data && !mutation.isPending && (
+        <>
+          <div className="flex flex-wrap gap-6 text-sm text-gray-600 mb-4">
+            <span>Input: <strong>{mutation.data.input_count ?? "—"}</strong></span>
+            <span>Scored: <strong>{mutation.data.scored_count ?? rows.length}</strong></span>
+            <span>Benchmark: <strong>{mutation.data.benchmark_name ?? benchmark}</strong></span>
+            {mutation.data.date != null && (
+              <span>Date: <strong>{String(mutation.data.date)}</strong></span>
+            )}
+          </div>
+          <FailedTickerNotice failed={mutation.data.failed_tickers} />
+          {rows.length > 0 ? (
+            <DataTable columns={PRICE_MOMENTUM_COLUMNS} rows={rows} />
+          ) : (
+            <p className="text-gray-400">No momentum results returned.</p>
+          )}
+        </>
+      )}
+
+      {!mutation.data && !mutation.isPending && !mutation.isError && (
+        <p className="text-gray-400 text-sm">Configure inputs above and click Run Screen.</p>
+      )}
+    </>
+  )
+}
+
 /* ─── Fundamental Momentum ─── */
 
 function FundamentalMomentumPanel() {
@@ -982,7 +1134,7 @@ function FundamentalMomentumPanel() {
 
 /* ─── Main Screeners Page ─── */
 
-type ScreenerTab = "Quality" | "Short" | "Long" | "Fundamental Momentum"
+type ScreenerTab = "Quality" | "Short" | "Long" | "Price Momentum" | "Fundamental Momentum"
 
 export function Screeners() {
   const [activeTab, setActiveTab] = useState<ScreenerTab>("Quality")
@@ -993,12 +1145,13 @@ export function Screeners() {
         <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Screeners</h1>
       </div>
 
-      <div className="mb-6 max-w-md">
+      <div className="mb-6 max-w-2xl overflow-x-auto">
         <SegmentedControl
           options={[
             { value: "Quality" as const, label: "Quality" },
             { value: "Short" as const, label: "Short" },
             { value: "Long" as const, label: "Long" },
+            { value: "Price Momentum" as const, label: "Price Momentum" },
             { value: "Fundamental Momentum" as const, label: "Fund. Momentum" },
           ]}
           value={activeTab}
@@ -1009,6 +1162,7 @@ export function Screeners() {
       {activeTab === "Quality" && <QualityPanel />}
       {activeTab === "Short" && <ShortPanel />}
       {activeTab === "Long" && <LongPanel />}
+      {activeTab === "Price Momentum" && <PriceMomentumPanel />}
       {activeTab === "Fundamental Momentum" && <FundamentalMomentumPanel />}
     </div>
   )

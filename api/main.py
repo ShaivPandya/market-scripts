@@ -64,6 +64,7 @@ _OPTIONAL_MODULES = [
     ("api.routers.short_screen", "short_screen", "equities"),
     ("api.routers.long_screen", "long_screen", "equities"),
     ("api.routers.fundamental_momentum", "fundamental_momentum", "equities"),
+    ("api.routers.price_momentum", "price_momentum", "equities"),
     ("api.routers.index_dashboard", "index_dashboard", "equities"),
     ("api.routers.fx_dashboard", "fx_dashboard", "fx"),
     ("api.routers.fx_model", "fx_model", "fx"),

@@ -789,6 +789,10 @@ type ScreenJobResponse<T> =
 export type ScreenResult = {
   results_df?: Record<string, unknown>[]
   failed_tickers?: string[]
+  input_count?: number
+  scored_count?: number
+  benchmark_name?: string
+  date?: string | null
   phase1_count?: number
   phase1_pass_count?: number | null
   phase3_pass_count?: number
@@ -840,6 +844,13 @@ export type LongScreenRequest = {
   rel_momentum_benchmark: string
 }
 
+export type PriceMomentumRequest = {
+  input_mode: string
+  universe: string
+  tickers: string
+  benchmark: string
+}
+
 const startShortScreenJob = (body: ShortScreenRequest) =>
   client.post("/short-screen/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
 
@@ -851,6 +862,12 @@ const startLongScreenJob = (body: LongScreenRequest) =>
 
 const fetchLongScreenJob = (job_id: string) =>
   client.get(`/long-screen/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+const startPriceMomentumJob = (body: PriceMomentumRequest) =>
+  client.post("/price-momentum/async", body, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
+
+const fetchPriceMomentumJob = (job_id: string) =>
+  client.get(`/price-momentum/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as ScreenJobResponse<ScreenResult>)
 
 async function runScreenJob<TBody>(
   body: TBody,
@@ -889,6 +906,9 @@ export const runShortScreen = (body: ShortScreenRequest, onProgress?: (progress:
 
 export const runLongScreen = (body: LongScreenRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
   runScreenJob(body, startLongScreenJob, fetchLongScreenJob, "Long screen", onProgress)
+
+export const runPriceMomentum = (body: PriceMomentumRequest, onProgress?: (progress: ScreenJobProgress | undefined) => void) =>
+  runScreenJob(body, startPriceMomentumJob, fetchPriceMomentumJob, "Price momentum", onProgress)
 
 type FundamentalMomentumRequest = {
   screen_type: string

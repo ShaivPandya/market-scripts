@@ -1,6 +1,7 @@
 import threading
 import time
 
+import pandas as pd
 import pytest
 
 
@@ -226,6 +227,112 @@ def test_price_only_short_screen_skips_fundamentals(monkeypatch):
     assert result["phase1_pass_count"] is None
     assert result["phase3_pass_count"] == 2
     assert result["final_count"] == 2
+
+
+def test_price_momentum_analyze_ticker_returns_raw_roc63():
+    from portfolio.momentum.price_momentum.momentum import analyze_ticker
+
+    dates = pd.bdate_range("2025-01-01", periods=100)
+    prices = pd.Series(range(100, 200), index=dates, dtype="float64")
+    benchmark = pd.Series(100.0, index=dates)
+
+    result = analyze_ticker("AAA", benchmark, years=1, ticker_prices=prices)
+
+    assert result is not None
+    expected = (prices.iloc[-1] / prices.shift(63).iloc[-1] - 1.0) * 100.0
+    assert result["roc63"] == pytest.approx(expected)
+
+
+def test_price_momentum_router_resolves_benchmark_and_custom_tickers():
+    from api.routers import price_momentum as router
+
+    custom = router.PriceMomentumRequest(
+        input_mode="Custom Tickers",
+        tickers="bbb, AAA, aaa",
+        benchmark="Same as Input",
+    )
+    sector = router.PriceMomentumRequest(
+        input_mode="Universe",
+        universe="VGT — Technology",
+        benchmark="Same as Input",
+    )
+    selected = router.PriceMomentumRequest(benchmark="Russell 2000")
+
+    assert router._resolve_tickers(custom) == ["BBB", "AAA"]
+    assert router._resolve_benchmark_ticker(custom.benchmark, custom.universe, custom.input_mode) == "SPY"
+    assert router._resolve_benchmark_ticker(sector.benchmark, sector.universe, sector.input_mode) == "VGT"
+    assert router._resolve_benchmark_ticker(selected.benchmark, selected.universe, selected.input_mode) == "IWM"
+    assert '"tickers":"AAA,BBB"' in router._cache_key(custom)
+
+
+def test_price_momentum_async_returns_result_and_cache(auth_client, monkeypatch):
+    from api import cache
+    from api.routers import price_momentum as router
+
+    cache.invalidate_all()
+    calls = {"n": 0}
+
+    def fake_compute(req, progress_callback=None):
+        calls["n"] += 1
+        if progress_callback:
+            progress_callback("prices", 1, 1)
+        return {
+            "results_df": [{"ticker": "AAA", "roc63": 12.3, "benchmark": "SPY"}],
+            "failed_tickers": [],
+            "input_count": 1,
+            "scored_count": 1,
+            "benchmark_name": "SPY",
+            "date": "2026-05-01",
+            "final_count": 1,
+        }
+
+    monkeypatch.setattr(router, "_compute_price_momentum", fake_compute)
+
+    body = {
+        "input_mode": "Custom Tickers",
+        "tickers": "AAA",
+        "universe": "S&P 500",
+        "benchmark": "Same as Input",
+    }
+
+    started = auth_client.post("/api/v1/price-momentum/async", json=body)
+    assert started.status_code in (200, 202)
+    job_id = started.json()["job_id"]
+    done = _poll(auth_client, "/api/v1/price-momentum/async", job_id)
+    assert done["status"] == "done"
+    assert done["result"]["results_df"] == [{"ticker": "AAA", "roc63": 12.3, "benchmark": "SPY"}]
+
+    cached = auth_client.post("/api/v1/price-momentum/async", json=body)
+    assert cached.status_code in (200, 202)
+    assert cached.json()["status"] == "done"
+    assert cached.json()["result"]["scored_count"] == 1
+    assert calls["n"] == 1
+
+
+def test_existing_momentum_endpoint_hides_raw_roc63(monkeypatch):
+    from api import cache
+    from api.routers import momentum as router
+    from portfolio.momentum.price_momentum import momentum
+
+    cache.invalidate_all()
+    monkeypatch.setattr(
+        momentum,
+        "get_data",
+        lambda: {
+            "results": [
+                {
+                    "ticker": "AAA",
+                    "roc63": 9.0,
+                    "avg20_roc63": 7.0,
+                    "avg20_vol_roc63": 5.0,
+                }
+            ]
+        },
+    )
+
+    result = router.get_momentum()
+
+    assert result["results"] == [{"ticker": "AAA", "avg20_roc63": 7.0}]
 
 
 def test_quarterly_financials_only_requested_for_growth_filters(monkeypatch):

@@ -24,10 +24,20 @@ def get_momentum():
     for k, v in data.items():
         import pandas as pd
 
-        if isinstance(v, pd.DataFrame):
+        if k == "results" and isinstance(v, list):
+            cleaned_rows = []
+            for row in v:
+                if isinstance(row, dict):
+                    cleaned = {rk: rv for rk, rv in row.items() if rk not in {"avg20_vol_roc63", "roc63"}}
+                    cleaned_rows.append(cleaned)
+                else:
+                    cleaned_rows.append(row)
+            result[k] = serialize_value(cleaned_rows)
+        elif isinstance(v, pd.DataFrame):
             df = v.reset_index()
-            if "avg20_vol_roc63" in df.columns:
-                df = df.drop(columns=["avg20_vol_roc63"])
+            drop_columns = [col for col in ("avg20_vol_roc63", "roc63") if col in df.columns]
+            if drop_columns:
+                df = df.drop(columns=drop_columns)
             result[k] = serialize_dataframe(df)
         else:
             result[k] = serialize_value(v)
