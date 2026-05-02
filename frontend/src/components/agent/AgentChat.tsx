@@ -26,6 +26,7 @@ const DEFAULT_RESPONSE_PREFERENCES: AgentResponsePreferences = {
   headers_lists: "less",
   emoji: "less",
   fast_answers: true,
+  thinking_enabled: false,
   custom_instructions: "",
 }
 
@@ -402,6 +403,21 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                     type="checkbox"
                     checked={draftPreferences.fast_answers}
                     onChange={e => setDraftPreferences(prev => ({ ...prev, fast_answers: e.target.checked }))}
+                    className="h-4 w-4 accent-blue-600"
+                  />
+                </label>
+              </section>
+
+              <section>
+                <label className="flex items-center justify-between gap-3">
+                  <span>
+                    <span className="block text-sm font-medium text-app">Thinking</span>
+                    <span className="block text-xs text-muted">Use deeper model reasoning for complex turns</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={draftPreferences.thinking_enabled}
+                    onChange={e => setDraftPreferences(prev => ({ ...prev, thinking_enabled: e.target.checked }))}
                     className="h-4 w-4 accent-blue-600"
                   />
                 </label>

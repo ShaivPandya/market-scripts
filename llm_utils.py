@@ -15,6 +15,11 @@ MODEL_MID = "mid"
 MODEL_HIGH = "high"
 MODEL_TIERS = {MODEL_LOW, MODEL_MID, MODEL_HIGH}
 
+REASONING_LOW = "low"
+REASONING_MEDIUM = "medium"
+REASONING_HIGH = "high"
+REASONING_EFFORTS = {REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH}
+
 ANTHROPIC_DEFAULT_MODELS = {
     MODEL_LOW: "claude-haiku-4-5",
     MODEL_MID: "claude-sonnet-4-6",
@@ -212,6 +217,7 @@ def call_llm_text(
     allowed_domains: Sequence[str] | None = None,
     max_web_search_uses: int = 5,
     provider: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[str, list[tuple[str, str]], Any]:
     resolved_provider = _normalize_provider(provider)
     if resolved_provider == PROVIDER_ANTHROPIC:
@@ -223,6 +229,7 @@ def call_llm_text(
             system=system,
             allowed_domains=allowed_domains,
             max_web_search_uses=max_web_search_uses,
+            reasoning_effort=reasoning_effort,
         )
     else:
         response = _call_openai_response(
@@ -232,6 +239,7 @@ def call_llm_text(
             max_tokens=max_tokens,
             system=system,
             allowed_domains=allowed_domains,
+            reasoning_effort=reasoning_effort,
         )
     return extract_text(response), extract_citations(response), response
 
@@ -246,6 +254,7 @@ def call_llm_pdf_text(
     system: str | None = None,
     filename: str = "document.pdf",
     provider: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[str, list[tuple[str, str]], Any]:
     resolved_provider = _normalize_provider(provider)
     pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
@@ -271,6 +280,7 @@ def call_llm_pdf_text(
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
+            reasoning_effort=reasoning_effort,
         )
     else:
         response = _call_openai_response(
@@ -291,6 +301,7 @@ def call_llm_pdf_text(
             api_key=api_key,
             max_tokens=max_tokens,
             system=system,
+            reasoning_effort=reasoning_effort,
         )
     return extract_text(response), extract_citations(response), response
 
@@ -304,6 +315,7 @@ def call_claude_text(
     system: str | None = None,
     allowed_domains: Sequence[str] | None = None,
     max_web_search_uses: int = 5,
+    reasoning_effort: str | None = None,
 ) -> tuple[str, list[tuple[str, str]], Any]:
     return call_llm_text(
         prompt=prompt,
@@ -313,6 +325,7 @@ def call_claude_text(
         system=system,
         allowed_domains=allowed_domains,
         max_web_search_uses=max_web_search_uses,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -342,13 +355,22 @@ def _call_anthropic_messages(
     system: str | None = None,
     allowed_domains: Sequence[str] | None = None,
     max_web_search_uses: int = 5,
+    reasoning_effort: str | None = None,
 ) -> Any:
     client = get_llm_client(PROVIDER_ANTHROPIC, api_key=api_key)
+    resolved_model = resolve_model(model, PROVIDER_ANTHROPIC)
     kwargs: dict[str, Any] = {
-        "model": resolve_model(model, PROVIDER_ANTHROPIC),
+        "model": resolved_model,
         "max_tokens": max_tokens,
         "messages": messages,
     }
+    apply_reasoning_config(
+        kwargs,
+        provider=PROVIDER_ANTHROPIC,
+        model=resolved_model,
+        max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
+    )
     if system:
         kwargs["system"] = system
     if allowed_domains is not None:
@@ -378,13 +400,22 @@ def _call_openai_response(
     max_tokens: int,
     system: str | None = None,
     allowed_domains: Sequence[str] | None = None,
+    reasoning_effort: str | None = None,
 ) -> Any:
     client = get_llm_client(PROVIDER_OPENAI, api_key=api_key)
+    resolved_model = resolve_model(model, PROVIDER_OPENAI)
     kwargs: dict[str, Any] = {
-        "model": resolve_model(model, PROVIDER_OPENAI),
+        "model": resolved_model,
         "input": input_items,
         "max_output_tokens": max_tokens,
     }
+    apply_reasoning_config(
+        kwargs,
+        provider=PROVIDER_OPENAI,
+        model=resolved_model,
+        max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
+    )
     if system:
         kwargs["instructions"] = system
     if allowed_domains is not None:
@@ -397,6 +428,37 @@ def _call_openai_response(
         ]
         kwargs["include"] = ["web_search_call.action.sources"]
     return client.responses.create(**kwargs)
+
+
+def apply_reasoning_config(
+    kwargs: dict[str, Any],
+    *,
+    provider: str,
+    model: str,
+    max_tokens: int,
+    reasoning_effort: str | None,
+) -> None:
+    effort = _normalize_reasoning_effort(reasoning_effort)
+    if effort is None:
+        return
+
+    resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_OPENAI:
+        kwargs["reasoning"] = {"effort": effort}
+        return
+
+    if _anthropic_supports_adaptive_thinking(model):
+        kwargs["thinking"] = {"type": "adaptive", "display": "omitted"}
+        output_config = dict(kwargs.get("output_config") or {})
+        output_config["effort"] = effort
+        kwargs["output_config"] = output_config
+        return
+
+    kwargs["thinking"] = {
+        "type": "enabled",
+        "budget_tokens": _anthropic_manual_thinking_budget(max_tokens=max_tokens, effort=effort),
+        "display": "omitted",
+    }
 
 
 def _normalize_provider(provider: str | None) -> str:
@@ -422,6 +484,41 @@ def _normalize_tier(tier: str) -> str:
     if normalized not in MODEL_TIERS:
         raise ValueError("model tier must be 'low', 'mid', or 'high'")
     return normalized
+
+
+def _normalize_reasoning_effort(effort: str | None) -> str | None:
+    if effort is None:
+        return None
+    normalized = effort.strip().lower()
+    if normalized in {"", "none", "off", "disabled"}:
+        return None
+    if normalized not in REASONING_EFFORTS:
+        raise ValueError("reasoning_effort must be 'low', 'medium', or 'high'")
+    return normalized
+
+
+def _anthropic_supports_adaptive_thinking(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "claude-mythos-preview",
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+        )
+    )
+
+
+def _anthropic_manual_thinking_budget(*, max_tokens: int, effort: str) -> int:
+    if max_tokens < 2048:
+        raise ValueError("Anthropic manual thinking requires max_tokens >= 2048")
+    cap_by_effort = {
+        REASONING_LOW: 2048,
+        REASONING_MEDIUM: 4096,
+        REASONING_HIGH: 8192,
+    }
+    return min(cap_by_effort[effort], max(max_tokens // 2, 1024))
 
 
 def _model_to_tier(model: str) -> str | None:

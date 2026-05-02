@@ -186,6 +186,7 @@ def test_agent_stream_tracks_args_per_call_id(auth_client, monkeypatch):
 
     assert resp.status_code == 200
     assert fake_client.messages.kwargs_history[0].get("tool_choice") == {"type": "any"}
+    assert "thinking" not in fake_client.messages.kwargs_history[0]
     assert "tool_choice" not in fake_client.messages.kwargs_history[1]
     assert seen_args == [{"query": "A"}, {"query": "B"}]
     parsed = _parse_sse(resp.text)
@@ -239,6 +240,7 @@ def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
 
     assert resp.status_code == 200
     assert fake_client.responses.kwargs_history[0]["tool_choice"] == "required"
+    assert "reasoning" not in fake_client.responses.kwargs_history[0]
     assert "tool_choice" not in fake_client.responses.kwargs_history[1]
     assert fake_client.responses.kwargs_history[0]["tools"][0]["type"] == "function"
     assert fake_client.responses.kwargs_history[1]["input"][-1] == {
@@ -251,6 +253,83 @@ def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
     assert any(e == "tool_call" and p["name"] == "query_ontology" for e, p in parsed)
     assert any(e == "tool_result" and p["status"] == "ok" for e, p in parsed)
     assert any(e == "delta" and p["text"] == "analysis" for e, p in parsed)
+
+
+def test_agent_stream_openai_thinking_keeps_required_tool_choice(auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+
+    streams = [
+        (
+            [_openai_event_function_call("query_ontology", "call-1")],
+            SimpleNamespace(
+                output=[
+                    {
+                        "type": "function_call",
+                        "name": "query_ontology",
+                        "call_id": "call-1",
+                        "arguments": json.dumps({"query": "A"}),
+                    }
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        (
+            [_openai_event_text_delta("analysis")],
+            SimpleNamespace(
+                output=[{"type": "message", "content": [{"type": "output_text", "text": "analysis"}]}],
+                usage=SimpleNamespace(input_tokens=2, output_tokens=3),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_openai(monkeypatch, streams)
+    monkeypatch.setattr(agent_router, "execute_tool", lambda _name, _args: json.dumps({"ok": True}))
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={
+            "messages": [{"role": "user", "content": "test"}],
+            "response_preferences": {"thinking_enabled": True},
+        },
+    )
+
+    assert resp.status_code == 200
+    assert fake_client.responses.kwargs_history[0]["reasoning"] == {"effort": "medium"}
+    assert fake_client.responses.kwargs_history[0]["tool_choice"] == "required"
+    assert fake_client.responses.kwargs_history[1]["reasoning"] == {"effort": "medium"}
+
+
+def test_agent_stream_anthropic_thinking_relaxes_forced_tool_choice(auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+
+    streams = [
+        (
+            [_event_text_delta("analysis")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "analysis"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat",
+        json={
+            "messages": [{"role": "user", "content": "test"}],
+            "response_preferences": {"thinking_enabled": True},
+        },
+    )
+
+    assert resp.status_code == 200
+    assert fake_client.messages.kwargs_history[0]["thinking"] == {"type": "adaptive", "display": "omitted"}
+    assert fake_client.messages.kwargs_history[0]["output_config"] == {"effort": "medium"}
+    assert "tool_choice" not in fake_client.messages.kwargs_history[0]
+    assert fake_client.messages.kwargs_history[0]["tools"]
 
 
 def test_agent_stream_marks_tool_result_error(auth_client, monkeypatch):

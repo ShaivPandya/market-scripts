@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from llm_utils import MODEL_HIGH, call_llm_text, extract_citations, extract_text
+from llm_utils import MODEL_HIGH, REASONING_HIGH, call_llm_text, extract_citations, extract_text
 
 log = logging.getLogger("auto_report.shared")
 
@@ -158,6 +158,7 @@ def call_report_llm(
                     max_tokens=max_tokens,
                     system=system_msg,
                     allowed_domains=allowed_domains,
+                    reasoning_effort=REASONING_HIGH,
                 )
             except Exception as exc:
                 status_code = getattr(exc, "status_code", None)

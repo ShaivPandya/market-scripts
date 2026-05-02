@@ -40,6 +40,7 @@ export interface AgentResponsePreferences {
   headers_lists: AgentPreferenceLevel
   emoji: AgentPreferenceLevel
   fast_answers: boolean
+  thinking_enabled: boolean
   custom_instructions?: string | null
 }
 
