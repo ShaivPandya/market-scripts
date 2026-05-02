@@ -21,8 +21,9 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
+- `deploy-backend.sh` — build via Cloud Build at the current short git SHA, then roll API + Cloud Run Jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`.
 - `deploy-frontend.sh` — builds `frontend/dist` and deploys Firebase Hosting for the configured `PROJECT_ID`.
-- `deploy-all.sh` — build via Cloud Build at the current short git SHA, then roll API + Cloud Run Jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`.
+- `deploy-all.sh` — deploys the full production stack by running `deploy-backend.sh` first and `deploy-frontend.sh` second. `SKIP_BUILD=1` skips the backend container build; `SKIP_FRONTEND_BUILD=1` deploys the existing `frontend/dist`.
 - `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23z UTC) and delete the old high-frequency cache-warm job unless `SCHEDULE_CACHE_WARM=1` is set. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo.
 - `cleanup-stale.sh` — dry-runs (or `--apply` deletes) GCP resources that pre-date the current scripts and are no longer referenced.
 
@@ -34,7 +35,7 @@ cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
 ./infra/gcp/setup-secrets.sh       # SQL users + Secret Manager + per-secret IAM
 ./infra/gcp/iam.sh                 # project + bucket + run-job IAM
 # (still need: CREATE EXTENSION vector + alembic upgrade head as the migrator)
-./infra/gcp/deploy-all.sh          # build + deploy everything at the current SHA
+./infra/gcp/deploy-all.sh          # deploy backend, then frontend, at the current SHA
 ./infra/gcp/iam.sh                 # re-run to bind job executor roles on the now-deployed jobs
 ./infra/gcp/setup-scheduler.sh     # wire up Cloud Scheduler
 ```
@@ -42,10 +43,11 @@ cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
 Routine deploys:
 
 ```bash
-# backend stack
+# full stack
 ./infra/gcp/deploy-all.sh
 
-# frontend hosting
+# or deploy components separately:
+./infra/gcp/deploy-backend.sh
 ./infra/gcp/deploy-frontend.sh
 
 # or roll a single component:

@@ -145,7 +145,7 @@ cat <<EOF
 
   - alembic upgrade head as the migrator user.
 
-  - Build + deploy:  ./infra/gcp/deploy-all.sh
+  - Full deploy:     ./infra/gcp/deploy-all.sh
       (or run cloudbuild + deploy-{api,async-job,migration-job}.sh manually)
 
   - Cloud Scheduler jobs:  ./infra/gcp/setup-scheduler.sh

@@ -6,7 +6,7 @@
 #   SKIP_BUILD=1 ./infra/gcp/deploy-frontend.sh
 #
 # Uses PROJECT_ID from infra/gcp/config.sh and deploys firebase.json hosting.
-# Run after deploy-all.sh for a complete production release.
+# Run after deploy-backend.sh when deploying components separately.
 # Refuses to run on a dirty working tree unless ALLOW_DIRTY=1.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
