@@ -29,6 +29,63 @@ def test_thesis_status(auth_client, monkeypatch, tmp_path):
     assert resp.json() == {"AAA": "populated", "BBB": "empty", "CCC": "missing"}
 
 
+def test_thesis_meta_includes_position_context_and_latest_evaluation(monkeypatch):
+    import portfolio.portfolio_db as portfolio_db
+    import portfolio.thesis_db as thesis_db
+
+    monkeypatch.setattr(
+        portfolio_db,
+        "get_positions",
+        lambda: [
+            {"ticker": "nvda", "asset": "equity", "direction": "long", "conviction": 5},
+            {"ticker": "tsm", "asset": "equity", "direction": "short", "conviction": 3},
+        ],
+    )
+    monkeypatch.setattr(
+        thesis_db,
+        "get_all_thesis_meta",
+        lambda: [
+            {
+                "ticker": "NVDA",
+                "status": "active",
+                "created_at": "2026-05-01T00:00:00+00:00",
+                "updated_at": "2026-05-01T00:00:00+00:00",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        thesis_db,
+        "get_latest_evaluations",
+        lambda: [
+            {
+                "id": 1,
+                "ticker": "nvda",
+                "evaluated_at": "2026-05-02T12:00:00+00:00",
+                "thesis_status": "strengthen",
+                "technical_read": "supportive",
+                "fundamental_read": "supportive",
+                "action": "hold",
+                "confidence": "high",
+                "key_developments": [],
+                "earnings_note": None,
+                "risk_flag": None,
+            }
+        ],
+    )
+
+    payload = thesis_router.get_thesis_meta_all()
+
+    assert payload[0]["ticker"] == "NVDA"
+    assert payload[0]["direction"] == "long"
+    assert payload[0]["conviction"] == 5
+    assert payload[0]["last_evaluated"] == "2026-05-02T12:00:00+00:00"
+    assert payload[0]["latest_evaluation"]["ticker"] == "NVDA"
+    assert payload[1]["ticker"] == "TSM"
+    assert payload[1]["status"] == "missing"
+    assert payload[1]["direction"] == "short"
+    assert payload[1]["latest_evaluation"] is None
+
+
 def test_get_thesis_not_found(auth_client, monkeypatch, tmp_path):
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()

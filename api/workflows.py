@@ -155,6 +155,22 @@ Given the data below, assess:
 7. **Recent News** – What recent headlines are relevant? Do they support or challenge the thesis?
 
 End with a clear **recommendation**: hold, add, trim, or exit — with reasoning.
+
+After your analysis, output a structured JSON block fenced with ```artifacts
+{{
+  "evaluation_draft": {{
+    "ticker": "{ticker}",
+    "thesis_status": "strengthen|neutral|weaken|insufficient-data",
+    "technical_read": "...",
+    "fundamental_read": "...",
+    "action": "hold|add|trim|exit|reassess",
+    "confidence": "high|medium|low",
+    "key_developments": ["..."],
+    "earnings_note": null,
+    "risk_flag": null
+  }}
+}}
+```
 """
 
 
