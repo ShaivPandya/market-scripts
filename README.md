@@ -23,6 +23,9 @@ pip install -r requirements.txt -c requirements-lock.txt
 Optional extras (needed for some web pages / endpoints):
 
 ```bash
+# Semantic knowledge-base retrieval
+pip install -r requirements-embeddings.txt -c requirements-lock.txt
+
 # FX Model (installs statsmodels + pandaSDMX)
 pip install -r fx/model/requirements.txt
 

@@ -1,0 +1,7 @@
+# Optional semantic retrieval dependencies.
+#
+# Install this only on hosts that need the knowledge-base embedding index/search
+# feature. The default development and CI installs omit it because
+# sentence-transformers pulls torch, which is large on Linux runners.
+-r requirements.txt
+sentence-transformers>=2.2.0

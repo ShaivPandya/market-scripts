@@ -136,7 +136,10 @@ def _get_model():
                 _model = SentenceTransformer("all-MiniLM-L6-v2")
                 logger.info("Loaded sentence-transformer model: all-MiniLM-L6-v2")
             except ImportError:
-                logger.warning("sentence-transformers not installed. Install with: pip install sentence-transformers")
+                logger.warning(
+                    "sentence-transformers not installed. Install optional embeddings dependencies with: "
+                    "pip install -r requirements-embeddings.txt -c requirements-lock.txt"
+                )
                 raise
     return _model
 
