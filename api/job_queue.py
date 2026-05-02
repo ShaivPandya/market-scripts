@@ -2,8 +2,8 @@
 
 Production uses Postgres as the durable source of truth. Local development and
 tests use an in-process fallback unless async jobs are explicitly configured for
-Postgres/RQ, so a production ``DATABASE_URL`` in ``.env`` does not leak into
-local dashboard workflows.
+Postgres-backed execution, so a production ``DATABASE_URL`` in ``.env`` does not
+leak into local dashboard workflows.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def postgres_jobs_enabled() -> bool:
     backend = (os.getenv("ASYNC_JOB_BACKEND") or "").strip().lower()
     if backend in {"local", "memory", "in-memory", "in_process", "in-process"}:
         return False
-    if backend in {"rq", "postgres"}:
+    if backend in {"cloud_run_jobs", "cloud-run-jobs", "cloudrunjobs", "rq", "postgres"}:
         return bool(database_url())
     return os.getenv("ENVIRONMENT", "development").strip().lower() == "production" and bool(database_url())
 
@@ -296,18 +296,18 @@ def create_job(
         return dict(row)
 
 
-def set_rq_job_id(job_id: str, rq_job_id: str) -> None:
+def set_cloud_run_job_name(job_id: str, cloud_run_job_name: str) -> None:
     now = _now()
     if not postgres_jobs_enabled():
         with _memory_lock:
             if job_id in _memory_jobs:
-                _memory_jobs[job_id]["rq_job_id"] = rq_job_id
+                _memory_jobs[job_id]["cloud_run_job_name"] = cloud_run_job_name
                 _memory_jobs[job_id]["updated_at"] = now
         return
     with connect() as conn:
         conn.execute(
-            "UPDATE async_jobs SET rq_job_id = %s, updated_at = %s WHERE job_id = %s",
-            (rq_job_id, now, job_id),
+            "UPDATE async_jobs SET cloud_run_job_name = %s, updated_at = %s WHERE job_id = %s",
+            (cloud_run_job_name, now, job_id),
         )
         conn.commit()
 
@@ -428,6 +428,23 @@ def count_active_jobs() -> int:
         return int(row["count"]) if row else 0
 
 
+def list_active_jobs() -> list[dict[str, Any]]:
+    if not postgres_jobs_enabled():
+        with _memory_lock:
+            return [dict(row) for row in _memory_jobs.values() if row.get("status") in ACTIVE_STATUSES]
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM async_jobs
+            WHERE status = ANY(%s)
+            ORDER BY created_at ASC
+            """,
+            (list(ACTIVE_STATUSES),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def clear_memory_jobs() -> None:
     """Clear local fallback jobs. Used by tests and local cache invalidation."""
     with _memory_lock:
@@ -461,6 +478,11 @@ def sweep_expired_jobs(now: datetime | None = None) -> int:
         return len(rows)
 
 
-def cloud_run_job_name(job_type: str) -> str:
-    env_key = f"CLOUD_RUN_JOB_{job_type.upper().replace('-', '_')}"
-    return os.getenv(env_key, f"talisman-{job_type}")
+def cloud_run_job_name(job_type: str | None = None) -> str:
+    if value := (os.getenv("ASYNC_CLOUD_RUN_JOB") or os.getenv("ASYNC_JOB_RUNNER_JOB") or "").strip():
+        return value
+    if job_type:
+        env_key = f"CLOUD_RUN_JOB_{job_type.upper().replace('-', '_')}"
+        if value := (os.getenv(env_key) or "").strip():
+            return value
+    return "talisman-async-job"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the image at the current short git SHA and complete a backend
-# production rollout: run DB migrations, roll the API service, worker pool,
-# Cloud Run jobs, IAM bindings, and Scheduler jobs to the current config.
+# production rollout: run DB migrations, roll the API service, Cloud Run jobs,
+# IAM bindings, and Scheduler jobs to the current config.
 #
 # Usage:
 #   ./infra/gcp/deploy-all.sh                 # build + deploy at git short SHA
@@ -65,6 +65,9 @@ log "Deploying migration job"
 log "Deploying top50 refresh job"
 "${_repo_root}/infra/gcp/deploy-top50-refresh-job.sh"
 
+log "Deploying async job runner"
+"${_repo_root}/infra/gcp/deploy-async-job.sh"
+
 if [[ "${SYNC_IAM:-1}" == "1" ]]; then
   log "Syncing IAM bindings"
   "${_repo_root}/infra/gcp/iam.sh"
@@ -85,8 +88,7 @@ fi
 log "Deploying API service"
 "${_repo_root}/infra/gcp/deploy-api.sh"
 
-log "Deploying worker pool"
-"${_repo_root}/infra/gcp/deploy-worker.sh"
+log "Skipping legacy worker pool deploy; async work now runs via Cloud Run Jobs"
 
 if [[ "${SYNC_SCHEDULER:-1}" == "1" ]]; then
   log "Syncing Cloud Scheduler jobs"

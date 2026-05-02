@@ -192,13 +192,11 @@ pytz==2024.2
 PyYAML==6.0.1
 RapidFuzz==3.12.1
 readability-lxml==0.8.4.1
-redis==5.2.1
 referencing==0.37.0
 regex==2026.4.4
 requests==2.33.1
 rich==13.9.4
 rpds-py==0.30.0
-rq==2.8.0
 rsa==4.9.1
 ruff==0.15.5
 safetensors==0.4.3

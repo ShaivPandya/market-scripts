@@ -201,9 +201,8 @@ Some modules have their own deeper docs:
 
 The production stack runs on Google Cloud:
 
-- **Cloud Run** — `talisman-api` (FastAPI) and a worker service running `python -m api.rq_worker`
+- **Cloud Run** — `talisman-api` (FastAPI) and an on-demand async job runner
 - **Cloud SQL (Postgres + pgvector)** — application state
-- **Memorystore for Valkey** — async job queue (RQ)
 - **Cloud Storage** — generated documents (theses, overviews) and pre-migration backups
 - **Cloud Run Jobs** — long-running batch work and the state migration entrypoint
 - **Cloud Scheduler** — periodic cache warm + async-job sweep

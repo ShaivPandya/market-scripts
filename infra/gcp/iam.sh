@@ -9,9 +9,11 @@
 #   bucket gs://${GCS_STATE_BUCKET}:
 #     api-sa, worker-sa, migrator-sa  -> roles/storage.objectAdmin
 #   Cloud Run job ${MIGRATION_JOB}:
-#     migrator-sa  -> roles/run.invoker  (so Cloud Scheduler can run it)
+#     migrator-sa  -> roles/run.jobsExecutor  (so Cloud Scheduler can run it)
 #   Cloud Run job ${TOP50_REFRESH_JOB}:
-#     migrator-sa  -> roles/run.invoker
+#     migrator-sa  -> roles/run.jobsExecutor
+#   Cloud Run job ${ASYNC_JOB_RUNNER_JOB}:
+#     api-sa       -> roles/run.jobsExecutorWithOverrides
 #
 # Re-running is safe — gcloud `add-iam-policy-binding` is idempotent.
 
@@ -24,6 +26,8 @@ require_var API_SA
 require_var WORKER_SA
 require_var MIGRATOR_SA
 require_active_project
+
+ASYNC_JOB_RUNNER_JOB="${ASYNC_JOB_RUNNER_JOB:-talisman-async-job}"
 
 log() { printf '\n[iam] %s\n' "$*"; }
 
@@ -46,8 +50,8 @@ bind_bucket() {
   echo "  gs://${GCS_STATE_BUCKET} ${role} -> ${member}"
 }
 
-bind_run_job_invoker() {
-  local job="$1" member="$2"
+bind_run_job_role() {
+  local job="$1" member="$2" role="$3"
   if ! gcloud run jobs describe "${job}" \
         --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
     echo "  (skip) job ${job} not deployed yet — re-run iam.sh after deploy-${job##*-}-job.sh"
@@ -56,8 +60,8 @@ bind_run_job_invoker() {
   gcloud run jobs add-iam-policy-binding "${job}" \
     --project="${PROJECT_ID}" --region="${REGION}" \
     --member="serviceAccount:${member}" \
-    --role=roles/run.invoker >/dev/null
-  echo "  run jobs/${job} run.invoker -> ${member}"
+    --role="${role}" >/dev/null
+  echo "  run jobs/${job} ${role} -> ${member}"
 }
 
 ###############################################################################
@@ -81,12 +85,16 @@ done
 # Cloud Run Job invoker (for Cloud Scheduler -> Cloud Run Jobs)
 ###############################################################################
 if [[ -n "${MIGRATION_JOB:-}" ]]; then
-  log "Cloud Run job invoker: ${MIGRATION_JOB}"
-  bind_run_job_invoker "${MIGRATION_JOB}" "${MIGRATOR_SA}"
+  log "Cloud Run job executor: ${MIGRATION_JOB}"
+  bind_run_job_role "${MIGRATION_JOB}" "${MIGRATOR_SA}" roles/run.jobsExecutor
 fi
 if [[ -n "${TOP50_REFRESH_JOB:-}" ]]; then
-  log "Cloud Run job invoker: ${TOP50_REFRESH_JOB}"
-  bind_run_job_invoker "${TOP50_REFRESH_JOB}" "${MIGRATOR_SA}"
+  log "Cloud Run job executor: ${TOP50_REFRESH_JOB}"
+  bind_run_job_role "${TOP50_REFRESH_JOB}" "${MIGRATOR_SA}" roles/run.jobsExecutor
+fi
+if [[ -n "${ASYNC_JOB_RUNNER_JOB:-}" ]]; then
+  log "Cloud Run job executor with overrides: ${ASYNC_JOB_RUNNER_JOB}"
+  bind_run_job_role "${ASYNC_JOB_RUNNER_JOB}" "${API_SA}" roles/run.jobsExecutorWithOverrides
 fi
 
 log "IAM sync complete."

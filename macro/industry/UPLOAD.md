@@ -24,7 +24,7 @@ The Industry Monitor reads earnings-call PDFs from one of two sources, depending
    curl -X GET "https://<api-host>/industry-monitor?refresh=true"
    ```
 
-   The refresh dispatches via RQ to the Cloud Run worker. Tail worker logs for `Industry data fetch and summarization complete`.
+   The refresh dispatches to the generic async Cloud Run Job. Tail the async job execution logs for `Industry data fetch and summarization complete`.
 
 4. Verify the UI now shows `M / N companies` with the updated ticker reflected.
 
@@ -50,7 +50,7 @@ Transcript PDFs and the local `industry_transcripts.sqlite3` cache are intention
 
 ## IAM gotcha
 
-Both the API service (`talisman-api`) and the RQ worker run as Cloud Run services with their own service accounts. The **worker SA** is what actually executes the refresh job, so it must have `roles/storage.objectViewer` on `${GCS_STATE_BUCKET}`. If transcripts upload successfully but the UI still shows `0 / N`, check the worker SA's bucket permissions first.
+Both the API service (`talisman-api`) and the async Cloud Run Job use Cloud Run identities. The **worker SA** is what actually executes the refresh job, so it must have `roles/storage.objectViewer` on `${GCS_STATE_BUCKET}`. If transcripts upload successfully but the UI still shows `0 / N`, check the worker SA's bucket permissions first.
 
 ## Bucket hygiene
 
