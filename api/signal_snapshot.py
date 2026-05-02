@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import Any, cast
 
 from api.signal_aggregator import _build_episodes, build_signal_aggregator_from_payloads
 from api.snapshot_keys import (
@@ -83,8 +83,10 @@ def get_signal_aggregator_snapshot_response(
 
 def _snapshot_meta(payload: dict[str, Any]) -> dict[str, Any]:
     meta = payload.get("_meta")
-    if isinstance(meta, dict) and isinstance(meta.get("snapshot"), dict):
-        return meta["snapshot"]
+    if isinstance(meta, dict):
+        snapshot = meta.get("snapshot")
+        if isinstance(snapshot, dict):
+            return cast(dict[str, Any], snapshot)
     return {}
 
 
@@ -109,7 +111,11 @@ def _fallback_snapshot_meta(
         for module, state in module_status.items()
         if state.get("status") != "ok" and state.get("detail")
     ]
-    ages = [m.get("data_age_seconds") for m in metas if isinstance(m.get("data_age_seconds"), int | float)]
+    ages: list[int | float] = []
+    for meta in metas:
+        age = meta.get("data_age_seconds")
+        if isinstance(age, int | float):
+            ages.append(age)
     return {
         "key": SNAPSHOT_SIGNAL_AGGREGATOR,
         "source": "module_snapshots",
@@ -142,12 +148,12 @@ def get_signal_aggregator_module_snapshot_response(
 
         module_payloads[module_name] = payload
         raw[module_name] = _payload_without_meta(payload)
-        meta = _snapshot_meta(payload)
-        refresh_status = str(meta.get("refresh_status") or "ok")
+        snapshot_meta = _snapshot_meta(payload)
+        refresh_status = str(snapshot_meta.get("refresh_status") or "ok")
         if refresh_status != "ok":
             module_status[module_name] = {
                 "status": "error",
-                "detail": str(meta.get("error") or f"snapshot refresh {refresh_status}"),
+                "detail": str(snapshot_meta.get("error") or f"snapshot refresh {refresh_status}"),
             }
         else:
             module_status[module_name] = {"status": "ok"}
@@ -166,7 +172,8 @@ def get_signal_aggregator_module_snapshot_response(
     except Exception:
         return None
 
-    meta = data.get("_meta") if isinstance(data.get("_meta"), dict) else {}
+    raw_meta = data.get("_meta")
+    meta: dict[str, Any] = cast(dict[str, Any], raw_meta) if isinstance(raw_meta, dict) else {}
     meta["snapshot"] = _fallback_snapshot_meta(module_payloads, module_status)
     data["_meta"] = meta
     return data
