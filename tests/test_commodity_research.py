@@ -147,7 +147,11 @@ def _fake_fetch_all_payload(*, macro_status: str = "ok", degraded_proxy: bool = 
 
     daily = {"commodities": daily_prices, "timeframe": "ResearchDaily", "timestamp": pd.Timestamp.now()}
     monthly = {"commodities": monthly_prices, "timeframe": "Monthly", "timestamp": pd.Timestamp.now()}
-    return daily, monthly, curves, macro
+
+    eia_dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=12, freq="MS")
+    eia_df = pd.DataFrame({"date": eia_dates, "value": [100.0 + i * 0.1 for i in range(len(eia_dates))]})
+
+    return daily, monthly, curves, macro, eia_df
 
 
 def test_trend_score_uses_own_history_percentile():

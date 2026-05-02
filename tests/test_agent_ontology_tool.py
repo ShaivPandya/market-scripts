@@ -92,7 +92,7 @@ def test_query_ontology_string_filters(monkeypatch):
 
 
 def test_signal_aggregator_tool_dispatch(monkeypatch):
-    def fake_build(lookback_weeks, positioning_instruments, include_raw_modules):
+    def fake_build(lookback_weeks, positioning_instruments, include_raw_modules, include_history=False):
         assert lookback_weeks == 104
         assert positioning_instruments == "SP500,EUR"
         assert include_raw_modules is False

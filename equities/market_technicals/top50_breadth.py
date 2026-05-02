@@ -307,7 +307,8 @@ def _load_top50_tickers() -> list[str]:
             pass
     if tickers:
         return tickers
-    return compute_top50()["ticker"].astype(str).str.upper().tolist()
+    fallback: list[str] = compute_top50()["ticker"].astype(str).str.upper().tolist()
+    return fallback
 
 
 def main():

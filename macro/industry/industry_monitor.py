@@ -370,7 +370,9 @@ def _quarter_candidates(header: str, call_date: date) -> list[tuple[int, int, in
         score = _quarter_score(header, start, end, year is not None)
         if score is None:
             return
-        candidates.append((score, start, quarter, year if year is not None else _infer_year_for_quarter(call_date, quarter)))
+        candidates.append(
+            (score, start, quarter, year if year is not None else _infer_year_for_quarter(call_date, quarter))
+        )
 
     for m in re.finditer(r"\bQ([1-4])\s*(?:FY\s*)?(20[2-3]\d)\b", header, flags=re.IGNORECASE):
         add(m.start(), m.end(), int(m.group(1)), int(m.group(2)))

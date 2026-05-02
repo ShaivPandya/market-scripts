@@ -35,8 +35,9 @@ def fetch_shfe_html(url: str, *, cache_name: str, refresh: bool = False, raw_dir
         timeout=45,
     )
     response.raise_for_status()
-    path.write_text(response.text, encoding="utf-8")
-    return response.text
+    text: str = response.text
+    path.write_text(text, encoding="utf-8")
+    return text
 
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:

@@ -9,7 +9,7 @@ def test_login_success(client):
     resp = client.post("/api/v1/auth/login", json={"password": "testpass"})
     assert resp.status_code == 200
     assert resp.json() == {"detail": "ok"}
-    assert "access_token" in resp.cookies
+    assert "__session" in resp.cookies
 
 
 def test_login_wrong_password(client):

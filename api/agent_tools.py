@@ -1007,10 +1007,14 @@ def _series_edge_point(series: Any, *, first: bool) -> dict[str, Any] | None:
 def _build_agent_portfolio_payload(
     raw: dict[str, Any], holdings: list[dict[str, Any]], *, include_hedges: bool
 ) -> dict[str, Any]:
-    analytics = raw.get("analytics") if isinstance(raw.get("analytics"), dict) else {}
-    per_position = analytics.get("per_position") if isinstance(analytics.get("per_position"), dict) else {}
-    portfolio_summary = analytics.get("portfolio") if isinstance(analytics.get("portfolio"), dict) else {}
-    raw_positions = raw.get("positions") if isinstance(raw.get("positions"), dict) else {}
+    analytics_raw = raw.get("analytics")
+    analytics: dict[str, Any] = analytics_raw if isinstance(analytics_raw, dict) else {}
+    per_position_raw = analytics.get("per_position")
+    per_position: dict[str, Any] = per_position_raw if isinstance(per_position_raw, dict) else {}
+    portfolio_summary_raw = analytics.get("portfolio")
+    portfolio_summary: dict[str, Any] = portfolio_summary_raw if isinstance(portfolio_summary_raw, dict) else {}
+    raw_positions_raw = raw.get("positions")
+    raw_positions: dict[str, Any] = raw_positions_raw if isinstance(raw_positions_raw, dict) else {}
 
     rows: list[dict[str, Any]] = []
     for holding in holdings:
@@ -1063,7 +1067,7 @@ def _build_agent_portfolio_payload(
 
     long_count = sum(1 for row in rows if str(row.get("direction") or "").lower() == "long")
     short_count = sum(1 for row in rows if str(row.get("direction") or "").lower() == "short")
-    return serialize_value(
+    payload: dict[str, Any] = serialize_value(
         {
             "timeframe": raw.get("timeframe"),
             "timestamp": raw.get("timestamp"),
@@ -1083,6 +1087,7 @@ def _build_agent_portfolio_payload(
             "positions": rows,
         }
     )
+    return payload
 
 
 def _summarize_payload(value: Any) -> dict[str, Any]:

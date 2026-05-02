@@ -16,7 +16,7 @@ def annualized_return(returns: pd.Series, periods_per_year: int = 12) -> float:
     wealth = float((1.0 + r).prod())
     if wealth <= 0:
         return -1.0
-    return wealth ** (periods_per_year / len(r)) - 1.0
+    return float(wealth ** (periods_per_year / len(r)) - 1.0)
 
 
 def annualized_volatility(returns: pd.Series, periods_per_year: int = 12) -> float:

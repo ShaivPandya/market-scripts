@@ -8,10 +8,15 @@ import auto_report.auto_weekly_report as weekly
 
 def test_load_theses_reads_files(tmp_path, monkeypatch):
     """Thesis files are loaded; missing tickers get None."""
-    csv_path = tmp_path / "portfolio" / "portfolio.csv"
-    csv_path.parent.mkdir(parents=True)
-    csv_path.write_text(
-        "ticker,asset,direction,contrarian,conviction\nAAA,equity,long,false,3\nBBB,equity,short,false,2\n"
+    from portfolio import portfolio_db
+
+    monkeypatch.setattr(
+        portfolio_db,
+        "get_positions",
+        lambda: [
+            {"ticker": "AAA", "asset": "equity", "direction": "long", "contrarian": False, "conviction": 3},
+            {"ticker": "BBB", "asset": "equity", "direction": "short", "contrarian": False, "conviction": 2},
+        ],
     )
 
     thesis_dir = tmp_path / "investment_theses"
@@ -19,7 +24,6 @@ def test_load_theses_reads_files(tmp_path, monkeypatch):
     (thesis_dir / "AAA.md").write_text("# AAA Thesis\nBuy because reasons.")
 
     monkeypatch.setattr(weekly, "THESES_DIR", thesis_dir)
-    monkeypatch.setattr(weekly, "PROJECT_ROOT", tmp_path)
 
     result = weekly.load_theses()
     assert result["AAA"] == "# AAA Thesis\nBuy because reasons."
@@ -28,16 +32,19 @@ def test_load_theses_reads_files(tmp_path, monkeypatch):
 
 def test_load_theses_empty_file(tmp_path, monkeypatch):
     """An empty thesis file returns None."""
-    csv_path = tmp_path / "portfolio" / "portfolio.csv"
-    csv_path.parent.mkdir(parents=True)
-    csv_path.write_text("ticker,asset,direction,contrarian,conviction\nXYZ,equity,long,false,3\n")
+    from portfolio import portfolio_db
+
+    monkeypatch.setattr(
+        portfolio_db,
+        "get_positions",
+        lambda: [{"ticker": "XYZ", "asset": "equity", "direction": "long", "contrarian": False, "conviction": 3}],
+    )
 
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
     (thesis_dir / "XYZ.md").write_text("")
 
     monkeypatch.setattr(weekly, "THESES_DIR", thesis_dir)
-    monkeypatch.setattr(weekly, "PROJECT_ROOT", tmp_path)
 
     result = weekly.load_theses()
     assert result["XYZ"] is None
