@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Install deps first for better layer caching
-COPY requirements.txt requirements-lock.txt .
+COPY requirements.txt requirements-lock.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -c requirements-lock.txt
 
 # Copy the repo (API imports modules from many top-level folders)
