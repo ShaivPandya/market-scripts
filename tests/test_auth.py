@@ -49,13 +49,38 @@ def test_health_no_auth_required(client):
     assert "status" in data
 
 
+def test_password_mode_does_not_require_proxy_secret_for_login(client, monkeypatch):
+    monkeypatch.setenv("AUTH_MODE", "password")
+    monkeypatch.setenv("API_PROXY_SECRET", "proxy-secret")
+    monkeypatch.delenv("REQUIRE_API_PROXY_SECRET", raising=False)
+
+    resp = client.post("/api/v1/auth/login", json={"password": "testpass"})
+    assert resp.status_code == 200
+
+
+def test_explicit_proxy_secret_requirement_blocks_missing_header(client, monkeypatch):
+    monkeypatch.setenv("AUTH_MODE", "password")
+    monkeypatch.setenv("API_PROXY_SECRET", "proxy-secret")
+    monkeypatch.setenv("REQUIRE_API_PROXY_SECRET", "true")
+
+    missing = client.post("/api/v1/auth/login", json={"password": "testpass"})
+    assert missing.status_code == 403
+
+    allowed = client.post(
+        "/api/v1/auth/login",
+        json={"password": "testpass"},
+        headers={"X-Api-Proxy-Secret": "proxy-secret"},
+    )
+    assert allowed.status_code == 200
+
+
 def test_cloudflare_mode_requires_backend_proxy_secret(client, monkeypatch):
     monkeypatch.setenv("AUTH_MODE", "cloudflare")
     monkeypatch.delenv("API_PROXY_SECRET", raising=False)
 
     protected = client.get("/api/v1/agent/workflows")
     assert protected.status_code == 403
-    assert protected.json() == {"detail": "API proxy secret is required in Cloudflare auth mode."}
+    assert protected.json() == {"detail": "API proxy secret is required for this auth mode."}
 
     health = client.get("/api/health")
     assert health.status_code == 200

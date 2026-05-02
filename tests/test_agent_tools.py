@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from api import agent_tools
+from api.routers import agent as agent_router
 
 
 def test_cached_singleflight_fetches_once(monkeypatch):
@@ -83,6 +84,115 @@ def test_execute_tool_outputs_valid_json_when_compacted(monkeypatch):
     assert "_meta" in payload
     assert payload["_meta"]["tool"] == "dummy_tool"
     assert payload["_meta"]["output_chars"] <= payload["_meta"]["max_chars"]
+
+
+def test_agent_capability_registry_covers_user_facing_app_surface():
+    names = {cap.name for cap in agent_tools.AGENT_CAPABILITIES}
+    expected = {
+        "get_commodity_research",
+        "get_commodities",
+        "get_commodities_curve",
+        "get_portfolio_news",
+        "get_country_dashboard",
+        "get_index_dashboard",
+        "get_fx_dashboard",
+        "run_fx_model",
+        "get_financials",
+        "get_dcf_historical",
+        "run_dcf_valuation",
+        "run_chart",
+        "run_ratio_chart",
+        "run_quality_screen",
+        "run_short_screen",
+        "run_long_screen",
+        "run_fundamental_momentum",
+        "run_portfolio_analyzer",
+        "run_portfolio_sizer",
+        "run_hedging_tool",
+        "get_workspace",
+        "get_research_notes",
+        "get_weekly_report",
+        "search_agent_capabilities",
+    }
+
+    assert expected <= names
+    assert len(names) == len(agent_tools.AGENT_CAPABILITIES)
+    assert all(cap.category and cap.access_mode and cap.aliases for cap in agent_tools.AGENT_CAPABILITIES)
+    assert all(cap.schema_safe for cap in agent_tools.AGENT_CAPABILITIES)
+
+
+def test_agent_capability_registry_does_not_expose_direct_mutations():
+    names = {cap.name for cap in agent_tools.AGENT_CAPABILITIES}
+
+    forbidden_direct_tools = {
+        "update_portfolio_positions",
+        "update_hedge_positions",
+        "save_thesis",
+        "create_research_note",
+        "delete_portfolio_news_digest",
+        "approve_item",
+        "reject_item",
+        "bulk_approve",
+        "bulk_reject",
+    }
+    proposal_tools = {
+        "propose_portfolio_positions_update",
+        "propose_hedge_positions_update",
+        "propose_thesis_content_update",
+        "propose_research_note",
+        "propose_news_digest_delete",
+    }
+
+    assert names.isdisjoint(forbidden_direct_tools)
+    assert proposal_tools <= names
+
+
+def test_agent_provider_tool_definitions_are_in_parity():
+    anthropic_names = {tool["name"] for tool in agent_router.ANTHROPIC_TOOL_DEFINITIONS}
+    openai_names = {tool["name"] for tool in agent_router.OPENAI_TOOL_DEFINITIONS}
+    registry_names = {cap.name for cap in agent_tools.AGENT_CAPABILITIES}
+
+    assert anthropic_names == registry_names
+    assert openai_names == registry_names
+    assert all("input_schema" in tool for tool in agent_router.ANTHROPIC_TOOL_DEFINITIONS)
+    assert all(tool["type"] == "function" and "parameters" in tool for tool in agent_router.OPENAI_TOOL_DEFINITIONS)
+
+
+def test_agent_selector_finds_new_full_app_capabilities():
+    cases = {
+        "show me the commodity proxy screener": "get_commodity_research",
+        "pull the latest portfolio news digests": "get_portfolio_news",
+        "run a DCF valuation for NVDA": "run_dcf_valuation",
+        "get SONO financials": "get_financials",
+        "run the FX model for EURUSD": "run_fx_model",
+        "run a short screener": "run_short_screen",
+        "chart MU over 2Y": "run_chart",
+        "update my portfolio positions": "propose_portfolio_positions_update",
+    }
+
+    for prompt, expected_tool in cases.items():
+        selected = agent_router._select_tool_names(prompt)
+        assert agent_router._is_data_seeking(prompt)
+        assert expected_tool in selected
+        assert "search_agent_capabilities" in selected
+
+
+def test_agent_capability_search_returns_fallback_matches():
+    result = agent_tools.search_agent_capabilities("commodity proxy screener", top_k=5)
+    names = [row["name"] for row in result["matches"]]
+
+    assert "get_commodity_research" in names
+
+
+def test_agent_capabilities_endpoint(auth_client):
+    resp = auth_client.get("/api/v1/agent/capabilities")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    names = {row["name"] for row in payload["capabilities"]}
+    assert payload["count"] == len(payload["capabilities"])
+    assert "get_commodity_research" in names
+    assert "run_fx_model" in names
 
 
 def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(monkeypatch):

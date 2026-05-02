@@ -34,26 +34,26 @@ interface RouteEntry {
 const ROUTE_PAGE_MAP: Record<string, RouteEntry> = {
   // Core
   "/": { pageName: "Portfolio Dashboard", tools: ["get_portfolio"] },
-  "/workspace": { pageName: "Workspace" },
+  "/workspace": { pageName: "Workspace", tools: ["get_workspace"] },
   "/theses": { pageName: "Investment Theses", tools: ["get_thesis"] },
   "/weekly-report": { pageName: "Weekly Report" },
   "/dossier": { pageName: "Position Dossier", tools: ["get_dossier"] },
 
   // Labs
-  "/analyzer": { pageName: "Portfolio Analyzer" },
-  "/sizer": { pageName: "Portfolio Sizer" },
-  "/hedging-tool": { pageName: "Hedging Tool" },
-  "/chart": { pageName: "Chart" },
-  "/screeners": { pageName: "Screeners" },
-  "/financials": { pageName: "Financials" },
-  "/fx-model": { pageName: "FX Model" },
-  "/momentum": { pageName: "Momentum" },
+  "/analyzer": { pageName: "Portfolio Analyzer", tools: ["run_portfolio_analyzer"] },
+  "/sizer": { pageName: "Portfolio Sizer", tools: ["run_portfolio_sizer", "get_portfolio_sizer_prefill"] },
+  "/hedging-tool": { pageName: "Hedging Tool", tools: ["run_hedging_tool", "get_hedging_portfolio_weights"] },
+  "/chart": { pageName: "Chart", tools: ["run_chart", "run_ratio_chart"] },
+  "/screeners": { pageName: "Screeners", tools: ["run_quality_screen", "run_short_screen", "run_long_screen"] },
+  "/financials": { pageName: "Financials", tools: ["get_financials"] },
+  "/fx-model": { pageName: "FX Model", tools: ["run_fx_model", "get_fx_model_pairs"] },
+  "/momentum": { pageName: "Momentum", tools: ["get_momentum", "run_fundamental_momentum"] },
 
   // Monitors
   "/signal-aggregator": { pageName: "Signal Aggregator", tools: ["get_signal_aggregator"] },
   "/ontology": { pageName: "Ontology Workbench", tools: ["query_ontology"] },
   "/market-technicals": { pageName: "Market Technicals", tools: ["get_market_breadth", "get_vix_term_structure"] },
-  "/portfolio-news": { pageName: "News Digests" },
+  "/portfolio-news": { pageName: "News Digests", tools: ["get_portfolio_news", "search_knowledge_base"] },
   "/breakout": { pageName: "Breakout", tools: ["get_breakout"] },
   "/sentiment": { pageName: "Sentiment", tools: ["get_sentiment"] },
   "/positioning": { pageName: "Positioning", tools: ["get_positioning"] },
@@ -68,14 +68,14 @@ const ROUTE_PAGE_MAP: Record<string, RouteEntry> = {
   "/liquidity": { pageName: "Liquidity", tools: ["get_liquidity"] },
   "/yield-curve": { pageName: "Yield Curve", tools: ["get_yield_curve"] },
   "/bond-dashboard": { pageName: "Bond Dashboard", tools: ["get_bond_dashboard"] },
-  "/country-dashboard": { pageName: "Country Dashboard" },
+  "/country-dashboard": { pageName: "Country Dashboard", tools: ["get_country_dashboard"] },
 
   // Assets
-  "/index-dashboard": { pageName: "Index Dashboard" },
-  "/fx-dashboard": { pageName: "FX Dashboard" },
-  "/commodities": { pageName: "Commodity Dashboard" },
-  "/commodities-curve": { pageName: "Commodities Curve" },
-  "/commodity-research": { pageName: "Commodity Proxy Screener" },
+  "/index-dashboard": { pageName: "Index Dashboard", tools: ["get_index_dashboard"] },
+  "/fx-dashboard": { pageName: "FX Dashboard", tools: ["get_fx_dashboard"] },
+  "/commodities": { pageName: "Commodity Dashboard", tools: ["get_commodities"] },
+  "/commodities-curve": { pageName: "Commodities Curve", tools: ["get_commodities_curve"] },
+  "/commodity-research": { pageName: "Commodity Proxy Screener", tools: ["get_commodity_research"] },
 }
 
 // ---------------------------------------------------------------------------

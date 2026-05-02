@@ -23,7 +23,14 @@ def _safe_call(fn, *args, **kwargs) -> Any:
 @router.get("/workspace")
 def get_workspace():
     """Return workspace landing page data."""
-    from portfolio.core_db import get_action_items, get_pending_approvals, get_watch_triggers, get_workflow_runs
+    from portfolio.core_db import (
+        get_action_items,
+        get_latest_recommendation,
+        get_pending_approvals,
+        get_recommendations,
+        get_watch_triggers,
+        get_workflow_runs,
+    )
 
     # Parallel fetch for expensive cached calls
     regime_data = None
@@ -119,6 +126,35 @@ def get_workspace():
 
     # Pending approvals
     pending_approvals = get_pending_approvals(status="pending")
+    recommendation_approvals = [
+        a
+        for a in pending_approvals
+        if isinstance(a.get("proposed_change"), dict) and a["proposed_change"].get("recommendation_id") is not None
+    ]
+
+    latest_daily_recommendation = _safe_call(get_latest_recommendation, "daily")
+    latest_weekly_recommendation = _safe_call(get_latest_recommendation, "weekly")
+    pending_actionable_recommendations = (
+        _safe_call(
+            get_recommendations,
+            approval_status="pending",
+            limit=5,
+        )
+        or []
+    )
+    blocked_recommendation_warnings = []
+    for rec in (latest_daily_recommendation, latest_weekly_recommendation):
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("recommendation_status") == "blocked" or rec.get("critical_data_quality") in {"stale", "failed"}:
+            blocked_recommendation_warnings.append(
+                {
+                    "report_type": rec.get("report_type"),
+                    "as_of": rec.get("as_of"),
+                    "critical_data_quality": rec.get("critical_data_quality"),
+                    "blocked_reasons": rec.get("blocked_reasons_json", []),
+                }
+            )
 
     # Open action items
     open_actions = get_action_items(status="open")
@@ -136,6 +172,16 @@ def get_workspace():
         "pending_approvals": {
             "count": len(pending_approvals),
             "items": pending_approvals[:5],
+        },
+        "recommendations": {
+            "latest_daily": latest_daily_recommendation,
+            "latest_weekly": latest_weekly_recommendation,
+            "pending_actionable": {
+                "count": len(pending_actionable_recommendations),
+                "items": pending_actionable_recommendations[:5],
+            },
+            "blocked_warnings": blocked_recommendation_warnings,
+            "pending_approval_count": len(recommendation_approvals),
         },
         "open_actions": {
             "count": len(open_actions),

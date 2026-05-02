@@ -30,7 +30,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements-dev.txt
-      - run: pytest --tb=short --cov=api --cov-report=term-missing -q
+      - run: pytest --tb=short --cov=api --cov=auto_report --cov=portfolio --cov-report=term-missing -q
 
   typecheck:
     runs-on: ubuntu-latest

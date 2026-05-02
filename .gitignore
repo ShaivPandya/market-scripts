@@ -51,6 +51,9 @@ outputs/
 **/outputs/
 results/aluminum/
 
+# Industry transcript artifacts are stored in Cloud Storage for deployed envs.
+macro/industry/files/**/*.pdf
+
 # SQLite local/runtime files
 *.db
 *.sqlite

@@ -989,6 +989,20 @@ export const clearCache = () => client.delete("/cache").then(r => r.data)
 // Workspace
 export const fetchWorkspace = () => client.get("/workspace").then(r => r.data)
 
+// Recommendations
+export const fetchRecommendations = (params?: {
+  report_type?: string
+  status?: string
+  ticker?: string
+  approval_status?: string
+  outcome_status?: string
+  limit?: number
+}) => client.get("/recommendations", { params }).then(r => r.data)
+export const fetchLatestRecommendations = () =>
+  client.get("/recommendations/latest").then(r => r.data)
+export const fetchRecommendation = (id: number) =>
+  client.get(`/recommendations/${id}`).then(r => r.data)
+
 // Dossier
 export const fetchDossier = (ticker: string) =>
   client.get(`/dossier/${encodeURIComponent(ticker)}`).then(r => r.data)

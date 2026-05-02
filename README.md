@@ -121,7 +121,7 @@ Each module also often has a `__main__` / CLI path for terminal usage.
 
 **Production**
 - The frontend is served by Firebase Hosting and `/api/**` is rewritten to the Cloud Run service `talisman-api` in `us-central1` (see `firebase.json`).
-- Set `API_PROXY_SECRET` on the Cloud Run service to require an `X-Api-Proxy-Secret` header on every `/api/*` request (see `api/main.py` middleware and `.env.example`). This is required when `AUTH_MODE=cloudflare`.
+- `API_PROXY_SECRET` is required for `AUTH_MODE=cloudflare`, where an edge proxy must inject `X-Api-Proxy-Secret` on `/api/*` requests. For password-mode Firebase Hosting rewrites, leave `REQUIRE_API_PROXY_SECRET=false` because Firebase does not inject that custom header.
 
 ## Repository structure (high level)
 
@@ -192,7 +192,7 @@ Some modules have their own deeper docs:
 ## Security notes
 
 - `.env` is ignored by git; don’t commit secrets
-- In production, store secrets in Google Secret Manager and set `API_PROXY_SECRET` on the Cloud Run service so only callers presenting the matching `X-Api-Proxy-Secret` header can reach `/api/*`.
+- In production, store secrets in Google Secret Manager. Set `API_PROXY_SECRET` and `REQUIRE_API_PROXY_SECRET=true` only when traffic reaches Cloud Run through an edge proxy that injects the matching `X-Api-Proxy-Secret` header.
 
 ## Deployment
 

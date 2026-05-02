@@ -2,8 +2,8 @@
 """
 Automated weekly market report.
 
-Orchestrates data collection from existing modules, calls Claude to generate
-a Markdown report, writes outputs, archives to history, and creates a GitHub Issue.
+Orchestrates data collection from existing modules, generates separate commentary
+and recommendations artifacts, archives outputs, and creates one GitHub Issue.
 
 Run:
     python -m auto_report.auto_weekly_report --force   # bypass Friday-afternoon gate
@@ -32,6 +32,19 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
+from auto_report.recommendations import (  # noqa: E402
+    RECOMMENDATIONS_SEPARATOR,
+    STANCE_OPTIONS,
+    assess_report_data_quality,
+    build_recommendations_user_message,
+    evaluate_due_recommendations,
+    fallback_recommendations_payload,
+    format_recommendations_markdown,
+    parse_recommendations_response,
+    persist_recommendations,
+    repair_recommendations_response,
+    stable_hash,
+)
 from auto_report.shared import (  # noqa: E402
     call_claude,
     create_github_issue,
@@ -43,6 +56,7 @@ from auto_report.shared import (  # noqa: E402
 from auto_report.shared import (
     write_bundle as _write_bundle_to_path,
 )
+from llm_utils import MODEL_HIGH  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -931,6 +945,7 @@ def _append_sources_section(report_md: str, citations: list[tuple[str, str]]) ->
 def _build_user_message(bundle: dict, perf_md: str, web_search: bool = True) -> str:
     prompt_bundle = _prepare_prompt_bundle(bundle)
     bundle_json = json.dumps(prompt_bundle, indent=2, default=str)
+    stance_options = " | ".join(STANCE_OPTIONS)
 
     search_instruction = ""
     if web_search:
@@ -975,7 +990,7 @@ Constraints:
 After the report, output the separator `{SUMMARY_SEPARATOR}` on its own line, then a JSON block:
 ```json
 {{
-  "stance": "<bullish|bearish|neutral|cautious>",
+  "stance": "<{stance_options}>",
   "confidence": "<high|medium|low>",
   "drivers": ["<top 3-5 drivers>"],
   "watchlist_triggers": ["<3-5 specific triggers that would change stance>"]
@@ -992,7 +1007,7 @@ End immediately after the JSON. No assistant meta text."""
 
 def _fallback_summary() -> dict:
     return {
-        "stance": "unknown",
+        "stance": "Neutral / Watchful",
         "confidence": "low",
         "drivers": [],
         "watchlist_triggers": [],
@@ -1020,7 +1035,89 @@ def parse_response(text: str) -> tuple[str, dict]:
         log.warning("No summary separator found in Claude response")
         report_md = text.strip()
         summary = _fallback_summary()
+    if summary.get("stance") not in STANCE_OPTIONS:
+        log.warning("Unknown weekly stance %r — defaulting to Neutral / Watchful", summary.get("stance"))
+        summary["stance"] = "Neutral / Watchful"
     return report_md, summary
+
+
+# ---------------------------------------------------------------------------
+# Recommendations prompt, parsing, and persistence
+# ---------------------------------------------------------------------------
+
+
+def _build_recommendations_system_message() -> str:
+    core_md = load_prompt_file(PROMPTS_DIR / "system.md", "prompts/system.md")
+    weekly_md = load_prompt_file(PROMPTS_DIR / "weekly_system.md", "prompts/weekly_system.md")
+    rec_md = load_prompt_file(PROMPTS_DIR / "recommendations_system.md", "prompts/recommendations_system.md")
+    return f"{core_md}\n\n---\n\n{weekly_md}\n\n---\n\n{rec_md}"
+
+
+def _generate_weekly_recommendations(
+    *,
+    today_str: str,
+    summary: dict,
+    data_quality: dict,
+    evidence_bundle: dict,
+    commentary_md: str,
+    perf_md: str,
+) -> tuple[str, dict]:
+    stance = summary.get("stance") or "Neutral / Watchful"
+    if data_quality.get("recommendations_blocked"):
+        payload = fallback_recommendations_payload(
+            "weekly",
+            today_str,
+            stance,
+            data_quality,
+            status="blocked",
+            reason="Critical data quality blocks actionable weekly recommendations.",
+        )
+        return format_recommendations_markdown(payload), payload
+
+    system_msg = _build_recommendations_system_message()
+    user_msg = build_recommendations_user_message(
+        report_type="weekly",
+        as_of=today_str,
+        stance=stance,
+        data_quality=data_quality,
+        evidence_bundle=evidence_bundle,
+        commentary_md=commentary_md,
+        extra_context_md=f"## Deterministic Weekly Performance Tables\n\n{perf_md}",
+    )
+    try:
+        raw_text, _ = call_claude(system_msg=system_msg, user_msg=user_msg, allowed_domains=None, max_tokens=8192)
+        try:
+            memo_md, payload = parse_recommendations_response(
+                raw_text,
+                report_type="weekly",
+                as_of=today_str,
+                stance=stance,
+                data_quality=data_quality,
+            )
+        except Exception as exc:
+            log.warning("Weekly recommendations validation failed; attempting repair: %s", exc)
+            memo_md, payload = repair_recommendations_response(
+                raw_text,
+                str(exc),
+                report_type="weekly",
+                as_of=today_str,
+                stance=stance,
+                data_quality=data_quality,
+            )
+        memo_md = strip_llm_meta(memo_md)
+        formatted = format_recommendations_markdown(payload)
+        return "\n\n".join(part for part in [memo_md, formatted] if part).strip(), payload
+    except Exception as exc:
+        log.error("Weekly recommendations generation failed: %s", exc, exc_info=True)
+        payload = fallback_recommendations_payload(
+            "weekly",
+            today_str,
+            stance,
+            data_quality,
+            status="error",
+            reason=f"Recommendation generation failed: {exc}",
+        )
+        return format_recommendations_markdown(payload), payload
 
 
 # ---------------------------------------------------------------------------
@@ -1296,11 +1393,27 @@ def _merge_thesis_into_summary(base_summary: dict, thesis_summary: dict) -> dict
 # ---------------------------------------------------------------------------
 
 
-def write_outputs(report_md: str, summary: dict, bundle: dict, output_dir: Path, today: str):
+def write_outputs(
+    report_md: str,
+    commentary_md: str,
+    recommendations_md: str,
+    recommendations_payload: dict,
+    summary: dict,
+    bundle: dict,
+    output_dir: Path,
+    today: str,
+):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     (output_dir / "report.md").write_text(report_md, encoding="utf-8")
+    (output_dir / "commentary.md").write_text(commentary_md, encoding="utf-8")
+    (output_dir / "recommendations.md").write_text(recommendations_md, encoding="utf-8")
+    (output_dir / "recommendations.json").write_text(
+        json.dumps(recommendations_payload, indent=2, default=str),
+        encoding="utf-8",
+    )
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (output_dir / "weekly_bundle.json").write_text(json.dumps(bundle, indent=2, default=str), encoding="utf-8")
     log.info("Wrote report.md and summary.json to %s", output_dir)
 
     # Index report for semantic search (best-effort)
@@ -1321,6 +1434,12 @@ def write_outputs(report_md: str, summary: dict, bundle: dict, output_dir: Path,
     archive_dir.mkdir(parents=True, exist_ok=True)
     (archive_dir / "weekly_bundle.json").write_text(json.dumps(bundle, indent=2, default=str), encoding="utf-8")
     (archive_dir / "report.md").write_text(report_md, encoding="utf-8")
+    (archive_dir / "commentary.md").write_text(commentary_md, encoding="utf-8")
+    (archive_dir / "recommendations.md").write_text(recommendations_md, encoding="utf-8")
+    (archive_dir / "recommendations.json").write_text(
+        json.dumps(recommendations_payload, indent=2, default=str),
+        encoding="utf-8",
+    )
     (archive_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     log.info("Archived to %s", archive_dir)
 
@@ -1385,7 +1504,7 @@ def main():
         allowed_domains = None
         log.info("Web search disabled")
 
-    # 7. Call Claude
+    # 7. Call Claude for weekly commentary
     user_msg = _build_user_message(bundle, perf_md, web_search=use_search)
     report_md = None
     summary = None
@@ -1403,6 +1522,8 @@ def main():
         report_md = f"# Weekly Report — {today_str}\n\n**Error**: Claude generation failed.\n\n```\n{error_msg}\n```"
         summary = _fallback_summary()
         summary["error"] = error_msg
+
+    commentary_md = report_md
 
     # 7b. Thesis Monitoring Pass
     thesis_data: dict = {}
@@ -1427,7 +1548,7 @@ def main():
 
             # Append thesis section to report
             if thesis_md:
-                report_md += "\n\n---\n\n" + thesis_md
+                commentary_md += "\n\n---\n\n" + thesis_md
 
             # Merge thesis into summary
             summary = _merge_thesis_into_summary(summary, thesis_summary)
@@ -1452,21 +1573,104 @@ def main():
             )
         except Exception as e:
             log.error("Thesis monitoring pass failed: %s", e, exc_info=True)
+            thesis_data = {"error": str(e)}
             fallback = _fallback_thesis_summary()
             fallback["error"] = str(e)
             summary = _merge_thesis_into_summary(summary, fallback)
-            report_md += f"\n\n---\n\n## Portfolio Thesis Monitoring\n\n**Error**: Thesis monitoring failed — {e}"
+            commentary_md += f"\n\n---\n\n## Portfolio Thesis Monitoring\n\n**Error**: Thesis monitoring failed — {e}"
     else:
         log.info("No investment_theses/ directory found — skipping thesis monitoring")
+        thesis_data = {"status": "not_configured", "message": "No investment_theses directory found"}
 
-    report_md = _append_sources_section(report_md, citations)
+    commentary_md = _append_sources_section(commentary_md, citations)
     if citations:
         log.info("Appended %d unique citation sources to report", len(_dedupe_citations(citations)))
 
-    # 8. Write outputs + archive
-    write_outputs(report_md, summary, bundle, OUTPUT_DIR, today_str)
+    # 8. Data quality + recommendations
+    raw_recommendation_bundle = {
+        **raw_data,
+        "portfolio_context": thesis_data,
+        "weekly_summary": summary,
+    }
+    data_quality = assess_report_data_quality(raw_recommendation_bundle, "weekly")
+    recommendation_evidence_bundle = serialize_bundle(
+        {
+            **raw_recommendation_bundle,
+            "data_quality": data_quality,
+        }
+    )
+    recommendations_md, recommendations_payload = _generate_weekly_recommendations(
+        today_str=today_str,
+        summary=summary,
+        data_quality=data_quality,
+        evidence_bundle=recommendation_evidence_bundle,
+        commentary_md=commentary_md,
+        perf_md=perf_md,
+    )
+    persisted_recommendations = persist_recommendations(
+        recommendations_payload,
+        source_report_path=str(OUTPUT_DIR / "recommendations.md"),
+        source_json_path=str(OUTPUT_DIR / "recommendations.json"),
+        prompt_metadata={
+            "model": MODEL_HIGH,
+            "prompt_hash": stable_hash(
+                {
+                    "system": _build_recommendations_system_message(),
+                    "separator": RECOMMENDATIONS_SEPARATOR,
+                }
+            ),
+            "input_hash": stable_hash(recommendation_evidence_bundle),
+            "validation_status": "ok" if recommendations_payload.get("recommendation_status") != "error" else "error",
+            "source_quality_summary": data_quality,
+        },
+    )
+    summary["recommendations"] = {
+        "status": recommendations_payload.get("recommendation_status"),
+        "critical_data_quality": recommendations_payload.get("critical_data_quality"),
+        "blocked_reasons": recommendations_payload.get("blocked_reasons", []),
+        "action_count": len(recommendations_payload.get("recommended_actions", [])),
+        "actionable_count": sum(
+            1 for action in recommendations_payload.get("recommended_actions", []) if action.get("approval_required")
+        ),
+        "persisted_ids": [r.get("id") for r in persisted_recommendations],
+        "separator": RECOMMENDATIONS_SEPARATOR,
+    }
+    summary["data_quality"] = data_quality
 
-    # 8b. Archive thesis bundle
+    report_md = "\n\n".join(
+        [
+            f"# Weekly Market Report — {today_str}",
+            "---",
+            "# Weekly Commentary",
+            commentary_md,
+            "---",
+            "# Weekly Recommendations",
+            recommendations_md,
+        ]
+    )
+
+    full_bundle = serialize_bundle(
+        {
+            **raw_data,
+            "portfolio_context": thesis_data,
+            "data_quality": data_quality,
+            "recommendations": recommendations_payload,
+        }
+    )
+
+    # 9. Write outputs + archive
+    write_outputs(
+        report_md,
+        commentary_md,
+        recommendations_md,
+        recommendations_payload,
+        summary,
+        full_bundle,
+        OUTPUT_DIR,
+        today_str,
+    )
+
+    # 9b. Archive thesis bundle
     if thesis_data:
         archive_dir = OUTPUT_DIR / "history" / today_str
         archive_dir.mkdir(parents=True, exist_ok=True)
@@ -1480,12 +1684,18 @@ def main():
         except Exception as e:
             log.warning("Failed to archive thesis bundle: %s", e)
 
-    # 9. Create GitHub Issue
+    # 10. Create GitHub Issue
     issue_title = f"Weekly Market Report — {today_str}"
     try:
         create_github_issue(issue_title, report_md)
     except Exception as e:
         log.error("GitHub Issue creation failed: %s", e, exc_info=True)
+
+    try:
+        outcome_summary = evaluate_due_recommendations()
+        log.info("Recommendation outcome evaluation: %s", outcome_summary)
+    except Exception:
+        log.warning("Recommendation outcome evaluation failed", exc_info=True)
 
     log.info("=== Weekly report run complete ===")
 
