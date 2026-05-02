@@ -15,6 +15,7 @@ import argparse
 import logging
 import warnings
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -91,15 +92,26 @@ CURRENCY_PERIODS = {
 # ============================================================================
 
 
-def read_crb_from_xls(xls_path):
+def read_crb_from_xls(xls_source, filename: str | None = None):
     """
     Read CRB Industrial Spot Index data from Excel file (.xlsx or .xls).
     Returns a DataFrame with date and value columns.
     """
     try:
+        suffix = ""
+        if filename:
+            suffix = Path(filename).suffix.lower()
+        elif isinstance(xls_source, str | Path):
+            suffix = Path(xls_source).suffix.lower()
+
+        engine = "xlrd" if suffix == ".xls" else "openpyxl"
+        excel_source = (
+            BytesIO(bytes(xls_source)) if isinstance(xls_source, (bytes, bytearray, memoryview)) else xls_source
+        )
+
         df = pd.read_excel(
-            xls_path,
-            engine="openpyxl",
+            excel_source,
+            engine=engine,
             header=None,
             skiprows=5,
             usecols=[0, 1],
@@ -529,12 +541,20 @@ def main():
     console.print()
 
 
-def get_data(crb_file: str | None = None) -> dict:
+def get_data(
+    crb_file: str | None = None,
+    crb_bytes: bytes | None = None,
+    crb_filename: str | None = None,
+    crb_uploaded_at: str | None = None,
+) -> dict:
     """
     Fetch market dashboard data for GUI consumption.
 
     Args:
         crb_file: Optional path to CRB Excel file
+        crb_bytes: Optional CRB Excel workbook bytes, used for managed uploads
+        crb_filename: Optional display filename for CRB workbook bytes
+        crb_uploaded_at: Optional upload timestamp for managed CRB workbook
 
     Returns dict with:
       - commodities: dict of ticker -> {period -> return%}
@@ -548,12 +568,28 @@ def get_data(crb_file: str | None = None) -> dict:
 
     crb_returns = None
     crb_available = False
+    crb_rows = None
+    crb_latest_date = None
+    crb_latest_value = None
+    crb_display_filename = crb_filename
 
-    if crb_path.exists():
+    if crb_bytes is not None:
+        crb_df = read_crb_from_xls(crb_bytes, filename=crb_filename)
+        if crb_df is not None:
+            crb_returns = calculate_crb_returns(crb_df, EQUITY_PERIODS)
+            crb_available = True
+            crb_rows = int(len(crb_df))
+            crb_latest_date = crb_df["date"].iloc[-1].date().isoformat()
+            crb_latest_value = float(crb_df["value"].iloc[-1])
+    elif crb_path.exists():
         crb_df = read_crb_from_xls(crb_path)
         if crb_df is not None:
             crb_returns = calculate_crb_returns(crb_df, EQUITY_PERIODS)
             crb_available = True
+            crb_rows = int(len(crb_df))
+            crb_latest_date = crb_df["date"].iloc[-1].date().isoformat()
+            crb_latest_value = float(crb_df["value"].iloc[-1])
+            crb_display_filename = crb_path.name
 
     commodities_results = fetch_all_returns(COMMODITIES, EQUITY_PERIODS, "Commodities", crb_returns)
     equities_results = fetch_all_returns(EQUITIES, EQUITY_PERIODS, "Equities")
@@ -566,6 +602,11 @@ def get_data(crb_file: str | None = None) -> dict:
         "equity_relative_returns": equity_relative_returns,
         "currencies": currency_results,
         "crb_available": crb_available,
+        "crb_filename": crb_display_filename,
+        "crb_uploaded_at": crb_uploaded_at,
+        "crb_latest_date": crb_latest_date,
+        "crb_latest_value": crb_latest_value,
+        "crb_rows": crb_rows,
         "timestamp": datetime.now(),
         "benchmarks": {
             "default": EQUITY_BENCHMARK_DEFAULT,

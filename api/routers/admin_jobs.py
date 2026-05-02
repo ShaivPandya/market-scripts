@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import os
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, status
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.routers.auth import require_auth
@@ -11,8 +11,7 @@ from api.routers.auth import require_auth
 router = APIRouter()
 
 
-def require_job_admin(
-    request: Request,
+def require_scheduler_or_job_admin(
     access_token: str | None = Cookie(default=None, alias="__session"),
     scheduler_secret: str | None = Header(default=None, alias="X-Scheduler-Secret"),
 ) -> str:
@@ -25,8 +24,17 @@ def require_job_admin(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")  # noqa: B904
 
 
+def require_job_admin(
+    access_token: str | None = Cookie(default=None, alias="__session"),
+) -> str:
+    try:
+        return require_auth(access_token)
+    except HTTPException:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")  # noqa: B904
+
+
 @router.post("/admin/jobs/enqueue-cache-warm")
-def enqueue_cache_warm(_sub: str = Depends(require_job_admin)):
+def enqueue_cache_warm(_sub: str = Depends(require_scheduler_or_job_admin)):
     row, _disposition = enqueue_registered_job(
         "cache_warm",
         {"source": "scheduler"},
@@ -37,7 +45,7 @@ def enqueue_cache_warm(_sub: str = Depends(require_job_admin)):
 
 
 @router.post("/admin/jobs/enqueue-async-job-sweep")
-def enqueue_async_job_sweep(_sub: str = Depends(require_job_admin)):
+def enqueue_async_job_sweep(_sub: str = Depends(require_scheduler_or_job_admin)):
     row, _disposition = enqueue_registered_job(
         "async_job_sweep",
         {"source": "scheduler"},

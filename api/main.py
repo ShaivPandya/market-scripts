@@ -179,21 +179,31 @@ async def _request_timing_middleware(request: Request, call_next):
     return response
 
 
-_API_PROXY_SECRET = (os.environ.get("API_PROXY_SECRET") or "").strip() or None
+def _api_proxy_secret() -> str | None:
+    return (os.environ.get("API_PROXY_SECRET") or "").strip() or None
+
+
+def _auth_mode() -> str:
+    return (os.environ.get("AUTH_MODE") or "").strip().lower() or "password"
+
+
 _WRITE_FREEZE = (os.environ.get("WRITE_FREEZE") or "").strip().lower() in ("1", "true", "yes")
 
 
 @app.middleware("http")
 async def _require_proxy_secret(request: Request, call_next):
     """
-    When API_PROXY_SECRET is set (production), require every /api/* request except
-    /api/health to include X-Api-Proxy-Secret (injected by the Cloudflare Pages proxy).
+    Require X-Api-Proxy-Secret when configured. Cloudflare auth mode relies on
+    this proxy header, so fail closed if the backend secret is missing.
     """
-    if _API_PROXY_SECRET and request.url.path.startswith("/api/"):
-        if request.url.path != "/api/health":
+    if request.url.path.startswith("/api/") and request.url.path != "/api/health":
+        proxy_secret = _api_proxy_secret()
+        if proxy_secret:
             provided = request.headers.get("x-api-proxy-secret")
-            if provided != _API_PROXY_SECRET:
+            if provided != proxy_secret:
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
+        elif _auth_mode() == "cloudflare":
+            return JSONResponse({"detail": "API proxy secret is required in Cloudflare auth mode."}, status_code=403)
     return await call_next(request)
 
 

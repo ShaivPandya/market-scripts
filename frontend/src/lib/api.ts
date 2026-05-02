@@ -358,6 +358,24 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: Ab
 export const fetchEconomicGrowth = () =>
   client.get("/economic-growth").then(r => r.data)
 
+export const uploadEconomicGrowthCrbFile = (file: File) => {
+  const formData = new FormData()
+  formData.append("file", file)
+  return client
+    .post("/economic-growth/crb-file", formData, { timeout: 120_000 })
+    .then(r => r.data as {
+      status: "ok"
+      crb: {
+        filename: string
+        uploaded_at: string
+        rows: number
+        latest_date: string
+        latest_value: number
+        size_bytes: number
+      }
+    })
+}
+
 export const fetchWeeklyReport = () =>
   client.get("/weekly-report", { timeout: 180_000 }).then(r => r.data)
 

@@ -24,13 +24,20 @@ from slowapi.util import get_remote_address
 _limiter = Limiter(key_func=get_remote_address)
 
 # ── Config (read from .env via load_dotenv() in main.py) ─────────────────────
-_AUTH_MODE = (os.environ.get("AUTH_MODE") or "").strip().lower() or "password"
 _LOGIN_RATE_LIMIT = (os.environ.get("AUTH_LOGIN_RATE_LIMIT") or "").strip() or "5/minute"
+
+
+def _auth_mode() -> str:
+    return (os.environ.get("AUTH_MODE") or "").strip().lower() or "password"
 
 
 def _is_cloudflare_mode() -> bool:
     # Cloudflare Access gates the app; the API still remains protected by the proxy-secret middleware.
-    return _AUTH_MODE == "cloudflare"
+    return _auth_mode() == "cloudflare"
+
+
+def _cloudflare_proxy_secret_configured() -> bool:
+    return bool((os.environ.get("API_PROXY_SECRET") or "").strip())
 
 
 def _get_password_hash() -> bytes:
@@ -85,6 +92,11 @@ def require_auth(access_token: str | None = Cookie(default=None, alias="__sessio
         app.include_router(some_router, prefix="/api", dependencies=[Depends(require_auth)])
     """
     if _is_cloudflare_mode():
+        if not _cloudflare_proxy_secret_configured():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API proxy secret is required in Cloudflare auth mode.",
+            )
         return "admin"
     if access_token is None:
         raise HTTPException(

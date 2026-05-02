@@ -11,8 +11,8 @@
 # refresh-job.sh has run (so the job exists), and iam.sh has bound run.invoker
 # for migrator-sa on the job.
 #
-# The X-Scheduler-Secret header is pulled from Secret Manager (SCHEDULER_SECRET)
-# so the value never lives in this repo.
+# The X-Scheduler-Secret and X-Api-Proxy-Secret headers are pulled from Secret
+# Manager so the values never live in this repo.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -44,8 +44,16 @@ if [[ -z "${SCHEDULER_SECRET_VALUE}" ]]; then
   exit 1
 fi
 
+API_PROXY_SECRET_VALUE="$(gcloud secrets versions access latest \
+  --secret=API_PROXY_SECRET --project="${PROJECT_ID}" 2>/dev/null || true)"
+if [[ -z "${API_PROXY_SECRET_VALUE}" ]]; then
+  echo "API_PROXY_SECRET is not populated in Secret Manager." >&2
+  echo "Run ./infra/gcp/setup-secrets.sh first." >&2
+  exit 1
+fi
+
 # Create-or-update an HTTP scheduler job that POSTs to the API with the
-# X-Scheduler-Secret header and OIDC auth as api-sa.
+# scheduler and proxy-secret headers plus OIDC auth as api-sa.
 upsert_api_job() {
   local name="$1" schedule="$2" path="$3"
   local uri="${API_URL}${path}"
@@ -62,7 +70,7 @@ upsert_api_job() {
     --time-zone=UTC \
     --uri="${uri}" \
     --http-method=POST \
-    --headers="X-Scheduler-Secret=${SCHEDULER_SECRET_VALUE}" \
+    --headers="X-Scheduler-Secret=${SCHEDULER_SECRET_VALUE},X-Api-Proxy-Secret=${API_PROXY_SECRET_VALUE}" \
     --oidc-service-account-email="${API_SA}" \
     --oidc-token-audience="${API_URL}" \
     --quiet >/dev/null

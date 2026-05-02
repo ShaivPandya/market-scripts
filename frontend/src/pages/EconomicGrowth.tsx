@@ -1,6 +1,6 @@
-import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
-import { ChevronDown, Sparkles } from "lucide-react"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { ChevronDown, Loader2, Sparkles, Upload } from "lucide-react"
 import {
   Bar,
   BarChart,
@@ -14,7 +14,7 @@ import {
 } from "recharts"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
-import { fetchEconomicGrowth, analyzeEconomicGrowth } from "@/lib/api"
+import { fetchEconomicGrowth, analyzeEconomicGrowth, uploadEconomicGrowthCrbFile } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { SegmentedControl } from "@/components/shared/FormControls"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -48,6 +48,17 @@ function formatPp(value: number) {
 
 function formatPct(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`
+}
+
+function formatDisplayDate(value: string | null | undefined) {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) return value
+  return new Date(parsed).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
 }
 
 function EquityRelativeTooltip({
@@ -131,8 +142,12 @@ function EquityRelativePerformanceChart({
 }
 
 export function EconomicGrowth() {
+  const queryClient = useQueryClient()
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [equityView, setEquityView] = useState<EquityView>("table")
   const [selectedEquityPeriod, setSelectedEquityPeriod] = useState("1-mo")
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const { data, isLoading, error } = useApiQuery(
     ["economic-growth"],
     fetchEconomicGrowth,
@@ -147,6 +162,51 @@ export function EconomicGrowth() {
     },
   })
 
+  const uploadMutation = useMutation({
+    mutationFn: uploadEconomicGrowthCrbFile,
+    onSuccess: async result => {
+      const latestDate = formatDisplayDate(result.crb.latest_date)
+      setUploadError(null)
+      setUploadNotice(latestDate ? `CRB updated through ${latestDate}` : "CRB file updated")
+      await queryClient.invalidateQueries({ queryKey: ["economic-growth"] })
+    },
+    onError: err => {
+      setUploadNotice(null)
+      setUploadError(err instanceof Error ? err.message : "Upload failed")
+    },
+  })
+
+  useEffect(() => {
+    if (!uploadNotice && !uploadError) return
+    const timer = window.setTimeout(() => {
+      setUploadNotice(null)
+      setUploadError(null)
+    }, 5000)
+    return () => window.clearTimeout(timer)
+  }, [uploadNotice, uploadError])
+
+  function handleCrbUploadClick() {
+    if (uploadMutation.isPending) return
+    fileInputRef.current?.click()
+  }
+
+  function handleCrbFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const selectedFile = event.target.files?.[0]
+    event.target.value = ""
+    if (!selectedFile) return
+
+    const filename = selectedFile.name.toLowerCase()
+    if (!filename.endsWith(".xlsx") && !filename.endsWith(".xls")) {
+      setUploadNotice(null)
+      setUploadError("Excel workbooks only")
+      return
+    }
+
+    setUploadNotice(null)
+    setUploadError(null)
+    uploadMutation.mutate(selectedFile)
+  }
+
   if (isLoading) return <LoadingSpinner message="Fetching economic growth data..." />
   if (error || !data) return <ErrorMessage message={String(error) || "Failed to load"} />
 
@@ -155,6 +215,18 @@ export function EconomicGrowth() {
   const activeEquityPeriod = periods.includes(selectedEquityPeriod)
     ? selectedEquityPeriod
     : periods[0] ?? "1-mo"
+  const crbLatestDate = typeof data.crb_latest_date === "string" ? formatDisplayDate(data.crb_latest_date) : null
+  const crbLatestValue = typeof data.crb_latest_value === "number" ? data.crb_latest_value.toFixed(2) : null
+  const crbRows = typeof data.crb_rows === "number" ? data.crb_rows.toLocaleString() : null
+  const crbFilename = typeof data.crb_filename === "string" && data.crb_filename ? data.crb_filename : "CRB workbook"
+  const crbStatus = data.crb_available
+    ? [
+      crbFilename,
+      crbLatestDate ? `latest ${crbLatestDate}` : null,
+      crbLatestValue ? `value ${crbLatestValue}` : null,
+      crbRows ? `${crbRows} rows` : null,
+    ].filter(Boolean).join(" · ")
+    : "CRB workbook unavailable"
 
   const periodCols = (periods_: string[], colorFn: (v: unknown) => string): ColumnDef[] =>
     periods_.map(p => ({
@@ -268,7 +340,7 @@ export function EconomicGrowth() {
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Economic Growth Dashboard</h1>
           {data.timestamp && (
@@ -276,26 +348,58 @@ export function EconomicGrowth() {
               As of {new Date(data.timestamp).toLocaleString()}
             </p>
           )}
+          <p className={`text-xs mt-1 ${data.crb_available ? "text-gray-500" : "text-amber-600"}`}>
+            {crbStatus}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              mutation.mutate({
-                commodities: data.commodities ?? {},
-                equities: data.equities ?? {},
-                currencies: data.currencies ?? {},
-                equity_periods: periods,
-                currency_periods: currencyPeriods,
-              })
-              setIsOpen(true)
-            }}
-            disabled={mutation.isPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Sparkles size={14} />
-            AI Overview
-          </button>
-          <RefreshButton queryKeys={[["economic-growth"]]} />
+        <div className="flex flex-col items-start gap-1.5 sm:items-end">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                mutation.mutate({
+                  commodities: data.commodities ?? {},
+                  equities: data.equities ?? {},
+                  currencies: data.currencies ?? {},
+                  equity_periods: periods,
+                  currency_periods: currencyPeriods,
+                })
+                setIsOpen(true)
+              }}
+              disabled={mutation.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Sparkles size={14} />
+              AI Overview
+            </button>
+            <button
+              type="button"
+              onClick={handleCrbUploadClick}
+              disabled={uploadMutation.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border border-app text-muted hover:text-app transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Replace CRB workbook"
+              aria-label="Replace CRB workbook"
+            >
+              {uploadMutation.isPending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Upload size={14} />
+              )}
+              {uploadMutation.isPending ? "Uploading..." : "Upload CRB"}
+            </button>
+            <RefreshButton queryKeys={[["economic-growth"]]} />
+          </div>
+          {(uploadNotice || uploadError) && (
+            <p className={`max-w-[22rem] text-right text-xs font-medium ${uploadError ? "text-red-600" : "text-green-600"}`}>
+              {uploadError ?? uploadNotice}
+            </p>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            className="hidden"
+            onChange={handleCrbFileChange}
+          />
         </div>
       </div>
 
