@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 import portfolio.news_digests as digests
 
 SAMPLE_DIGEST = """# Newsletter Digest - May 1, 2026
@@ -89,6 +91,51 @@ def test_delete_digest_removes_manifest_and_file(monkeypatch, tmp_path):
         raise AssertionError("deleted digest should not be readable")
 
 
+def test_delete_digest_rejects_invalid_ids(monkeypatch, tmp_path):
+    _isolate_digest_store(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError):
+        digests.delete_digest("../2026-05-01-news")
+
+
+def test_delete_digest_requires_manifest_membership(monkeypatch, tmp_path):
+    _isolate_digest_store(monkeypatch, tmp_path)
+    orphan_id = "2026-05-01-orphan-digest"
+    orphan_path = digests.FILES_DIR / f"{orphan_id}.md"
+    orphan_path.parent.mkdir(parents=True, exist_ok=True)
+    orphan_path.write_text("# Orphan\n", encoding="utf-8")
+
+    assert digests.delete_digest(orphan_id) is False
+    assert orphan_path.exists()
+
+
+def test_approval_side_delete_validates_and_deletes_digest(monkeypatch, tmp_path):
+    _isolate_digest_store(monkeypatch, tmp_path)
+
+    import portfolio.core_db as core_db
+    from api.routers import portfolio_news as router
+
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "core.db")
+    monkeypatch.setattr(core_db, "_conn", None)
+    monkeypatch.setattr(router, "_delete_digest_index_best_effort", lambda _digest_id: None)
+
+    saved = digests.save_digest(SAMPLE_DIGEST, filename="05012026_digest.md")
+    approval = core_db.create_pending_approval(
+        entity_type="news_digest_delete",
+        proposed_change={"digest_id": saved["id"]},
+    )
+
+    resolved = core_db.resolve_approval(approval["id"], "approved")
+
+    assert resolved["status"] == "approved"
+    with pytest.raises(FileNotFoundError):
+        digests.get_digest(saved["id"])
+
+    if core_db._conn:
+        core_db._conn.close()
+    monkeypatch.setattr(core_db, "_conn", None)
+
+
 def test_report_context_uses_recent_window_with_latest_fallback(monkeypatch, tmp_path):
     _isolate_digest_store(monkeypatch, tmp_path)
     old = "# Old Digest\n\n*Generated: 2026-04-01*\n\n## macro\n\n- Old story\n"
@@ -132,3 +179,28 @@ def test_router_upload_list_detail_delete(auth_client, monkeypatch, tmp_path):
     deleted = auth_client.delete(f"/api/v1/portfolio-news/{digest_id}")
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
+
+
+def test_router_delete_rejects_invalid_and_unknown_digest_ids(auth_client, monkeypatch, tmp_path):
+    _isolate_digest_store(monkeypatch, tmp_path)
+
+    invalid = auth_client.delete("/api/v1/portfolio-news/..-evil")
+    unknown = auth_client.delete("/api/v1/portfolio-news/2026-05-01-missing-news")
+
+    assert invalid.status_code == 422
+    assert unknown.status_code == 404
+
+
+def test_router_upload_rejects_oversized_digest(auth_client, monkeypatch, tmp_path):
+    _isolate_digest_store(monkeypatch, tmp_path)
+
+    from api.routers import portfolio_news as router
+
+    monkeypatch.setattr(router, "MAX_UPLOAD_SIZE_BYTES", 4)
+
+    upload = auth_client.post(
+        "/api/v1/portfolio-news",
+        files={"file": ("oversized.md", b"# big", "text/markdown")},
+    )
+
+    assert upload.status_code == 413

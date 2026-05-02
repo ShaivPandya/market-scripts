@@ -163,3 +163,38 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
     assert payload["content"].startswith("# MU Overview")
     assert "### Porter's Five Forces" in payload["content"]
     assert (overview_dir / "MU.md").read_text(encoding="utf-8") == payload["content"]
+
+
+def test_thesis_and_overview_uploads_reject_endpoint_oversized_files(auth_client, monkeypatch):
+    monkeypatch.setattr(thesis_router, "MAX_UPLOAD_SIZE_BYTES", 4)
+    monkeypatch.setattr(overview_router, "MAX_UPLOAD_SIZE_BYTES", 4)
+
+    thesis = auth_client.post(
+        "/api/v1/thesis/generate",
+        data={"ticker": "mu"},
+        files={"file": ("thesis.md", b"12345", "text/markdown")},
+    )
+    overview = auth_client.post(
+        "/api/v1/overview/generate",
+        data={"ticker": "mu"},
+        files={"file": ("overview.md", b"12345", "text/markdown")},
+    )
+
+    assert thesis.status_code == 413
+    assert overview.status_code == 413
+
+
+def test_direct_markdown_save_models_have_pydantic_size_limits():
+    thesis_schema = (
+        thesis_router.SaveThesisRequest.model_json_schema()
+        if hasattr(thesis_router.SaveThesisRequest, "model_json_schema")
+        else thesis_router.SaveThesisRequest.schema()
+    )
+    overview_schema = (
+        overview_router.SaveOverviewRequest.model_json_schema()
+        if hasattr(overview_router.SaveOverviewRequest, "model_json_schema")
+        else overview_router.SaveOverviewRequest.schema()
+    )
+
+    assert thesis_schema["properties"]["content"]["maxLength"] == thesis_router.MAX_UPLOAD_SIZE_BYTES
+    assert overview_schema["properties"]["content"]["maxLength"] == overview_router.MAX_UPLOAD_SIZE_BYTES

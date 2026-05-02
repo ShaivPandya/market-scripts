@@ -6,9 +6,10 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
+from api.request_limits import read_upload_file_bytes
 from api.routers.portfolio_edit import _TICKER_RE
 from api.state_storage import exists_text, read_text, write_text
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
@@ -411,11 +412,9 @@ async def generate_overview(
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    upload_bytes = await file.read()
+    upload_bytes = await read_upload_file_bytes(file, limit_bytes=MAX_UPLOAD_SIZE_BYTES, limit_label="30 MiB")
     if not upload_bytes:
         raise ValidationError("Uploaded file is empty.")
-    if len(upload_bytes) > MAX_UPLOAD_SIZE_BYTES:
-        raise ValidationError("Uploaded file exceeds 30MB limit.")
 
     content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
     filename = (file.filename or "").lower()
@@ -468,7 +467,7 @@ async def generate_overview(
 
 
 class SaveOverviewRequest(BaseModel):
-    content: str
+    content: str = Field(..., max_length=MAX_UPLOAD_SIZE_BYTES)
 
 
 @router.put("/overview/{ticker}")

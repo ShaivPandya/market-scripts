@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-dev.txt -c requirements-lock.txt
       - run: pytest --tb=short --cov=api --cov=auto_report --cov=portfolio --cov-report=term-missing -q
 
   typecheck:
@@ -40,7 +40,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-dev.txt -c requirements-lock.txt
       - run: mypy api/ --ignore-missing-imports
 
   security:
@@ -51,4 +51,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pip-audit
-      - run: pip-audit -r requirements.txt --ignore-vuln CVE-2024-23342 --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-33752
+      - run: pip-audit -r requirements-audit.txt

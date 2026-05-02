@@ -68,7 +68,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.ny_gate.outputs.should_run == 'true'
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -c requirements-lock.txt
 
       - name: Wait until 09:45 ET
         if: steps.ny_gate.outputs.should_run == 'true'

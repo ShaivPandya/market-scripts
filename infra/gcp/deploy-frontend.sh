@@ -6,6 +6,8 @@
 #   SKIP_BUILD=1 ./infra/gcp/deploy-frontend.sh
 #
 # Uses PROJECT_ID from infra/gcp/config.sh and deploys firebase.json hosting.
+# Run after deploy-all.sh for a complete production release.
+# Refuses to run on a dirty working tree unless ALLOW_DIRTY=1.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -14,6 +16,16 @@ require_active_project
 
 repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 frontend_dir="${repo_root}/frontend"
+
+if [[ "${ALLOW_DIRTY:-0}" != "1" ]]; then
+  if ! git -C "${repo_root}" diff --quiet || ! git -C "${repo_root}" diff --cached --quiet; then
+    cat >&2 <<EOF
+Working tree is dirty. Refusing to deploy frontend assets that don't match the repo state.
+Commit or stash, or run:  ALLOW_DIRTY=1 ./infra/gcp/deploy-frontend.sh
+EOF
+    exit 1
+  fi
+fi
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm not found. Install Node.js >=20.19.0 and retry." >&2
@@ -27,6 +39,9 @@ fi
 
 if [[ ! -d "${frontend_dir}/node_modules" ]]; then
   echo "frontend/node_modules not found; installing dependencies with npm ci."
+  (cd "${frontend_dir}" && npm ci)
+elif [[ "${frontend_dir}/package-lock.json" -nt "${frontend_dir}/node_modules/.package-lock.json" ]]; then
+  echo "frontend/package-lock.json is newer than node_modules; refreshing dependencies with npm ci."
   (cd "${frontend_dir}" && npm ci)
 fi
 

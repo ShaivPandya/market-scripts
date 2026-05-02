@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile
 
 from api.exceptions import AppError, NotFoundError, ValidationError
+from api.request_limits import read_upload_file_bytes
 from api.serializers import serialize_response
 
 router = APIRouter()
@@ -76,11 +77,9 @@ async def upload_portfolio_news_digest(
     if not _is_markdown_upload(file):
         raise ValidationError("File must be a Markdown (.md) file.")
 
-    payload = await file.read()
+    payload = await read_upload_file_bytes(file, limit_bytes=MAX_UPLOAD_SIZE_BYTES, limit_label="10 MiB")
     if not payload:
         raise ValidationError("Uploaded file is empty.")
-    if len(payload) > MAX_UPLOAD_SIZE_BYTES:
-        raise ValidationError("Uploaded file exceeds 10MB limit.")
 
     content = _decode_markdown_upload(payload)
     filename = Path(file.filename or "digest.md").name
@@ -98,20 +97,27 @@ async def upload_portfolio_news_digest(
 
 @router.get("/portfolio-news/{digest_id}")
 def get_portfolio_news_digest(digest_id: str):
-    from portfolio.news_digests import get_digest
+    from portfolio.news_digests import get_digest, validate_digest_id
 
     try:
-        return serialize_response(get_digest(digest_id))
+        return serialize_response(get_digest(validate_digest_id(digest_id)))
+    except ValueError as exc:
+        raise ValidationError("Invalid news digest id.") from exc
     except FileNotFoundError as exc:
         raise NotFoundError("news digest", digest_id) from exc
 
 
 @router.delete("/portfolio-news/{digest_id}")
 def delete_portfolio_news_digest(digest_id: str):
-    from portfolio.news_digests import delete_digest
+    from portfolio.news_digests import delete_digest, validate_digest_id
 
-    deleted = delete_digest(digest_id)
+    try:
+        normalized_digest_id = validate_digest_id(digest_id)
+    except ValueError as exc:
+        raise ValidationError("Invalid news digest id.") from exc
+
+    deleted = delete_digest(normalized_digest_id)
     if not deleted:
-        raise NotFoundError("news digest", digest_id)
-    _delete_digest_index_best_effort(digest_id)
-    return {"status": "ok", "deleted": True, "id": digest_id}
+        raise NotFoundError("news digest", normalized_digest_id)
+    _delete_digest_index_best_effort(normalized_digest_id)
+    return {"status": "ok", "deleted": True, "id": normalized_digest_id}

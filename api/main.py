@@ -23,6 +23,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from api.exceptions import AppError, DataFetchError
 from api.logging_config import configure_logging, generate_request_id, request_id_var
+from api.request_limits import MULTIPART_FORM_DATA_OVERHEAD_BYTES, BodySizeLimitMiddleware
 from api.safe_import import get_degraded_modules, safe_import_router
 
 # ---------------------------------------------------------------------------
@@ -101,8 +102,9 @@ app = FastAPI(
     title="Market Analysis API",
     description="REST API for portfolio analytics, market data, and macro indicators",
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    docs_url=None if IS_PRODUCTION else "/api/docs",
+    redoc_url=None if IS_PRODUCTION else "/api/redoc",
+    openapi_url=None if IS_PRODUCTION else "/api/openapi.json",
 )
 
 # ---------------------------------------------------------------------------
@@ -120,6 +122,19 @@ def _rate_limit_exception_handler(request: Request, exc: Exception):
 
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exception_handler)
 
+
+def _multipart_request_body_limit(file_limit_bytes: int) -> int:
+    return file_limit_bytes + MULTIPART_FORM_DATA_OVERHEAD_BYTES
+
+
+_ENDPOINT_BODY_LIMITS = {
+    "/api/v1/thesis/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/v1/overview/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/v1/economic-growth/crb-file": _multipart_request_body_limit(10 * 1024 * 1024),
+    "/api/v1/portfolio-news": _multipart_request_body_limit(10 * 1024 * 1024),
+}
+
+app.add_middleware(BodySizeLimitMiddleware, path_limits=_ENDPOINT_BODY_LIMITS)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -152,6 +167,13 @@ async def _unhandled_error_handler(request: Request, exc: Exception):
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+_DOCS_PATHS = {"/api/docs", "/api/redoc", "/api/openapi.json"}
+
+
+def _is_production_runtime() -> bool:
+    return (os.environ.get("ENVIRONMENT") or ENVIRONMENT).strip().lower() == "production"
+
+
 @app.middleware("http")
 async def _request_id_middleware(request: Request, call_next):
     """Assign a correlation ID to every request."""
@@ -159,6 +181,25 @@ async def _request_id_middleware(request: Request, call_next):
     request_id_var.set(rid)
     response = await call_next(request)
     response.headers["X-Request-Id"] = rid
+    return response
+
+
+@app.middleware("http")
+async def _security_headers_middleware(request: Request, call_next):
+    """Apply conservative security headers to every response."""
+    response = await call_next(request)
+    if "x-content-type-options" not in response.headers:
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    if "referrer-policy" not in response.headers:
+        response.headers["Referrer-Policy"] = "no-referrer"
+    csp = response.headers.get("Content-Security-Policy")
+    if csp:
+        if "frame-ancestors" not in csp.lower():
+            response.headers["Content-Security-Policy"] = f"{csp}; frame-ancestors 'none'"
+    else:
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    if _is_production_runtime() and "strict-transport-security" not in response.headers:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
@@ -177,6 +218,14 @@ async def _request_timing_middleware(request: Request, call_next):
             duration_ms,
         )
     return response
+
+
+@app.middleware("http")
+async def _production_schema_middleware(request: Request, call_next):
+    """Disable interactive docs and schema routes in production."""
+    if _is_production_runtime() and request.url.path in _DOCS_PATHS:
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return await call_next(request)
 
 
 def _api_proxy_secret() -> str | None:
@@ -295,7 +344,11 @@ def clear_cache():
 
 @app.get("/api/health", tags=["admin"])
 def health():
-    checks: dict[str, str] = {}
+    return {"status": "ok"}
+
+
+def _detailed_health_response() -> JSONResponse:
+    checks: dict[str, str | list[str]] = {}
 
     # Check portfolio DB connectivity
     try:
@@ -304,8 +357,9 @@ def health():
         conn = _portfolio_conn()
         conn.execute("SELECT COUNT(*) FROM positions")
         checks["portfolio_db"] = "ok"
-    except Exception as exc:
-        checks["portfolio_db"] = f"error: {exc}"
+    except Exception:
+        logger.warning("portfolio_db health check failed", exc_info=True)
+        checks["portfolio_db"] = "error"
 
     # Check thesis DB connectivity
     try:
@@ -314,8 +368,9 @@ def health():
         conn = _thesis_conn()
         conn.execute("SELECT COUNT(*) FROM thesis_meta")
         checks["thesis_db"] = "ok"
-    except Exception as exc:
-        checks["thesis_db"] = f"error: {exc}"
+    except Exception:
+        logger.warning("thesis_db health check failed", exc_info=True)
+        checks["thesis_db"] = "error"
 
     # Check core DB connectivity
     try:
@@ -324,8 +379,9 @@ def health():
         conn = _core_conn()
         conn.execute("SELECT COUNT(*) FROM catalysts")
         checks["core_db"] = "ok"
-    except Exception as exc:
-        checks["core_db"] = f"error: {exc}"
+    except Exception:
+        logger.warning("core_db health check failed", exc_info=True)
+        checks["core_db"] = "error"
 
     # Check FRED API reachability
     fred_key = os.environ.get("FRED_API_KEY")
@@ -336,8 +392,9 @@ def health():
             fred = Fred(api_key=fred_key)
             fred.get_series("DGS10", limit=1)
             checks["fred_api"] = "ok"
-        except Exception as exc:
-            checks["fred_api"] = f"error: {exc}"
+        except Exception:
+            logger.warning("fred_api health check failed", exc_info=True)
+            checks["fred_api"] = "error"
     else:
         checks["fred_api"] = "no_api_key"
 
@@ -358,6 +415,11 @@ def health():
 
     status_code = 200 if status != "unhealthy" else 503
     return JSONResponse({"status": status, "checks": checks}, status_code=status_code)
+
+
+@app.get("/api/v1/admin/health", dependencies=_auth_dep, tags=["admin"])
+def admin_health():
+    return _detailed_health_response()
 
 
 @app.get("/api/v1/admin/quiescence", dependencies=_auth_dep, tags=["admin"])

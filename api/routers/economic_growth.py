@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from api.cache import delete_cached, get_cached, set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError, ValidationError
+from api.request_limits import read_upload_file_bytes
 from api.serializers import serialize_response
 from api.state_storage import exists_text, read_bytes, read_text, write_bytes, write_text
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
@@ -141,11 +142,9 @@ async def upload_economic_growth_crb_file(
     if not _is_excel_upload(file):
         raise ValidationError("File must be an Excel workbook (.xlsx or .xls).")
 
-    payload = await file.read()
+    payload = await read_upload_file_bytes(file, limit_bytes=MAX_CRB_UPLOAD_SIZE_BYTES, limit_label="10 MiB")
     if not payload:
         raise ValidationError("Uploaded file is empty.")
-    if len(payload) > MAX_CRB_UPLOAD_SIZE_BYTES:
-        raise ValidationError("Uploaded CRB workbook exceeds 10MB limit.")
 
     filename = Path(file.filename or "crb.xlsx").name
     metadata = _crb_metadata_from_upload(payload, filename)

@@ -46,18 +46,18 @@ class TestPublicEndpoints:
     def test_health(self, client):
         resp = client.get("/api/health")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "status" in data
-        assert data["status"] in ("ok", "degraded")
+        assert resp.json() == {"status": "ok"}
 
-    def test_health_has_checks(self, client):
-        resp = client.get("/api/health")
+    def test_admin_health_has_checks(self, auth_client):
+        resp = auth_client.get("/api/v1/admin/health")
+        assert resp.status_code in {200, 503}
         data = resp.json()
         assert "checks" in data
 
     def test_openapi_docs(self, client):
         resp = client.get("/api/docs")
         assert resp.status_code == 200
+        assert client.get("/api/openapi.json").status_code == 200
 
 
 class TestAuthRequired:

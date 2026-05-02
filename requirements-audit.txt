@@ -1,0 +1,3 @@
+# Locked runtime dependency input for pip-audit.
+-c requirements-lock.txt
+-r requirements.txt
