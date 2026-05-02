@@ -975,3 +975,66 @@ def _apply_approval_side_effect(approval: dict) -> None:
             source_id=approval.get("source_id"),
             expires_at=change.get("expires_at"),
         )
+
+    elif entity_type == "portfolio_positions":
+        from api.routers.portfolio_edit import PortfolioUpdateRequest, update_portfolio_positions
+
+        update_portfolio_positions(PortfolioUpdateRequest(positions=change.get("positions") or []))
+
+    elif entity_type == "hedge_positions":
+        from api.routers.portfolio_edit import HedgeUpdateRequest, update_hedge_positions
+
+        update_hedge_positions(HedgeUpdateRequest(positions=change.get("positions") or []))
+
+    elif entity_type == "thesis_content":
+        from api.routers.thesis import SaveThesisRequest, save_thesis
+
+        save_thesis(
+            str(change.get("ticker") or approval.get("ticker") or ""),
+            SaveThesisRequest(content=change.get("content", "")),
+        )
+
+    elif entity_type == "catalyst":
+        result = create_catalyst(
+            ticker=change.get("ticker", approval.get("ticker", "")),
+            description=change.get("description", ""),
+            category=change.get("category", "fundamental"),
+            target_date=change.get("target_date"),
+            created_by="agent",
+        )
+        try:
+            from portfolio.thesis_sync import sync_markdown_from_entities
+
+            sync_markdown_from_entities(result["ticker"])
+        except Exception:
+            pass
+
+    elif entity_type == "kill_condition":
+        result = create_kill_condition(
+            ticker=change.get("ticker", approval.get("ticker", "")),
+            condition=change.get("condition", ""),
+            metric=change.get("metric"),
+            threshold=change.get("threshold"),
+            created_by="agent",
+        )
+        try:
+            from portfolio.thesis_sync import sync_markdown_from_entities
+
+            sync_markdown_from_entities(result["ticker"])
+        except Exception:
+            pass
+
+    elif entity_type == "research_note":
+        create_research_note(
+            title=change.get("title", ""),
+            content=change.get("content", ""),
+            ticker=change.get("ticker", approval.get("ticker")),
+            note_type=change.get("note_type", "general"),
+            source_type=approval.get("source_type", "workflow"),
+            source_id=approval.get("source_id"),
+        )
+
+    elif entity_type == "news_digest_delete":
+        from api.routers.portfolio_news import delete_portfolio_news_digest
+
+        delete_portfolio_news_digest(str(change.get("digest_id") or ""))

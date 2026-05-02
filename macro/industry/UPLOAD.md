@@ -44,6 +44,10 @@ STATE_STORAGE_BACKEND=gcs GCS_STATE_BUCKET=talisman-state-prod \
 
 The script applies the `ODFL → ODL.pdf` rename automatically.
 
+## Repository policy
+
+Transcript PDFs and the local `industry_transcripts.sqlite3` cache are intentionally not kept in git. Production reads PDFs from Cloud Storage and uses the configured state database. Local development can still use PDFs placed under `macro/industry/files/{sector_dir}/{TICKER}.pdf`; those files are ignored so they do not enter commits or Docker/GCloud build contexts.
+
 ## IAM gotcha
 
 Both the API service (`talisman-api`) and the RQ worker run as Cloud Run services with their own service accounts. The **worker SA** is what actually executes the refresh job, so it must have `roles/storage.objectViewer` on `${GCS_STATE_BUCKET}`. If transcripts upload successfully but the UI still shows `0 / N`, check the worker SA's bucket permissions first.

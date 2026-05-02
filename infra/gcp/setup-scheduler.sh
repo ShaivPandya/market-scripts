@@ -58,9 +58,11 @@ upsert_api_job() {
   local name="$1" schedule="$2" path="$3"
   local uri="${API_URL}${path}"
   local action=create
+  local headers_flag=--headers
   if gcloud scheduler jobs describe "${name}" \
         --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
     action=update
+    headers_flag=--update-headers
   fi
   log "${action} ${name} (${schedule})"
   gcloud scheduler jobs "${action}" http "${name}" \
@@ -70,7 +72,7 @@ upsert_api_job() {
     --time-zone=UTC \
     --uri="${uri}" \
     --http-method=POST \
-    --headers="X-Scheduler-Secret=${SCHEDULER_SECRET_VALUE},X-Api-Proxy-Secret=${API_PROXY_SECRET_VALUE}" \
+    "${headers_flag}=X-Scheduler-Secret=${SCHEDULER_SECRET_VALUE},X-Api-Proxy-Secret=${API_PROXY_SECRET_VALUE}" \
     --oidc-service-account-email="${API_SA}" \
     --oidc-token-audience="${API_URL}" \
     --quiet >/dev/null

@@ -187,23 +187,30 @@ def _auth_mode() -> str:
     return (os.environ.get("AUTH_MODE") or "").strip().lower() or "password"
 
 
+def _proxy_secret_required() -> bool:
+    if _auth_mode() == "cloudflare":
+        return True
+    return (os.environ.get("REQUIRE_API_PROXY_SECRET") or "").strip().lower() in ("1", "true", "yes")
+
+
 _WRITE_FREEZE = (os.environ.get("WRITE_FREEZE") or "").strip().lower() in ("1", "true", "yes")
 
 
 @app.middleware("http")
 async def _require_proxy_secret(request: Request, call_next):
     """
-    Require X-Api-Proxy-Secret when configured. Cloudflare auth mode relies on
-    this proxy header, so fail closed if the backend secret is missing.
+    Require X-Api-Proxy-Secret for deployments that have an edge proxy capable
+    of injecting it. Firebase Hosting rewrites cannot add this header, so merely
+    configuring API_PROXY_SECRET must not block password-mode browser traffic.
     """
     if request.url.path.startswith("/api/") and request.url.path != "/api/health":
-        proxy_secret = _api_proxy_secret()
-        if proxy_secret:
+        if _proxy_secret_required():
+            proxy_secret = _api_proxy_secret()
+            if not proxy_secret:
+                return JSONResponse({"detail": "API proxy secret is required for this auth mode."}, status_code=403)
             provided = request.headers.get("x-api-proxy-secret")
             if provided != proxy_secret:
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
-        elif _auth_mode() == "cloudflare":
-            return JSONResponse({"detail": "API proxy secret is required in Cloudflare auth mode."}, status_code=403)
     return await call_next(request)
 
 

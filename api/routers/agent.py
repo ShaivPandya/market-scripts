@@ -22,7 +22,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from api.agent_tools import TOOL_DEFINITIONS, execute_tool
+from api.agent_tools import AGENT_CAPABILITY_BY_NAME, TOOL_DEFINITIONS, execute_tool, list_agent_capabilities
 from api.exceptions import ConfigurationError
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 from llm_utils import (
@@ -208,6 +208,12 @@ def list_workflows():
     return [{"name": name, **info} for name, info in AVAILABLE_WORKFLOWS.items()]
 
 
+@router.get("/agent/capabilities")
+def list_capabilities():
+    """List Stan's provider-neutral app capabilities."""
+    return {"capabilities": list_agent_capabilities(), "count": len(TOOL_DEFINITIONS)}
+
+
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
@@ -282,7 +288,9 @@ _DATA_SEEKING_RX = re.compile(
     r"\b("
     r"portfolio|holding|position|performance|p&l|pnl|risks?|market|macro|liquidity|breadth|vix|volatility|"
     r"positioning|sentiment|sector|yield|curve|bond|labor|housing|growth|central bank|industry|"
-    r"thesis|catalyst|kill condition|dossier|workflow|approval|action item|trigger|search|news"
+    r"thesis|catalyst|kill condition|dossier|workflow|approval|action item|trigger|search|news|"
+    r"commodity|commodities|country|index|indices|fx|currency|financials|dcf|valuation|chart|"
+    r"screener|screen|analyzer|sizer|hedging|workspace|research note|weekly report"
     r")\b",
     flags=re.IGNORECASE,
 )
@@ -382,6 +390,10 @@ def _select_tool_names(user_text: str) -> list[str]:
 
     if re.search(r"\b(portfolio|holding|holdings|position|positions|p&l|pnl|performance|exposure|risks?)\b", text):
         add("get_portfolio", "query_ontology")
+    if re.search(r"\b(update|edit|replace|change)\b.*\b(portfolio|holding|holdings|position|positions)\b", text):
+        add("get_portfolio_positions", "propose_portfolio_positions_update")
+    if re.search(r"\b(update|edit|replace|change)\b.*\b(hedge|hedges|hedging)\b", text):
+        add("get_hedge_positions", "propose_hedge_positions_update")
     if re.search(r"\b(hedge|hedges|hedging|beta|net exposure|gross exposure)\b", text):
         add("get_portfolio", "query_ontology", "get_ontology_diff")
     if re.search(r"\b(market|risk environment|risks?|regime|risk-on|risk-off|macro|cross[- ]?asset)\b", text):
@@ -427,21 +439,79 @@ def _select_tool_names(user_text: str) -> list[str]:
         add("search_web", "search_knowledge_base")
     if _should_use_retrieval(user_text):
         add("search_knowledge_base")
+    if "commodity" in text or "commodities" in text or "oil curve" in text or "gas curve" in text:
+        add("get_commodities", "get_commodities_curve", "get_commodity_research")
+    if "country" in text or "countries" in text:
+        add("get_country_dashboard")
+    if "index" in text or "indices" in text:
+        add("get_index_dashboard")
+    if re.search(r"\b(fx|currency|currencies|eurusd|usdjpy|gbpusd)\b", text):
+        add("get_fx_dashboard", "get_fx_model_pairs", "run_fx_model")
+    if "financials" in text or "income statement" in text or "balance sheet" in text:
+        add("get_financials")
+    if "dcf" in text or "valuation" in text:
+        add("get_dcf_historical", "run_dcf_valuation")
+    if "chart" in text or "technical analysis" in text:
+        add("run_chart", "run_ratio_chart", "get_price_volume_signals")
+    if "screener" in text or "screen" in text:
+        add("run_quality_screen", "run_short_screen", "run_long_screen", "run_fundamental_momentum")
+    if "portfolio analyzer" in text or "portfolio optimizer" in text:
+        add("run_portfolio_analyzer")
+    if "portfolio sizer" in text or "sizing" in text:
+        add("run_portfolio_sizer", "get_portfolio_sizer_prefill")
+    if "news digest" in text or "uploaded news" in text or "portfolio news" in text:
+        add("get_portfolio_news")
+    if "research note" in text:
+        add("get_research_notes", "propose_research_note")
+    if "workspace" in text:
+        add("get_workspace")
 
     stop = {"AND", "THE", "FOR", "MY", "ALL", "HOW", "CAN", "ARE", "HAS", "DO", "WHAT", "THIS", "THAT"}
     ticker_candidates = [m for m in _TICKER_RX.findall(user_text or "") if m not in stop and len(m) >= 2]
     if ticker_candidates:
-        add("get_portfolio", "get_dossier", "get_thesis", "search_web")
+        add(
+            "get_portfolio",
+            "get_dossier",
+            "get_thesis",
+            "get_financials",
+            "get_dcf_historical",
+            "run_chart",
+            "search_web",
+        )
+
+    # Registry lexical pass. This catches newly registered app capabilities
+    # without adding a new regex branch for every route.
+    registry_matches: list[tuple[int, str]] = []
+    for cap in AGENT_CAPABILITY_BY_NAME.values():
+        if not cap.selectable or cap.name == "search_agent_capabilities":
+            continue
+        terms = [cap.name.replace("_", " "), *cap.aliases]
+        score = 0
+        for term in terms:
+            term_l = term.lower().strip()
+            if not term_l:
+                continue
+            if term_l in text:
+                score = max(score, 10 if len(term_l) > 4 else 4)
+        if score:
+            registry_matches.append((score, cap.name))
+    for _score, name in sorted(registry_matches, key=lambda row: (-row[0], row[1]))[:12]:
+        add(name)
 
     if not selected and _is_data_seeking(user_text):
         add("get_signal_aggregator", "get_liquidity", "get_market_breadth", "get_vix_term_structure", "get_portfolio")
 
+    add("search_agent_capabilities")
     return selected
 
 
-def _select_tool_definitions(user_text: str, provider: str) -> list[dict]:
+def _tool_definitions_from_names(provider: str, names: list[str]) -> list[dict]:
     definitions = _TOOL_DEFINITION_BY_NAME_BY_PROVIDER[provider]
-    return [definitions[name] for name in _select_tool_names(user_text)]
+    return [definitions[name] for name in names if name in definitions]
+
+
+def _select_tool_definitions(user_text: str, provider: str) -> list[dict]:
+    return _tool_definitions_from_names(provider, _select_tool_names(user_text))
 
 
 def _execution_args(name: str, args: dict, *, force_refresh: bool, user_text: str) -> dict:
@@ -615,6 +685,26 @@ def _tool_meta(result_str: str) -> dict:
         return {}
     meta = payload.get("_meta")
     return meta if isinstance(meta, dict) else {}
+
+
+def _capability_names_from_search_result(result_str: str) -> list[str]:
+    try:
+        payload = json.loads(result_str)
+    except Exception:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    matches = payload.get("matches")
+    if not isinstance(matches, list):
+        return []
+    names: list[str] = []
+    for row in matches:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("name")
+        if isinstance(name, str) and name in _TOOL_NAMES and name not in names:
+            names.append(name)
+    return names
 
 
 def _is_retryable_error(exc: Exception) -> bool:
@@ -1136,7 +1226,8 @@ def agent_chat_v2(req: AgentChatRequestV2):
     except ValueError as exc:
         raise ConfigurationError(str(exc)) from exc
     workflow_name, workflow_ticker = _detect_workflow(req.message)
-    tool_defs = [] if casual else _select_tool_definitions(req.message, provider)
+    active_tool_names = [] if casual else _select_tool_names(req.message)
+    tool_defs = _tool_definitions_from_names(provider, active_tool_names)
     force_refresh = _wants_fresh_data(req.message)
     enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
@@ -1152,6 +1243,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
     )
 
     def generate():  # noqa: C901
+        nonlocal tool_defs
         yield _sse_ping()
         from api.memory_manager import build_conversation_context, finalize_turn_async
 
@@ -1372,6 +1464,16 @@ def agent_chat_v2(req: AgentChatRequestV2):
                             cache_status,
                             "error" if err_msg else "ok",
                         )
+                        if call_info["name"] == "search_agent_capabilities" and not err_msg:
+                            discovered = [
+                                tool_name
+                                for tool_name in _capability_names_from_search_result(result_str)
+                                if tool_name not in active_tool_names
+                            ]
+                            if discovered:
+                                active_tool_names.extend(discovered)
+                                tool_defs = _tool_definitions_from_names(provider, active_tool_names)
+                                logger.info("agent_v2_tool_expansion added=%s total=%d", discovered, len(tool_defs))
 
                         for call_id in call_info.get("call_ids", []):
                             payload = {

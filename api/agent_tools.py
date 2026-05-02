@@ -42,7 +42,7 @@ _INACCESSIBLE_DOMAINS_RX = re.compile(
 # Tool definitions (generic function-calling schema)
 # ---------------------------------------------------------------------------
 
-TOOL_DEFINITIONS: list[dict] = [
+_BASE_TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "name": "get_liquidity",
@@ -702,8 +702,609 @@ TOOL_DEFINITIONS: list[dict] = [
     },
 ]
 
-# Tool name → index lookup
+
+@dataclass(frozen=True, slots=True)
+class AgentCapability:
+    """Provider-neutral description of a capability Stan may call."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    category: str
+    access_mode: str
+    aliases: tuple[str, ...] = ()
+    selectable: bool = True
+
+    @property
+    def schema_safe(self) -> bool:
+        return self.parameters.get("type") == "object" and isinstance(self.parameters.get("properties"), dict)
+
+    def to_tool_definition(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
+
+
+def _schema(properties: dict[str, Any] | None = None, required: list[str] | None = None) -> dict[str, Any]:
+    return {"type": "object", "properties": properties or {}, "required": required or []}
+
+
+def _cap(
+    name: str,
+    description: str,
+    parameters: dict[str, Any] | None = None,
+    *,
+    category: str,
+    access_mode: str = "read",
+    aliases: tuple[str, ...] = (),
+    selectable: bool = True,
+) -> AgentCapability:
+    return AgentCapability(
+        name=name,
+        description=description,
+        parameters=parameters or _schema(),
+        category=category,
+        access_mode=access_mode,
+        aliases=aliases,
+        selectable=selectable,
+    )
+
+
+_BASE_CAPABILITY_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "get_liquidity": ("macro", "read", ("liquidity", "global liquidity", "credit")),
+    "get_market_breadth": ("technical", "read", ("breadth", "market breadth", "participation")),
+    "get_vix_term_structure": ("technical", "read", ("vix", "volatility", "term structure")),
+    "get_positioning": ("macro", "read", ("positioning", "cftc", "cot", "crowded")),
+    "get_signal_aggregator": ("macro", "read", ("signal aggregator", "regime", "risk on", "risk off")),
+    "get_economic_growth": ("macro", "read", ("growth", "economic growth", "cross asset")),
+    "get_labor_market": ("macro", "read", ("labor", "jobs", "claims", "payrolls")),
+    "get_housing": ("macro", "read", ("housing", "starts", "permits", "nahb")),
+    "get_sector_metrics": ("equities", "read", ("sector", "rotation", "sector metrics")),
+    "get_portfolio": ("portfolio", "read", ("portfolio", "holdings", "positions", "pnl", "p&l")),
+    "get_yield_curve": ("fixed_income", "read", ("yield curve", "rates", "bonds")),
+    "get_bond_dashboard": ("fixed_income", "read", ("bond dashboard", "sovereign yields")),
+    "get_sentiment": ("macro", "read", ("sentiment", "put call", "aaii", "naaim")),
+    "get_central_banks": ("macro", "read", ("central banks", "fed", "ecb", "boe", "boj")),
+    "get_industry_monitor": ("macro", "read", ("industry monitor", "transcripts", "management commentary")),
+    "get_breakout": ("technical", "read", ("breakout", "technical breakouts")),
+    "query_ontology": ("ontology", "read", ("ontology", "risk exposure", "portfolio risk")),
+    "get_thesis": ("thesis", "read", ("thesis", "investment thesis")),
+    "get_thesis_evaluations": ("thesis", "read", ("thesis evaluations", "monitoring history")),
+    "search_knowledge_base": ("research", "read", ("knowledge base", "past research", "notes", "news digests")),
+    "get_ontology_diff": ("ontology", "read", ("ontology diff", "risk changes")),
+    "search_web": ("research", "read", ("web", "news", "latest", "recent")),
+    "get_catalysts": ("process", "read", ("catalysts",)),
+    "get_kill_conditions": ("process", "read", ("kill conditions", "invalidation")),
+    "get_action_items": ("process", "read", ("action items", "tasks")),
+    "get_watch_triggers": ("process", "read", ("watch triggers", "monitoring")),
+    "get_pending_approvals": ("approvals", "read", ("approvals", "pending approvals")),
+    "get_dossier": ("portfolio", "read", ("dossier", "position dossier")),
+    "get_workflow_history": ("workflows", "read", ("workflow history", "workflow runs")),
+    "propose_thesis_status_change": ("thesis", "proposal", ("propose thesis status", "thesis status")),
+    "propose_action_item": ("process", "proposal", ("propose action", "action item")),
+    "propose_catalyst_status_change": ("process", "proposal", ("propose catalyst status",)),
+    "propose_kill_condition_status_change": ("process", "proposal", ("propose kill condition status",)),
+    "propose_watch_trigger": ("process", "proposal", ("propose watch trigger", "set trigger")),
+}
+
+
+def _base_capability(tool: dict[str, Any]) -> AgentCapability:
+    name = str(tool["name"])
+    category, access_mode, aliases = _BASE_CAPABILITY_META.get(
+        name,
+        ("misc", "read", tuple(name.replace("_", " ").split())),
+    )
+    return _cap(
+        name,
+        str(tool.get("description", "")),
+        tool.get("parameters") or _schema(),
+        category=category,
+        access_mode=access_mode,
+        aliases=aliases + (name.replace("_", " "),),
+    )
+
+
+_STRING = {"type": "string"}
+_NUMBER = {"type": "number"}
+_INTEGER = {"type": "integer"}
+_BOOLEAN = {"type": "boolean"}
+_OBJECT = {"type": "object"}
+_ARRAY_OBJECTS = {"type": "array", "items": {"type": "object"}}
+
+
+_EXTRA_CAPABILITIES: list[AgentCapability] = [
+    _cap(
+        "search_agent_capabilities",
+        "Search Stan's available app capabilities by natural-language query. Use when you need a tool that was not in the initially visible set.",
+        _schema(
+            {
+                "query": {"type": "string", "description": "Capability or app feature to find."},
+                "top_k": {"type": "integer", "description": "Maximum matches to return. Default 8."},
+            },
+            ["query"],
+        ),
+        category="agent",
+        aliases=("capability search", "available tools", "what can you access"),
+    ),
+    _cap(
+        "get_workspace",
+        "Fetch the Workspace landing page aggregate: regime, portfolio summary, thesis pressure, approvals, action items, triggers, and workflow runs.",
+        category="workspace",
+        aliases=("workspace", "dashboard home"),
+    ),
+    _cap(
+        "get_portfolio_positions",
+        "Fetch editable portfolio positions, optionally including hedges.",
+        _schema({"include_hedges": _BOOLEAN}),
+        category="portfolio",
+        aliases=("portfolio positions", "editable holdings"),
+    ),
+    _cap(
+        "get_hedge_positions",
+        "Fetch hedge positions from the portfolio editor.",
+        category="portfolio",
+        aliases=("hedge positions", "hedges"),
+    ),
+    _cap(
+        "get_portfolio_news",
+        "List uploaded news digests, or fetch one digest when digest_id is provided.",
+        _schema({"digest_id": {"type": "string", "description": "Optional digest id for detail."}}),
+        category="research",
+        aliases=("news digests", "portfolio news", "uploaded news"),
+    ),
+    _cap(
+        "get_research_notes",
+        "Fetch research notes, optionally filtered by ticker.",
+        _schema({"ticker": _STRING, "limit": _INTEGER}),
+        category="research",
+        aliases=("research notes", "notes"),
+    ),
+    _cap(
+        "get_workflow_run",
+        "Fetch one persisted workflow run by run_id.",
+        _schema({"run_id": _STRING}, ["run_id"]),
+        category="workflows",
+        aliases=("workflow run detail", "run detail"),
+    ),
+    _cap(
+        "get_weekly_report", "Fetch the weekly report payload.", category="reports", aliases=("weekly report", "weekly")
+    ),
+    _cap(
+        "get_commodities",
+        "Fetch the commodity dashboard across major commodities for a timeframe.",
+        _schema(
+            {"timeframe": {"type": "string", "description": "This Week, Daily, Weekly, or Monthly. Default Daily."}}
+        ),
+        category="commodities",
+        aliases=("commodities dashboard", "commodity prices"),
+    ),
+    _cap(
+        "get_commodities_curve",
+        "Fetch futures curve data for CL, BZ, NG, or TTF.",
+        _schema({"commodity": _STRING, "lookback_days": _INTEGER}),
+        category="commodities",
+        aliases=("commodities curve", "oil curve", "gas curve", "futures curve"),
+    ),
+    _cap(
+        "get_commodity_research",
+        "Fetch the commodity proxy research screener.",
+        category="commodities",
+        aliases=("commodity research", "commodity proxy", "aluminum research"),
+    ),
+    _cap(
+        "get_country_dashboard",
+        "Fetch the country dashboard.",
+        category="macro",
+        aliases=("country dashboard", "countries"),
+    ),
+    _cap(
+        "get_index_dashboard", "Fetch the index dashboard.", category="equities", aliases=("index dashboard", "indices")
+    ),
+    _cap("get_fx_dashboard", "Fetch the FX dashboard.", category="fx", aliases=("fx dashboard", "currencies")),
+    _cap(
+        "get_momentum",
+        "Fetch price momentum dashboard data.",
+        category="portfolio",
+        aliases=("momentum", "price momentum"),
+    ),
+    _cap(
+        "get_top50_breadth",
+        "Fetch S&P 500 top-50 breadth data.",
+        category="technical",
+        aliases=("top50 breadth", "top 50 breadth"),
+    ),
+    _cap(
+        "get_price_volume_signals",
+        "Fetch price-volume technical signals.",
+        category="technical",
+        aliases=("price volume", "volume signals"),
+    ),
+    _cap(
+        "get_financials",
+        "Fetch single-company financial history and metrics.",
+        _schema({"ticker": _STRING}, ["ticker"]),
+        category="equities",
+        aliases=("financials", "company financials", "revenue", "eps"),
+    ),
+    _cap(
+        "get_dcf_historical",
+        "Fetch historical financials and multiples for DCF work.",
+        _schema({"ticker": _STRING}, ["ticker"]),
+        category="equities",
+        aliases=("dcf historical", "valuation historical"),
+    ),
+    _cap(
+        "run_dcf_valuation",
+        "Run a DCF valuation from explicit assumptions.",
+        _schema(
+            {
+                "ticker": _STRING,
+                "revenue_growth_rates": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Five annual revenue growth rates as decimals.",
+                },
+                "ebitda_margin": _NUMBER,
+                "tax_rate": _NUMBER,
+                "da_pct_revenue": _NUMBER,
+                "nwc_pct_revenue": _NUMBER,
+                "capex_pct_revenue": _NUMBER,
+                "wacc": _NUMBER,
+                "terminal_growth_rates": _OBJECT,
+                "exit_ev_ebitda": _OBJECT,
+                "exit_ev_revenue": _OBJECT,
+            },
+            [
+                "ticker",
+                "revenue_growth_rates",
+                "ebitda_margin",
+                "da_pct_revenue",
+                "nwc_pct_revenue",
+                "capex_pct_revenue",
+                "wacc",
+                "exit_ev_ebitda",
+                "exit_ev_revenue",
+            ],
+        ),
+        category="equities",
+        access_mode="compute",
+        aliases=("run dcf", "dcf valuation", "valuation"),
+    ),
+    _cap(
+        "run_chart",
+        "Run technical analysis for a ticker.",
+        _schema({"ticker": _STRING, "lookback": _STRING}, ["ticker"]),
+        category="technical",
+        access_mode="compute",
+        aliases=("chart", "technical analysis"),
+    ),
+    _cap(
+        "run_ratio_chart",
+        "Run a ratio chart between two symbols.",
+        _schema(
+            {"symbol_a": _STRING, "symbol_b": _STRING, "start_date": _STRING, "end_date": _STRING, "method": _STRING},
+            ["symbol_a", "symbol_b"],
+        ),
+        category="technical",
+        access_mode="compute",
+        aliases=("ratio chart", "pair ratio"),
+    ),
+    _cap(
+        "get_fx_model_pairs",
+        "List supported FX model pairs.",
+        category="fx",
+        aliases=("fx model pairs", "currency pairs"),
+    ),
+    _cap(
+        "run_fx_model",
+        "Run the FX valuation/forecast model for a supported pair.",
+        _schema({"pair": _STRING, "bootstrap": _INTEGER, "skip_bis": _BOOLEAN, "horizons": _STRING}, ["pair"]),
+        category="fx",
+        access_mode="compute",
+        aliases=("fx model", "currency model"),
+    ),
+    _cap(
+        "run_quality_screen",
+        "Run the quality equity screen.",
+        _schema({"universe": _STRING, "tickers": _STRING, "benchmark": _STRING, "input_mode": _STRING}),
+        category="screeners",
+        access_mode="compute",
+        aliases=("quality screen", "quality screener"),
+    ),
+    _cap(
+        "run_short_screen",
+        "Start or reuse a short screen job.",
+        _schema(
+            {
+                "input_mode": _STRING,
+                "universe": _STRING,
+                "tickers": _STRING,
+                "pb_threshold": _NUMBER,
+                "loss_type": _STRING,
+                "check_issuance": _BOOLEAN,
+                "check_revenue": _BOOLEAN,
+                "max_revenue_growth": _NUMBER,
+                "check_eps": _BOOLEAN,
+                "max_eps_growth": _NUMBER,
+                "check_52w_positive": _BOOLEAN,
+                "check_min_drawdown": _BOOLEAN,
+                "min_drawdown_pct": _NUMBER,
+                "check_max_drawdown": _BOOLEAN,
+                "max_drawdown_pct": _NUMBER,
+                "check_3m_neg_momentum": _BOOLEAN,
+                "check_2m_neg_rel_momentum": _BOOLEAN,
+                "rel_momentum_benchmark": _STRING,
+            }
+        ),
+        category="screeners",
+        access_mode="compute",
+        aliases=("short screen", "short screener"),
+    ),
+    _cap(
+        "run_long_screen",
+        "Start or reuse a long screen job.",
+        _schema(
+            {
+                "input_mode": _STRING,
+                "universe": _STRING,
+                "tickers": _STRING,
+                "pb_threshold": _NUMBER,
+                "profit_type": _STRING,
+                "check_issuance": _BOOLEAN,
+                "check_revenue": _BOOLEAN,
+                "min_revenue_growth": _NUMBER,
+                "check_eps": _BOOLEAN,
+                "min_eps_growth": _NUMBER,
+                "check_ebit_multiple": _BOOLEAN,
+                "max_ebit_multiple": _NUMBER,
+                "check_52w_positive": _BOOLEAN,
+                "check_min_drawdown": _BOOLEAN,
+                "min_drawdown_pct": _NUMBER,
+                "check_max_drawdown": _BOOLEAN,
+                "max_drawdown_pct": _NUMBER,
+                "check_3m_pos_momentum": _BOOLEAN,
+                "check_2m_pos_rel_momentum": _BOOLEAN,
+                "rel_momentum_benchmark": _STRING,
+            }
+        ),
+        category="screeners",
+        access_mode="compute",
+        aliases=("long screen", "long screener"),
+    ),
+    _cap(
+        "run_fundamental_momentum",
+        "Start or reuse an EPS/revenue fundamental momentum screen.",
+        _schema(
+            {
+                "screen_type": _STRING,
+                "universe": _STRING,
+                "tickers": _STRING,
+                "benchmark": _STRING,
+                "input_mode": _STRING,
+            }
+        ),
+        category="screeners",
+        access_mode="compute",
+        aliases=("fundamental momentum", "eps momentum", "revenue momentum"),
+    ),
+    _cap(
+        "run_portfolio_analyzer",
+        "Start or reuse the portfolio analyzer.",
+        _schema({"book": _NUMBER, "target_leverage": _NUMBER, "beta_neutral": _BOOLEAN}),
+        category="portfolio",
+        access_mode="compute",
+        aliases=("portfolio analyzer", "portfolio optimizer"),
+    ),
+    _cap(
+        "run_portfolio_sizer",
+        "Start or reuse the portfolio sizer.",
+        _schema({"book": _NUMBER, "target_leverage": _NUMBER, "positions": _ARRAY_OBJECTS}),
+        category="portfolio",
+        access_mode="compute",
+        aliases=("portfolio sizer", "sizing"),
+    ),
+    _cap(
+        "get_portfolio_sizer_prefill",
+        "Fetch portfolio sizer prefill positions.",
+        category="portfolio",
+        aliases=("sizer prefill",),
+    ),
+    _cap(
+        "run_hedging_tool",
+        "Start or reuse the hedging tool.",
+        _schema({"book": _NUMBER, "positions": _ARRAY_OBJECTS}),
+        category="portfolio",
+        access_mode="compute",
+        aliases=("hedging tool", "hedge analysis"),
+    ),
+    _cap(
+        "get_hedging_tool_prefill",
+        "Fetch hedging tool prefill positions.",
+        category="portfolio",
+        aliases=("hedging prefill",),
+    ),
+    _cap(
+        "get_hedging_portfolio_weights",
+        "Derive hedging weights from the portfolio database.",
+        _schema({"book": _NUMBER}),
+        category="portfolio",
+        aliases=("hedging weights", "portfolio weights"),
+    ),
+    _cap(
+        "run_hedging_recommendation",
+        "Generate LLM hedging recommendations from hedging analysis tables.",
+        _schema(
+            {
+                "net_beta_spy": _NUMBER,
+                "net_beta_iwm": _NUMBER,
+                "post_hedge_beta_spy": _NUMBER,
+                "post_hedge_beta_iwm": _NUMBER,
+                "gross_input": _NUMBER,
+                "net_input": _NUMBER,
+                "gross_after_hedging": _NUMBER,
+                "volatility_after_hedging": _NUMBER,
+                "hedge_spy_weight": _NUMBER,
+                "hedge_iwm_weight": _NUMBER,
+                "positions_df": _ARRAY_OBJECTS,
+                "hedges_df": _ARRAY_OBJECTS,
+                "book_size": _NUMBER,
+            }
+        ),
+        category="portfolio",
+        access_mode="compute",
+        aliases=("hedging recommendation", "hedge recommendation"),
+    ),
+    _cap(
+        "propose_portfolio_positions_update",
+        "Propose replacing editable portfolio positions. Creates a pending approval.",
+        _schema({"positions": _ARRAY_OBJECTS, "reason": _STRING}, ["positions", "reason"]),
+        category="portfolio",
+        access_mode="proposal",
+        aliases=("propose portfolio edit", "update portfolio positions"),
+    ),
+    _cap(
+        "propose_hedge_positions_update",
+        "Propose replacing hedge positions. Creates a pending approval.",
+        _schema({"positions": _ARRAY_OBJECTS, "reason": _STRING}, ["positions", "reason"]),
+        category="portfolio",
+        access_mode="proposal",
+        aliases=("propose hedge edit", "update hedge positions"),
+    ),
+    _cap(
+        "propose_thesis_content_update",
+        "Propose replacing a ticker's thesis markdown. Creates a pending approval.",
+        _schema({"ticker": _STRING, "content": _STRING, "reason": _STRING}, ["ticker", "content", "reason"]),
+        category="thesis",
+        access_mode="proposal",
+        aliases=("propose thesis edit", "update thesis content"),
+    ),
+    _cap(
+        "propose_catalyst",
+        "Propose creating a catalyst. Creates a pending approval.",
+        _schema(
+            {"ticker": _STRING, "description": _STRING, "category": _STRING, "target_date": _STRING, "reason": _STRING},
+            ["ticker", "description", "reason"],
+        ),
+        category="process",
+        access_mode="proposal",
+        aliases=("propose catalyst", "create catalyst"),
+    ),
+    _cap(
+        "propose_kill_condition",
+        "Propose creating a kill condition. Creates a pending approval.",
+        _schema(
+            {"ticker": _STRING, "condition": _STRING, "metric": _STRING, "threshold": _STRING, "reason": _STRING},
+            ["ticker", "condition", "reason"],
+        ),
+        category="process",
+        access_mode="proposal",
+        aliases=("propose kill condition", "create kill condition"),
+    ),
+    _cap(
+        "propose_research_note",
+        "Propose creating a research note. Creates a pending approval.",
+        _schema(
+            {"title": _STRING, "content": _STRING, "ticker": _STRING, "note_type": _STRING, "reason": _STRING},
+            ["title", "content", "reason"],
+        ),
+        category="research",
+        access_mode="proposal",
+        aliases=("propose research note", "create research note"),
+    ),
+    _cap(
+        "propose_news_digest_delete",
+        "Propose deleting an uploaded news digest. Creates a pending approval.",
+        _schema({"digest_id": _STRING, "reason": _STRING}, ["digest_id", "reason"]),
+        category="research",
+        access_mode="proposal",
+        aliases=("delete news digest", "remove digest"),
+    ),
+]
+
+
+def _build_capability_registry() -> list[AgentCapability]:
+    by_name: dict[str, AgentCapability] = {}
+    for cap in [_base_capability(tool) for tool in _BASE_TOOL_DEFINITIONS] + _EXTRA_CAPABILITIES:
+        if cap.name in by_name:
+            raise RuntimeError(f"Duplicate agent capability: {cap.name}")
+        by_name[cap.name] = cap
+    return list(by_name.values())
+
+
+AGENT_CAPABILITIES: list[AgentCapability] = _build_capability_registry()
+AGENT_CAPABILITY_BY_NAME: dict[str, AgentCapability] = {cap.name: cap for cap in AGENT_CAPABILITIES}
+TOOL_DEFINITIONS: list[dict[str, Any]] = [cap.to_tool_definition() for cap in AGENT_CAPABILITIES]
+
+# Tool name -> index lookup
 _TOOL_INDEX = {t["name"]: i for i, t in enumerate(TOOL_DEFINITIONS)}
+
+
+def list_agent_capabilities() -> list[dict[str, Any]]:
+    """Return non-secret metadata for Stan's callable app capabilities."""
+    return [
+        {
+            "name": cap.name,
+            "category": cap.category,
+            "access_mode": cap.access_mode,
+            "description": cap.description,
+            "aliases": list(cap.aliases),
+            "schema_safe": cap.schema_safe,
+            "selectable": cap.selectable,
+        }
+        for cap in AGENT_CAPABILITIES
+    ]
+
+
+def _capability_search_text(cap: AgentCapability) -> str:
+    return " ".join(
+        [
+            cap.name.replace("_", " "),
+            cap.category.replace("_", " "),
+            cap.access_mode,
+            cap.description,
+            " ".join(cap.aliases),
+        ]
+    ).lower()
+
+
+def search_agent_capabilities(query: str, top_k: int = 8) -> dict[str, Any]:
+    """Small lexical search used as a fallback tool discovery path."""
+    q = (query or "").strip().lower()
+    if not q:
+        return {"query": query, "matches": [], "count": 0}
+    tokens = [t for t in re.split(r"[^a-z0-9.]+", q) if t]
+    matches: list[tuple[int, AgentCapability]] = []
+    for cap in AGENT_CAPABILITIES:
+        if not cap.selectable:
+            continue
+        haystack = _capability_search_text(cap)
+        score = 0
+        if q in haystack:
+            score += 5
+        for token in tokens:
+            if token == cap.name.lower():
+                score += 6
+            elif token in haystack:
+                score += 2
+        if score:
+            matches.append((score, cap))
+    matches.sort(key=lambda item: (-item[0], item[1].name))
+    safe_top_k = max(1, min(int(top_k or 8), 20))
+    rows = [
+        {
+            "name": cap.name,
+            "category": cap.category,
+            "access_mode": cap.access_mode,
+            "description": cap.description,
+            "aliases": list(cap.aliases),
+            "score": score,
+        }
+        for score, cap in matches[:safe_top_k]
+    ]
+    return {"query": query, "matches": rows, "count": len(rows)}
 
 
 # ---------------------------------------------------------------------------
@@ -1555,6 +2156,65 @@ def _build_agent_sentiment_snapshot(put_call: dict, surveys: dict, volatility: l
     return snapshot
 
 
+_AGENT_COMPUTE_WAIT_SECONDS = float(os.environ.get("AGENT_COMPUTE_WAIT_SECONDS", "8"))
+
+
+def _model_validate(model_cls, payload: dict[str, Any]):
+    if hasattr(model_cls, "model_validate"):
+        return model_cls.model_validate(payload)
+    return model_cls(**payload)
+
+
+def _run_registered_job_for_agent(
+    job_type: str,
+    payload: dict[str, Any],
+    *,
+    cache_key: str | None,
+    poll_path: str,
+) -> dict[str, Any]:
+    from api.async_job_runner import enqueue_registered_job, poll_registered_job
+
+    row, disposition = enqueue_registered_job(job_type, payload, cache_key=cache_key)
+    job_id = str(row.get("job_id") or "")
+    deadline = time.monotonic() + max(0.0, _AGENT_COMPUTE_WAIT_SECONDS)
+    result = poll_registered_job(job_id)
+    while result.get("status") in {"queued", "running"} and time.monotonic() < deadline:
+        time.sleep(0.25)
+        result = poll_registered_job(job_id)
+    if result.get("status") in {"queued", "running"}:
+        result["poll_url"] = poll_path.format(job_id=job_id)
+        result["message"] = "Job is still running. Poll the returned URL or ask again with the job_id."
+    result["disposition"] = disposition
+    return result
+
+
+def _create_pending(
+    entity_type: str,
+    proposed_change: dict[str, Any],
+    *,
+    reason: str,
+    ticker: str | None = None,
+    entity_id: int | None = None,
+) -> dict[str, Any]:
+    from portfolio.core_db import create_pending_approval
+
+    approval = create_pending_approval(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        ticker=ticker,
+        proposed_change=proposed_change,
+        reason=reason,
+        source_type="agent",
+    )
+    return {
+        "status": "pending_approval_created",
+        "approval_id": approval["id"],
+        "entity_type": entity_type,
+        "ticker": approval.get("ticker"),
+        "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+    }
+
+
 def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
     """Route a tool call to the corresponding data function."""
     force_refresh = bool(args.get("_force_refresh"))
@@ -1562,6 +2222,11 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
     def fetch(cache, key: str, loader: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
         return _fetch_with_cache(cache, key, loader, force_refresh=force_refresh)
+
+    if name == "search_agent_capabilities":
+        query = str(args.get("query") or "").strip()
+        top_k = int(args.get("top_k", 8))
+        return search_agent_capabilities(query, top_k=top_k), {"cache": "n/a"}
 
     if name == "get_liquidity":
         key = "agent_liquidity"
@@ -2115,5 +2780,307 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             "approval_id": approval["id"],
             "message": f"Proposed watch trigger{f' for {ticker}' if ticker else ''}. User must approve in Workspace.",
         }, {"cache": "n/a"}
+
+    # -------------------------------------------------------------------
+    # Full app capability registry additions
+    # -------------------------------------------------------------------
+    if name == "get_workspace":
+        from api.routers.workspace import get_workspace
+
+        return serialize_value(get_workspace()), {"cache": "n/a"}
+
+    if name == "get_portfolio_positions":
+        from api.routers.portfolio_edit import get_portfolio_positions
+
+        return get_portfolio_positions(include_hedges=bool(args.get("include_hedges", False))), {"cache": "n/a"}
+
+    if name == "get_hedge_positions":
+        from api.routers.portfolio_edit import get_hedge_positions_endpoint
+
+        return get_hedge_positions_endpoint(), {"cache": "n/a"}
+
+    if name == "get_portfolio_news":
+        digest_id = str(args.get("digest_id") or "").strip()
+        if digest_id:
+            from api.routers.portfolio_news import get_portfolio_news_digest
+
+            return get_portfolio_news_digest(digest_id), {"cache": "n/a"}
+        from api.routers.portfolio_news import list_portfolio_news
+
+        return list_portfolio_news(refresh=False), {"cache": "n/a"}
+
+    if name == "get_research_notes":
+        from api.routers.research_notes import list_research_notes
+
+        limit = max(1, min(int(args.get("limit", 20)), 100))
+        ticker = str(args.get("ticker") or "").strip().upper() or None
+        return list_research_notes(ticker=ticker, limit=limit), {"cache": "n/a"}
+
+    if name == "get_workflow_run":
+        from api.routers.workflow_runs import get_workflow_run_detail
+
+        return get_workflow_run_detail(str(args.get("run_id") or "")), {"cache": "n/a"}
+
+    if name == "get_weekly_report":
+        from api.routers.weekly_report import get_weekly_report
+
+        return serialize_value(
+            get_weekly_report(
+                refresh=bool(args.get("refresh", False)),
+                cached_only=bool(args.get("cached_only", False)),
+            )
+        ), {"cache": "n/a"}
+
+    if name == "get_commodities":
+        from api.routers.commodities import get_commodities
+
+        return get_commodities(timeframe=str(args.get("timeframe") or "Daily")), {"cache": "n/a"}
+
+    if name == "get_commodities_curve":
+        from api.routers.commodities_curve import get_commodities_curve
+
+        commodity = str(args.get("commodity") or "CL").strip().upper()
+        lookback_days = int(args.get("lookback_days", 30))
+        return get_commodities_curve(commodity=commodity, lookback_days=lookback_days), {"cache": "n/a"}
+
+    if name == "get_commodity_research":
+        from api.routers.commodity_research import get_commodity_research
+
+        return get_commodity_research(), {"cache": "n/a"}
+
+    if name == "get_country_dashboard":
+        from api.routers.country_dashboard import get_country_dashboard
+
+        return get_country_dashboard(metric=str(args.get("metric") or "Inflation")), {"cache": "n/a"}
+
+    if name == "get_index_dashboard":
+        from api.routers.index_dashboard import get_index_dashboard
+
+        return get_index_dashboard(timeframe=str(args.get("timeframe") or "Daily")), {"cache": "n/a"}
+
+    if name == "get_fx_dashboard":
+        from api.routers.fx_dashboard import get_fx_dashboard
+
+        return get_fx_dashboard(timeframe=str(args.get("timeframe") or "Daily")), {"cache": "n/a"}
+
+    if name == "get_momentum":
+        from api.routers.momentum import get_momentum
+
+        return get_momentum(), {"cache": "n/a"}
+
+    if name == "get_top50_breadth":
+        from api.routers.market_technicals import get_top50_breadth
+
+        return get_top50_breadth(), {"cache": "n/a"}
+
+    if name == "get_price_volume_signals":
+        from api.routers.market_technicals import get_price_volume_signals
+
+        return get_price_volume_signals(), {"cache": "n/a"}
+
+    if name == "get_financials":
+        from api.routers.financials import FinancialsRequest, run_financials
+
+        req = _model_validate(FinancialsRequest, args)
+        return run_financials(req), {"cache": "n/a"}
+
+    if name == "get_dcf_historical":
+        from api.routers.dcf import get_dcf_historical
+
+        return get_dcf_historical(str(args.get("ticker") or "")), {"cache": "n/a"}
+
+    if name == "run_dcf_valuation":
+        from api.routers.dcf import DCFValuationRequest, run_dcf_valuation
+
+        req = _model_validate(DCFValuationRequest, args)
+        return run_dcf_valuation(req), {"cache": "n/a"}
+
+    if name == "run_chart":
+        from api.routers.chart import ChartRequest, run_chart
+
+        req = _model_validate(ChartRequest, args)
+        return run_chart(req), {"cache": "n/a"}
+
+    if name == "run_ratio_chart":
+        from api.routers.chart import RatioChartRequest, run_chart_ratio
+
+        req = _model_validate(RatioChartRequest, args)
+        return run_chart_ratio(req), {"cache": "n/a"}
+
+    if name == "get_fx_model_pairs":
+        from api.routers.fx_model import list_pairs
+
+        return list_pairs(), {"cache": "n/a"}
+
+    if name == "run_fx_model":
+        from api.routers.fx_model import FXModelRequest, run_fx_model
+
+        req = _model_validate(FXModelRequest, args)
+        return run_fx_model(req), {"cache": "n/a"}
+
+    if name == "run_quality_screen":
+        from api.routers.quality import QualityRequest, run_quality_screen
+
+        req = _model_validate(QualityRequest, args)
+        return run_quality_screen(req), {"cache": "n/a"}
+
+    if name == "run_short_screen":
+        from api.routers.short_screen import ShortScreenRequest, _cache_key
+
+        req = _model_validate(ShortScreenRequest, args)
+        return _run_registered_job_for_agent(
+            "short_screen",
+            req.model_dump(),
+            cache_key=_cache_key(req),
+            poll_path="/api/v1/short-screen/async/{job_id}",
+        ), {"cache": "n/a"}
+
+    if name == "run_long_screen":
+        from api.routers.long_screen import LongScreenRequest, _cache_key
+
+        req = _model_validate(LongScreenRequest, args)
+        return _run_registered_job_for_agent(
+            "long_screen",
+            req.model_dump(),
+            cache_key=_cache_key(req),
+            poll_path="/api/v1/long-screen/async/{job_id}",
+        ), {"cache": "n/a"}
+
+    if name == "run_fundamental_momentum":
+        from api.routers.fundamental_momentum import FMRequest, _cache_key
+
+        req = _model_validate(FMRequest, args)
+        return _run_registered_job_for_agent(
+            "fundamental_momentum",
+            req.model_dump(),
+            cache_key=_cache_key(req),
+            poll_path="/api/v1/fundamental-momentum/async/{job_id}",
+        ), {"cache": "n/a"}
+
+    if name == "run_portfolio_analyzer":
+        from api.routers.analyzer import AnalyzerRequest, _cache_key
+
+        req = _model_validate(AnalyzerRequest, args)
+        return _run_registered_job_for_agent(
+            "analyzer",
+            req.model_dump(),
+            cache_key=_cache_key(req),
+            poll_path="/api/v1/portfolio-analyzer/async/{job_id}",
+        ), {"cache": "n/a"}
+
+    if name == "run_portfolio_sizer":
+        from api.routers.sizer import SizerRequest, _cache_key
+
+        req = _model_validate(SizerRequest, args)
+        return _run_registered_job_for_agent(
+            "sizer",
+            req.model_dump(),
+            cache_key=_cache_key(req),
+            poll_path="/api/v1/portfolio-sizer/async/{job_id}",
+        ), {"cache": "n/a"}
+
+    if name == "get_portfolio_sizer_prefill":
+        from api.routers.sizer import get_sizer_prefill
+
+        return get_sizer_prefill(), {"cache": "n/a"}
+
+    if name == "run_hedging_tool":
+        from api.routers.hedging import HedgingRequest, _cache_key
+
+        req = _model_validate(HedgingRequest, args)
+        return _run_registered_job_for_agent(
+            "hedging",
+            req.model_dump(),
+            cache_key=_cache_key(req),
+            poll_path="/api/v1/hedging-tool/async/{job_id}",
+        ), {"cache": "n/a"}
+
+    if name == "get_hedging_tool_prefill":
+        from api.routers.hedging import get_hedging_tool_prefill
+
+        return get_hedging_tool_prefill(), {"cache": "n/a"}
+
+    if name == "get_hedging_portfolio_weights":
+        from api.routers.hedging import get_portfolio_weights
+
+        return get_portfolio_weights(book=float(args.get("book", 100_000))), {"cache": "n/a"}
+
+    if name == "run_hedging_recommendation":
+        from api.routers.hedging import HedgingRecommendRequest, recommend_hedging_adjustments
+
+        req = _model_validate(HedgingRecommendRequest, args)
+        return recommend_hedging_adjustments(req), {"cache": "n/a"}
+
+    if name == "propose_portfolio_positions_update":
+        return _create_pending(
+            "portfolio_positions",
+            {"positions": args["positions"]},
+            reason=str(args["reason"]),
+        ), {"cache": "n/a"}
+
+    if name == "propose_hedge_positions_update":
+        return _create_pending(
+            "hedge_positions",
+            {"positions": args["positions"]},
+            reason=str(args["reason"]),
+        ), {"cache": "n/a"}
+
+    if name == "propose_thesis_content_update":
+        ticker = str(args["ticker"]).strip().upper()
+        return _create_pending(
+            "thesis_content",
+            {"ticker": ticker, "content": str(args["content"])},
+            ticker=ticker,
+            reason=str(args["reason"]),
+        ), {"cache": "n/a"}
+
+    if name == "propose_catalyst":
+        ticker = str(args["ticker"]).strip().upper()
+        return _create_pending(
+            "catalyst",
+            {
+                "ticker": ticker,
+                "description": args["description"],
+                "category": args.get("category", "fundamental"),
+                "target_date": args.get("target_date"),
+            },
+            ticker=ticker,
+            reason=str(args["reason"]),
+        ), {"cache": "n/a"}
+
+    if name == "propose_kill_condition":
+        ticker = str(args["ticker"]).strip().upper()
+        return _create_pending(
+            "kill_condition",
+            {
+                "ticker": ticker,
+                "condition": args["condition"],
+                "metric": args.get("metric"),
+                "threshold": args.get("threshold"),
+            },
+            ticker=ticker,
+            reason=str(args["reason"]),
+        ), {"cache": "n/a"}
+
+    if name == "propose_research_note":
+        ticker = str(args.get("ticker") or "").strip().upper() or None
+        return _create_pending(
+            "research_note",
+            {
+                "title": args["title"],
+                "content": args["content"],
+                "ticker": ticker,
+                "note_type": args.get("note_type", "general"),
+            },
+            ticker=ticker,
+            reason=str(args["reason"]),
+        ), {"cache": "n/a"}
+
+    if name == "propose_news_digest_delete":
+        return _create_pending(
+            "news_digest_delete",
+            {"digest_id": str(args["digest_id"]).strip()},
+            reason=str(args["reason"]),
+        ), {"cache": "n/a"}
 
     raise ValueError(f"Unknown tool: {name}")

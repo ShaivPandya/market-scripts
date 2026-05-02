@@ -22,6 +22,7 @@ outputs/
 **/outputs/
 results/
 tmp/
+macro/industry/files/**/*.pdf
 portfolio/*.db
 portfolio/*.db-*
 macro/**/*.sqlite3
