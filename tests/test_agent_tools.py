@@ -9,9 +9,171 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from api import agent_tools
 from api.routers import agent as agent_router
+from ontology.action_registry import ActionValidationError
+from ontology.policy import admin_actor, agent_actor
+
+PROPOSAL_TOOL_NAMES = {
+    "propose_thesis_status_change",
+    "propose_action_item",
+    "propose_catalyst_status_change",
+    "propose_kill_condition_status_change",
+    "propose_watch_trigger",
+    "propose_portfolio_positions_update",
+    "propose_hedge_positions_update",
+    "propose_thesis_content_update",
+    "propose_catalyst",
+    "propose_kill_condition",
+    "propose_research_note",
+    "propose_news_digest_delete",
+}
+
+
+def _proposal_tool_cases(digest_id: str) -> dict[str, tuple[dict, str, str]]:
+    return {
+        "propose_thesis_status_change": (
+            {"ticker": "mu", "new_status": "under_review", "reason": "Fresh evidence"},
+            "change_thesis_status",
+            "thesis_status",
+        ),
+        "propose_action_item": (
+            {
+                "ticker": "mu",
+                "description": "Review sizing",
+                "action_type": "review",
+                "urgency": "high",
+                "reason": "Risk changed",
+            },
+            "create_action_item",
+            "action_item",
+        ),
+        "propose_catalyst_status_change": (
+            {
+                "ticker": "mu",
+                "catalyst_id": 12,
+                "new_status": "played_out",
+                "evidence": "Management confirmed it",
+                "reason": "Update catalyst status",
+            },
+            "update_catalyst_status",
+            "catalyst_status",
+        ),
+        "propose_kill_condition_status_change": (
+            {
+                "ticker": "mu",
+                "kill_condition_id": 34,
+                "new_status": "triggered",
+                "reason": "Condition occurred",
+            },
+            "update_kill_condition_status",
+            "kill_condition_status",
+        ),
+        "propose_watch_trigger": (
+            {
+                "ticker": "mu",
+                "condition": "MU breaks below 90",
+                "trigger_type": "price_level",
+                "expires_at": "2026-06-01T00:00:00Z",
+                "definition": {"operator": "<", "value": 90},
+                "reason": "Watch downside risk",
+            },
+            "create_watch_trigger",
+            "watch_trigger",
+        ),
+        "propose_portfolio_positions_update": (
+            {
+                "positions": [
+                    {
+                        "ticker": "mu",
+                        "asset": "equity",
+                        "direction": "long",
+                        "contrarian": False,
+                        "conviction": 4,
+                    }
+                ],
+                "reason": "Resize portfolio",
+            },
+            "update_portfolio_positions",
+            "portfolio_positions",
+        ),
+        "propose_hedge_positions_update": (
+            {"positions": [{"ticker": "spy", "direction": "short", "shares": 5}], "reason": "Add hedge"},
+            "update_hedge_positions",
+            "hedge_positions",
+        ),
+        "propose_thesis_content_update": (
+            {"ticker": "mu", "content": "# MU\n\nUpdated thesis", "reason": "Refresh thesis"},
+            "save_thesis_content",
+            "thesis_content",
+        ),
+        "propose_catalyst": (
+            {
+                "ticker": "mu",
+                "description": "HBM ramp",
+                "category": "fundamental",
+                "target_date": "2026-06-30",
+                "reason": "Track material catalyst",
+            },
+            "create_catalyst",
+            "catalyst",
+        ),
+        "propose_kill_condition": (
+            {
+                "ticker": "mu",
+                "condition": "Gross margin breaks below 40%",
+                "metric": "gross_margin",
+                "threshold": "40%",
+                "reason": "Track thesis risk",
+            },
+            "create_kill_condition",
+            "kill_condition",
+        ),
+        "propose_research_note": (
+            {
+                "ticker": "mu",
+                "title": "HBM supply note",
+                "content": "Watch supply expansion.",
+                "note_type": "general",
+                "reason": "Save research context",
+            },
+            "create_research_note",
+            "research_note",
+        ),
+        "propose_news_digest_delete": (
+            {"digest_id": digest_id, "reason": "Remove stale digest"},
+            "delete_portfolio_news_digest",
+            "news_digest_delete",
+        ),
+    }
+
+
+@pytest.fixture
+def agent_proposal_state(tmp_path, monkeypatch):
+    import portfolio.core_db as core_db
+    import portfolio.news_digests as digests
+
+    if core_db._conn:
+        core_db._conn.close()
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "core.db")
+    monkeypatch.setattr(core_db, "_conn", None)
+
+    base = tmp_path / "news_digests"
+    monkeypatch.setattr(digests, "DIGESTS_DIR", base)
+    monkeypatch.setattr(digests, "MANIFEST_PATH", base / "manifest.json")
+    monkeypatch.setattr(digests, "FILES_DIR", base / "files")
+    monkeypatch.setattr(digests, "DIGESTS_GCS_PREFIX", "test/news_digests")
+    monkeypatch.setattr(digests, "MANIFEST_GCS_KEY", "test/news_digests/manifest.json")
+    monkeypatch.setattr(digests, "FILES_GCS_PREFIX", "test/news_digests/files")
+    monkeypatch.setenv("STATE_STORAGE_BACKEND", "local")
+
+    yield SimpleNamespace(core_db=core_db, digests=digests)
+
+    if core_db._conn:
+        core_db._conn.close()
+    monkeypatch.setattr(core_db, "_conn", None)
 
 
 def test_cached_singleflight_fetches_once(monkeypatch):
@@ -135,16 +297,8 @@ def test_agent_capability_registry_does_not_expose_direct_mutations():
         "bulk_approve",
         "bulk_reject",
     }
-    proposal_tools = {
-        "propose_portfolio_positions_update",
-        "propose_hedge_positions_update",
-        "propose_thesis_content_update",
-        "propose_research_note",
-        "propose_news_digest_delete",
-    }
-
     assert names.isdisjoint(forbidden_direct_tools)
-    assert proposal_tools <= names
+    assert PROPOSAL_TOOL_NAMES <= names
 
 
 def test_execute_tool_rejects_non_exposed_direct_mutation():
@@ -163,33 +317,118 @@ def test_execute_tool_rejects_non_exposed_direct_mutation():
     assert payload["_meta"]["status"] == "error"
 
 
-def test_agent_proposal_tools_create_action_backed_approvals(tmp_path, monkeypatch):
-    import portfolio.core_db as core_db
+def test_agent_dispatch_proposal_tools_use_canonical_helper(monkeypatch):
+    calls: list[tuple[str, dict, object]] = []
 
-    if core_db._conn:
-        core_db._conn.close()
-    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "core.db")
-    monkeypatch.setattr(core_db, "_conn", None)
+    def fake_propose_action_from_tool(tool_name, raw_input, context):
+        calls.append((tool_name, raw_input, context))
+        return {"id": len(calls), "entity_type": f"{tool_name}_entity", "ticker": "MU"}
 
-    payload, meta = agent_tools._dispatch(
-        "propose_catalyst",
+    monkeypatch.setattr(agent_tools, "propose_action_from_tool", fake_propose_action_from_tool)
+
+    for tool_name in sorted(PROPOSAL_TOOL_NAMES):
+        payload, meta = agent_tools._dispatch(tool_name, {"reason": "test"})
+
+        assert meta == {"cache": "n/a"}
+        assert payload["status"] == "pending_approval_created"
+        assert payload["approval_id"] == len(calls)
+        assert payload["entity_type"] == f"{tool_name}_entity"
+
+    assert [call[0] for call in calls] == sorted(PROPOSAL_TOOL_NAMES)
+    assert all(call[2].actor_type == "agent" for call in calls)
+    assert all(call[2].source_type == "agent" for call in calls)
+
+
+def test_agent_proposal_tools_create_action_backed_approvals(agent_proposal_state):
+    core_db = agent_proposal_state.core_db
+    digest = agent_proposal_state.digests.save_digest(
+        "# Digest\n\n## Movers\n- MU update\n", filename="05012026_digest.md"
+    )
+
+    for tool_name, (args, expected_action_id, expected_entity_type) in _proposal_tool_cases(digest["id"]).items():
+        payload, meta = agent_tools._dispatch(tool_name, args)
+        approval = core_db.get_pending_approval(payload["approval_id"])
+
+        assert meta == {"cache": "n/a"}
+        assert payload["status"] == "pending_approval_created"
+        assert payload["entity_type"] == expected_entity_type
+        assert approval["status"] == "pending"
+        assert approval["application_status"] == "pending"
+        assert approval["entity_type"] == expected_entity_type
+        assert approval["action_id"] == expected_action_id
+        assert approval["action_schema_name"] == expected_action_id
+        assert approval["action_schema_version"] == 1
+        assert approval["action_input_hash"]
+        assert approval["source_type"] == "agent"
+        assert approval["source_id"] == "admin"
+
+        proposal_runs = core_db.get_action_runs(f"{expected_action_id}:propose")
+        assert proposal_runs
+        assert proposal_runs[-1]["status"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "args", "match"),
+    [
+        ("propose_action_item", {"description": "Review", "reason": "Missing type"}, "action_type"),
+        (
+            "propose_thesis_status_change",
+            {"ticker": "MU", "new_status": "paused", "reason": "Bad status"},
+            "Invalid status",
+        ),
+        (
+            "propose_catalyst",
+            {"ticker": "bad ticker", "description": "HBM ramp", "reason": "Bad ticker"},
+            "Invalid ticker format",
+        ),
+        (
+            "propose_news_digest_delete",
+            {"digest_id": "2026-05-01-missing", "reason": "Not present"},
+            "Unknown news digest id",
+        ),
+    ],
+)
+def test_agent_proposal_tools_reject_invalid_input(agent_proposal_state, tool_name, args, match):
+    with pytest.raises(ActionValidationError, match=match):
+        agent_tools._dispatch(tool_name, args)
+
+    assert agent_proposal_state.core_db.get_pending_approvals(status=None) == []
+
+
+def test_agent_proposal_source_lineage_preserves_actor_metadata(agent_proposal_state):
+    core_db = agent_proposal_state.core_db
+    actor = agent_actor(admin_actor("alice"))
+
+    payload, _meta = agent_tools._dispatch(
+        "propose_action_item",
         {
             "ticker": "mu",
-            "description": "HBM ramp",
-            "category": "fundamental",
-            "reason": "Track material catalyst",
+            "description": "Review sizing",
+            "action_type": "review",
+            "reason": "Risk changed",
         },
+        actor=actor,
     )
 
     approval = core_db.get_pending_approval(payload["approval_id"])
-    assert meta == {"cache": "n/a"}
-    assert payload["entity_type"] == "catalyst"
-    assert approval["action_id"] == "create_catalyst"
-    assert approval["action_schema_version"] == 1
-    assert approval["proposed_change"]["ticker"] == "MU"
-    if core_db._conn:
-        core_db._conn.close()
-    monkeypatch.setattr(core_db, "_conn", None)
+    assert approval["source_type"] == "agent"
+    assert approval["source_id"] == "alice"
+
+    proposal_run = core_db.get_action_runs("create_action_item:propose")[0]
+    assert proposal_run["actor_type"] == "agent"
+    assert proposal_run["actor_id"] == "agent:alice"
+    assert proposal_run["source_type"] == "agent"
+    assert proposal_run["source_id"] == "alice"
+
+    approval_audit = core_db.get_audit_events(action_name="approval.created", limit=5)[0]
+    assert approval_audit["source_lineage"]["source_type"] == "agent"
+    assert approval_audit["source_lineage"]["source_id"] == "alice"
+    assert approval_audit["source_lineage"]["action_input_hash"] == approval["action_input_hash"]
+
+    domain_audit = core_db.get_audit_events(action_name="domain.action.succeeded", limit=5)[0]
+    assert domain_audit["source_lineage"]["source_type"] == "agent"
+    assert domain_audit["source_lineage"]["source_id"] == "alice"
+    assert domain_audit["metadata"]["action_id"] == "create_action_item"
 
 
 def test_agent_provider_tool_definitions_are_in_parity():
