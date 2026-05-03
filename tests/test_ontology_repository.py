@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.repository import OntologyRepository
+from ontology.schemas.identity import catalyst_id, evaluation_id
 
 
 def test_repository_upsert_and_join_queries(tmp_path):
@@ -62,12 +64,25 @@ def test_repository_upsert_and_join_queries(tmp_path):
 
     evidence = repo.fetch_position_signal_evidence("position:MU")
     assert len(evidence) == 1
-    assert evidence[0]["signal_id"] == "signal:test"
+    assert evidence[0]["signal_id"] == "signal:test:test_signal"
     assert evidence[0]["edge_props"]["contribution"] == 0.3
 
     graph = repo.fetch_graph()
     assert len(graph["nodes"]) == 4
     assert len(graph["edges"]) == 3
+    assert all(n["schema_version"] == 1 for n in graph["nodes"])
+    assert all(e["schema_version"] == 1 for e in graph["edges"])
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+        assert {"schema_name", "schema_version"} <= columns
+        row = conn.execute(
+            "SELECT schema_name, schema_version, properties_json FROM nodes WHERE id = ?", ("position:MU",)
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "Position"
+        assert row[1] == 1
+        assert json.loads(row[2])["schema_version"] == 1
 
 
 def test_snapshot_rows_are_run_scoped(tmp_path):
@@ -156,8 +171,8 @@ def test_snapshot_rows_are_run_scoped(tmp_path):
 
     ev_run_1 = repo.fetch_snapshot_position_signal_evidence("run-1", "position:MU")
     ev_run_2 = repo.fetch_snapshot_position_signal_evidence("run-2", "position:MU")
-    assert ev_run_1[0]["signal_id"] == "signal:s1"
-    assert ev_run_2[0]["signal_id"] == "signal:s2"
+    assert ev_run_1[0]["signal_id"] == "signal:test:signal_1"
+    assert ev_run_2[0]["signal_id"] == "signal:test:signal_2"
 
     meta = repo.get_run("run-2")
     assert meta is not None
@@ -237,3 +252,111 @@ def test_get_latest_run_returns_most_recent(tmp_path):
     latest = repo.get_latest_run()
     assert latest is not None
     assert latest["run_id"] == "run-new"
+
+
+def test_backfill_schema_versions_rewrites_legacy_optional_ids(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO ontology_runs(
+                run_id,
+                as_of,
+                source_status_json,
+                required_modules_json,
+                optional_modules_json,
+                component_scores_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            """,
+            ("run-legacy", "2026-03-08T00:00:00Z", "{}", "[]", "[]", "{}"),
+        )
+        conn.executemany(
+            """
+            INSERT INTO snapshot_nodes(run_id, id, type, label, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                (
+                    "run-legacy",
+                    "position:MU",
+                    "Position",
+                    "MU",
+                    json.dumps(
+                        {
+                            "ticker": "MU",
+                            "asset": "equity",
+                            "direction": "long",
+                            "risk_score": 0.72,
+                            "risk_level": "medium",
+                            "ontology_run_id": "run-legacy",
+                        }
+                    ),
+                ),
+                (
+                    "run-legacy",
+                    "thesis:MU",
+                    "Thesis",
+                    "Thesis: MU",
+                    json.dumps({"ticker": "MU", "status": "active", "ontology_run_id": "run-legacy"}),
+                ),
+                (
+                    "run-legacy",
+                    "evaluation:MU:2026-03-08T00:00:00Z",
+                    "Evaluation",
+                    "Eval: MU",
+                    json.dumps(
+                        {
+                            "ticker": "MU",
+                            "evaluated_at": "2026-03-08T00:00:00Z",
+                            "thesis_status": "strengthen",
+                            "technical_read": "supportive",
+                            "fundamental_read": "supportive",
+                            "action": "hold",
+                            "confidence": "high",
+                            "ontology_run_id": "run-legacy",
+                        }
+                    ),
+                ),
+                (
+                    "run-legacy",
+                    "catalyst:MU:0",
+                    "Catalyst",
+                    "Demand recovery",
+                    json.dumps(
+                        {
+                            "ticker": "MU",
+                            "name": "Demand recovery",
+                            "description": "Demand improves",
+                            "ontology_run_id": "run-legacy",
+                        }
+                    ),
+                ),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO snapshot_edges(run_id, source_id, target_id, relation_type, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                ("run-legacy", "position:MU", "thesis:MU", "has_thesis", "{}"),
+                ("run-legacy", "thesis:MU", "evaluation:MU:2026-03-08T00:00:00Z", "evaluated_by", "{}"),
+                ("run-legacy", "thesis:MU", "catalyst:MU:0", "has_catalyst", "{}"),
+            ],
+        )
+
+    dry_run = repo.backfill_schema_versions(dry_run=True)
+    snapshot_report = [s for s in dry_run["scopes"] if s.get("run_id") == "run-legacy"][0]
+    assert snapshot_report["rewritten_ids"] == 2
+
+    repo.backfill_schema_versions(dry_run=False)
+    graph = repo.fetch_snapshot_graph("run-legacy")
+    ids = {node["id"] for node in graph["nodes"]}
+    assert evaluation_id("MU", "2026-03-08T00:00:00Z") in ids
+    assert catalyst_id("MU", "Demand recovery", "Demand improves") in ids
+    assert all(node["schema_version"] == 1 for node in graph["nodes"])
+    assert all(edge["schema_version"] == 1 for edge in graph["edges"])

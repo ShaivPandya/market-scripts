@@ -623,10 +623,22 @@ class StateMigrator:
         db = self._db_path("ontology")
         source_hash = sha256_file(db)
         table_map = {
-            "nodes": ("ontology_nodes", ["id", "type", "label", "properties_json", "updated_at"], ["id"]),
+            "nodes": (
+                "ontology_nodes",
+                ["id", "type", "label", "properties_json", "schema_name", "schema_version", "updated_at"],
+                ["id"],
+            ),
             "edges": (
                 "ontology_edges",
-                ["source_id", "target_id", "relation_type", "properties_json", "updated_at"],
+                [
+                    "source_id",
+                    "target_id",
+                    "relation_type",
+                    "properties_json",
+                    "schema_name",
+                    "schema_version",
+                    "updated_at",
+                ],
                 ["source_id", "target_id", "relation_type"],
             ),
             "ontology_runs": (
@@ -644,12 +656,21 @@ class StateMigrator:
             ),
             "snapshot_nodes": (
                 "ontology_snapshot_nodes",
-                ["run_id", "id", "type", "label", "properties_json", "updated_at"],
+                ["run_id", "id", "type", "label", "properties_json", "schema_name", "schema_version", "updated_at"],
                 ["run_id", "id"],
             ),
             "snapshot_edges": (
                 "ontology_snapshot_edges",
-                ["run_id", "source_id", "target_id", "relation_type", "properties_json", "updated_at"],
+                [
+                    "run_id",
+                    "source_id",
+                    "target_id",
+                    "relation_type",
+                    "properties_json",
+                    "schema_name",
+                    "schema_version",
+                    "updated_at",
+                ],
                 ["run_id", "source_id", "target_id", "relation_type"],
             ),
         }
@@ -657,7 +678,12 @@ class StateMigrator:
         if self._source_completed("ontology", source_hash):
             return SourceResult("ontology", source_hash, counts)
         for source_table, (target_table, columns, conflict) in table_map.items():
-            self._upsert_rows(target_table, columns, conflict, _sqlite_rows(db, source_table))
+            rows = _sqlite_rows(db, source_table)
+            if source_table in {"nodes", "edges", "snapshot_nodes", "snapshot_edges"}:
+                for row in rows:
+                    row["schema_name"] = row.get("schema_name") or "legacy"
+                    row["schema_version"] = int(row.get("schema_version") or 0)
+            self._upsert_rows(target_table, columns, conflict, rows)
         result = SourceResult("ontology", source_hash, counts)
         self._record_source(result)
         return result

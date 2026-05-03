@@ -17,6 +17,7 @@ from ontology.risk import (
     risk_level,
     score_position,
 )
+from ontology.schemas.registry import normalize_graph
 from ontology.sector_mapper import SectorMapper
 
 ModuleFetcher = Callable[[], dict[str, Any] | list[Any]]
@@ -240,6 +241,43 @@ def ingest_into_repository(
         props = dict(node.properties)
         sector_name = _resolve_sector_name_from_edges(edges, position_id, nodes)
         sector_stress = sector_scores.get(sector_name, sector_scores.get("Unknown Equity", 0.5))
+        if sector_name not in sector_signal_by_name:
+            signal_id = f"signal:sector_metrics:{_slug(sector_name)}"
+            sector_signal_by_name[sector_name] = signal_id
+            add_node(
+                OntologyNode(
+                    id=signal_id,
+                    type="Signal",
+                    label=f"Sector Stress: {sector_name}",
+                    properties={
+                        "name": f"{sector_name} sector stress",
+                        "source": "sector_metrics",
+                        "value": round(sector_stress, 4),
+                        "threshold": "higher => weaker sector backdrop",
+                        "direction": "deteriorating" if sector_stress >= 0.6 else "stable",
+                        "raw_signal": "deteriorating" if sector_stress >= 0.6 else "stable",
+                        "sector": sector_name,
+                        "component": "sector_stress",
+                        "ontology_run_id": run_id,
+                    },
+                )
+            )
+            add_edge(
+                OntologyEdge(
+                    source_id="macro_indicator:sector_metrics",
+                    target_id=signal_id,
+                    relation_type="emits_signal",
+                    properties={"ontology_run_id": run_id},
+                )
+            )
+            add_edge(
+                OntologyEdge(
+                    source_id=f"sector:{_slug(sector_name)}",
+                    target_id="macro_indicator:sector_metrics",
+                    relation_type="affected_by",
+                    properties={"ontology_run_id": run_id},
+                )
+            )
 
         risk_score = score_position(
             volatility_cluster=volatility_cluster,
@@ -334,8 +372,20 @@ def ingest_into_repository(
                 )
             )
 
-    snapshot_nodes = list(nodes.values())
-    snapshot_edges = list(edges.values())
+    normalized_graph = normalize_graph(
+        list(nodes.values()),
+        list(edges.values()),
+        run_id=run_id,
+        allow_legacy=True,
+        skip_optional_invalid=True,
+    )
+    if normalized_graph.warnings:
+        source_status["thesis_entities"] = {
+            "status": "partial",
+            "detail": "; ".join(normalized_graph.warnings[:3]),
+        }
+    snapshot_nodes = normalized_graph.nodes
+    snapshot_edges = normalized_graph.edges
 
     as_of = str(portfolio_timestamp or datetime.now(UTC).isoformat())
     required_modules = list(required_fetchers.keys())

@@ -13,6 +13,8 @@ class OntologyNode:
     type: EntityType
     label: str
     properties: dict[str, Any] = field(default_factory=dict)
+    schema_name: str = "legacy"
+    schema_version: int = 0
 
 
 @dataclass(slots=True)
@@ -21,6 +23,8 @@ class OntologyEdge:
     target_id: str
     relation_type: str
     properties: dict[str, Any] = field(default_factory=dict)
+    schema_name: str = "legacy"
+    schema_version: int = 0
 
 
 @dataclass(slots=True)

@@ -198,6 +198,8 @@ def upgrade() -> None:
         sa.Column("type", sa.Text, nullable=False),
         sa.Column("label", sa.Text, nullable=False),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_nodes_type", "ontology_nodes", ["type"])
@@ -207,6 +209,8 @@ def upgrade() -> None:
         sa.Column("target_id", sa.Text, primary_key=True),
         sa.Column("relation_type", sa.Text, primary_key=True),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_edges_source", "ontology_edges", ["source_id"])
@@ -229,6 +233,8 @@ def upgrade() -> None:
         sa.Column("type", sa.Text, nullable=False),
         sa.Column("label", sa.Text, nullable=False),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_snapshot_nodes_run_type", "ontology_snapshot_nodes", ["run_id", "type"])
@@ -239,6 +245,8 @@ def upgrade() -> None:
         sa.Column("target_id", sa.Text, primary_key=True),
         sa.Column("relation_type", sa.Text, primary_key=True),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_snapshot_edges_run_source", "ontology_snapshot_edges", ["run_id", "source_id"])

@@ -11,6 +11,7 @@ from typing import Any
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
 from ontology.models import OntologyEdge, OntologyNode
+from ontology.schemas.registry import normalize_edge, normalize_graph, normalize_node
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -89,6 +90,8 @@ class OntologyRepository:
                     type TEXT NOT NULL,
                     label TEXT NOT NULL,
                     properties_json TEXT NOT NULL,
+                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
                 """
@@ -100,6 +103,8 @@ class OntologyRepository:
                     target_id TEXT NOT NULL,
                     relation_type TEXT NOT NULL,
                     properties_json TEXT NOT NULL,
+                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     PRIMARY KEY (source_id, target_id, relation_type)
                 )
@@ -130,6 +135,8 @@ class OntologyRepository:
                     type TEXT NOT NULL,
                     label TEXT NOT NULL,
                     properties_json TEXT NOT NULL,
+                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     PRIMARY KEY (run_id, id),
                     FOREIGN KEY (run_id) REFERENCES ontology_runs(run_id) ON DELETE CASCADE
@@ -144,6 +151,8 @@ class OntologyRepository:
                     target_id TEXT NOT NULL,
                     relation_type TEXT NOT NULL,
                     properties_json TEXT NOT NULL,
+                    schema_name TEXT NOT NULL DEFAULT 'legacy',
+                    schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     PRIMARY KEY (run_id, source_id, target_id, relation_type),
                     FOREIGN KEY (run_id) REFERENCES ontology_runs(run_id) ON DELETE CASCADE
@@ -158,28 +167,35 @@ class OntologyRepository:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_snapshot_edges_run_target ON snapshot_edges(run_id, target_id)"
             )
+            for table in ("nodes", "edges", "snapshot_nodes", "snapshot_edges"):
+                _ensure_schema_columns(conn, table)
 
     def upsert_nodes(self, nodes: list[OntologyNode]) -> None:
         if not nodes:
             return
+        normalized_nodes = [normalize_node(n, allow_legacy=_allow_legacy_schemas()) for n in nodes]
         rows = [
             (
                 n.id,
                 n.type,
                 n.label,
                 json.dumps(n.properties, default=str),
+                n.schema_name,
+                n.schema_version,
             )
-            for n in nodes
+            for n in normalized_nodes
         ]
         with self._connect() as conn:
             conn.executemany(
                 """
-                INSERT INTO nodes(id, type, label, properties_json, updated_at)
-                VALUES (?, ?, ?, ?, datetime('now'))
+                INSERT INTO nodes(id, type, label, properties_json, schema_name, schema_version, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(id) DO UPDATE SET
                   type=excluded.type,
                   label=excluded.label,
                   properties_json=excluded.properties_json,
+                  schema_name=excluded.schema_name,
+                  schema_version=excluded.schema_version,
                   updated_at=datetime('now')
                 """,
                 rows,
@@ -188,30 +204,38 @@ class OntologyRepository:
     def upsert_edges(self, edges: list[OntologyEdge]) -> None:
         if not edges:
             return
+        normalized_edges = [normalize_edge(e, allow_legacy=_allow_legacy_schemas()) for e in edges]
         rows = [
             (
                 e.source_id,
                 e.target_id,
                 e.relation_type,
                 json.dumps(e.properties, default=str),
+                e.schema_name,
+                e.schema_version,
             )
-            for e in edges
+            for e in normalized_edges
         ]
         with self._connect() as conn:
             conn.executemany(
                 """
-                INSERT INTO edges(source_id, target_id, relation_type, properties_json, updated_at)
-                VALUES (?, ?, ?, ?, datetime('now'))
+                INSERT INTO edges(
+                    source_id, target_id, relation_type, properties_json, schema_name, schema_version, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
                   properties_json=excluded.properties_json,
+                  schema_name=excluded.schema_name,
+                  schema_version=excluded.schema_version,
                   updated_at=datetime('now')
                 """,
                 rows,
             )
 
     def upsert_graph(self, nodes: list[OntologyNode], edges: list[OntologyEdge]) -> None:
-        self.upsert_nodes(nodes)
-        self.upsert_edges(edges)
+        normalized = normalize_graph(nodes, edges, allow_legacy=_allow_legacy_schemas())
+        self.upsert_nodes(normalized.nodes)
+        self.upsert_edges(normalized.edges)
 
     def save_snapshot(
         self,
@@ -225,6 +249,9 @@ class OntologyRepository:
         nodes: list[OntologyNode],
         edges: list[OntologyEdge],
     ) -> None:
+        normalized = normalize_graph(nodes, edges, run_id=run_id, allow_legacy=_allow_legacy_schemas())
+        nodes = normalized.nodes
+        edges = normalized.edges
         node_rows = [
             (
                 run_id,
@@ -232,6 +259,8 @@ class OntologyRepository:
                 n.type,
                 n.label,
                 json.dumps(n.properties, default=str),
+                n.schema_name,
+                n.schema_version,
             )
             for n in nodes
         ]
@@ -242,6 +271,8 @@ class OntologyRepository:
                 e.target_id,
                 e.relation_type,
                 json.dumps(e.properties, default=str),
+                e.schema_name,
+                e.schema_version,
             )
             for e in edges
         ]
@@ -280,8 +311,10 @@ class OntologyRepository:
             if node_rows:
                 conn.executemany(
                     """
-                    INSERT INTO snapshot_nodes(run_id, id, type, label, properties_json, updated_at)
-                    VALUES (?, ?, ?, ?, ?, datetime('now'))
+                    INSERT INTO snapshot_nodes(
+                        run_id, id, type, label, properties_json, schema_name, schema_version, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     """,
                     node_rows,
                 )
@@ -289,9 +322,16 @@ class OntologyRepository:
                 conn.executemany(
                     """
                     INSERT INTO snapshot_edges(
-                        run_id, source_id, target_id, relation_type, properties_json, updated_at
+                        run_id,
+                        source_id,
+                        target_id,
+                        relation_type,
+                        properties_json,
+                        schema_name,
+                        schema_version,
+                        updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, datetime('now'))
+                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     """,
                     edge_rows,
                 )
@@ -412,7 +452,7 @@ class OntologyRepository:
         with self._connect() as conn:
             node_rows = conn.execute(
                 """
-                SELECT id, type, label, properties_json, updated_at
+                SELECT id, type, label, properties_json, schema_name, schema_version, updated_at
                 FROM snapshot_nodes
                 WHERE run_id = ?
                 ORDER BY type, id
@@ -421,7 +461,7 @@ class OntologyRepository:
             ).fetchall()
             edge_rows = conn.execute(
                 """
-                SELECT source_id, target_id, relation_type, properties_json, updated_at
+                SELECT source_id, target_id, relation_type, properties_json, schema_name, schema_version, updated_at
                 FROM snapshot_edges
                 WHERE run_id = ?
                 ORDER BY relation_type, source_id
@@ -434,7 +474,9 @@ class OntologyRepository:
                 "id": r["id"],
                 "type": r["type"],
                 "label": r["label"],
-                "properties": _load_json(r["properties_json"]),
+                "properties": _load_node_properties(r, run_id=run_id),
+                "schema_name": r["schema_name"],
+                "schema_version": int(r["schema_version"] or 0),
                 "updated_at": r["updated_at"],
             }
             for r in node_rows
@@ -444,7 +486,9 @@ class OntologyRepository:
                 "source_id": r["source_id"],
                 "target_id": r["target_id"],
                 "relation_type": r["relation_type"],
-                "properties": _load_json(r["properties_json"]),
+                "properties": _load_edge_properties(r, run_id=run_id),
+                "schema_name": r["schema_name"],
+                "schema_version": int(r["schema_version"] or 0),
                 "updated_at": r["updated_at"],
             }
             for r in edge_rows
@@ -455,10 +499,19 @@ class OntologyRepository:
         sql = """
         SELECT
           p.id AS position_id,
+          p.label AS position_label,
+          p.schema_name AS position_schema_name,
+          p.schema_version AS position_schema_version,
           p.properties_json AS position_props,
           a.id AS asset_id,
+          a.label AS asset_label,
+          a.schema_name AS asset_schema_name,
+          a.schema_version AS asset_schema_version,
           a.properties_json AS asset_props,
           s.id AS sector_id,
+          s.label AS sector_label,
+          s.schema_name AS sector_schema_name,
+          s.schema_version AS sector_schema_version,
           s.properties_json AS sector_props
         FROM snapshot_nodes p
         LEFT JOIN snapshot_edges pa
@@ -487,11 +540,38 @@ class OntologyRepository:
             out.append(
                 {
                     "position_id": row["position_id"],
-                    "position_props": _load_json(row["position_props"]),
+                    "position_props": _load_node_properties(
+                        row,
+                        run_id=run_id,
+                        id_key="position_id",
+                        type_value="Position",
+                        label_key="position_label",
+                        properties_key="position_props",
+                        schema_name_key="position_schema_name",
+                        schema_version_key="position_schema_version",
+                    ),
                     "asset_id": row["asset_id"],
-                    "asset_props": _load_json(row["asset_props"]),
+                    "asset_props": _load_node_properties(
+                        row,
+                        run_id=run_id,
+                        id_key="asset_id",
+                        type_value="Asset",
+                        label_key="asset_label",
+                        properties_key="asset_props",
+                        schema_name_key="asset_schema_name",
+                        schema_version_key="asset_schema_version",
+                    ),
                     "sector_id": row["sector_id"],
-                    "sector_props": _load_json(row["sector_props"]),
+                    "sector_props": _load_node_properties(
+                        row,
+                        run_id=run_id,
+                        id_key="sector_id",
+                        type_value="Sector",
+                        label_key="sector_label",
+                        properties_key="sector_props",
+                        schema_name_key="sector_schema_name",
+                        schema_version_key="sector_schema_version",
+                    ),
                 }
             )
         return out
@@ -500,7 +580,12 @@ class OntologyRepository:
         sql = """
         SELECT
           s.id AS signal_id,
+          s.label AS signal_label,
+          s.schema_name AS signal_schema_name,
+          s.schema_version AS signal_schema_version,
           s.properties_json AS signal_props,
+          ps.schema_name AS edge_schema_name,
+          ps.schema_version AS edge_schema_version,
           ps.properties_json AS edge_props
         FROM snapshot_edges ps
         JOIN snapshot_nodes s
@@ -520,8 +605,26 @@ class OntologyRepository:
             out.append(
                 {
                     "signal_id": row["signal_id"],
-                    "signal_props": _load_json(row["signal_props"]),
-                    "edge_props": _load_json(row["edge_props"]),
+                    "signal_props": _load_node_properties(
+                        row,
+                        run_id=run_id,
+                        id_key="signal_id",
+                        type_value="Signal",
+                        label_key="signal_label",
+                        properties_key="signal_props",
+                        schema_name_key="signal_schema_name",
+                        schema_version_key="signal_schema_version",
+                    ),
+                    "edge_props": _load_edge_properties(
+                        row,
+                        run_id=run_id,
+                        source_id_key=None,
+                        target_id_key="signal_id",
+                        relation_type_value="exposed_to_signal",
+                        properties_key="edge_props",
+                        schema_name_key="edge_schema_name",
+                        schema_version_key="edge_schema_version",
+                    ),
                 }
             )
         return out
@@ -531,7 +634,12 @@ class OntologyRepository:
         SELECT
           ps.source_id AS position_id,
           s.id AS signal_id,
+          s.label AS signal_label,
+          s.schema_name AS signal_schema_name,
+          s.schema_version AS signal_schema_version,
           s.properties_json AS signal_props,
+          ps.schema_name AS edge_schema_name,
+          ps.schema_version AS edge_schema_version,
           ps.properties_json AS edge_props
         FROM snapshot_edges ps
         JOIN snapshot_nodes s
@@ -550,8 +658,26 @@ class OntologyRepository:
             grouped.setdefault(row["position_id"], []).append(
                 {
                     "signal_id": row["signal_id"],
-                    "signal_props": _load_json(row["signal_props"]),
-                    "edge_props": _load_json(row["edge_props"]),
+                    "signal_props": _load_node_properties(
+                        row,
+                        run_id=run_id,
+                        id_key="signal_id",
+                        type_value="Signal",
+                        label_key="signal_label",
+                        properties_key="signal_props",
+                        schema_name_key="signal_schema_name",
+                        schema_version_key="signal_schema_version",
+                    ),
+                    "edge_props": _load_edge_properties(
+                        row,
+                        run_id=run_id,
+                        source_id_key="position_id",
+                        target_id_key="signal_id",
+                        relation_type_value="exposed_to_signal",
+                        properties_key="edge_props",
+                        schema_name_key="edge_schema_name",
+                        schema_version_key="edge_schema_version",
+                    ),
                 }
             )
         return grouped
@@ -559,10 +685,18 @@ class OntologyRepository:
     def fetch_graph(self) -> dict[str, list[dict[str, Any]]]:
         with self._connect() as conn:
             node_rows = conn.execute(
-                "SELECT id, type, label, properties_json, updated_at FROM nodes ORDER BY type, id"
+                """
+                SELECT id, type, label, properties_json, schema_name, schema_version, updated_at
+                FROM nodes
+                ORDER BY type, id
+                """
             ).fetchall()
             edge_rows = conn.execute(
-                "SELECT source_id, target_id, relation_type, properties_json, updated_at FROM edges ORDER BY relation_type, source_id"
+                """
+                SELECT source_id, target_id, relation_type, properties_json, schema_name, schema_version, updated_at
+                FROM edges
+                ORDER BY relation_type, source_id
+                """
             ).fetchall()
 
         nodes = [
@@ -570,7 +704,9 @@ class OntologyRepository:
                 "id": r["id"],
                 "type": r["type"],
                 "label": r["label"],
-                "properties": _load_json(r["properties_json"]),
+                "properties": _load_node_properties(r),
+                "schema_name": r["schema_name"],
+                "schema_version": int(r["schema_version"] or 0),
                 "updated_at": r["updated_at"],
             }
             for r in node_rows
@@ -580,7 +716,9 @@ class OntologyRepository:
                 "source_id": r["source_id"],
                 "target_id": r["target_id"],
                 "relation_type": r["relation_type"],
-                "properties": _load_json(r["properties_json"]),
+                "properties": _load_edge_properties(r),
+                "schema_name": r["schema_name"],
+                "schema_version": int(r["schema_version"] or 0),
                 "updated_at": r["updated_at"],
             }
             for r in edge_rows
@@ -591,10 +729,19 @@ class OntologyRepository:
         sql = """
         SELECT
           p.id AS position_id,
+          p.label AS position_label,
+          p.schema_name AS position_schema_name,
+          p.schema_version AS position_schema_version,
           p.properties_json AS position_props,
           a.id AS asset_id,
+          a.label AS asset_label,
+          a.schema_name AS asset_schema_name,
+          a.schema_version AS asset_schema_version,
           a.properties_json AS asset_props,
           s.id AS sector_id,
+          s.label AS sector_label,
+          s.schema_name AS sector_schema_name,
+          s.schema_version AS sector_schema_version,
           s.properties_json AS sector_props
         FROM nodes p
         LEFT JOIN edges pa
@@ -618,11 +765,35 @@ class OntologyRepository:
             out.append(
                 {
                     "position_id": row["position_id"],
-                    "position_props": _load_json(row["position_props"]),
+                    "position_props": _load_node_properties(
+                        row,
+                        id_key="position_id",
+                        type_value="Position",
+                        label_key="position_label",
+                        properties_key="position_props",
+                        schema_name_key="position_schema_name",
+                        schema_version_key="position_schema_version",
+                    ),
                     "asset_id": row["asset_id"],
-                    "asset_props": _load_json(row["asset_props"]),
+                    "asset_props": _load_node_properties(
+                        row,
+                        id_key="asset_id",
+                        type_value="Asset",
+                        label_key="asset_label",
+                        properties_key="asset_props",
+                        schema_name_key="asset_schema_name",
+                        schema_version_key="asset_schema_version",
+                    ),
                     "sector_id": row["sector_id"],
-                    "sector_props": _load_json(row["sector_props"]),
+                    "sector_props": _load_node_properties(
+                        row,
+                        id_key="sector_id",
+                        type_value="Sector",
+                        label_key="sector_label",
+                        properties_key="sector_props",
+                        schema_name_key="sector_schema_name",
+                        schema_version_key="sector_schema_version",
+                    ),
                 }
             )
         return out
@@ -631,7 +802,12 @@ class OntologyRepository:
         sql = """
         SELECT
           s.id AS signal_id,
+          s.label AS signal_label,
+          s.schema_name AS signal_schema_name,
+          s.schema_version AS signal_schema_version,
           s.properties_json AS signal_props,
+          ps.schema_name AS edge_schema_name,
+          ps.schema_version AS edge_schema_version,
           ps.properties_json AS edge_props
         FROM edges ps
         JOIN nodes s
@@ -649,11 +825,79 @@ class OntologyRepository:
             out.append(
                 {
                     "signal_id": row["signal_id"],
-                    "signal_props": _load_json(row["signal_props"]),
-                    "edge_props": _load_json(row["edge_props"]),
+                    "signal_props": _load_node_properties(
+                        row,
+                        id_key="signal_id",
+                        type_value="Signal",
+                        label_key="signal_label",
+                        properties_key="signal_props",
+                        schema_name_key="signal_schema_name",
+                        schema_version_key="signal_schema_version",
+                    ),
+                    "edge_props": _load_edge_properties(
+                        row,
+                        source_id_key=None,
+                        target_id_key="signal_id",
+                        relation_type_value="exposed_to_signal",
+                        properties_key="edge_props",
+                        schema_name_key="edge_schema_name",
+                        schema_version_key="edge_schema_version",
+                    ),
                 }
             )
         return out
+
+    def backfill_schema_versions(self, *, dry_run: bool = True) -> dict[str, Any]:
+        """Convert legacy ontology property bags to typed v1 payloads.
+
+        The write mode rewrites each graph scope atomically: current graph rows
+        first, then each snapshot run independently. Evaluation and catalyst IDs
+        may be canonicalized, so dependent edges are rewritten with the node ID
+        map returned by the schema registry.
+        """
+        report: dict[str, Any] = {"dry_run": dry_run, "scopes": [], "warnings": []}
+        with self._connect() as conn:
+            live_nodes = _fetch_node_envelopes(conn, table="nodes")
+            live_edges = _fetch_edge_envelopes(conn, table="edges")
+            live_graph = normalize_graph(live_nodes, live_edges, allow_legacy=True, skip_optional_invalid=True)
+            report["scopes"].append(
+                {
+                    "scope": "live",
+                    "nodes": len(live_graph.nodes),
+                    "edges": len(live_graph.edges),
+                    "rewritten_ids": sum(1 for old, new in live_graph.node_id_map.items() if old != new),
+                }
+            )
+            report["warnings"].extend(live_graph.warnings)
+            if not dry_run:
+                conn.execute("DELETE FROM edges")
+                conn.execute("DELETE FROM nodes")
+                _insert_live_nodes(conn, live_graph.nodes)
+                _insert_live_edges(conn, live_graph.edges)
+
+            run_rows = conn.execute("SELECT run_id FROM ontology_runs ORDER BY run_id").fetchall()
+            for run_row in run_rows:
+                run_id = str(run_row["run_id"])
+                nodes = _fetch_node_envelopes(conn, table="snapshot_nodes", run_id=run_id)
+                edges = _fetch_edge_envelopes(conn, table="snapshot_edges", run_id=run_id)
+                graph = normalize_graph(nodes, edges, run_id=run_id, allow_legacy=True, skip_optional_invalid=True)
+                report["scopes"].append(
+                    {
+                        "scope": "snapshot",
+                        "run_id": run_id,
+                        "nodes": len(graph.nodes),
+                        "edges": len(graph.edges),
+                        "rewritten_ids": sum(1 for old, new in graph.node_id_map.items() if old != new),
+                    }
+                )
+                report["warnings"].extend(graph.warnings)
+                if not dry_run:
+                    conn.execute("DELETE FROM snapshot_edges WHERE run_id = ?", (run_id,))
+                    conn.execute("DELETE FROM snapshot_nodes WHERE run_id = ?", (run_id,))
+                    _insert_snapshot_nodes(conn, run_id, graph.nodes)
+                    _insert_snapshot_edges(conn, run_id, graph.edges)
+
+        return report
 
 
 def _load_json(raw: Any) -> dict[str, Any]:
@@ -676,3 +920,244 @@ def _load_json_list(raw: Any) -> list[str]:
         return [str(v) for v in parsed if isinstance(v, (str, int, float))]
     except Exception:
         return []
+
+
+def _allow_legacy_schemas() -> bool:
+    value = (os.getenv("ONTOLOGY_STRICT_SCHEMAS") or "").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
+
+
+def _ensure_schema_columns(conn: sqlite3.Connection, table: str) -> None:
+    existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if "schema_name" not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_name TEXT NOT NULL DEFAULT 'legacy'")
+    if "schema_version" not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0")
+
+
+def _row_value(row: Any, key: str | None, default: Any = None) -> Any:
+    if key is None:
+        return default
+    try:
+        if hasattr(row, "keys") and key not in row.keys():
+            return default
+        return row[key]
+    except Exception:
+        return default
+
+
+def _load_node_properties(
+    row: Any,
+    *,
+    run_id: str | None = None,
+    id_key: str = "id",
+    type_key: str = "type",
+    type_value: str | None = None,
+    label_key: str = "label",
+    properties_key: str = "properties_json",
+    schema_name_key: str = "schema_name",
+    schema_version_key: str = "schema_version",
+) -> dict[str, Any]:
+    node_id = _row_value(row, id_key)
+    if node_id is None:
+        return {}
+    props = _load_json(_row_value(row, properties_key))
+    node_type = type_value or _row_value(row, type_key)
+    label = _row_value(row, label_key, str(node_id))
+    if not node_type:
+        return props
+    allow_legacy = _allow_legacy_schemas()
+    try:
+        normalized = normalize_node(
+            OntologyNode(
+                id=str(node_id),
+                type=node_type,
+                label=str(label or node_id),
+                properties=props,
+                schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "legacy")),
+                schema_version=int(_row_value(row, schema_version_key, props.get("schema_version") or 0) or 0),
+            ),
+            run_id=run_id,
+            allow_legacy=allow_legacy,
+        )
+        return normalized.properties
+    except Exception:
+        if not allow_legacy:
+            raise
+        return props
+
+
+def _load_edge_properties(
+    row: Any,
+    *,
+    run_id: str | None = None,
+    source_id_key: str | None = "source_id",
+    target_id_key: str | None = "target_id",
+    relation_type_key: str = "relation_type",
+    relation_type_value: str | None = None,
+    properties_key: str = "properties_json",
+    schema_name_key: str = "schema_name",
+    schema_version_key: str = "schema_version",
+) -> dict[str, Any]:
+    props = _load_json(_row_value(row, properties_key))
+    relation_type = relation_type_value or _row_value(row, relation_type_key)
+    if not relation_type:
+        return props
+    allow_legacy = _allow_legacy_schemas()
+    try:
+        normalized = normalize_edge(
+            OntologyEdge(
+                source_id=str(_row_value(row, source_id_key, "unknown")),
+                target_id=str(_row_value(row, target_id_key, "unknown")),
+                relation_type=str(relation_type),
+                properties=props,
+                schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "legacy")),
+                schema_version=int(_row_value(row, schema_version_key, props.get("schema_version") or 0) or 0),
+            ),
+            run_id=run_id,
+            allow_legacy=allow_legacy,
+        )
+        return normalized.properties
+    except Exception:
+        if not allow_legacy:
+            raise
+        return props
+
+
+def _fetch_node_envelopes(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    *,
+    table: str,
+    run_id: str | None = None,
+) -> list[OntologyNode]:
+    where = " WHERE run_id = ?" if run_id is not None else ""
+    rows = conn.execute(
+        f"SELECT id, type, label, properties_json, schema_name, schema_version FROM {table}{where} ORDER BY id",
+        (run_id,) if run_id is not None else (),
+    ).fetchall()
+    return [
+        OntologyNode(
+            id=str(row["id"]),
+            type=row["type"],
+            label=str(row["label"]),
+            properties=_load_json(row["properties_json"]),
+            schema_name=str(row["schema_name"] or "legacy"),
+            schema_version=int(row["schema_version"] or 0),
+        )
+        for row in rows
+    ]
+
+
+def _fetch_edge_envelopes(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    *,
+    table: str,
+    run_id: str | None = None,
+) -> list[OntologyEdge]:
+    where = " WHERE run_id = ?" if run_id is not None else ""
+    rows = conn.execute(
+        f"""
+        SELECT source_id, target_id, relation_type, properties_json, schema_name, schema_version
+        FROM {table}{where}
+        ORDER BY source_id, target_id, relation_type
+        """,
+        (run_id,) if run_id is not None else (),
+    ).fetchall()
+    return [
+        OntologyEdge(
+            source_id=str(row["source_id"]),
+            target_id=str(row["target_id"]),
+            relation_type=str(row["relation_type"]),
+            properties=_load_json(row["properties_json"]),
+            schema_name=str(row["schema_name"] or "legacy"),
+            schema_version=int(row["schema_version"] or 0),
+        )
+        for row in rows
+    ]
+
+
+def _insert_live_nodes(conn: sqlite3.Connection | PostgresCompatConnection, nodes: list[OntologyNode]) -> None:
+    if not nodes:
+        return
+    conn.executemany(
+        """
+        INSERT INTO nodes(id, type, label, properties_json, schema_name, schema_version, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        [
+            (n.id, n.type, n.label, json.dumps(n.properties, default=str), n.schema_name, n.schema_version)
+            for n in nodes
+        ],
+    )
+
+
+def _insert_live_edges(conn: sqlite3.Connection | PostgresCompatConnection, edges: list[OntologyEdge]) -> None:
+    if not edges:
+        return
+    conn.executemany(
+        """
+        INSERT INTO edges(source_id, target_id, relation_type, properties_json, schema_name, schema_version, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        [
+            (
+                e.source_id,
+                e.target_id,
+                e.relation_type,
+                json.dumps(e.properties, default=str),
+                e.schema_name,
+                e.schema_version,
+            )
+            for e in edges
+        ],
+    )
+
+
+def _insert_snapshot_nodes(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    run_id: str,
+    nodes: list[OntologyNode],
+) -> None:
+    if not nodes:
+        return
+    conn.executemany(
+        """
+        INSERT INTO snapshot_nodes(
+            run_id, id, type, label, properties_json, schema_name, schema_version, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        [
+            (run_id, n.id, n.type, n.label, json.dumps(n.properties, default=str), n.schema_name, n.schema_version)
+            for n in nodes
+        ],
+    )
+
+
+def _insert_snapshot_edges(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    run_id: str,
+    edges: list[OntologyEdge],
+) -> None:
+    if not edges:
+        return
+    conn.executemany(
+        """
+        INSERT INTO snapshot_edges(
+            run_id, source_id, target_id, relation_type, properties_json, schema_name, schema_version, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        [
+            (
+                run_id,
+                e.source_id,
+                e.target_id,
+                e.relation_type,
+                json.dumps(e.properties, default=str),
+                e.schema_name,
+                e.schema_version,
+            )
+            for e in edges
+        ],
+    )
