@@ -143,7 +143,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 onClick={onClose}
                 className={({ isActive }) =>
                   cn(
-                    "theme-sidebar-link mb-1 block w-full truncate text-left text-sm",
+                    "theme-sidebar-link mb-1 flex w-full truncate text-left text-sm",
                     isActive && "theme-sidebar-link-active font-medium",
                   )
                 }
