@@ -21,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.gzip import GZipMiddleware
 
+from api.audit import emit_audit_event
 from api.exceptions import AppError, DataFetchError
 from api.logging_config import configure_logging, generate_request_id, request_id_var
 from api.request_limits import MULTIPART_FORM_DATA_OVERHEAD_BYTES, BodySizeLimitMiddleware
@@ -49,7 +50,8 @@ from api.routers import (
     thesis,
 )
 from api.routers import auth as auth_router
-from api.routers.auth import require_auth
+from api.routers.auth import require_actor
+from ontology.policy import PolicyDenied
 
 # Optional routers — gracefully degrade if dependencies fail
 _optional_routers: dict[str, tuple] = {}
@@ -166,6 +168,19 @@ async def _unhandled_error_handler(request: Request, exc: Exception):
     )
 
 
+@app.exception_handler(PolicyDenied)
+async def _policy_denied_handler(request: Request, exc: PolicyDenied):
+    logger.warning("PolicyDenied on %s %s: %s", request.method, request.url.path, exc.reason)
+    emit_audit_event(
+        "permission.denied",
+        "permission",
+        "denied",
+        metadata={"method": request.method, "path": request.url.path},
+        error=exc.reason,
+    )
+    return JSONResponse(status_code=403, content={"detail": exc.reason, "type": "PolicyDenied"})
+
+
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
@@ -258,9 +273,23 @@ async def _require_proxy_secret(request: Request, call_next):
         if _proxy_secret_required():
             proxy_secret = _api_proxy_secret()
             if not proxy_secret:
+                emit_audit_event(
+                    "permission.proxy_secret_denied",
+                    "permission",
+                    "denied",
+                    metadata={"method": request.method, "path": request.url.path, "reason": "proxy_secret_missing"},
+                    error="API proxy secret is required for this auth mode.",
+                )
                 return JSONResponse({"detail": "API proxy secret is required for this auth mode."}, status_code=403)
             provided = request.headers.get("x-api-proxy-secret")
             if provided != proxy_secret:
+                emit_audit_event(
+                    "permission.proxy_secret_denied",
+                    "permission",
+                    "denied",
+                    metadata={"method": request.method, "path": request.url.path, "reason": "invalid_proxy_secret"},
+                    error="Forbidden",
+                )
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
     return await call_next(request)
 
@@ -270,6 +299,13 @@ async def _write_freeze_middleware(request: Request, call_next):
     """Reject mutating API calls during cutover freeze."""
     if _WRITE_FREEZE and request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         if request.url.path not in {"/api/v1/auth/login", "/api/health", "/api/v1/admin/quiescence"}:
+            emit_audit_event(
+                "permission.write_freeze_denied",
+                "permission",
+                "denied",
+                metadata={"method": request.method, "path": request.url.path},
+                error="Writes are frozen for migration cutover.",
+            )
             return JSONResponse({"detail": "Writes are frozen for migration cutover."}, status_code=423)
     return await call_next(request)
 
@@ -291,7 +327,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Router registration — versioned at /api/v1
 # ---------------------------------------------------------------------------
-_auth_dep = [Depends(require_auth)]
+_auth_dep = [Depends(require_actor)]
 _V1 = "/api/v1"
 
 # Core routers (always available)

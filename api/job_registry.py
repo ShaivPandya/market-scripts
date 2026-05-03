@@ -101,7 +101,7 @@ JOB_SPECS: dict[str, JobSpec] = {
     ),
     "ontology": JobSpec(
         job_type="ontology",
-        request_model="api.routers.ontology.OntologyQueryRequest",
+        request_model="api.routers.ontology.OntologyQueryJobRequest",
         compute_func="api.routers.ontology._execute_query",
         cache_key_func="api.routers.ontology._job_cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_ONTOLOGY", "default"),

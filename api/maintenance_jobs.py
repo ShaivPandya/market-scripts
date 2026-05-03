@@ -22,11 +22,13 @@ WARM_TOOLS: list[tuple[str, dict[str, Any]]] = [
 
 def warm_caches(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     from api.agent_tools import execute_tool
+    from ontology.policy import system_actor
 
+    actor = system_actor("maintenance.cache_warm")
     results: list[dict[str, str]] = []
     for tool_name, args in WARM_TOOLS:
         try:
-            execute_tool(tool_name, args)
+            execute_tool(tool_name, args, actor=actor)
             logger.info("cache_warm tool=%s status=ok", tool_name)
             results.append({"tool": tool_name, "status": "ok"})
         except Exception as exc:

@@ -366,6 +366,30 @@ CREATE TABLE IF NOT EXISTS recommendations (
 )
 """
 
+_CREATE_AUDIT_EVENTS = """
+CREATE TABLE IF NOT EXISTS audit_events (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id             TEXT NOT NULL UNIQUE,
+    occurred_at          TEXT NOT NULL,
+    received_at          TEXT NOT NULL,
+    request_id           TEXT,
+    actor_id             TEXT,
+    actor_type           TEXT NOT NULL DEFAULT 'system',
+    parent_actor_id      TEXT,
+    action_name          TEXT NOT NULL,
+    action_category      TEXT NOT NULL,
+    status               TEXT NOT NULL,
+    object_type          TEXT,
+    object_id            TEXT,
+    object_refs_json     TEXT NOT NULL DEFAULT '[]',
+    before_summary_json  TEXT,
+    after_summary_json   TEXT,
+    source_lineage_json  TEXT,
+    metadata_json        TEXT,
+    error                TEXT
+)
+"""
+
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_catalysts_ticker ON catalysts(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_kill_conditions_ticker ON kill_conditions(ticker)",
@@ -396,6 +420,12 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_recommendations_status ON recommendations(status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_approval ON recommendations(approval_status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_outcome ON recommendations(outcome_status)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_request ON audit_events(request_id)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_actor_time ON audit_events(actor_id, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_action_time ON audit_events(action_name, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_object_time ON audit_events(object_type, object_id, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_status_time ON audit_events(status, occurred_at)",
 ]
 
 # ---------------------------------------------------------------------------
@@ -433,6 +463,7 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "action_runs",
                             "action_events",
                             "recommendations",
+                            "audit_events",
                         }
                     )
                 else:
@@ -458,6 +489,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_ACTION_RUNS,
         _CREATE_ACTION_EVENTS,
         _CREATE_RECOMMENDATIONS,
+        _CREATE_AUDIT_EVENTS,
     ]:
         conn.execute(stmt)
     _ensure_sqlite_columns(conn)
@@ -747,6 +779,216 @@ def get_action_events(action_run_id: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Audit Events
+# ---------------------------------------------------------------------------
+
+_AUDIT_JSON_FIELDS = (
+    "object_refs_json",
+    "before_summary_json",
+    "after_summary_json",
+    "source_lineage_json",
+    "metadata_json",
+)
+
+
+def _json_or_none(value: Any | None) -> str | None:
+    return json.dumps(value, default=str) if value is not None else None
+
+
+def _parse_audit_event_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    for field in _AUDIT_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["object_refs"] = d.get("object_refs_json") if isinstance(d.get("object_refs_json"), list) else []
+    d["before_summary"] = d.get("before_summary_json")
+    d["after_summary"] = d.get("after_summary_json")
+    d["source_lineage"] = d.get("source_lineage_json")
+    d["metadata"] = d.get("metadata_json")
+    return d
+
+
+def record_audit_event(
+    *,
+    action_name: str,
+    action_category: str,
+    status: str,
+    event_id: str | None = None,
+    occurred_at: str | None = None,
+    received_at: str | None = None,
+    request_id: str | None = None,
+    actor_id: str | None = None,
+    actor_type: str = "system",
+    parent_actor_id: str | None = None,
+    object_type: str | None = None,
+    object_id: str | None = None,
+    object_refs: list[dict[str, Any]] | None = None,
+    before_summary: Any | None = None,
+    after_summary: Any | None = None,
+    source_lineage: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+) -> dict:
+    """Append one structured audit event."""
+
+    conn = _get_conn()
+    now = _now()
+    refs = object_refs or []
+    first_ref = refs[0] if refs and isinstance(refs[0], dict) else {}
+    resolved_object_type = object_type or first_ref.get("type") or first_ref.get("object_type")
+    resolved_object_id = object_id or first_ref.get("id") or first_ref.get("object_id")
+    event_error = str(error)[:1000] if error is not None else None
+    params = (
+        event_id or uuid.uuid4().hex,
+        occurred_at or now,
+        received_at or now,
+        request_id,
+        actor_id,
+        actor_type or "system",
+        parent_actor_id,
+        action_name,
+        action_category,
+        status,
+        str(resolved_object_type) if resolved_object_type is not None else None,
+        str(resolved_object_id) if resolved_object_id is not None else None,
+        json.dumps(refs, default=str),
+        _json_or_none(before_summary),
+        _json_or_none(after_summary),
+        _json_or_none(source_lineage),
+        _json_or_none(metadata),
+        event_error,
+    )
+    with _lock:
+        cur = conn.execute(
+            """
+            INSERT INTO audit_events (
+                event_id,
+                occurred_at,
+                received_at,
+                request_id,
+                actor_id,
+                actor_type,
+                parent_actor_id,
+                action_name,
+                action_category,
+                status,
+                object_type,
+                object_id,
+                object_refs_json,
+                before_summary_json,
+                after_summary_json,
+                source_lineage_json,
+                metadata_json,
+                error
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            params,
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM audit_events WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_audit_event_row(row)
+
+
+def get_audit_events(
+    *,
+    request_id: str | None = None,
+    actor_id: str | None = None,
+    action_name: str | None = None,
+    action_category: str | None = None,
+    status: str | None = None,
+    object_type: str | None = None,
+    object_id: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    for column, value in (
+        ("request_id", request_id),
+        ("actor_id", actor_id),
+        ("action_name", action_name),
+        ("action_category", action_category),
+        ("status", status),
+        ("object_type", object_type),
+        ("object_id", object_id),
+    ):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    if since is not None:
+        clauses.append("occurred_at >= ?")
+        params.append(since)
+    if until is not None:
+        clauses.append("occurred_at <= ?")
+        params.append(until)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    safe_limit = max(1, min(int(limit), 1000))
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM audit_events{where} ORDER BY occurred_at DESC, id DESC LIMIT ?",
+            (*params, safe_limit),
+        ).fetchall()
+    return [_parse_audit_event_row(row) for row in rows]
+
+
+def prune_audit_events(*, retention_days: int = 365, batch_size: int = 5000) -> int:
+    if retention_days <= 0:
+        return 0
+    conn = _get_conn()
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+    safe_batch = max(1, min(int(batch_size), 10000))
+    deleted = 0
+    while True:
+        with _lock:
+            rows = conn.execute(
+                "SELECT id FROM audit_events WHERE occurred_at < ? ORDER BY occurred_at ASC, id ASC LIMIT ?",
+                (cutoff, safe_batch),
+            ).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            if not ids:
+                conn.commit()
+                break
+            placeholders = ", ".join("?" for _ in ids)
+            cur = conn.execute(f"DELETE FROM audit_events WHERE id IN ({placeholders})", tuple(ids))
+            conn.commit()
+        deleted += int(cur.rowcount or len(ids))
+        if len(ids) < safe_batch:
+            break
+    return deleted
+
+
+def _emit_core_audit(
+    action_name: str,
+    *,
+    status: str,
+    object_refs: list[dict[str, Any]] | None = None,
+    before_summary: Any | None = None,
+    after_summary: Any | None = None,
+    source_lineage: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+) -> None:
+    try:
+        from api.audit import emit_audit_event
+
+        emit_audit_event(
+            action_name,
+            "core_db",
+            status,
+            object_refs=object_refs,
+            before_summary=before_summary,
+            after_summary=after_summary,
+            source_lineage=source_lineage,
+            metadata=metadata,
+            error=error,
+        )
+    except Exception:
+        logger.debug("Failed to emit core audit event action=%s", action_name, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Catalysts
 # ---------------------------------------------------------------------------
 
@@ -925,6 +1167,17 @@ def create_workflow_run(
             (rid, workflow_name, ticker.upper() if ticker else None, "running", now),
         )
         conn.commit()
+    _emit_core_audit(
+        "workflow.run.started",
+        status="started",
+        object_refs=[{"type": "workflow_run", "id": rid}, {"type": "workflow", "id": workflow_name}],
+        after_summary={
+            "workflow_name": workflow_name,
+            "ticker": ticker.upper() if ticker else None,
+            "status": "running",
+        },
+        source_lineage={"run_id": rid},
+    )
     return {"run_id": rid, "workflow_name": workflow_name, "ticker": ticker, "status": "running", "started_at": now}
 
 
@@ -950,6 +1203,23 @@ def complete_workflow_run(
     d = _require_row_dict(row)
     _parse_json_field(d, "artifacts")
     _parse_json_field(d, "tool_sections")
+    sections = d.get("tool_sections") if isinstance(d.get("tool_sections"), list) else []
+    artifact_payload = d.get("artifacts") if isinstance(d.get("artifacts"), (dict, list)) else {}
+    artifact_count = len(artifact_payload) if isinstance(artifact_payload, dict) else len(artifact_payload)
+    _emit_core_audit(
+        "workflow.run.completed",
+        status="succeeded",
+        object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": d.get("workflow_name")}],
+        after_summary={
+            "workflow_name": d.get("workflow_name"),
+            "ticker": d.get("ticker"),
+            "status": "completed",
+            "tool_section_count": len(sections),
+            "artifact_count": artifact_count,
+            "synthesis_hash": _json_hash(synthesis),
+        },
+        source_lineage={"run_id": run_id},
+    )
     return d
 
 
@@ -965,7 +1235,16 @@ def fail_workflow_run(run_id: str, error: str) -> dict:
         row = conn.execute("SELECT * FROM workflow_runs WHERE run_id = ?", (run_id,)).fetchone()
     if not row:
         raise ValueError(f"No workflow run with id {run_id}")
-    return _require_row_dict(row)
+    d = _require_row_dict(row)
+    _emit_core_audit(
+        "workflow.run.failed",
+        status="failed",
+        object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": d.get("workflow_name")}],
+        after_summary={"workflow_name": d.get("workflow_name"), "ticker": d.get("ticker"), "status": "failed"},
+        source_lineage={"run_id": run_id},
+        error=error,
+    )
+    return d
 
 
 def get_workflow_runs(
@@ -992,6 +1271,16 @@ def get_workflow_runs(
     for d in results:
         _parse_json_field(d, "artifacts")
         _parse_json_field(d, "tool_sections")
+    _emit_core_audit(
+        "workflow.runs.read",
+        status="succeeded",
+        after_summary={
+            "workflow_name": workflow_name,
+            "ticker": ticker.upper() if ticker else None,
+            "result_count": len(results),
+            "limit": limit,
+        },
+    )
     return results
 
 
@@ -1004,6 +1293,12 @@ def get_workflow_run(run_id: str) -> dict | None:
     d = _require_row_dict(row)
     _parse_json_field(d, "artifacts")
     _parse_json_field(d, "tool_sections")
+    _emit_core_audit(
+        "workflow.run.read",
+        status="succeeded",
+        object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": d.get("workflow_name")}],
+        after_summary={"run_id": run_id, "workflow_name": d.get("workflow_name"), "status": d.get("status")},
+    )
     return d
 
 
@@ -1057,7 +1352,27 @@ def upsert_report_run(record: dict) -> dict:
         )
         conn.commit()
         row = conn.execute("SELECT * FROM report_runs WHERE report_id = ?", (report_id,)).fetchone()
-    return _parse_report_run_json_fields(_require_row_dict(row))
+    result = _parse_report_run_json_fields(_require_row_dict(row))
+    _emit_core_audit(
+        "report.run.upserted",
+        status=str(result.get("status") or "completed"),
+        object_refs=[{"type": "report_run", "id": report_id}, {"type": "report_type", "id": report_type}],
+        after_summary={
+            "report_id": report_id,
+            "report_type": report_type,
+            "as_of": as_of,
+            "status": result.get("status"),
+            "report_hash": result.get("report_hash"),
+            "input_hash": result.get("input_hash"),
+        },
+        source_lineage={
+            "source": result.get("source"),
+            "source_run_id": result.get("source_run_id"),
+            "source_url": result.get("source_url"),
+        },
+        error=str(result.get("error")) if result.get("error") else None,
+    )
+    return result
 
 
 def get_report_runs(report_type: str | None = None, limit: int = 20) -> list[dict]:
@@ -1999,6 +2314,21 @@ def update_recommendation_approval(
     with _lock:
         updated = _update_recommendation_approval_tx(conn, recommendation_id, approval_id, approval_status)
         conn.commit()
+    _emit_core_audit(
+        "recommendation.approval.updated",
+        status="succeeded",
+        object_refs=[
+            {"type": "recommendation", "id": recommendation_id},
+            {"type": "approval", "id": approval_id} if approval_id is not None else {"type": "approval", "id": "none"},
+        ],
+        after_summary={
+            "recommendation_id": recommendation_id,
+            "approval_id": approval_id,
+            "approval_status": approval_status,
+            "ticker": updated.get("ticker"),
+            "report_id": updated.get("report_id"),
+        },
+    )
     return updated
 
 
@@ -2040,7 +2370,20 @@ def update_recommendation_outcome(
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
-    return _parse_recommendation_json_fields(_require_row_dict(updated))
+    result = _parse_recommendation_json_fields(_require_row_dict(updated))
+    _emit_core_audit(
+        "recommendation.outcome.updated",
+        status="succeeded",
+        object_refs=[{"type": "recommendation", "id": recommendation_id}],
+        after_summary={
+            "recommendation_id": recommendation_id,
+            "outcome_status": outcome_status,
+            "outcome_hash": _json_hash(outcome),
+            "ticker": result.get("ticker"),
+            "report_id": result.get("report_id"),
+        },
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2109,7 +2452,7 @@ def create_pending_approval(
             ),
         )
         conn.commit()
-    return {
+    result = {
         "id": cur.lastrowid,
         "entity_type": entity_type,
         "entity_id": entity_id,
@@ -2131,6 +2474,22 @@ def create_pending_approval(
         "application_completed_at": None,
         "application_error": None,
     }
+    _emit_core_audit(
+        "approval.created",
+        status="pending",
+        object_refs=[{"type": "approval", "id": result["id"]}, {"type": entity_type, "id": entity_id}],
+        after_summary={
+            "approval_id": result["id"],
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "ticker": result["ticker"],
+            "action_id": action_id,
+            "status": "pending",
+            "change_hash": _json_hash(proposed_change),
+        },
+        source_lineage={"source_type": source_type, "source_id": source_id, "action_input_hash": action_input_hash},
+    )
+    return result
 
 
 def create_pending_approval_once(
@@ -2197,7 +2556,18 @@ def get_pending_approvals(
             f"SELECT * FROM pending_approvals{where} ORDER BY created_at DESC",
             params,
         ).fetchall()
-    return [_parse_pending_approval_row(row) for row in rows]
+    results = [_parse_pending_approval_row(row) for row in rows]
+    _emit_core_audit(
+        "approvals.read",
+        status="succeeded",
+        after_summary={
+            "status": status,
+            "ticker": ticker.upper() if ticker else None,
+            "application_status": application_status,
+            "result_count": len(results),
+        },
+    )
+    return results
 
 
 def get_pending_approval(approval_id: int) -> dict | None:
@@ -2206,7 +2576,22 @@ def get_pending_approval(approval_id: int) -> dict | None:
         row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
     if not row:
         return None
-    return _parse_pending_approval_row(row)
+    result = _parse_pending_approval_row(row)
+    _emit_core_audit(
+        "approval.read",
+        status="succeeded",
+        object_refs=[
+            {"type": "approval", "id": approval_id},
+            {"type": result.get("entity_type"), "id": result.get("entity_id")},
+        ],
+        after_summary={
+            "approval_id": approval_id,
+            "status": result.get("status"),
+            "application_status": result.get("application_status"),
+            "entity_type": result.get("entity_type"),
+        },
+    )
+    return result
 
 
 def resolve_approval(
@@ -2237,9 +2622,28 @@ def resolve_approval(
         error = _approval_error_message(exc)
         record_action_event(run_id, "error", message=error)
         complete_action_run(run_id, status="failed", error=error)
+        _emit_core_audit(
+            "approval.resolve.failed",
+            status="failed",
+            object_refs=[{"type": "approval", "id": approval_id}, {"type": "action_run", "id": run_id}],
+            after_summary={"approval_id": approval_id, "requested_status": status},
+            error=error,
+        )
         raise
     record_action_event(run_id, "complete", payload={"status": result.get("status")})
     complete_action_run(run_id, status="succeeded", output_payload=result)
+    _emit_core_audit(
+        "approval.resolved",
+        status=str(result.get("status") or status),
+        object_refs=[{"type": "approval", "id": approval_id}, {"type": "action_run", "id": run_id}],
+        after_summary={
+            "approval_id": approval_id,
+            "status": result.get("status"),
+            "application_status": result.get("application_status"),
+            "entity_type": result.get("entity_type"),
+            "ticker": result.get("ticker"),
+        },
+    )
     return result
 
 
@@ -2302,7 +2706,26 @@ def _resolve_approval_impl(
         raise ApprovalApplicationError(approval_id, error) from exc
 
     _run_approval_post_commit_callbacks(callbacks)
-    return _parse_pending_approval_row(updated)
+    result = _parse_pending_approval_row(updated)
+    _emit_core_audit(
+        "approval.applied",
+        status="succeeded",
+        object_refs=[
+            {"type": "approval", "id": approval_id},
+            {"type": result.get("entity_type"), "id": result.get("entity_id")},
+        ],
+        after_summary={
+            "approval_id": approval_id,
+            "entity_type": result.get("entity_type"),
+            "entity_id": result.get("entity_id"),
+            "ticker": result.get("ticker"),
+            "status": result.get("status"),
+            "application_status": result.get("application_status"),
+            "application_attempts": result.get("application_attempts"),
+        },
+        source_lineage={"source_type": result.get("source_type"), "source_id": result.get("source_id")},
+    )
+    return result
 
 
 def _reject_approval(approval_id: int, resolved_note: str | None) -> dict:
@@ -2333,7 +2756,25 @@ def _reject_approval(approval_id: int, resolved_note: str | None) -> dict:
         except Exception:
             conn.rollback()
             raise
-    return _parse_pending_approval_row(updated)
+    result = _parse_pending_approval_row(updated)
+    _emit_core_audit(
+        "approval.rejected",
+        status="rejected",
+        object_refs=[
+            {"type": "approval", "id": approval_id},
+            {"type": result.get("entity_type"), "id": result.get("entity_id")},
+        ],
+        after_summary={
+            "approval_id": approval_id,
+            "entity_type": result.get("entity_type"),
+            "entity_id": result.get("entity_id"),
+            "ticker": result.get("ticker"),
+            "status": result.get("status"),
+            "application_status": result.get("application_status"),
+        },
+        source_lineage={"source_type": result.get("source_type"), "source_id": result.get("source_id")},
+    )
+    return result
 
 
 def _claim_approval_for_application(
@@ -2365,7 +2806,23 @@ def _claim_approval_for_application(
         )
         updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
         conn.commit()
-    return _parse_pending_approval_row(updated), True
+    result = _parse_pending_approval_row(updated)
+    _emit_core_audit(
+        "approval.apply.started",
+        status="started",
+        object_refs=[
+            {"type": "approval", "id": approval_id},
+            {"type": result.get("entity_type"), "id": result.get("entity_id")},
+        ],
+        after_summary={
+            "approval_id": approval_id,
+            "entity_type": result.get("entity_type"),
+            "application_status": result.get("application_status"),
+            "application_attempts": result.get("application_attempts"),
+        },
+        source_lineage={"source_type": result.get("source_type"), "source_id": result.get("source_id")},
+    )
+    return result, True
 
 
 def _approval_application_is_stale(approval: dict) -> bool:
@@ -2393,6 +2850,13 @@ def _mark_approval_application_failed(approval_id: int, exc: Exception) -> None:
             (now, error, approval_id),
         )
         conn.commit()
+    _emit_core_audit(
+        "approval.apply.failed",
+        status="failed",
+        object_refs=[{"type": "approval", "id": approval_id}],
+        after_summary={"approval_id": approval_id, "application_status": "failed"},
+        error=error,
+    )
 
 
 def _approval_error_message(exc: Exception) -> str:

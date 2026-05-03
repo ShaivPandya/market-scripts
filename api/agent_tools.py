@@ -9,6 +9,7 @@ for different LLM tool-calling APIs.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ from typing import Any
 
 from api.cache import get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
+from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor
 
 logger = logging.getLogger("api.agent")
 
@@ -1996,16 +1998,17 @@ def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def execute_tool(name: str, arguments: dict) -> str:
+def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
     """Run the tool identified by *name* and return a JSON string for the model.
 
     Errors are caught and returned as ``{"error": "..."}`` so the model can
     inform the user instead of crashing the stream.
     """
     started = time.perf_counter()
+    actor = actor or admin_actor(source="agent_tools")
     try:
         safe_args = arguments if isinstance(arguments, dict) else {}
-        result, dispatch_meta = _dispatch(name, safe_args)
+        result, dispatch_meta = _call_dispatch(name, safe_args, actor=actor)
         payload, _compact_meta = _compact_tool_output(name, result)
         meta = dict(dispatch_meta)
         meta.update(
@@ -2020,6 +2023,16 @@ def execute_tool(name: str, arguments: dict) -> str:
             meta["quality_ok"] = bool(quality.get("ok"))
         payload = _attach_meta(payload, meta)
         return _stable_json_dumps(payload)
+    except PolicyDenied as exc:
+        payload = _attach_meta(
+            {"error": "Access denied", "type": "PolicyDenied", "detail": exc.reason},
+            {
+                "tool": name,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "status": "denied",
+            },
+        )
+        return _stable_json_dumps(payload)
     except Exception as exc:
         logger.exception("Tool %s failed", name)
         payload = _attach_meta(
@@ -2031,6 +2044,14 @@ def execute_tool(name: str, arguments: dict) -> str:
             },
         )
         return _stable_json_dumps(payload)
+
+
+def _call_dispatch(name: str, args: dict, *, actor: Actor) -> tuple[object, dict[str, Any]]:
+    params = inspect.signature(_dispatch).parameters.values()
+    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    if supports_actor:
+        return _dispatch(name, args, actor=actor)
+    return _dispatch(name, args)
 
 
 def _to_float(value: Any) -> float | None:
@@ -2171,6 +2192,14 @@ def _model_validate(model_cls, payload: dict[str, Any]):
     return model_cls(**payload)
 
 
+def _call_with_optional_actor(func, *, actor: Actor, **kwargs):
+    params = inspect.signature(func).parameters.values()
+    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    if supports_actor:
+        return func(**kwargs, actor=actor)
+    return func(**kwargs)
+
+
 def _run_registered_job_for_agent(
     job_type: str,
     payload: dict[str, Any],
@@ -2221,8 +2250,9 @@ def _create_pending(
     }
 
 
-def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
+def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object, dict[str, Any]]:
     """Route a tool call to the corresponding data function."""
+    actor = actor or admin_actor(source="agent_tools")
     force_refresh = bool(args.get("_force_refresh"))
     args = {k: v for k, v in args.items() if not str(k).startswith("_")}
 
@@ -2550,6 +2580,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
                 "include_graph": include_graph,
                 "run_id": run_id,
                 "refresh_snapshot": refresh_snapshot,
+                "actor": actor_cache_key(actor),
             },
             sort_keys=True,
             default=str,
@@ -2558,7 +2589,9 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
         def _load():
             service = OntologyQueryService()
-            result = service.query(
+            result = _call_with_optional_actor(
+                service.query,
+                actor=actor,
                 query=ontology_query or None,
                 intent=str(intent) if isinstance(intent, str) else None,
                 filters=filters,
@@ -2633,19 +2666,31 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             svc = OntologyQueryService()
 
             if run_id_before and run_id_after:
-                diff = svc.compare_snapshots(run_id_before, run_id_after)
+                diff = _call_with_optional_actor(
+                    svc.compare_snapshots,
+                    actor=actor,
+                    run_id_a=run_id_before,
+                    run_id_b=run_id_after,
+                )
             else:
                 # Auto-select: get latest two runs
-                runs = svc.list_runs(limit=5)
+                runs = _call_with_optional_actor(svc.list_runs, actor=actor, limit=5)
                 if len(runs) < 2:
                     return {"error": f"Need at least 2 ontology snapshots to compare. Only found {len(runs)}."}, {
                         "cache": "n/a"
                     }
                 rid_after = run_id_after or str(runs[0].get("run_id", ""))
                 rid_before = run_id_before or str(runs[1].get("run_id", ""))
-                diff = svc.compare_snapshots(rid_before, rid_after)
+                diff = _call_with_optional_actor(
+                    svc.compare_snapshots,
+                    actor=actor,
+                    run_id_a=rid_before,
+                    run_id_b=rid_after,
+                )
 
             return serialize_value(diff), {"cache": "n/a"}
+        except PolicyDenied:
+            raise
         except Exception as exc:
             return {"error": f"Ontology diff failed: {exc}"}, {"cache": "n/a"}
 

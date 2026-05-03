@@ -590,6 +590,27 @@ class StateMigrator:
                 "payload_json",
                 "created_at",
             ],
+            "audit_events": [
+                "id",
+                "event_id",
+                "occurred_at",
+                "received_at",
+                "request_id",
+                "actor_id",
+                "actor_type",
+                "parent_actor_id",
+                "action_name",
+                "action_category",
+                "status",
+                "object_type",
+                "object_id",
+                "object_refs_json",
+                "before_summary_json",
+                "after_summary_json",
+                "source_lineage_json",
+                "metadata_json",
+                "error",
+            ],
             "recommendations": [
                 "id",
                 "report_type",
@@ -637,7 +658,15 @@ class StateMigrator:
         if self._source_completed("core", source_hash):
             return SourceResult("core", source_hash, counts)
         for table, columns in tables.items():
-            conflict = ["run_id"] if table == "workflow_runs" else ["report_id"] if table == "report_runs" else ["id"]
+            conflict = (
+                ["run_id"]
+                if table == "workflow_runs"
+                else ["report_id"]
+                if table == "report_runs"
+                else ["event_id"]
+                if table == "audit_events"
+                else ["id"]
+            )
             rows = _sqlite_rows(db, table)
             if table == "pending_approvals":
                 rows = _normalize_pending_approval_rows(rows)

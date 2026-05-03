@@ -79,6 +79,11 @@ def test_execute_portfolio_action_writes_positions_and_audit_events():
     assert "validated" in events
     assert "mutation_completed" in events
     assert "callback_completed" in events
+    audit = core_db.get_audit_events(action_category="domain_action", limit=10)
+    assert [row["action_name"] for row in audit].count("domain.action.started") == 1
+    succeeded = [row for row in audit if row["action_name"] == "domain.action.succeeded"][0]
+    assert succeeded["object_refs"][0] == {"type": "domain_action", "id": "update_portfolio_positions"}
+    assert succeeded["after_summary"]["status"] == "ok"
 
 
 def test_execute_action_denies_agent_direct_mutation_and_audits_failure():
@@ -97,6 +102,9 @@ def test_execute_action_denies_agent_direct_mutation_and_audits_failure():
     runs = core_db.get_action_runs("update_portfolio_positions")
     assert runs[0]["status"] == "failed"
     assert "authorization_denied" in [event["event_type"] for event in core_db.get_action_events(runs[0]["id"])]
+    denied = core_db.get_audit_events(action_name="domain.action.denied")
+    assert denied[0]["status"] == "denied"
+    assert denied[0]["object_refs"][0]["id"] == "update_portfolio_positions"
 
 
 def test_execute_portfolio_action_validation_failure_is_audited():
@@ -131,6 +139,10 @@ def test_action_backed_approval_applies_registered_action():
     assert len(child_runs) == 1
     assert child_runs[0]["status"] == "succeeded"
     assert child_runs[0]["parent_action_run_id"] is not None
+    audit_names = {event["action_name"] for event in core_db.get_audit_events(limit=50)}
+    assert "approval.created" in audit_names
+    assert "approval.apply.started" in audit_names
+    assert "approval.applied" in audit_names
 
 
 def test_thesis_status_action_noops_same_status_without_history_row():

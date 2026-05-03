@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from api.audit import emit_audit_event
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
 from ontology.models import OntologyEdge, OntologyNode
@@ -25,6 +27,42 @@ logger = logging.getLogger("uvicorn.error")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = _REPO_ROOT / "data_cache" / "ontology" / "ontology.sqlite3"
+
+
+def _stable_hash(value: Any) -> str:
+    raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _source_status_counts(source_status: dict[str, Any]) -> dict[str, int]:
+    counts = {"ok": 0, "partial": 0, "error": 0, "other": 0}
+    for state in source_status.values():
+        status = str(state.get("status") if isinstance(state, dict) else "error")
+        if status in counts:
+            counts[status] += 1
+        else:
+            counts["other"] += 1
+    return counts
+
+
+def _emit_ontology_audit(
+    action_name: str,
+    *,
+    status: str,
+    object_refs: list[dict[str, Any]] | None = None,
+    after_summary: dict[str, Any] | None = None,
+    source_lineage: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    emit_audit_event(
+        action_name,
+        "ontology",
+        status,
+        object_refs=object_refs,
+        after_summary=after_summary,
+        source_lineage=source_lineage,
+        error=error,
+    )
 
 
 def _candidate_db_paths() -> list[Path]:
@@ -213,10 +251,21 @@ class OntologyRepository:
                 """,
                 rows,
             )
+        _emit_ontology_audit(
+            "ontology.nodes.upserted",
+            status="succeeded",
+            object_refs=[{"type": "ontology_node", "id": n.id} for n in normalized_nodes[:5]],
+            after_summary={
+                "node_count": len(normalized_nodes),
+                "node_ids": [n.id for n in normalized_nodes[:10]],
+                "node_types": sorted({n.type for n in normalized_nodes}),
+            },
+        )
 
     def upsert_edges(self, edges: list[OntologyEdge]) -> None:
         if not edges:
             return
+        normalized_edges: list[OntologyEdge] = []
         with self._connect() as conn:
             normalized_edges = _normalize_live_edges_for_storage(conn, edges)
             rows = [
@@ -246,12 +295,43 @@ class OntologyRepository:
                     rows,
                 )
             except Exception as exc:
+                _emit_ontology_audit(
+                    "ontology.edges.upserted",
+                    status="failed",
+                    after_summary={"edge_count": len(edges)},
+                    error=str(exc),
+                )
                 _raise_edge_integrity_error(exc)
+        _emit_ontology_audit(
+            "ontology.edges.upserted",
+            status="succeeded",
+            object_refs=[
+                {
+                    "type": "ontology_edge",
+                    "id": f"{e.source_id}:{e.relation_type}:{e.target_id}",
+                }
+                for e in normalized_edges[:5]
+            ],
+            after_summary={
+                "edge_count": len(normalized_edges),
+                "relation_types": sorted({e.relation_type for e in normalized_edges}),
+            },
+        )
 
     def upsert_graph(self, nodes: list[OntologyNode], edges: list[OntologyEdge]) -> None:
         normalized = normalize_graph(nodes, edges, allow_legacy=_allow_legacy_schemas())
+        _emit_ontology_audit(
+            "ontology.graph.upsert.started",
+            status="started",
+            after_summary={"node_count": len(normalized.nodes), "edge_count": len(normalized.edges)},
+        )
         self.upsert_nodes(normalized.nodes)
         self.upsert_edges(normalized.edges)
+        _emit_ontology_audit(
+            "ontology.graph.upserted",
+            status="succeeded",
+            after_summary={"node_count": len(normalized.nodes), "edge_count": len(normalized.edges)},
+        )
 
     def save_snapshot(
         self,
@@ -353,7 +433,44 @@ class OntologyRepository:
                         edge_rows,
                     )
             except Exception as exc:
+                _emit_ontology_audit(
+                    "ontology.snapshot.saved",
+                    status="failed",
+                    object_refs=[{"type": "ontology_run", "id": run_id}],
+                    after_summary={"run_id": run_id, "node_count": len(nodes), "edge_count": len(edges)},
+                    source_lineage={
+                        "run_id": run_id,
+                        "as_of": as_of,
+                        "required_modules": list(required_modules),
+                        "optional_modules": list(optional_modules),
+                        "source_status_counts": _source_status_counts(source_status),
+                        "component_scores_hash": _stable_hash(component_scores),
+                    },
+                    error=str(exc),
+                )
                 _raise_edge_integrity_error(exc)
+        _emit_ontology_audit(
+            "ontology.snapshot.saved",
+            status="succeeded",
+            object_refs=[{"type": "ontology_run", "id": run_id}],
+            after_summary={
+                "run_id": run_id,
+                "as_of": as_of,
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+                "required_module_count": len(required_modules),
+                "optional_module_count": len(optional_modules),
+            },
+            source_lineage={
+                "run_id": run_id,
+                "as_of": as_of,
+                "required_modules": list(required_modules),
+                "optional_modules": list(optional_modules),
+                "source_status_counts": _source_status_counts(source_status),
+                "component_scores_hash": _stable_hash(component_scores),
+                "source_status": source_status,
+            },
+        )
 
     def prune_runs_older_than(self, *, days: int) -> int:
         if days <= 0:
@@ -368,6 +485,11 @@ class OntologyRepository:
                 "DELETE FROM ontology_runs WHERE created_at < datetime('now', ?)",
                 (f"-{days} days",),
             )
+        _emit_ontology_audit(
+            "ontology.runs.pruned",
+            status="succeeded",
+            after_summary={"retention_days": days, "deleted_count": to_delete},
+        )
         return to_delete
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:

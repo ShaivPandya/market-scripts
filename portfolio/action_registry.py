@@ -18,6 +18,8 @@ from pydantic import (
     model_validator,
 )
 
+from api.audit import emit_audit_event, summarize_for_audit
+
 logger = logging.getLogger(__name__)
 PydanticValidationError = ValidationError
 
@@ -432,14 +434,95 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
     )
     run_id = int(run["id"])
     core_db.record_action_event(run_id, "start", payload={"action_id": action.action_id})
+    _emit_domain_audit(
+        action,
+        context,
+        "domain.action.started",
+        "started",
+        action_run_id=run_id,
+        metadata={
+            "action_id": action.action_id,
+            "action_schema_version": action.schema_version,
+            "input_hash": input_hash,
+            "input_summary": summarize_for_audit(raw_input),
+        },
+    )
     return run_id, input_hash
 
 
-def _audit_fail(run_id: int, message: str, *, rolled_back: bool = False) -> None:
+def _action_refs(
+    action: DomainAction, context: ActionContext, action_run_id: int | None = None
+) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = [{"type": "domain_action", "id": action.action_id}]
+    if action_run_id is not None:
+        refs.append({"type": "action_run", "id": action_run_id})
+    if context.approval_id is not None:
+        refs.append({"type": "approval", "id": context.approval_id})
+    if context.source_type and context.source_id:
+        refs.append({"type": context.source_type, "id": context.source_id, "role": "source"})
+    return refs
+
+
+def _source_lineage(context: ActionContext) -> dict[str, Any]:
+    return {
+        "source_type": context.source_type,
+        "source_id": context.source_id,
+        "approval_id": context.approval_id,
+        "parent_action_run_id": context.parent_action_run_id,
+    }
+
+
+def _emit_domain_audit(
+    action: DomainAction,
+    context: ActionContext,
+    action_name: str,
+    status: str,
+    *,
+    action_run_id: int | None = None,
+    before_summary: Any | None = None,
+    after_summary: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+) -> None:
+    emit_audit_event(
+        action_name,
+        "domain_action",
+        status,
+        actor=context,
+        object_refs=_action_refs(action, context, action_run_id),
+        before_summary=before_summary,
+        after_summary=after_summary,
+        source_lineage=_source_lineage(context),
+        metadata=metadata,
+        error=error,
+    )
+
+
+def _audit_fail(
+    run_id: int,
+    message: str,
+    *,
+    rolled_back: bool = False,
+    action: DomainAction | None = None,
+    context: ActionContext | None = None,
+    audit_action_name: str = "domain.action.failed",
+    audit_status: str = "failed",
+) -> None:
     from portfolio import core_db
 
     core_db.record_action_event(run_id, "error", message=message)
     core_db.complete_action_run(run_id, status="rolled_back" if rolled_back else "failed", error=message)
+    if action is not None and context is not None:
+        _emit_domain_audit(
+            action,
+            context,
+            audit_action_name,
+            audit_status,
+            action_run_id=run_id,
+            after_summary={"status": audit_status},
+            metadata={"action_id": action.action_id, "action_schema_version": action.schema_version},
+            error=message,
+        )
 
 
 def execute_action(
@@ -488,15 +571,33 @@ def execute_action(
 
         core_db.record_action_event(run_id, "complete", payload=result.output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=result.output)
+        _emit_domain_audit(
+            action,
+            context,
+            "domain.action.succeeded",
+            "succeeded",
+            action_run_id=run_id,
+            after_summary=result.output,
+            metadata={"action_id": action.action_id, "action_schema_version": action.schema_version},
+        )
         return result
     except ActionError as exc:
         if core_db.get_action_run(run_id).get("status") == "running":
-            _audit_fail(run_id, exc.message)
+            _audit_fail(
+                run_id,
+                exc.message,
+                action=action,
+                context=context,
+                audit_action_name="domain.action.denied"
+                if isinstance(exc, ActionAuthorizationError)
+                else "domain.action.failed",
+                audit_status="denied" if isinstance(exc, ActionAuthorizationError) else "failed",
+            )
         raise
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
         if core_db.get_action_run(run_id).get("status") == "running":
-            _audit_fail(run_id, message)
+            _audit_fail(run_id, message, action=action, context=context)
         raise
 
 
@@ -560,13 +661,36 @@ def propose_action(
         }
         core_db.record_action_event(run_id, "approval_created", payload=output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=output)
+        _emit_domain_audit(
+            proposal_action,
+            context,
+            "domain.action.succeeded",
+            "succeeded",
+            action_run_id=run_id,
+            after_summary=output,
+            metadata={
+                "action_id": action.action_id,
+                "proposal_action_id": proposal_action.action_id,
+                "action_schema_version": action.schema_version,
+                "input_hash": input_hash,
+            },
+        )
         return approval
     except ActionError as exc:
-        _audit_fail(run_id, exc.message)
+        _audit_fail(
+            run_id,
+            exc.message,
+            action=proposal_action,
+            context=context,
+            audit_action_name="domain.action.denied"
+            if isinstance(exc, ActionAuthorizationError)
+            else "domain.action.failed",
+            audit_status="denied" if isinstance(exc, ActionAuthorizationError) else "failed",
+        )
         raise
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
-        _audit_fail(run_id, message)
+        _audit_fail(run_id, message, action=proposal_action, context=context)
         raise
 
 

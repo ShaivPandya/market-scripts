@@ -12,7 +12,7 @@ Dependency:
 
 import os
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -20,6 +20,9 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+from api.audit import emit_audit_event
+from ontology.policy import Actor, admin_actor
 
 _limiter = Limiter(key_func=get_remote_address)
 
@@ -126,6 +129,14 @@ def require_auth(access_token: str | None = Cookie(default=None, alias="__sessio
         )
 
 
+def require_actor(sub: str = Depends(require_auth)) -> Actor:
+    """Return the typed actor context for the authenticated v1 user."""
+    return admin_actor(sub, source="api")
+
+
+ActorDep = Annotated[Actor, Depends(require_actor)]
+
+
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 
@@ -140,6 +151,14 @@ class LoginRequest(BaseModel):
 @_limiter.limit(_LOGIN_RATE_LIMIT)
 def login(request: Request, body: LoginRequest, response: Response):
     if not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
+        emit_audit_event(
+            "auth.login",
+            "permission",
+            "failed",
+            after_summary={"auth_mode": _auth_mode(), "reason": "incorrect_password"},
+            metadata={"path": str(request.url.path)},
+            error="Incorrect password",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect password",
@@ -153,15 +172,29 @@ def login(request: Request, body: LoginRequest, response: Response):
         secure=os.environ.get("ENVIRONMENT", "development").strip().lower() == "production",
         path="/",
     )
+    emit_audit_event(
+        "auth.login",
+        "permission",
+        "succeeded",
+        actor=admin_actor("admin", source="api"),
+        after_summary={"auth_mode": _auth_mode()},
+        metadata={"path": str(request.url.path)},
+    )
     return {"detail": "ok"}
 
 
 @router.post("/auth/logout")
 def logout(response: Response):
     response.delete_cookie(key="__session", path="/", samesite="strict")
+    emit_audit_event(
+        "auth.logout",
+        "permission",
+        "succeeded",
+        after_summary={"auth_mode": _auth_mode()},
+    )
     return {"detail": "ok"}
 
 
 @router.get("/auth/me")
-def me(sub: str = Depends(require_auth)):
-    return {"username": sub}
+def me(actor: ActorDep):
+    return {"username": actor.actor_id}
