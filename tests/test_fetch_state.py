@@ -54,7 +54,11 @@ def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch):
         ("GET", "https://example.test/api/v1/portfolio-positions"),
     ]
     assert session.calls[0][2]["json"] == {"password": "report-password"}
-    assert session.calls[0][2]["headers"] == {"X-Api-Proxy-Secret": "proxy-secret"}
+    assert session.calls[0][2]["headers"] == {
+        "X-Api-Proxy-Secret": "proxy-secret",
+        "X-Request-Schema-Name": "post:/api/v1/auth/login",
+        "X-Request-Schema-Version": "1",
+    }
     assert session.calls[1][2]["params"] == {"include_hedges": "true"}
     assert saved == [
         ([{"ticker": "MU", "role": "position"}], "position"),

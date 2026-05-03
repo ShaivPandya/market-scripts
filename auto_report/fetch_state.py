@@ -29,6 +29,13 @@ def _build_headers() -> dict[str, str]:
     return headers
 
 
+def _schema_headers(schema_name: str) -> dict[str, str]:
+    return {
+        "X-Request-Schema-Name": schema_name,
+        "X-Request-Schema-Version": "1",
+    }
+
+
 def _login_if_needed(session: requests.Session, api_url: str, headers: dict[str, str]) -> None:
     password = (os.getenv("TALISMAN_API_PASSWORD") or "").strip()
     if not password:
@@ -37,7 +44,7 @@ def _login_if_needed(session: requests.Session, api_url: str, headers: dict[str,
     response = session.post(
         f"{api_url}/api/v1/auth/login",
         json={"password": password},
-        headers=headers,
+        headers={**headers, **_schema_headers("post:/api/v1/auth/login")},
         timeout=30,
     )
     response.raise_for_status()
