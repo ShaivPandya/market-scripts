@@ -4,6 +4,8 @@ import { Calendar, FileText, Loader2, RefreshCw, Search, Trash2, Upload } from "
 
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
+import { PageHeader } from "@/components/shared/PageHeader"
+import { SurfaceCard } from "@/components/shared/SurfaceCard"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
     deletePortfolioNewsDigest,
@@ -70,8 +72,8 @@ export function PortfolioNews() {
         60 * 1000,
     )
 
-    const items = listQuery.data?.items ?? []
-    const stories = listQuery.data?.stories ?? []
+    const items = useMemo(() => listQuery.data?.items ?? [], [listQuery.data?.items])
+    const stories = useMemo(() => listQuery.data?.stories ?? [], [listQuery.data?.stories])
 
     useEffect(() => {
         if (!items.length) {
@@ -147,43 +149,42 @@ export function PortfolioNews() {
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                    <h1 className="text-2xl font-semibold tracking-tight text-gray-900">News Digests</h1>
-                    <p className="mt-0.5 text-sm text-gray-400">
-                        {listQuery.data
-                            ? `${listQuery.data.counts.digests} digests, ${listQuery.data.counts.stories} stories`
-                            : "Loading digest library"}
-                    </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                    <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".md,text/markdown,text/x-markdown"
-                        className="hidden"
-                        onChange={event => handleUpload(event.currentTarget.files?.[0])}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isUploading}
-                        className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                        {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                        Upload
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => listQuery.refetch()}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-700"
-                        title="Refresh"
-                    >
-                        <RefreshCw className="h-4 w-4" />
-                    </button>
-                </div>
-            </div>
+            <PageHeader
+                title="News Digests"
+                subtitle={
+                    listQuery.data
+                        ? `${listQuery.data.counts.digests} digests, ${listQuery.data.counts.stories} stories`
+                        : "Loading digest library"
+                }
+                actions={(
+                    <>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".md,text/markdown,text/x-markdown"
+                            className="hidden"
+                            onChange={event => handleUpload(event.currentTarget.files?.[0])}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploading}
+                            className="theme-button-base theme-button-secondary px-4"
+                        >
+                            {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                            Upload
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => listQuery.refetch()}
+                            className="theme-icon-button border border-app bg-card"
+                            title="Refresh"
+                        >
+                            <RefreshCw className="h-4 w-4" />
+                        </button>
+                    </>
+                )}
+            />
 
             {uploadError && <ErrorMessage message={uploadError} />}
             {listQuery.isLoading && <LoadingSpinner message="Loading news digests..." />}
@@ -193,19 +194,19 @@ export function PortfolioNews() {
                 <div className="grid grid-cols-1 gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
                     <aside className="space-y-4">
                         <div className="relative">
-                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
                             <input
                                 value={search}
                                 onChange={event => setSearch(event.target.value)}
                                 placeholder="Search stories"
-                                className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-gray-400"
+                                className="theme-input w-full py-2 pl-9 pr-3 text-sm"
                             />
                         </div>
 
-                        <div className="rounded-lg border border-gray-200 bg-white">
-                            <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
-                                <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">Digests</span>
-                                <span className="text-xs tabular-nums text-gray-400">{visibleDigests.length}</span>
+                        <SurfaceCard className="overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-app px-3 py-3">
+                                <span className="label-text">Digests</span>
+                                <span className="text-xs tabular-nums text-subtle">{visibleDigests.length}</span>
                             </div>
                             <div className="max-h-[48vh] overflow-y-auto p-2">
                                 {visibleDigests.length ? (
@@ -216,19 +217,19 @@ export function PortfolioNews() {
                                                 type="button"
                                                 onClick={() => setSelectedId(digest.id)}
                                                 className={cn(
-                                                    "w-full rounded-lg border px-3 py-3 text-left transition-colors",
+                                                    "w-full rounded-[1rem] border px-3 py-3 text-left transition-colors",
                                                     selectedId === digest.id
-                                                        ? "border-gray-900 bg-gray-50"
-                                                        : "border-gray-100 bg-white hover:border-gray-200 hover:bg-gray-50",
+                                                        ? "border-[hsl(var(--accent))] bg-selected"
+                                                        : "border-app bg-card hover:bg-hover",
                                                 )}
                                             >
                                                 <div className="flex items-start gap-2">
-                                                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+                                                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-subtle" />
                                                     <div className="min-w-0 flex-1">
-                                                        <div className="line-clamp-2 text-sm font-semibold leading-5 text-gray-900">
+                                                        <div className="line-clamp-2 text-sm font-semibold leading-5 text-app">
                                                             {digest.title}
                                                         </div>
-                                                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-400">
+                                                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-subtle">
                                                             <span className="inline-flex items-center gap-1">
                                                                 <Calendar className="h-3.5 w-3.5" />
                                                                 {formatDate(digest.generated_date)}
@@ -241,16 +242,16 @@ export function PortfolioNews() {
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="px-3 py-8 text-center text-sm text-gray-400">No digests</div>
+                                    <div className="px-3 py-8 text-center text-sm text-subtle">No digests</div>
                                 )}
                             </div>
-                        </div>
+                        </SurfaceCard>
 
                         {normalizedSearch && (
-                            <div className="rounded-lg border border-gray-200 bg-white">
-                                <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
-                                    <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">Stories</span>
-                                    <span className="text-xs tabular-nums text-gray-400">{filteredStories.length}</span>
+                            <SurfaceCard className="overflow-hidden">
+                                <div className="flex items-center justify-between border-b border-app px-3 py-3">
+                                    <span className="label-text">Stories</span>
+                                    <span className="text-xs tabular-nums text-subtle">{filteredStories.length}</span>
                                 </div>
                                 <div className="max-h-[42vh] overflow-y-auto p-2">
                                     {filteredStories.length ? (
@@ -260,29 +261,29 @@ export function PortfolioNews() {
                                                     key={`${story.digest_id}-${story.id}`}
                                                     type="button"
                                                     onClick={() => story.digest_id && setSelectedId(story.digest_id)}
-                                                    className="w-full rounded-lg border border-gray-100 bg-white px-3 py-2 text-left transition-colors hover:border-gray-200 hover:bg-gray-50"
+                                                    className="w-full rounded-[1rem] border border-app bg-card px-3 py-2 text-left transition-colors hover:bg-hover"
                                                 >
-                                                    <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                                                    <div className="text-[10px] font-semibold uppercase tracking-widest text-subtle">
                                                         {story.section}
                                                     </div>
-                                                    <div className="mt-1 text-sm font-medium leading-5 text-gray-900">
+                                                    <div className="mt-1 text-sm font-medium leading-5 text-app">
                                                         {story.headline}
                                                     </div>
                                                     {story.digest_title && (
-                                                        <div className="mt-1 text-xs text-gray-400">{story.digest_title}</div>
+                                                        <div className="mt-1 text-xs text-subtle">{story.digest_title}</div>
                                                     )}
                                                 </button>
                                             ))}
                                         </div>
                                     ) : (
-                                        <div className="px-3 py-8 text-center text-sm text-gray-400">No matching stories</div>
+                                        <div className="px-3 py-8 text-center text-sm text-subtle">No matching stories</div>
                                     )}
                                 </div>
-                            </div>
+                            </SurfaceCard>
                         )}
                     </aside>
 
-                    <main className="min-w-0 rounded-lg border border-gray-200 bg-white">
+                    <main className="theme-surface min-w-0 overflow-hidden">
                         {selectedId && detailQuery.isLoading && (
                             <div className="p-8">
                                 <LoadingSpinner message="Loading digest..." />
@@ -294,14 +295,14 @@ export function PortfolioNews() {
                             </div>
                         )}
                         {!selectedId && (
-                            <div className="px-6 py-16 text-center text-sm text-gray-400">No digest selected</div>
+                            <div className="px-6 py-16 text-center text-sm text-subtle">No digest selected</div>
                         )}
                         {selectedDetail && (
                             <div>
-                                <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
+                                <div className="flex items-start justify-between gap-4 border-b border-app px-5 py-4">
                                     <div className="min-w-0">
-                                        <h2 className="text-lg font-semibold text-gray-900">{selectedDetail.title}</h2>
-                                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
+                                        <h2 className="text-lg font-semibold tracking-[-0.02em] text-app">{selectedDetail.title}</h2>
+                                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
                                             <span>{formatDate(selectedDetail.generated_date)}</span>
                                             <span>{selectedDetail.story_count} stories</span>
                                             <span>Updated {formatDate(selectedDetail.updated_at, true)}</span>
@@ -312,7 +313,7 @@ export function PortfolioNews() {
                                             type="button"
                                             onClick={() => handleDelete(selectedDigestForDelete)}
                                             disabled={deletingId === selectedDigestForDelete.id}
-                                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                            className="theme-icon-button h-10 w-10 shrink-0 border border-app bg-card text-subtle hover:text-negative disabled:cursor-not-allowed disabled:opacity-60"
                                             title="Delete"
                                         >
                                             {deletingId === selectedDigestForDelete.id ? (
@@ -324,7 +325,7 @@ export function PortfolioNews() {
                                     )}
                                 </div>
                                 <div className="max-h-[72vh] overflow-y-auto px-5 py-5">
-                                    <div className="prose prose-sm max-w-none">
+                                    <div className="max-w-3xl">
                                         <MarkdownRenderer content={selectedDetail.content} />
                                     </div>
                                 </div>

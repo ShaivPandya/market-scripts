@@ -78,15 +78,50 @@ class _Repo:
             self._row("NVDA", 0.81, "high", "Information Technology"),
         ]
 
+    def query_snapshot_positions_page(self, run_id: str, *, filters=None, page=1, page_size=25, schema_mode="upgraded"):
+        rows = self.fetch_snapshot_position_asset_sector_rows(run_id, schema_mode=schema_mode)
+        start = max(0, (page - 1) * page_size)
+        end = start + page_size
+        return {
+            "rows": rows[start:end],
+            "total_results": len(rows),
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def aggregate_snapshot_positions(self, run_id: str, *, filters=None):
+        rows = self.fetch_snapshot_position_asset_sector_rows(run_id)
+        scores = [float(row["position_props"].get("risk_score") or 0.0) for row in rows]
+        return {
+            "position_count": len(rows),
+            "risk_buckets": {
+                "high": sum(1 for score in scores if score >= 0.75),
+                "medium": sum(1 for score in scores if 0.5 <= score < 0.75),
+                "low": sum(1 for score in scores if score < 0.5),
+            },
+            "asset_exposure_counts": {"equity": len(rows)},
+            "average_risk_score": round(sum(scores) / len(scores), 4) if scores else 0.0,
+        }
+
     def fetch_snapshot_all_position_signal_evidence(self, run_id: str, *, schema_mode="upgraded"):
         return {
             "position:MU": [self._evidence("MU")],
             "position:NVDA": [self._evidence("NVDA")],
         }
 
+    def fetch_snapshot_position_signal_evidence_batch(self, run_id: str, position_ids, *, schema_mode="upgraded"):
+        grouped = self.fetch_snapshot_all_position_signal_evidence(run_id, schema_mode=schema_mode)
+        return {position_id: list(grouped.get(position_id, [])) for position_id in position_ids}
+
     def fetch_snapshot_position_signal_evidence(self, run_id: str, position_id: str, *, schema_mode="upgraded"):
         ticker = position_id.split(":")[-1] if ":" in position_id else "MU"
         return [self._evidence(ticker)]
+
+    def fetch_snapshot_position_thesis_context_batch(self, run_id: str, position_ids, *, schema_mode="upgraded"):
+        return {position_id: {} for position_id in position_ids}
+
+    def snapshot_has_positions(self, run_id: str) -> bool:
+        return True
 
     def fetch_snapshot_graph(self, run_id: str, *, schema_mode="upgraded"):
         return {
@@ -176,7 +211,8 @@ def test_policy_denies_object_and_recomputes_aggregate(monkeypatch):
     resp = _query(_Policy(denied_objects={"position:NVDA"}), monkeypatch)
 
     assert [row["ticker"] for row in resp["results"]] == ["MU"]
-    assert resp["aggregate"]["position_count"] == 1
+    assert resp["aggregate"]["exact"] is False
+    assert resp["_meta"]["pagination"]["exact_total"] is False
     assert resp["_meta"]["authorization"]["filtered_objects"] == 1
 
 
@@ -245,7 +281,12 @@ def test_policy_filters_graph_nodes_and_connected_edges(monkeypatch):
     )
 
     graph = resp["graph"]
-    assert {node["id"] for node in graph["nodes"]} == {"position:MU", "asset:MU"}
+    assert {node["id"] for node in graph["nodes"]} == {
+        "position:MU",
+        "asset:MU",
+        "sector:information_technology",
+        "signal:MU",
+    }
     assert all(edge["source_id"] != "position:NVDA" for edge in graph["edges"])
 
 

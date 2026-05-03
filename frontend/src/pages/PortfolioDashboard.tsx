@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react"
-import { Link } from "react-router-dom"
 import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { fetchPortfolioAllTimeframes } from "@/lib/api"
@@ -8,6 +7,9 @@ import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SegmentedControl } from "@/components/shared/FormControls"
 import { PortfolioEditor } from "@/components/PortfolioEditor"
+import { Notice } from "@/components/shared/Notice"
+import { PageHeader } from "@/components/shared/PageHeader"
+import { ChartTile } from "@/components/shared/ChartTile"
 
 const TIMEFRAMES = ["This Week", "Daily", "Weekly", "Monthly"] as const
 type Timeframe = typeof TIMEFRAMES[number]
@@ -30,8 +32,14 @@ export function PortfolioDashboard() {
     fetchPortfolioAllTimeframes,
   )
   const timeframeData = data?.timeframes?.[timeframe]
-  const positions: Record<string, DataPoint[]> = timeframeData?.positions ?? {}
-  const order: string[] = timeframeData?.position_order ?? Object.keys(positions)
+  const positions: Record<string, DataPoint[]> = useMemo(
+    () => timeframeData?.positions ?? {},
+    [timeframeData?.positions],
+  )
+  const order: string[] = useMemo(
+    () => timeframeData?.position_order ?? Object.keys(positions),
+    [positions, timeframeData?.position_order],
+  )
   const warning = timeframeData?.warning ?? data?.warning
   const hasSeries = order.some(ticker => {
     const series = positions[ticker]
@@ -64,19 +72,22 @@ export function PortfolioDashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Dashboard</h1>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setEditOpen(true)}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            Edit Portfolio
-          </button>
-          <RefreshButton queryKeys={[["portfolio", "all_timeframes"], ["thesis", "status"]]} />
-        </div>
-      </div>
+      <PageHeader
+        title="Portfolio Dashboard"
+        subtitle="Portfolio positions organized as an adaptive chart grid with quick access to each dossier."
+        actions={(
+          <>
+            <button
+              type="button"
+              onClick={() => setEditOpen(true)}
+              className="theme-button-base theme-button-secondary px-4"
+            >
+              Edit Portfolio
+            </button>
+            <RefreshButton queryKeys={[["portfolio", "all_timeframes"], ["thesis", "status"]]} />
+          </>
+        )}
+      />
 
       <div className="mb-6">
         <SegmentedControl
@@ -91,14 +102,10 @@ export function PortfolioDashboard() {
         <ErrorMessage message={String(error) || "Failed to load"} />
       )}
       {!isLoading && !error && warning && (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {warning}
-        </div>
+        <Notice tone="warning" className="mb-4">{warning}</Notice>
       )}
       {!isLoading && !error && timeframeData && !hasSeries && (
-        <div className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
-          No price series available.
-        </div>
+        <Notice tone="info">No price series available.</Notice>
       )}
 
       {timeframeData && !isLoading && hasSeries && (
@@ -108,19 +115,18 @@ export function PortfolioDashboard() {
             if (!series || series.length === 0) return null
             const ret = calcReturn(series)
             return (
-              <div key={ticker} className="rounded-xl border bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <Link to={`/dossier/${ticker}`} state={{ from: "portfolio" }} className="text-sm font-semibold text-app hover:underline">{ticker}</Link>
-                  </div>
-                  {ret != null && (
-                    <span className={`text-xs font-medium ${ret >= 0 ? "text-green-600" : "text-red-600"}`}>
-                      {ret >= 0 ? "+" : ""}{ret.toFixed(2)}%
-                    </span>
-                  )}
-                </div>
+              <ChartTile
+                key={ticker}
+                title={ticker}
+                href={`/dossier/${ticker}`}
+                meta={ret != null ? (
+                  <span className={`text-xs font-semibold ${ret >= 0 ? "text-positive" : "text-negative"}`}>
+                    {ret >= 0 ? "+" : ""}{ret.toFixed(2)}%
+                  </span>
+                ) : undefined}
+              >
                 <TimeSeriesChart data={series} height={160} timeframe={timeframe} />
-              </div>
+              </ChartTile>
             )
           })}
         </div>

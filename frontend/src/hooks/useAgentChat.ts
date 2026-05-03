@@ -137,31 +137,6 @@ function loadState(): AgentChatState {
   return { messages: [], isStreaming: false, error: null, sessionId: null }
 }
 
-async function saveSessionToServer(messages: AgentMessage[], sessionId: string | null): Promise<string | null> {
-  if (messages.length === 0) return null
-  try {
-    const body: Record<string, unknown> = {
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content,
-        timestamp: m.timestamp,
-      })),
-    }
-    if (sessionId) body.session_id = sessionId
-    const resp = await fetch(`${BASE_URL}/memory/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...schemaHeaders("POST", `${BASE_URL}/memory/sessions`) },
-      credentials: "include",
-      body: JSON.stringify(body),
-    })
-    if (!resp.ok) return null
-    const data = await resp.json()
-    return data.session_id ?? null
-  } catch {
-    return null
-  }
-}
-
 async function summarizeSession(sessionId: string): Promise<void> {
   try {
     await fetch(`${BASE_URL}/memory/sessions/${sessionId}/summarize`, {

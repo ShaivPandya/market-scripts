@@ -5,7 +5,7 @@ from inspect import Parameter, signature
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.audit import emit_audit_event
@@ -28,11 +28,19 @@ ActorDep = Annotated[Actor, Depends(require_actor)]
 
 
 class OntologyFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tickers: list[str] | None = None
     sectors: list[str] | None = None
     assets: list[str] | None = None
-    max_results: int | None = None
     min_risk_score: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_max_results(cls, value: Any):
+        if isinstance(value, dict) and "max_results" in value:
+            raise ValueError("filters.max_results has been removed; use top-level page_size instead")
+        return value
 
 
 class OntologyQueryRequest(BaseModel):
@@ -42,6 +50,8 @@ class OntologyQueryRequest(BaseModel):
             "portfolio_risk_exposure",
             "positions_in_deteriorating_macro",
             "entity_context",
+            "thesis_review",
+            "temporal_comparison",
         ]
         | None
     ) = None
@@ -50,6 +60,8 @@ class OntologyQueryRequest(BaseModel):
     include_graph: bool = False
     run_id: str | None = None
     refresh_snapshot: bool = False
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=25, ge=1, le=100)
     schema_mode: Literal["stored", "upgraded"]
 
 
@@ -83,6 +95,8 @@ def _execute_query(req: OntologyQueryJobRequest | OntologyQueryRequest) -> dict[
             include_graph=req.include_graph,
             run_id=req.run_id,
             refresh_snapshot=req.refresh_snapshot,
+            page=req.page,
+            page_size=req.page_size,
             schema_mode=req.schema_mode,
         )
     except OntologyRunNotFoundError as exc:

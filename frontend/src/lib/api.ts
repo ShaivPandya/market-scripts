@@ -299,18 +299,24 @@ export const fetchVixTermStructure = () =>
 
 export type OntologyQueryBody = {
   query?: string
-  intent?: "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
+  intent?:
+    | "portfolio_risk_exposure"
+    | "positions_in_deteriorating_macro"
+    | "entity_context"
+    | "thesis_review"
+    | "temporal_comparison"
   filters?: {
     tickers?: string[]
     sectors?: string[]
     assets?: string[]
-    max_results?: number
     min_risk_score?: number
   }
   timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
   include_graph?: boolean
   run_id?: string
   refresh_snapshot?: boolean
+  page?: number
+  page_size?: number
   schema_mode?: "stored" | "upgraded"
 }
 
@@ -349,6 +355,34 @@ export interface OntologyResponse {
     confidence?: number
     position_count?: number
     average_risk_score?: number
+    exact?: boolean
+    risk_buckets?: {
+      high?: number
+      medium?: number
+      low?: number
+    }
+    [key: string]: unknown
+  }
+  _meta?: {
+    pagination?: {
+      page?: number
+      page_size?: number
+      returned_results?: number
+      total_results?: number
+      total_pages?: number
+      has_prev?: boolean
+      has_next?: boolean
+      sort?: string
+      exact_total?: boolean
+    }
+    graph?: {
+      scope?: string
+      node_count?: number
+      edge_count?: number
+      truncated?: boolean
+      max_nodes?: number
+      max_edges?: number
+    }
     [key: string]: unknown
   }
   [key: string]: unknown

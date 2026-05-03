@@ -150,7 +150,12 @@ export function Workspace() {
   const [refreshError, setRefreshError] = useState<string | null>(null)
 
   function toggleExpanded(key: string) {
-    setExpandedIds(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   async function handleApproval(id: number, action: "approve" | "reject") {

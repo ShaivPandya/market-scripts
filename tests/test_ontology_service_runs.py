@@ -75,6 +75,35 @@ class _FakeRepo:
     def fetch_snapshot_position_asset_sector_rows(self, run_id: str, *, schema_mode="upgraded"):
         return self.rows_by_run.get(run_id, [])
 
+    def query_snapshot_positions_page(self, run_id: str, *, filters=None, page=1, page_size=25, schema_mode="upgraded"):
+        rows = list(self.rows_by_run.get(run_id, []))
+        start = max(0, (page - 1) * page_size)
+        end = start + page_size
+        return {
+            "rows": rows[start:end],
+            "total_results": len(rows),
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def aggregate_snapshot_positions(self, run_id: str, *, filters=None):
+        rows = self.rows_by_run.get(run_id, [])
+        scores = [float(row["position_props"].get("risk_score") or 0.0) for row in rows]
+        assets: dict[str, int] = {}
+        for row in rows:
+            asset = str(row["position_props"].get("asset") or "unknown")
+            assets[asset] = assets.get(asset, 0) + 1
+        return {
+            "position_count": len(rows),
+            "risk_buckets": {
+                "high": sum(1 for score in scores if score >= 0.75),
+                "medium": sum(1 for score in scores if 0.5 <= score < 0.75),
+                "low": sum(1 for score in scores if score < 0.5),
+            },
+            "asset_exposure_counts": assets,
+            "average_risk_score": round(sum(scores) / len(scores), 4) if scores else 0.0,
+        }
+
     def fetch_snapshot_position_signal_evidence(self, run_id: str, position_id: str, *, schema_mode="upgraded"):
         if run_id == "run-historical":
             return [{"signal_id": "signal:test", "edge_props": {"name": "signal", "contribution": 0.5}}]
@@ -85,6 +114,16 @@ class _FakeRepo:
         return {
             row["position_id"]: list(evidence) for row in (self.rows_by_run.get(run_id) or []) if row.get("position_id")
         }
+
+    def fetch_snapshot_position_signal_evidence_batch(self, run_id: str, position_ids, *, schema_mode="upgraded"):
+        grouped = self.fetch_snapshot_all_position_signal_evidence(run_id, schema_mode=schema_mode)
+        return {position_id: list(grouped.get(position_id, [])) for position_id in position_ids}
+
+    def fetch_snapshot_position_thesis_context_batch(self, run_id: str, position_ids, *, schema_mode="upgraded"):
+        return {position_id: {} for position_id in position_ids}
+
+    def snapshot_has_positions(self, run_id: str) -> bool:
+        return bool(self.rows_by_run.get(run_id))
 
     def fetch_snapshot_graph(self, run_id: str, *, schema_mode="upgraded"):
         return {"nodes": [{"id": "position:MU"}], "edges": []}
@@ -378,3 +417,244 @@ def test_query_with_unknown_run_id_raises():
             include_graph=False,
             run_id="missing",
         )
+
+
+def test_query_uses_bounded_batches_for_graph_reads(monkeypatch):
+    class _BoundedRepo(_FakeRepo):
+        def __init__(self):
+            super().__init__()
+            self.rows_by_run["run-historical"] = [
+                {
+                    "position_id": "position:NVDA",
+                    "position_label": "NVDA",
+                    "position_props": {
+                        "ticker": "NVDA",
+                        "asset": "equity",
+                        "direction": "long",
+                        "risk_score": 0.81,
+                        "risk_level": "high",
+                        "ontology_run_id": "run-historical",
+                    },
+                    "asset_id": "asset:NVDA",
+                    "asset_label": "NVDA",
+                    "asset_props": {"ticker": "NVDA", "asset": "equity"},
+                    "sector_id": "sector:information_technology",
+                    "sector_label": "Information Technology",
+                    "sector_props": {"name": "Information Technology"},
+                    "position_asset_edge_props": {"ontology_run_id": "run-historical"},
+                    "asset_sector_edge_props": {"ontology_run_id": "run-historical", "source": "test"},
+                },
+                {
+                    "position_id": "position:MU",
+                    "position_label": "MU",
+                    "position_props": {
+                        "ticker": "MU",
+                        "asset": "equity",
+                        "direction": "long",
+                        "risk_score": 0.72,
+                        "risk_level": "medium",
+                        "ontology_run_id": "run-historical",
+                    },
+                    "asset_id": "asset:MU",
+                    "asset_label": "MU",
+                    "asset_props": {"ticker": "MU", "asset": "equity"},
+                    "sector_id": "sector:information_technology",
+                    "sector_label": "Information Technology",
+                    "sector_props": {"name": "Information Technology"},
+                    "position_asset_edge_props": {"ontology_run_id": "run-historical"},
+                    "asset_sector_edge_props": {"ontology_run_id": "run-historical", "source": "test"},
+                },
+            ]
+
+        def fetch_snapshot_all_position_signal_evidence(self, run_id: str, *, schema_mode="upgraded"):
+            raise AssertionError("legacy full-snapshot signal evidence fetch should not be used")
+
+        def fetch_snapshot_graph(self, run_id: str, *, schema_mode="upgraded"):
+            raise AssertionError("legacy full-snapshot graph fetch should not be used")
+
+        def fetch_snapshot_position_signal_evidence_batch(self, run_id: str, position_ids, *, schema_mode="upgraded"):
+            out = {}
+            for position_id in position_ids:
+                ticker = position_id.split(":")[-1].lower()
+                out[position_id] = [
+                    {
+                        "position_id": position_id,
+                        "signal_id": f"signal:test:{ticker}",
+                        "signal_label": f"{ticker.upper()} signal",
+                        "signal_props": {"source": "test"},
+                        "edge_props": {"source": "test", "name": f"{ticker.upper()} signal", "contribution": 0.3},
+                    }
+                ]
+            return out
+
+        def fetch_snapshot_position_thesis_context_batch(self, run_id: str, position_ids, *, schema_mode="upgraded"):
+            return {position_id: {} for position_id in position_ids}
+
+    repo = _BoundedRepo()
+    service = OntologyQueryService(repository=repo)
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+
+    resp = service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        timeframe="Daily",
+        include_graph=True,
+        run_id="run-historical",
+        page=1,
+        page_size=1,
+    )
+
+    assert len(resp["results"]) == 1
+    assert resp["_meta"]["pagination"]["page"] == 1
+    assert resp["_meta"]["pagination"]["page_size"] == 1
+    assert resp["_meta"]["pagination"]["total_results"] == 2
+    assert resp["_meta"]["graph"]["scope"] == "page"
+    node_ids = {node["id"] for node in resp["graph"]["nodes"]}
+    assert "position:NVDA" in node_ids
+    assert "position:MU" not in node_ids
+
+
+def test_query_returns_empty_past_end_page_with_pagination(monkeypatch):
+    repo = _FakeRepo()
+    repo.rows_by_run["run-historical"] = [
+        {
+            "position_id": "position:NVDA",
+            "position_props": {
+                "ticker": "NVDA",
+                "asset": "equity",
+                "direction": "long",
+                "risk_score": 0.81,
+                "risk_level": "high",
+                "ontology_run_id": "run-historical",
+            },
+            "sector_props": {"name": "Information Technology"},
+        },
+        {
+            "position_id": "position:MU",
+            "position_props": {
+                "ticker": "MU",
+                "asset": "equity",
+                "direction": "long",
+                "risk_score": 0.72,
+                "risk_level": "medium",
+                "ontology_run_id": "run-historical",
+            },
+            "sector_props": {"name": "Information Technology"},
+        },
+    ]
+    service = OntologyQueryService(repository=repo)
+
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+
+    resp = service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        timeframe="Daily",
+        include_graph=False,
+        run_id="run-historical",
+        page=5,
+        page_size=1,
+    )
+
+    assert resp["results"] == []
+    assert resp["_meta"]["pagination"]["page"] == 5
+    assert resp["_meta"]["pagination"]["page_size"] == 1
+    assert resp["_meta"]["pagination"]["total_results"] == 2
+    assert resp["_meta"]["pagination"]["returned_results"] == 0
+    assert resp["_meta"]["pagination"]["has_prev"] is True
+    assert resp["_meta"]["pagination"]["has_next"] is False
+
+
+def test_build_page_graph_reports_page_scope_and_node_truncation():
+    rows = []
+    evidence_by_position = {}
+    for index in range(200):
+        position_id = f"position:T{index:03d}"
+        asset_id = f"asset:T{index:03d}"
+        rows.append(
+            {
+                "position_id": position_id,
+                "position_label": f"T{index:03d}",
+                "position_props": {"ticker": f"T{index:03d}", "asset": "equity", "risk_score": 0.7},
+                "position_schema_name": "Position",
+                "position_schema_version": 1,
+                "position_updated_at": "2026-03-08T00:00:00Z",
+                "asset_id": asset_id,
+                "asset_label": f"T{index:03d}",
+                "asset_props": {"ticker": f"T{index:03d}", "asset": "equity"},
+                "asset_schema_name": "Asset",
+                "asset_schema_version": 1,
+                "asset_updated_at": "2026-03-08T00:00:00Z",
+                "sector_id": "sector:information_technology",
+                "sector_label": "Information Technology",
+                "sector_props": {"name": "Information Technology"},
+                "sector_schema_name": "Sector",
+                "sector_schema_version": 1,
+                "sector_updated_at": "2026-03-08T00:00:00Z",
+                "position_asset_edge_props": {"ontology_run_id": "run-historical"},
+                "position_asset_edge_schema_name": "references_asset",
+                "position_asset_edge_schema_version": 1,
+                "position_asset_edge_relation_schema_name": "references_asset",
+                "position_asset_edge_relation_schema_version": 1,
+                "position_asset_edge_updated_at": "2026-03-08T00:00:00Z",
+                "asset_sector_edge_props": {"ontology_run_id": "run-historical", "source": "test"},
+                "asset_sector_edge_schema_name": "belongs_to_sector",
+                "asset_sector_edge_schema_version": 1,
+                "asset_sector_edge_relation_schema_name": "belongs_to_sector",
+                "asset_sector_edge_relation_schema_version": 1,
+                "asset_sector_edge_updated_at": "2026-03-08T00:00:00Z",
+            }
+        )
+        evidence_by_position[position_id] = [
+            {
+                "signal_id": f"signal:test:t{index:03d}",
+                "signal_label": f"T{index:03d}",
+                "signal_props": {"source": "test"},
+                "signal_schema_name": "Signal",
+                "signal_schema_version": 1,
+                "signal_updated_at": "2026-03-08T00:00:00Z",
+                "edge_props": {"source": "test", "name": f"T{index:03d}", "contribution": 0.1},
+                "edge_schema_name": "exposed_to_signal",
+                "edge_schema_version": 1,
+                "edge_relation_schema_name": "exposed_to_signal",
+                "edge_relation_schema_version": 1,
+                "edge_updated_at": "2026-03-08T00:00:00Z",
+            }
+        ]
+
+    graph, meta = svc._build_page_graph(rows, evidence_by_position, {}, run_id="run-historical")
+
+    assert meta["scope"] == "page"
+    assert meta["max_nodes"] == svc.GRAPH_PAGE_NODE_LIMIT
+    assert meta["max_edges"] == svc.GRAPH_PAGE_EDGE_LIMIT
+    assert meta["truncated"] is True
+    assert len(graph["nodes"]) == svc.GRAPH_PAGE_NODE_LIMIT
+    assert len(graph["edges"]) <= svc.GRAPH_PAGE_EDGE_LIMIT
+
+
+def test_page_graph_builder_caps_edges():
+    builder = svc._PageGraphBuilder(max_nodes=6, max_edges=2)
+
+    assert builder.add_node({"id": "position:MU", "type": "Position", "label": "MU", "properties": {}})
+    assert builder.add_node({"id": "asset:MU", "type": "Asset", "label": "MU", "properties": {}})
+    assert builder.add_node(
+        {"id": "sector:information_technology", "type": "Sector", "label": "Information Technology", "properties": {}}
+    )
+    assert builder.add_edge({"source_id": "position:MU", "target_id": "asset:MU", "relation_type": "references_asset"})
+    assert builder.add_edge(
+        {
+            "source_id": "asset:MU",
+            "target_id": "sector:information_technology",
+            "relation_type": "belongs_to_sector",
+        }
+    )
+    assert (
+        builder.add_edge(
+            {"source_id": "position:MU", "target_id": "sector:information_technology", "relation_type": "synthetic"}
+        )
+        is False
+    )
+    assert builder.truncated is True
+    assert len(builder.edges) == 2

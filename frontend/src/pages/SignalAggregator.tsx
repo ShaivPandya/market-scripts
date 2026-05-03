@@ -125,7 +125,7 @@ export function SignalAggregator() {
   const factors = useMemo(() => data?.factors ?? [], [data?.factors])
   const historySeries = useMemo(() => data?.history?.series ?? [], [data?.history?.series])
   const historyEpisodes = useMemo(() => data?.history?.episodes ?? [], [data?.history?.episodes])
-  const failedModules = data?.failed_modules ?? []
+  const failedModules = useMemo(() => data?.failed_modules ?? [], [data?.failed_modules])
   const isDegraded = data?.status === "degraded" || failedModules.length > 0
 
   // Register screen context for agent chat

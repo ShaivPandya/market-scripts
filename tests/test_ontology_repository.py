@@ -7,7 +7,7 @@ from typing import Literal
 import pytest
 
 from ontology.models import OntologyEdge, OntologyNode
-from ontology.repository import OntologyRepository
+from ontology.repository import OntologyRepository, _build_snapshot_position_query_parts
 from ontology.schemas.identity import catalyst_id, evaluation_id
 from ontology.schemas.registry import OntologySchemaValidationError
 
@@ -520,6 +520,193 @@ def test_stored_snapshot_read_ignores_current_relation_cardinality_change(tmp_pa
     assert len(exposures) == 2
 
 
+def test_query_snapshot_positions_page_filters_and_paginates(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    _insert_snapshot_query_fixture(db_path, run_id="run-query")
+
+    page_1 = repo.query_snapshot_positions_page(
+        "run-query",
+        filters={},
+        page=1,
+        page_size=2,
+        schema_mode="upgraded",
+    )
+    assert page_1["total_results"] == 3
+    assert [row["position_id"] for row in page_1["rows"]] == ["position:NVDA", "position:MU"]
+
+    page_2 = repo.query_snapshot_positions_page(
+        "run-query",
+        filters={},
+        page=2,
+        page_size=2,
+        schema_mode="upgraded",
+    )
+    assert [row["position_id"] for row in page_2["rows"]] == ["position:GLD"]
+
+    page_9 = repo.query_snapshot_positions_page(
+        "run-query",
+        filters={},
+        page=9,
+        page_size=2,
+        schema_mode="upgraded",
+    )
+    assert page_9["rows"] == []
+    assert page_9["total_results"] == 3
+
+    by_ticker = repo.query_snapshot_positions_page(
+        "run-query",
+        filters={"tickers": ["mu"]},
+        page=1,
+        page_size=10,
+        schema_mode="upgraded",
+    )
+    assert [row["position_id"] for row in by_ticker["rows"]] == ["position:MU"]
+
+    by_sector = repo.query_snapshot_positions_page(
+        "run-query",
+        filters={"sectors": ["Information Technology"]},
+        page=1,
+        page_size=10,
+        schema_mode="upgraded",
+    )
+    assert [row["position_id"] for row in by_sector["rows"]] == ["position:NVDA", "position:MU"]
+
+    by_asset = repo.query_snapshot_positions_page(
+        "run-query",
+        filters={"assets": ["commodity"]},
+        page=1,
+        page_size=10,
+        schema_mode="upgraded",
+    )
+    assert [row["position_id"] for row in by_asset["rows"]] == ["position:GLD"]
+
+    by_risk = repo.query_snapshot_positions_page(
+        "run-query",
+        filters={"min_risk_score": 0.75},
+        page=1,
+        page_size=10,
+        schema_mode="upgraded",
+    )
+    assert [row["position_id"] for row in by_risk["rows"]] == ["position:NVDA"]
+
+
+def test_aggregate_snapshot_positions_respects_filters(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    _insert_snapshot_query_fixture(db_path, run_id="run-query")
+
+    aggregate = repo.aggregate_snapshot_positions(
+        "run-query",
+        filters={"sectors": ["Information Technology"]},
+    )
+    assert aggregate["position_count"] == 2
+    assert aggregate["risk_buckets"] == {"high": 1, "medium": 1, "low": 0}
+    assert aggregate["asset_exposure_counts"] == {"equity": 2}
+    assert aggregate["average_risk_score"] == 0.765
+
+
+def test_snapshot_batch_traversal_methods_are_scoped_to_requested_positions(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    _insert_snapshot_query_fixture(db_path, run_id="run-query")
+
+    evidence = repo.fetch_snapshot_position_signal_evidence_batch(
+        "run-query",
+        ["position:MU", "position:GLD"],
+        schema_mode="upgraded",
+    )
+    assert sorted(evidence) == ["position:GLD", "position:MU"]
+    assert evidence["position:MU"][0]["signal_id"] == "signal:test:mu"
+    assert evidence["position:GLD"][0]["edge_props"]["contribution"] == 0.11
+
+    thesis = repo.fetch_snapshot_position_thesis_context_batch(
+        "run-query",
+        ["position:MU", "position:GLD"],
+        schema_mode="upgraded",
+    )
+    assert thesis["position:MU"]["thesis"]["node"]["id"] == "thesis:MU"
+    assert thesis["position:MU"]["evaluations"][0]["node"]["id"] == evaluation_id("MU", "2026-03-08T00:00:00Z")
+    assert thesis["position:MU"]["catalysts"][0]["node"]["id"] == catalyst_id(
+        "MU", "Memory recovery", "Demand improves"
+    )
+    assert thesis["position:GLD"] == {}
+
+
+def test_snapshot_has_positions_reports_presence_without_full_row_load(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    _insert_snapshot_query_fixture(db_path, run_id="run-query")
+
+    assert repo.snapshot_has_positions("run-query") is True
+    assert repo.snapshot_has_positions("missing-run") is False
+
+
+def test_snapshot_query_plans_use_paginated_query_indexes(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    OntologyRepository(db_path=db_path)
+    _insert_snapshot_query_fixture(db_path, run_id="run-query")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        index_names = {row["name"] for row in conn.execute("PRAGMA index_list('snapshot_nodes')").fetchall()}
+        assert "idx_snapshot_nodes_run_type_id" in index_names
+        assert "idx_snapshot_nodes_position_risk_sort" in index_names
+
+        parts = _build_snapshot_position_query_parts("run-query", {"min_risk_score": 0.5}, use_postgres=False)
+        plan_rows = conn.execute(
+            f"""
+            EXPLAIN QUERY PLAN
+            SELECT p.id
+            {parts["from_sql"]}
+            WHERE {parts["where_sql"]}
+            ORDER BY {parts["risk_score_sort_expr"]} DESC, p.id ASC
+            LIMIT 2 OFFSET 0
+            """,
+            tuple(parts["params"]),
+        ).fetchall()
+        plan_details = " | ".join(str(row["detail"]) for row in plan_rows)
+        assert "idx_snapshot_nodes_run_type" in plan_details or "idx_snapshot_nodes_run_type_id" in plan_details
+
+        signal_plan = conn.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT ps.source_id, s.id
+            FROM snapshot_edges ps
+            JOIN snapshot_nodes s
+              ON s.run_id = ps.run_id
+             AND s.id = ps.target_id
+             AND s.type = 'Signal'
+            WHERE ps.run_id = ?
+              AND ps.relation_type = 'exposed_to_signal'
+              AND ps.source_id IN (?, ?)
+            ORDER BY ps.source_id, s.id
+            """,
+            ("run-query", "position:MU", "position:GLD"),
+        ).fetchall()
+        signal_details = " | ".join(str(row["detail"]) for row in signal_plan)
+        assert "idx_snapshot_edges_run_relation_source_target" in signal_details
+
+        thesis_plan = conn.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT ht.source_id, eb.target_id
+            FROM snapshot_edges ht
+            LEFT JOIN snapshot_edges eb
+              ON eb.run_id = ht.run_id
+             AND eb.source_id = ht.target_id
+             AND eb.relation_type = 'evaluated_by'
+            WHERE ht.run_id = ?
+              AND ht.relation_type = 'has_thesis'
+              AND ht.source_id IN (?, ?)
+            ORDER BY ht.source_id, eb.target_id
+            """,
+            ("run-query", "position:MU", "position:GLD"),
+        ).fetchall()
+        thesis_details = " | ".join(str(row["detail"]) for row in thesis_plan)
+        assert "idx_snapshot_edges_run_relation_source_target" in thesis_details
+
+
 def test_direct_sqlite_edge_insert_rejects_missing_endpoint(tmp_path):
     db_path = tmp_path / "ontology.sqlite3"
     OntologyRepository(db_path=db_path)
@@ -692,3 +879,162 @@ def _insert_minimal_legacy_snapshot(db_path, *, run_id: str) -> None:
                 ),
             ],
         )
+
+
+def _insert_snapshot_query_fixture(db_path, *, run_id: str) -> None:
+    repo = OntologyRepository(db_path=db_path)
+    nodes = [
+        OntologyNode(
+            id="position:MU",
+            type="Position",
+            label="MU",
+            properties={
+                "ticker": "MU",
+                "asset": "equity",
+                "direction": "long",
+                "risk_score": 0.72,
+                "risk_level": "medium",
+                "ontology_run_id": run_id,
+            },
+        ),
+        OntologyNode(
+            id="position:NVDA",
+            type="Position",
+            label="NVDA",
+            properties={
+                "ticker": "NVDA",
+                "asset": "equity",
+                "direction": "long",
+                "risk_score": 0.81,
+                "risk_level": "high",
+                "ontology_run_id": run_id,
+            },
+        ),
+        OntologyNode(
+            id="position:GLD",
+            type="Position",
+            label="GLD",
+            properties={
+                "ticker": "GLD",
+                "asset": "commodity",
+                "direction": "long",
+                "risk_score": 0.31,
+                "risk_level": "low",
+                "ontology_run_id": run_id,
+            },
+        ),
+        OntologyNode(id="asset:MU", type="Asset", label="MU", properties={"ticker": "MU", "asset": "equity"}),
+        OntologyNode(id="asset:NVDA", type="Asset", label="NVDA", properties={"ticker": "NVDA", "asset": "equity"}),
+        OntologyNode(id="asset:GLD", type="Asset", label="GLD", properties={"ticker": "GLD", "asset": "commodity"}),
+        OntologyNode(
+            id="sector:information_technology",
+            type="Sector",
+            label="Information Technology",
+            properties={"name": "Information Technology"},
+        ),
+        OntologyNode(
+            id="sector:commodities",
+            type="Sector",
+            label="Commodities",
+            properties={"name": "Commodities"},
+        ),
+        OntologyNode(id="signal:test:mu", type="Signal", label="MU", properties={"source": "test"}),
+        OntologyNode(id="signal:test:nvda", type="Signal", label="NVDA", properties={"source": "test"}),
+        OntologyNode(id="signal:test:gld", type="Signal", label="GLD", properties={"source": "test"}),
+        OntologyNode(
+            id="thesis:MU",
+            type="Thesis",
+            label="Thesis: MU",
+            properties={"ticker": "MU", "status": "active", "ontology_run_id": run_id},
+        ),
+        OntologyNode(
+            id=evaluation_id("MU", "2026-03-08T00:00:00Z"),
+            type="Evaluation",
+            label="Evaluation: MU",
+            properties={
+                "ticker": "MU",
+                "evaluated_at": "2026-03-08T00:00:00Z",
+                "thesis_status": "strengthen",
+                "technical_read": "supportive",
+                "fundamental_read": "supportive",
+                "action": "hold",
+                "confidence": "high",
+                "ontology_run_id": run_id,
+            },
+        ),
+        OntologyNode(
+            id=catalyst_id("MU", "Memory recovery", "Demand improves"),
+            type="Catalyst",
+            label="Memory recovery",
+            properties={
+                "ticker": "MU",
+                "name": "Memory recovery",
+                "description": "Demand improves",
+                "ontology_run_id": run_id,
+            },
+        ),
+    ]
+    edges = [
+        OntologyEdge("position:MU", "asset:MU", "references_asset", {"ontology_run_id": run_id}),
+        OntologyEdge("position:NVDA", "asset:NVDA", "references_asset", {"ontology_run_id": run_id}),
+        OntologyEdge("position:GLD", "asset:GLD", "references_asset", {"ontology_run_id": run_id}),
+        OntologyEdge(
+            "asset:MU",
+            "sector:information_technology",
+            "belongs_to_sector",
+            {"source": "test", "ontology_run_id": run_id},
+        ),
+        OntologyEdge(
+            "asset:NVDA",
+            "sector:information_technology",
+            "belongs_to_sector",
+            {"source": "test", "ontology_run_id": run_id},
+        ),
+        OntologyEdge(
+            "asset:GLD",
+            "sector:commodities",
+            "belongs_to_sector",
+            {"source": "test", "ontology_run_id": run_id},
+        ),
+        OntologyEdge(
+            "position:MU",
+            "signal:test:mu",
+            "exposed_to_signal",
+            {"source": "test", "name": "MU", "contribution": 0.22, "ontology_run_id": run_id},
+        ),
+        OntologyEdge(
+            "position:NVDA",
+            "signal:test:nvda",
+            "exposed_to_signal",
+            {"source": "test", "name": "NVDA", "contribution": 0.41, "ontology_run_id": run_id},
+        ),
+        OntologyEdge(
+            "position:GLD",
+            "signal:test:gld",
+            "exposed_to_signal",
+            {"source": "test", "name": "GLD", "contribution": 0.11, "ontology_run_id": run_id},
+        ),
+        OntologyEdge("position:MU", "thesis:MU", "has_thesis", {"ontology_run_id": run_id}),
+        OntologyEdge(
+            "thesis:MU",
+            evaluation_id("MU", "2026-03-08T00:00:00Z"),
+            "evaluated_by",
+            {"ontology_run_id": run_id},
+        ),
+        OntologyEdge(
+            "thesis:MU",
+            catalyst_id("MU", "Memory recovery", "Demand improves"),
+            "has_catalyst",
+            {"ontology_run_id": run_id},
+        ),
+    ]
+    repo.save_snapshot(
+        run_id=run_id,
+        as_of="2026-03-08T00:00:00Z",
+        source_status={"portfolio": {"status": "ok"}},
+        required_modules=["portfolio"],
+        optional_modules=[],
+        component_scores={"macro_regime": 0.5},
+        nodes=nodes,
+        edges=edges,
+    )

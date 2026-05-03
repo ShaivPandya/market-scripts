@@ -109,11 +109,13 @@ export function CentralBanks() {
     return right - left
   })
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!isLoading && !isFetching && hasLoadedData && totalItems === 0 && refreshToken === 0) {
       setRefreshToken(1)
     }
   }, [hasLoadedData, isFetching, isLoading, refreshToken, totalItems])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
     <div>

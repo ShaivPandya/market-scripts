@@ -11,7 +11,17 @@ class _FakeService:
         self.payload = payload
 
     def query(
-        self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False, schema_mode="upgraded"
+        self,
+        query,
+        intent,
+        filters,
+        timeframe,
+        include_graph,
+        run_id,
+        refresh_snapshot=False,
+        page=1,
+        page_size=25,
+        schema_mode="upgraded",
     ):
         out = dict(self.payload)
         out.setdefault("run_id", run_id or "run-1")
@@ -164,6 +174,8 @@ def test_ontology_query_unknown_run_id_returns_404(auth_client, monkeypatch):
             include_graph,
             run_id,
             refresh_snapshot=False,
+            page=1,
+            page_size=25,
             schema_mode="upgraded",
         ):
             raise OntologyRunNotFoundError(str(run_id))
@@ -198,6 +210,8 @@ def test_ontology_query_passes_run_id(auth_client, monkeypatch):
             include_graph,
             run_id,
             refresh_snapshot=False,
+            page=1,
+            page_size=25,
             schema_mode="upgraded",
         ):
             captured["run_id"] = run_id
@@ -244,6 +258,8 @@ def test_ontology_query_passes_refresh_snapshot(auth_client, monkeypatch):
             include_graph,
             run_id,
             refresh_snapshot=False,
+            page=1,
+            page_size=25,
             schema_mode="upgraded",
         ):
             captured["refresh_snapshot"] = bool(refresh_snapshot)
@@ -273,6 +289,83 @@ def test_ontology_query_passes_refresh_snapshot(auth_client, monkeypatch):
     assert captured["refresh_snapshot"] is True
 
 
+def test_ontology_query_rejects_removed_filters_max_results(auth_client):
+    resp = auth_client.post(
+        "/api/v1/ontology/query",
+        json={
+            "intent": "portfolio_risk_exposure",
+            "filters": {"tickers": ["MU"], "max_results": 5},
+            "schema_mode": "upgraded",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "filters.max_results has been removed; use top-level page_size instead" in str(resp.json())
+
+
+def test_ontology_query_passes_pagination(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    captured: dict[str, int] = {"page": 0, "page_size": 0}
+
+    class _CapturePaginationService:
+        def query(
+            self,
+            query,
+            intent,
+            filters,
+            timeframe,
+            include_graph,
+            run_id,
+            refresh_snapshot=False,
+            page=1,
+            page_size=25,
+            schema_mode="upgraded",
+        ):
+            captured["page"] = page
+            captured["page_size"] = page_size
+            return {
+                "run_id": "run-1",
+                "intent": "portfolio_risk_exposure",
+                "interpreted_query": {"source": "structured", "query": query, "entity": None, "filters": filters},
+                "as_of": "2026-03-08T00:00:00Z",
+                "source_status": {"portfolio": {"status": "ok"}},
+                "results": [],
+                "aggregate": {
+                    "position_count": 0,
+                    "risk_buckets": {"high": 0, "medium": 0, "low": 0},
+                    "asset_exposure_counts": {},
+                    "average_risk_score": 0.0,
+                    "confidence": 1.0,
+                },
+                "_meta": {
+                    "pagination": {
+                        "page": page,
+                        "page_size": page_size,
+                        "returned_results": 0,
+                        "total_results": 0,
+                        "total_pages": 0,
+                        "has_prev": False,
+                        "has_next": False,
+                        "sort": "risk_score_desc_then_position_id_asc",
+                        "exact_total": True,
+                    }
+                },
+            }
+
+    monkeypatch.setattr(ontology_router, "_service", _CapturePaginationService())
+
+    resp = auth_client.post(
+        "/api/v1/ontology/query",
+        json={"intent": "portfolio_risk_exposure", "page": 3, "page_size": 7, "schema_mode": "upgraded"},
+    )
+
+    data = _resolve_ontology_result(auth_client, resp)
+    assert captured == {"page": 3, "page_size": 7}
+    assert data["_meta"]["pagination"]["page"] == 3
+    assert data["_meta"]["pagination"]["page_size"] == 7
+
+
 def _poll_ontology_job(auth_client, job_id: str, timeout_s: float = 4.0):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
@@ -300,6 +393,8 @@ def test_ontology_query_async_returns_done_result(auth_client, monkeypatch):
             include_graph,
             run_id,
             refresh_snapshot=False,
+            page=1,
+            page_size=25,
             schema_mode="upgraded",
         ):
             time.sleep(0.1)
@@ -352,6 +447,8 @@ def test_ontology_query_async_dedupes_running_job(auth_client, monkeypatch):
             include_graph,
             run_id,
             refresh_snapshot=False,
+            page=1,
+            page_size=25,
             schema_mode="upgraded",
         ):
             time.sleep(0.25)
@@ -402,6 +499,8 @@ def test_ontology_query_async_surfaces_worker_error(auth_client, monkeypatch):
             include_graph,
             run_id,
             refresh_snapshot=False,
+            page=1,
+            page_size=25,
             schema_mode="upgraded",
         ):
             raise RuntimeError("boom")

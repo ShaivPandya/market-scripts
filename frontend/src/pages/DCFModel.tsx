@@ -288,6 +288,7 @@ export function DCFModel() {
   const [evrBull, setEvrBull] = useState("5")
 
   // Pre-populate from historical averages
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!hist) return
     const avg = hist.historical_averages
@@ -320,6 +321,7 @@ export function DCFModel() {
       }
     }
   }, [hist])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // DCF mutation
   const dcfMutation = useMutation({

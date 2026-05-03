@@ -23,6 +23,7 @@ from ontology.schema_definitions import (
     ontology_schema_definitions,
     seed_schema_definitions,
 )
+from ontology.schemas.identity import canonical_ticker, position_id, sector_id
 from ontology.schemas.registry import (
     OntologySchemaValidationError,
     normalize_edge,
@@ -240,6 +241,7 @@ class OntologyRepository:
             create_ontology_binding_tables(conn)
             seed_schema_definitions(conn, ontology_schema_definitions())
             _ensure_relation_indexes(conn)
+            _ensure_snapshot_query_indexes(conn)
 
     def upsert_nodes(self, nodes: list[OntologyNode]) -> None:
         if not nodes:
@@ -668,6 +670,510 @@ class OntologyRepository:
                 }
             )
         return out
+
+    def snapshot_has_positions(self, run_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 AS found
+                FROM snapshot_nodes
+                WHERE run_id = ?
+                  AND type = 'Position'
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return row is not None
+
+    def query_snapshot_positions_page(
+        self,
+        run_id: str,
+        *,
+        filters: dict[str, Any] | None,
+        page: int,
+        page_size: int,
+        schema_mode: SchemaMode,
+    ) -> dict[str, Any]:
+        _validate_schema_mode(schema_mode)
+        safe_page = max(1, int(page))
+        safe_page_size = max(1, min(int(page_size), 100))
+        offset = (safe_page - 1) * safe_page_size
+        parts = _build_snapshot_position_query_parts(run_id, filters, use_postgres=self._use_postgres)
+
+        with self._connect() as conn:
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS total_results {parts['from_sql']} WHERE {parts['where_sql']}",
+                tuple(parts["params"]),
+            ).fetchone()
+            rows = conn.execute(
+                f"""
+                SELECT
+                  p.id AS position_id,
+                  p.label AS position_label,
+                  p.properties_json AS position_props,
+                  p.schema_name AS position_schema_name,
+                  p.schema_version AS position_schema_version,
+                  p.updated_at AS position_updated_at,
+                  a.id AS asset_id,
+                  a.label AS asset_label,
+                  a.properties_json AS asset_props,
+                  a.schema_name AS asset_schema_name,
+                  a.schema_version AS asset_schema_version,
+                  a.updated_at AS asset_updated_at,
+                  s.id AS sector_id,
+                  s.label AS sector_label,
+                  s.properties_json AS sector_props,
+                  s.schema_name AS sector_schema_name,
+                  s.schema_version AS sector_schema_version,
+                  s.updated_at AS sector_updated_at,
+                  pa.properties_json AS position_asset_edge_props,
+                  pa.schema_name AS position_asset_edge_schema_name,
+                  pa.schema_version AS position_asset_edge_schema_version,
+                  pa.relation_schema_name AS position_asset_edge_relation_schema_name,
+                  pa.relation_schema_version AS position_asset_edge_relation_schema_version,
+                  pa.updated_at AS position_asset_edge_updated_at,
+                  ase.properties_json AS asset_sector_edge_props,
+                  ase.schema_name AS asset_sector_edge_schema_name,
+                  ase.schema_version AS asset_sector_edge_schema_version,
+                  ase.relation_schema_name AS asset_sector_edge_relation_schema_name,
+                  ase.relation_schema_version AS asset_sector_edge_relation_schema_version,
+                  ase.updated_at AS asset_sector_edge_updated_at,
+                  {parts["risk_score_sort_expr"]} AS risk_score_value
+                {parts["from_sql"]}
+                WHERE {parts["where_sql"]}
+                ORDER BY risk_score_value DESC, p.id ASC
+                LIMIT ? OFFSET ?
+                """,
+                tuple([*parts["params"], safe_page_size, offset]),
+            ).fetchall()
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            out.append(
+                {
+                    "position_id": row["position_id"],
+                    "position_label": row["position_label"],
+                    "position_props": _node_properties_for_mode(
+                        row,
+                        schema_mode=schema_mode,
+                        run_id=run_id,
+                        id_key="position_id",
+                        type_value="Position",
+                        label_key="position_label",
+                        properties_key="position_props",
+                        schema_name_key="position_schema_name",
+                        schema_version_key="position_schema_version",
+                    ),
+                    "position_schema_name": row["position_schema_name"],
+                    "position_schema_version": int(row["position_schema_version"] or 0),
+                    "position_updated_at": row["position_updated_at"],
+                    "asset_id": row["asset_id"],
+                    "asset_label": row["asset_label"],
+                    "asset_props": _node_properties_for_mode(
+                        row,
+                        schema_mode=schema_mode,
+                        run_id=run_id,
+                        id_key="asset_id",
+                        type_value="Asset",
+                        label_key="asset_label",
+                        properties_key="asset_props",
+                        schema_name_key="asset_schema_name",
+                        schema_version_key="asset_schema_version",
+                    ),
+                    "asset_schema_name": row["asset_schema_name"],
+                    "asset_schema_version": int(row["asset_schema_version"] or 0)
+                    if row["asset_id"] is not None
+                    else None,
+                    "asset_updated_at": row["asset_updated_at"],
+                    "sector_id": row["sector_id"],
+                    "sector_label": row["sector_label"],
+                    "sector_props": _node_properties_for_mode(
+                        row,
+                        schema_mode=schema_mode,
+                        run_id=run_id,
+                        id_key="sector_id",
+                        type_value="Sector",
+                        label_key="sector_label",
+                        properties_key="sector_props",
+                        schema_name_key="sector_schema_name",
+                        schema_version_key="sector_schema_version",
+                    ),
+                    "sector_schema_name": row["sector_schema_name"],
+                    "sector_schema_version": (
+                        int(row["sector_schema_version"] or 0) if row["sector_id"] is not None else None
+                    ),
+                    "sector_updated_at": row["sector_updated_at"],
+                    "position_asset_edge_props": _edge_properties_for_mode(
+                        row,
+                        schema_mode=schema_mode,
+                        run_id=run_id,
+                        source_id_key="position_id",
+                        target_id_key="asset_id",
+                        relation_type_value="references_asset",
+                        properties_key="position_asset_edge_props",
+                        schema_name_key="position_asset_edge_schema_name",
+                        schema_version_key="position_asset_edge_schema_version",
+                    ),
+                    "position_asset_edge_schema_name": row["position_asset_edge_schema_name"],
+                    "position_asset_edge_schema_version": (
+                        int(row["position_asset_edge_schema_version"] or 0)
+                        if row["position_asset_edge_updated_at"] is not None
+                        else None
+                    ),
+                    "position_asset_edge_relation_schema_name": _row_value(
+                        row, "position_asset_edge_relation_schema_name", "legacy"
+                    ),
+                    "position_asset_edge_relation_schema_version": int(
+                        _row_value(row, "position_asset_edge_relation_schema_version", 0) or 0
+                    ),
+                    "position_asset_edge_updated_at": row["position_asset_edge_updated_at"],
+                    "asset_sector_edge_props": _edge_properties_for_mode(
+                        row,
+                        schema_mode=schema_mode,
+                        run_id=run_id,
+                        source_id_key="asset_id",
+                        target_id_key="sector_id",
+                        relation_type_value="belongs_to_sector",
+                        properties_key="asset_sector_edge_props",
+                        schema_name_key="asset_sector_edge_schema_name",
+                        schema_version_key="asset_sector_edge_schema_version",
+                    ),
+                    "asset_sector_edge_schema_name": row["asset_sector_edge_schema_name"],
+                    "asset_sector_edge_schema_version": (
+                        int(row["asset_sector_edge_schema_version"] or 0)
+                        if row["asset_sector_edge_updated_at"] is not None
+                        else None
+                    ),
+                    "asset_sector_edge_relation_schema_name": _row_value(
+                        row, "asset_sector_edge_relation_schema_name", "legacy"
+                    ),
+                    "asset_sector_edge_relation_schema_version": int(
+                        _row_value(row, "asset_sector_edge_relation_schema_version", 0) or 0
+                    ),
+                    "asset_sector_edge_updated_at": row["asset_sector_edge_updated_at"],
+                }
+            )
+
+        return {
+            "rows": out,
+            "total_results": int(total_row["total_results"] or 0) if total_row is not None else 0,
+            "page": safe_page,
+            "page_size": safe_page_size,
+        }
+
+    def aggregate_snapshot_positions(
+        self,
+        run_id: str,
+        *,
+        filters: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        parts = _build_snapshot_position_query_parts(run_id, filters, use_postgres=self._use_postgres)
+        risk_expr = parts["risk_score_expr"]
+        asset_expr = parts["asset_bucket_expr"]
+
+        with self._connect() as conn:
+            counts = conn.execute(
+                f"""
+                SELECT
+                  COUNT(*) AS position_count,
+                  SUM(CASE WHEN {risk_expr} >= 0.75 THEN 1 ELSE 0 END) AS high_count,
+                  SUM(CASE WHEN {risk_expr} >= 0.5 AND {risk_expr} < 0.75 THEN 1 ELSE 0 END) AS medium_count,
+                  SUM(CASE WHEN {risk_expr} < 0.5 OR {risk_expr} IS NULL THEN 1 ELSE 0 END) AS low_count,
+                  AVG({risk_expr}) AS average_risk_score
+                {parts["from_sql"]}
+                WHERE {parts["where_sql"]}
+                """,
+                tuple(parts["params"]),
+            ).fetchone()
+            asset_rows = conn.execute(
+                f"""
+                SELECT
+                  {asset_expr} AS asset_name,
+                  COUNT(*) AS asset_count
+                {parts["from_sql"]}
+                WHERE {parts["where_sql"]}
+                GROUP BY {asset_expr}
+                ORDER BY {asset_expr}
+                """,
+                tuple(parts["params"]),
+            ).fetchall()
+
+        return {
+            "position_count": int(_row_value(counts, "position_count", 0) or 0),
+            "risk_buckets": {
+                "high": int(_row_value(counts, "high_count", 0) or 0),
+                "medium": int(_row_value(counts, "medium_count", 0) or 0),
+                "low": int(_row_value(counts, "low_count", 0) or 0),
+            },
+            "asset_exposure_counts": {
+                str(row["asset_name"] or "unknown"): int(row["asset_count"] or 0) for row in asset_rows
+            },
+            "average_risk_score": round(float(_row_value(counts, "average_risk_score", 0.0) or 0.0), 4),
+        }
+
+    def fetch_snapshot_position_signal_evidence_batch(
+        self,
+        run_id: str,
+        position_ids: Sequence[str],
+        *,
+        schema_mode: SchemaMode,
+    ) -> dict[str, list[dict[str, Any]]]:
+        _validate_schema_mode(schema_mode)
+        normalized_ids = _normalized_ids(position_ids)
+        if not normalized_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        sql = f"""
+        SELECT
+          ps.source_id AS position_id,
+          s.id AS signal_id,
+          s.label AS signal_label,
+          s.schema_name AS signal_schema_name,
+          s.schema_version AS signal_schema_version,
+          s.updated_at AS signal_updated_at,
+          s.properties_json AS signal_props,
+          ps.schema_name AS edge_schema_name,
+          ps.schema_version AS edge_schema_version,
+          ps.relation_schema_name AS relation_schema_name,
+          ps.relation_schema_version AS relation_schema_version,
+          ps.updated_at AS edge_updated_at,
+          ps.properties_json AS edge_props
+        FROM snapshot_edges ps
+        JOIN snapshot_nodes s
+          ON s.run_id = ps.run_id
+         AND s.id = ps.target_id
+         AND s.type = 'Signal'
+        WHERE ps.run_id = ?
+          AND ps.relation_type = 'exposed_to_signal'
+          AND ps.source_id IN ({placeholders})
+        ORDER BY ps.source_id, s.id
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple([run_id, *normalized_ids])).fetchall()
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["position_id"]), []).append(
+                {
+                    "position_id": row["position_id"],
+                    "signal_id": row["signal_id"],
+                    "signal_label": row["signal_label"],
+                    "signal_props": _node_properties_for_mode(
+                        row,
+                        schema_mode=schema_mode,
+                        run_id=run_id,
+                        id_key="signal_id",
+                        type_value="Signal",
+                        label_key="signal_label",
+                        properties_key="signal_props",
+                        schema_name_key="signal_schema_name",
+                        schema_version_key="signal_schema_version",
+                    ),
+                    "signal_schema_name": row["signal_schema_name"],
+                    "signal_schema_version": int(row["signal_schema_version"] or 0),
+                    "signal_updated_at": row["signal_updated_at"],
+                    "edge_props": _edge_properties_for_mode(
+                        row,
+                        schema_mode=schema_mode,
+                        run_id=run_id,
+                        source_id_key="position_id",
+                        target_id_key="signal_id",
+                        relation_type_value="exposed_to_signal",
+                        properties_key="edge_props",
+                        schema_name_key="edge_schema_name",
+                        schema_version_key="edge_schema_version",
+                    ),
+                    "edge_schema_name": row["edge_schema_name"],
+                    "edge_schema_version": int(row["edge_schema_version"] or 0),
+                    "edge_relation_schema_name": _row_value(row, "relation_schema_name", "legacy"),
+                    "edge_relation_schema_version": int(_row_value(row, "relation_schema_version", 0) or 0),
+                    "edge_updated_at": row["edge_updated_at"],
+                }
+            )
+        return grouped
+
+    def fetch_snapshot_position_thesis_context_batch(
+        self,
+        run_id: str,
+        position_ids: Sequence[str],
+        *,
+        schema_mode: SchemaMode,
+    ) -> dict[str, dict[str, Any]]:
+        _validate_schema_mode(schema_mode)
+        normalized_ids = _normalized_ids(position_ids)
+        if not normalized_ids:
+            return {}
+
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        thesis_sql = f"""
+        SELECT
+          ht.source_id AS position_id,
+          ht.target_id AS thesis_id,
+          ht.properties_json AS has_thesis_edge_props,
+          ht.schema_name AS has_thesis_edge_schema_name,
+          ht.schema_version AS has_thesis_edge_schema_version,
+          ht.relation_schema_name AS has_thesis_edge_relation_schema_name,
+          ht.relation_schema_version AS has_thesis_edge_relation_schema_version,
+          ht.updated_at AS has_thesis_edge_updated_at,
+          t.label AS thesis_label,
+          t.properties_json AS thesis_props,
+          t.schema_name AS thesis_schema_name,
+          t.schema_version AS thesis_schema_version,
+          t.updated_at AS thesis_updated_at
+        FROM snapshot_edges ht
+        JOIN snapshot_nodes t
+          ON t.run_id = ht.run_id
+         AND t.id = ht.target_id
+         AND t.type = 'Thesis'
+        WHERE ht.run_id = ?
+          AND ht.relation_type = 'has_thesis'
+          AND ht.source_id IN ({placeholders})
+        ORDER BY ht.source_id, ht.target_id
+        """
+        with self._connect() as conn:
+            thesis_rows = conn.execute(thesis_sql, tuple([run_id, *normalized_ids])).fetchall()
+
+            grouped: dict[str, dict[str, Any]] = {position_id: {} for position_id in normalized_ids}
+            thesis_ids: list[str] = []
+            for row in thesis_rows:
+                position_key = str(row["position_id"])
+                thesis_node = _node_payload_from_row(
+                    row,
+                    prefix="thesis",
+                    node_type="Thesis",
+                    run_id=run_id,
+                    schema_mode=schema_mode,
+                )
+                if thesis_node is None:
+                    continue
+                thesis_edge = _edge_payload_from_row(
+                    row,
+                    prefix="has_thesis_edge",
+                    source_id_key="position_id",
+                    target_id_key="thesis_id",
+                    relation_type="has_thesis",
+                    run_id=run_id,
+                    schema_mode=schema_mode,
+                )
+                grouped[position_key] = {
+                    "thesis": {"node": thesis_node, "edge": thesis_edge},
+                    "evaluations": [],
+                    "catalysts": [],
+                }
+                thesis_ids.append(thesis_node["id"])
+
+            normalized_thesis_ids = _normalized_ids(thesis_ids)
+            if not normalized_thesis_ids:
+                return grouped
+
+            thesis_placeholders = ", ".join("?" for _ in normalized_thesis_ids)
+            evaluation_sql = f"""
+            SELECT
+              eb.source_id AS thesis_id,
+              eb.target_id AS evaluation_id,
+              eb.properties_json AS evaluated_by_edge_props,
+              eb.schema_name AS evaluated_by_edge_schema_name,
+              eb.schema_version AS evaluated_by_edge_schema_version,
+              eb.relation_schema_name AS evaluated_by_edge_relation_schema_name,
+              eb.relation_schema_version AS evaluated_by_edge_relation_schema_version,
+              eb.updated_at AS evaluated_by_edge_updated_at,
+              e.label AS evaluation_label,
+              e.properties_json AS evaluation_props,
+              e.schema_name AS evaluation_schema_name,
+              e.schema_version AS evaluation_schema_version,
+              e.updated_at AS evaluation_updated_at
+            FROM snapshot_edges eb
+            JOIN snapshot_nodes e
+              ON e.run_id = eb.run_id
+             AND e.id = eb.target_id
+             AND e.type = 'Evaluation'
+            WHERE eb.run_id = ?
+              AND eb.relation_type = 'evaluated_by'
+              AND eb.source_id IN ({thesis_placeholders})
+            ORDER BY eb.source_id, eb.target_id
+            """
+            catalyst_sql = f"""
+            SELECT
+              hc.source_id AS thesis_id,
+              hc.target_id AS catalyst_id,
+              hc.properties_json AS has_catalyst_edge_props,
+              hc.schema_name AS has_catalyst_edge_schema_name,
+              hc.schema_version AS has_catalyst_edge_schema_version,
+              hc.relation_schema_name AS has_catalyst_edge_relation_schema_name,
+              hc.relation_schema_version AS has_catalyst_edge_relation_schema_version,
+              hc.updated_at AS has_catalyst_edge_updated_at,
+              c.label AS catalyst_label,
+              c.properties_json AS catalyst_props,
+              c.schema_name AS catalyst_schema_name,
+              c.schema_version AS catalyst_schema_version,
+              c.updated_at AS catalyst_updated_at
+            FROM snapshot_edges hc
+            JOIN snapshot_nodes c
+              ON c.run_id = hc.run_id
+             AND c.id = hc.target_id
+             AND c.type = 'Catalyst'
+            WHERE hc.run_id = ?
+              AND hc.relation_type = 'has_catalyst'
+              AND hc.source_id IN ({thesis_placeholders})
+            ORDER BY hc.source_id, hc.target_id
+            """
+            evaluation_rows = conn.execute(evaluation_sql, tuple([run_id, *normalized_thesis_ids])).fetchall()
+            catalyst_rows = conn.execute(catalyst_sql, tuple([run_id, *normalized_thesis_ids])).fetchall()
+
+        positions_by_thesis = {
+            ctx["thesis"]["node"]["id"]: position_key
+            for position_key, ctx in grouped.items()
+            if isinstance(ctx.get("thesis"), dict) and isinstance(ctx["thesis"].get("node"), dict)
+        }
+        for row in evaluation_rows:
+            position_key = positions_by_thesis.get(str(row["thesis_id"]))
+            if position_key is None:
+                continue
+            node = _node_payload_from_row(
+                row,
+                prefix="evaluation",
+                node_type="Evaluation",
+                run_id=run_id,
+                schema_mode=schema_mode,
+            )
+            if node is None:
+                continue
+            edge = _edge_payload_from_row(
+                row,
+                prefix="evaluated_by_edge",
+                source_id_key="thesis_id",
+                target_id_key="evaluation_id",
+                relation_type="evaluated_by",
+                run_id=run_id,
+                schema_mode=schema_mode,
+            )
+            grouped[position_key]["evaluations"].append({"node": node, "edge": edge})
+
+        for row in catalyst_rows:
+            position_key = positions_by_thesis.get(str(row["thesis_id"]))
+            if position_key is None:
+                continue
+            node = _node_payload_from_row(
+                row,
+                prefix="catalyst",
+                node_type="Catalyst",
+                run_id=run_id,
+                schema_mode=schema_mode,
+            )
+            if node is None:
+                continue
+            edge = _edge_payload_from_row(
+                row,
+                prefix="has_catalyst_edge",
+                source_id_key="thesis_id",
+                target_id_key="catalyst_id",
+                relation_type="has_catalyst",
+                run_id=run_id,
+                schema_mode=schema_mode,
+            )
+            grouped[position_key]["catalysts"].append({"node": node, "edge": edge})
+
+        return grouped
 
     def fetch_snapshot_graph(self, run_id: str, *, schema_mode: SchemaMode) -> dict[str, list[dict[str, Any]]]:
         _validate_schema_mode(schema_mode)
@@ -1313,6 +1819,43 @@ def _ensure_relation_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_snapshot_query_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_snapshot_nodes_run_type_id
+        ON snapshot_nodes(run_id, type, id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_snapshot_edges_run_relation_source_target
+        ON snapshot_edges(run_id, relation_type, source_id, target_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_snapshot_nodes_position_asset_lookup
+        ON snapshot_nodes(
+            run_id,
+            lower(COALESCE(json_extract(properties_json, '$.asset'), '')),
+            id
+        )
+        WHERE type = 'Position'
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_snapshot_nodes_position_risk_sort
+        ON snapshot_nodes(
+            run_id,
+            CAST(COALESCE(json_extract(properties_json, '$.risk_score'), 0) AS REAL) DESC,
+            id
+        )
+        WHERE type = 'Position'
+        """
+    )
+
+
 def _row_value(row: Any, key: str | None, default: Any = None) -> Any:
     if key is None:
         return default
@@ -1672,3 +2215,190 @@ def _raise_edge_integrity_error(exc: Exception) -> None:
     if isinstance(exc, sqlite3.IntegrityError) or module.startswith("psycopg"):
         raise OntologySchemaValidationError(f"Ontology edge integrity violation: {exc}") from exc
     raise exc
+
+
+def _build_snapshot_position_query_parts(
+    run_id: str,
+    filters: dict[str, Any] | None,
+    *,
+    use_postgres: bool,
+) -> dict[str, Any]:
+    normalized = _normalize_snapshot_position_filters(filters)
+    risk_score_expr = _snapshot_json_float_expr("p.properties_json", "risk_score", use_postgres=use_postgres)
+    risk_score_sort_expr = f"COALESCE({risk_score_expr}, 0.0)"
+    asset_expr = _snapshot_json_text_expr("p.properties_json", "asset", use_postgres=use_postgres)
+    asset_bucket_expr = f"COALESCE(NULLIF(lower({asset_expr}), ''), 'unknown')"
+    from_sql = """
+        FROM snapshot_nodes p
+        LEFT JOIN snapshot_edges pa
+          ON pa.run_id = p.run_id
+         AND pa.source_id = p.id
+         AND pa.relation_type = 'references_asset'
+        LEFT JOIN snapshot_nodes a
+          ON a.run_id = p.run_id
+         AND a.id = pa.target_id
+        LEFT JOIN snapshot_edges ase
+          ON ase.run_id = p.run_id
+         AND ase.source_id = a.id
+         AND ase.relation_type = 'belongs_to_sector'
+        LEFT JOIN snapshot_nodes s
+          ON s.run_id = p.run_id
+         AND s.id = ase.target_id
+    """
+    where_clauses = ["p.run_id = ?", "p.type = 'Position'"]
+    params: list[Any] = [run_id]
+
+    if normalized["position_ids"]:
+        placeholders = ", ".join("?" for _ in normalized["position_ids"])
+        where_clauses.append(f"p.id IN ({placeholders})")
+        params.extend(normalized["position_ids"])
+    if normalized["sector_ids"]:
+        placeholders = ", ".join("?" for _ in normalized["sector_ids"])
+        where_clauses.append(f"s.id IN ({placeholders})")
+        params.extend(normalized["sector_ids"])
+    if normalized["assets"]:
+        placeholders = ", ".join("?" for _ in normalized["assets"])
+        where_clauses.append(f"lower({asset_expr}) IN ({placeholders})")
+        params.extend(normalized["assets"])
+    if normalized["min_risk_score"] is not None:
+        where_clauses.append(f"{risk_score_expr} >= ?")
+        params.append(float(normalized["min_risk_score"]))
+
+    return {
+        "from_sql": from_sql,
+        "where_sql": " AND ".join(where_clauses),
+        "params": params,
+        "risk_score_expr": risk_score_expr,
+        "risk_score_sort_expr": risk_score_sort_expr,
+        "asset_bucket_expr": asset_bucket_expr,
+    }
+
+
+def _normalize_snapshot_position_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
+    raw = filters if isinstance(filters, dict) else {}
+    position_ids: list[str] = []
+    for ticker in raw.get("tickers", []) if isinstance(raw.get("tickers"), list) else []:
+        try:
+            position_ids.append(position_id(canonical_ticker(ticker)))
+        except Exception:
+            continue
+    sector_ids: list[str] = []
+    for sector_name in raw.get("sectors", []) if isinstance(raw.get("sectors"), list) else []:
+        text = str(sector_name or "").strip()
+        if text:
+            sector_ids.append(sector_id(text))
+    assets = [
+        str(asset).strip().lower()
+        for asset in (raw.get("assets", []) if isinstance(raw.get("assets"), list) else [])
+        if str(asset or "").strip()
+    ]
+    return {
+        "position_ids": _normalized_ids(position_ids),
+        "sector_ids": _normalized_ids(sector_ids),
+        "assets": _normalized_ids(assets),
+        "min_risk_score": _to_float(raw.get("min_risk_score")),
+    }
+
+
+def _normalized_ids(values: Sequence[Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _snapshot_json_text_expr(column: str, field: str, *, use_postgres: bool) -> str:
+    if use_postgres:
+        return f"({column}::jsonb ->> '{field}')"
+    return f"json_extract({column}, '$.{field}')"
+
+
+def _snapshot_json_float_expr(column: str, field: str, *, use_postgres: bool) -> str:
+    text_expr = _snapshot_json_text_expr(column, field, use_postgres=use_postgres)
+    if use_postgres:
+        return f"NULLIF({text_expr}, '')::double precision"
+    return f"CAST({text_expr} AS REAL)"
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _node_payload_from_row(
+    row: Any,
+    *,
+    prefix: str,
+    node_type: str,
+    run_id: str,
+    schema_mode: SchemaMode,
+) -> dict[str, Any] | None:
+    node_id = _row_value(row, f"{prefix}_id")
+    if node_id is None:
+        return None
+    return {
+        "id": str(node_id),
+        "type": node_type,
+        "label": str(_row_value(row, f"{prefix}_label", node_id) or node_id),
+        "properties": _node_properties_for_mode(
+            row,
+            schema_mode=schema_mode,
+            run_id=run_id,
+            id_key=f"{prefix}_id",
+            type_value=node_type,
+            label_key=f"{prefix}_label",
+            properties_key=f"{prefix}_props",
+            schema_name_key=f"{prefix}_schema_name",
+            schema_version_key=f"{prefix}_schema_version",
+        ),
+        "schema_name": _row_value(row, f"{prefix}_schema_name"),
+        "schema_version": int(_row_value(row, f"{prefix}_schema_version", 0) or 0),
+        "updated_at": _row_value(row, f"{prefix}_updated_at"),
+    }
+
+
+def _edge_payload_from_row(
+    row: Any,
+    *,
+    prefix: str,
+    source_id_key: str,
+    target_id_key: str,
+    relation_type: str,
+    run_id: str,
+    schema_mode: SchemaMode,
+) -> dict[str, Any] | None:
+    source_id = _row_value(row, source_id_key)
+    target_id = _row_value(row, target_id_key)
+    updated_at = _row_value(row, f"{prefix}_updated_at")
+    if source_id is None or target_id is None or updated_at is None:
+        return None
+    return {
+        "source_id": str(source_id),
+        "target_id": str(target_id),
+        "relation_type": relation_type,
+        "properties": _edge_properties_for_mode(
+            row,
+            schema_mode=schema_mode,
+            run_id=run_id,
+            source_id_key=source_id_key,
+            target_id_key=target_id_key,
+            relation_type_value=relation_type,
+            properties_key=f"{prefix}_props",
+            schema_name_key=f"{prefix}_schema_name",
+            schema_version_key=f"{prefix}_schema_version",
+        ),
+        "schema_name": _row_value(row, f"{prefix}_schema_name"),
+        "schema_version": int(_row_value(row, f"{prefix}_schema_version", 0) or 0),
+        "relation_schema_name": _row_value(row, f"{prefix}_relation_schema_name", "legacy"),
+        "relation_schema_version": int(_row_value(row, f"{prefix}_relation_schema_version", 0) or 0),
+        "updated_at": updated_at,
+    }

@@ -171,7 +171,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
         <select
           value={draftPreferences[key]}
           onChange={e => setDraftPreferences(prev => ({ ...prev, [key]: e.target.value as AgentPreferenceLevel }))}
-          className="w-28 rounded-md border border-app bg-app px-2 py-1.5 text-sm text-app focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+          className="theme-input w-28 px-2 py-1.5 text-sm"
         >
           {LEVEL_OPTIONS.map(opt => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -211,19 +211,16 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
 
   return (
     <>
-      {/* Backdrop */}
       {open && (
         <div
-          className="fixed inset-0 z-40 bg-black/30 transition-opacity"
+          className="fixed inset-0 z-40 bg-[hsl(var(--background-overlay))]/35 backdrop-blur-[2px] transition-opacity"
           onClick={onClose}
         />
       )}
 
-      {/* Drawer panel */}
       <div
         className={cn(
-          "fixed top-0 right-0 z-50 h-full w-full bg-app border-l border-app",
-          "flex flex-col shadow-2xl",
+          "fixed right-0 top-0 z-50 flex h-full w-full flex-col border-l border-app bg-app shadow-[var(--shadow-floating)]",
           "transition-[width,transform] duration-300 ease-in-out",
           isWide
             ? "sm:w-[min(680px,100vw)] md:w-[calc(100vw-14rem)]"
@@ -231,27 +228,28 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
           open ? "translate-x-0" : "translate-x-full",
         )}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-app bg-card">
+        <div className="flex items-center justify-between border-b border-app bg-card px-4 py-[max(0.75rem,var(--safe-top))]">
           <div className="flex items-center gap-2">
             {showHistory ? (
               <button
+                type="button"
                 onClick={() => { setShowHistory(false); setShowPreferences(false) }}
-                className="p-1 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+                className="theme-icon-button h-10 w-10"
                 title="Back to chat"
               >
                 <ArrowLeft size={16} />
               </button>
             ) : showPreferences ? (
               <button
+                type="button"
                 onClick={() => setShowPreferences(false)}
-                className="p-1 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+                className="theme-icon-button h-10 w-10"
                 title="Back to chat"
               >
                 <ArrowLeft size={16} />
               </button>
             ) : (
-              <MessageCircle size={16} className="text-blue-500" />
+              <MessageCircle size={16} className="text-link" />
             )}
             <span className="text-sm font-semibold text-app">
               {showHistory ? "History" : showPreferences ? "Preferences" : "Stan"}
@@ -260,8 +258,9 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
           <div className="flex items-center gap-1">
             {!showHistory && !showPreferences && (
               <button
+                type="button"
                 onClick={handleShowPreferences}
-                className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+                className="theme-icon-button h-10 w-10"
                 title="Response preferences"
               >
                 <SlidersHorizontal size={14} />
@@ -269,16 +268,18 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
             )}
             {!showHistory && !showPreferences && (
               <button
+                type="button"
                 onClick={handleShowHistory}
-                className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+                className="theme-icon-button h-10 w-10"
                 title="Conversation history"
               >
                 <History size={14} />
               </button>
             )}
             <button
+              type="button"
               onClick={() => setIsWide(v => !v)}
-              className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+              className="theme-icon-button h-10 w-10"
               title={isWide ? "Restore default width" : "Widen chat"}
               aria-label={isWide ? "Restore default width" : "Widen chat"}
             >
@@ -286,17 +287,19 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
             </button>
             {!showHistory && !showPreferences && (
               <button
+                type="button"
                 onClick={clearChat}
                 disabled={messages.length === 0}
-                className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                className="theme-icon-button h-10 w-10 disabled:cursor-not-allowed disabled:opacity-30"
                 title="New chat"
               >
                 <SquarePen size={14} />
               </button>
             )}
             <button
+              type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-muted hover:text-app hover:bg-muted-surface transition-colors"
+              className="theme-icon-button h-10 w-10"
               title="Close"
             >
               <X size={16} />
@@ -378,7 +381,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                       ...prev,
                       personality: e.target.value as AgentResponsePreferences["personality"],
                     }))}
-                    className="w-32 rounded-md border border-app bg-app px-2 py-1.5 text-sm text-app focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                    className="theme-input w-32 px-3 py-1.5 text-sm"
                   >
                     <option value="pragmatic">Pragmatic</option>
                     <option value="friendly">Friendly</option>
@@ -403,7 +406,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                     type="checkbox"
                     checked={draftPreferences.fast_answers}
                     onChange={e => setDraftPreferences(prev => ({ ...prev, fast_answers: e.target.checked }))}
-                    className="h-4 w-4 accent-blue-600"
+                    className="h-4 w-4 accent-[hsl(var(--accent))]"
                   />
                 </label>
               </section>
@@ -418,7 +421,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                     type="checkbox"
                     checked={draftPreferences.thinking_enabled}
                     onChange={e => setDraftPreferences(prev => ({ ...prev, thinking_enabled: e.target.checked }))}
-                    className="h-4 w-4 accent-blue-600"
+                    className="h-4 w-4 accent-[hsl(var(--accent))]"
                   />
                 </label>
               </section>
@@ -431,14 +434,15 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   placeholder="End responses after answering. Do not ask follow-up questions."
                   rows={6}
                   maxLength={2000}
-                  className="w-full resize-none rounded-lg border border-app bg-app px-3 py-2 text-sm text-app placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="theme-input min-h-[9rem] w-full resize-none text-sm"
                 />
               </section>
 
               <div className="flex justify-end">
                 <button
+                  type="button"
                   onClick={handleSavePreferences}
-                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                  className="theme-button-base theme-button-primary px-4"
                 >
                   Save
                 </button>
@@ -461,8 +465,9 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                     {QUICK_PROMPTS.map(prompt => (
                       <button
                         key={prompt}
+                        type="button"
                         onClick={() => handleQuickPrompt(prompt)}
-                        className="text-left text-xs px-3 py-2 rounded-lg border border-app bg-card hover:bg-muted-surface transition-colors text-muted hover:text-app"
+                        className="theme-button-secondary min-h-11 rounded-[1rem] px-3 py-2 text-left text-xs text-muted transition-colors hover:text-app"
                       >
                         {prompt}
                       </button>
@@ -475,7 +480,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                     <AgentMessage key={msg.id} message={msg} />
                   ))}
                   {error && (
-                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-400">
+                    <div className="mb-3 rounded-[0.9rem] border border-app bg-[hsl(var(--destructive-muted))] px-3 py-2 text-xs text-negative">
                       {error}
                     </div>
                   )}
@@ -485,11 +490,11 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
             </div>
 
             {/* Workflow launcher + Input area */}
-            <div className="border-t border-app px-4 py-3 bg-card">
-              {/* Workflow buttons */}
+            <div className="safe-bottom border-t border-app bg-card px-4 py-3">
               {!isStreaming && (
                 <div className="mb-2">
                   <button
+                    type="button"
                     onClick={() => setShowWorkflows(v => !v)}
                     className="flex items-center gap-1.5 text-[11px] text-muted hover:text-app transition-colors mb-1.5"
                   >
@@ -507,7 +512,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                               value={workflowTicker}
                               onChange={e => setWorkflowTicker(e.target.value.toUpperCase())}
                               placeholder="TICKER"
-                              className="w-[60px] px-1.5 py-1 text-[11px] rounded border border-app bg-app text-app placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-blue-500/40 font-mono"
+                              className="theme-input mono-text w-[72px] px-2 py-1 text-[11px]"
                               onKeyDown={e => {
                                 if (e.key === "Enter") {
                                   e.preventDefault()
@@ -517,9 +522,10 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                             />
                           )}
                           <button
+                            type="button"
                             onClick={() => handleWorkflow(wf)}
                             disabled={wf.requiresTicker && !workflowTicker.trim()}
-                            className="px-2 py-1 text-[11px] rounded-md border border-app bg-card hover:bg-muted-surface text-muted hover:text-app transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="theme-button-secondary min-h-8 rounded-md px-2 py-1 text-[11px] text-muted transition-colors hover:text-app disabled:cursor-not-allowed disabled:opacity-40"
                             title={wf.description}
                           >
                             {wf.label}
@@ -539,9 +545,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   placeholder="Ask about markets, portfolio, macro..."
                   rows={1}
                   className={cn(
-                    "flex-1 resize-none rounded-lg border border-app bg-app px-3 py-2 text-sm text-app",
-                    "placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500",
-                    "max-h-[120px]",
+                    "theme-input max-h-[120px] flex-1 resize-none text-sm",
                   )}
                   style={{ minHeight: "38px" }}
                   onInput={e => {
@@ -553,17 +557,19 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                 />
                 {isStreaming ? (
                   <button
+                    type="button"
                     onClick={stopStreaming}
-                    className="flex-none flex items-center justify-center h-[38px] w-[38px] rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+                    className="theme-button-destructive flex h-11 w-11 flex-none items-center justify-center rounded-full"
                     title="Stop generating"
                   >
                     <Square size={14} />
                   </button>
                 ) : (
                   <button
+                    type="button"
                     onClick={handleSend}
                     disabled={!input.trim()}
-                    className="flex-none flex items-center justify-center h-[38px] w-[38px] rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="theme-button-primary flex h-11 w-11 flex-none items-center justify-center rounded-full text-[hsl(var(--accent-foreground))] disabled:cursor-not-allowed disabled:opacity-40"
                     title="Send message"
                   >
                     <Send size={14} />

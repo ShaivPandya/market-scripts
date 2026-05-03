@@ -323,7 +323,15 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                 },
                 "filters": {
                     "type": "object",
-                    "description": "Optional filters: tickers, sectors, assets, max_results, min_risk_score.",
+                    "description": "Optional filters: tickers, sectors, assets, min_risk_score.",
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "Optional 1-based results page. Defaults to 1.",
+                },
+                "page_size": {
+                    "type": "integer",
+                    "description": "Optional page size from 1 to 100. Defaults to 25.",
                 },
                 "timeframe": {
                     "type": "string",
@@ -2570,6 +2578,8 @@ def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object
         include_graph = bool(args.get("include_graph", False))
         run_id = args.get("run_id")
         refresh_snapshot = bool(args.get("refresh_snapshot", False))
+        page = max(1, int(args.get("page", 1) or 1))
+        page_size = max(1, min(int(args.get("page_size", 25) or 25), 100))
 
         cache_token = json.dumps(
             {
@@ -2580,6 +2590,8 @@ def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object
                 "include_graph": include_graph,
                 "run_id": run_id,
                 "refresh_snapshot": refresh_snapshot,
+                "page": page,
+                "page_size": page_size,
                 "actor": actor_cache_key(actor),
             },
             sort_keys=True,
@@ -2599,6 +2611,8 @@ def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object
                 include_graph=include_graph,
                 run_id=str(run_id) if isinstance(run_id, str) and run_id.strip() else None,
                 refresh_snapshot=refresh_snapshot,
+                page=page,
+                page_size=page_size,
             )
             return serialize_value(result)
 

@@ -12,7 +12,18 @@ def test_query_ontology_tool_registered():
 
 
 def test_query_ontology_tool_dispatch(monkeypatch):
-    def fake_query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+    def fake_query(
+        self,
+        query,
+        intent,
+        filters,
+        timeframe,
+        include_graph,
+        run_id,
+        refresh_snapshot=False,
+        page=1,
+        page_size=25,
+    ):
         return {
             "run_id": run_id or "run-1",
             "intent": intent or "portfolio_risk_exposure",
@@ -40,7 +51,7 @@ def test_query_ontology_tool_dispatch(monkeypatch):
         {
             "query": "Show me my portfolio risk exposure",
             "timeframe": "Daily",
-            "filters": {"max_results": 5},
+            "page_size": 5,
         },
     )
 
@@ -57,7 +68,18 @@ def test_query_ontology_string_filters(monkeypatch):
     monkeypatch.setattr("api.agent_tools.get_cached", lambda *args, **kwargs: None)
     monkeypatch.setattr("api.agent_tools.set_cached", lambda *args, **kwargs: None)
 
-    def fake_query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+    def fake_query(
+        self,
+        query,
+        intent,
+        filters,
+        timeframe,
+        include_graph,
+        run_id,
+        refresh_snapshot=False,
+        page=1,
+        page_size=25,
+    ):
         captured["filters"] = filters
         return {
             "run_id": run_id or "run-1",

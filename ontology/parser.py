@@ -93,7 +93,7 @@ def _coerce_filters(raw: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, list):
             out[k] = [str(i).strip() for i in v if str(i).strip()]
 
-    for k in ("max_results", "min_risk_score"):
+    for k in ("min_risk_score",):
         if k in raw:
             out[k] = raw.get(k)
 
@@ -205,7 +205,7 @@ def _parse_with_llm(query: str) -> dict[str, Any] | None:
         "Extract a portfolio-ontology query intent and optional filters as strict JSON. "
         "Allowed intents: portfolio_risk_exposure, positions_in_deteriorating_macro, entity_context, thesis_review, temporal_comparison. "
         "Return JSON object with keys: intent, filters, entity. "
-        "filters may include tickers (array), sectors (array), assets (array), max_results (int), min_risk_score (float). "
+        "filters may include tickers (array), sectors (array), assets (array), min_risk_score (float). "
         "No markdown.\n\n"
         f"User query: {query}"
     )

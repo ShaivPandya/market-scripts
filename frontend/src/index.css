@@ -682,6 +682,156 @@
   .safe-top {
     padding-top: max(1rem, var(--safe-top));
   }
+
+  .bg-white {
+    background-color: hsl(var(--background-card));
+  }
+
+  .bg-gray-50,
+  .bg-gray-50\/60,
+  .bg-gray-100 {
+    background-color: hsl(var(--background-card-muted));
+  }
+
+  .bg-gray-200,
+  .bg-gray-300,
+  .bg-gray-800 {
+    background-color: hsl(var(--hover));
+  }
+
+  .bg-blue-50,
+  .bg-blue-50\/60,
+  .bg-blue-100 {
+    background-color: hsl(var(--accent-muted));
+  }
+
+  .bg-red-50,
+  .bg-red-100 {
+    background-color: hsl(var(--destructive-muted));
+  }
+
+  .bg-green-50,
+  .bg-green-100 {
+    background-color: hsl(var(--success-muted));
+  }
+
+  .bg-yellow-50,
+  .bg-yellow-100,
+  .bg-amber-50,
+  .bg-amber-100,
+  .bg-orange-50,
+  .bg-orange-100 {
+    background-color: hsl(var(--warning-muted));
+  }
+
+  .text-gray-900,
+  .text-gray-800,
+  .text-gray-700 {
+    color: hsl(var(--foreground));
+  }
+
+  .text-gray-600,
+  .text-gray-500 {
+    color: hsl(var(--foreground-secondary));
+  }
+
+  .text-gray-400,
+  .text-gray-300 {
+    color: hsl(var(--foreground-tertiary));
+  }
+
+  .text-blue-500,
+  .text-blue-600,
+  .text-blue-700,
+  .text-blue-800,
+  .dark\:text-blue-400 {
+    color: hsl(var(--link));
+  }
+
+  .text-red-500,
+  .text-red-600,
+  .text-red-700,
+  .text-red-800,
+  .dark\:text-red-400 {
+    color: hsl(var(--negative));
+  }
+
+  .text-green-600,
+  .text-green-700,
+  .text-green-800,
+  .dark\:text-green-400 {
+    color: hsl(var(--positive));
+  }
+
+  .text-yellow-600,
+  .text-yellow-700,
+  .text-yellow-800,
+  .text-amber-700,
+  .text-amber-800,
+  .dark\:text-amber-400,
+  .dark\:text-yellow-400,
+  .dark\:text-orange-400 {
+    color: hsl(var(--warning));
+  }
+
+  .border-gray-100,
+  .border-gray-200,
+  .border-gray-200\/80 {
+    border-color: hsl(var(--border));
+  }
+
+  .border-gray-300 {
+    border-color: hsl(var(--border-strong));
+  }
+
+  .border-blue-100,
+  .border-blue-200 {
+    border-color: hsl(var(--accent) / 0.18);
+  }
+
+  .border-red-200 {
+    border-color: hsl(var(--destructive) / 0.18);
+  }
+
+  .border-green-200 {
+    border-color: hsl(var(--success) / 0.18);
+  }
+
+  .border-yellow-100,
+  .border-yellow-200,
+  .border-yellow-300,
+  .border-amber-200 {
+    border-color: hsl(var(--warning) / 0.18);
+  }
+
+  .hover\:bg-gray-50:hover,
+  .hover\:bg-gray-100:hover,
+  .hover\:bg-gray-200:hover {
+    background-color: hsl(var(--hover));
+  }
+
+  .hover\:bg-blue-100:hover {
+    background-color: hsl(var(--selected));
+  }
+
+  .hover\:bg-red-50:hover,
+  .hover\:bg-red-100:hover {
+    background-color: hsl(var(--destructive) / 0.14);
+  }
+
+  .hover\:text-gray-700:hover,
+  .hover\:text-gray-900:hover,
+  .hover\:text-blue-700:hover {
+    color: hsl(var(--foreground));
+  }
+
+  .focus\:ring-blue-500,
+  .focus\:ring-blue-500\/40,
+  .focus\:border-blue-500,
+  .focus-visible\:ring-blue-500 {
+    --tw-ring-color: hsl(var(--focus-ring) / 0.34);
+    border-color: hsl(var(--focus-ring));
+  }
 }
 
 .hig-slider {

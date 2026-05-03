@@ -1,7 +1,7 @@
 import { useState } from "react"
-import { Outlet } from "react-router-dom"
-import { MessageCircle } from "lucide-react"
-import { Sidebar } from "./Sidebar"
+import { Outlet, useLocation } from "react-router-dom"
+import { Menu, MessageCircle, PanelRightOpen } from "lucide-react"
+import { Sidebar, getRouteLabel } from "./Sidebar"
 import { AgentChat } from "../agent/AgentChat"
 import { ScreenContextProvider, useScreenContext, useAutoScreenContext } from "@/contexts/ScreenContext"
 
@@ -32,6 +32,8 @@ function LayoutInner({ sidebarOpen, setSidebarOpen, agentOpen, setAgentOpen }: L
   const { screenContext } = useScreenContext()
   const autoContext = useAutoScreenContext()
   const effectiveContext = screenContext ?? autoContext
+  const location = useLocation()
+  const routeLabel = getRouteLabel(location.pathname)
 
   return (
     <div className="flex min-h-screen bg-app text-app">
@@ -44,30 +46,44 @@ function LayoutInner({ sidebarOpen, setSidebarOpen, agentOpen, setAgentOpen }: L
 
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <main className="flex-1 overflow-auto p-3 md:p-6 bg-app min-w-0">
-        <button
-          className="theme-button-secondary mb-3 rounded-lg p-2 md:hidden"
-          onClick={() => setSidebarOpen(true)}
-          aria-label="Open navigation"
-        >
-          <div className="mb-1 h-0.5 w-5 bg-[hsl(var(--muted-foreground))]" />
-          <div className="mb-1 h-0.5 w-5 bg-[hsl(var(--muted-foreground))]" />
-          <div className="h-0.5 w-5 bg-[hsl(var(--muted-foreground))]" />
-        </button>
+      <main className="theme-page flex-1 overflow-auto min-w-0">
+        <div className="theme-page-content">
+          <div className="theme-floating mb-4 flex items-center justify-between gap-3 px-3 py-3 md:hidden">
+            <button
+              type="button"
+              className="theme-icon-button"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open navigation"
+            >
+              <Menu size={18} />
+            </button>
+            <div className="min-w-0 text-center">
+              <p className="text-xs uppercase tracking-[0.14em] text-subtle">Market Dashboard</p>
+              <p className="truncate text-sm font-semibold text-app">{routeLabel}</p>
+            </div>
+            <button
+              type="button"
+              className="theme-icon-button"
+              onClick={() => setAgentOpen(true)}
+              aria-label="Open Stan"
+            >
+              <PanelRightOpen size={18} />
+            </button>
+          </div>
 
-        <Outlet />
+          <Outlet />
+        </div>
       </main>
 
-      {/* Stan floating button */}
       <button
+        type="button"
         onClick={() => setAgentOpen(true)}
-        className="fixed bottom-6 right-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors hover:scale-105"
+        className="theme-floating fixed bottom-[max(1.25rem,calc(1.25rem+var(--safe-bottom)))] right-[max(1rem,calc(1rem+var(--safe-right)))] z-40 flex h-14 w-14 items-center justify-center text-link transition-colors hover:bg-selected"
         aria-label="Open Stan"
       >
         <MessageCircle size={20} />
       </button>
 
-      {/* Stan drawer */}
       <AgentChat open={agentOpen} onClose={() => setAgentOpen(false)} screenContext={effectiveContext} />
     </div>
   )

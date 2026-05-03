@@ -66,7 +66,10 @@ export function Positioning() {
     60 * 60 * 1000,
   )
 
-  const summaryRows: Record<string, unknown>[] = Array.isArray(summaryData) ? summaryData : []
+  const summaryRows: Record<string, unknown>[] = useMemo(
+    () => (Array.isArray(summaryData) ? summaryData : []),
+    [summaryData],
+  )
 
   // Register screen context for agent chat
   const screenCtx = useMemo(() => {

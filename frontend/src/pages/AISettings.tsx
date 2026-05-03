@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, CheckCircle, Save } from "lucide-react"
+import { Save } from "lucide-react"
 
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { useApiQuery } from "@/hooks/useApiQuery"
@@ -12,6 +12,9 @@ import {
   type LLMSettings,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { PageHeader } from "@/components/shared/PageHeader"
+import { SurfaceCard } from "@/components/shared/SurfaceCard"
+import { StatusBadge } from "@/components/shared/StatusBadge"
 
 const QUERY_KEY = ["llm-settings"]
 const MODEL_TIERS = [
@@ -26,45 +29,32 @@ function providerDescription(provider: LLMProvider) {
 
 function statusBadge(provider: LLMProviderStatus) {
   if (provider.configured) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-        <CheckCircle size={13} aria-hidden="true" />
-        Configured
-      </span>
-    )
+    return <StatusBadge tone="success">Configured</StatusBadge>
   }
 
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-      <AlertTriangle size={13} aria-hidden="true" />
-      Missing {provider.api_key_env}
-    </span>
-  )
+  return <StatusBadge tone="warning">Missing {provider.api_key_env}</StatusBadge>
 }
 
 export function AISettings() {
   const queryClient = useQueryClient()
   const { data, isLoading, error } = useApiQuery<LLMSettings>(QUERY_KEY, fetchLLMSettings, 30_000)
-  const [selectedProvider, setSelectedProvider] = useState<LLMProvider>("anthropic")
-
-  useEffect(() => {
-    if (data?.provider) setSelectedProvider(data.provider)
-  }, [data?.provider])
+  const [selectedProvider, setSelectedProvider] = useState<LLMProvider | null>(null)
+  const effectiveProvider = selectedProvider ?? data?.provider ?? "anthropic"
 
   const selectedStatus = useMemo(
-    () => data?.available_providers.find(provider => provider.provider === selectedProvider),
-    [data?.available_providers, selectedProvider],
+    () => data?.available_providers.find(provider => provider.provider === effectiveProvider),
+    [data?.available_providers, effectiveProvider],
   )
 
   const mutation = useMutation({
     mutationFn: updateLLMSettings,
     onSuccess: settings => {
       queryClient.setQueryData(QUERY_KEY, settings)
-      setSelectedProvider(settings.provider)
+      setSelectedProvider(null)
     },
   })
 
-  const hasChanges = data ? selectedProvider !== data.provider : false
+  const hasChanges = data ? effectiveProvider !== data.provider : false
   const canSave = Boolean(hasChanges && selectedStatus?.configured && !mutation.isPending)
 
   if (isLoading) return <LoadingSpinner message="Loading AI settings..." />
@@ -72,26 +62,24 @@ export function AISettings() {
 
   return (
     <div className="max-w-4xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-app">AI Settings</h1>
-        <p className="mt-1 text-sm text-muted">
-          Runtime provider for live app AI features.
-        </p>
-      </div>
+      <PageHeader
+        title="AI Settings"
+        subtitle="Runtime provider controls for live app AI features."
+      />
 
-      <section className="theme-surface rounded-xl p-5">
+      <SurfaceCard className="p-5">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-app">Provider</h2>
+            <h2 className="section-title">Provider</h2>
             <p className="mt-1 text-xs text-muted">
               Active provider: {data.provider === "anthropic" ? "Claude" : "OpenAI"}
             </p>
           </div>
           <button
             type="button"
-            onClick={() => mutation.mutate(selectedProvider)}
+            onClick={() => mutation.mutate(effectiveProvider)}
             disabled={!canSave}
-            className="theme-button-primary inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            className="theme-button-base theme-button-primary px-4 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save size={15} aria-hidden="true" />
             Save
@@ -100,17 +88,16 @@ export function AISettings() {
 
         <div className="grid gap-3 md:grid-cols-2">
           {data.available_providers.map(provider => {
-            const checked = selectedProvider === provider.provider
             return (
               <button
                 key={provider.provider}
                 type="button"
                 onClick={() => setSelectedProvider(provider.provider)}
                 className={cn(
-                  "rounded-lg border px-4 py-3 text-left transition-colors",
-                  checked
-                    ? "border-[hsl(var(--accent))] bg-[hsl(var(--muted-2))]"
-                    : "border-app hover:bg-[hsl(var(--muted-2))]",
+                  "theme-surface rounded-[1rem] px-4 py-4 text-left transition-colors",
+                  effectiveProvider === provider.provider
+                    ? "border-[hsl(var(--accent))] bg-selected"
+                    : "hover:bg-hover",
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -119,9 +106,9 @@ export function AISettings() {
                       <span
                         className={cn(
                           "inline-block h-3 w-3 rounded-full border",
-                          checked
+                          effectiveProvider === provider.provider
                             ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]"
-                            : "border-[hsl(var(--muted-3))]",
+                            : "border-strong",
                         )}
                       />
                       <span className="text-sm font-semibold text-app">{provider.label}</span>
@@ -141,23 +128,23 @@ export function AISettings() {
           </div>
         )}
         {hasChanges && !selectedStatus?.configured && (
-          <p className="mt-4 text-sm text-amber-700 dark:text-amber-300">
+          <p className="mt-4 text-sm text-[hsl(var(--warning))]">
             {selectedStatus?.api_key_env ?? "Provider API key"} is not configured on the API server.
           </p>
         )}
-      </section>
+      </SurfaceCard>
 
-      <section className="theme-surface mt-5 rounded-xl p-5">
-        <h2 className="text-sm font-semibold text-app">Resolved Model Tiers</h2>
+      <SurfaceCard className="mt-5 p-5">
+        <h2 className="section-title">Resolved Model Tiers</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           {MODEL_TIERS.map(tier => (
-            <div key={tier.key} className="rounded-lg border border-app px-3 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">{tier.label}</p>
+            <div key={tier.key} className="theme-surface-muted px-3 py-3">
+              <p className="label-text">{tier.label}</p>
               <p className="mt-2 break-words font-mono text-sm text-app">{data.models[tier.key]}</p>
             </div>
           ))}
         </div>
-      </section>
+      </SurfaceCard>
     </div>
   )
 }

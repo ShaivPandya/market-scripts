@@ -45,6 +45,8 @@ KNOWN_SECTORS = {
     "Unknown Equity",
 }
 SNAPSHOT_REUSE_MAX_AGE = timedelta(minutes=15)
+GRAPH_PAGE_NODE_LIMIT = 500
+GRAPH_PAGE_EDGE_LIMIT = 1000
 
 
 class OntologyRunNotFoundError(Exception):
@@ -96,6 +98,8 @@ class OntologyQueryService:
         include_graph: bool = False,
         run_id: str | None = None,
         refresh_snapshot: bool = False,
+        page: int = 1,
+        page_size: int = 25,
         schema_mode: str = "upgraded",
         actor: Actor | None = None,
     ) -> dict[str, Any]:
@@ -118,6 +122,8 @@ class OntologyQueryService:
             )
             raise
         tf = timeframe if timeframe in VALID_TIMEFRAMES else "Daily"
+        safe_page = max(1, int(page))
+        safe_page_size = max(1, min(int(page_size), 100))
         auth_stats = _empty_auth_stats()
 
         interpreted = parse_hybrid_query(
@@ -163,13 +169,33 @@ class OntologyQueryService:
                     effective_filters["tickers"] = [token.upper()]
                 else:
                     effective_filters["sectors"] = [token]
-
-        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=resolved_run_id, schema_mode="upgraded")
-        all_evidence = self.repo.fetch_snapshot_all_position_signal_evidence(
+        applied_filters = _query_filters_for_sql(effective_filters, interpreted.intent)
+        page_data = self.repo.query_snapshot_positions_page(
             run_id=resolved_run_id,
+            filters=applied_filters,
+            page=safe_page,
+            page_size=safe_page_size,
             schema_mode="upgraded",
         )
-        results = []
+        rows = page_data["rows"]
+        position_ids = [str(row.get("position_id") or "") for row in rows if row.get("position_id")]
+        evidence_by_position = self.repo.fetch_snapshot_position_signal_evidence_batch(
+            run_id=resolved_run_id,
+            position_ids=position_ids,
+            schema_mode="upgraded",
+        )
+        thesis_context = (
+            self.repo.fetch_snapshot_position_thesis_context_batch(
+                run_id=resolved_run_id,
+                position_ids=position_ids,
+                schema_mode="upgraded",
+            )
+            if include_graph or interpreted.intent == "thesis_review"
+            else {}
+        )
+        results: list[dict[str, Any]] = []
+        result_position_ids: list[str] = []
+        visible_rows: list[dict[str, Any]] = []
         for row in rows:
             position_resource = _position_resource_from_row(row)
             if not self.policy.check_object(actor, position_resource).allowed:
@@ -193,7 +219,7 @@ class OntologyQueryService:
             sector = _resolved_sector(row, position_resource, actor, self.policy, auth_stats)
 
             evidence = self._build_evidence_from_batch(
-                all_evidence.get(position_id, []),
+                evidence_by_position.get(position_id, []),
                 actor=actor,
                 position_resource=position_resource,
                 auth_stats=auth_stats,
@@ -210,59 +236,31 @@ class OntologyQueryService:
                     "evidence": evidence,
                 }
             )
-
-        if interpreted.intent == "positions_in_deteriorating_macro":
-            results = [r for r in results if (_to_float(r.get("risk_score")) or 0.0) >= 0.6]
+            result_position_ids.append(position_id)
+            visible_rows.append(row)
 
         if interpreted.intent == "thesis_review":
-            results = _enrich_with_thesis(results, resolved_run_id, self.repo, actor, self.policy, auth_stats)
+            _enrich_with_thesis_context(
+                results,
+                position_ids=result_position_ids,
+                thesis_context=thesis_context,
+                actor=actor,
+                policy=self.policy,
+                auth_stats=auth_stats,
+            )
 
-        if interpreted.intent == "temporal_comparison":
-            diff = self._auto_temporal_diff(resolved_run_id, actor=actor)
-            if diff:
-                response = {
-                    "run_id": resolved_run_id,
-                    "intent": "temporal_comparison",
-                    "interpreted_query": {
-                        "source": interpreted.source,
-                        "query": interpreted.original_query,
-                        "entity": interpreted.entity,
-                        "filters": effective_filters,
-                    },
-                    "as_of": as_of,
-                    "source_status": source_status,
-                    "diff": diff,
-                    "results": results,
-                    "aggregate": _build_aggregate(results, source_status, required_modules),
-                    "_meta": {"authorization": dict(auth_stats)},
-                }
-                _emit_ontology_read_audit(
-                    "ontology.query",
-                    actor=actor,
-                    status="succeeded",
-                    object_refs=[{"type": "ontology_run", "id": resolved_run_id}],
-                    metadata={
-                        "intent": interpreted.intent,
-                        "include_graph": include_graph,
-                        "refresh_snapshot": refresh_snapshot,
-                    },
-                    after_summary={
-                        "run_id": resolved_run_id,
-                        "intent": interpreted.intent,
-                        "result_count": len(results),
-                        "has_diff": True,
-                    },
-                    source_lineage={"run_id": resolved_run_id, "as_of": as_of, "source_status": source_status},
-                )
-                return response
-
-        results = _apply_filters(results, effective_filters)
-        results.sort(key=lambda r: _to_float(r.get("risk_score")) or 0.0, reverse=True)
-        max_results = _to_int(effective_filters.get("max_results"))
-        if max_results is not None and max_results > 0:
-            results = results[:max_results]
-
-        aggregate = _build_aggregate(results, source_status, required_modules)
+        exact_totals = _has_exact_query_totals(actor, self.policy)
+        aggregate = self.repo.aggregate_snapshot_positions(run_id=resolved_run_id, filters=applied_filters)
+        aggregate["confidence"] = round(_compute_confidence(source_status, required_modules), 4)
+        aggregate["exact"] = exact_totals
+        _sanitize_aggregate_for_policy(actor, self.policy, aggregate)
+        pagination_meta = _build_pagination_meta(
+            page=safe_page,
+            page_size=safe_page_size,
+            returned_results=len(results),
+            total_results=int(page_data["total_results"] or 0),
+            exact_total=exact_totals,
+        )
         response: dict[str, Any] = {
             "run_id": resolved_run_id,
             "intent": interpreted.intent,
@@ -270,7 +268,7 @@ class OntologyQueryService:
                 "source": interpreted.source,
                 "query": interpreted.original_query,
                 "entity": interpreted.entity,
-                "filters": effective_filters,
+                "filters": applied_filters,
             },
             "as_of": as_of,
             "source_status": source_status,
@@ -278,16 +276,36 @@ class OntologyQueryService:
             "aggregate": aggregate,
         }
 
+        if interpreted.intent == "temporal_comparison":
+            diff = self._auto_temporal_diff(resolved_run_id, actor=actor)
+            if diff:
+                response["diff"] = diff
+
         if include_graph:
+            raw_graph, graph_meta = _build_page_graph(
+                visible_rows,
+                evidence_by_position,
+                thesis_context,
+                run_id=resolved_run_id,
+            )
             graph, graph_stats = filter_graph(
                 actor,
                 self.policy,
-                self.repo.fetch_snapshot_graph(run_id=resolved_run_id, schema_mode="upgraded"),
+                raw_graph,
             )
             response["graph"] = graph
             _merge_auth_stats(auth_stats, graph_stats)
+            graph_meta["node_count"] = len(graph.get("nodes", []))
+            graph_meta["edge_count"] = len(graph.get("edges", []))
+        else:
+            graph_meta = None
 
-        response["_meta"] = {"authorization": dict(auth_stats)}
+        response["_meta"] = {
+            "authorization": dict(auth_stats),
+            "pagination": pagination_meta,
+        }
+        if graph_meta is not None:
+            response["_meta"]["graph"] = graph_meta
 
         _emit_ontology_read_audit(
             "ontology.query",
@@ -298,12 +316,17 @@ class OntologyQueryService:
                 "intent": interpreted.intent,
                 "include_graph": include_graph,
                 "refresh_snapshot": refresh_snapshot,
+                "page": safe_page,
+                "page_size": safe_page_size,
             },
             after_summary={
                 "run_id": resolved_run_id,
                 "intent": interpreted.intent,
                 "result_count": len(results),
+                "total_results": pagination_meta["total_results"],
                 "include_graph": include_graph,
+                "page": safe_page,
+                "page_size": safe_page_size,
                 "authorization": dict(auth_stats),
             },
             source_lineage={"run_id": resolved_run_id, "as_of": as_of, "source_status": source_status},
@@ -327,8 +350,7 @@ class OntologyQueryService:
         if not run_id:
             return False
 
-        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id, schema_mode="upgraded")
-        return len(rows) > 0
+        return self.repo.snapshot_has_positions(run_id)
 
     def compare_snapshots(self, run_id_a: str, run_id_b: str, actor: Actor | None = None) -> dict[str, Any]:
         """Diff two ontology snapshots. Returns position changes, risk score deltas, and signal transitions."""
@@ -488,11 +510,11 @@ class OntologyQueryService:
             return None
 
     def _build_evidence(self, position_id: str, run_id: str, actor: Actor | None = None) -> list[dict[str, Any]]:
-        raw = self.repo.fetch_snapshot_position_signal_evidence(
+        raw = self.repo.fetch_snapshot_position_signal_evidence_batch(
             run_id=run_id,
-            position_id=position_id,
+            position_ids=[position_id],
             schema_mode="upgraded",
-        )
+        ).get(position_id, [])
         position_resource = NodeResource(id=position_id, type="Position")
         return self._build_evidence_from_batch(raw, actor=actor, position_resource=position_resource)
 
@@ -675,11 +697,22 @@ def _resolved_asset(
     if not policy.check_object(actor, asset_resource).allowed:
         stats["filtered_objects"] += 1
         return None
+    edge_props = _as_dict(row.get("position_asset_edge_props")) or {"ontology_run_id": pos.get("ontology_run_id")}
     edge = EdgeResource(
         source_id=position_resource.id,
         target_id=asset_resource.id,
         relation_type="references_asset",
-        properties={"ontology_run_id": pos.get("ontology_run_id")},
+        properties=edge_props,
+        schema_name=(
+            str(row["position_asset_edge_schema_name"])
+            if row.get("position_asset_edge_schema_name") is not None
+            else None
+        ),
+        schema_version=(
+            int(row["position_asset_edge_schema_version"])
+            if row.get("position_asset_edge_schema_version") is not None
+            else None
+        ),
     )
     if not _relationship_allowed(actor, policy, edge, position_resource, asset_resource, stats):
         return None
@@ -705,11 +738,24 @@ def _resolved_sector(
         return None
     asset_resource = _asset_resource_from_row(row)
     if asset_resource is not None and row.get("sector_id") is not None:
+        edge_props = _as_dict(row.get("asset_sector_edge_props")) or {
+            "ontology_run_id": position_resource.properties.get("ontology_run_id")
+        }
         edge = EdgeResource(
             source_id=asset_resource.id,
             target_id=sector_resource.id,
             relation_type="belongs_to_sector",
-            properties={"ontology_run_id": position_resource.properties.get("ontology_run_id")},
+            properties=edge_props,
+            schema_name=(
+                str(row["asset_sector_edge_schema_name"])
+                if row.get("asset_sector_edge_schema_name") is not None
+                else None
+            ),
+            schema_version=(
+                int(row["asset_sector_edge_schema_version"])
+                if row.get("asset_sector_edge_schema_version") is not None
+                else None
+            ),
         )
         if not _relationship_allowed(actor, policy, edge, asset_resource, sector_resource, stats):
             return None
@@ -852,61 +898,452 @@ def _enrich_with_thesis(
     policy: OntologyPolicy | None = None,
     auth_stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Enrich position results with thesis metadata from the ontology snapshot."""
     actor = actor or admin_actor(source="service")
     policy = policy or DEFAULT_ONTOLOGY_POLICY
     auth_stats = auth_stats if auth_stats is not None else _empty_auth_stats()
-    graph, graph_stats = filter_graph(actor, policy, repo.fetch_snapshot_graph(run_id=run_id, schema_mode="upgraded"))
-    _merge_auth_stats(auth_stats, graph_stats)
-    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
-    edges = graph.get("edges", []) if isinstance(graph, dict) else []
+    position_ids = [f"position:{str(result.get('ticker') or '').upper()}" for result in results if result.get("ticker")]
+    thesis_context = repo.fetch_snapshot_position_thesis_context_batch(
+        run_id=run_id,
+        position_ids=position_ids,
+        schema_mode="upgraded",
+    )
+    _enrich_with_thesis_context(
+        results,
+        position_ids=position_ids,
+        thesis_context=thesis_context,
+        actor=actor,
+        policy=policy,
+        auth_stats=auth_stats,
+    )
+    return results
 
-    # Build lookup: position_id -> thesis node properties
-    thesis_by_position: dict[str, dict[str, Any]] = {}
-    eval_by_thesis: dict[str, dict[str, Any]] = {}
 
-    for edge in edges:
-        if not isinstance(edge, dict):
-            continue
-        if edge.get("relation_type") == "has_thesis":
-            thesis_by_position[edge["source_id"]] = edge["target_id"]
-        if edge.get("relation_type") == "evaluated_by":
-            eval_by_thesis[edge["source_id"]] = edge["target_id"]
+def _query_filters_for_sql(filters: dict[str, Any], intent: str | None) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in ("tickers", "sectors", "assets"):
+        value = filters.get(key)
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                out[key] = cleaned
+    min_risk = _to_float(filters.get("min_risk_score"))
+    if intent == "positions_in_deteriorating_macro":
+        min_risk = max(min_risk or 0.0, 0.6)
+    if min_risk is not None:
+        out["min_risk_score"] = round(min_risk, 4)
+    return out
 
-    node_props: dict[str, dict[str, Any]] = {}
-    for node in nodes:
-        if isinstance(node, dict):
-            node_props[node.get("id", "")] = node.get("properties", {})
 
-    for result in results:
-        ticker = str(result.get("ticker") or "").upper()
-        position_id = f"position:{ticker}"
-        thesis_id = thesis_by_position.get(position_id)
+def _has_exact_query_totals(actor: Actor | None, policy: OntologyPolicy) -> bool:
+    if policy is not DEFAULT_ONTOLOGY_POLICY or actor is None:
+        return False
+    roles = {role.lower() for role in actor.roles}
+    return actor.actor_type == "system" or "admin" in roles
 
-        if thesis_id and isinstance(thesis_id, str):
-            t_props = _as_dict(node_props.get(thesis_id))
-            result["thesis"] = {
-                "status": t_props.get("status"),
-                "created_at": t_props.get("created_at"),
-                "updated_at": t_props.get("updated_at"),
-            }
-            eval_id = eval_by_thesis.get(thesis_id)
-            if eval_id and isinstance(eval_id, str):
-                e_props = _as_dict(node_props.get(eval_id))
-                result["latest_evaluation"] = {
-                    "evaluated_at": e_props.get("evaluated_at"),
-                    "thesis_status": e_props.get("thesis_status"),
-                    "technical_read": e_props.get("technical_read"),
-                    "fundamental_read": e_props.get("fundamental_read"),
-                    "action": e_props.get("action"),
-                    "confidence": e_props.get("confidence"),
-                    "risk_flag": e_props.get("risk_flag"),
-                }
-        else:
+
+def _build_pagination_meta(
+    *,
+    page: int,
+    page_size: int,
+    returned_results: int,
+    total_results: int,
+    exact_total: bool,
+) -> dict[str, Any]:
+    total_pages = (total_results + page_size - 1) // page_size if page_size > 0 else 0
+    return {
+        "page": page,
+        "page_size": page_size,
+        "returned_results": returned_results,
+        "total_results": total_results,
+        "total_pages": total_pages,
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+        "sort": "risk_score_desc_then_position_id_asc",
+        "exact_total": exact_total,
+    }
+
+
+def _sanitize_aggregate_for_policy(actor: Actor | None, policy: OntologyPolicy, aggregate: dict[str, Any]) -> None:
+    if not _position_field_visible(actor, policy, "risk_score"):
+        aggregate["average_risk_score"] = 0.0
+    if not _position_field_visible(actor, policy, "risk_level"):
+        aggregate["risk_buckets"] = {"high": 0, "medium": 0, "low": 0}
+    if not _position_field_visible(actor, policy, "asset"):
+        aggregate["asset_exposure_counts"] = {}
+
+
+def _enrich_with_thesis_context(
+    results: list[dict[str, Any]],
+    *,
+    position_ids: list[str],
+    thesis_context: dict[str, dict[str, Any]],
+    actor: Actor | None,
+    policy: OntologyPolicy,
+    auth_stats: dict[str, int],
+) -> None:
+    for position_id, result in zip(position_ids, results, strict=False):
+        context = thesis_context.get(position_id) if isinstance(thesis_context, dict) else None
+        if not isinstance(context, dict):
             result["thesis"] = None
             result["latest_evaluation"] = None
+            continue
 
-    return results
+        thesis_bundle = context.get("thesis")
+        thesis_node = thesis_bundle.get("node") if isinstance(thesis_bundle, dict) else None
+        thesis_edge = thesis_bundle.get("edge") if isinstance(thesis_bundle, dict) else None
+        if not _graph_node_visible(actor, policy, thesis_node, auth_stats):
+            result["thesis"] = None
+            result["latest_evaluation"] = None
+            continue
+        if not _graph_edge_visible(
+            actor, policy, thesis_edge, source_id=position_id, target=thesis_node, auth_stats=auth_stats
+        ):
+            result["thesis"] = None
+            result["latest_evaluation"] = None
+            continue
+
+        thesis_props = _graph_node_properties(actor, policy, thesis_node, auth_stats)
+        result["thesis"] = {
+            "status": thesis_props.get("status"),
+            "created_at": thesis_props.get("created_at"),
+            "updated_at": thesis_props.get("updated_at"),
+        }
+
+        evaluations = context.get("evaluations") if isinstance(context.get("evaluations"), list) else []
+        latest = _select_latest_visible_evaluation(
+            evaluations,
+            actor=actor,
+            policy=policy,
+            thesis_node=thesis_node,
+            auth_stats=auth_stats,
+        )
+        if latest is None:
+            result["latest_evaluation"] = None
+            continue
+        eval_props = _graph_node_properties(actor, policy, latest["node"], auth_stats)
+        result["latest_evaluation"] = {
+            "evaluated_at": eval_props.get("evaluated_at"),
+            "thesis_status": eval_props.get("thesis_status"),
+            "technical_read": eval_props.get("technical_read"),
+            "fundamental_read": eval_props.get("fundamental_read"),
+            "action": eval_props.get("action"),
+            "confidence": eval_props.get("confidence"),
+            "risk_flag": eval_props.get("risk_flag"),
+        }
+
+
+def _select_latest_visible_evaluation(
+    evaluations: list[dict[str, Any]],
+    *,
+    actor: Actor | None,
+    policy: OntologyPolicy,
+    thesis_node: dict[str, Any],
+    auth_stats: dict[str, int],
+) -> dict[str, Any] | None:
+    visible: list[dict[str, Any]] = []
+    for item in evaluations:
+        node = item.get("node") if isinstance(item, dict) else None
+        edge = item.get("edge") if isinstance(item, dict) else None
+        if not _graph_node_visible(actor, policy, node, auth_stats):
+            continue
+        if not _graph_edge_visible(actor, policy, edge, source=thesis_node, target=node, auth_stats=auth_stats):
+            continue
+        visible.append(item)
+    if not visible:
+        return None
+    visible.sort(key=_evaluation_sort_key, reverse=True)
+    return visible[0]
+
+
+def _evaluation_sort_key(item: dict[str, Any]) -> tuple[str, str]:
+    node = item.get("node") if isinstance(item, dict) else {}
+    props = _as_dict(node.get("properties") if isinstance(node, dict) else {})
+    return (str(props.get("evaluated_at") or ""), str(node.get("id") or ""))
+
+
+def _build_page_graph(
+    rows: list[dict[str, Any]],
+    evidence_by_position: dict[str, list[dict[str, Any]]],
+    thesis_context: dict[str, dict[str, Any]],
+    *,
+    run_id: str,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    builder = _PageGraphBuilder(max_nodes=GRAPH_PAGE_NODE_LIMIT, max_edges=GRAPH_PAGE_EDGE_LIMIT)
+
+    for row in rows:
+        builder.add_node(_row_graph_node(row, kind="position"))
+
+    for row in rows:
+        builder.add_node(_row_graph_node(row, kind="asset"))
+        builder.add_edge(_row_graph_edge(row, kind="position_asset", run_id=run_id))
+        builder.add_node(_row_graph_node(row, kind="sector"))
+        builder.add_edge(_row_graph_edge(row, kind="asset_sector", run_id=run_id))
+
+    for row in rows:
+        position_id = str(row.get("position_id") or "")
+        for evidence in evidence_by_position.get(position_id, []):
+            builder.add_node(_signal_graph_node(evidence))
+            builder.add_edge(_signal_graph_edge(position_id, evidence))
+
+    for row in rows:
+        position_id = str(row.get("position_id") or "")
+        context = thesis_context.get(position_id) if isinstance(thesis_context, dict) else None
+        if not isinstance(context, dict):
+            continue
+        thesis_bundle = context.get("thesis")
+        if isinstance(thesis_bundle, dict):
+            builder.add_node(thesis_bundle.get("node"))
+            builder.add_edge(thesis_bundle.get("edge"))
+        for evaluation in context.get("evaluations") if isinstance(context.get("evaluations"), list) else []:
+            if isinstance(evaluation, dict):
+                builder.add_node(evaluation.get("node"))
+                builder.add_edge(evaluation.get("edge"))
+        for catalyst in context.get("catalysts") if isinstance(context.get("catalysts"), list) else []:
+            if isinstance(catalyst, dict):
+                builder.add_node(catalyst.get("node"))
+                builder.add_edge(catalyst.get("edge"))
+
+    return builder.graph(), {
+        "scope": "page",
+        "node_count": len(builder.nodes),
+        "edge_count": len(builder.edges),
+        "truncated": builder.truncated,
+        "max_nodes": GRAPH_PAGE_NODE_LIMIT,
+        "max_edges": GRAPH_PAGE_EDGE_LIMIT,
+    }
+
+
+class _PageGraphBuilder:
+    def __init__(self, *, max_nodes: int, max_edges: int):
+        self.max_nodes = max_nodes
+        self.max_edges = max_edges
+        self.nodes: list[dict[str, Any]] = []
+        self.edges: list[dict[str, Any]] = []
+        self._node_ids: set[str] = set()
+        self._edge_keys: set[tuple[str, str, str]] = set()
+        self.truncated = False
+
+    def add_node(self, node: dict[str, Any] | None) -> bool:
+        if not isinstance(node, dict):
+            return False
+        node_id = str(node.get("id") or "")
+        if not node_id:
+            return False
+        if node_id in self._node_ids:
+            return True
+        if len(self.nodes) >= self.max_nodes:
+            self.truncated = True
+            return False
+        self._node_ids.add(node_id)
+        self.nodes.append(dict(node))
+        return True
+
+    def add_edge(self, edge: dict[str, Any] | None) -> bool:
+        if not isinstance(edge, dict):
+            return False
+        source_id = str(edge.get("source_id") or "")
+        target_id = str(edge.get("target_id") or "")
+        relation_type = str(edge.get("relation_type") or "")
+        if not source_id or not target_id or not relation_type:
+            return False
+        if source_id not in self._node_ids or target_id not in self._node_ids:
+            return False
+        key = (source_id, target_id, relation_type)
+        if key in self._edge_keys:
+            return True
+        if len(self.edges) >= self.max_edges:
+            self.truncated = True
+            return False
+        self._edge_keys.add(key)
+        self.edges.append(dict(edge))
+        return True
+
+    def graph(self) -> dict[str, list[dict[str, Any]]]:
+        return {"nodes": self.nodes, "edges": self.edges}
+
+
+def _row_graph_node(row: dict[str, Any], *, kind: str) -> dict[str, Any] | None:
+    if kind == "position":
+        node_id = row.get("position_id")
+        if node_id is None:
+            return None
+        return {
+            "id": str(node_id),
+            "type": "Position",
+            "label": str(row.get("position_label") or node_id),
+            "properties": _as_dict(row.get("position_props")),
+            "schema_name": row.get("position_schema_name"),
+            "schema_version": row.get("position_schema_version"),
+            "updated_at": row.get("position_updated_at"),
+        }
+    if kind == "asset":
+        node_id = row.get("asset_id")
+        if node_id is None:
+            return None
+        return {
+            "id": str(node_id),
+            "type": "Asset",
+            "label": str(row.get("asset_label") or node_id),
+            "properties": _as_dict(row.get("asset_props")),
+            "schema_name": row.get("asset_schema_name"),
+            "schema_version": row.get("asset_schema_version"),
+            "updated_at": row.get("asset_updated_at"),
+        }
+    if kind == "sector":
+        node_id = row.get("sector_id")
+        if node_id is None:
+            return None
+        return {
+            "id": str(node_id),
+            "type": "Sector",
+            "label": str(row.get("sector_label") or node_id),
+            "properties": _as_dict(row.get("sector_props")),
+            "schema_name": row.get("sector_schema_name"),
+            "schema_version": row.get("sector_schema_version"),
+            "updated_at": row.get("sector_updated_at"),
+        }
+    return None
+
+
+def _row_graph_edge(row: dict[str, Any], *, kind: str, run_id: str) -> dict[str, Any] | None:
+    if kind == "position_asset":
+        source_id = row.get("position_id")
+        target_id = row.get("asset_id")
+        if source_id is None or target_id is None:
+            return None
+        return {
+            "source_id": str(source_id),
+            "target_id": str(target_id),
+            "relation_type": "references_asset",
+            "properties": _as_dict(row.get("position_asset_edge_props")) or {"ontology_run_id": run_id},
+            "schema_name": row.get("position_asset_edge_schema_name"),
+            "schema_version": row.get("position_asset_edge_schema_version"),
+            "relation_schema_name": row.get("position_asset_edge_relation_schema_name"),
+            "relation_schema_version": row.get("position_asset_edge_relation_schema_version"),
+            "updated_at": row.get("position_asset_edge_updated_at"),
+        }
+    if kind == "asset_sector":
+        source_id = row.get("asset_id")
+        target_id = row.get("sector_id")
+        if source_id is None or target_id is None:
+            return None
+        return {
+            "source_id": str(source_id),
+            "target_id": str(target_id),
+            "relation_type": "belongs_to_sector",
+            "properties": _as_dict(row.get("asset_sector_edge_props")) or {"ontology_run_id": run_id},
+            "schema_name": row.get("asset_sector_edge_schema_name"),
+            "schema_version": row.get("asset_sector_edge_schema_version"),
+            "relation_schema_name": row.get("asset_sector_edge_relation_schema_name"),
+            "relation_schema_version": row.get("asset_sector_edge_relation_schema_version"),
+            "updated_at": row.get("asset_sector_edge_updated_at"),
+        }
+    return None
+
+
+def _signal_graph_node(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row.get("signal_id") or ""),
+        "type": "Signal",
+        "label": str(row.get("signal_label") or row.get("signal_id") or ""),
+        "properties": _as_dict(row.get("signal_props")),
+        "schema_name": row.get("signal_schema_name"),
+        "schema_version": row.get("signal_schema_version"),
+        "updated_at": row.get("signal_updated_at"),
+    }
+
+
+def _signal_graph_edge(position_id: str, row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_id": position_id,
+        "target_id": str(row.get("signal_id") or ""),
+        "relation_type": "exposed_to_signal",
+        "properties": _as_dict(row.get("edge_props")),
+        "schema_name": row.get("edge_schema_name"),
+        "schema_version": row.get("edge_schema_version"),
+        "relation_schema_name": row.get("edge_relation_schema_name"),
+        "relation_schema_version": row.get("edge_relation_schema_version"),
+        "updated_at": row.get("edge_updated_at"),
+    }
+
+
+def _graph_node_visible(
+    actor: Actor | None,
+    policy: OntologyPolicy,
+    node: dict[str, Any] | None,
+    auth_stats: dict[str, int],
+) -> bool:
+    if not isinstance(node, dict):
+        return False
+    resource = NodeResource(
+        id=str(node.get("id") or ""),
+        type=str(node.get("type") or ""),
+        label=str(node["label"]) if node.get("label") is not None else None,
+        properties=_as_dict(node.get("properties")),
+        schema_name=str(node["schema_name"]) if node.get("schema_name") is not None else None,
+        schema_version=int(node["schema_version"]) if node.get("schema_version") is not None else None,
+    )
+    if policy.check_object(actor, resource).allowed:
+        return True
+    auth_stats["filtered_objects"] += 1
+    return False
+
+
+def _graph_edge_visible(
+    actor: Actor | None,
+    policy: OntologyPolicy,
+    edge: dict[str, Any] | None,
+    *,
+    source: dict[str, Any] | None = None,
+    target: dict[str, Any] | None = None,
+    source_id: str | None = None,
+    auth_stats: dict[str, int],
+) -> bool:
+    if not isinstance(edge, dict):
+        return False
+    edge_resource = EdgeResource(
+        source_id=str(edge.get("source_id") or source_id or ""),
+        target_id=str(edge.get("target_id") or ""),
+        relation_type=str(edge.get("relation_type") or ""),
+        properties=_as_dict(edge.get("properties")),
+        schema_name=str(edge["schema_name"]) if edge.get("schema_name") is not None else None,
+        schema_version=int(edge["schema_version"]) if edge.get("schema_version") is not None else None,
+    )
+    source_resource = (
+        _node_resource_from_graph_node(source)
+        if isinstance(source, dict)
+        else (NodeResource(id=source_id, type="Position") if source_id else None)
+    )
+    target_resource = _node_resource_from_graph_node(target) if isinstance(target, dict) else None
+    if policy.check_relationship(actor, edge_resource, source=source_resource, target=target_resource).allowed:
+        return True
+    auth_stats["filtered_relationships"] += 1
+    return False
+
+
+def _graph_node_properties(
+    actor: Actor | None,
+    policy: OntologyPolicy,
+    node: dict[str, Any] | None,
+    auth_stats: dict[str, int],
+) -> dict[str, Any]:
+    if not isinstance(node, dict):
+        return {}
+    resource = _node_resource_from_graph_node(node)
+    props, redacted = redact_properties(actor, policy, resource, _as_dict(node.get("properties")))
+    auth_stats["redacted_fields"] += redacted
+    return props
+
+
+def _node_resource_from_graph_node(node: dict[str, Any]) -> NodeResource:
+    return NodeResource(
+        id=str(node.get("id") or ""),
+        type=str(node.get("type") or ""),
+        label=str(node["label"]) if node.get("label") is not None else None,
+        properties=_as_dict(node.get("properties")),
+        schema_name=str(node["schema_name"]) if node.get("schema_name") is not None else None,
+        schema_version=int(node["schema_version"]) if node.get("schema_version") is not None else None,
+    )
 
 
 def _run_is_fresh(created_at: Any, *, max_age: timedelta) -> bool:

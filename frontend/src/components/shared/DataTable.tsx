@@ -147,7 +147,7 @@ export const DataTable = memo(function DataTable({
               <tr
                 key={ri}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
-                className={`border-b border-app/80 transition-colors hover:bg-hover${onRowClick ? " cursor-pointer" : ""}`}
+                className={`border-b border-app transition-colors hover:bg-hover${onRowClick ? " cursor-pointer" : ""}`}
               >
                 {displayColumns.map(col => {
                   const raw = row[col.key]

@@ -176,7 +176,12 @@ export function PositionDossier() {
   })
 
   function toggleExpanded(key: string) {
-    setExpandedIds(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   async function handleApproval(id: number, action: "approve" | "reject") {
@@ -1011,7 +1016,8 @@ function ClaimsTab({
       if (!prev) return prev
       const key = kind === "catalyst" ? "linked_catalyst_ids" : "linked_kill_condition_ids"
       const current = new Set(prev[key])
-      current.has(id) ? current.delete(id) : current.add(id)
+      if (current.has(id)) current.delete(id)
+      else current.add(id)
       return { ...prev, [key]: Array.from(current) }
     })
   }
@@ -1443,6 +1449,8 @@ function RiskTab({ ticker }: { ticker: string }) {
       run_id: latestRun!.run_id,
       include_graph: false,
       refresh_snapshot: false,
+      page: 1,
+      page_size: 1,
     }),
     enabled: Boolean(latestRun?.run_id),
     staleTime: 60 * 1000,
@@ -1455,12 +1463,15 @@ function RiskTab({ ticker }: { ticker: string }) {
       timeframe: "Daily",
       include_graph: false,
       refresh_snapshot: true,
+      page: 1,
+      page_size: 1,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["ontology-runs"] })
     },
   })
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!refreshMutation.isPending) {
       setElapsed(0)
@@ -1470,6 +1481,7 @@ function RiskTab({ ticker }: { ticker: string }) {
     const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
     return () => window.clearInterval(id)
   }, [refreshMutation.isPending])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const ontology: OntologyResponse | undefined = refreshMutation.data ?? cachedRiskQuery.data
   const rows = Array.isArray(ontology?.results) ? ontology.results : []
