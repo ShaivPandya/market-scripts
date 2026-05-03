@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { NavLink, useNavigate } from "react-router-dom"
 import { Moon, Sun } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -9,7 +10,7 @@ interface NavSection {
   pages: { label: string; path: string }[]
 }
 
-const NAV_SECTIONS: NavSection[] = [
+export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Core",
     pages: [
@@ -83,6 +84,15 @@ interface SidebarProps {
   onClose: () => void
 }
 
+export function getRouteLabel(pathname: string) {
+  for (const section of NAV_SECTIONS) {
+    const match = section.pages.find(page => page.path === pathname)
+    if (match) return match.label
+  }
+  if (pathname.startsWith("/dossier/")) return "Position Dossier"
+  return "Market Dashboard"
+}
+
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { logout, mode } = useAuth()
   const { resolvedTheme, toggleTheme } = useTheme()
@@ -103,18 +113,25 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   return (
     <nav
       className={[
-        "md:w-56 md:shrink-0 md:static md:translate-x-0 md:h-screen md:sticky md:top-0",
-        "fixed top-0 left-0 h-full w-64 z-30",
+        "md:w-[18.5rem] md:shrink-0 md:static md:translate-x-0 md:h-screen md:sticky md:top-0",
+        "fixed top-0 left-0 z-30 h-full w-[min(22rem,calc(100vw-1rem))]",
         "transition-transform duration-300",
         isOpen ? "translate-x-0" : "-translate-x-full",
         "theme-sidebar border-r border-strong flex flex-col",
       ].join(" ")}
+      aria-label="Primary navigation"
     >
-      <div className="px-3 py-4 flex-1 overflow-y-auto">
+      <div className="border-b border-app px-4 pb-4 pt-[max(1rem,var(--safe-top))]">
+        <p className="theme-eyebrow mb-2">Workspace</p>
+        <p className="text-lg font-semibold tracking-[-0.03em] text-app">Market Dashboard</p>
+        <p className="mt-1 text-sm text-muted">Research, macro, and portfolio workflows.</p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-4">
         {NAV_SECTIONS.map((section, si) => (
           <div key={si}>
             {section.label && (
-              <p className="mt-3 mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+              <p className="mb-1 mt-4 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-subtle">
                 {section.label}
               </p>
             )}
@@ -126,7 +143,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 onClick={onClose}
                 className={({ isActive }) =>
                   cn(
-                    "theme-sidebar-link block w-full rounded-lg px-2.5 py-1.5 text-left text-sm mb-0.5 truncate",
+                    "theme-sidebar-link mb-1 block w-full truncate text-left text-sm",
                     isActive && "theme-sidebar-link-active font-medium",
                   )
                 }
@@ -141,11 +158,12 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         ))}
       </div>
 
-      <div className="border-t border-app px-3 py-3">
+      <div className="border-t border-app px-3 py-3 pb-[max(0.75rem,var(--safe-bottom))]">
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={handleLogout}
-            className="flex-1 rounded-lg px-2 py-1.5 text-left text-sm text-muted transition-colors hover:bg-[hsl(var(--muted-2))] hover:text-app"
+            className="theme-button-base theme-button-secondary flex-1 justify-start px-4"
           >
             Sign out
           </button>
@@ -155,31 +173,31 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             aria-checked={resolvedTheme === "dark"}
             aria-label="Toggle dark mode"
             onClick={toggleTheme}
-            className="inline-flex shrink-0 items-center gap-2 rounded-full border border-app bg-muted-surface px-2 py-1 transition-colors hover:bg-[hsl(var(--muted-2))]"
+            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full border border-app bg-card-muted px-3 transition-colors hover:bg-hover"
           >
             <Sun
               size={14}
-              className={resolvedTheme === "dark" ? "text-subtle" : "text-amber-500"}
+              className={resolvedTheme === "dark" ? "text-subtle" : "text-link"}
               aria-hidden="true"
             />
             <span
-              className="relative inline-flex h-[18px] w-[32px] rounded-full transition-colors duration-200"
+              className="relative inline-flex h-5 w-9 rounded-full transition-colors duration-200"
               style={{
                 backgroundColor: resolvedTheme === "dark"
                   ? "hsl(var(--accent))"
-                  : "hsl(var(--muted-3))",
+                  : "hsl(var(--border-strong))",
               }}
             >
               <span
                 className={cn(
-                  "mt-[2px] inline-block h-[14px] w-[14px] rounded-full bg-card shadow-sm transition-transform duration-200",
-                  resolvedTheme === "dark" ? "translate-x-[16px]" : "translate-x-[2px]",
+                  "mt-[2px] inline-block h-4 w-4 rounded-full bg-elevated shadow-sm transition-transform duration-200",
+                  resolvedTheme === "dark" ? "translate-x-[18px]" : "translate-x-[2px]",
                 )}
               />
             </span>
             <Moon
               size={14}
-              className={resolvedTheme === "dark" ? "text-blue-400" : "text-subtle"}
+              className={resolvedTheme === "dark" ? "text-link" : "text-subtle"}
               aria-hidden="true"
             />
           </button>

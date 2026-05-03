@@ -8,6 +8,7 @@ import pytest
 
 import portfolio.core_db as core_db
 from portfolio.thesis_backfill import _extract_label_and_description, _parse_bullets, backfill_from_markdown
+from portfolio.thesis_sync import sync_claims_from_content
 
 
 @pytest.fixture(autouse=True)
@@ -92,6 +93,11 @@ def test_backfill_creates_catalysts_and_kill_conditions(tmp_path):
     assert len(kcs) == 3
     assert all(kc["created_by"] == "backfill" for kc in kcs)
 
+    claims = core_db.get_thesis_claims("MU")
+    assert len(claims) == 2
+    assert claims[0]["status"] == "active"
+    assert claims[0]["source_requirements"] == []
+
 
 def test_backfill_skips_already_backfilled(tmp_path):
     theses_dir = tmp_path / "investment_theses"
@@ -123,3 +129,54 @@ def test_backfill_skips_tbd_bullets(tmp_path):
 
     result = backfill_from_markdown(theses_dir)
     assert result.get("STUB", {}).get("catalysts", 0) == 0
+
+
+def test_structured_claims_sync_fields_and_links():
+    catalyst = core_db.create_catalyst(
+        ticker="MU",
+        description="HBM ramp: HBM3 fully sold out",
+        created_by="backfill",
+    )
+    kill_condition = core_db.create_kill_condition(
+        ticker="MU",
+        condition="AI spending deceleration: Hyperscaler capex pulls back",
+        created_by="backfill",
+    )
+    content = """# MU
+## Thesis
+- Legacy thesis bullet
+
+## Key Catalysts
+- **HBM ramp:** HBM3 fully sold out
+
+## Risk Factors
+- **AI spending deceleration:** Hyperscaler capex pulls back
+
+## Thesis Claims
+
+- **HBM supply stays tight:** Premium pricing can persist.
+  - Status: active
+  - Expected evidence: HBM sell-out commentary.
+  - Disconfirming evidence: ASP declines.
+  - Source requirements:
+    - type=earnings_transcript; description=latest call; required=true; freshness_days=45
+  - Cadence: weekly
+  - Confidence: 0.72
+  - Catalysts: HBM ramp
+  - Kill conditions: AI spending deceleration
+"""
+
+    assert sync_claims_from_content("MU", content) == 1
+    claim = core_db.get_thesis_claims("MU")[0]
+    assert claim["claim"] == "HBM supply stays tight: Premium pricing can persist."
+    assert claim["confidence"] == 0.72
+    assert claim["source_requirements"] == [
+        {
+            "type": "earnings_transcript",
+            "description": "latest call",
+            "required": True,
+            "freshness_days": 45,
+        }
+    ]
+    assert claim["linked_catalyst_ids"] == [catalyst["id"]]
+    assert claim["linked_kill_condition_ids"] == [kill_condition["id"]]

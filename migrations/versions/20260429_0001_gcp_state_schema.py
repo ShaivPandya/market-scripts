@@ -165,6 +165,12 @@ def upgrade() -> None:
         sa.Column("entity_type", sa.Text, nullable=False),
         sa.Column("entity_id", sa.Integer),
         sa.Column("ticker", sa.Text),
+        sa.Column("action_id", sa.Text),
+        sa.Column("action_schema_name", sa.Text),
+        sa.Column("action_schema_version", sa.Integer),
+        sa.Column("action_input_hash", sa.Text),
+        sa.Column("request_schema_name", sa.Text),
+        sa.Column("request_schema_version", sa.Integer),
         sa.Column("proposed_change", sa.Text, nullable=False),
         sa.Column("reason", sa.Text),
         sa.Column("source_type", sa.Text, nullable=False, server_default="workflow"),
@@ -176,6 +182,43 @@ def upgrade() -> None:
     )
     op.create_index("idx_pending_approvals_status", "pending_approvals", ["status"])
     op.create_index("idx_pending_approvals_ticker", "pending_approvals", ["ticker"])
+    op.create_index("idx_pending_approvals_action_id", "pending_approvals", ["action_id"])
+
+    op.create_table(
+        "action_runs",
+        sa.Column("id", sa.Integer, sa.Identity(), primary_key=True),
+        sa.Column("action_id", sa.Text, nullable=False),
+        sa.Column("action_schema_name", sa.Text),
+        sa.Column("action_schema_version", sa.Integer, nullable=False, server_default=sa.text("1")),
+        sa.Column("request_schema_name", sa.Text),
+        sa.Column("request_schema_version", sa.Integer),
+        sa.Column("actor_type", sa.Text, nullable=False),
+        sa.Column("actor_id", sa.Text),
+        sa.Column("source_type", sa.Text),
+        sa.Column("source_id", sa.Text),
+        sa.Column("approval_id", sa.Integer),
+        sa.Column("parent_action_run_id", sa.Integer),
+        sa.Column("input_hash", sa.Text),
+        sa.Column("input_json", sa.Text),
+        sa.Column("output_json", sa.Text),
+        sa.Column("status", sa.Text, nullable=False, server_default="running"),
+        sa.Column("error", sa.Text),
+        sa.Column("started_at", sa.Text, nullable=False),
+        sa.Column("completed_at", sa.Text),
+    )
+    op.create_index("idx_action_runs_action_id", "action_runs", ["action_id"])
+    op.create_index("idx_action_runs_status", "action_runs", ["status"])
+    op.create_index("idx_action_runs_approval", "action_runs", ["approval_id"])
+    op.create_table(
+        "action_events",
+        sa.Column("id", sa.Integer, sa.Identity(), primary_key=True),
+        sa.Column("action_run_id", sa.Integer, nullable=False),
+        sa.Column("event_type", sa.Text, nullable=False),
+        sa.Column("message", sa.Text),
+        sa.Column("payload_json", sa.Text),
+        sa.Column("created_at", sa.Text, nullable=False),
+    )
+    op.create_index("idx_action_events_run", "action_events", ["action_run_id"])
 
     op.create_table(
         "conversation_sessions",
@@ -198,6 +241,8 @@ def upgrade() -> None:
         sa.Column("type", sa.Text, nullable=False),
         sa.Column("label", sa.Text, nullable=False),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_nodes_type", "ontology_nodes", ["type"])
@@ -207,6 +252,10 @@ def upgrade() -> None:
         sa.Column("target_id", sa.Text, primary_key=True),
         sa.Column("relation_type", sa.Text, primary_key=True),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
+        sa.Column("relation_schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("relation_schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_edges_source", "ontology_edges", ["source_id"])
@@ -229,6 +278,8 @@ def upgrade() -> None:
         sa.Column("type", sa.Text, nullable=False),
         sa.Column("label", sa.Text, nullable=False),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_snapshot_nodes_run_type", "ontology_snapshot_nodes", ["run_id", "type"])
@@ -239,10 +290,39 @@ def upgrade() -> None:
         sa.Column("target_id", sa.Text, primary_key=True),
         sa.Column("relation_type", sa.Text, primary_key=True),
         sa.Column("properties_json", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
+        sa.Column("relation_schema_name", sa.Text, nullable=False, server_default="legacy"),
+        sa.Column("relation_schema_version", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("updated_at", sa.Text, nullable=False),
     )
     op.create_index("idx_ontology_snapshot_edges_run_source", "ontology_snapshot_edges", ["run_id", "source_id"])
     op.create_index("idx_ontology_snapshot_edges_run_target", "ontology_snapshot_edges", ["run_id", "target_id"])
+
+    op.create_table(
+        "schema_definitions",
+        sa.Column("schema_kind", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False),
+        sa.Column("schema_version", sa.Integer, nullable=False),
+        sa.Column("definition_json", sa.Text, nullable=False),
+        sa.Column("definition_hash", sa.Text, nullable=False),
+        sa.Column("compatibility_json", sa.Text, nullable=False, server_default="{}"),
+        sa.Column("status", sa.Text, nullable=False, server_default="active"),
+        sa.Column("created_at", sa.Text, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP::text")),
+        sa.Column("deprecated_at", sa.Text),
+        sa.PrimaryKeyConstraint("schema_kind", "schema_name", "schema_version"),
+    )
+    op.create_index("idx_schema_definitions_kind_status", "schema_definitions", ["schema_kind", "status"])
+    op.create_table(
+        "ontology_run_schema_bindings",
+        sa.Column("run_id", sa.Text, sa.ForeignKey("ontology_runs.run_id", ondelete="CASCADE"), nullable=False),
+        sa.Column("schema_kind", sa.Text, nullable=False),
+        sa.Column("schema_name", sa.Text, nullable=False),
+        sa.Column("schema_version", sa.Integer, nullable=False),
+        sa.Column("definition_hash", sa.Text, nullable=False),
+        sa.PrimaryKeyConstraint("run_id", "schema_kind", "schema_name", "schema_version"),
+    )
+    op.create_index("idx_ontology_run_schema_bindings_run", "ontology_run_schema_bindings", ["run_id"])
 
     op.create_table(
         "retrieval_documents",
@@ -316,6 +396,8 @@ def upgrade() -> None:
         sa.Column("status", sa.Text, nullable=False),
         sa.Column("payload_json", postgresql.JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("result_json", postgresql.JSONB),
+        sa.Column("request_schema_name", sa.Text),
+        sa.Column("request_schema_version", sa.Integer),
         sa.Column("cloud_run_job_name", sa.Text),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True)),
@@ -355,12 +437,16 @@ def downgrade() -> None:
         "central_bank_items",
         "retrieval_chunks",
         "retrieval_documents",
+        "ontology_run_schema_bindings",
+        "schema_definitions",
         "ontology_snapshot_edges",
         "ontology_snapshot_nodes",
         "ontology_runs",
         "ontology_edges",
         "ontology_nodes",
         "conversation_sessions",
+        "action_events",
+        "action_runs",
         "pending_approvals",
         "research_notes",
         "watch_triggers",

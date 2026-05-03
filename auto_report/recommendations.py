@@ -649,11 +649,34 @@ def persist_recommendations(
     source_json_path: str,
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
-    from portfolio.core_db import create_pending_approval, create_recommendation, update_recommendation_approval
+    from portfolio.core_db import (
+        create_pending_approval,
+        create_recommendation,
+        supersede_report_recommendations,
+        update_recommendation_approval,
+        upsert_recommendation,
+    )
 
     prompt_metadata = prompt_metadata or {}
+    report_id = prompt_metadata.get("report_id")
+    active_idempotency_keys: list[str] = []
     persisted: list[dict] = []
     for action in payload.get("recommended_actions", []):
+        action_hash = stable_hash(
+            {
+                "action": action.get("action"),
+                "ticker": action.get("ticker"),
+                "instrument": action.get("instrument"),
+                "horizon": action.get("horizon"),
+                "target_change": action.get("target_change"),
+                "rationale": action.get("rationale"),
+                "evidence": action.get("evidence", []),
+                "invalidation": action.get("invalidation"),
+            }
+        )
+        idempotency_key = f"{payload['report_type']}:{payload['as_of']}:{action_hash}" if report_id else None
+        if idempotency_key:
+            active_idempotency_keys.append(idempotency_key)
         record = {
             **action,
             "report_type": payload["report_type"],
@@ -675,30 +698,35 @@ def persist_recommendations(
             else "open",
             "approval_status": "none",
             "outcome_status": "pending",
+            "report_id": report_id,
+            "idempotency_key": idempotency_key,
             **prompt_metadata,
         }
-        rec = create_recommendation(record)
+        rec = upsert_recommendation(record) if idempotency_key else create_recommendation(record)
         if payload["recommendation_status"] == "clear" and action["action"] in ACTIONABLE_ACTIONS:
-            description = f"{action['action'].replace('_', ' ').title()} {action.get('instrument') or action.get('ticker') or 'portfolio'}"
-            if action.get("target_change"):
-                description += f" ({action['target_change']})"
-            approval = create_pending_approval(
-                entity_type="action_item",
-                proposed_change={
-                    "recommendation_id": rec["id"],
-                    "ticker": action.get("ticker"),
-                    "description": description,
-                    "action_type": _approval_action_type(action["action"]),
-                    "urgency": "high" if action["action"] in {"exit", "reduce"} else "normal",
-                    "reason": action.get("rationale", ""),
-                },
-                ticker=action.get("ticker"),
-                reason=action.get("rationale", ""),
-                source_type="workflow",
-                source_id=f"{payload['report_type']}:{payload['as_of']}",
-            )
-            rec = update_recommendation_approval(rec["id"], approval["id"], "pending")
+            if rec.get("approval_id") is None and rec.get("approval_status") in {None, "none"}:
+                description = f"{action['action'].replace('_', ' ').title()} {action.get('instrument') or action.get('ticker') or 'portfolio'}"
+                if action.get("target_change"):
+                    description += f" ({action['target_change']})"
+                approval = create_pending_approval(
+                    entity_type="action_item",
+                    proposed_change={
+                        "recommendation_id": rec["id"],
+                        "ticker": action.get("ticker"),
+                        "description": description,
+                        "action_type": _approval_action_type(action["action"]),
+                        "urgency": "high" if action["action"] in {"exit", "reduce"} else "normal",
+                        "reason": action.get("rationale", ""),
+                    },
+                    ticker=action.get("ticker"),
+                    reason=action.get("rationale", ""),
+                    source_type="workflow",
+                    source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
+                )
+                rec = update_recommendation_approval(rec["id"], approval["id"], "pending")
         persisted.append(rec)
+    if report_id:
+        supersede_report_recommendations(str(report_id), active_idempotency_keys)
     return persisted
 
 
@@ -719,6 +747,92 @@ def _expected_direction(action: str) -> str | None:
     if action in {"sell", "reduce", "exit", "avoid"}:
         return "down"
     return None
+
+
+def _download_close_series(ticker: str, start: date, end: date):
+    import yfinance as yf
+
+    hist = yf.download(
+        ticker,
+        start=start.isoformat(),
+        end=(end + timedelta(days=1)).isoformat(),
+        progress=False,
+        auto_adjust=True,
+    )
+    if hist is None or hist.empty or "Close" not in hist:
+        raise RuntimeError(f"no close price history for {ticker}")
+    close = hist["Close"]
+    if hasattr(close, "iloc") and getattr(close, "ndim", 1) > 1:
+        close = close.iloc[:, 0]
+    close = close.dropna()
+    if close.empty:
+        raise RuntimeError(f"empty close series for {ticker}")
+    return close
+
+
+def _series_return_pct(close) -> float:
+    start = float(close.iloc[0])
+    end = float(close.iloc[-1])
+    if start == 0:
+        return 0.0
+    return (end / start - 1.0) * 100.0
+
+
+def _excursions_pct(close, expected_direction: str) -> tuple[float, float]:
+    start = float(close.iloc[0])
+    running = (close / start - 1.0) * 100.0
+    if expected_direction == "up":
+        return float(running.min()), float(running.max())
+    return float(-running.max()), float(-running.min())
+
+
+def _timing_label(as_of: date, today: date, horizon: str | None, expected_onset_window: str | None) -> str:
+    elapsed_days = (today - as_of).days
+    horizon_days = _horizon_days(horizon)
+    onset_days = _horizon_days(expected_onset_window)
+    if elapsed_days < max(1, min(onset_days, horizon_days)):
+        return "too_early"
+    if elapsed_days <= max(onset_days, horizon_days) * 2:
+        return "on_time"
+    return "late"
+
+
+def _process_label(process_quality: str, outcome_quality: str) -> str:
+    if process_quality == "inconclusive" or outcome_quality == "inconclusive":
+        return "inconclusive"
+    return f"{process_quality}_process_{outcome_quality}_outcome"
+
+
+def _thesis_and_kill_context(ticker: str | None) -> dict[str, Any]:
+    if not ticker:
+        return {"thesis_validation": None, "kill_condition_status": None}
+    context: dict[str, Any] = {"thesis_validation": None, "kill_condition_status": None}
+    try:
+        from portfolio.thesis_db import get_evaluations
+
+        latest = get_evaluations(ticker, limit=1)
+        if latest:
+            ev = latest[0]
+            context["thesis_validation"] = {
+                "evaluated_at": ev.get("evaluated_at"),
+                "thesis_status": ev.get("thesis_status"),
+                "action": ev.get("action"),
+                "risk_flag": ev.get("risk_flag"),
+            }
+    except Exception:
+        context["thesis_validation"] = {"status": "unavailable"}
+    try:
+        from portfolio.core_db import get_kill_conditions
+
+        conditions = get_kill_conditions(ticker)
+        context["kill_condition_status"] = {
+            "active": sum(1 for row in conditions if row.get("status") == "active"),
+            "triggered": sum(1 for row in conditions if row.get("status") == "triggered"),
+            "retired": sum(1 for row in conditions if row.get("status") == "retired"),
+        }
+    except Exception:
+        context["kill_condition_status"] = {"status": "unavailable"}
+    return context
 
 
 def evaluate_due_recommendations(limit: int = 50) -> dict:
@@ -745,6 +859,14 @@ def evaluate_due_recommendations(limit: int = 50) -> dict:
                 {
                     "evaluation_authority": "ai_draft_user_final",
                     "final_label_status": "draft",
+                    "process_label": "inconclusive",
+                    "timing_vs_expected_onset": _timing_label(
+                        as_of,
+                        today,
+                        rec.get("horizon"),
+                        rec.get("expected_onset_window"),
+                    ),
+                    "opportunity_cost": rec.get("opportunity_cost_json", []),
                     "draft_postmortem": "No-action recommendation reached its review horizon. User should confirm whether inaction preserved optionality or missed an actionable opportunity.",
                     "objective_score_available": False,
                 },
@@ -757,31 +879,36 @@ def evaluate_due_recommendations(limit: int = 50) -> dict:
             update_recommendation_outcome(
                 rec["id"],
                 "unavailable",
-                {"reason": "broad or non-directional recommendation; manual review required"},
+                {
+                    "reason": "broad or non-directional recommendation; manual review required",
+                    "process_label": "inconclusive",
+                    "opportunity_cost": rec.get("opportunity_cost_json", []),
+                },
             )
             unavailable += 1
             continue
         try:
-            import yfinance as yf
-
-            hist = yf.download(
-                ticker,
-                start=as_of.isoformat(),
-                end=(today + timedelta(days=1)).isoformat(),
-                progress=False,
-                auto_adjust=True,
-            )
-            if hist is None or hist.empty or "Close" not in hist:
-                raise RuntimeError("no close price history")
-            close = hist["Close"].dropna()
-            if close.empty:
-                raise RuntimeError("empty close series")
+            close = _download_close_series(ticker, as_of, today)
+            benchmark_close = _download_close_series("SPY", as_of, today)
             start = float(close.iloc[0])
             end = float(close.iloc[-1])
-            forward_return = (end / start - 1.0) * 100.0
-            running = (close / start - 1.0) * 100.0
-            max_adverse = float(running.min() if direction == "up" else running.max())
+            forward_return = _series_return_pct(close)
+            benchmark_return = _series_return_pct(benchmark_close)
+            relative_return = forward_return - benchmark_return
+            max_adverse, max_favorable = _excursions_pct(close, direction)
             directionally_right = forward_return > 0 if direction == "up" else forward_return < 0
+            relative_right = relative_return > 0 if direction == "up" else relative_return < 0
+            source_quality = str(rec.get("source_quality") or "")
+            confidence = _as_float(rec.get("confidence"), 0.0)
+            process_quality = (
+                "good"
+                if source_quality in {"ok", "degraded"}
+                and confidence >= 0.5
+                and rec.get("recommendation_status") == "clear"
+                else "bad"
+            )
+            outcome_quality = "good" if directionally_right and relative_right else "bad"
+            thesis_context = _thesis_and_kill_context(ticker)
             update_recommendation_outcome(
                 rec["id"],
                 "evaluated",
@@ -791,10 +918,39 @@ def evaluate_due_recommendations(limit: int = 50) -> dict:
                     "start_price": start,
                     "end_price": end,
                     "forward_return_pct": round(forward_return, 2),
+                    "benchmark": "SPY",
+                    "benchmark_return_pct": round(benchmark_return, 2),
+                    "benchmark_relative_return_pct": round(relative_return, 2),
                     "max_adverse_move_pct": round(max_adverse, 2),
+                    "max_favorable_move_pct": round(max_favorable, 2),
                     "expected_direction": direction,
                     "directionally_right": directionally_right,
-                    "draft_postmortem": "Objective price outcome computed. User should confirm whether the recommendation reflected good process.",
+                    "relative_directionally_right": relative_right,
+                    "alternative_trade_performance": {
+                        "cash_return_pct": 0.0,
+                        "benchmark_return_pct": round(benchmark_return, 2),
+                    },
+                    "sizing_quality": {
+                        "target_change": rec.get("target_change"),
+                        "approval_status": rec.get("approval_status"),
+                        "label": "unverified_execution"
+                        if rec.get("approval_status") != "approved"
+                        else "requires_trade_fill_review",
+                    },
+                    "timing_vs_expected_onset": _timing_label(
+                        as_of,
+                        today,
+                        rec.get("horizon"),
+                        rec.get("expected_onset_window"),
+                    ),
+                    "catalyst_result": {
+                        "catalyst": rec.get("catalyst"),
+                        "label": "requires_review" if rec.get("catalyst") else "none_specified",
+                    },
+                    "opportunity_cost": rec.get("opportunity_cost_json", []),
+                    "process_label": _process_label(process_quality, outcome_quality),
+                    **thesis_context,
+                    "draft_postmortem": "Objective price and process-attribution fields computed. User should confirm execution, catalyst, and thesis labels.",
                 },
             )
             updated += 1

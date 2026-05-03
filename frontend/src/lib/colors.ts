@@ -6,12 +6,12 @@
  * Use as: style={{ color: colorPositiveNegative(val) }}
  */
 
-const GREEN_BOLD = "#00c853"
-const GREEN = "#00c853"
-const RED_BOLD = "#ff1744"
-const RED = "#ff1744"
-const YELLOW = "#ffc107"
-const GRAY = "gray"
+const GREEN_BOLD = "hsl(var(--positive))"
+const GREEN = "hsl(var(--positive))"
+const RED_BOLD = "hsl(var(--negative))"
+const RED = "hsl(var(--negative))"
+const YELLOW = "hsl(var(--warning))"
+const GRAY = "hsl(var(--neutral))"
 
 /** Positive → green, negative → red, zero/null → "" */
 export function colorPositiveNegative(val: unknown): string {

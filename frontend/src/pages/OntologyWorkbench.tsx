@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Info } from "lucide-react"
 import { useMutation } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchOntologyRuns, runOntologyQueryAsync, type OntologyRunSummary } from "@/lib/api"
+import { fetchOntologyRuns, runOntologyQueryAsync, type OntologyResponse, type OntologyRunSummary } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
@@ -25,18 +25,6 @@ interface OntologyRow {
   risk_score?: number
   risk_level?: string
   evidence?: OntologyEvidence[]
-}
-
-interface OntologyResponse {
-  run_id: string
-  as_of: string
-  source_status: Record<string, { status?: string; detail?: string }>
-  results: OntologyRow[]
-  aggregate: {
-    position_count?: number
-    confidence?: number
-    risk_buckets?: { high?: number; medium?: number; low?: number }
-  }
 }
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -123,7 +111,8 @@ export function OntologyWorkbench() {
   const [sectors, setSectors] = useState("")
   const [assets, setAssets] = useState("")
   const [minRiskScore, setMinRiskScore] = useState("")
-  const [maxResults, setMaxResults] = useState("")
+  const [pageSize, setPageSize] = useState("25")
+  const [page, setPage] = useState(1)
   const [runId, setRunId] = useState("")
   const [cachedResult, setCachedResult] = useState<OntologyResponse | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -146,6 +135,7 @@ export function OntologyWorkbench() {
     onSuccess: result => setCachedResult((result as OntologyResponse) ?? null),
   })
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!mutation.isPending) {
       setElapsed(0)
@@ -155,6 +145,7 @@ export function OntologyWorkbench() {
     const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
     return () => clearInterval(id)
   }, [mutation.isPending])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort()
@@ -164,7 +155,13 @@ export function OntologyWorkbench() {
   const handleIntentChange = useCallback((v: string) => setIntent(v as Intent), [])
   const handleTimeframeChange = useCallback((v: string) => setTimeframe(v as Timeframe), [])
 
-  const handleSubmit = useCallback(() => {
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setPage(1)
+  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, pageSize, runId])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const submitQuery = useCallback((nextPage: number) => {
     const filters: Record<string, unknown> = {}
     const parsedTickers = parseCsv(tickers)
     const parsedSectors = parseCsv(sectors)
@@ -176,9 +173,11 @@ export function OntologyWorkbench() {
     const parsedMinRisk = Number.parseFloat(minRiskScore)
     if (Number.isFinite(parsedMinRisk)) filters.min_risk_score = parsedMinRisk
 
-    const parsedMaxResults = Number.parseInt(maxResults, 10)
-    if (Number.isFinite(parsedMaxResults) && parsedMaxResults > 0) filters.max_results = parsedMaxResults
+    const parsedPageSize = Number.parseInt(pageSize, 10)
+    const safePageSize = Number.isFinite(parsedPageSize) ? Math.min(Math.max(parsedPageSize, 1), 100) : 25
+    const safePage = Math.max(1, nextPage)
 
+    setPage(safePage)
     mutation.mutate({
       query: query.trim() || undefined,
       intent: intent === "auto" ? undefined : intent,
@@ -187,11 +186,17 @@ export function OntologyWorkbench() {
       run_id: runId.trim() || undefined,
       include_graph: false,
       refresh_snapshot: false,
+      page: safePage,
+      page_size: safePageSize,
     })
-  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, maxResults, runId, mutation])
+  }, [query, intent, timeframe, tickers, sectors, assets, minRiskScore, pageSize, runId, mutation])
+
+  const handleSubmit = useCallback(() => submitQuery(page), [page, submitQuery])
 
   const data = (mutation.data as OntologyResponse | undefined) ?? cachedResult
-  const rows = useMemo(() => (Array.isArray(data?.results) ? data.results : []), [data?.results])
+  const rows = useMemo(() => (Array.isArray(data?.results) ? data.results : []), [data])
+  const pagination = data?._meta?.pagination
+  const currentPage = pagination?.page ?? page
   const runOptions = useMemo(() => {
     const items = runsData?.runs
     return Array.isArray(items) ? items : []
@@ -310,10 +315,10 @@ export function OntologyWorkbench() {
           type="number"
         />
         <TextInput
-          label="Max Results"
-          value={maxResults}
-          onChange={setMaxResults}
-          placeholder="20"
+          label="Page Size"
+          value={pageSize}
+          onChange={setPageSize}
+          placeholder="25"
           type="number"
         />
         <div className="flex items-end">
@@ -361,8 +366,39 @@ export function OntologyWorkbench() {
           </div>
 
           <section className="mb-8">
-            <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Position Results</h2>
-            <DataTable columns={RESULT_COLUMNS} rows={rows as Record<string, unknown>[]} />
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">Position Results</h2>
+              {pagination && (
+                <div className="flex items-center gap-3 text-xs text-subtle">
+                  <span>
+                    {pagination.total_results && pagination.returned_results
+                      ? `${(pagination.page! - 1) * pagination.page_size! + 1}-${(pagination.page! - 1) * pagination.page_size! + pagination.returned_results} of ${pagination.total_results}`
+                      : `0 of ${pagination.total_results ?? 0}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => submitQuery(Math.max(1, currentPage - 1))}
+                    disabled={mutation.isPending || !pagination.has_prev}
+                    className="theme-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {currentPage}
+                    {pagination.total_pages ? ` / ${pagination.total_pages}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => submitQuery(currentPage + 1)}
+                    disabled={mutation.isPending || !pagination.has_next}
+                    className="theme-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
+            <DataTable columns={RESULT_COLUMNS} rows={rows as unknown as Record<string, unknown>[]} />
           </section>
 
           <section>

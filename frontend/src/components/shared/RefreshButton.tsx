@@ -37,9 +37,10 @@ export function RefreshButton({ queryKeys, beforeRefetch, onError, onSuccess }: 
 
   return (
     <button
+      type="button"
       onClick={handleRefresh}
       disabled={isRefreshing}
-      className="theme-button-secondary rounded-lg px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+      className="theme-button-base theme-button-secondary px-4 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {isRefreshing ? "Refreshing..." : "Refresh Data"}
     </button>

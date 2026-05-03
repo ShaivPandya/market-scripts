@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 import portfolio.core_db as core_db
+import portfolio.news_digests as digests
 from api.workflow_artifacts import extract_artifacts, persist_artifacts
 
 
@@ -12,6 +15,14 @@ from api.workflow_artifacts import extract_artifacts, persist_artifacts
 def _use_temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "test_core.db")
     monkeypatch.setattr(core_db, "_conn", None)
+    base = tmp_path / "news_digests"
+    monkeypatch.setattr(digests, "DIGESTS_DIR", base)
+    monkeypatch.setattr(digests, "MANIFEST_PATH", base / "manifest.json")
+    monkeypatch.setattr(digests, "FILES_DIR", base / "files")
+    monkeypatch.setattr(digests, "DIGESTS_GCS_PREFIX", "test/news_digests")
+    monkeypatch.setattr(digests, "MANIFEST_GCS_KEY", "test/news_digests/manifest.json")
+    monkeypatch.setattr(digests, "FILES_GCS_PREFIX", "test/news_digests/files")
+    os.environ["STATE_STORAGE_BACKEND"] = "local"
     yield
     if core_db._conn:
         try:
@@ -89,6 +100,10 @@ def test_persist_artifacts_creates_approvals():
     assert "evaluation" in types
     assert "action_item" in types
     assert "watch_trigger" in types
+    by_type = {a["entity_type"]: a for a in approvals}
+    assert by_type["evaluation"]["action_id"] == "save_evaluation"
+    assert by_type["action_item"]["action_id"] == "create_action_item"
+    assert by_type["watch_trigger"]["action_id"] == "create_watch_trigger"
 
 
 def test_persist_empty_artifacts():
@@ -106,6 +121,7 @@ def test_persist_thesis_status_change():
     approvals = core_db.get_pending_approvals()
     assert len(approvals) == 1
     assert approvals[0]["entity_type"] == "thesis_status"
+    assert approvals[0]["action_id"] == "change_thesis_status"
 
 
 def test_persist_kill_condition_updates():
@@ -117,3 +133,27 @@ def test_persist_kill_condition_updates():
     }
     count = persist_artifacts("test-run-abc", "MU", artifacts)
     assert count == 2
+    approvals = core_db.get_pending_approvals()
+    assert {a["action_id"] for a in approvals} == {"update_kill_condition_status"}
+
+
+def test_persist_research_notes_and_digest_deletes():
+    from portfolio.news_digests import save_digest
+
+    digest = save_digest("# Morning Digest\n\n## Movers\n- MU update\n", filename="digest.md")
+    artifacts = {
+        "research_notes": [
+            {
+                "ticker": "MU",
+                "title": "Follow-up",
+                "content": "Need to revisit sizing after earnings.",
+                "note_type": "workflow_output",
+            }
+        ],
+        "news_digest_deletes": [{"digest_id": digest["id"]}],
+    }
+
+    count = persist_artifacts("test-run-notes", "MU", artifacts)
+    assert count == 2
+    approvals = core_db.get_pending_approvals()
+    assert {a["action_id"] for a in approvals} == {"create_research_note", "delete_portfolio_news_digest"}

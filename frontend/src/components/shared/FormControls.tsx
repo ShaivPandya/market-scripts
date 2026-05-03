@@ -17,7 +17,7 @@ export function SegmentedControl<T extends string>({
   size = "md",
 }: SegmentedControlProps<T>) {
   return (
-    <div className="theme-segmented inline-flex items-center rounded-full p-0.5">
+    <div className="theme-segmented">
       {options.map(o => (
         <button
           key={o.value}
@@ -25,7 +25,7 @@ export function SegmentedControl<T extends string>({
           onClick={() => onChange(o.value)}
           className={cn(
             "theme-segmented-option rounded-full transition-all duration-150",
-            size === "sm" ? "px-3 py-1 text-xs" : "px-3.5 py-1.5 text-sm",
+            size === "sm" ? "px-3 py-1 text-xs" : "px-4 py-1.5 text-sm",
           )}
           data-active={value === o.value}
         >
@@ -48,6 +48,7 @@ interface SliderInputProps {
   formatValue?: (v: number) => string
   minLabel?: string
   maxLabel?: string
+  helperText?: string
 }
 
 export function SliderInput({
@@ -60,11 +61,12 @@ export function SliderInput({
   formatValue,
   minLabel,
   maxLabel,
+  helperText,
 }: SliderInputProps) {
   const display = formatValue ? formatValue(value) : String(value)
   return (
-    <div>
-      <label className="mb-2 flex items-baseline justify-between text-sm text-muted">
+    <div className="space-y-2">
+      <label className="flex items-baseline justify-between text-sm text-muted">
         <span>{label}</span>
         <span className="text-sm font-semibold text-app">{display}</span>
       </label>
@@ -83,6 +85,7 @@ export function SliderInput({
           <span>{maxLabel}</span>
         </div>
       )}
+      {helperText && <p className="theme-field-caption">{helperText}</p>}
     </div>
   )
 }
@@ -95,24 +98,52 @@ interface SelectInputProps {
   onChange: (value: string) => void
   options: { value: string; label: string }[]
   className?: string
+  helperText?: string
+  errorText?: string
+  id?: string
+  disabled?: boolean
 }
 
-export function SelectInput({ label, value, onChange, options, className }: SelectInputProps) {
+export function SelectInput({
+  label,
+  value,
+  onChange,
+  options,
+  className,
+  helperText,
+  errorText,
+  id,
+  disabled,
+}: SelectInputProps) {
+  const describedBy = errorText ? `${id ?? label}-error` : helperText ? `${id ?? label}-help` : undefined
   return (
-    <div className={className}>
+    <div className={cn("space-y-1.5", className)}>
       {label && (
-        <label className="mb-1.5 block text-sm text-muted">{label}</label>
+        <label htmlFor={id} className="theme-field-label">{label}</label>
       )}
       <select
+        id={id}
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="theme-input w-full appearance-none pr-8"
-        style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}
+        disabled={disabled}
+        aria-invalid={Boolean(errorText)}
+        aria-describedby={describedBy}
+        className="theme-input w-full appearance-none pr-10"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238a8f99' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+          backgroundRepeat: "no-repeat",
+          backgroundPosition: "right 14px center",
+        }}
       >
         {options.map(o => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
+      {errorText ? (
+        <p id={`${id ?? label}-error`} className="theme-field-caption theme-field-error">{errorText}</p>
+      ) : helperText ? (
+        <p id={`${id ?? label}-help`} className="theme-field-caption">{helperText}</p>
+      ) : null}
     </div>
   )
 }
@@ -126,21 +157,46 @@ interface TextInputProps {
   placeholder?: string
   className?: string
   type?: string
+  helperText?: string
+  errorText?: string
+  id?: string
+  disabled?: boolean
 }
 
-export function TextInput({ label, value, onChange, placeholder, className, type = "text" }: TextInputProps) {
+export function TextInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  className,
+  type = "text",
+  helperText,
+  errorText,
+  id,
+  disabled,
+}: TextInputProps) {
+  const describedBy = errorText ? `${id ?? label}-error` : helperText ? `${id ?? label}-help` : undefined
   return (
-    <div className={className}>
+    <div className={cn("space-y-1.5", className)}>
       {label && (
-        <label className="mb-1.5 block text-sm text-muted">{label}</label>
+        <label htmlFor={id} className="theme-field-label">{label}</label>
       )}
       <input
+        id={id}
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
+        disabled={disabled}
+        aria-invalid={Boolean(errorText)}
+        aria-describedby={describedBy}
         className="theme-input w-full"
       />
+      {errorText ? (
+        <p id={`${id ?? label}-error`} className="theme-field-caption theme-field-error">{errorText}</p>
+      ) : helperText ? (
+        <p id={`${id ?? label}-help`} className="theme-field-caption">{helperText}</p>
+      ) : null}
     </div>
   )
 }
@@ -156,30 +212,28 @@ interface ToggleProps {
 
 export function Toggle({ label, checked, onChange, description }: ToggleProps) {
   return (
-    <label className="flex items-center gap-3 cursor-pointer select-none">
+    <label className="flex min-h-11 items-center gap-3 cursor-pointer select-none">
       <button
         type="button"
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className="relative inline-flex h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-200"
-        style={{
-          backgroundColor: checked
-            ? "hsl(var(--accent))"
-            : "hsl(var(--muted-3))",
-        }}
+        className={cn(
+          "relative inline-flex h-7 w-12 shrink-0 rounded-full border transition-colors duration-200",
+          checked
+            ? "border-transparent bg-[hsl(var(--accent))]"
+            : "border-app bg-card-muted",
+        )}
       >
         <span
           className={cn(
-            "pointer-events-none inline-block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200",
-            checked ? "translate-x-[20px]" : "translate-x-[2px]",
-            "mt-[2px]",
+            "pointer-events-none mt-[3px] inline-block h-5 w-5 rounded-full bg-elevated shadow-sm transition-transform duration-200",
+            checked ? "translate-x-6" : "translate-x-[3px]",
           )}
-          style={{ backgroundColor: "hsl(var(--card))" }}
         />
       </button>
       <div>
-        <span className="text-sm text-app">{label}</span>
+        <span className="text-sm font-medium text-app">{label}</span>
         {description && <span className="mt-0.5 block text-xs text-subtle">{description}</span>}
       </div>
     </label>
@@ -213,8 +267,7 @@ export function ActionButton({
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        "theme-button-primary w-full rounded-lg py-2.5 text-sm font-semibold transition-all duration-150",
-        "active:scale-[0.98]",
+        "theme-button-base theme-button-primary w-full px-4",
         "disabled:opacity-50 disabled:pointer-events-none",
         className,
       )}

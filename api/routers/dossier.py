@@ -25,6 +25,7 @@ def get_dossier(ticker: str):
         get_kill_conditions,
         get_pending_approvals,
         get_research_notes,
+        get_thesis_claims,
         get_watch_triggers,
         get_workflow_runs,
     )
@@ -105,6 +106,7 @@ def get_dossier(ticker: str):
     # Core entities from core_db
     catalysts = get_catalysts(ticker)
     kill_conditions = get_kill_conditions(ticker)
+    thesis_claims = get_thesis_claims(ticker=ticker)
     workflow_runs = get_workflow_runs(ticker=ticker, limit=10)
     action_items = get_action_items(ticker=ticker, status="open")
     watch_triggers = get_watch_triggers(ticker=ticker)
@@ -129,6 +131,7 @@ def get_dossier(ticker: str):
         "evaluations": evaluations,
         "catalysts": catalysts,
         "kill_conditions": kill_conditions,
+        "thesis_claims": thesis_claims,
         "ontology_risk": ontology_risk,
         "workflow_runs": workflow_runs,
         "action_items": action_items,

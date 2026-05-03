@@ -146,7 +146,7 @@ function PutCallTab() {
   const iwm = parsePCEntry(payload.iwm)
   const asOf = spy?.as_of ?? equity?.as_of ?? ""
 
-  const expiryCurveData = useMemo(() => {
+  const expiryCurveData = (() => {
     const byExpiry = new Map<string, {
       date: string
       SPY: number | null
@@ -188,7 +188,7 @@ function PutCallTab() {
         Equity: r.equityCalls > 0 ? Number((r.equityPuts / r.equityCalls).toFixed(3)) : null,
       }))
       .sort((a, b) => String(a.date).localeCompare(String(b.date)))
-  }, [spy?.breakdown, qqq?.breakdown, iwm?.breakdown])
+  })()
 
   if (isLoading) return <LoadingSpinner message="Computing Put/Call ratios from options chains..." />
   if (error || !data) return <ErrorMessage message={String(error)} />

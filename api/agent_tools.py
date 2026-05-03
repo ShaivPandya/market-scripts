@@ -9,6 +9,7 @@ for different LLM tool-calling APIs.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import logging
 import os
@@ -24,6 +25,15 @@ from typing import Any
 
 from api.cache import get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
+from ontology.action_registry import (
+    ActionContext as RegistryActionContext,
+)
+from ontology.action_registry import (
+    is_agent_tool_exposed,
+    iter_tool_exposures,
+    propose_action_from_tool,
+)
+from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor
 
 logger = logging.getLogger("api.agent")
 
@@ -321,7 +331,15 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                 },
                 "filters": {
                     "type": "object",
-                    "description": "Optional filters: tickers, sectors, assets, max_results, min_risk_score.",
+                    "description": "Optional filters: tickers, sectors, assets, min_risk_score.",
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "Optional 1-based results page. Defaults to 1.",
+                },
+                "page_size": {
+                    "type": "integer",
+                    "description": "Optional page size from 1 to 100. Defaults to 25.",
                 },
                 "timeframe": {
                     "type": "string",
@@ -604,7 +622,7 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                 "ticker": {"type": "string", "description": "Ticker symbol"},
                 "new_status": {
                     "type": "string",
-                    "description": "Proposed new status: active|under_review|suspended|closed",
+                    "description": "Proposed new status: active|under_review|invalidated",
                 },
                 "reason": {"type": "string", "description": "Explanation for the proposed change"},
             },
@@ -693,7 +711,13 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                 },
                 "trigger_type": {
                     "type": "string",
-                    "description": "Type: price_level|technical|fundamental|event|macro|custom",
+                    "description": (
+                        "Type: price_level|technical|fundamental|fundamental_news|event|news_event|macro|custom"
+                    ),
+                },
+                "definition": {
+                    "type": "object",
+                    "description": "Optional machine-readable executable trigger definition.",
                 },
                 "reason": {"type": "string", "description": "Why this trigger matters"},
             },
@@ -1225,9 +1249,22 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
 ]
 
 
+def _capability_from_exposure(tool) -> AgentCapability:
+    return AgentCapability(
+        name=tool.tool_name,
+        description=tool.description,
+        parameters=tool.parameters,
+        category=tool.category,
+        access_mode=tool.access_mode,
+        aliases=tool.aliases,
+        selectable=tool.selectable,
+    )
+
+
 def _build_capability_registry() -> list[AgentCapability]:
     by_name: dict[str, AgentCapability] = {}
-    for cap in [_base_capability(tool) for tool in _BASE_TOOL_DEFINITIONS] + _EXTRA_CAPABILITIES:
+    for tool in iter_tool_exposures(agent_exposed_only=True):
+        cap = _capability_from_exposure(tool)
         if cap.name in by_name:
             raise RuntimeError(f"Duplicate agent capability: {cap.name}")
         by_name[cap.name] = cap
@@ -1428,6 +1465,8 @@ def _compact_ontology_payload(payload: Any) -> Any:
         "source_status": _compact_generic(payload.get("source_status"), max_depth=3, list_limit=20, dict_limit=20),
         "aggregate": _compact_generic(payload.get("aggregate"), max_depth=3, list_limit=20, dict_limit=20),
     }
+    if isinstance(payload.get("_meta"), dict):
+        out["_meta"] = _compact_generic(payload.get("_meta"), max_depth=3, list_limit=20, dict_limit=20)
 
     raw_results = payload.get("results")
     results = raw_results if isinstance(raw_results, list) else []
@@ -1866,7 +1905,7 @@ def _extract_inaccessible_domains(exc: Exception) -> set[str]:
 
 
 def _run_search_web(query: str) -> dict[str, Any]:
-    from llm_utils import MODEL_LOW, call_llm_text, selected_provider
+    from llm_utils import MODEL_LOW, call_llm_text
 
     allowed_domains = list(_SEARCH_WEB_ALLOWED_DOMAINS_DEFAULT)
     attempts = 0
@@ -1895,7 +1934,7 @@ def _run_search_web(query: str) -> dict[str, Any]:
             }
         except Exception as exc:  # noqa: BLE001 - tool should recover if possible
             blocked = _extract_inaccessible_domains(exc)
-            if selected_provider() != "anthropic" or not blocked:
+            if not blocked:
                 raise
 
             remaining = [d for d in allowed_domains if d.lower() not in blocked]
@@ -1990,16 +2029,19 @@ def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def execute_tool(name: str, arguments: dict) -> str:
+def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
     """Run the tool identified by *name* and return a JSON string for the model.
 
     Errors are caught and returned as ``{"error": "..."}`` so the model can
     inform the user instead of crashing the stream.
     """
     started = time.perf_counter()
+    actor = actor or admin_actor(source="agent_tools")
     try:
         safe_args = arguments if isinstance(arguments, dict) else {}
-        result, dispatch_meta = _dispatch(name, safe_args)
+        if not is_agent_tool_exposed(name):
+            raise ValueError(f"Tool '{name}' is not exposed to the agent")
+        result, dispatch_meta = _call_dispatch(name, safe_args, actor=actor)
         payload, _compact_meta = _compact_tool_output(name, result)
         meta = dict(dispatch_meta)
         meta.update(
@@ -2014,6 +2056,16 @@ def execute_tool(name: str, arguments: dict) -> str:
             meta["quality_ok"] = bool(quality.get("ok"))
         payload = _attach_meta(payload, meta)
         return _stable_json_dumps(payload)
+    except PolicyDenied as exc:
+        payload = _attach_meta(
+            {"error": "Access denied", "type": "PolicyDenied", "detail": exc.reason},
+            {
+                "tool": name,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "status": "denied",
+            },
+        )
+        return _stable_json_dumps(payload)
     except Exception as exc:
         logger.exception("Tool %s failed", name)
         payload = _attach_meta(
@@ -2025,6 +2077,14 @@ def execute_tool(name: str, arguments: dict) -> str:
             },
         )
         return _stable_json_dumps(payload)
+
+
+def _call_dispatch(name: str, args: dict, *, actor: Actor) -> tuple[object, dict[str, Any]]:
+    params = inspect.signature(_dispatch).parameters.values()
+    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    if supports_actor:
+        return _dispatch(name, args, actor=actor)
+    return _dispatch(name, args)
 
 
 def _to_float(value: Any) -> float | None:
@@ -2165,6 +2225,14 @@ def _model_validate(model_cls, payload: dict[str, Any]):
     return model_cls(**payload)
 
 
+def _call_with_optional_actor(func, *, actor: Actor, **kwargs):
+    params = inspect.signature(func).parameters.values()
+    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    if supports_actor:
+        return func(**kwargs, actor=actor)
+    return func(**kwargs)
+
+
 def _run_registered_job_for_agent(
     job_type: str,
     payload: dict[str, Any],
@@ -2215,8 +2283,9 @@ def _create_pending(
     }
 
 
-def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
+def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object, dict[str, Any]]:
     """Route a tool call to the corresponding data function."""
+    actor = actor or admin_actor(source="agent_tools")
     force_refresh = bool(args.get("_force_refresh"))
     args = {k: v for k, v in args.items() if not str(k).startswith("_")}
 
@@ -2227,6 +2296,20 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         query = str(args.get("query") or "").strip()
         top_k = int(args.get("top_k", 8))
         return search_agent_capabilities(query, top_k=top_k), {"cache": "n/a"}
+
+        if name.startswith("propose_"):
+            approval = propose_action_from_tool(
+                name,
+                args,
+                RegistryActionContext(actor_type="agent", source_type="agent"),
+            )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "get_liquidity":
         key = "agent_liquidity"
@@ -2523,9 +2606,11 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         elif isinstance(raw_filters, str):
             try:
                 parsed = json.loads(raw_filters)
-                filters = parsed if isinstance(parsed, dict) else {}
-            except (json.JSONDecodeError, TypeError):
-                filters = {}
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError("query_ontology.filters must be a valid JSON object") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("query_ontology.filters must decode to a JSON object")
+            filters = parsed
         else:
             filters = {}
         ontology_query = str(args.get("query") or "").strip()
@@ -2534,6 +2619,8 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         include_graph = bool(args.get("include_graph", False))
         run_id = args.get("run_id")
         refresh_snapshot = bool(args.get("refresh_snapshot", False))
+        page = max(1, int(args.get("page", 1) or 1))
+        page_size = max(1, min(int(args.get("page_size", 25) or 25), 100))
 
         cache_token = json.dumps(
             {
@@ -2544,6 +2631,9 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
                 "include_graph": include_graph,
                 "run_id": run_id,
                 "refresh_snapshot": refresh_snapshot,
+                "page": page,
+                "page_size": page_size,
+                "actor": actor_cache_key(actor),
             },
             sort_keys=True,
             default=str,
@@ -2552,7 +2642,9 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
 
         def _load():
             service = OntologyQueryService()
-            result = service.query(
+            result = _call_with_optional_actor(
+                service.query,
+                actor=actor,
                 query=ontology_query or None,
                 intent=str(intent) if isinstance(intent, str) else None,
                 filters=filters,
@@ -2560,6 +2652,8 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
                 include_graph=include_graph,
                 run_id=str(run_id) if isinstance(run_id, str) and run_id.strip() else None,
                 refresh_snapshot=refresh_snapshot,
+                page=page,
+                page_size=page_size,
             )
             return serialize_value(result)
 
@@ -2627,19 +2721,31 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             svc = OntologyQueryService()
 
             if run_id_before and run_id_after:
-                diff = svc.compare_snapshots(run_id_before, run_id_after)
+                diff = _call_with_optional_actor(
+                    svc.compare_snapshots,
+                    actor=actor,
+                    run_id_a=run_id_before,
+                    run_id_b=run_id_after,
+                )
             else:
                 # Auto-select: get latest two runs
-                runs = svc.list_runs(limit=5)
+                runs = _call_with_optional_actor(svc.list_runs, actor=actor, limit=5)
                 if len(runs) < 2:
                     return {"error": f"Need at least 2 ontology snapshots to compare. Only found {len(runs)}."}, {
                         "cache": "n/a"
                     }
                 rid_after = run_id_after or str(runs[0].get("run_id", ""))
                 rid_before = run_id_before or str(runs[1].get("run_id", ""))
-                diff = svc.compare_snapshots(rid_before, rid_after)
+                diff = _call_with_optional_actor(
+                    svc.compare_snapshots,
+                    actor=actor,
+                    run_id_a=rid_before,
+                    run_id_b=rid_after,
+                )
 
             return serialize_value(diff), {"cache": "n/a"}
+        except PolicyDenied:
+            raise
         except Exception as exc:
             return {"error": f"Ontology diff failed: {exc}"}, {"cache": "n/a"}
 
@@ -2718,15 +2824,14 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
     # Investing OS — propose tools (approval-gated writes)
     # -------------------------------------------------------------------
     if name == "propose_thesis_status_change":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = args["ticker"].strip().upper()
-        approval = create_pending_approval(
-            entity_type="thesis_status",
-            ticker=ticker,
-            proposed_change={"new_status": args["new_status"], "reason": args["reason"]},
+        approval = propose_action(
+            "change_thesis_status",
+            {"ticker": ticker, "status": args["new_status"], "reason": args["reason"]},
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
         )
         return {
             "status": "pending_approval_created",
@@ -2735,19 +2840,19 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_action_item":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = (args.get("ticker") or "").strip().upper() or None
-        approval = create_pending_approval(
-            entity_type="action_item",
-            ticker=ticker,
-            proposed_change={
+        approval = propose_action(
+            "create_action_item",
+            {
                 "description": args["description"],
                 "action_type": args["action_type"],
+                "ticker": ticker,
                 "urgency": args.get("urgency", "normal"),
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
         )
         return {
             "status": "pending_approval_created",
@@ -2756,20 +2861,20 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_catalyst_status_change":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = args["ticker"].strip().upper()
-        approval = create_pending_approval(
-            entity_type="catalyst_status",
-            ticker=ticker,
-            entity_id=args["catalyst_id"],
-            proposed_change={
+        approval = propose_action(
+            "update_catalyst_status",
+            {
                 "catalyst_id": args["catalyst_id"],
                 "status": args["new_status"],
                 "evidence": args.get("evidence"),
+                "ticker": ticker,
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
+            entity_id=args["catalyst_id"],
         )
         return {
             "status": "pending_approval_created",
@@ -2778,19 +2883,19 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_kill_condition_status_change":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = args["ticker"].strip().upper()
-        approval = create_pending_approval(
-            entity_type="kill_condition_status",
-            ticker=ticker,
-            entity_id=args["kill_condition_id"],
-            proposed_change={
+        approval = propose_action(
+            "update_kill_condition_status",
+            {
                 "kill_condition_id": args["kill_condition_id"],
                 "status": args["new_status"],
+                "ticker": ticker,
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
+            entity_id=args["kill_condition_id"],
         )
         return {
             "status": "pending_approval_created",
@@ -2799,18 +2904,20 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_watch_trigger":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = (args.get("ticker") or "").strip().upper() or None
-        approval = create_pending_approval(
-            entity_type="watch_trigger",
-            ticker=ticker,
-            proposed_change={
+        approval = propose_action(
+            "create_watch_trigger",
+            {
                 "condition": args["condition"],
                 "trigger_type": args["trigger_type"],
+                "ticker": ticker,
+                "expires_at": args.get("expires_at"),
+                "definition": args.get("definition"),
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
         )
         return {
             "status": "pending_approval_created",
@@ -3055,55 +3162,102 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         return recommend_hedging_adjustments(req), {"cache": "n/a"}
 
     if name == "propose_portfolio_positions_update":
-        return _create_pending(
-            "portfolio_positions",
+        from portfolio.action_registry import ActionContext, propose_action
+
+        approval = propose_action(
+            "update_portfolio_positions",
             {"positions": args["positions"]},
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_hedge_positions_update":
-        return _create_pending(
-            "hedge_positions",
+        from portfolio.action_registry import ActionContext, propose_action
+
+        approval = propose_action(
+            "update_hedge_positions",
             {"positions": args["positions"]},
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_thesis_content_update":
+        from portfolio.action_registry import ActionContext, propose_action
+
         ticker = str(args["ticker"]).strip().upper()
-        return _create_pending(
-            "thesis_content",
+        approval = propose_action(
+            "save_thesis_content",
             {"ticker": ticker, "content": str(args["content"])},
-            ticker=ticker,
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_catalyst":
+        from portfolio.action_registry import ActionContext, propose_action
+
         ticker = str(args["ticker"]).strip().upper()
-        return _create_pending(
-            "catalyst",
+        approval = propose_action(
+            "create_catalyst",
             {
                 "ticker": ticker,
                 "description": args["description"],
                 "category": args.get("category", "fundamental"),
                 "target_date": args.get("target_date"),
             },
-            ticker=ticker,
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_kill_condition":
+        from portfolio.action_registry import ActionContext, propose_action
+
         ticker = str(args["ticker"]).strip().upper()
-        return _create_pending(
-            "kill_condition",
+        approval = propose_action(
+            "create_kill_condition",
             {
                 "ticker": ticker,
                 "condition": args["condition"],
                 "metric": args.get("metric"),
                 "threshold": args.get("threshold"),
             },
-            ticker=ticker,
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_research_note":
         ticker = str(args.get("ticker") or "").strip().upper() or None

@@ -100,6 +100,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const [hedgeValidationError, setHedgeValidationError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!open) return
     setTab("Positions")
@@ -115,6 +116,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       .catch(err => setLoadError(String(err)))
       .finally(() => setIsLoading(false))
   }, [open])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   function handleSaved() {
     queryClient.invalidateQueries({ queryKey: ["portfolio", "all_timeframes"] })

@@ -107,6 +107,72 @@ def generate_thesis_markdown(ticker: str) -> str:
     except Exception:
         pass
 
+    # Thesis claims from core_db
+    try:
+        from portfolio.core_db import get_catalysts, get_kill_conditions, get_thesis_claims
+
+        catalysts = get_catalysts(ticker)
+        conditions = get_kill_conditions(ticker)
+        catalyst_labels = {
+            int(c["id"]): str(c.get("description") or "").split(": ", 1)[0].strip() for c in catalysts if c.get("id")
+        }
+        condition_labels = {
+            int(k["id"]): str(k.get("condition") or "").split(": ", 1)[0].strip() for k in conditions if k.get("id")
+        }
+        claims = [c for c in get_thesis_claims(ticker=ticker, limit=500) if c.get("status") != "retired"]
+        if claims:
+            lines = ["## Thesis Claims", ""]
+            for claim in claims:
+                claim_text = str(claim.get("claim") or "").strip()
+                if ": " in claim_text:
+                    label, rest = claim_text.split(": ", 1)
+                    lines.append(f"- **{label}:** {rest}")
+                else:
+                    lines.append(f"- **{claim_text}**")
+                lines.append(f"  <!-- thesis-claim:id={claim['id']} -->")
+                lines.append(f"  - Status: {claim.get('status') or 'active'}")
+                if claim.get("expected_evidence"):
+                    lines.append(f"  - Expected evidence: {claim['expected_evidence']}")
+                if claim.get("disconfirming_evidence"):
+                    lines.append(f"  - Disconfirming evidence: {claim['disconfirming_evidence']}")
+                source_requirements = claim.get("source_requirements") or claim.get("source_requirements_json") or []
+                if source_requirements:
+                    lines.append("  - Source requirements:")
+                    for req in source_requirements:
+                        if isinstance(req, dict):
+                            freshness = req.get("freshness_days")
+                            freshness_text = "" if freshness in (None, "") else str(freshness)
+                            required = "true" if req.get("required", True) else "false"
+                            lines.append(
+                                "    - "
+                                f"type={req.get('type') or 'custom'}; "
+                                f"description={req.get('description') or req.get('type') or 'custom'}; "
+                                f"required={required}; freshness_days={freshness_text}"
+                            )
+                        else:
+                            lines.append(f"    - {req}")
+                if claim.get("cadence"):
+                    lines.append(f"  - Cadence: {claim['cadence']}")
+                if claim.get("confidence") is not None:
+                    lines.append(f"  - Confidence: {float(claim['confidence']):.2f}".rstrip("0").rstrip("."))
+                linked_catalysts = [
+                    catalyst_labels[int(cid)]
+                    for cid in claim.get("linked_catalyst_ids", claim.get("linked_catalyst_ids_json", []))
+                    if int(cid) in catalyst_labels
+                ]
+                if linked_catalysts:
+                    lines.append(f"  - Catalysts: {'; '.join(linked_catalysts)}")
+                linked_conditions = [
+                    condition_labels[int(kid)]
+                    for kid in claim.get("linked_kill_condition_ids", claim.get("linked_kill_condition_ids_json", []))
+                    if int(kid) in condition_labels
+                ]
+                if linked_conditions:
+                    lines.append(f"  - Kill conditions: {'; '.join(linked_conditions)}")
+            sections.append("\n".join(lines))
+    except Exception:
+        pass
+
     # Latest evaluation
     try:
         from portfolio.thesis_db import get_evaluations

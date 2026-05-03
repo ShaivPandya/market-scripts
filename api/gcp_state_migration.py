@@ -193,6 +193,25 @@ def _sqlite_count(db_path: Path, table: str) -> int:
         return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
+def _normalize_pending_approval_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in rows:
+        status = row.get("status")
+        application_status = row.get("application_status")
+        if application_status is None:
+            if status == "approved":
+                application_status = "applied"
+            elif status in {"rejected", "expired"}:
+                application_status = "not_applicable"
+            else:
+                application_status = "pending"
+            row["application_status"] = application_status
+        if row.get("application_attempts") is None:
+            row["application_attempts"] = 0
+        if application_status in {"applied", "not_applicable"} and row.get("application_completed_at") is None:
+            row["application_completed_at"] = row.get("resolved_at") or row.get("created_at")
+    return rows
+
+
 def _sqlite_table_exists(db_path: Path, table: str) -> bool:
     with sqlite3.connect(str(db_path)) as conn:
         row = conn.execute(
@@ -449,6 +468,24 @@ class StateMigrator:
                 "artifacts",
                 "error",
             ],
+            "report_runs": [
+                "report_id",
+                "report_type",
+                "as_of",
+                "source",
+                "source_run_id",
+                "source_url",
+                "status",
+                "report_hash",
+                "input_hash",
+                "summary_json",
+                "artifact_paths_json",
+                "issue_url",
+                "created_at",
+                "updated_at",
+                "synced_at",
+                "error",
+            ],
             "action_items": [
                 "id",
                 "ticker",
@@ -473,6 +510,27 @@ class StateMigrator:
                 "created_at",
                 "fired_at",
                 "expires_at",
+                "definition_json",
+                "last_checked_at",
+                "last_result_json",
+                "last_evidence",
+            ],
+            "thesis_claims": [
+                "id",
+                "ticker",
+                "claim",
+                "expected_evidence",
+                "disconfirming_evidence",
+                "source_requirements_json",
+                "cadence",
+                "confidence",
+                "status",
+                "linked_catalyst_ids_json",
+                "linked_kill_condition_ids_json",
+                "source_type",
+                "source_id",
+                "created_at",
+                "updated_at",
             ],
             "research_notes": [
                 "id",
@@ -489,6 +547,12 @@ class StateMigrator:
                 "entity_type",
                 "entity_id",
                 "ticker",
+                "action_id",
+                "action_schema_name",
+                "action_schema_version",
+                "action_input_hash",
+                "request_schema_name",
+                "request_schema_version",
                 "proposed_change",
                 "reason",
                 "source_type",
@@ -497,6 +561,61 @@ class StateMigrator:
                 "created_at",
                 "resolved_at",
                 "resolved_note",
+                "application_status",
+                "application_attempts",
+                "application_started_at",
+                "application_completed_at",
+                "application_error",
+            ],
+            "action_runs": [
+                "id",
+                "action_id",
+                "action_schema_name",
+                "action_schema_version",
+                "request_schema_name",
+                "request_schema_version",
+                "actor_type",
+                "actor_id",
+                "source_type",
+                "source_id",
+                "approval_id",
+                "parent_action_run_id",
+                "input_hash",
+                "input_json",
+                "output_json",
+                "status",
+                "error",
+                "started_at",
+                "completed_at",
+            ],
+            "action_events": [
+                "id",
+                "action_run_id",
+                "event_type",
+                "message",
+                "payload_json",
+                "created_at",
+            ],
+            "audit_events": [
+                "id",
+                "event_id",
+                "occurred_at",
+                "received_at",
+                "request_id",
+                "actor_id",
+                "actor_type",
+                "parent_actor_id",
+                "action_name",
+                "action_category",
+                "status",
+                "object_type",
+                "object_id",
+                "object_refs_json",
+                "before_summary_json",
+                "after_summary_json",
+                "source_lineage_json",
+                "metadata_json",
+                "error",
             ],
             "recommendations": [
                 "id",
@@ -536,6 +655,8 @@ class StateMigrator:
                 "input_hash",
                 "validation_status",
                 "source_quality_summary_json",
+                "report_id",
+                "idempotency_key",
             ],
         }
         tables = {table: columns for table, columns in tables.items() if _sqlite_table_exists(db, table)}
@@ -543,9 +664,20 @@ class StateMigrator:
         if self._source_completed("core", source_hash):
             return SourceResult("core", source_hash, counts)
         for table, columns in tables.items():
-            conflict = ["run_id"] if table == "workflow_runs" else ["id"]
-            self._upsert_rows(table, columns, conflict, _sqlite_rows(db, table))
-        for table in [t for t in tables if t != "workflow_runs"]:
+            conflict = (
+                ["run_id"]
+                if table == "workflow_runs"
+                else ["report_id"]
+                if table == "report_runs"
+                else ["event_id"]
+                if table == "audit_events"
+                else ["id"]
+            )
+            rows = _sqlite_rows(db, table)
+            if table == "pending_approvals":
+                rows = _normalize_pending_approval_rows(rows)
+            self._upsert_rows(table, columns, conflict, rows)
+        for table in [t for t in tables if t not in {"workflow_runs", "report_runs"}]:
             self._reset_identity(table)
         result = SourceResult("core", source_hash, counts)
         self._record_source(result)
@@ -582,10 +714,24 @@ class StateMigrator:
         db = self._db_path("ontology")
         source_hash = sha256_file(db)
         table_map = {
-            "nodes": ("ontology_nodes", ["id", "type", "label", "properties_json", "updated_at"], ["id"]),
+            "nodes": (
+                "ontology_nodes",
+                ["id", "type", "label", "properties_json", "schema_name", "schema_version", "updated_at"],
+                ["id"],
+            ),
             "edges": (
                 "ontology_edges",
-                ["source_id", "target_id", "relation_type", "properties_json", "updated_at"],
+                [
+                    "source_id",
+                    "target_id",
+                    "relation_type",
+                    "properties_json",
+                    "schema_name",
+                    "schema_version",
+                    "relation_schema_name",
+                    "relation_schema_version",
+                    "updated_at",
+                ],
                 ["source_id", "target_id", "relation_type"],
             ),
             "ontology_runs": (
@@ -603,20 +749,96 @@ class StateMigrator:
             ),
             "snapshot_nodes": (
                 "ontology_snapshot_nodes",
-                ["run_id", "id", "type", "label", "properties_json", "updated_at"],
+                ["run_id", "id", "type", "label", "properties_json", "schema_name", "schema_version", "updated_at"],
                 ["run_id", "id"],
             ),
             "snapshot_edges": (
                 "ontology_snapshot_edges",
-                ["run_id", "source_id", "target_id", "relation_type", "properties_json", "updated_at"],
+                [
+                    "run_id",
+                    "source_id",
+                    "target_id",
+                    "relation_type",
+                    "properties_json",
+                    "schema_name",
+                    "schema_version",
+                    "relation_schema_name",
+                    "relation_schema_version",
+                    "updated_at",
+                ],
                 ["run_id", "source_id", "target_id", "relation_type"],
             ),
+            "schema_definitions": (
+                "schema_definitions",
+                [
+                    "schema_kind",
+                    "schema_name",
+                    "schema_version",
+                    "definition_json",
+                    "definition_hash",
+                    "compatibility_json",
+                    "status",
+                    "created_at",
+                    "deprecated_at",
+                ],
+                ["schema_kind", "schema_name", "schema_version"],
+            ),
+            "ontology_run_schema_bindings": (
+                "ontology_run_schema_bindings",
+                ["run_id", "schema_kind", "schema_name", "schema_version", "definition_hash"],
+                ["run_id", "schema_kind", "schema_name", "schema_version"],
+            ),
         }
+        table_map = {table: value for table, value in table_map.items() if _sqlite_table_exists(db, table)}
         counts = {table: _sqlite_count(db, table) for table in table_map}
         if self._source_completed("ontology", source_hash):
             return SourceResult("ontology", source_hash, counts)
         for source_table, (target_table, columns, conflict) in table_map.items():
-            self._upsert_rows(target_table, columns, conflict, _sqlite_rows(db, source_table))
+            rows = _sqlite_rows(db, source_table)
+            if source_table in {"nodes", "edges", "snapshot_nodes", "snapshot_edges"}:
+                for row in rows:
+                    row["schema_name"] = row.get("schema_name") or "legacy"
+                    row["schema_version"] = int(row.get("schema_version") or 0)
+                    if source_table in {"edges", "snapshot_edges"}:
+                        row["relation_schema_name"] = row.get("relation_schema_name") or "legacy"
+                        row["relation_schema_version"] = int(row.get("relation_schema_version") or 0)
+            self._upsert_rows(target_table, columns, conflict, rows)
+        if "schema_definitions" not in table_map:
+            from ontology.schema_definitions import domain_action_schema_definitions, ontology_schema_definitions
+
+            now = datetime.now(UTC).isoformat()
+            definition_rows = []
+            for definition in [*ontology_schema_definitions(), *domain_action_schema_definitions()]:
+                row = definition.row()
+                definition_rows.append(
+                    {
+                        "schema_kind": row[0],
+                        "schema_name": row[1],
+                        "schema_version": row[2],
+                        "definition_json": row[3],
+                        "definition_hash": row[4],
+                        "compatibility_json": row[5],
+                        "status": row[6],
+                        "created_at": now,
+                        "deprecated_at": row[7],
+                    }
+                )
+            self._upsert_rows(
+                "schema_definitions",
+                [
+                    "schema_kind",
+                    "schema_name",
+                    "schema_version",
+                    "definition_json",
+                    "definition_hash",
+                    "compatibility_json",
+                    "status",
+                    "created_at",
+                    "deprecated_at",
+                ],
+                ["schema_kind", "schema_name", "schema_version"],
+                definition_rows,
+            )
         result = SourceResult("ontology", source_hash, counts)
         self._record_source(result)
         return result

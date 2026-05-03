@@ -10,6 +10,7 @@ Each workflow run is persisted in core_db.workflow_runs for auditability.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import time
@@ -17,6 +18,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from api.agent_tools import execute_tool
+from api.audit import emit_audit_event
+from ontology.action_registry import get_tool_exposure
+from ontology.policy import Actor, admin_actor
 
 logger = logging.getLogger("api.workflows")
 
@@ -63,30 +67,73 @@ AVAILABLE_WORKFLOWS = {
 # ---------------------------------------------------------------------------
 
 
-def _exec_tool(name: str, args: dict | None = None) -> tuple[str, dict, float]:
+def _exec_tool(name: str, args: dict | None = None, actor: Actor | None = None) -> tuple[str, dict, float]:
     """Execute a single tool, return (result_json, parsed_dict, elapsed_ms)."""
     args = args or {}
+    actor = actor or admin_actor(source="workflow")
+    exposure = get_tool_exposure(name)
+    if exposure.access_mode not in {"read", "compute"}:
+        raise ValueError(f"Workflow tool '{name}' is not allowed for workflow execution")
     started = time.perf_counter()
+    emit_audit_event(
+        "workflow.tool.started",
+        "workflow",
+        "started",
+        actor=actor,
+        object_refs=[{"type": "tool", "id": name}],
+        metadata={"tool_name": name, "arg_keys": sorted(args.keys())},
+    )
     try:
-        result_str = execute_tool(name, args)
+        result_str = _execute_tool_for_actor(name, args, actor)
         elapsed = round((time.perf_counter() - started) * 1000, 1)
         try:
             parsed = json.loads(result_str)
         except Exception:
             parsed = {"raw": result_str}
+        emit_audit_event(
+            "workflow.tool.completed",
+            "workflow",
+            "succeeded",
+            actor=actor,
+            object_refs=[{"type": "tool", "id": name}],
+            after_summary={
+                "tool_name": name,
+                "duration_ms": elapsed,
+                "status": "error" if isinstance(parsed, dict) and parsed.get("error") else "ok",
+                "result_keys": sorted(parsed.keys()) if isinstance(parsed, dict) else [],
+            },
+        )
         return result_str, parsed, elapsed
     except Exception as exc:
         elapsed = round((time.perf_counter() - started) * 1000, 1)
         logger.warning("Workflow tool %s failed: %s", name, exc)
+        emit_audit_event(
+            "workflow.tool.failed",
+            "workflow",
+            "failed",
+            actor=actor,
+            object_refs=[{"type": "tool", "id": name}],
+            after_summary={"tool_name": name, "duration_ms": elapsed},
+            error=str(exc),
+        )
         return json.dumps({"error": str(exc)}), {"error": str(exc)}, elapsed
 
 
-def _exec_parallel(calls: list[tuple[str, dict]]) -> list[tuple[str, dict, float]]:
+def _execute_tool_for_actor(name: str, args: dict, actor: Actor) -> str:
+    params = inspect.signature(execute_tool).parameters.values()
+    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    if supports_actor:
+        return execute_tool(name, args, actor=actor)
+    return execute_tool(name, args)
+
+
+def _exec_parallel(calls: list[tuple[str, dict]], actor: Actor | None = None) -> list[tuple[str, dict, float]]:
     """Execute multiple tool calls in parallel."""
+    actor = actor or admin_actor(source="workflow")
     if len(calls) == 1:
-        return [_exec_tool(calls[0][0], calls[0][1])]
+        return [_exec_tool(calls[0][0], calls[0][1], actor=actor)]
     with ThreadPoolExecutor(max_workers=min(len(calls), 6)) as pool:
-        futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
+        futures = [(name, pool.submit(_exec_tool, name, args, actor)) for name, args in calls]
         return [(name, fut.result()[1], fut.result()[2]) for name, fut in futures]
 
 
@@ -111,7 +158,7 @@ Be direct, use numbers, skip hedging language. This is for a professional invest
 """
 
 
-def run_morning_brief() -> tuple[str, list[dict[str, Any]]]:
+def run_morning_brief(actor: Actor | None = None) -> tuple[str, list[dict[str, Any]]]:
     """Execute morning brief workflow.
 
     Returns (synthesis_prompt, tool_data_sections).
@@ -124,8 +171,9 @@ def run_morning_brief() -> tuple[str, list[dict[str, Any]]]:
     ]
 
     results: list[tuple[str, dict, float]] = []
+    actor = actor or admin_actor(source="workflow")
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
+        futures = [(name, pool.submit(_exec_tool, name, args, actor)) for name, args in calls]
         for name, fut in futures:
             _str, parsed, elapsed = fut.result()
             results.append((name, parsed, elapsed))
@@ -174,7 +222,7 @@ After your analysis, output a structured JSON block fenced with ```artifacts
 """
 
 
-def run_thesis_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
+def run_thesis_review(ticker: str, actor: Actor | None = None) -> tuple[str, list[dict[str, Any]]]:
     """Execute thesis review workflow for a specific ticker."""
     ticker = ticker.upper()
 
@@ -189,8 +237,9 @@ def run_thesis_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     ]
 
     results: list[tuple[str, dict, float]] = []
+    actor = actor or admin_actor(source="workflow")
     with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
+        futures = [(name, pool.submit(_exec_tool, name, args, actor)) for name, args in calls]
         for name, fut in futures:
             _str, parsed, elapsed = fut.result()
             results.append((name, parsed, elapsed))
@@ -225,7 +274,7 @@ End with a specific **game plan**: pre-earnings positioning adjustments (if any)
 """
 
 
-def run_pre_earnings(ticker: str) -> tuple[str, list[dict[str, Any]]]:
+def run_pre_earnings(ticker: str, actor: Actor | None = None) -> tuple[str, list[dict[str, Any]]]:
     """Execute pre-earnings prep workflow for a specific ticker."""
     ticker = ticker.upper()
 
@@ -237,8 +286,9 @@ def run_pre_earnings(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     ]
 
     results: list[tuple[str, dict, float]] = []
+    actor = actor or admin_actor(source="workflow")
     with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
+        futures = [(name, pool.submit(_exec_tool, name, args, actor)) for name, args in calls]
         for name, fut in futures:
             _str, parsed, elapsed = fut.result()
             results.append((name, parsed, elapsed))
@@ -249,6 +299,7 @@ def run_pre_earnings(ticker: str) -> tuple[str, list[dict[str, Any]]]:
         kb_str, kb_parsed, kb_elapsed = _exec_tool(
             "search_knowledge_base",
             {"query": f"{ticker} earnings analysis", "tickers": ticker, "top_k": 3},
+            actor=actor,
         )
         results.append(("search_knowledge_base", kb_parsed, kb_elapsed))
         logger.info("workflow=pre_earnings ticker=%s tool=search_knowledge_base duration_ms=%.1f", ticker, kb_elapsed)
@@ -301,7 +352,7 @@ After your analysis, output a structured JSON block fenced with ```artifacts
 """
 
 
-def run_post_earnings_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
+def run_post_earnings_review(ticker: str, actor: Actor | None = None) -> tuple[str, list[dict[str, Any]]]:
     """Execute post-earnings review workflow."""
     ticker = ticker.upper()
 
@@ -313,8 +364,9 @@ def run_post_earnings_review(ticker: str) -> tuple[str, list[dict[str, Any]]]:
     ]
 
     results: list[tuple[str, dict, float]] = []
+    actor = actor or admin_actor(source="workflow")
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
+        futures = [(name, pool.submit(_exec_tool, name, args, actor)) for name, args in calls]
         for name, fut in futures:
             _str, parsed, elapsed = fut.result()
             results.append((name, parsed, elapsed))
@@ -355,7 +407,7 @@ After your analysis, output a structured JSON block fenced with ```artifacts
 """
 
 
-def run_weekly_portfolio_review() -> tuple[str, list[dict[str, Any]]]:
+def run_weekly_portfolio_review(actor: Actor | None = None) -> tuple[str, list[dict[str, Any]]]:
     """Execute weekly portfolio review workflow."""
     calls: list[tuple[str, dict[str, Any]]] = [
         ("get_portfolio", {}),
@@ -364,8 +416,9 @@ def run_weekly_portfolio_review() -> tuple[str, list[dict[str, Any]]]:
     ]
 
     results: list[tuple[str, dict, float]] = []
+    actor = actor or admin_actor(source="workflow")
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
+        futures = [(name, pool.submit(_exec_tool, name, args, actor)) for name, args in calls]
         for name, fut in futures:
             _str, parsed, elapsed = fut.result()
             results.append((name, parsed, elapsed))
@@ -373,7 +426,7 @@ def run_weekly_portfolio_review() -> tuple[str, list[dict[str, Any]]]:
 
     # Also fetch latest evaluations for all tickers
     try:
-        eval_str, eval_parsed, eval_elapsed = _exec_tool("get_thesis_evaluations", {"ticker": "__all__"})
+        eval_str, eval_parsed, eval_elapsed = _exec_tool("get_thesis_evaluations", {"ticker": "__all__"}, actor=actor)
         results.append(("get_thesis_evaluations", eval_parsed, eval_elapsed))
     except Exception:
         pass
@@ -418,7 +471,7 @@ After your analysis, output a structured JSON block fenced with ```artifacts
 """
 
 
-def run_thesis_invalidation_check(ticker: str) -> tuple[str, list[dict[str, Any]]]:
+def run_thesis_invalidation_check(ticker: str, actor: Actor | None = None) -> tuple[str, list[dict[str, Any]]]:
     """Execute thesis invalidation check workflow."""
     ticker = ticker.upper()
 
@@ -430,8 +483,9 @@ def run_thesis_invalidation_check(ticker: str) -> tuple[str, list[dict[str, Any]
     ]
 
     results: list[tuple[str, dict, float]] = []
+    actor = actor or admin_actor(source="workflow")
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [(name, pool.submit(_exec_tool, name, args)) for name, args in calls]
+        futures = [(name, pool.submit(_exec_tool, name, args, actor)) for name, args in calls]
         for name, fut in futures:
             _str, parsed, elapsed = fut.result()
             results.append((name, parsed, elapsed))
@@ -473,18 +527,19 @@ def _build_sections(results: list[tuple[str, dict, float]]) -> tuple[list[dict[s
 # ---------------------------------------------------------------------------
 
 _WORKFLOW_RUNNERS = {
-    "morning_brief": lambda _: run_morning_brief(),
-    "thesis_review": lambda t: run_thesis_review(t),
-    "pre_earnings": lambda t: run_pre_earnings(t),
-    "post_earnings_review": lambda t: run_post_earnings_review(t),
-    "weekly_portfolio_review": lambda _: run_weekly_portfolio_review(),
-    "thesis_invalidation_check": lambda t: run_thesis_invalidation_check(t),
+    "morning_brief": lambda _, actor: run_morning_brief(actor=actor),
+    "thesis_review": lambda t, actor: run_thesis_review(t, actor=actor),
+    "pre_earnings": lambda t, actor: run_pre_earnings(t, actor=actor),
+    "post_earnings_review": lambda t, actor: run_post_earnings_review(t, actor=actor),
+    "weekly_portfolio_review": lambda _, actor: run_weekly_portfolio_review(actor=actor),
+    "thesis_invalidation_check": lambda t, actor: run_thesis_invalidation_check(t, actor=actor),
 }
 
 
 def execute_workflow(
     workflow_name: str,
     ticker: str | None = None,
+    actor: Actor | None = None,
 ) -> tuple[str, str, list[dict[str, Any]]]:
     """Run a named workflow. Returns (run_id, synthesis_prompt, tool_data_sections).
 
@@ -511,11 +566,29 @@ def execute_workflow(
 
         run = create_workflow_run(workflow_name, ticker)
         run_id = run["run_id"]
+        emit_audit_event(
+            "workflow.execution.started",
+            "workflow",
+            "started",
+            actor=actor or admin_actor(source="workflow"),
+            object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": workflow_name}],
+            after_summary={"workflow_name": workflow_name, "ticker": ticker, "status": "running"},
+            source_lineage={"run_id": run_id},
+        )
     except Exception:
         import uuid
 
         run_id = uuid.uuid4().hex
         logger.warning("Failed to create workflow run record, using ephemeral id=%s", run_id)
+        emit_audit_event(
+            "workflow.execution.started",
+            "workflow",
+            "started",
+            actor=actor or admin_actor(source="workflow"),
+            object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": workflow_name}],
+            after_summary={"workflow_name": workflow_name, "ticker": ticker, "status": "ephemeral"},
+            source_lineage={"run_id": run_id, "ephemeral": True},
+        )
 
-    synthesis_prompt, sections = runner(ticker)
+    synthesis_prompt, sections = runner(ticker, actor or admin_actor(source="workflow"))
     return run_id, synthesis_prompt, sections

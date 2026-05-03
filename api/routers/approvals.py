@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from api.exceptions import NotFoundError, ValidationError
+from api.action_execution import execute_api_action
+from api.exceptions import AppError, ConflictError, NotFoundError, ValidationError
 
 router = APIRouter()
 
@@ -25,12 +24,18 @@ class BulkResolveRequest(BaseModel):
 def list_approvals(
     status: str | None = "pending",
     ticker: str | None = None,
+    application_status: str | None = None,
 ):
     from portfolio.core_db import get_pending_approvals
 
     if status == "all":
         status = None
-    approvals = get_pending_approvals(status=status, ticker=ticker)
+    if application_status == "all":
+        application_status = None
+    try:
+        approvals = get_pending_approvals(status=status, ticker=ticker, application_status=application_status)
+    except ValueError as e:
+        raise ValidationError(str(e)) from e
     return {"approvals": approvals, "count": len(approvals)}
 
 
@@ -46,51 +51,51 @@ def get_approval(approval_id: int):
 
 @router.post("/approvals/{approval_id}/approve")
 def approve_item(approval_id: int, body: ResolveRequest | None = None):
-    from portfolio.core_db import resolve_approval
-
-    try:
-        return resolve_approval(approval_id, "approved", body.note if body else None)
-    except ValueError as e:
-        if "not found" in str(e).lower() or "No pending" in str(e):
-            raise NotFoundError("Approval", str(approval_id)) from e
-        raise ValidationError(str(e)) from e
+    return execute_api_action(
+        "resolve_approval",
+        {"approval_id": approval_id, "status": "approved", "note": body.note if body else None},
+        source_id="approvals.approve_item",
+    )
 
 
 @router.post("/approvals/{approval_id}/reject")
 def reject_item(approval_id: int, body: ResolveRequest | None = None):
-    from portfolio.core_db import resolve_approval
-
-    try:
-        return resolve_approval(approval_id, "rejected", body.note if body else None)
-    except ValueError as e:
-        if "not found" in str(e).lower() or "No pending" in str(e):
-            raise NotFoundError("Approval", str(approval_id)) from e
-        raise ValidationError(str(e)) from e
+    return execute_api_action(
+        "resolve_approval",
+        {"approval_id": approval_id, "status": "rejected", "note": body.note if body else None},
+        source_id="approvals.reject_item",
+    )
 
 
 @router.post("/approvals/bulk-approve")
 def bulk_approve(body: BulkResolveRequest):
-    from portfolio.core_db import resolve_approval
-
     results = []
     for aid in body.ids:
         try:
-            resolve_approval(aid, "approved", body.note)
+            execute_api_action(
+                "resolve_approval",
+                {"approval_id": aid, "status": "approved", "note": body.note},
+                source_id="approvals.bulk_approve",
+            )
             results.append({"id": aid, "status": "approved"})
-        except ValueError:
-            results.append({"id": aid, "status": "error", "message": "Not found or already resolved"})
+        except ConflictError as e:
+            results.append({"id": aid, "status": "failed", "message": str(e)})
+        except AppError as e:
+            results.append({"id": aid, "status": "error", "message": e.message or "Not found or already resolved"})
     return {"results": results}
 
 
 @router.post("/approvals/bulk-reject")
 def bulk_reject(body: BulkResolveRequest):
-    from portfolio.core_db import resolve_approval
-
     results = []
     for aid in body.ids:
         try:
-            resolve_approval(aid, "rejected", body.note)
+            execute_api_action(
+                "resolve_approval",
+                {"approval_id": aid, "status": "rejected", "note": body.note},
+                source_id="approvals.bulk_reject",
+            )
             results.append({"id": aid, "status": "rejected"})
-        except ValueError:
-            results.append({"id": aid, "status": "error", "message": "Not found or already resolved"})
+        except AppError as e:
+            results.append({"id": aid, "status": "error", "message": e.message or "Not found or already resolved"})
     return {"results": results}

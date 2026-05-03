@@ -28,6 +28,8 @@ def get_workspace():
         get_latest_recommendation,
         get_pending_approvals,
         get_recommendations,
+        get_report_runs,
+        get_thesis_claims,
         get_watch_triggers,
         get_workflow_runs,
     )
@@ -175,6 +177,11 @@ def get_workspace():
 
     # Latest workflow run
     recent_runs = get_workflow_runs(limit=3)
+    recent_report_runs = get_report_runs(limit=5)
+    challenged_claims = get_thesis_claims(status="challenged", limit=5) + get_thesis_claims(
+        status="disconfirmed",
+        limit=5,
+    )
 
     return {
         "regime": regime_summary,
@@ -203,4 +210,9 @@ def get_workspace():
             "items": active_triggers[:5],
         },
         "recent_workflow_runs": recent_runs,
+        "recent_report_runs": recent_report_runs,
+        "thesis_claims": {
+            "challenged_count": len(challenged_claims),
+            "items": challenged_claims[:5],
+        },
     }

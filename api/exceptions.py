@@ -79,3 +79,10 @@ class ValidationError(AppError):
 
     def __init__(self, message: str = "Validation failed"):
         super().__init__(message, status_code=422)
+
+
+class ConflictError(AppError):
+    """A request conflicts with the current durable resource state."""
+
+    def __init__(self, message: str = "Conflict"):
+        super().__init__(message, status_code=409)

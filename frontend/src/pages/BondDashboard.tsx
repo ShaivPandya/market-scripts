@@ -5,6 +5,8 @@ import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesC
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SegmentedControl } from "@/components/shared/FormControls"
+import { PageHeader } from "@/components/shared/PageHeader"
+import { ChartTile } from "@/components/shared/ChartTile"
 
 const TENORS = ["2Y", "10Y", "30Y"] as const
 type Tenor = typeof TENORS[number]
@@ -43,17 +45,11 @@ export function BondDashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Bond Dashboard</h1>
-          {data?.timestamp && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              Snapshot: {new Date(data.timestamp).toLocaleString()}
-            </p>
-          )}
-        </div>
-        <RefreshButton queryKeys={[["bond-dashboard"]]} />
-      </div>
+      <PageHeader
+        title="Bond Dashboard"
+        subtitle={data?.timestamp ? `Snapshot: ${new Date(data.timestamp).toLocaleString()}` : "Global sovereign yield snapshots across key maturities."}
+        actions={<RefreshButton queryKeys={[["bond-dashboard"]]} />}
+      />
 
       <div className="mb-6">
         <SegmentedControl
@@ -77,24 +73,22 @@ export function BondDashboard() {
             const changeBps = td?.change_bps
 
             return (
-              <div key={code} className="rounded-xl border bg-white p-4 shadow-sm">
-                <div className="flex justify-between items-start mb-1">
-                  <p className="text-sm font-semibold text-gray-700">{country.name}</p>
-                  <span className="text-xs text-gray-400">{country.source}</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">
-                  {latest != null ? `${latest.toFixed(3)}%` : "N/A"}
-                </p>
-                {changeBps != null && (
-                  <p className={`text-sm ${changeBps <= 0 ? "text-green-600" : "text-red-600"}`}>
+              <ChartTile
+                key={code}
+                title={country.name}
+                subtitle={latest != null ? `${latest.toFixed(3)}%` : "N/A"}
+                meta={<span className="caption">{country.source}</span>}
+              >
+                {changeBps != null ? (
+                  <p className={`mb-2 text-sm font-medium ${changeBps <= 0 ? "text-positive" : "text-negative"}`}>
                     {changeBps >= 0 ? "+" : ""}{changeBps.toFixed(1)} bps YoY
                   </p>
-                )}
-                {td?.latest_date && (
-                  <p className="text-xs text-gray-400 mt-1">
+                ) : null}
+                {td?.latest_date ? (
+                  <p className="mb-3 text-xs text-subtle">
                     Latest: {new Date(td.latest_date).toLocaleDateString()}
                   </p>
-                )}
+                ) : null}
                 {series.length > 0 ? (
                   <TimeSeriesChart
                     data={series}
@@ -103,9 +97,9 @@ export function BondDashboard() {
                     tooltipFormatter={v => `${v.toFixed(3)}%`}
                   />
                 ) : (
-                  <p className="text-sm text-gray-400 mt-4">No data available</p>
+                  <p className="body-copy pt-4">No data available.</p>
                 )}
-              </div>
+              </ChartTile>
             )
           })}
         </div>

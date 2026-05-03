@@ -3,6 +3,7 @@
 import os
 
 import pytest
+from fastapi.testclient import TestClient
 
 # Ensure auth env vars are set for testing
 os.environ["JWT_SECRET"] = "test-secret-for-ci"
@@ -27,11 +28,20 @@ def client():
     os.environ["AUTH_LOGIN_RATE_LIMIT"] = "1000/minute"
     os.environ["ENVIRONMENT"] = "development"
     os.environ["STATE_STORAGE_BACKEND"] = "local"
-    from fastapi.testclient import TestClient
-
     from api.main import app
 
-    return TestClient(app)
+    class SchemaAwareTestClient(TestClient):
+        def request(self, method, url, **kwargs):  # noqa: ANN001, ANN201 - test helper mirrors TestClient.
+            headers = dict(kwargs.pop("headers", {}) or {})
+            if not any(key.lower() in {"x-request-schema-name", "x-request-schema-version"} for key in headers):
+                from api.request_schema import schema_headers_for_path
+
+                path = str(url).split("?", 1)[0]
+                headers.update(schema_headers_for_path(app, str(method), path))
+            kwargs["headers"] = headers
+            return super().request(method, url, **kwargs)
+
+    return SchemaAwareTestClient(app)
 
 
 @pytest.fixture
@@ -46,3 +56,18 @@ def auth_client(client):
         return client
     # Fallback: return unauthenticated client (tests should handle this)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _isolate_app_settings(tmp_path, monkeypatch):
+    """Keep ignored local app settings out of test provider selection."""
+    from api import llm_settings
+
+    if llm_settings._conn is not None:
+        llm_settings._conn.close()
+    monkeypatch.setattr(llm_settings, "_conn", None)
+    monkeypatch.setattr(llm_settings, "DB_PATH", tmp_path / "app_settings.db")
+    yield
+    if llm_settings._conn is not None:
+        llm_settings._conn.close()
+    monkeypatch.setattr(llm_settings, "_conn", None)

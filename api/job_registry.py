@@ -101,7 +101,7 @@ JOB_SPECS: dict[str, JobSpec] = {
     ),
     "ontology": JobSpec(
         job_type="ontology",
-        request_model="api.routers.ontology.OntologyQueryRequest",
+        request_model="api.routers.ontology.OntologyQueryJobRequest",
         compute_func="api.routers.ontology._execute_query",
         cache_key_func="api.routers.ontology._job_cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_ONTOLOGY", "default"),
@@ -192,6 +192,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Async job sweep failed",
+    ),
+    "watch_trigger_monitor": JobSpec(
+        job_type="watch_trigger_monitor",
+        request_model=None,
+        compute_func="api.watch_trigger_monitor.run_watch_trigger_monitor",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_WATCH_TRIGGER_MONITOR_SECONDS", 10 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Watch trigger monitor failed",
     ),
 }
 

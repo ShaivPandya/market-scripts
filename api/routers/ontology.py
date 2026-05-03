@@ -1,25 +1,47 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from inspect import Parameter, signature
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
+from api.audit import emit_audit_event
 from api.exceptions import DataFetchError, NotFoundError
+from api.job_queue import get_job
+from api.routers.auth import require_actor
+from ontology.action_registry import get_tool_exposure
+from ontology.policy import (
+    Actor,
+    OntologyAction,
+    PolicyDenied,
+    actor_from_dict,
+    actor_to_dict,
+    require_allowed,
+)
 from ontology.service import OntologyQueryService, OntologyRunNotFoundError
 
 router = APIRouter()
 _service = OntologyQueryService()
+ActorDep = Annotated[Actor, Depends(require_actor)]
 
 
 class OntologyFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tickers: list[str] | None = None
     sectors: list[str] | None = None
     assets: list[str] | None = None
-    max_results: int | None = None
     min_risk_score: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_max_results(cls, value: Any):
+        if isinstance(value, dict) and "max_results" in value:
+            raise ValueError("filters.max_results has been removed; use top-level page_size instead")
+        return value
 
 
 class OntologyQueryRequest(BaseModel):
@@ -29,6 +51,8 @@ class OntologyQueryRequest(BaseModel):
             "portfolio_risk_exposure",
             "positions_in_deteriorating_macro",
             "entity_context",
+            "thesis_review",
+            "temporal_comparison",
         ]
         | None
     ) = None
@@ -37,16 +61,34 @@ class OntologyQueryRequest(BaseModel):
     include_graph: bool = False
     run_id: str | None = None
     refresh_snapshot: bool = False
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=25, ge=1, le=100)
+    schema_mode: Literal["stored", "upgraded"]
+
+
+class OntologyQueryJobRequest(OntologyQueryRequest):
+    actor: dict[str, Any] = Field(default_factory=dict)
 
 
 def _extract_filters(req: OntologyQueryRequest) -> dict[str, Any]:
     return req.filters.model_dump(exclude_none=True) if req.filters else {}
 
 
-def _execute_query(req: OntologyQueryRequest) -> dict[str, Any]:
+def _call_with_optional_actor(func, *, actor: Actor, **kwargs):
+    params = signature(func).parameters.values()
+    supports_actor = any(p.kind == Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    if supports_actor:
+        return func(**kwargs, actor=actor)
+    return func(**kwargs)
+
+
+def _execute_query(req: OntologyQueryJobRequest | OntologyQueryRequest) -> dict[str, Any]:
     filters = _extract_filters(req)
+    actor = actor_from_dict(getattr(req, "actor", None))
     try:
-        return _service.query(
+        return _call_with_optional_actor(
+            _service.query,
+            actor=actor,
             query=req.query,
             intent=req.intent,
             filters=filters,
@@ -54,46 +96,128 @@ def _execute_query(req: OntologyQueryRequest) -> dict[str, Any]:
             include_graph=req.include_graph,
             run_id=req.run_id,
             refresh_snapshot=req.refresh_snapshot,
+            page=req.page,
+            page_size=req.page_size,
+            schema_mode=req.schema_mode,
         )
     except OntologyRunNotFoundError as exc:
         raise NotFoundError("Ontology run", str(exc)) from exc
 
 
 @router.get("/ontology/runs")
-def list_ontology_runs(limit: int = 100):
+def list_ontology_runs(actor: ActorDep, limit: int = 100):
     safe_limit = max(1, min(int(limit), 500))
     try:
-        runs = _service.list_runs(limit=safe_limit)
+        runs = _call_with_optional_actor(_service.list_runs, actor=actor, limit=safe_limit)
         return {"runs": runs}
+    except PolicyDenied:
+        raise
     except Exception as exc:
         raise DataFetchError(source="ontology", detail=str(exc)) from exc
 
 
 @router.post("/ontology/query")
-def query_ontology(req: OntologyQueryRequest):
+def query_ontology(req: OntologyQueryRequest, actor: ActorDep):
+    _preflight_query_policy(req, actor)
+    job_req = _job_request(req, actor)
     row, _disposition = enqueue_registered_job(
         "ontology",
-        req.model_dump(exclude_none=True),
-        cache_key=_job_cache_key(req),
+        job_req.model_dump(exclude_none=True),
+        cache_key=_job_cache_key(job_req),
     )
     return enqueue_response(row, "/api/v1/ontology/query/async/{job_id}")
 
 
-def _job_cache_key(req: OntologyQueryRequest) -> str:
+def _job_cache_key(req: OntologyQueryRequest | OntologyQueryJobRequest) -> str:
     payload = req.model_dump(exclude_none=True)
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
 @router.post("/ontology/query/async")
-def start_query_ontology_async(req: OntologyQueryRequest):
-    key = _job_cache_key(req)
-    row, _disposition = enqueue_registered_job("ontology", req.model_dump(exclude_none=True), cache_key=key)
+def start_query_ontology_async(req: OntologyQueryRequest, actor: ActorDep):
+    _preflight_query_policy(req, actor)
+    job_req = _job_request(req, actor)
+    key = _job_cache_key(job_req)
+    row, _disposition = enqueue_registered_job("ontology", job_req.model_dump(exclude_none=True), cache_key=key)
     return enqueue_response(row, "/api/v1/ontology/query/async/{job_id}")
 
 
 @router.get("/ontology/query/async/{job_id}")
-def get_query_ontology_async(job_id: str):
+def get_query_ontology_async(job_id: str, actor: ActorDep):
     try:
-        return poll_registered_job(job_id)
+        _preflight_job_read(job_id, actor)
+        result = poll_registered_job(job_id)
+        emit_audit_event(
+            "ontology.job.read",
+            "ontology_read",
+            "succeeded",
+            actor=actor,
+            object_refs=[{"type": "async_job", "id": job_id}],
+            after_summary={"job_id": job_id, "status": result.get("status")},
+        )
+        return result
     except KeyError:
         raise NotFoundError("Ontology job", job_id)  # noqa: B904
+
+
+def _job_request(req: OntologyQueryRequest, actor: Actor) -> OntologyQueryJobRequest:
+    payload = req.model_dump(exclude_none=True)
+    payload["actor"] = actor_to_dict(actor)
+    return OntologyQueryJobRequest.model_validate(payload)
+
+
+def _preflight_query_policy(req: OntologyQueryRequest, actor: Actor) -> None:
+    policy = getattr(_service, "policy", None)
+    if policy is None:
+        return
+    query_tool = get_tool_exposure("query_ontology")
+    query_policy = query_tool.policy_spec
+    try:
+        required_actions = query_policy.ontology_actions if query_policy else (OntologyAction.QUERY,)
+        for action_name in required_actions:
+            require_allowed(policy.check_action(actor, action_name, {"intent": req.intent, "run_id": req.run_id}))
+        dynamic_actions = (
+            query_policy.dynamic_ontology_actions(
+                {"include_graph": req.include_graph, "refresh_snapshot": req.refresh_snapshot}
+            )
+            if query_policy and query_policy.dynamic_ontology_actions
+            else ()
+        )
+        for action_name in dynamic_actions:
+            require_allowed(policy.check_action(actor, action_name, {"run_id": req.run_id}))
+    except PolicyDenied as exc:
+        emit_audit_event(
+            "ontology.query.preflight",
+            "ontology_read",
+            "denied",
+            actor=actor,
+            metadata={"intent": req.intent, "run_id": req.run_id, "include_graph": req.include_graph},
+            error=exc.reason,
+        )
+        raise
+
+
+def _preflight_job_read(job_id: str, actor: Actor) -> None:
+    policy = getattr(_service, "policy", None)
+    try:
+        if policy is not None:
+            require_allowed(policy.check_action(actor, OntologyAction.JOB_READ, {"job_id": job_id}))
+
+        row = get_job(job_id)
+        if row is None:
+            raise KeyError(job_id)
+        payload = row.get("payload_json")
+        payload_actor = actor_from_dict(payload.get("actor") if isinstance(payload, dict) else None)
+        roles = {role.lower() for role in actor.roles}
+        if actor.actor_type != "system" and "admin" not in roles and actor.actor_id != payload_actor.actor_id:
+            raise PolicyDenied("Actor is not allowed to read this ontology job")
+    except PolicyDenied as exc:
+        emit_audit_event(
+            "ontology.job.read",
+            "ontology_read",
+            "denied",
+            actor=actor,
+            object_refs=[{"type": "async_job", "id": job_id}],
+            error=exc.reason,
+        )
+        raise

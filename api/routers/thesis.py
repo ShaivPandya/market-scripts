@@ -7,12 +7,19 @@ from typing import Literal
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
 
+from api.action_execution import execute_api_action
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.request_limits import read_upload_file_bytes
 from api.routers.portfolio_edit import _TICKER_RE
-from api.state_storage import exists_text, read_text, write_text
 from llm_utils import MODEL_MID, call_llm_pdf_text
 from paths import PROJECT_ROOT
+from portfolio import thesis_content
+from portfolio.action_registry import (
+    ActionContext,
+    ActionNotFoundError,
+    ActionValidationError,
+    execute_action,
+)
 
 router = APIRouter()
 
@@ -60,22 +67,24 @@ def _thesis_gcs_key(ticker: str) -> str:
     return f"{THESES_GCS_PREFIX}/{ticker}.md"
 
 
+def _configure_thesis_content_storage() -> None:
+    thesis_content.THESES_DIR = THESES_DIR
+    thesis_content.THESES_GCS_PREFIX = THESES_GCS_PREFIX
+
+
 def _thesis_exists(ticker: str) -> bool:
-    return exists_text(_thesis_path(ticker), _thesis_gcs_key(ticker))
+    _configure_thesis_content_storage()
+    return thesis_content.thesis_exists(ticker)
 
 
 def _read_thesis(ticker: str) -> str:
-    return read_text(_thesis_path(ticker), _thesis_gcs_key(ticker), encoding="utf-8")
+    _configure_thesis_content_storage()
+    return thesis_content.read_thesis(ticker)
 
 
 def _write_thesis(ticker: str, content: str) -> str:
-    return write_text(
-        _thesis_path(ticker),
-        _thesis_gcs_key(ticker),
-        content,
-        encoding="utf-8",
-        content_type="text/markdown; charset=utf-8",
-    )
+    _configure_thesis_content_storage()
+    return thesis_content.write_thesis(ticker, content)
 
 
 def _strip_outer_markdown_fence(text: str) -> str:
@@ -200,40 +209,12 @@ async def generate_thesis(
     else:
         raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
-    try:
-        source_path = _write_thesis(normalized_ticker, content)
-    except Exception as e:
-        from api.exceptions import AppError
-
-        raise AppError(f"Failed to write thesis file: {e}") from e
-
-    from portfolio.thesis_db import upsert_thesis_meta
-
-    upsert_thesis_meta(normalized_ticker, status="active")
-
-    # Index thesis for semantic search (best-effort, non-blocking)
-    try:
-        from api.retrieval import index_document
-
-        index_document(
-            doc_type="thesis",
-            content=content,
-            ticker=normalized_ticker,
-            source_path=source_path,
-            doc_id=f"thesis-{normalized_ticker}",
-        )
-    except Exception:
-        pass  # Don't block thesis save if indexing fails
-
-    # Sync catalysts/kill conditions from the new thesis content
-    try:
-        from portfolio.thesis_sync import sync_entities_from_markdown
-
-        sync_entities_from_markdown(normalized_ticker)
-    except Exception:
-        pass  # Don't block thesis save if sync fails
-
-    return {"status": "ok", "ticker": normalized_ticker, "content": content}
+    _configure_thesis_content_storage()
+    return execute_api_action(
+        "save_thesis_content",
+        {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
+        source_id="thesis.generate_thesis",
+    )
 
 
 @router.get("/thesis/meta")
@@ -351,15 +332,15 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    new_status = body.status.strip().lower()
-    if new_status not in ("active", "under_review", "invalidated"):
-        raise ValidationError(f"Invalid status: '{new_status}'. Must be active, under_review, or invalidated.")
-
-    from portfolio.thesis_db import update_thesis_status
-
     try:
-        return update_thesis_status(normalized_ticker, new_status, body.reason.strip())
-    except ValueError as e:
+        return execute_action(
+            "change_thesis_status",
+            {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
+            ActionContext(actor_type="user", source_type="api", source_id="thesis.change_thesis_status"),
+        ).output
+    except ActionValidationError as e:
+        raise ValidationError(e.message) from e
+    except ActionNotFoundError as e:
         raise NotFoundError("Thesis", normalized_ticker) from e
 
 
@@ -377,39 +358,12 @@ def save_thesis(ticker: str, body: SaveThesisRequest):
     if not content:
         raise ValidationError("Thesis content cannot be empty.")
 
-    try:
-        source_path = _write_thesis(normalized_ticker, content + "\n")
-    except Exception as e:
-        from api.exceptions import AppError
-
-        raise AppError(f"Failed to write thesis file: {e}") from e
-
-    from portfolio.thesis_db import upsert_thesis_meta
-
-    upsert_thesis_meta(normalized_ticker, status="active")
-
-    try:
-        from api.retrieval import index_document
-
-        index_document(
-            doc_type="thesis",
-            content=content,
-            ticker=normalized_ticker,
-            source_path=source_path,
-            doc_id=f"thesis-{normalized_ticker}",
-        )
-    except Exception:
-        pass
-
-    # Sync catalysts/kill conditions from the updated thesis content
-    try:
-        from portfolio.thesis_sync import sync_entities_from_markdown
-
-        sync_entities_from_markdown(normalized_ticker)
-    except Exception:
-        pass
-
-    return {"status": "ok", "ticker": normalized_ticker, "content": content}
+    _configure_thesis_content_storage()
+    return execute_api_action(
+        "save_thesis_content",
+        {"ticker": normalized_ticker, "content": content},
+        source_id="thesis.save_thesis",
+    )
 
 
 @router.get("/thesis/{ticker}")

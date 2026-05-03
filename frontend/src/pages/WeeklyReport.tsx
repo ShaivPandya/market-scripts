@@ -88,25 +88,28 @@ export function WeeklyReport() {
 
     useEffect(() => {
         const fetchId = ++cacheFetchIdRef.current
+        let active = true
         async function loadCached() {
             setIsCheckingCache(!loadLocalWeeklyReport())
             try {
                 const cached = await fetchWeeklyReportCached()
-                if (cacheFetchIdRef.current !== fetchId) return
+                if (!active || cacheFetchIdRef.current !== fetchId) return
                 if (cached) {
                     setData(cached)
                     saveLocalWeeklyReport(cached.report)
                 }
             } catch (err: unknown) {
-                if (cacheFetchIdRef.current !== fetchId) return
+                if (!active || cacheFetchIdRef.current !== fetchId) return
                 setError(err instanceof Error ? err.message : String(err))
             } finally {
-                if (cacheFetchIdRef.current !== fetchId) return
-                setIsCheckingCache(false)
+                if (active && cacheFetchIdRef.current === fetchId) {
+                    setIsCheckingCache(false)
+                }
             }
         }
         loadCached()
         return () => {
+            active = false
             cacheFetchIdRef.current += 1
         }
     }, [])

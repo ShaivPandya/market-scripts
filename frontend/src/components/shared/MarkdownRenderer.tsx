@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { type ReactNode } from "react"
 
 type ListType = "ul" | "ol"
@@ -32,7 +33,10 @@ export function renderInlineMarkdown(text: string) {
             if (end !== -1) {
                 const code = text.slice(i + 1, end)
                 nodes.push(
-                    <code key={`code-${key++}`} className="rounded bg-gray-50 px-1 py-0.5 text-[0.95em]">
+                    <code
+                        key={`code-${key++}`}
+                        className="rounded-md border border-app bg-card-muted px-1.5 py-0.5 text-[0.95em] mono-text text-app"
+                    >
                         {code}
                     </code>,
                 )
@@ -90,7 +94,7 @@ export function renderInlineMarkdown(text: string) {
                                 href={safeUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+                                className="text-link underline underline-offset-2"
                             >
                                 {label}
                             </a>,
@@ -152,12 +156,12 @@ export function renderMarkdownLite(markdown: string) {
                     "pl-5",
                     marker,
                     "space-y-1",
-                    "text-sm sm:text-base text-gray-900",
+                    "text-sm sm:text-base text-app",
                 ].join(" ")}
             >
                 {node.items.map((item, itemIdx) => (
                     <li key={`li-${depth}-${itemIdx}`} className="leading-6">
-                        <span>{renderInlineMarkdown(item.text)}</span>
+                <span>{renderInlineMarkdown(item.text)}</span>
                         {item.children ? renderListNode(item.children, depth + 1) : null}
                     </li>
                 ))}
@@ -226,7 +230,7 @@ export function renderMarkdownLite(markdown: string) {
         blocks.push(
             <pre
                 key={`pre-${blocks.length}`}
-                className="my-4 overflow-x-auto rounded-lg border border-gray-200 bg-gray-50 p-4 text-xs sm:text-sm text-gray-900"
+                className="my-4 overflow-x-auto rounded-[1rem] border border-app bg-card-muted p-4 text-xs sm:text-sm text-app"
             >
                 <code className={codeFenceLang ? `language-${codeFenceLang}` : undefined}>
                     {codeLines.join("\n")}
@@ -273,12 +277,12 @@ export function renderMarkdownLite(markdown: string) {
             const keyId = `h-${blocks.length}`
             const body = renderInlineMarkdown(content)
             const clamped = Math.min(6, Math.max(1, level))
-            if (clamped === 1) blocks.push(<h1 key={keyId} className="mt-0 mb-3 text-xl sm:text-2xl font-semibold text-gray-900">{body}</h1>)
-            else if (clamped === 2) blocks.push(<h2 key={keyId} className="mt-7 mb-2 text-lg sm:text-xl font-semibold text-gray-900">{body}</h2>)
-            else if (clamped === 3) blocks.push(<h3 key={keyId} className="mt-6 mb-2 text-base sm:text-lg font-semibold text-gray-900">{body}</h3>)
-            else if (clamped === 4) blocks.push(<h4 key={keyId} className="mt-5 mb-2 text-sm sm:text-base font-semibold text-gray-900">{body}</h4>)
-            else if (clamped === 5) blocks.push(<h5 key={keyId} className="mt-4 mb-2 text-sm font-semibold text-gray-900">{body}</h5>)
-            else blocks.push(<h6 key={keyId} className="mt-4 mb-2 text-sm font-semibold text-gray-900">{body}</h6>)
+            if (clamped === 1) blocks.push(<h1 key={keyId} className="mt-0 mb-3 text-2xl font-semibold tracking-[-0.03em] text-app">{body}</h1>)
+            else if (clamped === 2) blocks.push(<h2 key={keyId} className="mt-7 mb-2 text-xl font-semibold tracking-[-0.02em] text-app">{body}</h2>)
+            else if (clamped === 3) blocks.push(<h3 key={keyId} className="mt-6 mb-2 text-lg font-semibold text-app">{body}</h3>)
+            else if (clamped === 4) blocks.push(<h4 key={keyId} className="mt-5 mb-2 text-base font-semibold text-app">{body}</h4>)
+            else if (clamped === 5) blocks.push(<h5 key={keyId} className="mt-4 mb-2 text-sm font-semibold text-app">{body}</h5>)
+            else blocks.push(<h6 key={keyId} className="mt-4 mb-2 text-sm font-semibold text-app">{body}</h6>)
             continue
         }
 
@@ -296,15 +300,15 @@ export function renderMarkdownLite(markdown: string) {
 
             const rows = rowLines.map(splitTableRow)
             blocks.push(
-                <div key={`tablewrap-${blocks.length}`} className="my-4 -mx-2 overflow-x-auto">
+                <div key={`tablewrap-${blocks.length}`} className="my-4 overflow-x-auto">
                     <div className="px-2">
-                        <table className="w-full border-collapse text-sm text-gray-900">
+                        <table className="w-full border-collapse text-sm text-app">
                             <thead>
-                                <tr className="bg-gray-50">
+                                <tr className="bg-card-muted">
                                     {headerCells.map((c, i) => (
                                         <th
                                             key={`th-${i}`}
-                                            className="border border-gray-200 px-3 py-2 text-left font-semibold"
+                                            className="border border-app px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle"
                                         >
                                             {renderInlineMarkdown(c)}
                                         </th>
@@ -313,11 +317,11 @@ export function renderMarkdownLite(markdown: string) {
                             </thead>
                             <tbody>
                                 {rows.map((row, r) => (
-                                    <tr key={`tr-${r}`} className="odd:bg-white even:bg-gray-50/40">
+                                    <tr key={`tr-${r}`} className="odd:bg-card even:bg-card-muted/60">
                                         {row.map((c, i) => (
                                             <td
                                                 key={`td-${r}-${i}`}
-                                                className="border border-gray-200 px-3 py-2 align-top"
+                                                className="border border-app px-3 py-2 align-top"
                                             >
                                                 {renderInlineMarkdown(c)}
                                             </td>
@@ -347,7 +351,7 @@ export function renderMarkdownLite(markdown: string) {
 
         flushList()
         blocks.push(
-            <p key={`p-${blocks.length}`} className="my-2 text-sm sm:text-base leading-6 text-gray-900 whitespace-pre-wrap">
+            <p key={`p-${blocks.length}`} className="my-2 whitespace-pre-wrap text-sm leading-7 text-app sm:text-base">
                 {renderInlineMarkdown(line)}
             </p>,
         )

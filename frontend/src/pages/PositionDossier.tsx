@@ -15,11 +15,16 @@ import {
   dismissAction,
   updateCatalystStatus,
   updateKillConditionStatus,
+  createThesisClaim,
+  updateThesisClaim,
   fetchOntologyRuns,
   queryOntology,
   runOntologyQueryAsync,
   type OntologyEvidence,
   type OntologyResponse,
+  type SourceRequirement,
+  type ThesisClaim,
+  type ThesisClaimStatus,
   type ThesisStatus,
   type ThesisStatusValue,
 } from "@/lib/api"
@@ -45,6 +50,7 @@ interface DossierData {
     status_history: StatusEntry[]
   }
   evaluations: Evaluation[]
+  thesis_claims: ThesisClaim[]
   catalysts: Catalyst[]
   kill_conditions: KillCondition[]
   ontology_risk: Record<string, unknown> | null
@@ -78,7 +84,7 @@ interface Catalyst { id: number; description: string; category: string; status: 
 interface KillCondition { id: number; condition: string; metric: string | null; threshold: string | null; status: string; triggered_at: string | null }
 interface WorkflowRun { run_id: string; workflow_name: string; status: string; started_at: string; completed_at: string | null }
 interface ActionItem { id: number; description: string; action_type: string; urgency: string; status: string; created_at: string }
-interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string }
+interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
 interface ResearchNote { id: number; title: string; content: string; note_type: string | null; created_at: string }
 interface Approval { id: number; entity_type: string; reason: string | null; created_at: string; proposed_change: Record<string, unknown> }
 
@@ -103,7 +109,7 @@ interface ParsedOverview {
   demand_outlook: OutlookSection | null
 }
 
-const BASE_TABS = ["Thesis", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Research", "Workflows"] as const
+const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Research", "Workflows"] as const
 type Tab = "Overview" | typeof BASE_TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -115,6 +121,9 @@ const STATUS_COLORS: Record<string, string> = {
   played_out: "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
   failed: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
   triggered: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
+  supported: "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
+  challenged: "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
+  disconfirmed: "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950",
   retired: "text-gray-500 bg-gray-50 dark:text-gray-400 dark:bg-gray-800",
   superseded: "text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-800",
 }
@@ -167,7 +176,12 @@ export function PositionDossier() {
   })
 
   function toggleExpanded(key: string) {
-    setExpandedIds(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   async function handleApproval(id: number, action: "approve" | "reject") {
@@ -268,6 +282,7 @@ export function PositionDossier() {
             )}
           >
             {t}
+            {t === "Claims" && data.thesis_claims.length > 0 && <span className="ml-1 text-xs text-subtle">({data.thesis_claims.length})</span>}
             {t === "Catalysts" && data.catalysts.length > 0 && <span className="ml-1 text-xs text-subtle">({data.catalysts.length})</span>}
             {t === "Kill Conditions" && data.kill_conditions.length > 0 && <span className="ml-1 text-xs text-subtle">({data.kill_conditions.length})</span>}
             {t === "Evaluations" && data.evaluations.length > 0 && <span className="ml-1 text-xs text-subtle">({data.evaluations.length})</span>}
@@ -279,6 +294,7 @@ export function PositionDossier() {
       <div className="theme-surface rounded-xl p-4">
         {activeTab === "Overview" && <OverviewTab content={data.overview_content} parsed={data.overview_parsed} ticker={data.ticker} />}
         {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
+        {activeTab === "Claims" && <ClaimsTab claims={data.thesis_claims} catalysts={data.catalysts} conditions={data.kill_conditions} ticker={ticker!} />}
         {activeTab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} ticker={ticker!} />}
         {activeTab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} ticker={ticker!} />}
         {activeTab === "Evaluations" && <EvaluationsTab evaluations={data.evaluations} />}
@@ -381,9 +397,16 @@ export function PositionDossier() {
               <h2 className="text-sm font-semibold text-app mb-3">Watch Triggers</h2>
               <div className="space-y-2">
                 {data.watch_triggers.map(t => (
-                  <div key={t.id} className="flex items-center gap-2 text-sm px-2 py-1.5">
-                    <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
-                    <span className="text-muted truncate">{t.condition}</span>
+                  <div key={t.id} className="text-sm px-2 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
+                      <span className="text-muted truncate">{t.condition}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
+                      <span>{t.status}</span>
+                      {t.last_checked_at && <span>Checked {formatTime(t.last_checked_at)}</span>}
+                      {t.last_evidence && <span className="truncate">{t.last_evidence}</span>}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -871,6 +894,350 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
   )
 }
 
+type SourceRequirementDraft = Omit<SourceRequirement, "freshness_days"> & { freshness_days: string }
+interface ClaimDraft {
+  id: number | null
+  claim: string
+  expected_evidence: string
+  disconfirming_evidence: string
+  source_requirements: SourceRequirementDraft[]
+  cadence: string
+  confidence: string
+  status: ThesisClaimStatus
+  linked_catalyst_ids: number[]
+  linked_kill_condition_ids: number[]
+}
+
+const CLAIM_STATUSES: ThesisClaimStatus[] = ["active", "supported", "challenged", "disconfirmed", "retired"]
+
+function blankClaimDraft(): ClaimDraft {
+  return {
+    id: null,
+    claim: "",
+    expected_evidence: "",
+    disconfirming_evidence: "",
+    source_requirements: [],
+    cadence: "",
+    confidence: "",
+    status: "active",
+    linked_catalyst_ids: [],
+    linked_kill_condition_ids: [],
+  }
+}
+
+function sourceRequirementsForClaim(claim: ThesisClaim): SourceRequirement[] {
+  return claim.source_requirements ?? claim.source_requirements_json ?? []
+}
+
+function claimToDraft(claim: ThesisClaim): ClaimDraft {
+  return {
+    id: claim.id,
+    claim: claim.claim,
+    expected_evidence: claim.expected_evidence ?? "",
+    disconfirming_evidence: claim.disconfirming_evidence ?? "",
+    source_requirements: sourceRequirementsForClaim(claim).map(req => ({
+      type: req.type || "custom",
+      description: req.description || "",
+      required: req.required !== false,
+      freshness_days: req.freshness_days == null ? "" : String(req.freshness_days),
+    })),
+    cadence: claim.cadence ?? "",
+    confidence: claim.confidence == null ? "" : String(claim.confidence),
+    status: claim.status,
+    linked_catalyst_ids: claim.linked_catalyst_ids ?? claim.linked_catalyst_ids_json ?? [],
+    linked_kill_condition_ids: claim.linked_kill_condition_ids ?? claim.linked_kill_condition_ids_json ?? [],
+  }
+}
+
+function draftToPayload(draft: ClaimDraft, ticker: string) {
+  const confidenceText = draft.confidence.trim()
+  const confidence = confidenceText === "" ? null : Number(confidenceText)
+  return {
+    ticker,
+    claim: draft.claim.trim(),
+    expected_evidence: draft.expected_evidence.trim() || null,
+    disconfirming_evidence: draft.disconfirming_evidence.trim() || null,
+    source_requirements: draft.source_requirements
+      .filter(req => req.type.trim() || req.description.trim())
+      .map(req => ({
+        type: req.type.trim() || "custom",
+        description: req.description.trim() || req.type.trim() || "custom",
+        required: req.required,
+        freshness_days: req.freshness_days.trim() === "" ? null : Number(req.freshness_days),
+      })),
+    cadence: draft.cadence.trim() || null,
+    confidence: Number.isFinite(confidence) ? confidence : null,
+    status: draft.status,
+    linked_catalyst_ids: draft.linked_catalyst_ids,
+    linked_kill_condition_ids: draft.linked_kill_condition_ids,
+  }
+}
+
+function ClaimsTab({
+  claims,
+  catalysts,
+  conditions,
+  ticker,
+}: {
+  claims: ThesisClaim[]
+  catalysts: Catalyst[]
+  conditions: KillCondition[]
+  ticker: string
+}) {
+  const [draft, setDraft] = useState<ClaimDraft | null>(null)
+  const qc = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: (next: ClaimDraft) => {
+      const payload = draftToPayload(next, ticker)
+      if (next.id) return updateThesisClaim(next.id, payload)
+      return createThesisClaim({ ...payload, ticker, claim: payload.claim })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      qc.invalidateQueries({ queryKey: ["thesis"] })
+      setDraft(null)
+    },
+  })
+
+  function updateDraft(patch: Partial<ClaimDraft>) {
+    setDraft(prev => prev ? { ...prev, ...patch } : prev)
+  }
+
+  function updateSourceRequirement(index: number, patch: Partial<SourceRequirementDraft>) {
+    setDraft(prev => {
+      if (!prev) return prev
+      const source_requirements = prev.source_requirements.map((req, i) => i === index ? { ...req, ...patch } : req)
+      return { ...prev, source_requirements }
+    })
+  }
+
+  function toggleLinked(kind: "catalyst" | "kill", id: number) {
+    setDraft(prev => {
+      if (!prev) return prev
+      const key = kind === "catalyst" ? "linked_catalyst_ids" : "linked_kill_condition_ids"
+      const current = new Set(prev[key])
+      if (current.has(id)) current.delete(id)
+      else current.add(id)
+      return { ...prev, [key]: Array.from(current) }
+    })
+  }
+
+  function addSourceRequirement() {
+    setDraft(prev => prev ? {
+      ...prev,
+      source_requirements: [
+        ...prev.source_requirements,
+        { type: "custom", description: "", required: true, freshness_days: "" },
+      ],
+    } : prev)
+  }
+
+  function removeSourceRequirement(index: number) {
+    setDraft(prev => prev ? {
+      ...prev,
+      source_requirements: prev.source_requirements.filter((_, i) => i !== index),
+    } : prev)
+  }
+
+  const catalystLabelById = new Map(catalysts.map(c => [c.id, c.description.split(": ", 1)[0]]))
+  const conditionLabelById = new Map(conditions.map(k => [k.id, k.condition.split(": ", 1)[0]]))
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setDraft(blankClaimDraft())}
+          className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors"
+        >
+          Add Claim
+        </button>
+      </div>
+
+      {draft && (
+        <div className="rounded-lg border border-app p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <SelectInput
+              label="Status"
+              value={draft.status}
+              onChange={v => updateDraft({ status: v as ThesisClaimStatus })}
+              options={CLAIM_STATUSES.map(status => ({ value: status, label: status.replace(/_/g, " ") }))}
+            />
+            <TextInput label="Cadence" value={draft.cadence} onChange={v => updateDraft({ cadence: v })} placeholder="weekly" />
+            <TextInput label="Confidence" type="number" value={draft.confidence} onChange={v => updateDraft({ confidence: v })} placeholder="0.70" />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm text-muted">Claim</label>
+            <textarea
+              value={draft.claim}
+              onChange={e => updateDraft({ claim: e.target.value })}
+              className="theme-input min-h-[80px] w-full"
+            />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1.5 block text-sm text-muted">Expected evidence</label>
+              <textarea
+                value={draft.expected_evidence}
+                onChange={e => updateDraft({ expected_evidence: e.target.value })}
+                className="theme-input min-h-[90px] w-full"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm text-muted">Disconfirming evidence</label>
+              <textarea
+                value={draft.disconfirming_evidence}
+                onChange={e => updateDraft({ disconfirming_evidence: e.target.value })}
+                className="theme-input min-h-[90px] w-full"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase text-subtle">Source Requirements</h3>
+              <button type="button" onClick={addSourceRequirement} className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                Add source
+              </button>
+            </div>
+            {draft.source_requirements.map((req, index) => (
+              <div key={index} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto_auto_auto] gap-2 items-end">
+                <TextInput label="Type" value={req.type} onChange={v => updateSourceRequirement(index, { type: v })} />
+                <TextInput label="Description" value={req.description} onChange={v => updateSourceRequirement(index, { description: v })} />
+                <TextInput label="Freshness days" type="number" value={req.freshness_days} onChange={v => updateSourceRequirement(index, { freshness_days: v })} />
+                <label className="flex items-center gap-2 pb-2 text-sm text-muted">
+                  <input type="checkbox" checked={req.required} onChange={e => updateSourceRequirement(index, { required: e.target.checked })} />
+                  Required
+                </label>
+                <button type="button" onClick={() => removeSourceRequirement(index)} className="rounded border border-app px-2 py-2 text-xs text-muted hover:text-app">
+                  Remove
+                </button>
+              </div>
+            ))}
+            {!draft.source_requirements.length && <p className="text-xs text-subtle">No source requirements.</p>}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <LinkCheckboxes
+              title="Linked Catalysts"
+              items={catalysts.map(c => ({ id: c.id, label: c.description }))}
+              selectedIds={draft.linked_catalyst_ids}
+              onToggle={id => toggleLinked("catalyst", id)}
+            />
+            <LinkCheckboxes
+              title="Linked Kill Conditions"
+              items={conditions.map(k => ({ id: k.id, label: k.condition }))}
+              selectedIds={draft.linked_kill_condition_ids}
+              onToggle={id => toggleLinked("kill", id)}
+            />
+          </div>
+
+          {mutation.isError && <p className="text-xs text-red-600">{errorMessage(mutation.error)}</p>}
+          <div className="flex gap-2">
+            <ActionButton
+              onClick={() => draft.claim.trim() && mutation.mutate(draft)}
+              loading={mutation.isPending}
+              loadingText="Saving..."
+              disabled={!draft.claim.trim()}
+              className="w-auto px-4"
+            >
+              Save Claim
+            </ActionButton>
+            <button type="button" onClick={() => setDraft(null)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!claims.length && !draft && <p className="text-sm text-muted">No thesis claims tracked.</p>}
+      {claims.map(claim => {
+        const sourceRequirements = sourceRequirementsForClaim(claim)
+        const linkedCatalysts = (claim.linked_catalyst_ids ?? claim.linked_catalyst_ids_json ?? [])
+          .map(id => catalystLabelById.get(id))
+          .filter(Boolean)
+        const linkedConditions = (claim.linked_kill_condition_ids ?? claim.linked_kill_condition_ids_json ?? [])
+          .map(id => conditionLabelById.get(id))
+          .filter(Boolean)
+        return (
+          <div key={claim.id} className="rounded-lg border border-app px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-app">{claim.claim}</p>
+                <div className="mt-1 flex flex-wrap gap-2 text-xs text-subtle">
+                  <span className={cn("px-1.5 py-0.5 rounded font-medium", STATUS_COLORS[claim.status] ?? "")}>{claim.status.replace(/_/g, " ")}</span>
+                  {claim.cadence && <span>{claim.cadence}</span>}
+                  {claim.confidence != null && <span>{formatConfidence(claim.confidence)} confidence</span>}
+                </div>
+              </div>
+              <button type="button" onClick={() => setDraft(claimToDraft(claim))} className="rounded border border-app px-2 py-1 text-xs text-muted hover:text-app">
+                Edit
+              </button>
+            </div>
+            <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
+              {claim.expected_evidence && <div><p className="font-semibold text-subtle uppercase">Expected Evidence</p><p className="mt-1 text-muted">{claim.expected_evidence}</p></div>}
+              {claim.disconfirming_evidence && <div><p className="font-semibold text-subtle uppercase">Disconfirming Evidence</p><p className="mt-1 text-muted">{claim.disconfirming_evidence}</p></div>}
+            </div>
+            {sourceRequirements.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs font-semibold text-subtle uppercase">Sources</p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {sourceRequirements.map((req, index) => (
+                    <span key={index} className="rounded border border-app px-2 py-1 text-xs text-muted">
+                      {req.type}: {req.description}{req.required ? "" : " (optional)"}{req.freshness_days != null ? `, ${req.freshness_days}d` : ""}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(linkedCatalysts.length > 0 || linkedConditions.length > 0) && (
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-subtle">
+                {linkedCatalysts.length > 0 && <span>Catalysts: {linkedCatalysts.join("; ")}</span>}
+                {linkedConditions.length > 0 && <span>Kill conditions: {linkedConditions.join("; ")}</span>}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function LinkCheckboxes({
+  title,
+  items,
+  selectedIds,
+  onToggle,
+}: {
+  title: string
+  items: { id: number; label: string }[]
+  selectedIds: number[]
+  onToggle: (id: number) => void
+}) {
+  return (
+    <div className="rounded-lg border border-app p-3">
+      <p className="mb-2 text-xs font-semibold uppercase text-subtle">{title}</p>
+      {items.length ? (
+        <div className="max-h-40 space-y-1 overflow-y-auto">
+          {items.map(item => (
+            <label key={item.id} className="flex items-start gap-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(item.id)}
+                onChange={() => onToggle(item.id)}
+                className="mt-0.5"
+              />
+              <span>{item.label}</span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-subtle">None available.</p>
+      )}
+    </div>
+  )
+}
+
 function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: string }) {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null)
   const qc = useQueryClient()
@@ -1082,6 +1449,8 @@ function RiskTab({ ticker }: { ticker: string }) {
       run_id: latestRun!.run_id,
       include_graph: false,
       refresh_snapshot: false,
+      page: 1,
+      page_size: 1,
     }),
     enabled: Boolean(latestRun?.run_id),
     staleTime: 60 * 1000,
@@ -1094,12 +1463,15 @@ function RiskTab({ ticker }: { ticker: string }) {
       timeframe: "Daily",
       include_graph: false,
       refresh_snapshot: true,
+      page: 1,
+      page_size: 1,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["ontology-runs"] })
     },
   })
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!refreshMutation.isPending) {
       setElapsed(0)
@@ -1109,6 +1481,7 @@ function RiskTab({ ticker }: { ticker: string }) {
     const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
     return () => window.clearInterval(id)
   }, [refreshMutation.isPending])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const ontology: OntologyResponse | undefined = refreshMutation.data ?? cachedRiskQuery.data
   const rows = Array.isArray(ontology?.results) ? ontology.results : []

@@ -417,7 +417,7 @@ export function ChartPage() {
       "Bottom Decile": bottomDecile,
       "Bottom 5%": bottom5Pct,
     }))
-  ), [ratioRows, historicalAvg, topDecile, bottomDecile])
+  ), [ratioRows, historicalAvg, top5Pct, topDecile, bottomDecile, bottom5Pct])
 
   const ratioColumns: ColumnDef[] = useMemo(() => [
     { key: "date", header: "Date" },

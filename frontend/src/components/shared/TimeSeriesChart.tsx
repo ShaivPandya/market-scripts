@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   LineChart,
   Line,
@@ -41,6 +42,13 @@ interface TimeSeriesChartProps {
   multiData?: Record<string, unknown>[]
   /** Series definitions for multi-series mode */
   series?: SeriesDef[]
+}
+
+const DEFAULT_SERIES_COLORS = {
+  primary: "hsl(var(--accent))",
+  positive: "hsl(var(--positive))",
+  negative: "hsl(var(--negative))",
+  neutral: "hsl(var(--neutral))",
 }
 
 function shortDate(isoDate: string): string {
@@ -116,7 +124,7 @@ function getYearTicks(data: DataPoint[]): string[] {
 export function TimeSeriesChart({
   data = [],
   height = 200,
-  color = "hsl(var(--accent))",
+  color = DEFAULT_SERIES_COLORS.primary,
   label,
   zeroLine = false,
   yFormatter,

@@ -9,6 +9,24 @@ const client = axios.create({
   timeout: 60_000,
 })
 
+function schemaHeaders(method: string, url: string): Record<string, string> {
+  const base = new URL(client.defaults.baseURL ?? "/api/v1", window.location.origin)
+  const parsed = url.startsWith("http")
+    ? new URL(url)
+    : new URL(`${base.pathname.replace(/\/+$/, "")}/${url.replace(/^\/+/, "")}`, window.location.origin)
+  return {
+    "X-Request-Schema-Name": `${method.toLowerCase()}:${parsed.pathname}`,
+    "X-Request-Schema-Version": "1",
+  }
+}
+
+client.interceptors.request.use(config => {
+  const method = (config.method ?? "get").toLowerCase()
+  if (!["post", "put", "patch", "delete"].includes(method) || config.data == null || !config.url) return config
+  config.headers.set(schemaHeaders(method, config.url))
+  return config
+})
+
 function _truncate(s: string, maxLen: number) {
   if (s.length <= maxLen) return s
   return s.slice(0, maxLen - 1) + "…"
@@ -281,18 +299,25 @@ export const fetchVixTermStructure = () =>
 
 export type OntologyQueryBody = {
   query?: string
-  intent?: "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
+  intent?:
+    | "portfolio_risk_exposure"
+    | "positions_in_deteriorating_macro"
+    | "entity_context"
+    | "thesis_review"
+    | "temporal_comparison"
   filters?: {
     tickers?: string[]
     sectors?: string[]
     assets?: string[]
-    max_results?: number
     min_risk_score?: number
   }
   timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
   include_graph?: boolean
   run_id?: string
   refresh_snapshot?: boolean
+  page?: number
+  page_size?: number
+  schema_mode?: "stored" | "upgraded"
 }
 
 export interface OntologyEvidence {
@@ -330,6 +355,34 @@ export interface OntologyResponse {
     confidence?: number
     position_count?: number
     average_risk_score?: number
+    exact?: boolean
+    risk_buckets?: {
+      high?: number
+      medium?: number
+      low?: number
+    }
+    [key: string]: unknown
+  }
+  _meta?: {
+    pagination?: {
+      page?: number
+      page_size?: number
+      returned_results?: number
+      total_results?: number
+      total_pages?: number
+      has_prev?: boolean
+      has_next?: boolean
+      sort?: string
+      exact_total?: boolean
+    }
+    graph?: {
+      scope?: string
+      node_count?: number
+      edge_count?: number
+      truncated?: boolean
+      max_nodes?: number
+      max_edges?: number
+    }
     [key: string]: unknown
   }
   [key: string]: unknown
@@ -356,7 +409,9 @@ type OntologyJobResponse =
   | { job_id: string; status: "done"; result?: OntologyResponse }
 
 export const startOntologyQueryJob = (body: OntologyQueryBody) =>
-  client.post("/ontology/query/async", body, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
+  client
+    .post("/ontology/query/async", { ...body, schema_mode: body.schema_mode ?? "upgraded" }, { timeout: 30_000 })
+    .then(r => r.data as OntologyJobResponse)
 
 export const fetchOntologyQueryJob = (job_id: string) =>
   client.get(`/ontology/query/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
@@ -1112,7 +1167,7 @@ export const dismissAction = (id: number) =>
 // Watch Triggers
 export const fetchTriggers = (params?: { status?: string; ticker?: string }) =>
   client.get("/triggers", { params }).then(r => r.data)
-export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string }) =>
+export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string; definition?: Record<string, unknown> }) =>
   client.post("/triggers", body).then(r => r.data)
 export const fireTrigger = (id: number) =>
   client.put(`/triggers/${id}/fire`).then(r => r.data)
@@ -1126,6 +1181,55 @@ export const createCatalyst = (body: { ticker: string; description: string; cate
   client.post("/catalysts", body).then(r => r.data)
 export const updateCatalystStatus = (id: number, status: string, evidence?: string) =>
   client.put(`/catalysts/${id}/status`, { status, evidence }).then(r => r.data)
+
+// Thesis Claims
+export interface SourceRequirement {
+  type: string
+  description: string
+  required: boolean
+  freshness_days: number | null
+}
+
+export type ThesisClaimStatus = "active" | "supported" | "challenged" | "disconfirmed" | "retired"
+
+export interface ThesisClaim {
+  id: number
+  ticker: string
+  claim: string
+  expected_evidence: string | null
+  disconfirming_evidence: string | null
+  source_requirements: SourceRequirement[]
+  source_requirements_json?: SourceRequirement[]
+  cadence: string | null
+  confidence: number | null
+  status: ThesisClaimStatus
+  linked_catalyst_ids: number[]
+  linked_catalyst_ids_json?: number[]
+  linked_kill_condition_ids: number[]
+  linked_kill_condition_ids_json?: number[]
+  source_type: string
+  source_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ThesisClaimPayload = {
+  ticker?: string
+  claim?: string
+  expected_evidence?: string | null
+  disconfirming_evidence?: string | null
+  source_requirements?: SourceRequirement[]
+  cadence?: string | null
+  confidence?: number | null
+  status?: ThesisClaimStatus
+  linked_catalyst_ids?: number[]
+  linked_kill_condition_ids?: number[]
+}
+
+export const createThesisClaim = (body: ThesisClaimPayload & { ticker: string; claim: string }) =>
+  client.post("/thesis-claims", body).then(r => r.data as ThesisClaim)
+export const updateThesisClaim = (id: number, body: ThesisClaimPayload) =>
+  client.put(`/thesis-claims/${id}`, body).then(r => r.data as ThesisClaim)
 
 // Kill Conditions
 export const fetchKillConditions = (ticker: string) =>

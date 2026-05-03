@@ -8,6 +8,7 @@ platform's analysis modules.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -18,12 +19,13 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.agent_tools import AGENT_CAPABILITY_BY_NAME, TOOL_DEFINITIONS, execute_tool, list_agent_capabilities
 from api.exceptions import ConfigurationError
+from api.routers.auth import require_actor
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 from llm_utils import (
     MODEL_MID,
@@ -36,9 +38,11 @@ from llm_utils import (
     resolve_model,
     selected_provider,
 )
+from ontology.policy import Actor, agent_actor
 
 router = APIRouter()
 logger = logging.getLogger("api.agent")
+ActorDep = Annotated[Actor, Depends(require_actor)]
 
 # ---------------------------------------------------------------------------
 # Prompt loading
@@ -678,12 +682,13 @@ def _dedupe_tool_calls(calls: list[dict]) -> list[dict]:
 
 def _execute_tools_parallel(
     calls: list[dict],
+    actor: Actor | None = None,
 ) -> list[tuple[dict, str, float]]:
     """Execute deduplicated tool calls in parallel and measure runtime."""
     if len(calls) == 1:
         c = calls[0]
         started = time.perf_counter()
-        result = execute_tool(c["name"], c["args"])
+        result = _execute_tool_for_actor(c["name"], c["args"], actor)
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         return [(c, result, elapsed_ms)]
 
@@ -691,7 +696,7 @@ def _execute_tools_parallel(
         futures = []
         for c in calls:
             started = time.perf_counter()
-            fut = pool.submit(execute_tool, c["name"], c["args"])
+            fut = pool.submit(_execute_tool_for_actor, c["name"], c["args"], actor)
             futures.append((c, fut, started))
         out: list[tuple[dict, str, float]] = []
         for c, fut, started in futures:
@@ -703,6 +708,7 @@ def _execute_tools_parallel(
 
 def _execute_tools_parallel_keepalive(
     calls: list[dict],
+    actor: Actor | None = None,
 ):
     """Execute tool calls while yielding None periodically as an SSE keepalive signal."""
     if not calls:
@@ -712,7 +718,7 @@ def _execute_tools_parallel_keepalive(
         future_meta = {}
         for c in calls:
             started = time.perf_counter()
-            fut = pool.submit(execute_tool, c["name"], c["args"])
+            fut = pool.submit(_execute_tool_for_actor, c["name"], c["args"], actor)
             future_meta[fut] = (c, started)
 
         pending = set(future_meta)
@@ -731,6 +737,14 @@ def _execute_tools_parallel_keepalive(
                 result = fut.result()
                 elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
                 yield (c, result, elapsed_ms)
+
+
+def _execute_tool_for_actor(name: str, args: dict, actor: Actor | None) -> str:
+    params = inspect.signature(execute_tool).parameters.values()
+    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    if supports_actor:
+        return execute_tool(name, args, actor=actor)
+    return execute_tool(name, args)
 
 
 def _tool_error_message(result_str: str) -> str | None:
@@ -1011,7 +1025,8 @@ def _usage_dict(message: object) -> dict:
 
 
 @router.post("/agent/chat")
-def agent_chat(req: AgentChatRequest):
+def agent_chat(req: AgentChatRequest, actor: ActorDep):
+    tool_actor = agent_actor(actor)
     provider, api_key = _read_llm_api_key()
     reasoning_effort = _chat_reasoning_effort(req.response_preferences)
     instructions = _with_response_preferences(
@@ -1050,7 +1065,7 @@ def agent_chat(req: AgentChatRequest):
                     return
 
                 # Emit tool calls as they execute
-                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker)
+                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker, actor=tool_actor)
                 for section in sections:
                     yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
@@ -1210,7 +1225,7 @@ def agent_chat(req: AgentChatRequest):
                         pending_calls.append(call_info)
 
                     if pending_calls:
-                        for tool_item in _execute_tools_parallel_keepalive(pending_calls):
+                        for tool_item in _execute_tools_parallel_keepalive(pending_calls, actor=tool_actor):
                             if tool_item is None:
                                 yield _sse_ping()
                                 continue
@@ -1306,7 +1321,8 @@ def agent_chat(req: AgentChatRequest):
 
 
 @router.post("/agent/chat/v2")
-def agent_chat_v2(req: AgentChatRequestV2):
+def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
+    tool_actor = agent_actor(actor)
     """Chat endpoint with server-managed conversation memory.
 
     The frontend sends only the new message + session_id.  The server
@@ -1383,7 +1399,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
                     yield _sse("done", {"usage": {}, "session_id": session_id})
                     return
 
-                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker)
+                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker, actor=tool_actor)
                 for section in sections:
                     yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
@@ -1536,7 +1552,7 @@ def agent_chat_v2(req: AgentChatRequestV2):
                         pending_calls.append(call_info)
 
                     if pending_calls:
-                        for tool_item in _execute_tools_parallel_keepalive(pending_calls):
+                        for tool_item in _execute_tools_parallel_keepalive(pending_calls, actor=tool_actor):
                             if tool_item is None:
                                 yield _sse_ping()
                                 continue

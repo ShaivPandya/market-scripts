@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sys
@@ -11,6 +12,7 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
+from api.audit import emit_audit_event
 from api.exceptions import AsyncJobDispatchError
 from api.job_queue import (
     ACTIVE_STATUSES,
@@ -25,6 +27,53 @@ from api.job_queue import (
 from api.job_registry import cache_key_for_payload, get_job_spec, import_string, parse_request
 
 logger = logging.getLogger("api.async_job_runner")
+
+
+def _hash_cache_key(cache_key: str | None) -> str | None:
+    if not cache_key:
+        return None
+    return hashlib.sha256(cache_key.encode("utf-8")).hexdigest()[:16]
+
+
+def _job_actor(row_or_payload: dict[str, Any] | None) -> Any:
+    if not isinstance(row_or_payload, dict):
+        return None
+    payload = row_or_payload.get("payload_json") if "payload_json" in row_or_payload else row_or_payload
+    return payload.get("actor") if isinstance(payload, dict) else None
+
+
+def _emit_job_audit(
+    action_name: str,
+    *,
+    row: dict[str, Any] | None = None,
+    job_id: str | None = None,
+    job_type: str | None = None,
+    status: str,
+    metadata: dict[str, Any] | None = None,
+    after_summary: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    resolved_job_id = job_id or str((row or {}).get("job_id") or "")
+    resolved_job_type = job_type or str((row or {}).get("job_type") or "")
+    emit_audit_event(
+        action_name,
+        "async_job",
+        status,
+        actor=_job_actor(row),
+        object_refs=[
+            {"type": "async_job", "id": resolved_job_id},
+            {"type": "async_job_type", "id": resolved_job_type},
+        ],
+        metadata={
+            "job_id": resolved_job_id,
+            "job_type": resolved_job_type,
+            "backend": _env_backend(),
+            "cache_key_hash": _hash_cache_key(str((row or {}).get("cache_key") or "")),
+            **(metadata or {}),
+        },
+        after_summary=after_summary,
+        error=error,
+    )
 
 
 def _normalize_backend(value: str) -> str:
@@ -97,6 +146,13 @@ def _sync_stale_active_job(row: dict[str, Any], *, now: datetime | None = None) 
     )
     fail_job(job_id, error, result_ttl_seconds=spec.failed_ttl_s)
     refreshed = get_job(job_id)
+    _emit_job_audit(
+        "async_job.stale_failed",
+        row=refreshed or row,
+        status="failed",
+        after_summary={"status": "failed", "reason": "stale_timeout"},
+        error=error,
+    )
     return refreshed or row
 
 
@@ -146,6 +202,13 @@ def enqueue_registered_job(
     if disposition != "created":
         row = _sync_stale_active_job(row)
         if str(row.get("status") or "") != "failed":
+            _emit_job_audit(
+                "async_job.reused",
+                row=row,
+                status=str(row.get("status") or disposition),
+                metadata={"disposition": disposition, "reuse_completed": reuse_completed},
+                after_summary={"status": row.get("status"), "disposition": disposition},
+            )
             return row, disposition
 
         row, disposition = create_or_reuse_job(
@@ -157,6 +220,13 @@ def enqueue_registered_job(
             reuse_completed=reuse_completed,
         )
         if disposition != "created":
+            _emit_job_audit(
+                "async_job.reused",
+                row=row,
+                status=str(row.get("status") or disposition),
+                metadata={"disposition": disposition, "reuse_completed": reuse_completed},
+                after_summary={"status": row.get("status"), "disposition": disposition},
+            )
             return _sync_stale_active_job(row), disposition
 
     try:
@@ -167,7 +237,23 @@ def enqueue_registered_job(
     except Exception as exc:
         detail = str(exc) or "Failed to enqueue async job"
         fail_job(str(row["job_id"]), detail, result_ttl_seconds=spec.failed_ttl_s)
+        failed = get_job(str(row["job_id"])) or row
+        _emit_job_audit(
+            "async_job.dispatch_failed",
+            row=failed,
+            status="failed",
+            metadata={"disposition": disposition},
+            after_summary={"status": "failed", "disposition": disposition},
+            error=detail,
+        )
         raise AsyncJobDispatchError(detail) from exc
+    _emit_job_audit(
+        "async_job.enqueued",
+        row=row,
+        status="queued",
+        metadata={"disposition": disposition, "reuse_completed": reuse_completed},
+        after_summary={"status": row.get("status"), "disposition": disposition},
+    )
     return row, disposition
 
 
@@ -192,6 +278,13 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
     try:
         req = parse_request(spec, payload)
         mark_job_running(job_id)
+        running_row = get_job(job_id) or row
+        _emit_job_audit(
+            "async_job.running",
+            row=running_row,
+            status="running",
+            after_summary={"status": "running"},
+        )
 
         if spec.supports_progress:
             update_job_progress(job_id, {"phase": "running", "done": 0, "total": 0})
@@ -210,9 +303,29 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
             final_count = result.get("final_count", 0)
             update_job_progress(job_id, {"phase": "done", "done": final_count, "total": final_count})
         complete_job(job_id, result, result_ttl_seconds=spec.completed_ttl_s)
+        completed_row = get_job(job_id) or row
+        _emit_job_audit(
+            "async_job.completed",
+            row=completed_row,
+            status="succeeded",
+            after_summary={
+                "status": "completed",
+                "result_keys": sorted(result.keys()),
+                "final_count": result.get("final_count"),
+            },
+        )
         return result
     except Exception as exc:
-        fail_job(job_id, str(exc) or spec.error_message, result_ttl_seconds=spec.failed_ttl_s)
+        error = str(exc) or spec.error_message
+        fail_job(job_id, error, result_ttl_seconds=spec.failed_ttl_s)
+        failed_row = get_job(job_id) or row
+        _emit_job_audit(
+            "async_job.failed",
+            row=failed_row,
+            status="failed",
+            after_summary={"status": "failed"},
+            error=error,
+        )
         raise
 
 
@@ -240,7 +353,14 @@ def poll_registered_job(job_id: str) -> dict[str, Any]:
     if not row:
         raise KeyError(job_id)
     row = _sync_stale_active_job(row)
-    return job_response(row)
+    response = job_response(row)
+    _emit_job_audit(
+        "async_job.read",
+        row=row,
+        status=str(row.get("status") or response.get("status") or "unknown"),
+        after_summary={"status": response.get("status"), "has_progress": bool(response.get("progress"))},
+    )
+    return response
 
 
 def enqueue_response(row: dict[str, Any], poll_path: str) -> JSONResponse:
