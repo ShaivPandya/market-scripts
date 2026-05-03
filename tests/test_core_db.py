@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -422,3 +423,209 @@ class TestPendingApprovals:
         mu_approvals = core_db.get_pending_approvals(ticker="MU")
         assert len(mu_approvals) == 1
         assert mu_approvals[0]["ticker"] == "MU"
+
+
+class TestPendingApprovalContracts:
+    def test_create_pending_approval_persists_action_schema_metadata_and_audit(self):
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+            reason="Workflow suggested review",
+            source_type="workflow",
+            source_id="run-approval",
+            action_id="create_action_item",
+            action_schema_name="create_action_item",
+            action_schema_version=3,
+            action_input_hash="abc123",
+            request_schema_name="ActionRequest",
+            request_schema_version=2,
+        )
+
+        saved = core_db.get_pending_approval(approval["id"])
+        assert saved is not None
+        assert saved["action_id"] == "create_action_item"
+        assert saved["action_schema_name"] == "create_action_item"
+        assert saved["action_schema_version"] == 3
+        assert saved["action_input_hash"] == "abc123"
+        assert saved["request_schema_name"] == "ActionRequest"
+        assert saved["request_schema_version"] == 2
+
+        event = core_db.get_audit_events(action_name="approval.created", limit=5)[0]
+        assert event["status"] == "pending"
+        assert event["after_summary"]["action_id"] == "create_action_item"
+        assert event["source_lineage"]["source_type"] == "workflow"
+        assert event["source_lineage"]["source_id"] == "run-approval"
+        assert event["source_lineage"]["action_input_hash"] == "abc123"
+
+    def test_action_backed_approval_precondition_failure_is_retryable_and_non_mutating(self):
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"item_id": 9999, "resolution_note": "Done"},
+            source_type="workflow",
+            source_id="run-precondition",
+            action_id="complete_action_item",
+            action_schema_name="complete_action_item",
+            action_schema_version=1,
+        )
+
+        with pytest.raises(core_db.ApprovalApplicationError, match="not found"):
+            core_db.resolve_approval(approval["id"], "approved")
+
+        failed = core_db.get_pending_approval(approval["id"])
+        assert failed["status"] == "pending"
+        assert failed["application_status"] == "failed"
+        assert failed["application_attempts"] == 1
+        assert core_db.get_action_items() == []
+
+        child_runs = core_db.get_action_runs(action_id="complete_action_item", approval_id=approval["id"])
+        assert len(child_runs) == 1
+        assert child_runs[0]["status"] == "failed"
+
+    def test_approval_apply_success_creates_child_action_run_parent_link_and_audit_chain(self):
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+            source_type="workflow",
+            source_id="run-success",
+            action_id="create_action_item",
+            action_schema_name="create_action_item",
+            action_schema_version=1,
+        )
+
+        resolved = core_db.resolve_approval(approval["id"], "approved", "Apply it")
+
+        assert resolved["status"] == "approved"
+        assert resolved["application_status"] == "applied"
+        assert core_db.get_action_items(ticker="MU")[0]["description"] == "Review MU thesis"
+
+        resolve_run = core_db.get_action_runs(action_id="resolve_approval", approval_id=approval["id"])[0]
+        child_run = core_db.get_action_runs(action_id="create_action_item", approval_id=approval["id"])[0]
+        assert child_run["status"] == "succeeded"
+        assert child_run["parent_action_run_id"] == resolve_run["id"]
+
+        audit_names = {row["action_name"] for row in core_db.get_audit_events(limit=20)}
+        assert {"approval.apply.started", "approval.applied", "approval.resolved"} <= audit_names
+
+    def test_create_pending_approval_once_dedupes_same_workflow_payload_per_source_id_only(self):
+        first = core_db.create_pending_approval_once(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+            source_type="workflow",
+            source_id="run-1",
+            action_id="create_action_item",
+        )
+        second = core_db.create_pending_approval_once(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+            source_type="workflow",
+            source_id="run-1",
+            action_id="create_action_item",
+        )
+        third = core_db.create_pending_approval_once(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+            source_type="workflow",
+            source_id="run-2",
+            action_id="create_action_item",
+        )
+
+        assert first["id"] == second["id"]
+        assert third["id"] != first["id"]
+        assert len(core_db.get_pending_approvals(status=None)) == 2
+
+    def test_fresh_application_lease_blocks_duplicate_apply_but_stale_lease_recovers(self):
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+            source_type="workflow",
+            source_id="run-lease",
+            action_id="create_action_item",
+            action_schema_name="create_action_item",
+            action_schema_version=1,
+        )
+        conn = core_db._get_conn()
+        with core_db._lock:
+            conn.execute(
+                "UPDATE pending_approvals SET application_status = 'applying', application_started_at = ?, "
+                "application_attempts = 1 WHERE id = ?",
+                (datetime.now(UTC).isoformat(), approval["id"]),
+            )
+            conn.commit()
+
+        with pytest.raises(ValueError, match="already in progress"):
+            core_db.apply_approval_resolution(approval["id"], "approved")
+
+        stale_started = (datetime.now(UTC) - core_db.APPROVAL_APPLICATION_LEASE - timedelta(minutes=1)).isoformat()
+        with core_db._lock:
+            conn.execute(
+                "UPDATE pending_approvals SET application_status = 'applying', application_started_at = ? WHERE id = ?",
+                (stale_started, approval["id"]),
+            )
+            conn.commit()
+
+        resolved = core_db.apply_approval_resolution(approval["id"], "approved")
+        assert resolved["status"] == "approved"
+        assert resolved["application_status"] == "applied"
+        assert core_db.get_action_items(ticker="MU")[0]["description"] == "Review MU thesis"
+
+    def test_old_approval_action_schema_replays_after_schema_evolution_through_core_db_resolution(self, monkeypatch):
+        from typing import Literal
+
+        import portfolio.action_registry as registry
+        from portfolio.action_registry import (
+            CreateActionItemInput,
+            DomainAction,
+            register_action_schema_version,
+            register_action_upgrade_adapter,
+        )
+
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+            source_type="workflow",
+            source_id="run-old-schema",
+            action_id="create_action_item",
+            action_schema_name="create_action_item",
+            action_schema_version=1,
+        )
+
+        class CreateActionItemInputV2(CreateActionItemInput):
+            schema_version: Literal[2] = 2
+            source: Literal["approval"] = "approval"
+
+        old_action = registry.get_action("create_action_item")
+        monkeypatch.setitem(
+            registry._ACTIONS,
+            "create_action_item",
+            DomainAction(
+                action_id=old_action.action_id,
+                input_model=CreateActionItemInputV2,
+                handler=old_action.handler,
+                schema_version=2,
+                execute_actor_types=old_action.execute_actor_types,
+                propose_actor_types=old_action.propose_actor_types,
+                approval_entity_type=old_action.approval_entity_type,
+                approval_payload=old_action.approval_payload,
+                approval_ticker=old_action.approval_ticker,
+            ),
+        )
+        register_action_schema_version("create_action_item", 1, CreateActionItemInput)
+        register_action_schema_version("create_action_item", 2, CreateActionItemInputV2)
+        register_action_upgrade_adapter(
+            "create_action_item",
+            1,
+            2,
+            lambda payload: {**payload, "source": "approval"},
+        )
+
+        resolved = core_db.resolve_approval(approval["id"], "approved")
+
+        assert resolved["application_status"] == "applied"
+        assert core_db.get_action_items(ticker="MU")[0]["description"] == "Review MU thesis"

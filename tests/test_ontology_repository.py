@@ -2,14 +2,236 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
+import ontology.ingestion as ingestion
+import portfolio.core_db as core_db
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.repository import OntologyRepository, _build_snapshot_position_query_parts
-from ontology.schemas.identity import catalyst_id, evaluation_id
+from ontology.schemas.identity import catalyst_id, evaluation_id, signal_id
 from ontology.schemas.registry import OntologySchemaValidationError
+from ontology.sources.base import LineageMetadata, SourceResult
+from ontology.sources.dtos import (
+    LaborMarketSnapshot,
+    LiquiditySnapshot,
+    MarketBreadthSnapshot,
+    PortfolioMetadata,
+    PortfolioPosition,
+    PortfolioSnapshot,
+    SectorMetricRow,
+    SectorMetricsSnapshot,
+    Top50BreadthSnapshot,
+    VixTermStructureSnapshot,
+)
+
+
+@pytest.fixture(autouse=True)
+def _use_temp_audit_db(tmp_path, monkeypatch):
+    if core_db._conn:
+        try:
+            core_db._conn.close()
+        except Exception:
+            pass
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "test_core.db")
+    monkeypatch.setattr(core_db, "_conn", None)
+    yield
+    if core_db._conn:
+        try:
+            core_db._conn.close()
+        except Exception:
+            pass
+    monkeypatch.setattr(core_db, "_conn", None)
+
+
+@pytest.fixture
+def source_status_factory():
+    def _build(*, required_status: str = "ok", optional_status: str = "partial") -> dict[str, Any]:
+        return {
+            "portfolio": {
+                "status": required_status,
+                "quality": "ok" if required_status == "ok" else "schema_drift",
+                "source_name": "portfolio",
+                "source_version": "1",
+                "fetched_at": "2026-05-01T20:00:00+00:00",
+                "lineage": {
+                    "raw_module": "portfolio.portfolio_dashboard",
+                    "raw_function": "get_data",
+                    "adapter": "portfolio",
+                    "adapter_version": "1",
+                    "payload_fingerprint": "portfolio-abc",
+                },
+                "schema_drift": [
+                    {
+                        "severity": "info",
+                        "path": "$.extra",
+                        "expected": "known field",
+                        "actual": "str",
+                        "action": "ignored",
+                    }
+                ],
+            },
+            "sentiment": {
+                "status": optional_status,
+                "quality": "missing" if optional_status != "ok" else "ok",
+                "source_name": "sentiment",
+                "source_version": "1",
+            },
+        }
+
+    return _build
+
+
+@pytest.fixture
+def semantic_graph_factory():
+    def _build(
+        run_id: str = "run-1",
+        *,
+        position_id: str = "position:MU",
+        include_optional: bool = False,
+        invalid_exposure: bool = False,
+    ) -> tuple[list[OntologyNode], list[OntologyEdge]]:
+        position_props: dict[str, Any] = {
+            "schema_version": 1,
+            "ticker": "MU",
+            "asset": "equity",
+            "direction": "long",
+            "timeframe": "Daily",
+            "latest_price": 100.0,
+            "as_of": "2026-03-08T00:00:00Z",
+            "risk_score": 0.72,
+            "risk_level": "medium",
+            "volatility_cluster": 0.4,
+            "breadth_stress": 0.5,
+            "sector_stress": 0.6,
+            "macro_regime": 0.7,
+            "ontology_run_id": run_id,
+        }
+        nodes = [
+            OntologyNode(
+                id=position_id,
+                type="Position",
+                label="MU",
+                properties=position_props,
+                schema_name="Position",
+                schema_version=1,
+            ),
+            OntologyNode(id="asset:MU", type="Asset", label="MU", properties={"ticker": "MU", "asset": "equity"}),
+            OntologyNode(
+                id="sector:information_technology",
+                type="Sector",
+                label="Information Technology",
+                properties={"name": "Information Technology"},
+            ),
+            OntologyNode(id="signal:test", type="Signal", label="Signal Alpha", properties={"source": "test"}),
+        ]
+        edges = [
+            OntologyEdge(position_id, "asset:MU", "references_asset", {"ontology_run_id": run_id}),
+            OntologyEdge(
+                "asset:MU",
+                "sector:information_technology",
+                "belongs_to_sector",
+                {"ontology_run_id": run_id, "source": "test"},
+            ),
+            OntologyEdge(
+                position_id,
+                "signal:test",
+                "exposed_to_signal",
+                {
+                    "schema_version": 1,
+                    "component": "macro_regime",
+                    "source": "test",
+                    "name": "Signal Alpha",
+                    "value": 1.2,
+                    "threshold": "higher is worse",
+                    "direction": "deteriorating",
+                    "contribution": 1.2 if invalid_exposure else 0.4,
+                    "ontology_run_id": run_id,
+                },
+                schema_name="PositionSignalExposure",
+                schema_version=1,
+            ),
+        ]
+        if include_optional:
+            nodes.extend(
+                [
+                    OntologyNode(
+                        id="thesis:MU",
+                        type="Thesis",
+                        label="Thesis: MU",
+                        properties={"ticker": "MU", "status": "active", "ontology_run_id": run_id},
+                    ),
+                    OntologyNode(
+                        id="evaluation:MU:2026-03-08T00:00:00Z",
+                        type="Evaluation",
+                        label="Eval: MU",
+                        properties={
+                            "ticker": "MU",
+                            "evaluated_at": "2026-03-08T00:00:00Z",
+                            "thesis_status": "active",
+                            "technical_read": "supportive",
+                            "fundamental_read": "supportive",
+                            "action": "hold",
+                            "confidence": "high",
+                            "ontology_run_id": run_id,
+                        },
+                    ),
+                    OntologyNode(
+                        id="catalyst:MU:0",
+                        type="Catalyst",
+                        label="Demand recovery",
+                        properties={
+                            "ticker": "MU",
+                            "name": "Demand recovery",
+                            "description": "Demand improves",
+                            "ontology_run_id": run_id,
+                        },
+                    ),
+                ]
+            )
+            edges.extend(
+                [
+                    OntologyEdge(position_id, "thesis:MU", "has_thesis", {"ontology_run_id": run_id}),
+                    OntologyEdge(
+                        "thesis:MU",
+                        "evaluation:MU:2026-03-08T00:00:00Z",
+                        "evaluated_by",
+                        {"ontology_run_id": run_id},
+                    ),
+                    OntologyEdge("thesis:MU", "catalyst:MU:0", "has_catalyst", {"ontology_run_id": run_id}),
+                ]
+            )
+        return nodes, edges
+
+    return _build
+
+
+class _Adapter:
+    def __init__(self, name: str):
+        self.source_name = name
+        self.source_version = "test"
+        self.required = True
+        self.raw_module = "tests"
+        self.raw_function = name
+        self.parameters = {}
+
+
+def _result(name: str, data: Any, status: str = "ok") -> SourceResult:
+    return SourceResult(
+        data=data,
+        status=status,
+        quality="ok" if status == "ok" else "missing",
+        fetched_at="2026-05-01T20:00:00+00:00",
+        as_of="2026-05-01T20:00:00+00:00",
+        lineage=LineageMetadata(
+            raw_module="tests",
+            raw_function=name,
+            adapter=name,
+            adapter_version="test",
+            payload_fingerprint=f"{name}-abc",
+        ),
+    )
 
 
 def test_repository_upsert_and_join_queries(tmp_path):
@@ -792,6 +1014,370 @@ def test_backfill_write_rejects_cardinality_conflict(tmp_path):
 
     with pytest.raises(OntologySchemaValidationError, match="only one target"):
         repo.backfill_schema_versions(dry_run=False)
+
+
+def test_upsert_graph_rejects_noncanonical_position_and_does_not_mutate_live_graph(tmp_path, semantic_graph_factory):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    repo.upsert_graph(_core_nodes(), _core_edges())
+    before = repo.fetch_graph()
+
+    nodes, edges = semantic_graph_factory(position_id="position:WRONG")
+
+    with pytest.raises(OntologySchemaValidationError, match="non-canonical identity"):
+        repo.upsert_graph(nodes, edges)
+
+    after = repo.fetch_graph()
+    assert after == before
+    assert {node["id"] for node in after["nodes"]} == {
+        "position:MU",
+        "asset:MU",
+        "sector:information_technology",
+    }
+
+
+def test_save_snapshot_rejects_invalid_signal_exposure_and_does_not_persist_partial_run(
+    tmp_path, semantic_graph_factory
+):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    nodes, edges = semantic_graph_factory(run_id="run-invalid", invalid_exposure=True)
+
+    with pytest.raises(OntologySchemaValidationError, match="Invalid exposed_to_signal"):
+        repo.save_snapshot(
+            run_id="run-invalid",
+            as_of="2026-03-08T00:00:00Z",
+            source_status={"portfolio": {"status": "ok"}},
+            required_modules=["portfolio"],
+            optional_modules=[],
+            component_scores={"macro_regime": 0.5},
+            nodes=nodes,
+            edges=edges,
+        )
+
+    assert repo.get_run("run-invalid") is None
+    with sqlite3.connect(db_path) as conn:
+        run_count = conn.execute("SELECT COUNT(*) FROM ontology_runs WHERE run_id = 'run-invalid'").fetchone()[0]
+        node_count = conn.execute("SELECT COUNT(*) FROM snapshot_nodes WHERE run_id = 'run-invalid'").fetchone()[0]
+        edge_count = conn.execute("SELECT COUNT(*) FROM snapshot_edges WHERE run_id = 'run-invalid'").fetchone()[0]
+    assert (run_count, node_count, edge_count) == (0, 0, 0)
+
+
+def test_save_snapshot_emits_success_and_failure_audits_with_lineage_and_counts(
+    tmp_path,
+    monkeypatch,
+    semantic_graph_factory,
+    source_status_factory,
+):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    nodes, edges = semantic_graph_factory(run_id="run-audit", include_optional=True)
+    source_status = source_status_factory(required_status="ok", optional_status="partial")
+
+    repo.save_snapshot(
+        run_id="run-audit",
+        as_of="2026-05-01T20:00:00+00:00",
+        source_status=source_status,
+        required_modules=["portfolio"],
+        optional_modules=["sentiment"],
+        component_scores={"macro_regime": 0.55},
+        nodes=nodes,
+        edges=edges,
+    )
+
+    real_connect = repo._connect
+
+    class _FailingConnection:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def __enter__(self):
+            self._conn.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return self._conn.__exit__(exc_type, exc, tb)
+
+        def execute(self, sql, *args, **kwargs):
+            return self._conn.execute(sql, *args, **kwargs)
+
+        def executemany(self, sql, *args, **kwargs):
+            if "INSERT INTO snapshot_nodes" in str(sql):
+                raise sqlite3.IntegrityError("forced snapshot failure")
+            return self._conn.executemany(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    monkeypatch.setattr(repo, "_connect", lambda: _FailingConnection(real_connect()))
+
+    with pytest.raises(OntologySchemaValidationError, match="forced snapshot failure"):
+        repo.save_snapshot(
+            run_id="run-failed-audit",
+            as_of="2026-05-02T20:00:00+00:00",
+            source_status=source_status,
+            required_modules=["portfolio"],
+            optional_modules=["sentiment"],
+            component_scores={"macro_regime": 0.65},
+            nodes=nodes,
+            edges=edges,
+        )
+
+    rows = core_db.get_audit_events(action_name="ontology.snapshot.saved", limit=10)
+    succeeded = [row for row in rows if row["status"] == "succeeded"][0]
+    failed = [row for row in rows if row["status"] == "failed"][0]
+
+    assert succeeded["object_refs"] == [{"type": "ontology_run", "id": "run-audit"}]
+    assert succeeded["after_summary"]["run_id"] == "run-audit"
+    assert succeeded["after_summary"]["node_count"] == len(nodes)
+    assert succeeded["source_lineage"]["source_status_counts"]["ok"] == 1
+    assert succeeded["source_lineage"]["source_status_counts"]["partial"] == 1
+
+    assert failed["object_refs"] == [{"type": "ontology_run", "id": "run-failed-audit"}]
+    assert failed["after_summary"]["run_id"] == "run-failed-audit"
+    assert "forced snapshot failure" in str(failed["error"])
+    assert failed["source_lineage"]["run_id"] == "run-failed-audit"
+    assert repo.get_run("run-failed-audit") is None
+
+
+def test_backfill_failure_reports_exact_run_and_leaves_rows_unchanged(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    _insert_minimal_legacy_snapshot(db_path, run_id="run-a")
+    _insert_minimal_legacy_snapshot(db_path, run_id="run-b")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP INDEX idx_snapshot_edges_unique_run_source_relation")
+        conn.execute(
+            """
+            INSERT INTO snapshot_nodes(run_id, id, type, label, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            ("run-b", "asset:NVDA", "Asset", "NVDA", json.dumps({"ticker": "NVDA", "asset": "equity"})),
+        )
+        conn.execute(
+            """
+            INSERT INTO snapshot_edges(run_id, source_id, target_id, relation_type, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            ("run-b", "position:MU", "asset:NVDA", "references_asset", "{}"),
+        )
+        conn.commit()
+
+    with pytest.raises(OntologySchemaValidationError, match="run-b"):
+        repo.backfill_schema_versions(dry_run=False)
+
+    report = repo.backfill_schema_versions(dry_run=True)
+    assert any(
+        scope.get("run_id") == "run-b" and "only one target" in str(scope.get("error")) for scope in report["scopes"]
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        run_a_version = conn.execute(
+            "SELECT schema_version FROM snapshot_nodes WHERE run_id = ? AND id = ?",
+            ("run-a", "position:MU"),
+        ).fetchone()[0]
+        run_b_edge_count = conn.execute(
+            "SELECT COUNT(*) FROM snapshot_edges WHERE run_id = ? AND source_id = ? AND relation_type = ?",
+            ("run-b", "position:MU", "references_asset"),
+        ).fetchone()[0]
+    assert run_a_version == 0
+    assert run_b_edge_count == 2
+
+
+def test_schema_bindings_preserve_stored_vs_upgraded_read_contract_after_schema_evolution(tmp_path, monkeypatch):
+    from ontology.schemas import registry
+    from ontology.schemas.objects import PositionV1
+
+    class PositionV2(PositionV1):
+        schema_version: Literal[2] = 2
+        risk_bucket: str
+
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    repo.save_snapshot(
+        run_id="run-bindings",
+        as_of="2026-03-08T00:00:00Z",
+        source_status={"portfolio": {"status": "ok"}},
+        required_modules=["portfolio"],
+        optional_modules=[],
+        component_scores={"macro_regime": 0.5},
+        nodes=_core_nodes(),
+        edges=_core_edges(),
+    )
+
+    run_meta = repo.get_run("run-bindings")
+    assert run_meta is not None
+    assert any(
+        binding["schema_kind"] == "ontology_object"
+        and binding["schema_name"] == "Position"
+        and binding["schema_version"] == 1
+        for binding in run_meta["schema_bindings"]
+    )
+
+    monkeypatch.setitem(registry.NODE_SCHEMAS, "Position", PositionV2)
+    monkeypatch.setitem(
+        registry.NODE_UPGRADE_ADAPTERS,
+        ("Position", 1, 2),
+        lambda payload: {**payload, "schema_version": 2, "risk_bucket": "evolved"},
+    )
+
+    stored = repo.fetch_snapshot_graph("run-bindings", schema_mode="stored")
+    upgraded = repo.fetch_snapshot_graph("run-bindings", schema_mode="upgraded")
+
+    stored_position = [node for node in stored["nodes"] if node["type"] == "Position"][0]
+    upgraded_position = [node for node in upgraded["nodes"] if node["type"] == "Position"][0]
+    assert stored_position["schema_version"] == 1
+    assert "risk_bucket" not in stored_position["properties"]
+    assert upgraded_position["properties"]["schema_version"] == 2
+    assert upgraded_position["properties"]["risk_bucket"] == "evolved"
+
+
+def test_ingestion_snapshot_persists_canonical_thesis_evaluation_catalyst_signal_mapping(tmp_path, monkeypatch):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+
+    metadata = PortfolioMetadata(ticker="MU", asset="equity", direction="long")
+    portfolio = PortfolioSnapshot(
+        positions={
+            "MU": PortfolioPosition(
+                ticker="MU",
+                asset="equity",
+                direction="long",
+                latest_price=100.0,
+                series_points=1,
+                as_of="2026-05-01T20:00:00+00:00",
+                metadata=metadata,
+            )
+        },
+        timeframe="Daily",
+        timestamp="2026-05-01T20:00:00+00:00",
+    )
+    results = {
+        "portfolio": _result("portfolio", portfolio),
+        "market_breadth": _result(
+            "market_breadth",
+            MarketBreadthSnapshot(500, 50, 45, 25, 11, "2026-05-01"),
+        ),
+        "top50_breadth": _result("top50_breadth", Top50BreadthSnapshot(40, 30, 20, 50)),
+        "vix_term_structure": _result(
+            "vix_term_structure",
+            VixTermStructureSnapshot("2026-05-01", 20, 22, 1.1, "Neutral"),
+        ),
+        "sector_metrics": _result(
+            "sector_metrics",
+            SectorMetricsSnapshot(
+                rows=[
+                    SectorMetricRow(
+                        "Information Technology",
+                        30,
+                        None,
+                        -1,
+                        None,
+                        -4,
+                        None,
+                        -3,
+                    )
+                ],
+                timestamp="2026-05-01T20:00:00+00:00",
+            ),
+        ),
+        "liquidity": _result("liquidity", LiquiditySnapshot(-0.2, "normal", "2026-05-01")),
+        "sentiment": _result("sentiment", None, status="partial"),
+        "positioning_summary": _result("positioning_summary", None, status="partial"),
+        "economic_growth": _result("economic_growth", None, status="partial"),
+        "labor_market": _result(
+            "labor_market",
+            LaborMarketSnapshot(latest={}, timestamp="2026-05-01T20:00:00+00:00", initial_claims_change=5),
+        ),
+    }
+
+    required = {name: _Adapter(name) for name in list(results)[:6]}
+    optional = {name: _Adapter(name) for name in list(results)[6:]}
+    monkeypatch.setattr(ingestion, "build_adapter_registry", lambda timeframe: (required, optional, {}))
+    monkeypatch.setattr(ingestion, "run_adapters", lambda adapters: {name: results[name] for name in adapters})
+    monkeypatch.setattr(
+        ingestion,
+        "compute_volatility_cluster",
+        lambda *_args, **_kwargs: (
+            0.4,
+            [
+                {
+                    "source": "macro",
+                    "name": "Vol Signal",
+                    "threshold": "higher is worse",
+                    "direction": "stable",
+                }
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        ingestion,
+        "compute_breadth_stress",
+        lambda *_args, **_kwargs: (
+            0.5,
+            [
+                {
+                    "source": "market_breadth",
+                    "name": "Breadth Signal",
+                    "threshold": "higher is worse",
+                    "direction": "stable",
+                }
+            ],
+        ),
+    )
+    monkeypatch.setattr(ingestion, "compute_sector_stress_map", lambda *_args, **_kwargs: ({"MU": 0.6}, []))
+    monkeypatch.setattr(
+        ingestion,
+        "compute_macro_regime",
+        lambda *_args, **_kwargs: (
+            0.7,
+            [
+                {
+                    "source": "liquidity",
+                    "name": "Macro Regime",
+                    "threshold": "higher is worse",
+                    "direction": "deteriorating",
+                }
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "portfolio.thesis_db.get_all_thesis_meta",
+        lambda: [{"ticker": "MU", "status": "active", "created_at": "2026-05-01", "updated_at": "2026-05-02"}],
+    )
+    monkeypatch.setattr(
+        "portfolio.thesis_db.get_latest_evaluations",
+        lambda: [
+            {
+                "ticker": "MU",
+                "evaluated_at": "2026-05-02T00:00:00Z",
+                "thesis_status": "active",
+                "technical_read": "supportive",
+                "fundamental_read": "supportive",
+                "action": "hold",
+                "confidence": "high",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ingestion,
+        "_parse_catalysts_from_thesis",
+        lambda ticker: [{"name": "Memory recovery", "description": "Demand improves"}] if ticker == "MU" else [],
+    )
+
+    out = ingestion.ingest_into_repository(repo=repo, timeframe="Daily", include_deep_modules=False)
+    graph = repo.fetch_snapshot_graph(out.run_id, schema_mode="upgraded")
+    ids = {node["id"] for node in graph["nodes"]}
+
+    assert "thesis:MU" in ids
+    assert evaluation_id("MU", "2026-05-02T00:00:00Z") in ids
+    assert catalyst_id("MU", "Memory recovery", "Demand improves") in ids
+    assert signal_id("macro", "Vol Signal") in ids
+    assert signal_id("market_breadth", "Breadth Signal") in ids
+    assert signal_id("liquidity", "Macro Regime") in ids
+    assert "evaluation:MU:2026-05-02T00:00:00Z" not in ids
+    assert "catalyst:MU:0" not in ids
 
 
 def _core_nodes() -> list[OntologyNode]:

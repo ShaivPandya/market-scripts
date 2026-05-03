@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 import ontology.service as svc
+import portfolio.core_db as core_db
 from ontology.models import InterpretedQuery
+from ontology.policy import DefaultOntologyPolicy, OntologyAction, PolicyDecision, PolicyDenied, admin_actor
 from ontology.service import OntologyQueryService, OntologyRunNotFoundError
 
 
@@ -18,6 +20,54 @@ class _FakeIngestion:
     required_modules: list[str]
     optional_modules: list[str]
     component_scores: dict
+
+
+@pytest.fixture(autouse=True)
+def _use_temp_audit_db(tmp_path, monkeypatch):
+    if core_db._conn:
+        try:
+            core_db._conn.close()
+        except Exception:
+            pass
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "test_core.db")
+    monkeypatch.setattr(core_db, "_conn", None)
+    yield
+    if core_db._conn:
+        try:
+            core_db._conn.close()
+        except Exception:
+            pass
+    monkeypatch.setattr(core_db, "_conn", None)
+
+
+class _Policy(DefaultOntologyPolicy):
+    def __init__(
+        self,
+        *,
+        denied_actions: set[str] | None = None,
+        denied_objects: set[str] | None = None,
+        fields: dict[str, set[str]] | None = None,
+    ):
+        self.denied_actions = denied_actions or set()
+        self.denied_objects = denied_objects or set()
+        self.fields = fields or {}
+
+    def check_action(self, actor, action: str, context=None):
+        if action in self.denied_actions:
+            return PolicyDecision(False, f"denied action: {action}")
+        return PolicyDecision(True)
+
+    def check_object(self, actor, node, action: str = "read"):
+        if node.id in self.denied_objects:
+            return PolicyDecision(False, f"denied object: {node.id}")
+        return PolicyDecision(True)
+
+    def check_relationship(self, actor, edge, source=None, target=None, action: str = "read"):
+        return PolicyDecision(True)
+
+    def allowed_fields(self, actor, resource):
+        key = getattr(resource, "type", None) or getattr(resource, "owner_type", None) or ""
+        return self.fields.get(str(key))
 
 
 class _FakeRepo:
@@ -658,3 +708,428 @@ def test_page_graph_builder_caps_edges():
     )
     assert builder.truncated is True
     assert len(builder.edges) == 2
+
+
+def test_entity_context_auto_scopes_ticker_without_broadening_user_filters(monkeypatch):
+    class _CaptureRepo(_FakeRepo):
+        def __init__(self):
+            super().__init__()
+            self.filters_seen: list[dict] = []
+
+        def query_snapshot_positions_page(
+            self,
+            run_id: str,
+            *,
+            filters=None,
+            page=1,
+            page_size=25,
+            schema_mode="upgraded",
+        ):
+            self.filters_seen.append(dict(filters or {}))
+            return super().query_snapshot_positions_page(
+                run_id,
+                filters=filters,
+                page=page,
+                page_size=page_size,
+                schema_mode=schema_mode,
+            )
+
+    repo = _CaptureRepo()
+    service = OntologyQueryService(repository=repo)
+
+    monkeypatch.setattr(
+        svc,
+        "parse_hybrid_query",
+        lambda **_kwargs: InterpretedQuery(
+            intent="entity_context",
+            source="structured",
+            filters={"min_risk_score": 0.8},
+            entity="MU",
+            original_query="Show MU context",
+        ),
+    )
+    service.query(
+        query="Show MU context",
+        intent=None,
+        filters={},
+        run_id="run-historical",
+        include_graph=False,
+    )
+
+    monkeypatch.setattr(
+        svc,
+        "parse_hybrid_query",
+        lambda **_kwargs: InterpretedQuery(
+            intent="entity_context",
+            source="structured",
+            filters={"sectors": ["Information Technology"], "min_risk_score": 0.8},
+            entity="MU",
+            original_query="Show MU in its sector",
+        ),
+    )
+    service.query(
+        query="Show MU in its sector",
+        intent=None,
+        filters={},
+        run_id="run-historical",
+        include_graph=False,
+    )
+
+    assert repo.filters_seen[0] == {"tickers": ["MU"], "min_risk_score": 0.8}
+    assert repo.filters_seen[1] == {"sectors": ["Information Technology"], "min_risk_score": 0.8}
+
+
+def test_thesis_review_enriches_only_visible_page_positions(monkeypatch):
+    class _ThesisRepo(_FakeRepo):
+        def __init__(self):
+            super().__init__()
+            self.rows_by_run["run-historical"] = [
+                {
+                    "position_id": "position:NVDA",
+                    "position_label": "NVDA",
+                    "position_props": {
+                        "ticker": "NVDA",
+                        "asset": "equity",
+                        "direction": "long",
+                        "risk_score": 0.91,
+                        "risk_level": "high",
+                        "ontology_run_id": "run-historical",
+                    },
+                    "asset_id": "asset:NVDA",
+                    "asset_label": "NVDA",
+                    "asset_props": {"ticker": "NVDA", "asset": "equity"},
+                    "sector_id": "sector:information_technology",
+                    "sector_label": "Information Technology",
+                    "sector_props": {"name": "Information Technology"},
+                    "position_asset_edge_props": {"ontology_run_id": "run-historical"},
+                    "asset_sector_edge_props": {"ontology_run_id": "run-historical", "source": "test"},
+                },
+                {
+                    "position_id": "position:MU",
+                    "position_label": "MU",
+                    "position_props": {
+                        "ticker": "MU",
+                        "asset": "equity",
+                        "direction": "long",
+                        "risk_score": 0.72,
+                        "risk_level": "medium",
+                        "ontology_run_id": "run-historical",
+                    },
+                    "asset_id": "asset:MU",
+                    "asset_label": "MU",
+                    "asset_props": {"ticker": "MU", "asset": "equity"},
+                    "sector_id": "sector:information_technology",
+                    "sector_label": "Information Technology",
+                    "sector_props": {"name": "Information Technology"},
+                    "position_asset_edge_props": {"ontology_run_id": "run-historical"},
+                    "asset_sector_edge_props": {"ontology_run_id": "run-historical", "source": "test"},
+                },
+            ]
+            self.position_ids_seen: list[str] = []
+
+        def fetch_snapshot_position_thesis_context_batch(self, run_id: str, position_ids, *, schema_mode="upgraded"):
+            self.position_ids_seen = list(position_ids)
+            return {
+                "position:NVDA": {
+                    "thesis": {
+                        "node": {
+                            "id": "thesis:NVDA",
+                            "type": "Thesis",
+                            "label": "Thesis: NVDA",
+                            "properties": {
+                                "ticker": "NVDA",
+                                "status": "active",
+                                "created_at": "2026-03-01T00:00:00Z",
+                                "updated_at": "2026-03-08T00:00:00Z",
+                            },
+                        },
+                        "edge": {
+                            "source_id": "position:NVDA",
+                            "target_id": "thesis:NVDA",
+                            "relation_type": "has_thesis",
+                            "properties": {"ontology_run_id": run_id},
+                        },
+                    },
+                    "evaluations": [
+                        {
+                            "node": {
+                                "id": "evaluation:NVDA:2026-03-08T00:00:00Z",
+                                "type": "Evaluation",
+                                "label": "Eval: NVDA",
+                                "properties": {
+                                    "evaluated_at": "2026-03-08T00:00:00Z",
+                                    "thesis_status": "active",
+                                    "technical_read": "supportive",
+                                    "fundamental_read": "supportive",
+                                    "action": "hold",
+                                    "confidence": "high",
+                                },
+                            },
+                            "edge": {
+                                "source_id": "thesis:NVDA",
+                                "target_id": "evaluation:NVDA:2026-03-08T00:00:00Z",
+                                "relation_type": "evaluated_by",
+                                "properties": {"ontology_run_id": run_id},
+                            },
+                        }
+                    ],
+                    "catalysts": [],
+                }
+            }
+
+    repo = _ThesisRepo()
+    service = OntologyQueryService(repository=repo)
+    monkeypatch.setattr(
+        svc,
+        "parse_hybrid_query",
+        lambda **_kwargs: InterpretedQuery(
+            intent="thesis_review",
+            source="structured",
+            filters={},
+            entity=None,
+            original_query="Review the thesis page",
+        ),
+    )
+
+    resp = service.query(
+        query="Review the thesis page",
+        intent=None,
+        filters={},
+        run_id="run-historical",
+        include_graph=False,
+        page=1,
+        page_size=1,
+    )
+
+    assert repo.position_ids_seen == ["position:NVDA"]
+    assert len(resp["results"]) == 1
+    assert resp["results"][0]["ticker"] == "NVDA"
+    assert resp["results"][0]["thesis"] == {
+        "status": "active",
+        "created_at": "2026-03-01T00:00:00Z",
+        "updated_at": "2026-03-08T00:00:00Z",
+    }
+    assert resp["results"][0]["latest_evaluation"]["action"] == "hold"
+
+
+def test_compare_snapshots_reports_added_removed_risk_and_signal_transitions():
+    class _CompareRepo(_FakeRepo):
+        def __init__(self):
+            super().__init__()
+            self.rows_by_run = {
+                "run-0": [
+                    {
+                        "position_id": "position:MU",
+                        "position_props": {
+                            "ticker": "MU",
+                            "asset": "equity",
+                            "direction": "long",
+                            "risk_score": 0.4,
+                            "risk_level": "low",
+                            "volatility_cluster": 0.4,
+                            "breadth_stress": 0.3,
+                            "sector_stress": 0.4,
+                            "macro_regime": 0.35,
+                            "ontology_run_id": "run-0",
+                        },
+                        "sector_props": {"name": "Information Technology"},
+                    }
+                ],
+                "run-1": [
+                    {
+                        "position_id": "position:MU",
+                        "position_props": {
+                            "ticker": "MU",
+                            "asset": "equity",
+                            "direction": "long",
+                            "risk_score": 0.81,
+                            "risk_level": "high",
+                            "volatility_cluster": 0.72,
+                            "breadth_stress": 0.3,
+                            "sector_stress": 0.4,
+                            "macro_regime": 0.8,
+                            "ontology_run_id": "run-1",
+                        },
+                        "sector_props": {"name": "Information Technology"},
+                    },
+                    {
+                        "position_id": "position:NVDA",
+                        "position_props": {
+                            "ticker": "NVDA",
+                            "asset": "equity",
+                            "direction": "long",
+                            "risk_score": 0.77,
+                            "risk_level": "high",
+                            "volatility_cluster": 0.7,
+                            "breadth_stress": 0.65,
+                            "sector_stress": 0.6,
+                            "macro_regime": 0.7,
+                            "ontology_run_id": "run-1",
+                        },
+                        "sector_props": {"name": "Information Technology"},
+                    },
+                ],
+            }
+
+        def get_run(self, run_id: str):
+            if run_id not in {"run-0", "run-1"}:
+                return None
+            return {
+                "run_id": run_id,
+                "as_of": f"2026-03-0{1 if run_id == 'run-0' else 8}T00:00:00Z",
+                "source_status": {"portfolio": {"status": "ok"}},
+                "required_modules": ["portfolio"],
+                "component_scores": {"macro_regime": 0.3 if run_id == "run-0" else 0.8},
+                "created_at": "2026-03-08 00:00:00",
+            }
+
+    diff = OntologyQueryService(repository=_CompareRepo()).compare_snapshots("run-0", "run-1")
+
+    assert diff["positions_added"] == ["NVDA"]
+    assert diff["positions_removed"] == []
+    assert diff["risk_changes"][0]["ticker"] == "MU"
+    assert diff["risk_changes"][0]["delta"] == 0.41
+    assert any(row["component"] == "volatility_cluster" for row in diff["signal_transitions"])
+    assert diff["component_diffs"]["macro_regime"]["delta"] == 0.5
+
+
+@pytest.mark.parametrize(
+    ("query_kwargs", "denied_action"),
+    [
+        (
+            {"run_id": "run-historical", "include_graph": True, "refresh_snapshot": False},
+            OntologyAction.GRAPH_READ,
+        ),
+        (
+            {"run_id": None, "include_graph": False, "refresh_snapshot": True},
+            OntologyAction.SNAPSHOT_REFRESH,
+        ),
+    ],
+)
+def test_query_denied_graph_or_refresh_permission_short_circuits_before_repo_fetch(
+    monkeypatch,
+    query_kwargs,
+    denied_action,
+):
+    class _TrapRepo(_FakeRepo):
+        def get_run(self, run_id: str):
+            raise AssertionError("repo should not be touched when dynamic action is denied")
+
+        def get_latest_run(self):
+            raise AssertionError("latest run lookup should not happen when refresh is denied")
+
+    service = OntologyQueryService(repository=_TrapRepo(), policy=_Policy(denied_actions={denied_action}))
+    monkeypatch.setattr(svc, "parse_hybrid_query", lambda **_kwargs: pytest.fail("parse should not run"))
+
+    with pytest.raises(PolicyDenied, match=str(denied_action)):
+        service.query(
+            query="show risk",
+            intent="portfolio_risk_exposure",
+            filters={},
+            timeframe="Daily",
+            schema_mode="upgraded",
+            actor=admin_actor(),
+            **query_kwargs,
+        )
+
+
+def test_query_success_and_denial_emit_ontology_read_audits(monkeypatch):
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+    ok_service = OntologyQueryService(repository=_FakeRepo())
+    ok_service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        run_id="run-historical",
+        include_graph=False,
+        actor=admin_actor("auditor"),
+    )
+
+    denied_service = OntologyQueryService(repository=_FakeRepo(), policy=_Policy(denied_actions={OntologyAction.QUERY}))
+    with pytest.raises(PolicyDenied):
+        denied_service.query(
+            query="show risk",
+            intent=None,
+            filters={},
+            run_id="run-historical",
+            include_graph=False,
+            actor=admin_actor("auditor"),
+        )
+
+    rows = core_db.get_audit_events(action_name="ontology.query", limit=10)
+    statuses = {row["status"] for row in rows}
+    assert {"succeeded", "denied"} <= statuses
+    succeeded = [row for row in rows if row["status"] == "succeeded"][0]
+    denied = [row for row in rows if row["status"] == "denied"][0]
+    assert succeeded["object_refs"] == [{"type": "ontology_run", "id": "run-historical"}]
+    assert succeeded["after_summary"]["page"] == 1
+    assert denied["metadata"]["include_graph"] is False
+
+
+def test_filtered_objects_make_aggregate_and_temporal_diff_inexact(monkeypatch):
+    class _CompareRepo(_FakeRepo):
+        def __init__(self):
+            super().__init__()
+            self.rows_by_run = {
+                "run-0": [
+                    {
+                        "position_id": "position:MU",
+                        "position_props": {
+                            "ticker": "MU",
+                            "asset": "equity",
+                            "direction": "long",
+                            "risk_score": 0.42,
+                            "risk_level": "low",
+                            "ontology_run_id": "run-0",
+                        },
+                        "sector_props": {"name": "Information Technology"},
+                    }
+                ],
+                "run-1": [
+                    {
+                        "position_id": "position:MU",
+                        "position_props": {
+                            "ticker": "MU",
+                            "asset": "equity",
+                            "direction": "long",
+                            "risk_score": 0.82,
+                            "risk_level": "high",
+                            "ontology_run_id": "run-1",
+                        },
+                        "sector_props": {"name": "Information Technology"},
+                    }
+                ],
+            }
+
+        def get_run(self, run_id: str):
+            if run_id not in self.rows_by_run:
+                return None
+            return {
+                "run_id": run_id,
+                "as_of": "2026-03-08T00:00:00Z",
+                "source_status": {"portfolio": {"status": "ok"}},
+                "required_modules": ["portfolio"],
+                "component_scores": {},
+                "created_at": "2026-03-08 00:00:00",
+            }
+
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+    service = OntologyQueryService(
+        repository=_CompareRepo(),
+        policy=_Policy(fields={"Position": {"ticker", "asset", "direction", "risk_level", "ontology_run_id"}}),
+    )
+
+    resp = service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        run_id="run-1",
+        include_graph=False,
+        actor=admin_actor(),
+    )
+    diff = service.compare_snapshots("run-0", "run-1", actor=admin_actor())
+
+    assert resp["_meta"]["pagination"]["exact_total"] is False
+    assert resp["aggregate"]["average_risk_score"] == 0.0
+    assert diff["risk_changes"] == []
+    assert diff["_meta"]["authorization"]["redacted_fields"] >= 1

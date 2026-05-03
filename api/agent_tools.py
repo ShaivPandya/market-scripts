@@ -1465,6 +1465,8 @@ def _compact_ontology_payload(payload: Any) -> Any:
         "source_status": _compact_generic(payload.get("source_status"), max_depth=3, list_limit=20, dict_limit=20),
         "aggregate": _compact_generic(payload.get("aggregate"), max_depth=3, list_limit=20, dict_limit=20),
     }
+    if isinstance(payload.get("_meta"), dict):
+        out["_meta"] = _compact_generic(payload.get("_meta"), max_depth=3, list_limit=20, dict_limit=20)
 
     raw_results = payload.get("results")
     results = raw_results if isinstance(raw_results, list) else []
@@ -2604,9 +2606,11 @@ def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object
         elif isinstance(raw_filters, str):
             try:
                 parsed = json.loads(raw_filters)
-                filters = parsed if isinstance(parsed, dict) else {}
-            except (json.JSONDecodeError, TypeError):
-                filters = {}
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError("query_ontology.filters must be a valid JSON object") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("query_ontology.filters must decode to a JSON object")
+            filters = parsed
         else:
             filters = {}
         ontology_query = str(args.get("query") or "").strip()
