@@ -37,7 +37,7 @@ class RelationDefinition:
     optional: bool = False
 
 
-RELATION_REGISTRY: dict[RelationType, RelationDefinition] = {
+RELATION_REGISTRY: dict[str, RelationDefinition] = {
     REFERENCES_ASSET: RelationDefinition(
         name=REFERENCES_ASSET,
         source_type="Position",
@@ -101,7 +101,7 @@ RELATION_REGISTRY: dict[RelationType, RelationDefinition] = {
     ),
 }
 
-ALLOWED_RELATIONS: dict[RelationType, tuple[EntityType, EntityType]] = {
+ALLOWED_RELATIONS: dict[str, tuple[EntityType, EntityType]] = {
     name: (definition.source_type, definition.target_type) for name, definition in RELATION_REGISTRY.items()
 }
 OPTIONAL_RELATIONS = {name for name, definition in RELATION_REGISTRY.items() if definition.optional}

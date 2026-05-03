@@ -22,6 +22,10 @@ def _as_list(value: Any) -> list:
     return [value]
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _report_id(report_type: str, as_of: str, payload: dict[str, Any]) -> str:
     return str(payload.get("report_id") or f"{report_type}:{as_of}")
 
@@ -56,8 +60,8 @@ def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: 
         )
         count += 1
 
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    thesis = summary.get("thesis_monitoring") if isinstance(summary.get("thesis_monitoring"), dict) else {}
+    summary = _as_dict(payload.get("summary"))
+    thesis = _as_dict(summary.get("thesis_monitoring"))
     for item in _as_list(thesis.get("material_developments")):
         if not isinstance(item, dict) or not item.get("summary"):
             continue
@@ -77,7 +81,7 @@ def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: 
 def _create_report_action_items(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
     from portfolio.core_db import create_action_item_once
 
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    summary = _as_dict(payload.get("summary"))
     count = 0
 
     if report_type == "daily":
@@ -94,7 +98,7 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
                 source_id=report_id,
             )
             count += 1
-    thesis = summary.get("thesis_monitoring") if isinstance(summary.get("thesis_monitoring"), dict) else {}
+    thesis = _as_dict(summary.get("thesis_monitoring"))
     for ticker in _as_list(thesis.get("positions_needing_reassessment")):
         ticker_s = str(ticker).strip().upper()
         if not ticker_s:
@@ -114,7 +118,7 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
 def _create_watch_trigger_approvals(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
     from portfolio.action_registry import ActionContext, propose_action
 
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    summary = _as_dict(payload.get("summary"))
     count = 0
     for condition in _as_list(summary.get("watchlist_triggers")):
         condition_s = str(condition).strip()
@@ -137,9 +141,9 @@ def _create_watch_trigger_approvals(report_type: str, as_of: str, report_id: str
 
 
 def _persist_weekly_thesis_evaluations(as_of: str, payload: dict[str, Any]) -> int:
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    thesis = summary.get("thesis_monitoring") if isinstance(summary.get("thesis_monitoring"), dict) else {}
-    evals = thesis.get("thesis_evaluations") if isinstance(thesis, dict) else None
+    summary = _as_dict(payload.get("summary"))
+    thesis = _as_dict(summary.get("thesis_monitoring"))
+    evals = thesis.get("thesis_evaluations")
     if not isinstance(evals, list) or not evals:
         return 0
     from portfolio.thesis_db import save_evaluations, upsert_thesis_meta
@@ -169,8 +173,8 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
 
     as_of = _extract_as_of(report_type, payload)
     report_id = _report_id(report_type, as_of, payload)
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    metadata = _as_dict(payload.get("metadata"))
+    summary = _as_dict(payload.get("summary"))
     recommendations_payload = payload.get("recommendations")
     if not isinstance(recommendations_payload, dict):
         raise ValueError("report sync payload is missing recommendations.")
@@ -183,7 +187,7 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
     )
 
     report_md = str(payload.get("report_md") or payload.get("report") or "")
-    bundle = payload.get("bundle") if isinstance(payload.get("bundle"), dict) else {}
+    bundle = _as_dict(payload.get("bundle"))
     report_hash = str(payload.get("report_hash") or metadata.get("report_hash") or _hash_text(report_md) or "")
     input_hash = str(
         payload.get("input_hash")
@@ -205,15 +209,15 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
             "report_hash": report_hash,
             "input_hash": input_hash,
             "summary": summary,
-            "artifact_paths": payload.get("artifact_paths") or {},
+            "artifact_paths": _as_dict(payload.get("artifact_paths")),
             "issue_url": metadata.get("issue_url"),
         }
     )
 
     persisted_recommendations = persist_recommendations(
         recommendations_payload,
-        source_report_path=str((payload.get("artifact_paths") or {}).get("recommendations_md") or ""),
-        source_json_path=str((payload.get("artifact_paths") or {}).get("recommendations_json") or ""),
+        source_report_path=str(_as_dict(payload.get("artifact_paths")).get("recommendations_md") or ""),
+        source_json_path=str(_as_dict(payload.get("artifact_paths")).get("recommendations_json") or ""),
         prompt_metadata={
             "report_id": report_id,
             "model": metadata.get("model"),

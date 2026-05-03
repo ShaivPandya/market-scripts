@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import ontology.ingestion as ingestion
+import portfolio.core_db as core_db
 from ontology.sources.base import LineageMetadata, SourceResult
 from ontology.sources.dtos import (
     LaborMarketSnapshot,
@@ -16,6 +19,24 @@ from ontology.sources.dtos import (
     Top50BreadthSnapshot,
     VixTermStructureSnapshot,
 )
+
+
+@pytest.fixture(autouse=True)
+def _temp_core_db(tmp_path, monkeypatch):
+    if core_db._conn:
+        try:
+            core_db._conn.close()
+        except Exception:
+            pass
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "core.db")
+    monkeypatch.setattr(core_db, "_conn", None)
+    yield
+    if core_db._conn:
+        try:
+            core_db._conn.close()
+        except Exception:
+            pass
+    monkeypatch.setattr(core_db, "_conn", None)
 
 
 class _Repo:
@@ -52,6 +73,7 @@ def _result(name, data, status="ok"):
             adapter=name,
             adapter_version="test",
             payload_fingerprint="abc",
+            provenance_event_id=f"pv:source_adapter_run:test:{name}",
         ),
     )
 
@@ -123,6 +145,13 @@ def test_ingestion_uses_adapter_results(monkeypatch):
 
     assert out.source_status["portfolio"]["source_version"] == "test"
     assert out.required_modules == list(required.keys())
+    trace = core_db.get_provenance_trace(ontology_run_id=out.run_id)
+    assert any(
+        event["id"] == out.provenance_event_id and event["event_type"] == "ontology_run" for event in trace["events"]
+    )
+    record_kinds = {record["record_kind"] for record in trace["source_records"]}
+    assert {"portfolio_position", "sector_metric", "snapshot"}.issubset(record_kinds)
+    assert all(record["retention_class"] == "source_ref_90d" for record in trace["source_records"])
     assert repo.saved is not None
     positions = [node for node in repo.saved["nodes"] if node.id == "position:MU"]
     assert positions

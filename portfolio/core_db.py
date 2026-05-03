@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     tool_sections TEXT,
     synthesis     TEXT,
     artifacts     TEXT,
+    provenance_event_id TEXT,
     error         TEXT
 )
 """
@@ -280,7 +281,10 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     application_attempts     INTEGER NOT NULL DEFAULT 0,
     application_started_at   TEXT,
     application_completed_at TEXT,
-    application_error        TEXT
+    application_error        TEXT,
+    provenance_event_id       TEXT,
+    origin_provenance_event_id TEXT,
+    origin_artifact_id        TEXT
 )
 """
 
@@ -305,7 +309,8 @@ CREATE TABLE IF NOT EXISTS action_runs (
                          CHECK (status IN ('running', 'succeeded', 'failed', 'rolled_back')),
     error                TEXT,
     started_at           TEXT NOT NULL,
-    completed_at         TEXT
+    completed_at         TEXT,
+    provenance_event_id  TEXT
 )
 """
 
@@ -396,6 +401,83 @@ CREATE TABLE IF NOT EXISTS audit_events (
 )
 """
 
+_CREATE_PROVENANCE_EVENTS = """
+CREATE TABLE IF NOT EXISTS provenance_events (
+    id                   TEXT PRIMARY KEY,
+    event_type           TEXT NOT NULL,
+    event_name           TEXT NOT NULL,
+    status               TEXT NOT NULL,
+    started_at           TEXT NOT NULL,
+    completed_at         TEXT,
+    actor_type           TEXT,
+    actor_id             TEXT,
+    parent_actor_id      TEXT,
+    request_id           TEXT,
+    parent_event_id      TEXT,
+    workflow_run_id      TEXT,
+    ontology_run_id      TEXT,
+    agent_session_id     TEXT,
+    action_run_id        INTEGER,
+    approval_id          INTEGER,
+    audit_event_id       TEXT,
+    input_hash           TEXT,
+    output_hash          TEXT,
+    summary_json         TEXT,
+    metadata_json        TEXT,
+    redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
+    retention_class      TEXT NOT NULL DEFAULT 'provenance_365d',
+    error                TEXT
+)
+"""
+
+_CREATE_PROVENANCE_LINKS = """
+CREATE TABLE IF NOT EXISTS provenance_links (
+    id                   TEXT PRIMARY KEY,
+    event_id             TEXT NOT NULL,
+    source_ref_type      TEXT NOT NULL,
+    source_ref_id        TEXT NOT NULL,
+    source_ref_version   TEXT,
+    target_ref_type      TEXT NOT NULL,
+    target_ref_id        TEXT NOT NULL,
+    target_ref_version   TEXT,
+    link_type            TEXT NOT NULL,
+    metadata_json        TEXT,
+    created_at           TEXT NOT NULL
+)
+"""
+
+_CREATE_SOURCE_RECORD_REFS = """
+CREATE TABLE IF NOT EXISTS source_record_refs (
+    record_ref_id        TEXT PRIMARY KEY,
+    adapter_run_event_id TEXT NOT NULL,
+    source_name          TEXT NOT NULL,
+    record_kind          TEXT NOT NULL,
+    record_key_hash      TEXT NOT NULL,
+    record_hash          TEXT NOT NULL,
+    as_of                TEXT,
+    summary_json         TEXT,
+    redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
+    retention_class      TEXT NOT NULL DEFAULT 'source_ref_90d',
+    created_at           TEXT NOT NULL
+)
+"""
+
+_CREATE_WORKFLOW_ARTIFACT_RECORDS = """
+CREATE TABLE IF NOT EXISTS workflow_artifact_records (
+    artifact_id          TEXT PRIMARY KEY,
+    workflow_run_id      TEXT NOT NULL,
+    artifact_key         TEXT NOT NULL,
+    artifact_index       INTEGER NOT NULL DEFAULT 0,
+    artifact_hash        TEXT NOT NULL,
+    summary_json         TEXT,
+    approval_id          INTEGER,
+    provenance_event_id  TEXT,
+    redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
+    retention_class      TEXT NOT NULL DEFAULT 'workflow_artifact_365d',
+    created_at           TEXT NOT NULL
+)
+"""
+
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_catalysts_ticker ON catalysts(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_kill_conditions_ticker ON kill_conditions(ticker)",
@@ -432,6 +514,21 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_audit_events_action_time ON audit_events(action_name, occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_object_time ON audit_events(object_type, object_id, occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_status_time ON audit_events(status, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_type_time ON provenance_events(event_type, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_workflow ON provenance_events(workflow_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_ontology ON provenance_events(ontology_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_agent_session ON provenance_events(agent_session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_action_run ON provenance_events(action_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_approval ON provenance_events(approval_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_parent ON provenance_events(parent_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_links_event ON provenance_links(event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_links_source ON provenance_links(source_ref_type, source_ref_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_links_target ON provenance_links(target_ref_type, target_ref_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_links_type_time ON provenance_links(link_type, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_source_record_refs_adapter ON source_record_refs(adapter_run_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_record_refs_source ON source_record_refs(source_name, record_kind)",
+    "CREATE INDEX IF NOT EXISTS idx_workflow_artifact_records_run ON workflow_artifact_records(workflow_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_workflow_artifact_records_approval ON workflow_artifact_records(approval_id)",
 ]
 
 # ---------------------------------------------------------------------------
@@ -496,6 +593,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_ACTION_EVENTS,
         _CREATE_RECOMMENDATIONS,
         _CREATE_AUDIT_EVENTS,
+        _CREATE_PROVENANCE_EVENTS,
+        _CREATE_PROVENANCE_LINKS,
+        _CREATE_SOURCE_RECORD_REFS,
+        _CREATE_WORKFLOW_ARTIFACT_RECORDS,
     ]:
         conn.execute(stmt)
     _ensure_sqlite_columns(conn)
@@ -549,6 +650,9 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "action_input_hash": "TEXT",
             "request_schema_name": "TEXT",
             "request_schema_version": "INTEGER",
+            "provenance_event_id": "TEXT",
+            "origin_provenance_event_id": "TEXT",
+            "origin_artifact_id": "TEXT",
         },
     )
     _add_missing(
@@ -557,6 +661,27 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "action_schema_name": "TEXT",
             "request_schema_name": "TEXT",
             "request_schema_version": "INTEGER",
+            "provenance_event_id": "TEXT",
+        },
+    )
+    _add_missing(
+        "workflow_runs",
+        {
+            "provenance_event_id": "TEXT",
+        },
+    )
+    _add_missing(
+        "source_record_refs",
+        {
+            "redaction_policy": "TEXT NOT NULL DEFAULT 'audit_summary_v1'",
+            "retention_class": "TEXT NOT NULL DEFAULT 'source_ref_90d'",
+        },
+    )
+    _add_missing(
+        "workflow_artifact_records",
+        {
+            "redaction_policy": "TEXT NOT NULL DEFAULT 'audit_summary_v1'",
+            "retention_class": "TEXT NOT NULL DEFAULT 'workflow_artifact_365d'",
         },
     )
     conn.execute(
@@ -986,6 +1111,601 @@ def prune_audit_events(*, retention_days: int = 365, batch_size: int = 5000) -> 
     return deleted
 
 
+# ---------------------------------------------------------------------------
+# Provenance Events
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_EVENT_JSON_FIELDS = ("summary_json", "metadata_json")
+_PROVENANCE_LINK_JSON_FIELDS = ("metadata_json",)
+_SOURCE_RECORD_REF_JSON_FIELDS = ("summary_json",)
+_WORKFLOW_ARTIFACT_JSON_FIELDS = ("summary_json",)
+
+
+def _parse_provenance_event_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    for field in _PROVENANCE_EVENT_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["summary"] = d.get("summary_json")
+    d["metadata"] = d.get("metadata_json")
+    return d
+
+
+def _parse_provenance_link_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    for field in _PROVENANCE_LINK_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["metadata"] = d.get("metadata_json")
+    return d
+
+
+def _parse_source_record_ref_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    for field in _SOURCE_RECORD_REF_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["summary"] = d.get("summary_json")
+    return d
+
+
+def _parse_workflow_artifact_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    for field in _WORKFLOW_ARTIFACT_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["summary"] = d.get("summary_json")
+    return d
+
+
+def _provenance_timeline(
+    *,
+    events: list[dict],
+    links: list[dict],
+    source_records: list[dict],
+    workflow_artifacts: list[dict],
+) -> list[dict[str, Any]]:
+    timeline: list[dict[str, Any]] = []
+    for event in events:
+        timestamp = str(event.get("started_at") or event.get("completed_at") or "")
+        timeline.append(
+            {
+                "kind": "event",
+                "timestamp": timestamp,
+                "id": event.get("id"),
+                "label": event.get("event_name"),
+                "event_type": event.get("event_type"),
+                "status": event.get("status"),
+                "summary": event.get("summary"),
+            }
+        )
+    for link in links:
+        timeline.append(
+            {
+                "kind": "link",
+                "timestamp": str(link.get("created_at") or ""),
+                "id": link.get("id"),
+                "label": link.get("link_type"),
+                "source_ref_type": link.get("source_ref_type"),
+                "source_ref_id": link.get("source_ref_id"),
+                "target_ref_type": link.get("target_ref_type"),
+                "target_ref_id": link.get("target_ref_id"),
+            }
+        )
+    for record in source_records:
+        timeline.append(
+            {
+                "kind": "source_record",
+                "timestamp": str(record.get("created_at") or record.get("as_of") or ""),
+                "id": record.get("record_ref_id"),
+                "label": record.get("record_kind"),
+                "source_name": record.get("source_name"),
+                "summary": record.get("summary"),
+            }
+        )
+    for artifact in workflow_artifacts:
+        timeline.append(
+            {
+                "kind": "workflow_artifact",
+                "timestamp": str(artifact.get("created_at") or ""),
+                "id": artifact.get("artifact_id"),
+                "label": artifact.get("artifact_key"),
+                "workflow_run_id": artifact.get("workflow_run_id"),
+                "approval_id": artifact.get("approval_id"),
+                "summary": artifact.get("summary"),
+            }
+        )
+    timeline.sort(
+        key=lambda row: (str(row.get("timestamp") or ""), str(row.get("kind") or ""), str(row.get("id") or ""))
+    )
+    return timeline
+
+
+def upsert_provenance_event(
+    *,
+    event_id: str | None = None,
+    event_type: str,
+    event_name: str,
+    status: str = "started",
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    actor_type: str | None = None,
+    actor_id: str | None = None,
+    parent_actor_id: str | None = None,
+    request_id: str | None = None,
+    parent_event_id: str | None = None,
+    workflow_run_id: str | None = None,
+    ontology_run_id: str | None = None,
+    agent_session_id: str | None = None,
+    action_run_id: int | None = None,
+    approval_id: int | None = None,
+    audit_event_id: str | None = None,
+    input_hash: str | None = None,
+    output_hash: str | None = None,
+    summary: Any | None = None,
+    metadata: Any | None = None,
+    redaction_policy: str = "audit_summary_v1",
+    retention_class: str = "provenance_365d",
+    error: str | None = None,
+) -> dict:
+    """Insert or update one provenance event.
+
+    This is intentionally plain storage. Redaction and hashing are handled by
+    api.provenance before values reach this function.
+    """
+
+    conn = _get_conn()
+    eid = event_id or f"pv:{uuid.uuid4().hex}"
+    now = _now()
+    params = {
+        "id": eid,
+        "event_type": event_type,
+        "event_name": event_name,
+        "status": status,
+        "started_at": started_at or now,
+        "completed_at": completed_at,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "parent_actor_id": parent_actor_id,
+        "request_id": request_id,
+        "parent_event_id": parent_event_id,
+        "workflow_run_id": workflow_run_id,
+        "ontology_run_id": ontology_run_id,
+        "agent_session_id": agent_session_id,
+        "action_run_id": action_run_id,
+        "approval_id": approval_id,
+        "audit_event_id": audit_event_id,
+        "input_hash": input_hash,
+        "output_hash": output_hash,
+        "summary_json": _json_or_none(summary),
+        "metadata_json": _json_or_none(metadata),
+        "redaction_policy": redaction_policy,
+        "retention_class": retention_class,
+        "error": str(error)[:1000] if error is not None else None,
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    updates = ", ".join(f"{column} = excluded.{column}" for column in params if column != "id")
+    with _lock:
+        conn.execute(
+            f"INSERT INTO provenance_events ({columns}) VALUES ({placeholders}) "
+            f"ON CONFLICT(id) DO UPDATE SET {updates}",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM provenance_events WHERE id = ?", (eid,)).fetchone()
+    return _parse_provenance_event_row(row)
+
+
+def finish_provenance_event(
+    event_id: str,
+    *,
+    status: str,
+    completed_at: str | None = None,
+    output_hash: str | None = None,
+    summary: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+) -> dict | None:
+    conn = _get_conn()
+    now = completed_at or _now()
+    with _lock:
+        conn.execute(
+            """
+            UPDATE provenance_events
+            SET status = ?,
+                completed_at = ?,
+                output_hash = COALESCE(?, output_hash),
+                summary_json = COALESCE(?, summary_json),
+                metadata_json = COALESCE(?, metadata_json),
+                error = ?
+            WHERE id = ?
+            """,
+            (
+                status,
+                now,
+                output_hash,
+                _json_or_none(summary),
+                _json_or_none(metadata),
+                str(error)[:1000] if error is not None else None,
+                event_id,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM provenance_events WHERE id = ?", (event_id,)).fetchone()
+    return _parse_provenance_event_row(row) if row else None
+
+
+def upsert_provenance_link(
+    *,
+    link_id: str | None = None,
+    event_id: str,
+    source_ref_type: str,
+    source_ref_id: str,
+    target_ref_type: str,
+    target_ref_id: str,
+    link_type: str,
+    source_ref_version: str | None = None,
+    target_ref_version: str | None = None,
+    metadata: Any | None = None,
+    created_at: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    lid = (
+        link_id
+        or f"pvlink:{_json_hash([event_id, source_ref_type, source_ref_id, target_ref_type, target_ref_id, link_type, source_ref_version, target_ref_version])}"
+    )
+    now = created_at or _now()
+    params = {
+        "id": lid,
+        "event_id": event_id,
+        "source_ref_type": source_ref_type,
+        "source_ref_id": source_ref_id,
+        "source_ref_version": source_ref_version,
+        "target_ref_type": target_ref_type,
+        "target_ref_id": target_ref_id,
+        "target_ref_version": target_ref_version,
+        "link_type": link_type,
+        "metadata_json": _json_or_none(metadata),
+        "created_at": now,
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    updates = ", ".join(f"{column} = excluded.{column}" for column in params if column != "id")
+    with _lock:
+        conn.execute(
+            f"INSERT INTO provenance_links ({columns}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {updates}",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM provenance_links WHERE id = ?", (lid,)).fetchone()
+    return _parse_provenance_link_row(row)
+
+
+def upsert_source_record_ref(
+    *,
+    record_ref_id: str,
+    adapter_run_event_id: str,
+    source_name: str,
+    record_kind: str,
+    record_key_hash: str,
+    record_hash: str,
+    as_of: str | None = None,
+    summary: Any | None = None,
+    redaction_policy: str = "audit_summary_v1",
+    retention_class: str = "source_ref_90d",
+    created_at: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    now = created_at or _now()
+    params = {
+        "record_ref_id": record_ref_id,
+        "adapter_run_event_id": adapter_run_event_id,
+        "source_name": source_name,
+        "record_kind": record_kind,
+        "record_key_hash": record_key_hash,
+        "record_hash": record_hash,
+        "as_of": as_of,
+        "summary_json": _json_or_none(summary),
+        "redaction_policy": redaction_policy,
+        "retention_class": retention_class,
+        "created_at": now,
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    updates = ", ".join(f"{column} = excluded.{column}" for column in params if column != "record_ref_id")
+    with _lock:
+        conn.execute(
+            f"INSERT INTO source_record_refs ({columns}) VALUES ({placeholders}) "
+            f"ON CONFLICT(record_ref_id) DO UPDATE SET {updates}",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM source_record_refs WHERE record_ref_id = ?", (record_ref_id,)).fetchone()
+    return _parse_source_record_ref_row(row)
+
+
+def upsert_workflow_artifact_record(
+    *,
+    artifact_id: str,
+    workflow_run_id: str,
+    artifact_key: str,
+    artifact_index: int = 0,
+    artifact_hash: str,
+    summary: Any | None = None,
+    approval_id: int | None = None,
+    provenance_event_id: str | None = None,
+    redaction_policy: str = "audit_summary_v1",
+    retention_class: str = "workflow_artifact_365d",
+    created_at: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    now = created_at or _now()
+    params = {
+        "artifact_id": artifact_id,
+        "workflow_run_id": workflow_run_id,
+        "artifact_key": artifact_key,
+        "artifact_index": int(artifact_index),
+        "artifact_hash": artifact_hash,
+        "summary_json": _json_or_none(summary),
+        "approval_id": approval_id,
+        "provenance_event_id": provenance_event_id,
+        "redaction_policy": redaction_policy,
+        "retention_class": retention_class,
+        "created_at": now,
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    updates = ", ".join(f"{column} = excluded.{column}" for column in params if column != "artifact_id")
+    with _lock:
+        conn.execute(
+            f"INSERT INTO workflow_artifact_records ({columns}) VALUES ({placeholders}) "
+            f"ON CONFLICT(artifact_id) DO UPDATE SET {updates}",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM workflow_artifact_records WHERE artifact_id = ?", (artifact_id,)).fetchone()
+    return _parse_workflow_artifact_row(row)
+
+
+def set_workflow_run_provenance_event(run_id: str, provenance_event_id: str | None) -> None:
+    conn = _get_conn()
+    with _lock:
+        conn.execute("UPDATE workflow_runs SET provenance_event_id = ? WHERE run_id = ?", (provenance_event_id, run_id))
+        conn.commit()
+
+
+def set_action_run_provenance_event(action_run_id: int, provenance_event_id: str | None) -> None:
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE action_runs SET provenance_event_id = ? WHERE id = ?", (provenance_event_id, action_run_id)
+        )
+        conn.commit()
+
+
+def set_pending_approval_provenance(
+    approval_id: int,
+    *,
+    provenance_event_id: str | None = None,
+    origin_provenance_event_id: str | None = None,
+    origin_artifact_id: str | None = None,
+) -> None:
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            """
+            UPDATE pending_approvals
+            SET provenance_event_id = COALESCE(?, provenance_event_id),
+                origin_provenance_event_id = COALESCE(?, origin_provenance_event_id),
+                origin_artifact_id = COALESCE(?, origin_artifact_id)
+            WHERE id = ?
+            """,
+            (provenance_event_id, origin_provenance_event_id, origin_artifact_id, approval_id),
+        )
+        conn.commit()
+
+
+def get_provenance_event(event_id: str) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM provenance_events WHERE id = ?", (event_id,)).fetchone()
+    return _parse_provenance_event_row(row) if row else None
+
+
+def get_provenance_trace(
+    *,
+    workflow_run_id: str | None = None,
+    ontology_run_id: str | None = None,
+    approval_id: int | None = None,
+    action_run_id: int | None = None,
+    agent_session_id: str | None = None,
+    event_id: str | None = None,
+    ref_type: str | None = None,
+    ref_id: str | None = None,
+    max_depth: int = 4,
+) -> dict:
+    conn = _get_conn()
+    safe_depth = max(1, min(int(max_depth), 8))
+    event_ids: set[str] = set()
+    refs: set[tuple[str, str]] = set()
+    if ref_type and ref_id:
+        refs.add((str(ref_type), str(ref_id)))
+    if workflow_run_id:
+        refs.add(("workflow_run", str(workflow_run_id)))
+    if ontology_run_id:
+        refs.add(("ontology_run", str(ontology_run_id)))
+    if approval_id is not None:
+        refs.add(("approval", str(approval_id)))
+    if action_run_id is not None:
+        refs.add(("action_run", str(action_run_id)))
+    with _lock:
+        if event_id:
+            event_ids.add(event_id)
+        for column, value in (
+            ("workflow_run_id", workflow_run_id),
+            ("ontology_run_id", ontology_run_id),
+            ("approval_id", approval_id),
+            ("action_run_id", action_run_id),
+            ("agent_session_id", agent_session_id),
+        ):
+            if value is None:
+                continue
+            rows = conn.execute(f"SELECT id FROM provenance_events WHERE {column} = ?", (value,)).fetchall()
+            event_ids.update(str(row["id"]) for row in rows)
+
+        links_by_id: dict[str, dict] = {}
+        for _ in range(safe_depth):
+            next_event_ids = set(event_ids)
+            next_refs = set(refs)
+            if event_ids:
+                placeholders = ", ".join("?" for _ in event_ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT id, parent_event_id
+                    FROM provenance_events
+                    WHERE parent_event_id IN ({placeholders})
+                       OR id IN (
+                            SELECT parent_event_id
+                            FROM provenance_events
+                            WHERE id IN ({placeholders})
+                              AND parent_event_id IS NOT NULL
+                       )
+                    """,
+                    tuple(event_ids) + tuple(event_ids),
+                ).fetchall()
+                for row in rows:
+                    next_event_ids.add(str(row["id"]))
+                    if row["parent_event_id"]:
+                        next_event_ids.add(str(row["parent_event_id"]))
+                for row in conn.execute(
+                    f"SELECT * FROM provenance_links WHERE event_id IN ({placeholders})",
+                    tuple(event_ids),
+                ).fetchall():
+                    link = _parse_provenance_link_row(row)
+                    links_by_id[str(link["id"])] = link
+                    next_refs.add((str(link["source_ref_type"]), str(link["source_ref_id"])))
+                    next_refs.add((str(link["target_ref_type"]), str(link["target_ref_id"])))
+            for rtype, rid in refs:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM provenance_links
+                    WHERE (source_ref_type = ? AND source_ref_id = ?)
+                       OR (target_ref_type = ? AND target_ref_id = ?)
+                    """,
+                    (rtype, rid, rtype, rid),
+                ).fetchall()
+                for row in rows:
+                    link = _parse_provenance_link_row(row)
+                    links_by_id[str(link["id"])] = link
+                    next_event_ids.add(str(link["event_id"]))
+                    next_refs.add((str(link["source_ref_type"]), str(link["source_ref_id"])))
+                    next_refs.add((str(link["target_ref_type"]), str(link["target_ref_id"])))
+            if next_event_ids == event_ids and next_refs == refs:
+                break
+            event_ids, refs = next_event_ids, next_refs
+
+        events: list[dict] = []
+        if event_ids:
+            placeholders = ", ".join("?" for _ in event_ids)
+            rows = conn.execute(
+                f"SELECT * FROM provenance_events WHERE id IN ({placeholders}) ORDER BY started_at ASC, id ASC",
+                tuple(event_ids),
+            ).fetchall()
+            events = [_parse_provenance_event_row(row) for row in rows]
+
+        source_records: list[dict] = []
+        if event_ids:
+            placeholders = ", ".join("?" for _ in event_ids)
+            rows = conn.execute(
+                f"SELECT * FROM source_record_refs WHERE adapter_run_event_id IN ({placeholders}) ORDER BY created_at ASC",
+                tuple(event_ids),
+            ).fetchall()
+            source_records = [_parse_source_record_ref_row(row) for row in rows]
+
+        artifact_clauses: list[str] = []
+        artifact_params: list[Any] = []
+        if workflow_run_id:
+            artifact_clauses.append("workflow_run_id = ?")
+            artifact_params.append(workflow_run_id)
+        if approval_id is not None:
+            artifact_clauses.append("approval_id = ?")
+            artifact_params.append(approval_id)
+        if event_ids:
+            placeholders = ", ".join("?" for _ in event_ids)
+            artifact_clauses.append(f"provenance_event_id IN ({placeholders})")
+            artifact_params.extend(event_ids)
+        artifacts: list[dict] = []
+        if artifact_clauses:
+            rows = conn.execute(
+                f"SELECT * FROM workflow_artifact_records WHERE {' OR '.join(artifact_clauses)} ORDER BY created_at ASC",
+                tuple(artifact_params),
+            ).fetchall()
+            artifacts = [_parse_workflow_artifact_row(row) for row in rows]
+
+    links = sorted(links_by_id.values(), key=lambda row: (str(row.get("created_at") or ""), str(row.get("id") or "")))
+    return {
+        "events": events,
+        "links": links,
+        "source_records": source_records,
+        "workflow_artifacts": artifacts,
+        "timeline": _provenance_timeline(
+            events=events,
+            links=links,
+            source_records=source_records,
+            workflow_artifacts=artifacts,
+        ),
+        "seed": {
+            "workflow_run_id": workflow_run_id,
+            "ontology_run_id": ontology_run_id,
+            "approval_id": approval_id,
+            "action_run_id": action_run_id,
+            "agent_session_id": agent_session_id,
+            "event_id": event_id,
+            "ref_type": ref_type,
+            "ref_id": ref_id,
+        },
+    }
+
+
+def provenance_summary(
+    *,
+    workflow_run_id: str | None = None,
+    ontology_run_id: str | None = None,
+    approval_id: int | None = None,
+    action_run_id: int | None = None,
+    agent_session_id: str | None = None,
+    event_id: str | None = None,
+    ref_type: str | None = None,
+    ref_id: str | None = None,
+) -> dict:
+    trace = get_provenance_trace(
+        workflow_run_id=workflow_run_id,
+        ontology_run_id=ontology_run_id,
+        approval_id=approval_id,
+        action_run_id=action_run_id,
+        agent_session_id=agent_session_id,
+        event_id=event_id,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        max_depth=2,
+    )
+    events = trace["events"]
+    return {
+        "event_count": len(events),
+        "link_count": len(trace["links"]),
+        "source_record_count": len(trace["source_records"]),
+        "workflow_artifact_count": len(trace["workflow_artifacts"]),
+        "events": [
+            {
+                "id": row.get("id"),
+                "event_type": row.get("event_type"),
+                "event_name": row.get("event_name"),
+                "status": row.get("status"),
+                "started_at": row.get("started_at"),
+                "completed_at": row.get("completed_at"),
+            }
+            for row in events[:20]
+        ],
+    }
+
+
 def _emit_core_audit(
     action_name: str,
     *,
@@ -1205,6 +1925,32 @@ def create_workflow_run(
         },
         source_lineage={"run_id": rid},
     )
+    try:
+        from api import provenance
+
+        event_id = provenance.deterministic_id("pv:workflow_run", rid)
+        provenance.start_event(
+            event_id=event_id,
+            event_type="workflow_run",
+            event_name=workflow_name,
+            workflow_run_id=rid,
+            summary={
+                "workflow_name": workflow_name,
+                "ticker": ticker.upper() if ticker else None,
+                "status": "running",
+            },
+        )
+        set_workflow_run_provenance_event(rid, event_id)
+        provenance.link_refs(
+            event_id=event_id,
+            source_ref_type="workflow",
+            source_ref_id=workflow_name,
+            target_ref_type="workflow_run",
+            target_ref_id=rid,
+            link_type="executed_as",
+        )
+    except Exception:
+        pass
     return {"run_id": rid, "workflow_name": workflow_name, "ticker": ticker, "status": "running", "started_at": now}
 
 
@@ -1230,8 +1976,10 @@ def complete_workflow_run(
     d = _require_row_dict(row)
     _parse_json_field(d, "artifacts")
     _parse_json_field(d, "tool_sections")
-    sections = d.get("tool_sections") if isinstance(d.get("tool_sections"), list) else []
-    artifact_payload = d.get("artifacts") if isinstance(d.get("artifacts"), (dict, list)) else {}
+    raw_sections = d.get("tool_sections")
+    sections: list[Any] = raw_sections if isinstance(raw_sections, list) else []
+    raw_artifacts = d.get("artifacts")
+    artifact_payload: dict[Any, Any] | list[Any] = raw_artifacts if isinstance(raw_artifacts, (dict, list)) else {}
     artifact_count = len(artifact_payload) if isinstance(artifact_payload, dict) else len(artifact_payload)
     _emit_core_audit(
         "workflow.run.completed",
@@ -1247,6 +1995,30 @@ def complete_workflow_run(
         },
         source_lineage={"run_id": run_id},
     )
+    try:
+        from api import provenance
+
+        event_id = str(d.get("provenance_event_id") or provenance.deterministic_id("pv:workflow_run", run_id))
+        provenance.finish_event(
+            event_id,
+            status="succeeded",
+            output_value={
+                "run_id": run_id,
+                "artifact_count": artifact_count,
+                "tool_section_count": len(sections),
+                "synthesis_hash": _json_hash(synthesis),
+            },
+            summary={
+                "workflow_name": d.get("workflow_name"),
+                "ticker": d.get("ticker"),
+                "status": "completed",
+                "tool_section_count": len(sections),
+                "artifact_count": artifact_count,
+            },
+            metadata={"synthesis_hash": _json_hash(synthesis)},
+        )
+    except Exception:
+        pass
     return d
 
 
@@ -1271,6 +2043,18 @@ def fail_workflow_run(run_id: str, error: str) -> dict:
         source_lineage={"run_id": run_id},
         error=error,
     )
+    try:
+        from api import provenance
+
+        event_id = str(d.get("provenance_event_id") or provenance.deterministic_id("pv:workflow_run", run_id))
+        provenance.finish_event(
+            event_id,
+            status="failed",
+            summary={"workflow_name": d.get("workflow_name"), "ticker": d.get("ticker"), "status": "failed"},
+            error=error,
+        )
+    except Exception:
+        pass
     return d
 
 
@@ -1782,7 +2566,7 @@ def normalize_source_requirements(value: Any) -> list[dict[str, Any]]:
             required = bool(required_raw)
         freshness_raw = item.get("freshness_days")
         freshness_days = None
-        if freshness_raw not in (None, ""):
+        if freshness_raw is not None and freshness_raw != "":
             try:
                 freshness_days = max(0, int(freshness_raw))
             except (TypeError, ValueError):
@@ -2526,6 +3310,45 @@ def create_pending_approval(
         },
         source_lineage={"source_type": source_type, "source_id": source_id, "action_input_hash": action_input_hash},
     )
+    try:
+        from api import provenance
+
+        event_id = provenance.deterministic_id("pv:approval", result["id"])
+        approval_id = int(cast(Any, result["id"]))
+        provenance.start_event(
+            event_id=event_id,
+            event_type="approval",
+            event_name="approval.created",
+            approval_id=approval_id,
+            input_value=proposed_change,
+            summary={
+                "approval_id": result["id"],
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "ticker": result["ticker"],
+                "action_id": action_id,
+                "status": "pending",
+            },
+            metadata={
+                "source_type": source_type,
+                "source_id": source_id,
+                "action_input_hash": action_input_hash,
+            },
+        )
+        provenance.finish_event(event_id, status="succeeded", output_value=result, summary={"status": "pending"})
+        set_pending_approval_provenance(approval_id, provenance_event_id=event_id)
+        if source_type and source_id:
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type=source_type,
+                source_ref_id=str(source_id),
+                target_ref_type="approval",
+                target_ref_id=str(result["id"]),
+                link_type="proposed",
+                metadata={"action_id": action_id, "entity_type": entity_type},
+            )
+    except Exception:
+        pass
     return result
 
 
@@ -2658,6 +3481,33 @@ def resolve_approval(
         input_payload={"approval_id": approval_id, "status": status, "resolved_note": resolved_note},
     )
     run_id = int(run["id"])
+    provenance_event_id: str | None = None
+    try:
+        from api import provenance
+
+        provenance_event_id = provenance.deterministic_id("pv:action_run", run_id)
+        provenance.start_event(
+            event_id=provenance_event_id,
+            event_type="action_run",
+            event_name="resolve_approval",
+            actor={"actor_type": actor_type, "actor_id": actor_id},
+            action_run_id=run_id,
+            approval_id=approval_id,
+            input_value={"approval_id": approval_id, "status": status, "resolved_note": resolved_note},
+            summary={"action_id": "resolve_approval", "approval_id": approval_id, "status": status},
+            metadata={"parent_action_run_id": parent_action_run_id},
+        )
+        set_action_run_provenance_event(run_id, provenance_event_id)
+        provenance.link_refs(
+            event_id=provenance_event_id,
+            source_ref_type="approval",
+            source_ref_id=str(approval_id),
+            target_ref_type="action_run",
+            target_ref_id=str(run_id),
+            link_type="resolved_by",
+        )
+    except Exception:
+        provenance_event_id = None
     record_action_event(run_id, "start", payload={"approval_id": approval_id, "status": status})
     try:
         result = _resolve_approval_impl(approval_id, status, resolved_note, parent_action_run_id=run_id)
@@ -2665,6 +3515,17 @@ def resolve_approval(
         error = _approval_error_message(exc)
         record_action_event(run_id, "error", message=error)
         complete_action_run(run_id, status="failed", error=error)
+        try:
+            from api import provenance
+
+            provenance.finish_event(
+                provenance_event_id,
+                status="failed",
+                summary={"approval_id": approval_id, "requested_status": status},
+                error=error,
+            )
+        except Exception:
+            pass
         _emit_core_audit(
             "approval.resolve.failed",
             status="failed",
@@ -2675,6 +3536,21 @@ def resolve_approval(
         raise
     record_action_event(run_id, "complete", payload={"status": result.get("status")})
     complete_action_run(run_id, status="succeeded", output_payload=result)
+    try:
+        from api import provenance
+
+        provenance.finish_event(
+            provenance_event_id,
+            status="succeeded",
+            output_value=result,
+            summary={
+                "approval_id": approval_id,
+                "status": result.get("status"),
+                "application_status": result.get("application_status"),
+            },
+        )
+    except Exception:
+        pass
     _emit_core_audit(
         "approval.resolved",
         status=str(result.get("status") or status),
@@ -3248,7 +4124,11 @@ def _handle_news_digest_delete_approval(
     digest_id = validate_digest_id(str(change.get("digest_id") or ""))
     deleted = delete_digest(digest_id)
     if deleted:
-        callbacks.append(lambda digest_id=digest_id: _delete_digest_index_best_effort(digest_id))
+
+        def delete_digest_index() -> None:
+            _delete_digest_index_best_effort(digest_id)
+
+        callbacks.append(delete_digest_index)
 
 
 _APPROVAL_SIDE_EFFECT_HANDLERS: dict[str, ApprovalSideEffectHandler] = {

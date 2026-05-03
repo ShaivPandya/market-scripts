@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import HTTPException
 
 from api.exceptions import ConflictError, DataFetchError, NotFoundError, ValidationError
@@ -15,12 +17,12 @@ from portfolio.action_registry import (
 
 def execute_api_action(
     action_id: str,
-    payload: dict,
+    payload: dict[str, Any],
     *,
     source_id: str,
     validation_status_code: int = 422,
     data_fetch_source: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     try:
         return execute_action(
             action_id,

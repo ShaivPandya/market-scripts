@@ -6,6 +6,10 @@ This module owns two related registries:
   state-changing operations
 * agent tool exposures, which provide the AI-safe callable surface derived from
   typed inputs plus access and approval rules
+
+Despite living under ``ontology/``, state-changing domain actions execute
+against the canonical backing stores in ``portfolio_db``, ``thesis_db``, and
+``core_db``. Ontology snapshots only materialize those writes after ingestion.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -82,6 +86,7 @@ class ActionContext:
     approval_id: int | None = None
     parent_action_run_id: int | None = None
     action_run_id: int | None = None
+    provenance_event_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -541,6 +546,62 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
         input_payload=raw_input,
     )
     run_id = int(run["id"])
+    try:
+        from api import provenance
+
+        event_id = provenance.deterministic_id("pv:action_run", run_id)
+        provenance.start_event(
+            event_id=event_id,
+            event_type="action_run",
+            event_name=action.action_id,
+            actor=context,
+            parent_event_id=context.provenance_event_id,
+            action_run_id=run_id,
+            approval_id=context.approval_id,
+            input_value=raw_input,
+            summary={
+                "action_id": action.action_id,
+                "action_schema_name": action.action_id,
+                "action_schema_version": action.schema_version,
+                "actor_type": context.actor_type,
+            },
+            metadata={
+                "input_hash": input_hash,
+                "source_type": context.source_type,
+                "source_id": context.source_id,
+                "parent_action_run_id": context.parent_action_run_id,
+            },
+        )
+        core_db.set_action_run_provenance_event(run_id, event_id)
+        provenance.link_refs(
+            event_id=event_id,
+            source_ref_type="domain_action",
+            source_ref_id=action.action_id,
+            source_ref_version=str(action.schema_version),
+            target_ref_type="action_run",
+            target_ref_id=str(run_id),
+            link_type="executed_as",
+        )
+        if context.source_type and context.source_id:
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type=context.source_type,
+                source_ref_id=str(context.source_id),
+                target_ref_type="action_run",
+                target_ref_id=str(run_id),
+                link_type="triggered",
+            )
+        if context.approval_id is not None:
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type="approval",
+                source_ref_id=str(context.approval_id),
+                target_ref_type="action_run",
+                target_ref_id=str(run_id),
+                link_type="approved_execution",
+            )
+    except Exception:
+        pass
     core_db.record_action_event(run_id, "start", payload={"action_id": action.action_id})
     _emit_domain_audit(
         action,
@@ -592,7 +653,7 @@ def _emit_domain_audit(
     metadata: Any | None = None,
     error: str | None = None,
 ) -> None:
-    emit_audit_event(
+    audit_event = emit_audit_event(
         action_name,
         "domain_action",
         status,
@@ -604,6 +665,161 @@ def _emit_domain_audit(
         metadata=metadata,
         error=error,
     )
+    if action_run_id is not None and audit_event:
+        try:
+            from api import provenance
+
+            provenance.link_refs(
+                event_id=_action_run_provenance_id(action_run_id),
+                source_ref_type="action_run",
+                source_ref_id=str(action_run_id),
+                target_ref_type="audit_event",
+                target_ref_id=str(audit_event.get("event_id") or audit_event.get("id")),
+                link_type="audited_by",
+                metadata={"action_name": action_name, "status": status},
+            )
+        except Exception:
+            pass
+
+
+def _action_run_provenance_id(run_id: int) -> str:
+    try:
+        from api import provenance
+
+        return provenance.deterministic_id("pv:action_run", run_id)
+    except Exception:
+        return f"pv:action_run:{run_id}"
+
+
+def _finish_action_provenance(
+    run_id: int,
+    *,
+    status: str,
+    output_value: Any | None = None,
+    summary: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+) -> None:
+    try:
+        from api import provenance
+
+        provenance.finish_event(
+            _action_run_provenance_id(run_id),
+            status=status,
+            output_value=output_value,
+            summary=summary,
+            metadata=metadata,
+            error=error,
+        )
+    except Exception:
+        pass
+
+
+def _link_action_result_entities(
+    action: DomainAction,
+    context: ActionContext,
+    run_id: int,
+    output: dict[str, Any],
+    input_payload: dict[str, Any],
+) -> None:
+    try:
+        from api import provenance
+
+        event_id = _action_run_provenance_id(run_id)
+        for ref_type, ref_id, link_type in _action_result_refs(action.action_id, output, input_payload):
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type=provenance.REF_ACTION_RUN,
+                source_ref_id=str(run_id),
+                target_ref_type=ref_type,
+                target_ref_id=ref_id,
+                link_type=link_type,
+                metadata={
+                    "action_id": action.action_id,
+                    "approval_id": context.approval_id,
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                },
+            )
+    except Exception:
+        logger.debug(
+            "Failed to link action result entities run_id=%s action=%s", run_id, action.action_id, exc_info=True
+        )
+
+
+def _action_result_refs(
+    action_id: str,
+    output: dict[str, Any],
+    input_payload: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    try:
+        from api import provenance
+
+        produced = provenance.LINK_PRODUCED
+        updated = provenance.LINK_UPDATED
+        resolved = provenance.LINK_RESOLVED_BY
+    except Exception:
+        produced = "produced"
+        updated = "updated"
+        resolved = "resolved_by"
+
+    def _id(*keys: str) -> str | None:
+        for key in keys:
+            value = output.get(key)
+            if value is None:
+                value = input_payload.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+
+    def _ticker() -> str | None:
+        value = output.get("ticker") or input_payload.get("ticker")
+        return str(value).strip().upper() if value is not None and str(value).strip() else None
+
+    refs: list[tuple[str, str, str]] = []
+    if action_id == "update_portfolio_positions":
+        refs.append(("portfolio_positions", "current", updated))
+        for row in input_payload.get("positions") or []:
+            if isinstance(row, dict) and row.get("ticker"):
+                refs.append(("portfolio_position", str(row["ticker"]).strip().upper(), updated))
+    elif action_id == "update_hedge_positions":
+        refs.append(("hedge_positions", "current", updated))
+        for row in input_payload.get("positions") or []:
+            if isinstance(row, dict) and row.get("ticker"):
+                refs.append(("hedge_position", str(row["ticker"]).strip().upper(), updated))
+    elif action_id in {"change_thesis_status", "save_thesis_content"}:
+        if ticker := _ticker():
+            refs.append(("thesis", ticker, updated))
+    elif action_id == "save_evaluation":
+        if ticker := _ticker():
+            evaluated_at = _id("evaluated_at") or "latest"
+            refs.append(("thesis_evaluation", f"{ticker}:{evaluated_at}", produced))
+            refs.append(("thesis", ticker, updated))
+    elif action_id in {"create_catalyst", "update_catalyst_status"}:
+        if ref_id := _id("id", "catalyst_id"):
+            refs.append(("catalyst", ref_id, produced if action_id == "create_catalyst" else updated))
+    elif action_id in {"create_kill_condition", "update_kill_condition_status"}:
+        if ref_id := _id("id", "kill_condition_id"):
+            refs.append(("kill_condition", ref_id, produced if action_id == "create_kill_condition" else updated))
+    elif action_id in {"create_thesis_claim", "update_thesis_claim"}:
+        if ref_id := _id("id", "claim_id"):
+            refs.append(("thesis_claim", ref_id, produced if action_id == "create_thesis_claim" else updated))
+    elif action_id in {"create_action_item", "complete_action_item", "dismiss_action_item"}:
+        if ref_id := _id("id", "item_id"):
+            refs.append(("action_item", ref_id, produced if action_id == "create_action_item" else updated))
+    elif action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger"}:
+        if ref_id := _id("id", "trigger_id"):
+            refs.append(("watch_trigger", ref_id, produced if action_id == "create_watch_trigger" else updated))
+    elif action_id == "create_research_note":
+        if ref_id := _id("id"):
+            refs.append(("research_note", ref_id, produced))
+    elif action_id == "delete_portfolio_news_digest":
+        if ref_id := _id("digest_id"):
+            refs.append(("news_digest", ref_id, updated))
+    elif action_id == "resolve_approval":
+        if ref_id := _id("approval_id"):
+            refs.append(("approval", ref_id, resolved))
+    return refs
 
 
 def _audit_fail(
@@ -620,6 +836,13 @@ def _audit_fail(
 
     core_db.record_action_event(run_id, "error", message=message)
     core_db.complete_action_run(run_id, status="rolled_back" if rolled_back else "failed", error=message)
+    _finish_action_provenance(
+        run_id,
+        status="rolled_back" if rolled_back else "failed",
+        summary={"status": "rolled_back" if rolled_back else "failed"},
+        metadata={"audit_action_name": audit_action_name},
+        error=message,
+    )
     if action is not None and context is not None:
         _emit_domain_audit(
             action,
@@ -642,13 +865,11 @@ def execute_action(
 ) -> ActionResult:
     action = get_action(action_id)
     context = context or ActionContext()
-    audit_action = (
-        action
-        if input_schema_version in {None, action.schema_version}
-        else replace(action, schema_version=int(input_schema_version))
-    )
+    audit_action = action
+    if input_schema_version is not None and input_schema_version != action.schema_version:
+        audit_action = replace(action, schema_version=int(input_schema_version))
     run_id, _input_hash = _audit_start(audit_action, raw_input, context)
-    context = replace(context, action_run_id=run_id)
+    context = replace(context, action_run_id=run_id, provenance_event_id=_action_run_provenance_id(run_id))
 
     from portfolio import core_db
 
@@ -692,6 +913,14 @@ def execute_action(
 
         core_db.record_action_event(run_id, "complete", payload=result.output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=result.output)
+        _link_action_result_entities(action, context, run_id, result.output, normalized)
+        _finish_action_provenance(
+            run_id,
+            status="succeeded",
+            output_value=result.output,
+            summary={"status": "succeeded", **result.output},
+            metadata={"action_id": action.action_id, "action_schema_version": action.schema_version},
+        )
         _emit_domain_audit(
             action,
             context,
@@ -703,7 +932,8 @@ def execute_action(
         )
         return result
     except ActionError as exc:
-        if core_db.get_action_run(run_id).get("status") == "running":
+        action_run = core_db.get_action_run(run_id) or {}
+        if action_run.get("status") == "running":
             _audit_fail(
                 run_id,
                 exc.message,
@@ -717,7 +947,8 @@ def execute_action(
         raise
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
-        if core_db.get_action_run(run_id).get("status") == "running":
+        action_run = core_db.get_action_run(run_id) or {}
+        if action_run.get("status") == "running":
             _audit_fail(run_id, message, action=action, context=context)
         raise
 
@@ -741,6 +972,7 @@ def propose_action(
         execute_actor_types=action.propose_actor_types,
     )
     run_id, input_hash = _audit_start(proposal_action, raw_input, context)
+    proposal_event_id = _action_run_provenance_id(run_id)
 
     from portfolio import core_db
 
@@ -777,6 +1009,24 @@ def propose_action(
             action_schema_name=action.action_id,
             action_input_hash=input_hash,
         )
+        try:
+            from api import provenance
+
+            core_db.set_pending_approval_provenance(
+                int(approval["id"]),
+                origin_provenance_event_id=proposal_event_id,
+            )
+            provenance.link_refs(
+                event_id=proposal_event_id,
+                source_ref_type="action_run",
+                source_ref_id=str(run_id),
+                target_ref_type="approval",
+                target_ref_id=str(approval["id"]),
+                link_type="proposed",
+                metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
+            )
+        except Exception:
+            pass
         output = {
             "status": "pending_approval_created",
             "approval_id": approval["id"],
@@ -785,6 +1035,17 @@ def propose_action(
         }
         core_db.record_action_event(run_id, "approval_created", payload=output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=output)
+        _finish_action_provenance(
+            run_id,
+            status="succeeded",
+            output_value=output,
+            summary=output,
+            metadata={
+                "action_id": action.action_id,
+                "proposal_action_id": proposal_action.action_id,
+                "action_schema_version": action.schema_version,
+            },
+        )
         _emit_domain_audit(
             proposal_action,
             context,
@@ -818,7 +1079,7 @@ def propose_action(
         raise
 
 
-def _ensure_unique_tickers(rows: list[BaseModel]) -> None:
+def _ensure_unique_tickers(rows: Sequence[BaseModel]) -> None:
     seen: set[str] = set()
     for row in rows:
         ticker = str(row.ticker)  # type: ignore[attr-defined]
@@ -1626,7 +1887,7 @@ def _schema_annotation(schema: dict[str, Any] | None) -> Any:
     if kind == "boolean":
         return bool
     if kind == "array":
-        return list[_schema_annotation(schema.get("items") if isinstance(schema.get("items"), dict) else {})]
+        return list[Any]
     if kind == "object":
         return dict[str, Any]
     return str
@@ -1647,7 +1908,7 @@ def _input_model_from_schema(tool_name: str, schema: dict[str, Any]) -> type[Bas
             default = ...
         description = field_schema.get("description")
         fields[field_name] = (annotation, Field(default=default, description=description))
-    return create_model(_tool_model_name(tool_name), **fields)
+    return cast(type[BaseModel], create_model(_tool_model_name(tool_name), **cast(Any, fields)))
 
 
 def _output_spec_for_tool(tool_name: str, access_mode: ToolAccessMode) -> OutputSchemaSpec:
@@ -1765,7 +2026,13 @@ def _proposal_news_digest_delete_payload(model: BaseModel) -> dict[str, Any]:
     from portfolio.news_digests import get_digest
 
     payload = model.model_dump()
-    get_digest(str(payload["digest_id"]))
+    digest_id = str(payload["digest_id"])
+    try:
+        get_digest(digest_id)
+    except FileNotFoundError as exc:
+        raise ActionValidationError(f"Unknown news digest id: {digest_id}") from exc
+    except ValueError as exc:
+        raise ActionValidationError(str(exc) or "Invalid news digest id") from exc
     return {"digest_id": payload["digest_id"]}
 
 
@@ -1896,7 +2163,7 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'propose_action_item', 'description': 'Propose a new action item. This creates a pending approval that the user must approve before the action item is created. Use this for recommending trades, research tasks, or position adjustments.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol (optional for non-ticker-specific actions)'}, 'description': {'type': 'string', 'description': 'What needs to be done'}, 'action_type': {'type': 'string', 'description': 'Type: review|resize|research|exit|enter|hedge|other'}, 'urgency': {'type': 'string', 'description': 'Urgency: low|normal|high|urgent'}, 'reason': {'type': 'string', 'description': 'Why this action is recommended'}}, 'required': ['description', 'action_type', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose action', 'action item', 'propose action item'), 'selectable': True}
 {'name': 'propose_catalyst_status_change', 'description': 'Propose a catalyst status change. This creates a pending approval that the user must approve before the catalyst status is actually updated. Use this when evidence suggests a catalyst has played out, failed, or been superseded.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol'}, 'catalyst_id': {'type': 'integer', 'description': 'ID of the catalyst to update'}, 'new_status': {'type': 'string', 'description': 'Proposed new status: pending|played_out|failed|superseded'}, 'evidence': {'type': 'string', 'description': 'Evidence supporting the status change'}, 'reason': {'type': 'string', 'description': 'Explanation for the proposed change'}}, 'required': ['ticker', 'catalyst_id', 'new_status', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose catalyst status', 'propose catalyst status change'), 'selectable': True}
 {'name': 'propose_kill_condition_status_change', 'description': 'Propose a kill condition status change. This creates a pending approval that the user must approve before the kill condition status is actually updated. Use this when a kill condition has been triggered or should be retired.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol'}, 'kill_condition_id': {'type': 'integer', 'description': 'ID of the kill condition to update'}, 'new_status': {'type': 'string', 'description': 'Proposed new status: active|triggered|retired'}, 'reason': {'type': 'string', 'description': 'Explanation for the proposed change'}}, 'required': ['ticker', 'kill_condition_id', 'new_status', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose kill condition status', 'propose kill condition status change'), 'selectable': True}
-{'name': 'propose_watch_trigger', 'description': 'Propose a new watch trigger. This creates a pending approval that the user must approve before the trigger is activated. Use this to set up monitoring conditions.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol (optional)'}, 'condition': {'type': 'string', 'description': "The condition to watch for (e.g. 'AAPL breaks below $180')"}, 'trigger_type': {'type': 'string', 'description': 'Type: price_level|technical|fundamental|fundamental_news|event|news_event|macro|custom'}, 'definition': {'type': 'object', 'description': 'Optional machine-readable executable trigger definition.'}, 'reason': {'type': 'string', 'description': 'Why this trigger matters'}}, 'required': ['condition', 'trigger_type', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose watch trigger', 'set trigger', 'propose watch trigger'), 'selectable': True}
+{'name': 'propose_watch_trigger', 'description': 'Propose a new watch trigger. This creates a pending approval that the user must approve before the trigger is activated. Use this to set up monitoring conditions.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol (optional)'}, 'condition': {'type': 'string', 'description': "The condition to watch for (e.g. 'AAPL breaks below $180')"}, 'trigger_type': {'type': 'string', 'description': 'Type: price_level|technical|fundamental|fundamental_news|event|news_event|macro|custom'}, 'expires_at': {'type': 'string', 'description': 'Optional ISO timestamp when the trigger expires.'}, 'definition': {'type': 'object', 'description': 'Optional machine-readable executable trigger definition.'}, 'reason': {'type': 'string', 'description': 'Why this trigger matters'}}, 'required': ['condition', 'trigger_type', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose watch trigger', 'set trigger', 'propose watch trigger'), 'selectable': True}
 {'name': 'search_agent_capabilities', 'description': "Search Stan's available app capabilities by natural-language query. Use when you need a tool that was not in the initially visible set.", 'parameters': {'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Capability or app feature to find.'}, 'top_k': {'type': 'integer', 'description': 'Maximum matches to return. Default 8.'}}, 'required': ['query']}, 'category': 'agent', 'access_mode': 'read', 'aliases': ('capability search', 'available tools', 'what can you access'), 'selectable': True}
 {'name': 'get_workspace', 'description': 'Fetch the Workspace landing page aggregate: regime, portfolio summary, thesis pressure, approvals, action items, triggers, and workflow runs.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'workspace', 'access_mode': 'read', 'aliases': ('workspace', 'dashboard home'), 'selectable': True}
 {'name': 'get_portfolio_positions', 'description': 'Fetch editable portfolio positions, optionally including hedges.', 'parameters': {'type': 'object', 'properties': {'include_hedges': {'type': 'boolean'}}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('portfolio positions', 'editable holdings'), 'selectable': True}
@@ -2059,7 +2326,10 @@ def propose_action_from_tool(tool_name: str, raw_input: dict[str, Any], context:
     exposure = get_tool_exposure(tool_name)
     if exposure.access_mode != "proposal" or not exposure.action_id or exposure.to_action_input is None:
         raise ActionValidationError(f"Tool {tool_name} is not a proposal tool")
-    typed_input = exposure.input_model.model_validate(raw_input)
+    try:
+        typed_input = exposure.input_model.model_validate(raw_input)
+    except PydanticValidationError as exc:
+        raise ActionValidationError(_validation_message(exc)) from exc
     action_input = exposure.to_action_input(typed_input)
     reason = exposure.reason_builder(typed_input) if exposure.reason_builder else None
     entity_id = exposure.entity_id_builder(typed_input) if exposure.entity_id_builder else None
@@ -2090,7 +2360,7 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
         items = [artifact_value] if isinstance(artifact_value, dict) else []
 
     count = 0
-    for item in items:
+    for item_index, item in enumerate(items):
         if binding.required_keys and any(not item.get(key) for key in binding.required_keys):
             continue
         payload = binding.payload_adapter(item, ticker) if binding.payload_adapter else dict(item)
@@ -2099,6 +2369,103 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
             if binding.entity_id_field and item.get(binding.entity_id_field)
             else None
         )
-        propose_action(binding.action_id, payload, context, reason=binding.reason, entity_id=entity_id)
+        artifact_event_id: str | None = None
+        try:
+            from api import provenance
+
+            artifact_event_id = provenance.deterministic_id("pv:workflow_artifact", run_id, artifact_key, item_index)
+            provenance.start_event(
+                event_id=artifact_event_id,
+                event_type="workflow_artifact",
+                event_name=artifact_key,
+                actor=context,
+                parent_event_id=provenance.deterministic_id("pv:workflow_run", run_id),
+                workflow_run_id=run_id,
+                input_value=item,
+                summary={
+                    "artifact_key": artifact_key,
+                    "artifact_index": item_index,
+                    "ticker": ticker,
+                    "action_id": binding.action_id,
+                    "entity_id": entity_id,
+                },
+                metadata={
+                    "item_keys": sorted(str(key) for key in item.keys()),
+                    "multiple": binding.multiple,
+                },
+            )
+            provenance.link_refs(
+                event_id=artifact_event_id,
+                source_ref_type="workflow_run",
+                source_ref_id=run_id,
+                target_ref_type="workflow_artifact",
+                target_ref_id=artifact_event_id,
+                link_type="produced",
+                metadata={"artifact_key": artifact_key, "artifact_index": item_index},
+            )
+        except Exception:
+            artifact_event_id = None
+        try:
+            approval = propose_action(
+                binding.action_id,
+                payload,
+                replace(context, provenance_event_id=artifact_event_id),
+                reason=binding.reason,
+                entity_id=entity_id,
+            )
+        except Exception as exc:
+            try:
+                from api import provenance
+
+                provenance.finish_event(
+                    artifact_event_id,
+                    status="failed",
+                    summary={
+                        "artifact_key": artifact_key,
+                        "artifact_index": item_index,
+                        "action_id": binding.action_id,
+                    },
+                    error=str(exc) or exc.__class__.__name__,
+                )
+            except Exception:
+                pass
+            raise
+        try:
+            from api import provenance
+            from portfolio import core_db
+
+            record = provenance.record_workflow_artifact(
+                workflow_run_id=run_id,
+                artifact_key=artifact_key,
+                artifact_index=item_index,
+                artifact_value=item,
+                approval_id=int(approval["id"]),
+                provenance_event_id=artifact_event_id,
+            )
+            artifact_id = str(record.get("artifact_id")) if record and record.get("artifact_id") else artifact_event_id
+            core_db.set_pending_approval_provenance(int(approval["id"]), origin_artifact_id=artifact_id)
+            provenance.link_refs(
+                event_id=artifact_event_id,
+                source_ref_type="workflow_artifact",
+                source_ref_id=artifact_id or artifact_key,
+                target_ref_type="approval",
+                target_ref_id=str(approval["id"]),
+                link_type="proposed",
+                metadata={"action_id": binding.action_id, "artifact_key": artifact_key},
+            )
+            provenance.finish_event(
+                artifact_event_id,
+                status="succeeded",
+                output_value={"approval_id": approval["id"], "artifact_id": artifact_id},
+                summary={
+                    "artifact_key": artifact_key,
+                    "artifact_index": item_index,
+                    "approval_id": approval["id"],
+                    "action_id": binding.action_id,
+                    "status": "pending_approval_created",
+                },
+            )
+        except Exception:
+            pass
         count += 1
     return count

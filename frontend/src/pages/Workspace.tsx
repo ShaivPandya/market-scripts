@@ -1,11 +1,12 @@
 import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { CheckCircle, AlertTriangle, Eye, Play, Clock } from "lucide-react"
+import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchWorkspace, approveItem, rejectItem, completeAction, dismissAction, refreshMarketSnapshots } from "@/lib/api"
+import { fetchWorkspace, approveItem, rejectItem, completeAction, dismissAction, refreshMarketSnapshots, type ProvenanceSelector } from "@/lib/api"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
+import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
 
@@ -148,6 +149,7 @@ export function Workspace() {
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => {
@@ -379,6 +381,15 @@ export function Workspace() {
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <button
+                          type="button"
+                          onClick={() => setProvenanceSelector({ approval_id: a.id })}
+                          className="theme-icon-button h-8 w-8"
+                          aria-label={`View approval ${a.id} lineage`}
+                          title="Lineage"
+                        >
+                          <GitBranch size={14} />
+                        </button>
+                        <button
                           onClick={() => handleApproval(a.id, "approve")}
                           disabled={processingIds.has(a.id)}
                           className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 disabled:opacity-50"
@@ -506,7 +517,18 @@ export function Workspace() {
                       </Link>
                     )}
                   </div>
-                  <span className="text-xs text-subtle">{formatTime(run.started_at)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-subtle">{formatTime(run.started_at)}</span>
+                    <button
+                      type="button"
+                      onClick={() => setProvenanceSelector({ workflow_run_id: run.run_id })}
+                      className="theme-icon-button h-8 w-8"
+                      aria-label={`View workflow ${run.run_id} lineage`}
+                      title="Lineage"
+                    >
+                      <GitBranch size={14} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -528,6 +550,13 @@ export function Workspace() {
           No pending items. Run a workflow or chat with the agent to get started.
         </div>
       )}
+      <ProvenanceTraceDialog
+        open={provenanceSelector !== null}
+        onOpenChange={open => {
+          if (!open) setProvenanceSelector(null)
+        }}
+        selector={provenanceSelector}
+      />
     </div>
   )
 }

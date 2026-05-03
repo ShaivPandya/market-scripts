@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from inspect import Parameter, signature
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -86,19 +86,22 @@ def _execute_query(req: OntologyQueryJobRequest | OntologyQueryRequest) -> dict[
     filters = _extract_filters(req)
     actor = actor_from_dict(getattr(req, "actor", None))
     try:
-        return _call_with_optional_actor(
-            _service.query,
-            actor=actor,
-            query=req.query,
-            intent=req.intent,
-            filters=filters,
-            timeframe=req.timeframe,
-            include_graph=req.include_graph,
-            run_id=req.run_id,
-            refresh_snapshot=req.refresh_snapshot,
-            page=req.page,
-            page_size=req.page_size,
-            schema_mode=req.schema_mode,
+        return cast(
+            dict[str, Any],
+            _call_with_optional_actor(
+                _service.query,
+                actor=actor,
+                query=req.query,
+                intent=req.intent,
+                filters=filters,
+                timeframe=req.timeframe,
+                include_graph=req.include_graph,
+                run_id=req.run_id,
+                refresh_snapshot=req.refresh_snapshot,
+                page=req.page,
+                page_size=req.page_size,
+                schema_mode=req.schema_mode,
+            ),
         )
     except OntologyRunNotFoundError as exc:
         raise NotFoundError("Ontology run", str(exc)) from exc
@@ -114,6 +117,23 @@ def list_ontology_runs(actor: ActorDep, limit: int = 100):
         raise
     except Exception as exc:
         raise DataFetchError(source="ontology", detail=str(exc)) from exc
+
+
+@router.get("/ontology/runs/{run_id}")
+def get_ontology_run(run_id: str, actor: ActorDep):
+    policy = getattr(_service, "policy", None)
+    if policy is not None:
+        require_allowed(policy.check_action(actor, OntologyAction.RUNS_LIST, {"run_id": run_id}))
+    run = _service.repo.get_run(run_id)
+    if run is None:
+        raise NotFoundError("Ontology run", run_id)
+    try:
+        from portfolio.core_db import provenance_summary
+
+        run["provenance_summary"] = provenance_summary(ontology_run_id=run_id)
+    except Exception:
+        run["provenance_summary"] = {"event_count": 0, "link_count": 0}
+    return run
 
 
 @router.post("/ontology/query")

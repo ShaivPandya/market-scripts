@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ValidationError
 
 from ontology.models import EntityType, OntologyEdge, OntologyNode
+from ontology.schemas.base import OntologySchemaBase
 from ontology.schemas.identity import (
     asset_id,
     catalyst_id,
@@ -42,7 +44,7 @@ from ontology.schemas.relations import (
     get_relation_definition,
 )
 
-NODE_SCHEMAS: dict[str, type] = {
+NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Position": PositionV1,
     "Asset": AssetV1,
     "Sector": SectorV1,
@@ -124,7 +126,7 @@ def normalize_node(
         ) from exc
 
     try:
-        model = schema_cls.model_validate(payload)
+        model = cast(OntologyObjectV1, schema_cls.model_validate(payload))
     except ValidationError as exc:
         raise OntologySchemaValidationError(f"Invalid {node.type} node {node.id}: {exc}") from exc
 
@@ -190,7 +192,7 @@ def normalize_edge(
 
 def validate_edge_relation(
     edge: OntologyEdge,
-    node_types: dict[str, str],
+    node_types: Mapping[str, str],
     *,
     run_id: str | None = None,
     allow_legacy: bool = True,
@@ -254,7 +256,7 @@ def normalize_graph(
 
     for node in nodes:
         try:
-            normalized = normalize_node(node, run_id=run_id, allow_legacy=allow_legacy)
+            normalized_node = normalize_node(node, run_id=run_id, allow_legacy=allow_legacy)
         except OntologySchemaValidationError as exc:
             if skip_optional_invalid and node.type in OPTIONAL_NODE_TYPES:
                 skipped_old_ids.add(node.id)
@@ -262,10 +264,12 @@ def normalize_graph(
                 continue
             raise
 
-        if normalized.id in normalized_nodes and normalized_nodes[normalized.id] != normalized:
-            raise OntologySchemaValidationError(f"Duplicate canonical node id after normalization: {normalized.id}")
-        normalized_nodes[normalized.id] = normalized
-        id_map[node.id] = normalized.id
+        if normalized_node.id in normalized_nodes and normalized_nodes[normalized_node.id] != normalized_node:
+            raise OntologySchemaValidationError(
+                f"Duplicate canonical node id after normalization: {normalized_node.id}"
+            )
+        normalized_nodes[normalized_node.id] = normalized_node
+        id_map[node.id] = normalized_node.id
 
     normalized_edges: dict[tuple[str, str, str], OntologyEdge] = {}
     node_types = {node_id: node.type for node_id, node in normalized_nodes.items()}
@@ -276,7 +280,7 @@ def normalize_graph(
         source_id = id_map.get(edge.source_id, edge.source_id)
         target_id = id_map.get(edge.target_id, edge.target_id)
         try:
-            normalized = validate_edge_relation(
+            normalized_edge = validate_edge_relation(
                 edge,
                 node_types,
                 run_id=run_id,
@@ -290,7 +294,9 @@ def normalize_graph(
                 continue
             raise
 
-        normalized_edges[(normalized.source_id, normalized.target_id, normalized.relation_type)] = normalized
+        normalized_edges[(normalized_edge.source_id, normalized_edge.target_id, normalized_edge.relation_type)] = (
+            normalized_edge
+        )
 
     relation_report = validate_graph_relations(
         list(normalized_nodes.values()),
@@ -362,7 +368,7 @@ def _validate_relation(
     relation_type: str,
     source_id: str,
     target_id: str,
-    node_types: dict[str, str],
+    node_types: Mapping[str, str],
 ) -> None:
     try:
         definition = get_relation_definition(relation_type)
@@ -402,7 +408,7 @@ def _missing_property(value: Any) -> bool:
     return False
 
 
-def _schema_version_for(schema_cls: type) -> int:
+def _schema_version_for(schema_cls: type[OntologySchemaBase]) -> int:
     field = getattr(schema_cls, "model_fields", {}).get("schema_version")
     default = getattr(field, "default", 1)
     try:

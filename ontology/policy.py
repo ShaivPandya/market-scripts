@@ -330,17 +330,17 @@ def filter_graph(
     for edge in edges if isinstance(edges, list) else []:
         if not isinstance(edge, dict):
             continue
-        resource = edge_resource_from_dict(edge)
-        source = node_resources.get(resource.source_id)
-        target = node_resources.get(resource.target_id)
+        edge_resource = edge_resource_from_dict(edge)
+        source = node_resources.get(edge_resource.source_id)
+        target = node_resources.get(edge_resource.target_id)
         if source is None or target is None:
             stats["filtered_relationships"] += 1
             continue
-        if not policy.check_relationship(actor, resource, source=source, target=target).allowed:
+        if not policy.check_relationship(actor, edge_resource, source=source, target=target).allowed:
             stats["filtered_relationships"] += 1
             continue
         filtered = dict(edge)
-        props, redacted = redact_properties(actor, policy, resource, resource.properties)
+        props, redacted = redact_properties(actor, policy, edge_resource, edge_resource.properties)
         filtered["properties"] = props
         stats["redacted_fields"] += redacted
         filtered_edges.append(filtered)

@@ -41,11 +41,12 @@ def list_approvals(
 
 @router.get("/approvals/{approval_id}")
 def get_approval(approval_id: int):
-    from portfolio.core_db import get_pending_approval
+    from portfolio.core_db import get_pending_approval, provenance_summary
 
     approval = get_pending_approval(approval_id)
     if not approval:
         raise NotFoundError("Approval", str(approval_id))
+    approval["provenance_summary"] = provenance_summary(approval_id=approval_id)
     return approval
 
 

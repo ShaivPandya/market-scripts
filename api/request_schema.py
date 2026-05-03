@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Request
 from fastapi.routing import APIRoute
@@ -163,10 +163,12 @@ def _body_field_schema(route: APIRoute) -> dict[str, Any]:
     if field is None:
         return {}
     field_type = getattr(field, "type_", None)
+    if field_type is None:
+        return {}
     try:
         if hasattr(field_type, "model_json_schema"):
-            return field_type.model_json_schema()
-        return TypeAdapter(field_type).json_schema()
+            return cast(dict[str, Any], field_type.model_json_schema())
+        return cast(dict[str, Any], TypeAdapter(field_type).json_schema())
     except Exception:
         return {
             "title": getattr(field, "name", "RequestBody"),

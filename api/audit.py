@@ -13,16 +13,25 @@ from api.logging_config import request_id_var
 logger = logging.getLogger("api.audit")
 
 _SENSITIVE_KEY_PARTS = (
+    "args",
+    "arguments",
     "authorization",
     "api_key",
     "apikey",
     "cookie",
     "content",
+    "conversation",
     "document",
+    "input",
+    "instructions",
     "jwt",
+    "messages",
+    "output",
     "password",
     "prompt",
     "raw",
+    "response",
+    "result",
     "secret",
     "session",
     "synthesis",
@@ -45,6 +54,8 @@ def _stable_hash(value: Any) -> str:
 
 def _is_sensitive_key(key: Any) -> bool:
     lowered = str(key or "").strip().lower()
+    if lowered.endswith("_hash") or lowered.endswith("_fingerprint") or lowered in {"hash", "sha256"}:
+        return False
     return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
 
 

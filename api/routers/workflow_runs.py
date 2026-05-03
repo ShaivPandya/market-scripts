@@ -24,9 +24,10 @@ def list_workflow_runs(
 
 @router.get("/workflow-runs/{run_id}")
 def get_workflow_run_detail(run_id: str):
-    from portfolio.core_db import get_workflow_run
+    from portfolio.core_db import get_workflow_run, provenance_summary
 
     run = get_workflow_run(run_id)
     if not run:
         raise NotFoundError("Workflow run", run_id)
+    run["provenance_summary"] = provenance_summary(workflow_run_id=run_id)
     return run

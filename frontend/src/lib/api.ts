@@ -1250,3 +1250,58 @@ export const fetchWorkflowRuns = (params?: { workflow_name?: string; ticker?: st
   client.get("/workflow-runs", { params }).then(r => r.data)
 export const fetchWorkflowRun = (runId: string) =>
   client.get(`/workflow-runs/${runId}`).then(r => r.data)
+
+export interface ProvenanceSelector {
+  workflow_run_id?: string
+  ontology_run_id?: string
+  approval_id?: number
+  action_run_id?: number
+  agent_session_id?: string
+  event_id?: string
+  ref_type?: string
+  ref_id?: string
+  max_depth?: number
+}
+
+export interface ProvenanceEvent {
+  id: string
+  event_type: string
+  event_name?: string | null
+  status?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  actor_type?: string | null
+  actor_id?: string | null
+  summary?: Record<string, unknown> | null
+  metadata?: Record<string, unknown> | null
+}
+
+export interface ProvenanceLink {
+  id?: string
+  event_id?: string | null
+  source_ref_type: string
+  source_ref_id: string
+  target_ref_type: string
+  target_ref_id: string
+  link_type: string
+  created_at?: string | null
+}
+
+export interface ProvenanceTrace {
+  seed: Record<string, unknown>
+  events: ProvenanceEvent[]
+  links: ProvenanceLink[]
+  source_records: Record<string, unknown>[]
+  workflow_artifacts: Record<string, unknown>[]
+  timeline?: Record<string, unknown>[]
+}
+
+export const fetchProvenanceTrace = (params: ProvenanceSelector) =>
+  client.get("/provenance/trace", { params }).then(r => r.data as ProvenanceTrace)
+
+export const fetchEntityProvenance = (refType: string, refId: string, maxDepth = 3) =>
+  client
+    .get(`/provenance/entity/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}`, {
+      params: { max_depth: maxDepth },
+    })
+    .then(r => r.data as ProvenanceTrace)

@@ -466,6 +466,7 @@ class StateMigrator:
                 "tool_sections",
                 "synthesis",
                 "artifacts",
+                "provenance_event_id",
                 "error",
             ],
             "report_runs": [
@@ -566,6 +567,9 @@ class StateMigrator:
                 "application_started_at",
                 "application_completed_at",
                 "application_error",
+                "provenance_event_id",
+                "origin_provenance_event_id",
+                "origin_artifact_id",
             ],
             "action_runs": [
                 "id",
@@ -587,6 +591,7 @@ class StateMigrator:
                 "error",
                 "started_at",
                 "completed_at",
+                "provenance_event_id",
             ],
             "action_events": [
                 "id",
@@ -658,6 +663,71 @@ class StateMigrator:
                 "report_id",
                 "idempotency_key",
             ],
+            "provenance_events": [
+                "id",
+                "event_type",
+                "event_name",
+                "status",
+                "started_at",
+                "completed_at",
+                "actor_type",
+                "actor_id",
+                "parent_actor_id",
+                "request_id",
+                "parent_event_id",
+                "workflow_run_id",
+                "ontology_run_id",
+                "agent_session_id",
+                "action_run_id",
+                "approval_id",
+                "audit_event_id",
+                "input_hash",
+                "output_hash",
+                "summary_json",
+                "metadata_json",
+                "redaction_policy",
+                "retention_class",
+                "error",
+            ],
+            "provenance_links": [
+                "id",
+                "event_id",
+                "source_ref_type",
+                "source_ref_id",
+                "source_ref_version",
+                "target_ref_type",
+                "target_ref_id",
+                "target_ref_version",
+                "link_type",
+                "metadata_json",
+                "created_at",
+            ],
+            "source_record_refs": [
+                "record_ref_id",
+                "adapter_run_event_id",
+                "source_name",
+                "record_kind",
+                "record_key_hash",
+                "record_hash",
+                "as_of",
+                "summary_json",
+                "redaction_policy",
+                "retention_class",
+                "created_at",
+            ],
+            "workflow_artifact_records": [
+                "artifact_id",
+                "workflow_run_id",
+                "artifact_key",
+                "artifact_index",
+                "artifact_hash",
+                "summary_json",
+                "approval_id",
+                "provenance_event_id",
+                "redaction_policy",
+                "retention_class",
+                "created_at",
+            ],
         }
         tables = {table: columns for table, columns in tables.items() if _sqlite_table_exists(db, table)}
         counts = {table: _sqlite_count(db, table) for table in tables}
@@ -671,13 +741,29 @@ class StateMigrator:
                 if table == "report_runs"
                 else ["event_id"]
                 if table == "audit_events"
+                else ["record_ref_id"]
+                if table == "source_record_refs"
+                else ["artifact_id"]
+                if table == "workflow_artifact_records"
                 else ["id"]
             )
             rows = _sqlite_rows(db, table)
             if table == "pending_approvals":
                 rows = _normalize_pending_approval_rows(rows)
             self._upsert_rows(table, columns, conflict, rows)
-        for table in [t for t in tables if t not in {"workflow_runs", "report_runs"}]:
+        for table in [
+            t
+            for t in tables
+            if t
+            not in {
+                "workflow_runs",
+                "report_runs",
+                "provenance_events",
+                "provenance_links",
+                "source_record_refs",
+                "workflow_artifact_records",
+            }
+        ]:
             self._reset_identity(table)
         result = SourceResult("core", source_hash, counts)
         self._record_source(result)
@@ -809,18 +895,18 @@ class StateMigrator:
             now = datetime.now(UTC).isoformat()
             definition_rows = []
             for definition in [*ontology_schema_definitions(), *domain_action_schema_definitions()]:
-                row = definition.row()
+                definition_row = definition.row()
                 definition_rows.append(
                     {
-                        "schema_kind": row[0],
-                        "schema_name": row[1],
-                        "schema_version": row[2],
-                        "definition_json": row[3],
-                        "definition_hash": row[4],
-                        "compatibility_json": row[5],
-                        "status": row[6],
+                        "schema_kind": definition_row[0],
+                        "schema_name": definition_row[1],
+                        "schema_version": definition_row[2],
+                        "definition_json": definition_row[3],
+                        "definition_hash": definition_row[4],
+                        "compatibility_json": definition_row[5],
+                        "status": definition_row[6],
                         "created_at": now,
-                        "deprecated_at": row[7],
+                        "deprecated_at": definition_row[7],
                     }
                 )
             self._upsert_rows(

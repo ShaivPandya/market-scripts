@@ -262,6 +262,18 @@ def test_action_item_and_watch_trigger_actions_cover_lifecycle():
     assert fired["last_result"] == {"price": 151}
     assert cancelled["status"] == "cancelled"
 
+    run = core_db.get_action_runs("create_action_item")[0]
+    trace = core_db.get_provenance_trace(action_run_id=run["id"])
+    assert any(
+        link["source_ref_type"] == "action_run"
+        and link["source_ref_id"] == str(run["id"])
+        and link["target_ref_type"] == "action_item"
+        and link["target_ref_id"] == str(action["id"])
+        and link["link_type"] == "produced"
+        for link in trace["links"]
+    )
+    assert any(link["target_ref_type"] == "audit_event" for link in trace["links"])
+
 
 def test_legacy_approval_backed_actions_replay_through_registry(monkeypatch):
     monkeypatch.setattr("api.routers.portfolio_news._delete_digest_index_best_effort", lambda _digest_id: None)
