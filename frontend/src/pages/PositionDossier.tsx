@@ -84,7 +84,7 @@ interface Catalyst { id: number; description: string; category: string; status: 
 interface KillCondition { id: number; condition: string; metric: string | null; threshold: string | null; status: string; triggered_at: string | null }
 interface WorkflowRun { run_id: string; workflow_name: string; status: string; started_at: string; completed_at: string | null }
 interface ActionItem { id: number; description: string; action_type: string; urgency: string; status: string; created_at: string }
-interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string }
+interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
 interface ResearchNote { id: number; title: string; content: string; note_type: string | null; created_at: string }
 interface Approval { id: number; entity_type: string; reason: string | null; created_at: string; proposed_change: Record<string, unknown> }
 
@@ -392,9 +392,16 @@ export function PositionDossier() {
               <h2 className="text-sm font-semibold text-app mb-3">Watch Triggers</h2>
               <div className="space-y-2">
                 {data.watch_triggers.map(t => (
-                  <div key={t.id} className="flex items-center gap-2 text-sm px-2 py-1.5">
-                    <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
-                    <span className="text-muted truncate">{t.condition}</span>
+                  <div key={t.id} className="text-sm px-2 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
+                      <span className="text-muted truncate">{t.condition}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
+                      <span>{t.status}</span>
+                      {t.last_checked_at && <span>Checked {formatTime(t.last_checked_at)}</span>}
+                      {t.last_evidence && <span className="truncate">{t.last_evidence}</span>}
+                    </div>
                   </div>
                 ))}
               </div>

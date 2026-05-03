@@ -75,7 +75,10 @@ interface Trigger {
   ticker: string | null
   condition: string
   trigger_type: string
+  status: string
   created_at: string
+  last_checked_at: string | null
+  last_evidence: string | null
 }
 
 interface WorkflowRun {
@@ -453,14 +456,21 @@ export function Workspace() {
             </h2>
             <div className="space-y-2">
               {data.active_triggers.items.map(t => (
-                <div key={t.id} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm">
-                  {t.ticker && (
-                    <Link to={`/dossier/${t.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
-                      {t.ticker}
-                    </Link>
-                  )}
-                  <span className="text-muted truncate">{t.condition}</span>
-                  <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
+                <div key={t.id} className="rounded-lg px-3 py-2 text-sm">
+                  <div className="flex items-center gap-3">
+                    {t.ticker && (
+                      <Link to={`/dossier/${t.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
+                        {t.ticker}
+                      </Link>
+                    )}
+                    <span className="text-muted truncate">{t.condition}</span>
+                    <span className="text-xs text-subtle shrink-0">{t.trigger_type.replace(/_/g, " ")}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
+                    <span>{t.status}</span>
+                    {t.last_checked_at && <span>Checked {formatTime(t.last_checked_at)}</span>}
+                    {t.last_evidence && <span className="truncate">{t.last_evidence}</span>}
+                  </div>
                 </div>
               ))}
             </div>

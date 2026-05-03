@@ -1112,7 +1112,7 @@ export const dismissAction = (id: number) =>
 // Watch Triggers
 export const fetchTriggers = (params?: { status?: string; ticker?: string }) =>
   client.get("/triggers", { params }).then(r => r.data)
-export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string }) =>
+export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string; definition?: Record<string, unknown> }) =>
   client.post("/triggers", body).then(r => r.data)
 export const fireTrigger = (id: number) =>
   client.put(`/triggers/${id}/fire`).then(r => r.data)

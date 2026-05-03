@@ -87,6 +87,17 @@ DB_PATH = Path(__file__).parent / "core.db"
 # Schema
 # ---------------------------------------------------------------------------
 
+WATCH_TRIGGER_TYPES = (
+    "price_level",
+    "technical",
+    "fundamental",
+    "fundamental_news",
+    "event",
+    "news_event",
+    "macro",
+    "custom",
+)
+
 _CREATE_CATALYSTS = """
 CREATE TABLE IF NOT EXISTS catalysts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,7 +197,7 @@ CREATE TABLE IF NOT EXISTS watch_triggers (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker       TEXT,
     trigger_type TEXT NOT NULL
-                 CHECK (trigger_type IN ('price_level', 'technical', 'fundamental', 'event', 'macro', 'custom')),
+                 CHECK (trigger_type IN ('price_level', 'technical', 'fundamental', 'fundamental_news', 'event', 'news_event', 'macro', 'custom')),
     condition    TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'active'
                  CHECK (status IN ('active', 'fired', 'expired', 'cancelled')),
@@ -429,6 +440,49 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "idempotency_key": "TEXT",
         },
     )
+    _ensure_sqlite_watch_trigger_types(conn)
+
+
+def _ensure_sqlite_watch_trigger_types(conn: sqlite3.Connection) -> None:
+    """Rebuild legacy SQLite watch_triggers tables whose CHECK enum is stale."""
+
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_triggers'").fetchone()
+    create_sql = str(row[0] if row else "")
+    if not create_sql or all(trigger_type in create_sql for trigger_type in ("news_event", "fundamental_news")):
+        return
+    if "CHECK" not in create_sql or "trigger_type" not in create_sql:
+        return
+
+    legacy_table = "watch_triggers_legacy_trigger_type_upgrade"
+    conn.execute(f"DROP TABLE IF EXISTS {legacy_table}")
+    conn.execute(f"ALTER TABLE watch_triggers RENAME TO {legacy_table}")
+    conn.execute(_CREATE_WATCH_TRIGGERS)
+
+    legacy_cols = {str(col[1]) for col in conn.execute(f"PRAGMA table_info({legacy_table})").fetchall()}
+    target_cols = {str(col[1]) for col in conn.execute("PRAGMA table_info(watch_triggers)").fetchall()}
+    copy_cols = [
+        col
+        for col in (
+            "id",
+            "ticker",
+            "trigger_type",
+            "condition",
+            "status",
+            "source_type",
+            "source_id",
+            "created_at",
+            "fired_at",
+            "expires_at",
+            "definition_json",
+            "last_checked_at",
+            "last_result_json",
+            "last_evidence",
+        )
+        if col in legacy_cols and col in target_cols
+    ]
+    cols_sql = ", ".join(copy_cols)
+    conn.execute(f"INSERT INTO watch_triggers ({cols_sql}) SELECT {cols_sql} FROM {legacy_table}")
+    conn.execute(f"DROP TABLE {legacy_table}")
 
 
 def _now() -> str:
@@ -939,6 +993,9 @@ def create_watch_trigger(
 ) -> dict:
     conn = _get_conn()
     now = _now()
+    trigger_type = str(trigger_type or "custom").strip().lower()
+    if trigger_type not in WATCH_TRIGGER_TYPES:
+        raise ValueError(f"Invalid watch trigger type: {trigger_type}")
     definition_json = json.dumps(definition, default=str) if definition else None
     with _lock:
         cur = conn.execute(
@@ -968,8 +1025,10 @@ def create_watch_trigger(
         "fired_at": None,
         "expires_at": expires_at,
         "definition_json": definition,
+        "definition": definition,
         "last_checked_at": None,
         "last_result_json": None,
+        "last_result": None,
         "last_evidence": None,
     }
 
@@ -1008,6 +1067,8 @@ def create_watch_trigger_once(
 def _parse_watch_trigger_json_fields(d: dict) -> dict:
     _parse_json_field(d, "definition_json")
     _parse_json_field(d, "last_result_json")
+    d["definition"] = d.get("definition_json")
+    d["last_result"] = d.get("last_result_json")
     return d
 
 
@@ -1049,6 +1110,22 @@ def update_watch_trigger_check(
         conn.execute(
             "UPDATE watch_triggers SET last_checked_at = ?, last_result_json = ?, last_evidence = ? WHERE id = ?",
             (now, result_json, evidence, trigger_id),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
+    return _parse_watch_trigger_json_fields(_require_row_dict(updated))
+
+
+def update_watch_trigger_definition(trigger_id: int, definition: dict) -> dict:
+    conn = _get_conn()
+    definition_json = json.dumps(definition, default=str)
+    with _lock:
+        row = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
+        if not row:
+            raise ValueError(f"No watch trigger with id {trigger_id}")
+        conn.execute(
+            "UPDATE watch_triggers SET definition_json = ? WHERE id = ?",
+            (definition_json, trigger_id),
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
@@ -1951,6 +2028,7 @@ def _apply_approval_side_effect(approval: dict) -> None:
             source_type=approval.get("source_type", "workflow"),
             source_id=approval.get("source_id"),
             expires_at=change.get("expires_at"),
+            definition=change.get("definition"),
         )
 
     elif entity_type == "portfolio_positions":

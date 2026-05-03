@@ -693,7 +693,13 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                 },
                 "trigger_type": {
                     "type": "string",
-                    "description": "Type: price_level|technical|fundamental|event|macro|custom",
+                    "description": (
+                        "Type: price_level|technical|fundamental|fundamental_news|event|news_event|macro|custom"
+                    ),
+                },
+                "definition": {
+                    "type": "object",
+                    "description": "Optional machine-readable executable trigger definition.",
                 },
                 "reason": {"type": "string", "description": "Why this trigger matters"},
             },
@@ -1866,7 +1872,7 @@ def _extract_inaccessible_domains(exc: Exception) -> set[str]:
 
 
 def _run_search_web(query: str) -> dict[str, Any]:
-    from llm_utils import MODEL_LOW, call_llm_text, selected_provider
+    from llm_utils import MODEL_LOW, call_llm_text
 
     allowed_domains = list(_SEARCH_WEB_ALLOWED_DOMAINS_DEFAULT)
     attempts = 0
@@ -1895,7 +1901,7 @@ def _run_search_web(query: str) -> dict[str, Any]:
             }
         except Exception as exc:  # noqa: BLE001 - tool should recover if possible
             blocked = _extract_inaccessible_domains(exc)
-            if selected_provider() != "anthropic" or not blocked:
+            if not blocked:
                 raise
 
             remaining = [d for d in allowed_domains if d.lower() not in blocked]
@@ -2808,6 +2814,7 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
             proposed_change={
                 "condition": args["condition"],
                 "trigger_type": args["trigger_type"],
+                "definition": args.get("definition"),
             },
             reason=args["reason"],
             source_type="agent",
