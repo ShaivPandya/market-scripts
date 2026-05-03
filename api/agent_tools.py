@@ -355,6 +355,18 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                     "type": "string",
                     "description": "Optional ontology snapshot run_id for historical replay.",
                 },
+                "as_of": {
+                    "type": "string",
+                    "description": "Optional valid-time timestamp for temporal ontology reads.",
+                },
+                "tx_as_of": {
+                    "type": "string",
+                    "description": "Optional transaction-time timestamp for what Talisman knew then.",
+                },
+                "include_history": {
+                    "type": "boolean",
+                    "description": "If true, include historical temporal versions where supported.",
+                },
                 "refresh_snapshot": {
                     "type": "boolean",
                     "description": "If true, bypass latest snapshot reuse and force a fresh ontology snapshot build.",
@@ -2327,11 +2339,15 @@ def _model_validate(model_cls, payload: dict[str, Any]):
 
 
 def _call_with_optional_actor(func, *, actor: Actor, **kwargs):
-    params = inspect.signature(func).parameters.values()
-    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    params = inspect.signature(func).parameters
+    supports_var_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    supports_actor = supports_var_kwargs or "actor" in params
+    call_kwargs = (
+        dict(kwargs) if supports_var_kwargs else {key: value for key, value in kwargs.items() if key in params}
+    )
     if supports_actor:
-        return func(**kwargs, actor=actor)
-    return func(**kwargs)
+        call_kwargs["actor"] = actor
+    return func(**call_kwargs)
 
 
 def _run_registered_job_for_agent(
@@ -2711,6 +2727,9 @@ def _dispatch(
         timeframe = args.get("timeframe", "Daily")
         include_graph = bool(args.get("include_graph", False))
         run_id = args.get("run_id")
+        as_of = args.get("as_of")
+        tx_as_of = args.get("tx_as_of")
+        include_history = bool(args.get("include_history", False))
         refresh_snapshot = bool(args.get("refresh_snapshot", False))
         page = max(1, int(args.get("page", 1) or 1))
         page_size = max(1, min(int(args.get("page_size", 25) or 25), 100))
@@ -2723,6 +2742,9 @@ def _dispatch(
                 "timeframe": timeframe,
                 "include_graph": include_graph,
                 "run_id": run_id,
+                "as_of": as_of,
+                "tx_as_of": tx_as_of,
+                "include_history": include_history,
                 "refresh_snapshot": refresh_snapshot,
                 "page": page,
                 "page_size": page_size,
@@ -2744,6 +2766,9 @@ def _dispatch(
                 timeframe=str(timeframe) if isinstance(timeframe, str) else "Daily",
                 include_graph=include_graph,
                 run_id=str(run_id) if isinstance(run_id, str) and run_id.strip() else None,
+                as_of=str(as_of) if isinstance(as_of, str) and as_of.strip() else None,
+                tx_as_of=str(tx_as_of) if isinstance(tx_as_of, str) and tx_as_of.strip() else None,
+                include_history=include_history,
                 refresh_snapshot=refresh_snapshot,
                 page=page,
                 page_size=page_size,

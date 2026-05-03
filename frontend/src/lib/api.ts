@@ -314,6 +314,9 @@ export type OntologyQueryBody = {
   timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
   include_graph?: boolean
   run_id?: string
+  as_of?: string
+  tx_as_of?: string
+  include_history?: boolean
   refresh_snapshot?: boolean
   page?: number
   page_size?: number
@@ -338,6 +341,17 @@ export interface OntologyRow {
   risk_score?: number | null
   risk_level?: string
   evidence?: OntologyEvidence[]
+  _meta?: {
+    temporal?: {
+      object_uid?: string
+      version_id?: string
+      valid_from?: string
+      valid_to?: string | null
+      tx_from?: string
+      tx_to?: string | null
+      temporal_confidence?: string
+    }
+  }
 }
 
 export interface OntologySourceStatus {
@@ -383,6 +397,12 @@ export interface OntologyResponse {
       max_nodes?: number
       max_edges?: number
     }
+    temporal?: {
+      as_of?: string | null
+      tx_as_of?: string | null
+      include_history?: boolean
+      mode?: string
+    }
     [key: string]: unknown
   }
   [key: string]: unknown
@@ -399,6 +419,42 @@ export const fetchOntologyRuns = (limit = 100) =>
   client
     .get("/ontology/runs", { params: { limit } })
     .then(r => r.data as { runs: OntologyRunSummary[] })
+
+export type OntologyTemporalParams = {
+  as_of?: string
+  tx_as_of?: string
+  include_history?: boolean
+  limit?: number
+  offset?: number
+}
+
+export const fetchOntologyObjects = (params: OntologyTemporalParams & {
+  object_type?: string
+  business_key?: string
+  object_uid?: string
+} = {}) =>
+  client.get("/ontology/objects", { params }).then(r => r.data as { objects: Array<Record<string, unknown>> })
+
+export const fetchOntologyObject = (object_uid: string, params: Pick<OntologyTemporalParams, "as_of" | "tx_as_of"> = {}) =>
+  client
+    .get(`/ontology/objects/${encodeURIComponent(object_uid)}`, { params })
+    .then(r => r.data as Record<string, unknown>)
+
+export const fetchOntologyRelations = (params: OntologyTemporalParams & {
+  relation_type?: string
+  source_object_uid?: string
+  target_object_uid?: string
+} = {}) =>
+  client.get("/ontology/relations", { params }).then(r => r.data as { relations: Array<Record<string, unknown>> })
+
+export const fetchOntologySourceRecords = (params: OntologyTemporalParams & {
+  vendor?: string
+  source_name?: string
+  record_kind?: string
+} = {}) =>
+  client
+    .get("/ontology/source-records", { params })
+    .then(r => r.data as { source_records: Array<Record<string, unknown>> })
 
 export const queryOntology = (body: OntologyQueryBody) =>
   runOntologyQueryAsync(body)
