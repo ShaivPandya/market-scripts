@@ -12,6 +12,7 @@ from api.audit import emit_audit_event
 from api.exceptions import DataFetchError, NotFoundError
 from api.job_queue import get_job
 from api.routers.auth import require_actor
+from ontology.action_registry import get_tool_exposure
 from ontology.policy import (
     Actor,
     OntologyAction,
@@ -169,12 +170,21 @@ def _preflight_query_policy(req: OntologyQueryRequest, actor: Actor) -> None:
     policy = getattr(_service, "policy", None)
     if policy is None:
         return
+    query_tool = get_tool_exposure("query_ontology")
+    query_policy = query_tool.policy_spec
     try:
-        require_allowed(policy.check_action(actor, OntologyAction.QUERY, {"intent": req.intent, "run_id": req.run_id}))
-        if req.include_graph:
-            require_allowed(policy.check_action(actor, OntologyAction.GRAPH_READ, {"run_id": req.run_id}))
-        if req.refresh_snapshot:
-            require_allowed(policy.check_action(actor, OntologyAction.SNAPSHOT_REFRESH, {"run_id": req.run_id}))
+        required_actions = query_policy.ontology_actions if query_policy else (OntologyAction.QUERY,)
+        for action_name in required_actions:
+            require_allowed(policy.check_action(actor, action_name, {"intent": req.intent, "run_id": req.run_id}))
+        dynamic_actions = (
+            query_policy.dynamic_ontology_actions(
+                {"include_graph": req.include_graph, "refresh_snapshot": req.refresh_snapshot}
+            )
+            if query_policy and query_policy.dynamic_ontology_actions
+            else ()
+        )
+        for action_name in dynamic_actions:
+            require_allowed(policy.check_action(actor, action_name, {"run_id": req.run_id}))
     except PolicyDenied as exc:
         emit_audit_event(
             "ontology.query.preflight",

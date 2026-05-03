@@ -229,7 +229,7 @@ def ontology_schema_definitions() -> list[SchemaDefinition]:
 
 
 def domain_action_schema_definitions() -> list[SchemaDefinition]:
-    from portfolio.action_registry import iter_actions
+    from ontology.action_registry import iter_actions
 
     return [
         SchemaDefinition(

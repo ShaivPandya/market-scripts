@@ -19,6 +19,7 @@ from typing import Any
 
 from api.agent_tools import execute_tool
 from api.audit import emit_audit_event
+from ontology.action_registry import get_tool_exposure
 from ontology.policy import Actor, admin_actor
 
 logger = logging.getLogger("api.workflows")
@@ -70,6 +71,9 @@ def _exec_tool(name: str, args: dict | None = None, actor: Actor | None = None) 
     """Execute a single tool, return (result_json, parsed_dict, elapsed_ms)."""
     args = args or {}
     actor = actor or admin_actor(source="workflow")
+    exposure = get_tool_exposure(name)
+    if exposure.access_mode not in {"read", "compute"}:
+        raise ValueError(f"Workflow tool '{name}' is not allowed for workflow execution")
     started = time.perf_counter()
     emit_audit_event(
         "workflow.tool.started",

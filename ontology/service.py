@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from api.audit import emit_audit_event
+from ontology.action_registry import get_tool_exposure
 from ontology.ingestion import ingest_into_repository
 from ontology.parser import parse_hybrid_query
 from ontology.policy import (
@@ -106,12 +107,22 @@ class OntologyQueryService:
         if schema_mode != "upgraded":
             raise ValueError("Ontology semantic queries require schema_mode='upgraded'")
         actor = actor or admin_actor(source="service")
+        query_tool = get_tool_exposure("query_ontology")
+        query_policy = query_tool.policy_spec
         try:
-            require_allowed(self.policy.check_action(actor, OntologyAction.QUERY, {"intent": intent, "run_id": run_id}))
-            if include_graph:
-                require_allowed(self.policy.check_action(actor, OntologyAction.GRAPH_READ, {"run_id": run_id}))
-            if refresh_snapshot:
-                require_allowed(self.policy.check_action(actor, OntologyAction.SNAPSHOT_REFRESH, {"run_id": run_id}))
+            action_context = {"intent": intent, "run_id": run_id}
+            required_actions = query_policy.ontology_actions if query_policy else (OntologyAction.QUERY,)
+            for action_name in required_actions:
+                require_allowed(self.policy.check_action(actor, action_name, action_context))
+            dynamic_actions = (
+                query_policy.dynamic_ontology_actions(
+                    {"include_graph": include_graph, "refresh_snapshot": refresh_snapshot}
+                )
+                if query_policy and query_policy.dynamic_ontology_actions
+                else ()
+            )
+            for action_name in dynamic_actions:
+                require_allowed(self.policy.check_action(actor, action_name, {"run_id": run_id}))
         except PolicyDenied as exc:
             _emit_ontology_read_audit(
                 "ontology.query",

@@ -25,6 +25,14 @@ from typing import Any
 
 from api.cache import get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
+from ontology.action_registry import (
+    ActionContext as RegistryActionContext,
+)
+from ontology.action_registry import (
+    is_agent_tool_exposed,
+    iter_tool_exposures,
+    propose_action_from_tool,
+)
 from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor
 
 logger = logging.getLogger("api.agent")
@@ -1241,9 +1249,22 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
 ]
 
 
+def _capability_from_exposure(tool) -> AgentCapability:
+    return AgentCapability(
+        name=tool.tool_name,
+        description=tool.description,
+        parameters=tool.parameters,
+        category=tool.category,
+        access_mode=tool.access_mode,
+        aliases=tool.aliases,
+        selectable=tool.selectable,
+    )
+
+
 def _build_capability_registry() -> list[AgentCapability]:
     by_name: dict[str, AgentCapability] = {}
-    for cap in [_base_capability(tool) for tool in _BASE_TOOL_DEFINITIONS] + _EXTRA_CAPABILITIES:
+    for tool in iter_tool_exposures(agent_exposed_only=True):
+        cap = _capability_from_exposure(tool)
         if cap.name in by_name:
             raise RuntimeError(f"Duplicate agent capability: {cap.name}")
         by_name[cap.name] = cap
@@ -2016,6 +2037,8 @@ def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
     actor = actor or admin_actor(source="agent_tools")
     try:
         safe_args = arguments if isinstance(arguments, dict) else {}
+        if not is_agent_tool_exposed(name):
+            raise ValueError(f"Tool '{name}' is not exposed to the agent")
         result, dispatch_meta = _call_dispatch(name, safe_args, actor=actor)
         payload, _compact_meta = _compact_tool_output(name, result)
         meta = dict(dispatch_meta)
@@ -2271,6 +2294,20 @@ def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object
         query = str(args.get("query") or "").strip()
         top_k = int(args.get("top_k", 8))
         return search_agent_capabilities(query, top_k=top_k), {"cache": "n/a"}
+
+        if name.startswith("propose_"):
+            approval = propose_action_from_tool(
+                name,
+                args,
+                RegistryActionContext(actor_type="agent", source_type="agent"),
+            )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "get_liquidity":
         key = "agent_liquidity"

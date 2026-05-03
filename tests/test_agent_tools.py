@@ -77,12 +77,12 @@ def test_execute_tool_outputs_valid_json_when_compacted(monkeypatch):
     }
     monkeypatch.setattr("api.agent_tools._dispatch", lambda _name, _args: (huge_payload, {"cache": "miss_fetch"}))
 
-    raw = agent_tools.execute_tool("dummy_tool", {})
+    raw = agent_tools.execute_tool("get_workspace", {})
     payload = json.loads(raw)
 
     assert isinstance(payload, dict)
     assert "_meta" in payload
-    assert payload["_meta"]["tool"] == "dummy_tool"
+    assert payload["_meta"]["tool"] == "get_workspace"
     assert payload["_meta"]["output_chars"] <= payload["_meta"]["max_chars"]
 
 
@@ -145,6 +145,22 @@ def test_agent_capability_registry_does_not_expose_direct_mutations():
 
     assert names.isdisjoint(forbidden_direct_tools)
     assert proposal_tools <= names
+
+
+def test_execute_tool_rejects_non_exposed_direct_mutation():
+    payload = json.loads(
+        agent_tools.execute_tool(
+            "update_portfolio_positions",
+            {
+                "positions": [
+                    {"ticker": "MU", "asset": "equity", "direction": "long", "contrarian": False, "conviction": 3}
+                ]
+            },
+        )
+    )
+
+    assert "not exposed to the agent" in payload["error"]
+    assert payload["_meta"]["status"] == "error"
 
 
 def test_agent_proposal_tools_create_action_backed_approvals(tmp_path, monkeypatch):

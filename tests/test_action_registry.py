@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 import portfolio.core_db as core_db
+import portfolio.news_digests as digests
 import portfolio.portfolio_db as portfolio_db
 import portfolio.thesis_db as thesis_db
 from portfolio.action_registry import (
@@ -36,6 +39,14 @@ def _temp_action_state(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cache, "invalidate_all", lambda: None)
     monkeypatch.setattr(dashboard, "reload_portfolio", lambda: None)
+    base = tmp_path / "news_digests"
+    monkeypatch.setattr(digests, "DIGESTS_DIR", base)
+    monkeypatch.setattr(digests, "MANIFEST_PATH", base / "manifest.json")
+    monkeypatch.setattr(digests, "FILES_DIR", base / "files")
+    monkeypatch.setattr(digests, "DIGESTS_GCS_PREFIX", "test/news_digests")
+    monkeypatch.setattr(digests, "MANIFEST_GCS_KEY", "test/news_digests/manifest.json")
+    monkeypatch.setattr(digests, "FILES_GCS_PREFIX", "test/news_digests/files")
+    os.environ["STATE_STORAGE_BACKEND"] = "local"
     yield
     for module in (core_db, portfolio_db, thesis_db):
         conn = getattr(module, "_conn", None)
@@ -250,6 +261,55 @@ def test_action_item_and_watch_trigger_actions_cover_lifecycle():
     assert fired["status"] == "fired"
     assert fired["last_result"] == {"price": 151}
     assert cancelled["status"] == "cancelled"
+
+
+def test_legacy_approval_backed_actions_replay_through_registry(monkeypatch):
+    monkeypatch.setattr("api.routers.portfolio_news._delete_digest_index_best_effort", lambda _digest_id: None)
+
+    digest = digests.save_digest("# Digest\n\n## Movers\n- MU update\n", filename="05012026_digest.md")
+    context = ActionContext(actor_type="workflow", source_type="workflow", source_id="run-legacy-actions")
+
+    note_approval = propose_action(
+        "create_research_note",
+        {"ticker": "MU", "title": "Follow-up", "content": "Watch HBM supply", "note_type": "workflow_output"},
+        context,
+        reason="workflow note",
+    )
+    evaluation_approval = propose_action(
+        "save_evaluation",
+        {
+            "ticker": "MU",
+            "thesis_status": "active",
+            "technical_read": "Constructive",
+            "fundamental_read": "Stable",
+            "action": "hold",
+            "confidence": "high",
+            "key_developments": ["HBM demand remains strong"],
+        },
+        context,
+        reason="workflow evaluation",
+    )
+    delete_approval = propose_action(
+        "delete_portfolio_news_digest",
+        {"digest_id": digest["id"]},
+        context,
+        reason="remove stale digest",
+    )
+
+    core_db.resolve_approval(note_approval["id"], "approved")
+    core_db.resolve_approval(evaluation_approval["id"], "approved")
+    core_db.resolve_approval(delete_approval["id"], "approved")
+
+    assert core_db.get_research_notes(ticker="MU")[0]["title"] == "Follow-up"
+    assert thesis_db.get_evaluations("MU", limit=1)[0]["thesis_status"] == "active"
+    with pytest.raises(FileNotFoundError):
+        digests.get_digest(digest["id"])
+    assert core_db.get_action_runs("create_research_note", approval_id=note_approval["id"])[0]["status"] == "succeeded"
+    assert core_db.get_action_runs("save_evaluation", approval_id=evaluation_approval["id"])[0]["status"] == "succeeded"
+    assert (
+        core_db.get_action_runs("delete_portfolio_news_digest", approval_id=delete_approval["id"])[0]["status"]
+        == "succeeded"
+    )
 
 
 def test_pending_approval_replays_old_action_schema_after_current_schema_evolves(monkeypatch):

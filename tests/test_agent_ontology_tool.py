@@ -3,12 +3,24 @@ from __future__ import annotations
 import json
 
 from api.agent_tools import TOOL_DEFINITIONS, execute_tool
+from ontology.action_registry import get_tool_exposure
 
 
 def test_query_ontology_tool_registered():
     names = {tool.get("name") for tool in TOOL_DEFINITIONS}
     assert "query_ontology" in names
     assert "get_signal_aggregator" in names
+
+
+def test_query_ontology_tool_policy_spec_registered():
+    exposure = get_tool_exposure("query_ontology")
+
+    assert exposure.policy_spec is not None
+    assert exposure.policy_spec.ontology_actions == ("query",)
+    assert set(exposure.policy_spec.dynamic_ontology_actions({"include_graph": True, "refresh_snapshot": True})) == {
+        "graph.read",
+        "snapshot.refresh",
+    }
 
 
 def test_query_ontology_tool_dispatch(monkeypatch):
