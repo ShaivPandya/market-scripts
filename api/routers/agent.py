@@ -351,7 +351,7 @@ _DATA_SEEKING_RX = re.compile(
     r"\b("
     r"portfolio|holding|position|performance|p&l|pnl|risks?|market|macro|liquidity|breadth|vix|volatility|"
     r"positioning|sentiment|sector|yield|curve|bond|labor|housing|growth|central bank|industry|"
-    r"thesis|catalyst|kill condition|dossier|workflow|approval|action item|trigger|search|news|"
+    r"thesis|catalysts?|kill conditions?|dossier|workflow|approvals?|action items?|triggers?|search|news|"
     r"commodity|commodities|country|index|indices|fx|currency|financials|dcf|valuation|chart|"
     r"screener|screen|analyzer|sizer|hedging|workspace|research note|weekly report"
     r")\b",
@@ -510,6 +510,11 @@ def _select_tool_names(user_text: str) -> list[str]:
     if re.search(r"\b(action item|approval|trigger|workflow)\b", text):
         add("get_action_items", "get_pending_approvals", "get_watch_triggers", "get_workflow_history")
     if re.search(r"\b(search|news|latest|catalyst status|regulatory)\b", text):
+        add("search_web", "search_knowledge_base")
+    if "catalyst" in text and re.search(
+        r"\b(played out|played-out|play out|materiali[sz]ed|happened|occurred|announced|launched|approved|failed|status)\b",
+        text,
+    ):
         add("search_web", "search_knowledge_base")
     if _should_use_retrieval(user_text):
         add("search_knowledge_base")

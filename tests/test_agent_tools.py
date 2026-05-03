@@ -213,6 +213,7 @@ def test_agent_selector_finds_new_full_app_capabilities():
         "run a short screener": "run_short_screen",
         "chart MU over 2Y": "run_chart",
         "update my portfolio positions": "propose_portfolio_positions_update",
+        "Have any of the catalysts for Apollo played out?": "search_web",
     }
 
     for prompt, expected_tool in cases.items():

@@ -124,7 +124,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <div className="border-b border-app px-4 pb-4 pt-[max(1rem,var(--safe-top))]">
         <p className="theme-eyebrow mb-2">Workspace</p>
         <p className="text-lg font-semibold tracking-[-0.03em] text-app">Market Dashboard</p>
-        <p className="mt-1 text-sm text-muted">Research, macro, and portfolio workflows.</p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-4">
