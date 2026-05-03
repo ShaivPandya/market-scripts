@@ -176,7 +176,16 @@ def test_weekly_report_sync_persists_operating_artifacts(auth_client, monkeypatc
     assert core_db.get_research_notes(ticker="CRWD")[0]["note_type"] == "risk_assessment"
     assert core_db.get_action_items(ticker="CRWD", status="open")[0]["urgency"] == "high"
     assert core_db.get_pending_approvals(status="pending")[0]["entity_type"] == "watch_trigger"
-    assert core_db.get_thesis_claims(ticker="CRWD")[0]["claim"] == "CRWD can sustain premium growth."
+    claim = core_db.get_thesis_claims(ticker="CRWD")[0]
+    assert claim["claim"] == "CRWD can sustain premium growth."
+    assert claim["source_requirements"] == [
+        {
+            "type": "custom",
+            "description": "earnings",
+            "required": True,
+            "freshness_days": None,
+        }
+    ]
 
     dossier = auth_client.get("/api/v1/dossier/CRWD")
     assert dossier.status_code == 200

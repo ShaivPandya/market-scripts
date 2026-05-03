@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from api.exceptions import NotFoundError
+from api.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
 
@@ -121,14 +121,24 @@ def create_kill_condition(body: CreateKillConditionRequest):
 # ---------------------------------------------------------------------------
 
 
+class SourceRequirementRequest(BaseModel):
+    type: str = "custom"
+    description: str
+    required: bool = True
+    freshness_days: int | None = Field(default=None, ge=0)
+
+
+SourceRequirementInput = str | SourceRequirementRequest
+
+
 class CreateThesisClaimRequest(BaseModel):
     ticker: str
     claim: str
     expected_evidence: str | None = None
     disconfirming_evidence: str | None = None
-    source_requirements: list[str] = Field(default_factory=list)
+    source_requirements: list[SourceRequirementInput] = Field(default_factory=list)
     cadence: str | None = None
-    confidence: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
     status: str = "active"
     linked_catalyst_ids: list[int] = Field(default_factory=list)
     linked_kill_condition_ids: list[int] = Field(default_factory=list)
@@ -138,12 +148,40 @@ class UpdateThesisClaimRequest(BaseModel):
     claim: str | None = None
     expected_evidence: str | None = None
     disconfirming_evidence: str | None = None
-    source_requirements: list[str] | None = None
+    source_requirements: list[SourceRequirementInput] | None = None
     cadence: str | None = None
-    confidence: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
     status: str | None = None
     linked_catalyst_ids: list[int] | None = None
     linked_kill_condition_ids: list[int] | None = None
+
+
+def _source_requirements_payload(values: list[SourceRequirementInput] | None) -> list:
+    result: list = []
+    for value in values or []:
+        if isinstance(value, str):
+            result.append(value)
+        else:
+            result.append(value.model_dump())
+    return result
+
+
+def _sync_claim_markdown(ticker: str | None) -> None:
+    if not ticker:
+        return
+    try:
+        from portfolio.thesis_sync import sync_markdown_from_entities
+
+        sync_markdown_from_entities(ticker)
+    except Exception:
+        pass
+
+
+def _raise_claim_error(exc: ValueError, claim_id: int | None = None) -> None:
+    message = str(exc)
+    if message.startswith("No thesis claim") and claim_id is not None:
+        raise NotFoundError("Thesis claim", str(claim_id)) from exc
+    raise ValidationError(message) from exc
 
 
 @router.get("/thesis-claims")
@@ -162,32 +200,41 @@ def list_thesis_claims(
 def create_thesis_claim(body: CreateThesisClaimRequest):
     from portfolio.core_db import create_thesis_claim
 
-    return create_thesis_claim(
-        {
-            "ticker": body.ticker,
-            "claim": body.claim,
-            "expected_evidence": body.expected_evidence,
-            "disconfirming_evidence": body.disconfirming_evidence,
-            "source_requirements": body.source_requirements,
-            "cadence": body.cadence,
-            "confidence": body.confidence,
-            "status": body.status,
-            "linked_catalyst_ids": body.linked_catalyst_ids,
-            "linked_kill_condition_ids": body.linked_kill_condition_ids,
-            "source_type": "user",
-        }
-    )
+    try:
+        result = create_thesis_claim(
+            {
+                "ticker": body.ticker,
+                "claim": body.claim,
+                "expected_evidence": body.expected_evidence,
+                "disconfirming_evidence": body.disconfirming_evidence,
+                "source_requirements": _source_requirements_payload(body.source_requirements),
+                "cadence": body.cadence,
+                "confidence": body.confidence,
+                "status": body.status,
+                "linked_catalyst_ids": body.linked_catalyst_ids,
+                "linked_kill_condition_ids": body.linked_kill_condition_ids,
+                "source_type": "user",
+            }
+        )
+    except ValueError as e:
+        _raise_claim_error(e)
+    _sync_claim_markdown(result.get("ticker"))
+    return result
 
 
 @router.put("/thesis-claims/{claim_id}")
 def update_thesis_claim(claim_id: int, body: UpdateThesisClaimRequest):
     from portfolio.core_db import update_thesis_claim
 
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    updates = body.model_dump(exclude_unset=True)
+    if "source_requirements" in updates:
+        updates["source_requirements"] = _source_requirements_payload(body.source_requirements)
     try:
-        return update_thesis_claim(claim_id, updates)
+        result = update_thesis_claim(claim_id, updates)
     except ValueError as e:
-        raise NotFoundError("Thesis claim", str(claim_id)) from e
+        _raise_claim_error(e, claim_id)
+    _sync_claim_markdown(result.get("ticker"))
+    return result
 
 
 @router.put("/kill-conditions/{kc_id}/status")

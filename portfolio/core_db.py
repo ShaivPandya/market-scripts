@@ -1102,10 +1102,100 @@ _THESIS_CLAIM_JSON_FIELDS = (
     "linked_kill_condition_ids_json",
 )
 
+_THESIS_CLAIM_STATUSES = {"active", "supported", "challenged", "disconfirmed", "retired"}
+
+
+def normalize_source_requirements(value: Any) -> list[dict[str, Any]]:
+    """Normalize legacy string source requirements into typed requirement objects."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                continue
+            normalized.append(
+                {
+                    "type": "custom",
+                    "description": text,
+                    "required": True,
+                    "freshness_days": None,
+                }
+            )
+            continue
+        if not isinstance(item, dict):
+            continue
+        req_type = str(item.get("type") or "custom").strip() or "custom"
+        description = str(item.get("description") or item.get("label") or req_type).strip()
+        required_raw = item.get("required", True)
+        if isinstance(required_raw, str):
+            required = required_raw.strip().lower() not in {"false", "0", "no", "optional"}
+        else:
+            required = bool(required_raw)
+        freshness_raw = item.get("freshness_days")
+        freshness_days = None
+        if freshness_raw not in (None, ""):
+            try:
+                freshness_days = max(0, int(freshness_raw))
+            except (TypeError, ValueError):
+                freshness_days = None
+        normalized.append(
+            {
+                "type": req_type,
+                "description": description,
+                "required": required,
+                "freshness_days": freshness_days,
+            }
+        )
+    return normalized
+
+
+def _normalize_thesis_claim_status(status: Any) -> str:
+    normalized = str(status or "active").strip().lower()
+    if normalized not in _THESIS_CLAIM_STATUSES:
+        raise ValueError(f"Invalid thesis claim status: {normalized}")
+    return normalized
+
+
+def _normalize_claim_confidence(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    confidence = float(value)
+    if confidence < 0 or confidence > 1:
+        raise ValueError("Thesis claim confidence must be between 0 and 1")
+    return confidence
+
+
+def _normalize_claim_id_list(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+    ids: list[int] = []
+    for item in value:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
 
 def _parse_thesis_claim_json_fields(d: dict) -> dict:
     for field in _THESIS_CLAIM_JSON_FIELDS:
         _parse_json_field(d, field)
+    d["source_requirements_json"] = normalize_source_requirements(d.get("source_requirements_json"))
+    d["linked_catalyst_ids_json"] = _normalize_claim_id_list(d.get("linked_catalyst_ids_json"))
+    d["linked_kill_condition_ids_json"] = _normalize_claim_id_list(d.get("linked_kill_condition_ids_json"))
+    # Friendly aliases for API/UI callers while retaining the DB column-shaped keys.
+    d["source_requirements"] = d["source_requirements_json"]
+    d["linked_catalyst_ids"] = d["linked_catalyst_ids_json"]
+    d["linked_kill_condition_ids"] = d["linked_kill_condition_ids_json"]
     return d
 
 
@@ -1118,12 +1208,14 @@ def create_thesis_claim(record: dict) -> dict:
         "claim": record["claim"],
         "expected_evidence": record.get("expected_evidence"),
         "disconfirming_evidence": record.get("disconfirming_evidence"),
-        "source_requirements_json": _encode_json(record.get("source_requirements", [])),
+        "source_requirements_json": _encode_json(normalize_source_requirements(record.get("source_requirements", []))),
         "cadence": record.get("cadence"),
-        "confidence": record.get("confidence"),
-        "status": record.get("status") or "active",
-        "linked_catalyst_ids_json": _encode_json(record.get("linked_catalyst_ids", [])),
-        "linked_kill_condition_ids_json": _encode_json(record.get("linked_kill_condition_ids", [])),
+        "confidence": _normalize_claim_confidence(record.get("confidence")),
+        "status": _normalize_thesis_claim_status(record.get("status")),
+        "linked_catalyst_ids_json": _encode_json(_normalize_claim_id_list(record.get("linked_catalyst_ids", []))),
+        "linked_kill_condition_ids_json": _encode_json(
+            _normalize_claim_id_list(record.get("linked_kill_condition_ids", []))
+        ),
         "source_type": record.get("source_type") or "user",
         "source_id": record.get("source_id"),
         "created_at": record.get("created_at") or now,
@@ -1158,10 +1250,22 @@ def create_thesis_claim_once(record: dict) -> dict:
     return create_thesis_claim({**record, "ticker": ticker, "source_type": source_type})
 
 
+def get_thesis_claim(claim_id: int) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM thesis_claims WHERE id = ?", (claim_id,)).fetchone()
+    if not row:
+        return None
+    return _parse_thesis_claim_json_fields(_require_row_dict(row))
+
+
 def get_thesis_claims(
     ticker: str | None = None,
     status: str | None = None,
     limit: int = 100,
+    *,
+    source_type: str | None = None,
+    source_id: str | None = None,
 ) -> list[dict]:
     conn = _get_conn()
     clauses: list[str] = []
@@ -1172,6 +1276,12 @@ def get_thesis_claims(
     if status:
         clauses.append("status = ?")
         params.append(status)
+    if source_type:
+        clauses.append("source_type = ?")
+        params.append(source_type)
+    if source_id:
+        clauses.append("source_id = ?")
+        params.append(source_id)
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     safe_limit = max(1, min(int(limit), 500))
     with _lock:
@@ -1180,6 +1290,34 @@ def get_thesis_claims(
             (*params, safe_limit),
         ).fetchall()
     return [_parse_thesis_claim_json_fields(d) for d in _rows_to_list(rows)]
+
+
+def delete_thesis_claims_by_ticker(
+    ticker: str,
+    *,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    exclude_ids: list[int] | None = None,
+) -> int:
+    """Delete thesis claims for a ticker, optionally scoped to a source."""
+    conn = _get_conn()
+    clauses = ["ticker = ?"]
+    params: list[Any] = [ticker.upper()]
+    if source_type:
+        clauses.append("source_type = ?")
+        params.append(source_type)
+    if source_id:
+        clauses.append("source_id = ?")
+        params.append(source_id)
+    exclude_ids = _normalize_claim_id_list(exclude_ids or [])
+    if exclude_ids:
+        placeholders = ", ".join("?" for _ in exclude_ids)
+        clauses.append(f"id NOT IN ({placeholders})")
+        params.extend(exclude_ids)
+    with _lock:
+        cur = conn.execute(f"DELETE FROM thesis_claims WHERE {' AND '.join(clauses)}", params)
+        conn.commit()
+    return cur.rowcount
 
 
 def update_thesis_claim(claim_id: int, updates: dict) -> dict:
@@ -1199,16 +1337,20 @@ def update_thesis_claim(claim_id: int, updates: dict) -> dict:
         if key not in allowed:
             continue
         if key == "source_requirements":
-            params["source_requirements_json"] = _encode_json(value)
+            params["source_requirements_json"] = _encode_json(normalize_source_requirements(value))
         elif key == "linked_catalyst_ids":
-            params["linked_catalyst_ids_json"] = _encode_json(value)
+            params["linked_catalyst_ids_json"] = _encode_json(_normalize_claim_id_list(value))
         elif key == "linked_kill_condition_ids":
-            params["linked_kill_condition_ids_json"] = _encode_json(value)
+            params["linked_kill_condition_ids_json"] = _encode_json(_normalize_claim_id_list(value))
+        elif key == "confidence":
+            params[key] = _normalize_claim_confidence(value)
+        elif key == "status":
+            params[key] = _normalize_thesis_claim_status(value)
         else:
             params[key] = value
-    params["updated_at"] = _now()
     if not params:
         raise ValueError("No valid thesis claim updates supplied")
+    params["updated_at"] = _now()
     conn = _get_conn()
     set_clause = ", ".join(f"{key} = ?" for key in params)
     with _lock:

@@ -1127,6 +1127,55 @@ export const createCatalyst = (body: { ticker: string; description: string; cate
 export const updateCatalystStatus = (id: number, status: string, evidence?: string) =>
   client.put(`/catalysts/${id}/status`, { status, evidence }).then(r => r.data)
 
+// Thesis Claims
+export interface SourceRequirement {
+  type: string
+  description: string
+  required: boolean
+  freshness_days: number | null
+}
+
+export type ThesisClaimStatus = "active" | "supported" | "challenged" | "disconfirmed" | "retired"
+
+export interface ThesisClaim {
+  id: number
+  ticker: string
+  claim: string
+  expected_evidence: string | null
+  disconfirming_evidence: string | null
+  source_requirements: SourceRequirement[]
+  source_requirements_json?: SourceRequirement[]
+  cadence: string | null
+  confidence: number | null
+  status: ThesisClaimStatus
+  linked_catalyst_ids: number[]
+  linked_catalyst_ids_json?: number[]
+  linked_kill_condition_ids: number[]
+  linked_kill_condition_ids_json?: number[]
+  source_type: string
+  source_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ThesisClaimPayload = {
+  ticker?: string
+  claim?: string
+  expected_evidence?: string | null
+  disconfirming_evidence?: string | null
+  source_requirements?: SourceRequirement[]
+  cadence?: string | null
+  confidence?: number | null
+  status?: ThesisClaimStatus
+  linked_catalyst_ids?: number[]
+  linked_kill_condition_ids?: number[]
+}
+
+export const createThesisClaim = (body: ThesisClaimPayload & { ticker: string; claim: string }) =>
+  client.post("/thesis-claims", body).then(r => r.data as ThesisClaim)
+export const updateThesisClaim = (id: number, body: ThesisClaimPayload) =>
+  client.put(`/thesis-claims/${id}`, body).then(r => r.data as ThesisClaim)
+
 // Kill Conditions
 export const fetchKillConditions = (ticker: string) =>
   client.get("/kill-conditions", { params: { ticker } }).then(r => r.data)

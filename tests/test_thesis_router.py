@@ -3,9 +3,25 @@ from __future__ import annotations
 import sys
 import types
 
+import pytest
+
 import api.routers.overview as overview_router
 import api.routers.thesis as thesis_router
 from llm_utils import MODEL_MID, model_for_tier
+
+
+@pytest.fixture
+def temp_core_db(tmp_path, monkeypatch):
+    import portfolio.core_db as core_db
+
+    if core_db._conn:
+        core_db._conn.close()
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "core.db")
+    monkeypatch.setattr(core_db, "_conn", None)
+    yield core_db
+    if core_db._conn:
+        core_db._conn.close()
+    monkeypatch.setattr(core_db, "_conn", None)
 
 
 def test_thesis_status(auth_client, monkeypatch, tmp_path):
@@ -97,6 +113,9 @@ def test_get_thesis_not_found(auth_client, monkeypatch, tmp_path):
 
 def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    import llm_utils
+
+    monkeypatch.setattr(llm_utils, "_stored_provider", lambda: None)
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
     monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
@@ -166,6 +185,39 @@ def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path):
     assert payload["content"].startswith("# MU")
     assert "## Key Catalysts" in payload["content"]
     assert (thesis_dir / "MU.md").read_text(encoding="utf-8") == payload["content"]
+
+
+def test_save_thesis_syncs_catalysts_kill_conditions_and_claims(auth_client, monkeypatch, tmp_path, temp_core_db):
+    thesis_dir = tmp_path / "investment_theses"
+    thesis_dir.mkdir()
+    monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
+
+    import portfolio.thesis_sync as thesis_sync
+
+    monkeypatch.setattr(
+        thesis_sync,
+        "_thesis_paths",
+        lambda ticker: (thesis_dir / f"{ticker}.md", f"live/theses/{ticker}.md"),
+    )
+
+    resp = auth_client.put(
+        "/api/v1/thesis/MU",
+        json={
+            "content": (
+                "# MU\n\n"
+                "## Thesis\n- Memory demand improves\n\n"
+                "## Key Catalysts\n- **HBM ramp:** HBM3 fully sold out\n\n"
+                "## Risk Factors\n- **AI spending deceleration:** Capex slows\n"
+            )
+        },
+    )
+
+    assert resp.status_code == 200
+    assert len(temp_core_db.get_catalysts("MU")) == 1
+    assert len(temp_core_db.get_kill_conditions("MU")) == 1
+    claims = temp_core_db.get_thesis_claims("MU")
+    assert len(claims) == 1
+    assert claims[0]["claim"] == "Memory demand improves"
 
 
 def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
@@ -255,3 +307,89 @@ def test_direct_markdown_save_models_have_pydantic_size_limits():
 
     assert thesis_schema["properties"]["content"]["maxLength"] == thesis_router.MAX_UPLOAD_SIZE_BYTES
     assert overview_schema["properties"]["content"]["maxLength"] == overview_router.MAX_UPLOAD_SIZE_BYTES
+
+
+def test_thesis_claim_api_accepts_typed_sources_and_writes_markdown(auth_client, monkeypatch, tmp_path, temp_core_db):
+    core_db = temp_core_db
+    thesis_dir = tmp_path / "investment_theses"
+    thesis_dir.mkdir()
+    thesis_file = thesis_dir / "MU.md"
+    thesis_file.write_text(
+        "# MU\n\n## Thesis\n- Base thesis\n\n## Key Catalysts\n- TBD\n\n## Risk Factors\n- TBD\n",
+        encoding="utf-8",
+    )
+
+    import portfolio.thesis_sync as thesis_sync
+
+    monkeypatch.setattr(
+        thesis_sync,
+        "_thesis_paths",
+        lambda ticker: (thesis_dir / f"{ticker}.md", f"live/theses/{ticker}.md"),
+    )
+
+    catalyst = core_db.create_catalyst("MU", "HBM ramp: HBM3 sold out", created_by="backfill")
+    kill_condition = core_db.create_kill_condition(
+        "MU",
+        "AI spending deceleration: Hyperscaler capex pulls back",
+        created_by="backfill",
+    )
+
+    resp = auth_client.post(
+        "/api/v1/thesis-claims",
+        json={
+            "ticker": "MU",
+            "claim": "HBM supply stays tight: Premium pricing can persist.",
+            "expected_evidence": "HBM sell-out commentary.",
+            "disconfirming_evidence": "ASP declines.",
+            "source_requirements": [
+                {
+                    "type": "earnings_transcript",
+                    "description": "latest earnings call",
+                    "required": True,
+                    "freshness_days": 45,
+                }
+            ],
+            "cadence": "weekly",
+            "confidence": 0.72,
+            "linked_catalyst_ids": [catalyst["id"]],
+            "linked_kill_condition_ids": [kill_condition["id"]],
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["source_requirements"][0]["type"] == "earnings_transcript"
+    content = thesis_file.read_text(encoding="utf-8")
+    assert "## Thesis Claims" in content
+    assert "type=earnings_transcript" in content
+    assert "Catalysts: HBM ramp" in content
+    assert "Kill conditions: AI spending deceleration" in content
+
+    update = auth_client.put(
+        f"/api/v1/thesis-claims/{payload['id']}",
+        json={
+            "status": "supported",
+            "source_requirements": ["earnings"],
+            "confidence": 0.8,
+        },
+    )
+
+    assert update.status_code == 200
+    updated = update.json()
+    assert updated["status"] == "supported"
+    assert updated["source_requirements"][0] == {
+        "type": "custom",
+        "description": "earnings",
+        "required": True,
+        "freshness_days": None,
+    }
+    assert "Status: supported" in thesis_file.read_text(encoding="utf-8")
+
+
+def test_thesis_claim_api_rejects_invalid_confidence(auth_client):
+    resp = auth_client.post(
+        "/api/v1/thesis-claims",
+        json={"ticker": "MU", "claim": "Invalid confidence", "confidence": 1.5},
+    )
+
+    assert resp.status_code == 422

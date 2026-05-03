@@ -74,7 +74,8 @@ def backfill_from_markdown(theses_dir: Path | None = None) -> dict[str, dict[str
 
     Returns a summary dict: {ticker: {catalysts: N, kill_conditions: N}}.
     """
-    from portfolio.core_db import create_catalyst, create_kill_condition, get_catalysts, get_kill_conditions
+    from portfolio.core_db import create_catalyst, create_kill_condition, get_catalysts, get_thesis_claims
+    from portfolio.thesis_sync import sync_claims_from_content
 
     if theses_dir is None:
         from paths import PROJECT_ROOT
@@ -93,47 +94,56 @@ def backfill_from_markdown(theses_dir: Path | None = None) -> dict[str, dict[str
         if not content:
             continue
 
-        # Skip if this ticker already has backfilled data
+        # Keep catalyst/kill-condition backfill idempotent, but let claims
+        # backfill independently for databases populated before claims existed.
         existing_catalysts = get_catalysts(ticker)
-        if any(c.get("created_by") == "backfill" for c in existing_catalysts):
-            continue
+        has_backfilled_entities = any(c.get("created_by") == "backfill" for c in existing_catalysts)
 
         catalyst_bullets = _parse_bullets(content, "Key Catalysts")
         risk_bullets = _parse_bullets(content, "Risk Factors")
 
         cat_count = 0
-        for bullet in catalyst_bullets:
-            if not bullet or bullet.strip() == "TBD":
-                continue
-            label, desc = _extract_label_and_description(bullet)
-            category = _categorize_catalyst(label, desc)
-            create_catalyst(
-                ticker=ticker,
-                description=f"{label}: {desc}" if desc != label else label,
-                category=category,
-                created_by="backfill",
-            )
-            cat_count += 1
-
         kc_count = 0
-        for bullet in risk_bullets:
-            if not bullet or bullet.strip() == "TBD":
-                continue
-            label, desc = _extract_label_and_description(bullet)
-            create_kill_condition(
-                ticker=ticker,
-                condition=f"{label}: {desc}" if desc != label else label,
-                created_by="backfill",
-            )
-            kc_count += 1
+        if not has_backfilled_entities:
+            for bullet in catalyst_bullets:
+                if not bullet or bullet.strip() == "TBD":
+                    continue
+                label, desc = _extract_label_and_description(bullet)
+                category = _categorize_catalyst(label, desc)
+                create_catalyst(
+                    ticker=ticker,
+                    description=f"{label}: {desc}" if desc != label else label,
+                    category=category,
+                    created_by="backfill",
+                )
+                cat_count += 1
 
-        summary[ticker] = {"catalysts": cat_count, "kill_conditions": kc_count}
-        if cat_count or kc_count:
+            for bullet in risk_bullets:
+                if not bullet or bullet.strip() == "TBD":
+                    continue
+                label, desc = _extract_label_and_description(bullet)
+                create_kill_condition(
+                    ticker=ticker,
+                    condition=f"{label}: {desc}" if desc != label else label,
+                    created_by="backfill",
+                )
+                kc_count += 1
+
+        claim_count = 0
+        if not get_thesis_claims(ticker=ticker):
+            claim_count = sync_claims_from_content(ticker, content)
+
+        if not (cat_count or kc_count or claim_count):
+            continue
+
+        summary[ticker] = {"catalysts": cat_count, "kill_conditions": kc_count, "thesis_claims": claim_count}
+        if cat_count or kc_count or claim_count:
             logger.info(
-                "thesis_backfill: %s -> %d catalysts, %d kill conditions",
+                "thesis_backfill: %s -> %d catalysts, %d kill conditions, %d thesis claims",
                 ticker,
                 cat_count,
                 kc_count,
+                claim_count,
             )
 
     return summary
