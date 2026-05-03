@@ -8,8 +8,9 @@ Usage:
     python -m auto_report.fetch_state
 
 Required env:
-    TALISMAN_API_URL   — base URL of the deployed API (no trailing slash)
-    API_PROXY_SECRET   — X-Api-Proxy-Secret header value (optional but usually required)
+    TALISMAN_API_URL      — base URL of the deployed API (no trailing slash)
+    API_PROXY_SECRET      — X-Api-Proxy-Secret header value (optional but usually required)
+    TALISMAN_API_PASSWORD — password-mode login secret for CI/API automation (optional)
 """
 
 from __future__ import annotations
@@ -28,6 +29,20 @@ def _build_headers() -> dict[str, str]:
     return headers
 
 
+def _login_if_needed(session: requests.Session, api_url: str, headers: dict[str, str]) -> None:
+    password = (os.getenv("TALISMAN_API_PASSWORD") or "").strip()
+    if not password:
+        return
+
+    response = session.post(
+        f"{api_url}/api/v1/auth/login",
+        json={"password": password},
+        headers=headers,
+        timeout=30,
+    )
+    response.raise_for_status()
+
+
 def fetch_and_seed() -> int:
     api_url = (os.getenv("TALISMAN_API_URL") or "").strip().rstrip("/")
     if not api_url:
@@ -35,8 +50,11 @@ def fetch_and_seed() -> int:
         return 1
 
     headers = _build_headers()
+    session = requests.Session()
 
-    response = requests.get(
+    _login_if_needed(session, api_url, headers)
+
+    response = session.get(
         f"{api_url}/api/v1/portfolio-positions",
         params={"include_hedges": "true"},
         headers=headers,

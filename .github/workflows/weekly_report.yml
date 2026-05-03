@@ -61,6 +61,7 @@ jobs:
         env:
           TALISMAN_API_URL: ${{ vars.TALISMAN_API_URL }}
           API_PROXY_SECRET: ${{ secrets.API_PROXY_SECRET }}
+          TALISMAN_API_PASSWORD: ${{ secrets.TALISMAN_API_PASSWORD }}
         run: python -m auto_report.fetch_state
 
       - name: Generate weekly report
