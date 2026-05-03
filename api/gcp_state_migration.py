@@ -895,18 +895,18 @@ class StateMigrator:
             now = datetime.now(UTC).isoformat()
             definition_rows = []
             for definition in [*ontology_schema_definitions(), *domain_action_schema_definitions()]:
-                row = definition.row()
+                definition_row = definition.row()
                 definition_rows.append(
                     {
-                        "schema_kind": row[0],
-                        "schema_name": row[1],
-                        "schema_version": row[2],
-                        "definition_json": row[3],
-                        "definition_hash": row[4],
-                        "compatibility_json": row[5],
-                        "status": row[6],
+                        "schema_kind": definition_row[0],
+                        "schema_name": definition_row[1],
+                        "schema_version": definition_row[2],
+                        "definition_json": definition_row[3],
+                        "definition_hash": definition_row[4],
+                        "compatibility_json": definition_row[5],
+                        "status": definition_row[6],
                         "created_at": now,
-                        "deprecated_at": row[7],
+                        "deprecated_at": definition_row[7],
                     }
                 )
             self._upsert_rows(

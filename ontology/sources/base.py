@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, date, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 RawSourcePayload = Any
 SourceStatus = Literal["ok", "partial", "error"]
@@ -128,7 +128,7 @@ def run_source_adapter[T](
         raw = adapter.fetch()
         result = adapter.normalize(raw)
     except Exception as exc:
-        result = error_result(adapter, _sanitize_detail(str(exc)))
+        result = error_result(adapter, _sanitize_detail(str(exc)) or exc.__class__.__name__)
 
     duration_ms = (time.perf_counter() - started) * 1000.0
     result.lineage.provenance_event_id = provenance_event_id
@@ -384,7 +384,7 @@ def _fingerprintable(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, datetime | date):
         return value.isoformat()
     if is_dataclass(value):
-        return _fingerprintable(asdict(value), depth=depth + 1)
+        return _fingerprintable(asdict(cast(Any, value)), depth=depth + 1)
     if isinstance(value, Mapping):
         return {
             str(k): _fingerprintable(v, depth=depth + 1)

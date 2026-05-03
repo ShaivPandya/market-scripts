@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from ontology.schemas.base import expected_risk_level
 from ontology.schemas.identity import (
@@ -237,7 +237,7 @@ def _lower(value: object, *, default: str) -> str:
 
 def _score(value: object, *, default: float) -> float:
     try:
-        number = float(value)
+        number = float(cast(Any, value))
     except (TypeError, ValueError):
         number = default
     return max(0.0, min(1.0, number))
@@ -247,7 +247,7 @@ def _optional_float(value: object) -> float | None:
     try:
         if value is None:
             return None
-        return float(value)
+        return float(cast(Any, value))
     except (TypeError, ValueError):
         return None
 

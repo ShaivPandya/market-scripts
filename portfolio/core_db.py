@@ -1976,8 +1976,10 @@ def complete_workflow_run(
     d = _require_row_dict(row)
     _parse_json_field(d, "artifacts")
     _parse_json_field(d, "tool_sections")
-    sections = d.get("tool_sections") if isinstance(d.get("tool_sections"), list) else []
-    artifact_payload = d.get("artifacts") if isinstance(d.get("artifacts"), (dict, list)) else {}
+    raw_sections = d.get("tool_sections")
+    sections: list[Any] = raw_sections if isinstance(raw_sections, list) else []
+    raw_artifacts = d.get("artifacts")
+    artifact_payload: dict[Any, Any] | list[Any] = raw_artifacts if isinstance(raw_artifacts, (dict, list)) else {}
     artifact_count = len(artifact_payload) if isinstance(artifact_payload, dict) else len(artifact_payload)
     _emit_core_audit(
         "workflow.run.completed",
@@ -2564,7 +2566,7 @@ def normalize_source_requirements(value: Any) -> list[dict[str, Any]]:
             required = bool(required_raw)
         freshness_raw = item.get("freshness_days")
         freshness_days = None
-        if freshness_raw not in (None, ""):
+        if freshness_raw is not None and freshness_raw != "":
             try:
                 freshness_days = max(0, int(freshness_raw))
             except (TypeError, ValueError):
@@ -3312,11 +3314,12 @@ def create_pending_approval(
         from api import provenance
 
         event_id = provenance.deterministic_id("pv:approval", result["id"])
+        approval_id = int(cast(Any, result["id"]))
         provenance.start_event(
             event_id=event_id,
             event_type="approval",
             event_name="approval.created",
-            approval_id=int(result["id"]),
+            approval_id=approval_id,
             input_value=proposed_change,
             summary={
                 "approval_id": result["id"],
@@ -3333,7 +3336,7 @@ def create_pending_approval(
             },
         )
         provenance.finish_event(event_id, status="succeeded", output_value=result, summary={"status": "pending"})
-        set_pending_approval_provenance(int(result["id"]), provenance_event_id=event_id)
+        set_pending_approval_provenance(approval_id, provenance_event_id=event_id)
         if source_type and source_id:
             provenance.link_refs(
                 event_id=event_id,
@@ -4121,7 +4124,11 @@ def _handle_news_digest_delete_approval(
     digest_id = validate_digest_id(str(change.get("digest_id") or ""))
     deleted = delete_digest(digest_id)
     if deleted:
-        callbacks.append(lambda digest_id=digest_id: _delete_digest_index_best_effort(digest_id))
+
+        def delete_digest_index() -> None:
+            _delete_digest_index_best_effort(digest_id)
+
+        callbacks.append(delete_digest_index)
 
 
 _APPROVAL_SIDE_EFFECT_HANDLERS: dict[str, ApprovalSideEffectHandler] = {

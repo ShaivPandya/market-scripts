@@ -893,6 +893,12 @@ def _as_str_list(value: Any) -> list[str]:
     return [str(v) for v in value if isinstance(v, (str, int, float))]
 
 
+def _as_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _risk_level_from_score(score: float) -> str:
     if score >= 0.75:
         return "high"
@@ -1002,6 +1008,10 @@ def _enrich_with_thesis_context(
         thesis_bundle = context.get("thesis")
         thesis_node = thesis_bundle.get("node") if isinstance(thesis_bundle, dict) else None
         thesis_edge = thesis_bundle.get("edge") if isinstance(thesis_bundle, dict) else None
+        if not isinstance(thesis_node, dict):
+            result["thesis"] = None
+            result["latest_evaluation"] = None
+            continue
         if not _graph_node_visible(actor, policy, thesis_node, auth_stats):
             result["thesis"] = None
             result["latest_evaluation"] = None
@@ -1020,7 +1030,7 @@ def _enrich_with_thesis_context(
             "updated_at": thesis_props.get("updated_at"),
         }
 
-        evaluations = context.get("evaluations") if isinstance(context.get("evaluations"), list) else []
+        evaluations = _as_dict_list(context.get("evaluations"))
         latest = _select_latest_visible_evaluation(
             evaluations,
             actor=actor,
@@ -1053,8 +1063,8 @@ def _select_latest_visible_evaluation(
 ) -> dict[str, Any] | None:
     visible: list[dict[str, Any]] = []
     for item in evaluations:
-        node = item.get("node") if isinstance(item, dict) else None
-        edge = item.get("edge") if isinstance(item, dict) else None
+        node = item.get("node")
+        edge = item.get("edge")
         if not _graph_node_visible(actor, policy, node, auth_stats):
             continue
         if not _graph_edge_visible(actor, policy, edge, source=thesis_node, target=node, auth_stats=auth_stats):
@@ -1067,7 +1077,7 @@ def _select_latest_visible_evaluation(
 
 
 def _evaluation_sort_key(item: dict[str, Any]) -> tuple[str, str]:
-    node = item.get("node") if isinstance(item, dict) else {}
+    node = _as_dict(item.get("node"))
     props = _as_dict(node.get("properties") if isinstance(node, dict) else {})
     return (str(props.get("evaluated_at") or ""), str(node.get("id") or ""))
 
@@ -1105,11 +1115,11 @@ def _build_page_graph(
         if isinstance(thesis_bundle, dict):
             builder.add_node(thesis_bundle.get("node"))
             builder.add_edge(thesis_bundle.get("edge"))
-        for evaluation in context.get("evaluations") if isinstance(context.get("evaluations"), list) else []:
+        for evaluation in _as_dict_list(context.get("evaluations")):
             if isinstance(evaluation, dict):
                 builder.add_node(evaluation.get("node"))
                 builder.add_edge(evaluation.get("edge"))
-        for catalyst in context.get("catalysts") if isinstance(context.get("catalysts"), list) else []:
+        for catalyst in _as_dict_list(context.get("catalysts")):
             if isinstance(catalyst, dict):
                 builder.add_node(catalyst.get("node"))
                 builder.add_edge(catalyst.get("edge"))

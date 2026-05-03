@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.repository import OntologyRepository
@@ -736,7 +736,7 @@ def _source_rows_for_provenance(
 
 def _safe_record_value(value: Any) -> dict[str, Any]:
     if is_dataclass(value):
-        return asdict(value)
+        return cast(dict[str, Any], asdict(cast(Any, value)))
     if isinstance(value, dict):
         return dict(value)
     return {"value": value}

@@ -19,7 +19,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -865,11 +865,9 @@ def execute_action(
 ) -> ActionResult:
     action = get_action(action_id)
     context = context or ActionContext()
-    audit_action = (
-        action
-        if input_schema_version in {None, action.schema_version}
-        else replace(action, schema_version=int(input_schema_version))
-    )
+    audit_action = action
+    if input_schema_version is not None and input_schema_version != action.schema_version:
+        audit_action = replace(action, schema_version=int(input_schema_version))
     run_id, _input_hash = _audit_start(audit_action, raw_input, context)
     context = replace(context, action_run_id=run_id, provenance_event_id=_action_run_provenance_id(run_id))
 
@@ -934,7 +932,8 @@ def execute_action(
         )
         return result
     except ActionError as exc:
-        if core_db.get_action_run(run_id).get("status") == "running":
+        action_run = core_db.get_action_run(run_id) or {}
+        if action_run.get("status") == "running":
             _audit_fail(
                 run_id,
                 exc.message,
@@ -948,7 +947,8 @@ def execute_action(
         raise
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
-        if core_db.get_action_run(run_id).get("status") == "running":
+        action_run = core_db.get_action_run(run_id) or {}
+        if action_run.get("status") == "running":
             _audit_fail(run_id, message, action=action, context=context)
         raise
 
@@ -1079,7 +1079,7 @@ def propose_action(
         raise
 
 
-def _ensure_unique_tickers(rows: list[BaseModel]) -> None:
+def _ensure_unique_tickers(rows: Sequence[BaseModel]) -> None:
     seen: set[str] = set()
     for row in rows:
         ticker = str(row.ticker)  # type: ignore[attr-defined]
@@ -1887,7 +1887,7 @@ def _schema_annotation(schema: dict[str, Any] | None) -> Any:
     if kind == "boolean":
         return bool
     if kind == "array":
-        return list[_schema_annotation(schema.get("items") if isinstance(schema.get("items"), dict) else {})]
+        return list[Any]
     if kind == "object":
         return dict[str, Any]
     return str
@@ -1908,7 +1908,7 @@ def _input_model_from_schema(tool_name: str, schema: dict[str, Any]) -> type[Bas
             default = ...
         description = field_schema.get("description")
         fields[field_name] = (annotation, Field(default=default, description=description))
-    return create_model(_tool_model_name(tool_name), **fields)
+    return cast(type[BaseModel], create_model(_tool_model_name(tool_name), **cast(Any, fields)))
 
 
 def _output_spec_for_tool(tool_name: str, access_mode: ToolAccessMode) -> OutputSchemaSpec:

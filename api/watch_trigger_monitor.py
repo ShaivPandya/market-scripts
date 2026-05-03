@@ -82,6 +82,10 @@ def _as_list(value: Any) -> list[Any]:
     return [value]
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())
 
@@ -283,7 +287,7 @@ def _verify_news_matches(matches: list[dict[str, Any]], definition: dict[str, An
 
 
 def _linked_context(definition: dict[str, Any], fallback_ticker: str | None) -> dict[str, Any]:
-    context = {"claims": [], "catalysts": [], "kill_conditions": [], "terms": []}
+    context: dict[str, Any] = {"claims": [], "catalysts": [], "kill_conditions": [], "terms": []}
     ticker = str(definition.get("ticker") or fallback_ticker or "").upper()
     try:
         from portfolio.core_db import get_catalysts, get_kill_conditions, get_thesis_claim, get_thesis_claims
@@ -428,9 +432,7 @@ def _source_requirements_met(
     verifications: list[dict[str, Any]],
     definition: dict[str, Any],
 ) -> tuple[bool, dict[str, Any]]:
-    requirements = (
-        definition.get("source_requirements") if isinstance(definition.get("source_requirements"), dict) else {}
-    )
+    requirements = _as_dict(definition.get("source_requirements"))
     min_sources = int(requirements.get("min_sources") or definition.get("min_sources") or 1)
     primary_required = bool(requirements.get("primary_source_required") or definition.get("primary_source_required"))
     source_names = {

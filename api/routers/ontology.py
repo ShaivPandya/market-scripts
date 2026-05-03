@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from inspect import Parameter, signature
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -86,19 +86,22 @@ def _execute_query(req: OntologyQueryJobRequest | OntologyQueryRequest) -> dict[
     filters = _extract_filters(req)
     actor = actor_from_dict(getattr(req, "actor", None))
     try:
-        return _call_with_optional_actor(
-            _service.query,
-            actor=actor,
-            query=req.query,
-            intent=req.intent,
-            filters=filters,
-            timeframe=req.timeframe,
-            include_graph=req.include_graph,
-            run_id=req.run_id,
-            refresh_snapshot=req.refresh_snapshot,
-            page=req.page,
-            page_size=req.page_size,
-            schema_mode=req.schema_mode,
+        return cast(
+            dict[str, Any],
+            _call_with_optional_actor(
+                _service.query,
+                actor=actor,
+                query=req.query,
+                intent=req.intent,
+                filters=filters,
+                timeframe=req.timeframe,
+                include_graph=req.include_graph,
+                run_id=req.run_id,
+                refresh_snapshot=req.refresh_snapshot,
+                page=req.page,
+                page_size=req.page_size,
+                schema_mode=req.schema_mode,
+            ),
         )
     except OntologyRunNotFoundError as exc:
         raise NotFoundError("Ontology run", str(exc)) from exc

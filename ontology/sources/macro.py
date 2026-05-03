@@ -4,6 +4,8 @@ import os
 from typing import Any
 
 from ontology.sources.base import (
+    SourceQuality,
+    SourceStatus,
     as_dict,
     as_rows,
     build_source_result,
@@ -52,7 +54,7 @@ class SentimentAdapter:
         volatility = as_rows(raw.get("volatility"))
         latest_vvix = to_float(volatility[-1].get("vvix")) if volatility else None
         surveys = as_dict(raw.get("surveys"))
-        errors = surveys.get("errors") if isinstance(surveys.get("errors"), dict) else {}
+        errors = as_dict(surveys.get("errors"))
         snapshot = SentimentSnapshot(
             put_call=as_dict(raw.get("put_call")),
             surveys=surveys,
@@ -107,16 +109,20 @@ class PositioningAdapter:
         from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
 
         instrument_list = [i.strip() for i in str(self.parameters["instruments"]).split(",") if i.strip()]
+        end_value = self.parameters.get("end")
+        groups_value = self.parameters.get("groups")
+        z_window_value = self.parameters.get("z_window")
+        force_threshold_value = self.parameters.get("force_threshold")
         return fetch_multiple_instruments(
             domain=DEFAULT_DOMAIN,
             dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
             app_token=os.environ.get("SODA_APP_TOKEN") or None,
             instruments=instrument_list,
             start=str(self.parameters["start"]),
-            end=self.parameters["end"],
-            groups=self.parameters["groups"] or None,
-            z_window=int(self.parameters["z_window"]),
-            force_threshold=float(self.parameters["force_threshold"]),
+            end=str(end_value) if end_value is not None else None,
+            groups=str(groups_value) if groups_value else None,
+            z_window=int(z_window_value) if z_window_value is not None else 0,
+            force_threshold=float(force_threshold_value) if force_threshold_value is not None else 2.0,
         )
 
     def normalize(self, raw: Any):
@@ -140,8 +146,8 @@ class PositioningAdapter:
             )
 
         snapshot = PositioningSnapshot(rows=rows)
-        status = "ok" if rows else "partial"
-        quality = "ok" if rows else "missing"
+        status: SourceStatus = "ok" if rows else "partial"
+        quality: SourceQuality = "ok" if rows else "missing"
         return build_source_result(
             self,
             raw,

@@ -243,7 +243,7 @@ def create_github_issue(title: str, body: str) -> str | None:
 
     resp = requests_post(url, headers=headers, json={"title": title, "body": body}, timeout=30)
     if resp.status_code == 201:
-        issue_url = resp.json().get("html_url", "")
+        issue_url = str(resp.json().get("html_url") or "")
         log.info("Created GitHub Issue: %s", issue_url)
         return issue_url
     else:

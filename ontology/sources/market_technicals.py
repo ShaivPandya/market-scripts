@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ontology.sources.base import (
+    SourceQuality,
     as_dict,
     build_source_result,
     clean_str,
@@ -74,7 +75,7 @@ class MarketBreadthAdapter:
             as_of_date=clean_str(raw.get("as_of_date")),
             failed_ticker_count=failed_count,
         )
-        base_quality = "degraded" if failed_count else "ok"
+        base_quality: SourceQuality = "degraded" if failed_count else "ok"
         status, quality = status_for_drift(base_status="ok", base_quality=base_quality, drift=drift)
         return build_source_result(
             self,

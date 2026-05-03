@@ -7,12 +7,12 @@ import os
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from api.audit import emit_audit_event
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
-from ontology.models import OntologyEdge, OntologyNode
+from ontology.models import EntityType, OntologyEdge, OntologyNode, RelationType
 from ontology.schema_definitions import (
     SCHEMA_KIND_ONTOLOGY_EDGE_PROPERTIES,
     SCHEMA_KIND_ONTOLOGY_OBJECT,
@@ -1146,8 +1146,8 @@ class OntologyRepository:
             if isinstance(ctx.get("thesis"), dict) and isinstance(ctx["thesis"].get("node"), dict)
         }
         for row in evaluation_rows:
-            position_key = positions_by_thesis.get(str(row["thesis_id"]))
-            if position_key is None:
+            evaluation_position_key = positions_by_thesis.get(str(row["thesis_id"]))
+            if evaluation_position_key is None:
                 continue
             node = _node_payload_from_row(
                 row,
@@ -1167,11 +1167,11 @@ class OntologyRepository:
                 run_id=run_id,
                 schema_mode=schema_mode,
             )
-            grouped[position_key]["evaluations"].append({"node": node, "edge": edge})
+            grouped[evaluation_position_key]["evaluations"].append({"node": node, "edge": edge})
 
         for row in catalyst_rows:
-            position_key = positions_by_thesis.get(str(row["thesis_id"]))
-            if position_key is None:
+            catalyst_position_key = positions_by_thesis.get(str(row["thesis_id"]))
+            if catalyst_position_key is None:
                 continue
             node = _node_payload_from_row(
                 row,
@@ -1191,7 +1191,7 @@ class OntologyRepository:
                 run_id=run_id,
                 schema_mode=schema_mode,
             )
-            grouped[position_key]["catalysts"].append({"node": node, "edge": edge})
+            grouped[catalyst_position_key]["catalysts"].append({"node": node, "edge": edge})
 
         return grouped
 
@@ -1773,7 +1773,10 @@ def _ontology_run_provenance_id(run_id: str) -> str:
         return f"pv:ontology_run:{str(run_id).replace('+', '_')}"
 
 
-def _ensure_schema_columns(conn: sqlite3.Connection, table: str) -> None:
+RepositoryConnection = sqlite3.Connection | PostgresCompatConnection
+
+
+def _ensure_schema_columns(conn: RepositoryConnection, table: str) -> None:
     existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if "schema_name" not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_name TEXT NOT NULL DEFAULT 'legacy'")
@@ -1781,7 +1784,7 @@ def _ensure_schema_columns(conn: sqlite3.Connection, table: str) -> None:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0")
 
 
-def _ensure_relation_schema_columns(conn: sqlite3.Connection, table: str) -> None:
+def _ensure_relation_schema_columns(conn: RepositoryConnection, table: str) -> None:
     existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if "relation_schema_name" not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN relation_schema_name TEXT NOT NULL DEFAULT 'legacy'")
@@ -1789,13 +1792,13 @@ def _ensure_relation_schema_columns(conn: sqlite3.Connection, table: str) -> Non
         conn.execute(f"ALTER TABLE {table} ADD COLUMN relation_schema_version INTEGER NOT NULL DEFAULT 0")
 
 
-def _ensure_ontology_run_provenance_column(conn: sqlite3.Connection) -> None:
+def _ensure_ontology_run_provenance_column(conn: RepositoryConnection) -> None:
     existing = {str(row["name"]) for row in conn.execute("PRAGMA table_info(ontology_runs)").fetchall()}
     if "provenance_event_id" not in existing:
         conn.execute("ALTER TABLE ontology_runs ADD COLUMN provenance_event_id TEXT")
 
 
-def _ensure_relation_indexes(conn: sqlite3.Connection) -> None:
+def _ensure_relation_indexes(conn: RepositoryConnection) -> None:
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique_source_relation
@@ -1854,7 +1857,7 @@ def _ensure_relation_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
-def _ensure_snapshot_query_indexes(conn: sqlite3.Connection) -> None:
+def _ensure_snapshot_query_indexes(conn: RepositoryConnection) -> None:
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_snapshot_nodes_run_type_id
@@ -1944,7 +1947,7 @@ def _load_node_properties(
         normalized = normalize_node(
             OntologyNode(
                 id=str(node_id),
-                type=node_type,
+                type=cast(EntityType, str(node_type)),
                 label=str(label or node_id),
                 properties=props,
                 schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "legacy")),
@@ -1982,7 +1985,7 @@ def _load_edge_properties(
             OntologyEdge(
                 source_id=str(_row_value(row, source_id_key, "unknown")),
                 target_id=str(_row_value(row, target_id_key, "unknown")),
-                relation_type=str(relation_type),
+                relation_type=cast(RelationType, str(relation_type)),
                 properties=props,
                 schema_name=str(_row_value(row, schema_name_key, props.get("schema_name") or "legacy")),
                 schema_version=int(_row_value(row, schema_version_key, props.get("schema_version") or 0) or 0),
@@ -2011,7 +2014,7 @@ def _fetch_node_envelopes(
     return [
         OntologyNode(
             id=str(row["id"]),
-            type=row["type"],
+            type=cast(EntityType, str(row["type"])),
             label=str(row["label"]),
             properties=_load_json(row["properties_json"]),
             schema_name=str(row["schema_name"] or "legacy"),
@@ -2048,7 +2051,7 @@ def _fetch_edge_envelopes(
         OntologyEdge(
             source_id=str(row["source_id"]),
             target_id=str(row["target_id"]),
-            relation_type=str(row["relation_type"]),
+            relation_type=cast(RelationType, str(row["relation_type"])),
             properties=_load_json(row["properties_json"]),
             schema_name=str(row["schema_name"] or "legacy"),
             schema_version=int(row["schema_version"] or 0),
@@ -2296,11 +2299,13 @@ def _record_snapshot_provenance(
 
 
 def _source_record_ref(source_name: str, record_kind: str, record_key: Any, provenance: Any) -> str:
-    return provenance.deterministic_id(
-        "source_record",
-        source_name,
-        record_kind,
-        provenance.stable_hash(record_key),
+    return str(
+        provenance.deterministic_id(
+            "source_record",
+            source_name,
+            record_kind,
+            provenance.stable_hash(record_key),
+        )
     )
 
 
@@ -2382,7 +2387,7 @@ def _normalize_live_edges_for_storage(
 def _fetch_node_type_map(
     conn: sqlite3.Connection | PostgresCompatConnection,
     node_ids: set[str],
-) -> dict[str, str]:
+) -> dict[str, EntityType]:
     if not node_ids:
         return {}
     placeholders = ", ".join("?" for _ in node_ids)
@@ -2390,7 +2395,7 @@ def _fetch_node_type_map(
         f"SELECT id, type FROM nodes WHERE id IN ({placeholders})",
         tuple(sorted(node_ids)),
     ).fetchall()
-    return {str(row["id"]): str(row["type"]) for row in rows}
+    return {str(row["id"]): cast(EntityType, str(row["type"])) for row in rows}
 
 
 def _raise_edge_integrity_error(exc: Exception) -> None:

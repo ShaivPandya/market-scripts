@@ -15,6 +15,7 @@ import os
 import re
 import time
 from collections import Counter
+from collections.abc import Sized
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -1127,6 +1128,7 @@ def _start_model_call_provenance(
 
         model = stream_kwargs.get("model")
         conversation = stream_kwargs.get("messages") or stream_kwargs.get("input")
+        tools = stream_kwargs.get("tools")
         event_id = provenance.deterministic_id(
             "pv:model_call",
             session_id or workflow_run_id or "legacy",
@@ -1153,7 +1155,7 @@ def _start_model_call_provenance(
                 "purpose": purpose,
                 "attempt": attempt,
                 "round_index": round_index,
-                "tool_count": len(stream_kwargs.get("tools") or []),
+                "tool_count": len(tools) if isinstance(tools, Sized) else 0,
             },
             metadata={
                 "max_tokens": stream_kwargs.get("max_tokens"),
