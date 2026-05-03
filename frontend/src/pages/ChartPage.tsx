@@ -481,9 +481,10 @@ export function ChartPage() {
             <TextInput
               label="Ticker"
               value={ticker}
-              onChange={v => setTicker(v.toUpperCase())}
+              onChange={setTicker}
               placeholder="SPY"
               className="w-28"
+              uppercase
             />
             <div>
               <label className="block text-sm text-gray-600 mb-1.5">Lookback</label>
@@ -519,16 +520,18 @@ export function ChartPage() {
               <TextInput
                 label="Symbol A (Numerator)"
                 value={ratioSymbolA}
-                onChange={v => setRatioSymbolA(v.toUpperCase())}
+                onChange={setRatioSymbolA}
                 placeholder="^GSPC"
                 className="w-40"
+                uppercase
               />
               <TextInput
                 label="Symbol B (Denominator)"
                 value={ratioSymbolB}
-                onChange={v => setRatioSymbolB(v.toUpperCase())}
+                onChange={setRatioSymbolB}
                 placeholder="RSP"
                 className="w-40"
+                uppercase
               />
               <div>
                 <label className="block text-sm text-gray-600 mb-1.5">View Window</label>
@@ -619,6 +622,14 @@ export function ChartPage() {
             </p>
           </div>
 
+          <div>
+            <h2 className="text-base font-semibold mb-2">Price Ratio Over Time</h2>
+            <TimeSeriesChart multiData={ratioMultiChartData} series={ratioChartSeries} height={300} />
+            <p className="text-xs text-gray-500 mt-2">
+              Dashed references show historical average, 5th/95th percentile bands, and 10th/90th percentile decile bands.
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <MetricCard title="Start Ratio" value={formatRatio(toNumber(ratioStats.start_ratio), 4)} />
             <MetricCard title="Current Ratio" value={formatRatio(toNumber(ratioStats.end_ratio), 4)} />
@@ -634,14 +645,6 @@ export function ChartPage() {
             <MetricCard title="Bottom Decile" value={formatRatio(bottomDecile, 4)} />
             <MetricCard title="Top Decile" value={formatRatio(topDecile, 4)} />
             <MetricCard title="Top 5%" value={formatRatio(top5Pct, 4)} />
-          </div>
-
-          <div>
-            <h2 className="text-base font-semibold mb-2">Price Ratio Over Time</h2>
-            <TimeSeriesChart multiData={ratioMultiChartData} series={ratioChartSeries} height={300} />
-            <p className="text-xs text-gray-500 mt-2">
-              Dashed references show historical average, 5th/95th percentile bands, and 10th/90th percentile decile bands.
-            </p>
           </div>
 
           <DataTable

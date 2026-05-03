@@ -161,6 +161,7 @@ interface TextInputProps {
   errorText?: string
   id?: string
   disabled?: boolean
+  uppercase?: boolean
 }
 
 export function TextInput({
@@ -174,6 +175,7 @@ export function TextInput({
   errorText,
   id,
   disabled,
+  uppercase,
 }: TextInputProps) {
   const describedBy = errorText ? `${id ?? label}-error` : helperText ? `${id ?? label}-help` : undefined
   return (
@@ -185,9 +187,10 @@ export function TextInput({
         id={id}
         type={type}
         value={value}
-        onChange={e => onChange(e.target.value)}
+        onChange={e => onChange(uppercase ? e.target.value.toUpperCase() : e.target.value)}
         placeholder={placeholder}
         disabled={disabled}
+        autoCapitalize={uppercase ? "characters" : undefined}
         aria-invalid={Boolean(errorText)}
         aria-describedby={describedBy}
         className="theme-input w-full"

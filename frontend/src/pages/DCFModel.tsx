@@ -523,8 +523,9 @@ export function DCFModel() {
           <TextInput
             label="Ticker"
             value={ticker}
-            onChange={v => setTicker(v.toUpperCase())}
+            onChange={setTicker}
             placeholder="e.g. AAPL"
+            uppercase
           />
         </div>
         <ActionButton type="submit" loading={isFetching} disabled={!ticker.trim()}>

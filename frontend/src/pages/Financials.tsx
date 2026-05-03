@@ -219,9 +219,10 @@ export function Financials() {
         <TextInput
           label="Ticker"
           value={ticker}
-          onChange={v => setTicker(v.toUpperCase())}
+          onChange={setTicker}
           placeholder="AAPL"
           className="w-40"
+          uppercase
         />
         <ActionButton type="submit" loading={isLoading} loadingText="Loading..." className="w-auto px-6">
           Analyze

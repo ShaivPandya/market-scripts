@@ -506,19 +506,19 @@ export function PortfolioSizer() {
                     style={
                       row.direction === "long"
                         ? {
-                            backgroundColor: "hsl(var(--success-soft))",
-                            color: "hsl(var(--success-soft-foreground))",
-                            borderColor: "hsl(var(--success-border))",
+                            backgroundColor: "hsl(var(--success-muted))",
+                            color: "hsl(var(--success))",
+                            borderColor: "hsl(var(--success) / 0.25)",
                           }
                         : row.direction === "short"
                           ? {
-                              backgroundColor: "hsl(var(--danger-soft))",
-                              color: "hsl(var(--danger-soft-foreground))",
-                              borderColor: "hsl(var(--danger-border))",
+                              backgroundColor: "hsl(var(--destructive-muted))",
+                              color: "hsl(var(--destructive))",
+                              borderColor: "hsl(var(--destructive) / 0.25)",
                             }
                           : {
-                              backgroundColor: "hsl(var(--muted))",
-                              color: "hsl(var(--muted-foreground))",
+                              backgroundColor: "hsl(var(--background-card-muted))",
+                              color: "hsl(var(--foreground-secondary))",
                               borderColor: "hsl(var(--border))",
                             }
                     }
@@ -535,7 +535,7 @@ export function PortfolioSizer() {
                     step={1}
                     value={row.conviction}
                     onChange={e => updateConviction(row.id, Number(e.target.value))}
-                    className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[hsl(var(--muted-3))]"
+                    className="hig-slider w-full cursor-pointer"
                     style={{ accentColor: "hsl(var(--accent))" }}
                   />
                 </div>

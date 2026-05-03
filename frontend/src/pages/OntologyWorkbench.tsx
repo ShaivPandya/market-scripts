@@ -294,6 +294,7 @@ export function OntologyWorkbench() {
           value={tickers}
           onChange={setTickers}
           placeholder="AAPL, MSFT"
+          uppercase
         />
         <TextInput
           label="Sectors (CSV)"

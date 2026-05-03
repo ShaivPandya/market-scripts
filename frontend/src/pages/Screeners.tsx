@@ -182,6 +182,7 @@ function QualityPanel() {
             value={tickers}
             onChange={setTickers}
             placeholder="AAPL, MSFT, GOOG"
+            uppercase
           />
         )}
 
@@ -349,6 +350,7 @@ function ShortPanel() {
             value={tickers}
             onChange={setTickers}
             placeholder="AAPL, MSFT, GOOG"
+            uppercase
           />
         )}
 
@@ -658,6 +660,7 @@ function LongPanel() {
             value={tickers}
             onChange={setTickers}
             placeholder="AAPL, MSFT, GOOG"
+            uppercase
           />
         )}
 
@@ -958,6 +961,7 @@ function PriceMomentumPanel() {
             value={tickers}
             onChange={setTickers}
             placeholder="AAPL, MSFT, GOOG"
+            uppercase
           />
         )}
 
@@ -1087,6 +1091,7 @@ function FundamentalMomentumPanel() {
             value={tickers}
             onChange={setTickers}
             placeholder="AAPL, MSFT, GOOG"
+            uppercase
           />
         )}
 

@@ -299,14 +299,14 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                           style={
                             row.direction === "long"
                               ? {
-                                  backgroundColor: "hsl(var(--success-soft))",
-                                  color: "hsl(var(--success-soft-foreground))",
-                                  borderColor: "hsl(var(--success-border))",
+                                  backgroundColor: "hsl(var(--success-muted))",
+                                  color: "hsl(var(--success))",
+                                  borderColor: "hsl(var(--success) / 0.25)",
                                 }
                               : {
-                                  backgroundColor: "hsl(var(--danger-soft))",
-                                  color: "hsl(var(--danger-soft-foreground))",
-                                  borderColor: "hsl(var(--danger-border))",
+                                  backgroundColor: "hsl(var(--destructive-muted))",
+                                  color: "hsl(var(--destructive))",
+                                  borderColor: "hsl(var(--destructive) / 0.25)",
                                 }
                           }
                         >
@@ -323,7 +323,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         step={1}
                         value={row.conviction}
                         onChange={e => updatePositionRow(row._id, { conviction: Number(e.target.value) })}
-                        className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[hsl(var(--muted-3))]"
+                        className="hig-slider w-full cursor-pointer"
                         style={{ accentColor: "hsl(var(--accent))" }}
                       />
                       <span className="text-xs text-gray-500 whitespace-nowrap w-24 shrink-0">
@@ -368,11 +368,11 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         aria-checked={row.contrarian}
                         onClick={() => updatePositionRow(row._id, { contrarian: !row.contrarian })}
                         className="relative inline-flex h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-200"
-                        style={{ backgroundColor: row.contrarian ? "hsl(var(--accent))" : "hsl(var(--muted-3))" }}
+                        style={{ backgroundColor: row.contrarian ? "hsl(var(--accent))" : "hsl(var(--separator))" }}
                       >
                         <span
                           className={`pointer-events-none inline-block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200 mt-[2px] ${row.contrarian ? "translate-x-[20px]" : "translate-x-[2px]"}`}
-                          style={{ backgroundColor: "hsl(var(--card))" }}
+                          style={{ backgroundColor: "hsl(var(--background-elevated))" }}
                         />
                       </button>
                     </div>

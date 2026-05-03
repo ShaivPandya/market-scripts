@@ -396,6 +396,7 @@ export function HedgingTool() {
                     value={row.ticker}
                     onChange={v => updateRow(row.id, "ticker", v)}
                     placeholder="AAPL"
+                    uppercase
                   />
                 </div>
                 <div className="col-span-5">
