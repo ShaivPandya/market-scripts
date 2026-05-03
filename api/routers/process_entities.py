@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.exceptions import NotFoundError
 
@@ -114,6 +114,80 @@ def create_kill_condition(body: CreateKillConditionRequest):
     except Exception:
         pass
     return result
+
+
+# ---------------------------------------------------------------------------
+# Thesis Claims
+# ---------------------------------------------------------------------------
+
+
+class CreateThesisClaimRequest(BaseModel):
+    ticker: str
+    claim: str
+    expected_evidence: str | None = None
+    disconfirming_evidence: str | None = None
+    source_requirements: list[str] = Field(default_factory=list)
+    cadence: str | None = None
+    confidence: float | None = None
+    status: str = "active"
+    linked_catalyst_ids: list[int] = Field(default_factory=list)
+    linked_kill_condition_ids: list[int] = Field(default_factory=list)
+
+
+class UpdateThesisClaimRequest(BaseModel):
+    claim: str | None = None
+    expected_evidence: str | None = None
+    disconfirming_evidence: str | None = None
+    source_requirements: list[str] | None = None
+    cadence: str | None = None
+    confidence: float | None = None
+    status: str | None = None
+    linked_catalyst_ids: list[int] | None = None
+    linked_kill_condition_ids: list[int] | None = None
+
+
+@router.get("/thesis-claims")
+def list_thesis_claims(
+    ticker: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+):
+    from portfolio.core_db import get_thesis_claims
+
+    claims = get_thesis_claims(ticker=ticker, status=status, limit=limit)
+    return {"claims": claims, "count": len(claims)}
+
+
+@router.post("/thesis-claims")
+def create_thesis_claim(body: CreateThesisClaimRequest):
+    from portfolio.core_db import create_thesis_claim
+
+    return create_thesis_claim(
+        {
+            "ticker": body.ticker,
+            "claim": body.claim,
+            "expected_evidence": body.expected_evidence,
+            "disconfirming_evidence": body.disconfirming_evidence,
+            "source_requirements": body.source_requirements,
+            "cadence": body.cadence,
+            "confidence": body.confidence,
+            "status": body.status,
+            "linked_catalyst_ids": body.linked_catalyst_ids,
+            "linked_kill_condition_ids": body.linked_kill_condition_ids,
+            "source_type": "user",
+        }
+    )
+
+
+@router.put("/thesis-claims/{claim_id}")
+def update_thesis_claim(claim_id: int, body: UpdateThesisClaimRequest):
+    from portfolio.core_db import update_thesis_claim
+
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        return update_thesis_claim(claim_id, updates)
+    except ValueError as e:
+        raise NotFoundError("Thesis claim", str(claim_id)) from e
 
 
 @router.put("/kill-conditions/{kc_id}/status")

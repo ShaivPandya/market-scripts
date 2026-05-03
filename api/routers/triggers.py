@@ -15,6 +15,7 @@ class CreateTriggerRequest(BaseModel):
     trigger_type: str = "custom"
     ticker: str | None = None
     expires_at: str | None = None
+    definition: dict | None = None
 
 
 @router.get("/triggers")
@@ -38,6 +39,7 @@ def create_trigger(body: CreateTriggerRequest):
         ticker=body.ticker,
         source_type="user",
         expires_at=body.expires_at,
+        definition=body.definition,
     )
 
 

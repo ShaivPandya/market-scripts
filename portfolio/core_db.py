@@ -45,8 +45,18 @@ Public API:
     get_pending_approval(id)                           -> dict | None
     resolve_approval(id, status, resolved_note)        -> dict
 
+  Report Runs:
+    upsert_report_run(record)                          -> dict
+    get_report_runs(report_type, limit)                -> list[dict]
+
+  Thesis Claims:
+    create_thesis_claim(record)                        -> dict
+    get_thesis_claims(ticker, status)                  -> list[dict]
+    update_thesis_claim(id, updates)                   -> dict
+
   Recommendations:
     create_recommendation(record)                      -> dict
+    upsert_recommendation(record)                      -> dict
     get_recommendations(report_type, status, ticker)   -> list[dict]
     get_recommendation(id)                             -> dict | None
     get_latest_recommendation(report_type)             -> dict | None
@@ -128,6 +138,29 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 )
 """
 
+_CREATE_REPORT_RUNS = """
+CREATE TABLE IF NOT EXISTS report_runs (
+    report_id           TEXT PRIMARY KEY,
+    report_type         TEXT NOT NULL
+                        CHECK (report_type IN ('daily', 'weekly')),
+    as_of               TEXT NOT NULL,
+    source              TEXT NOT NULL DEFAULT 'github_actions',
+    source_run_id       TEXT,
+    source_url          TEXT,
+    status              TEXT NOT NULL DEFAULT 'completed'
+                        CHECK (status IN ('completed', 'failed')),
+    report_hash         TEXT,
+    input_hash          TEXT,
+    summary_json        TEXT,
+    artifact_paths_json TEXT,
+    issue_url           TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    synced_at           TEXT NOT NULL,
+    error               TEXT
+)
+"""
+
 _CREATE_ACTION_ITEMS = """
 CREATE TABLE IF NOT EXISTS action_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,7 +195,33 @@ CREATE TABLE IF NOT EXISTS watch_triggers (
     source_id    TEXT,
     created_at   TEXT NOT NULL,
     fired_at     TEXT,
-    expires_at   TEXT
+    expires_at   TEXT,
+    definition_json TEXT,
+    last_checked_at TEXT,
+    last_result_json TEXT,
+    last_evidence TEXT
+)
+"""
+
+_CREATE_THESIS_CLAIMS = """
+CREATE TABLE IF NOT EXISTS thesis_claims (
+    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker                       TEXT NOT NULL,
+    claim                        TEXT NOT NULL,
+    expected_evidence            TEXT,
+    disconfirming_evidence       TEXT,
+    source_requirements_json     TEXT,
+    cadence                      TEXT,
+    confidence                   REAL,
+    status                       TEXT NOT NULL DEFAULT 'active'
+                                 CHECK (status IN ('active', 'supported', 'challenged', 'disconfirmed', 'retired')),
+    linked_catalyst_ids_json     TEXT,
+    linked_kill_condition_ids_json TEXT,
+    source_type                  TEXT NOT NULL DEFAULT 'user'
+                                 CHECK (source_type IN ('workflow', 'agent', 'user')),
+    source_id                    TEXT,
+    created_at                   TEXT NOT NULL,
+    updated_at                   TEXT NOT NULL
 )
 """
 
@@ -246,7 +305,9 @@ CREATE TABLE IF NOT EXISTS recommendations (
     prompt_hash                 TEXT,
     input_hash                  TEXT,
     validation_status           TEXT,
-    source_quality_summary_json TEXT
+    source_quality_summary_json TEXT,
+    report_id                   TEXT,
+    idempotency_key             TEXT
 )
 """
 
@@ -256,14 +317,20 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_workflow_runs_name ON workflow_runs(workflow_name)",
     "CREATE INDEX IF NOT EXISTS idx_workflow_runs_ticker ON workflow_runs(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_workflow_runs_started ON workflow_runs(started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_report_runs_type_asof ON report_runs(report_type, as_of DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_report_runs_source ON report_runs(source_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_status ON action_items(status)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_ticker ON action_items(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_watch_triggers_status ON watch_triggers(status)",
     "CREATE INDEX IF NOT EXISTS idx_watch_triggers_ticker ON watch_triggers(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_thesis_claims_ticker ON thesis_claims(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_thesis_claims_status ON thesis_claims(status)",
     "CREATE INDEX IF NOT EXISTS idx_research_notes_ticker ON research_notes(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_ticker ON pending_approvals(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report ON recommendations(report_type, as_of DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_report_id ON recommendations(report_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_recommendations_idempotency ON recommendations(idempotency_key)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_ticker ON recommendations(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_status ON recommendations(status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_approval ON recommendations(approval_status)",
@@ -297,6 +364,7 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                         identity_tables={
                             "catalysts",
                             "kill_conditions",
+                            "thesis_claims",
                             "action_items",
                             "watch_triggers",
                             "research_notes",
@@ -318,16 +386,49 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_CATALYSTS,
         _CREATE_KILL_CONDITIONS,
         _CREATE_WORKFLOW_RUNS,
+        _CREATE_REPORT_RUNS,
         _CREATE_ACTION_ITEMS,
         _CREATE_WATCH_TRIGGERS,
+        _CREATE_THESIS_CLAIMS,
         _CREATE_RESEARCH_NOTES,
         _CREATE_PENDING_APPROVALS,
         _CREATE_RECOMMENDATIONS,
     ]:
         conn.execute(stmt)
+    _ensure_sqlite_columns(conn)
     for idx in _INDEXES:
         conn.execute(idx)
     conn.commit()
+
+
+def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
+    """Apply small additive schema upgrades for local SQLite databases."""
+
+    def _columns(table: str) -> set[str]:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _add_missing(table: str, columns: dict[str, str]) -> None:
+        existing = _columns(table)
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+    _add_missing(
+        "watch_triggers",
+        {
+            "definition_json": "TEXT",
+            "last_checked_at": "TEXT",
+            "last_result_json": "TEXT",
+            "last_evidence": "TEXT",
+        },
+    )
+    _add_missing(
+        "recommendations",
+        {
+            "report_id": "TEXT",
+            "idempotency_key": "TEXT",
+        },
+    )
 
 
 def _now() -> str:
@@ -359,6 +460,13 @@ def _parse_json_field(d: dict, field: str) -> dict:
         except (json.JSONDecodeError, TypeError):
             pass
     return d
+
+
+def _json_hash(value: Any) -> str:
+    import hashlib
+
+    raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -623,6 +731,77 @@ def get_workflow_run(run_id: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Report Runs
+# ---------------------------------------------------------------------------
+
+_REPORT_RUN_JSON_FIELDS = ("summary_json", "artifact_paths_json")
+
+
+def _parse_report_run_json_fields(d: dict) -> dict:
+    for field in _REPORT_RUN_JSON_FIELDS:
+        _parse_json_field(d, field)
+    return d
+
+
+def upsert_report_run(record: dict) -> dict:
+    conn = _get_conn()
+    now = _now()
+    report_type = str(record["report_type"])
+    as_of = str(record["as_of"])
+    report_id = str(record.get("report_id") or f"{report_type}:{as_of}")
+    params = {
+        "report_id": report_id,
+        "report_type": report_type,
+        "as_of": as_of,
+        "source": record.get("source") or "github_actions",
+        "source_run_id": record.get("source_run_id"),
+        "source_url": record.get("source_url"),
+        "status": record.get("status") or "completed",
+        "report_hash": record.get("report_hash"),
+        "input_hash": record.get("input_hash"),
+        "summary_json": json.dumps(record.get("summary", {}), default=str),
+        "artifact_paths_json": json.dumps(record.get("artifact_paths", {}), default=str),
+        "issue_url": record.get("issue_url"),
+        "created_at": record.get("created_at") or now,
+        "updated_at": now,
+        "synced_at": record.get("synced_at") or now,
+        "error": record.get("error"),
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    updates = ", ".join(
+        f"{column} = excluded.{column}" for column in params if column not in {"report_id", "created_at"}
+    )
+    with _lock:
+        conn.execute(
+            f"INSERT INTO report_runs ({columns}) VALUES ({placeholders}) "
+            f"ON CONFLICT(report_id) DO UPDATE SET {updates}",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM report_runs WHERE report_id = ?", (report_id,)).fetchone()
+    return _parse_report_run_json_fields(_require_row_dict(row))
+
+
+def get_report_runs(report_type: str | None = None, limit: int = 20) -> list[dict]:
+    conn = _get_conn()
+    safe_limit = max(1, min(int(limit), 100))
+    if report_type:
+        with _lock:
+            rows = conn.execute(
+                "SELECT * FROM report_runs WHERE report_type = ? ORDER BY as_of DESC, synced_at DESC LIMIT ?",
+                (report_type, safe_limit),
+            ).fetchall()
+    else:
+        with _lock:
+            rows = conn.execute(
+                "SELECT * FROM report_runs ORDER BY as_of DESC, synced_at DESC LIMIT ?",
+                (safe_limit,),
+            ).fetchall()
+    return [_parse_report_run_json_fields(d) for d in _rows_to_list(rows)]
+
+
+# ---------------------------------------------------------------------------
 # Action Items
 # ---------------------------------------------------------------------------
 
@@ -658,6 +837,35 @@ def create_action_item(
         "completed_at": None,
         "resolution_note": None,
     }
+
+
+def create_action_item_once(
+    description: str,
+    action_type: str = "review",
+    *,
+    ticker: str | None = None,
+    urgency: str = "normal",
+    source_type: str = "workflow",
+    source_id: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    normalized_ticker = ticker.upper() if ticker else None
+    if source_id:
+        with _lock:
+            row = conn.execute(
+                "SELECT * FROM action_items WHERE source_type = ? AND source_id = ? AND COALESCE(ticker, '') = COALESCE(?, '') AND description = ? ORDER BY id DESC LIMIT 1",
+                (source_type, source_id, normalized_ticker, description),
+            ).fetchone()
+        if row:
+            return _require_row_dict(row)
+    return create_action_item(
+        description=description,
+        action_type=action_type,
+        ticker=normalized_ticker,
+        urgency=urgency,
+        source_type=source_type,
+        source_id=source_id,
+    )
 
 
 def get_action_items(
@@ -727,14 +935,25 @@ def create_watch_trigger(
     source_type: str = "user",
     source_id: str | None = None,
     expires_at: str | None = None,
+    definition: dict | None = None,
 ) -> dict:
     conn = _get_conn()
     now = _now()
+    definition_json = json.dumps(definition, default=str) if definition else None
     with _lock:
         cur = conn.execute(
-            "INSERT INTO watch_triggers (ticker, trigger_type, condition, source_type, source_id, created_at, expires_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (ticker.upper() if ticker else None, trigger_type, condition, source_type, source_id, now, expires_at),
+            "INSERT INTO watch_triggers (ticker, trigger_type, condition, source_type, source_id, created_at, expires_at, definition_json) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                ticker.upper() if ticker else None,
+                trigger_type,
+                condition,
+                source_type,
+                source_id,
+                now,
+                expires_at,
+                definition_json,
+            ),
         )
         conn.commit()
     return {
@@ -748,7 +967,48 @@ def create_watch_trigger(
         "created_at": now,
         "fired_at": None,
         "expires_at": expires_at,
+        "definition_json": definition,
+        "last_checked_at": None,
+        "last_result_json": None,
+        "last_evidence": None,
     }
+
+
+def create_watch_trigger_once(
+    condition: str,
+    trigger_type: str = "custom",
+    *,
+    ticker: str | None = None,
+    source_type: str = "workflow",
+    source_id: str | None = None,
+    expires_at: str | None = None,
+    definition: dict | None = None,
+) -> dict:
+    conn = _get_conn()
+    normalized_ticker = ticker.upper() if ticker else None
+    if source_id:
+        with _lock:
+            row = conn.execute(
+                "SELECT * FROM watch_triggers WHERE source_type = ? AND source_id = ? AND COALESCE(ticker, '') = COALESCE(?, '') AND condition = ? ORDER BY id DESC LIMIT 1",
+                (source_type, source_id, normalized_ticker, condition),
+            ).fetchone()
+        if row:
+            return _parse_watch_trigger_json_fields(_require_row_dict(row))
+    return create_watch_trigger(
+        condition=condition,
+        trigger_type=trigger_type,
+        ticker=normalized_ticker,
+        source_type=source_type,
+        source_id=source_id,
+        expires_at=expires_at,
+        definition=definition,
+    )
+
+
+def _parse_watch_trigger_json_fields(d: dict) -> dict:
+    _parse_json_field(d, "definition_json")
+    _parse_json_field(d, "last_result_json")
+    return d
 
 
 def get_watch_triggers(
@@ -770,23 +1030,51 @@ def get_watch_triggers(
             f"SELECT * FROM watch_triggers{where} ORDER BY created_at DESC",
             params,
         ).fetchall()
-    return _rows_to_list(rows)
+    return [_parse_watch_trigger_json_fields(d) for d in _rows_to_list(rows)]
 
 
-def fire_watch_trigger(trigger_id: int) -> dict:
+def update_watch_trigger_check(
+    trigger_id: int,
+    *,
+    result: dict | None = None,
+    evidence: str | None = None,
+) -> dict:
     conn = _get_conn()
     now = _now()
+    result_json = json.dumps(result or {}, default=str)
     with _lock:
         row = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
         if not row:
             raise ValueError(f"No watch trigger with id {trigger_id}")
         conn.execute(
-            "UPDATE watch_triggers SET status = 'fired', fired_at = ? WHERE id = ?",
-            (now, trigger_id),
+            "UPDATE watch_triggers SET last_checked_at = ?, last_result_json = ?, last_evidence = ? WHERE id = ?",
+            (now, result_json, evidence, trigger_id),
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
-    return _require_row_dict(updated)
+    return _parse_watch_trigger_json_fields(_require_row_dict(updated))
+
+
+def fire_watch_trigger(
+    trigger_id: int,
+    *,
+    result: dict | None = None,
+    evidence: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    now = _now()
+    result_json = json.dumps(result or {}, default=str)
+    with _lock:
+        row = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
+        if not row:
+            raise ValueError(f"No watch trigger with id {trigger_id}")
+        conn.execute(
+            "UPDATE watch_triggers SET status = 'fired', fired_at = ?, last_checked_at = ?, last_result_json = ?, last_evidence = ? WHERE id = ?",
+            (now, now, result_json, evidence, trigger_id),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
+    return _parse_watch_trigger_json_fields(_require_row_dict(updated))
 
 
 def cancel_watch_trigger(trigger_id: int) -> dict:
@@ -801,7 +1089,139 @@ def cancel_watch_trigger(trigger_id: int) -> dict:
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
-    return _require_row_dict(updated)
+    return _parse_watch_trigger_json_fields(_require_row_dict(updated))
+
+
+# ---------------------------------------------------------------------------
+# Thesis Claims
+# ---------------------------------------------------------------------------
+
+_THESIS_CLAIM_JSON_FIELDS = (
+    "source_requirements_json",
+    "linked_catalyst_ids_json",
+    "linked_kill_condition_ids_json",
+)
+
+
+def _parse_thesis_claim_json_fields(d: dict) -> dict:
+    for field in _THESIS_CLAIM_JSON_FIELDS:
+        _parse_json_field(d, field)
+    return d
+
+
+def create_thesis_claim(record: dict) -> dict:
+    conn = _get_conn()
+    now = _now()
+    ticker = str(record["ticker"]).upper()
+    params = {
+        "ticker": ticker,
+        "claim": record["claim"],
+        "expected_evidence": record.get("expected_evidence"),
+        "disconfirming_evidence": record.get("disconfirming_evidence"),
+        "source_requirements_json": _encode_json(record.get("source_requirements", [])),
+        "cadence": record.get("cadence"),
+        "confidence": record.get("confidence"),
+        "status": record.get("status") or "active",
+        "linked_catalyst_ids_json": _encode_json(record.get("linked_catalyst_ids", [])),
+        "linked_kill_condition_ids_json": _encode_json(record.get("linked_kill_condition_ids", [])),
+        "source_type": record.get("source_type") or "user",
+        "source_id": record.get("source_id"),
+        "created_at": record.get("created_at") or now,
+        "updated_at": now,
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    with _lock:
+        cur = conn.execute(
+            f"INSERT INTO thesis_claims ({columns}) VALUES ({placeholders})",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM thesis_claims WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_thesis_claim_json_fields(_require_row_dict(row))
+
+
+def create_thesis_claim_once(record: dict) -> dict:
+    conn = _get_conn()
+    ticker = str(record["ticker"]).upper()
+    claim = str(record["claim"])
+    source_type = record.get("source_type") or "workflow"
+    source_id = record.get("source_id")
+    if source_id:
+        with _lock:
+            row = conn.execute(
+                "SELECT * FROM thesis_claims WHERE ticker = ? AND claim = ? AND source_type = ? AND source_id = ? ORDER BY id DESC LIMIT 1",
+                (ticker, claim, source_type, source_id),
+            ).fetchone()
+        if row:
+            return _parse_thesis_claim_json_fields(_require_row_dict(row))
+    return create_thesis_claim({**record, "ticker": ticker, "source_type": source_type})
+
+
+def get_thesis_claims(
+    ticker: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if ticker:
+        clauses.append("ticker = ?")
+        params.append(ticker.upper())
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    safe_limit = max(1, min(int(limit), 500))
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM thesis_claims{where} ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (*params, safe_limit),
+        ).fetchall()
+    return [_parse_thesis_claim_json_fields(d) for d in _rows_to_list(rows)]
+
+
+def update_thesis_claim(claim_id: int, updates: dict) -> dict:
+    allowed = {
+        "claim",
+        "expected_evidence",
+        "disconfirming_evidence",
+        "cadence",
+        "confidence",
+        "status",
+        "source_requirements",
+        "linked_catalyst_ids",
+        "linked_kill_condition_ids",
+    }
+    params: dict[str, Any] = {}
+    for key, value in updates.items():
+        if key not in allowed:
+            continue
+        if key == "source_requirements":
+            params["source_requirements_json"] = _encode_json(value)
+        elif key == "linked_catalyst_ids":
+            params["linked_catalyst_ids_json"] = _encode_json(value)
+        elif key == "linked_kill_condition_ids":
+            params["linked_kill_condition_ids_json"] = _encode_json(value)
+        else:
+            params[key] = value
+    params["updated_at"] = _now()
+    if not params:
+        raise ValueError("No valid thesis claim updates supplied")
+    conn = _get_conn()
+    set_clause = ", ".join(f"{key} = ?" for key in params)
+    with _lock:
+        row = conn.execute("SELECT * FROM thesis_claims WHERE id = ?", (claim_id,)).fetchone()
+        if not row:
+            raise ValueError(f"No thesis claim with id {claim_id}")
+        conn.execute(
+            f"UPDATE thesis_claims SET {set_clause} WHERE id = ?",
+            (*params.values(), claim_id),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM thesis_claims WHERE id = ?", (claim_id,)).fetchone()
+    return _parse_thesis_claim_json_fields(_require_row_dict(updated))
 
 
 # ---------------------------------------------------------------------------
@@ -837,6 +1257,35 @@ def create_research_note(
         "source_id": source_id,
         "created_at": now,
     }
+
+
+def create_research_note_once(
+    title: str,
+    content: str,
+    *,
+    ticker: str | None = None,
+    note_type: str = "general",
+    source_type: str = "workflow",
+    source_id: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    normalized_ticker = ticker.upper() if ticker else None
+    if source_id:
+        with _lock:
+            row = conn.execute(
+                "SELECT * FROM research_notes WHERE source_type = ? AND source_id = ? AND COALESCE(ticker, '') = COALESCE(?, '') AND title = ? ORDER BY id DESC LIMIT 1",
+                (source_type, source_id, normalized_ticker, title),
+            ).fetchone()
+        if row:
+            return _require_row_dict(row)
+    return create_research_note(
+        title=title,
+        content=content,
+        ticker=normalized_ticker,
+        note_type=note_type,
+        source_type=source_type,
+        source_id=source_id,
+    )
 
 
 def get_research_notes(
@@ -933,6 +1382,8 @@ def create_recommendation(record: dict) -> dict:
         "input_hash": record.get("input_hash"),
         "validation_status": record.get("validation_status"),
         "source_quality_summary_json": _encode_json(record.get("source_quality_summary", {})),
+        "report_id": record.get("report_id"),
+        "idempotency_key": record.get("idempotency_key"),
     }
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
@@ -943,6 +1394,91 @@ def create_recommendation(record: dict) -> dict:
         )
         conn.commit()
         row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_recommendation_json_fields(_require_row_dict(row))
+
+
+def upsert_recommendation(record: dict) -> dict:
+    if not record.get("idempotency_key"):
+        return create_recommendation(record)
+
+    conn = _get_conn()
+    now = record.get("created_at") or _now()
+    ticker = record.get("ticker")
+    status = record.get("status") or (
+        "blocked"
+        if record.get("recommendation_status") == "blocked"
+        else "error"
+        if record.get("recommendation_status") == "error"
+        else "open"
+    )
+    params = {
+        "report_type": record["report_type"],
+        "as_of": record["as_of"],
+        "created_at": now,
+        "source_report_path": record.get("source_report_path"),
+        "source_json_path": record.get("source_json_path"),
+        "stance": record["stance"],
+        "recommendation_status": record.get("recommendation_status", "clear"),
+        "critical_data_quality": record.get("critical_data_quality", "ok"),
+        "blocked_reasons_json": _encode_json(record.get("blocked_reasons", [])),
+        "what_changed_json": _encode_json(record.get("what_changed", [])),
+        "do_nothing_rationale": record.get("do_nothing_rationale", ""),
+        "action": record["action"],
+        "ticker": ticker.upper() if isinstance(ticker, str) and ticker else None,
+        "instrument": record.get("instrument") or "portfolio",
+        "horizon": record.get("horizon"),
+        "target_change": record.get("target_change"),
+        "rationale": record.get("rationale") or "",
+        "confidence": record.get("confidence"),
+        "source_quality": record.get("source_quality", "ok"),
+        "status": status,
+        "evidence_json": _encode_json(record.get("evidence", [])),
+        "disconfirming_evidence_json": _encode_json(record.get("disconfirming_evidence", [])),
+        "catalyst": record.get("catalyst"),
+        "invalidation": record.get("invalidation"),
+        "expected_onset_window": record.get("expected_onset_window"),
+        "alternatives_json": _encode_json(record.get("alternatives", [])),
+        "opportunity_cost_json": _encode_json(record.get("opportunity_cost", [])),
+        "approval_id": record.get("approval_id"),
+        "approval_status": record.get("approval_status", "none"),
+        "outcome_status": record.get("outcome_status", "pending"),
+        "outcome_json": _encode_json(record.get("outcome", {})),
+        "model": record.get("model"),
+        "prompt_hash": record.get("prompt_hash"),
+        "input_hash": record.get("input_hash"),
+        "validation_status": record.get("validation_status"),
+        "source_quality_summary_json": _encode_json(record.get("source_quality_summary", {})),
+        "report_id": record.get("report_id"),
+        "idempotency_key": record["idempotency_key"],
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    updates = ", ".join(
+        f"{column} = COALESCE(excluded.{column}, {column})"
+        if column in {"approval_id"}
+        else f"{column} = excluded.{column}"
+        for column in params
+        if column
+        not in {"created_at", "idempotency_key", "approval_status", "approval_id", "outcome_status", "outcome_json"}
+    )
+    updates = (
+        f"{updates}, "
+        "approval_id = COALESCE(recommendations.approval_id, excluded.approval_id), "
+        "approval_status = CASE WHEN recommendations.approval_id IS NOT NULL THEN recommendations.approval_status ELSE excluded.approval_status END, "
+        "outcome_status = recommendations.outcome_status, "
+        "outcome_json = recommendations.outcome_json"
+    )
+    with _lock:
+        conn.execute(
+            f"INSERT INTO recommendations ({columns}) VALUES ({placeholders}) "
+            f"ON CONFLICT(idempotency_key) DO UPDATE SET {updates}",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM recommendations WHERE idempotency_key = ?",
+            (record["idempotency_key"],),
+        ).fetchone()
     return _parse_recommendation_json_fields(_require_row_dict(row))
 
 
@@ -1014,6 +1550,28 @@ def update_recommendation_approval(
     return _parse_recommendation_json_fields(_require_row_dict(updated))
 
 
+def supersede_report_recommendations(report_id: str, active_idempotency_keys: list[str]) -> int:
+    conn = _get_conn()
+    if not report_id:
+        return 0
+    active = set(active_idempotency_keys)
+    with _lock:
+        rows = conn.execute(
+            "SELECT id, idempotency_key FROM recommendations WHERE report_id = ? AND status IN ('open', 'blocked', 'error')",
+            (report_id,),
+        ).fetchall()
+        superseded_ids = [int(row["id"]) for row in rows if str(row["idempotency_key"] or "") not in active]
+        if not superseded_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in superseded_ids)
+        conn.execute(
+            f"UPDATE recommendations SET status = 'superseded' WHERE id IN ({placeholders})",
+            tuple(superseded_ids),
+        )
+        conn.commit()
+    return len(superseded_ids)
+
+
 def update_recommendation_outcome(
     recommendation_id: int,
     outcome_status: str,
@@ -1081,6 +1639,37 @@ def create_pending_approval(
         "resolved_at": None,
         "resolved_note": None,
     }
+
+
+def create_pending_approval_once(
+    entity_type: str,
+    proposed_change: dict,
+    *,
+    entity_id: int | None = None,
+    ticker: str | None = None,
+    reason: str | None = None,
+    source_type: str = "workflow",
+    source_id: str | None = None,
+) -> dict:
+    proposed_hash = _json_hash(proposed_change)
+    normalized_ticker = ticker.upper() if ticker else None
+    if source_id:
+        for approval in get_pending_approvals(status=None, ticker=normalized_ticker):
+            if approval.get("entity_type") != entity_type:
+                continue
+            if approval.get("source_type") != source_type or approval.get("source_id") != source_id:
+                continue
+            if _json_hash(approval.get("proposed_change")) == proposed_hash:
+                return approval
+    return create_pending_approval(
+        entity_type=entity_type,
+        proposed_change=proposed_change,
+        entity_id=entity_id,
+        ticker=normalized_ticker,
+        reason=reason,
+        source_type=source_type,
+        source_id=source_id,
+    )
 
 
 def get_pending_approvals(

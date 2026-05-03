@@ -81,3 +81,11 @@ jobs:
           name: weekly-report-${{ github.run_id }}
           path: auto_report/outputs/
           retention-days: 90
+
+      - name: Sync report state to app
+        if: steps.ny_gate.outputs.should_run == 'true' && success()
+        env:
+          TALISMAN_API_URL: ${{ vars.TALISMAN_API_URL }}
+          REPORT_SYNC_SECRET: ${{ secrets.REPORT_SYNC_SECRET }}
+          API_PROXY_SECRET: ${{ secrets.API_PROXY_SECRET }}
+        run: python -m auto_report.sync_report_state weekly

@@ -449,6 +449,24 @@ class StateMigrator:
                 "artifacts",
                 "error",
             ],
+            "report_runs": [
+                "report_id",
+                "report_type",
+                "as_of",
+                "source",
+                "source_run_id",
+                "source_url",
+                "status",
+                "report_hash",
+                "input_hash",
+                "summary_json",
+                "artifact_paths_json",
+                "issue_url",
+                "created_at",
+                "updated_at",
+                "synced_at",
+                "error",
+            ],
             "action_items": [
                 "id",
                 "ticker",
@@ -473,6 +491,27 @@ class StateMigrator:
                 "created_at",
                 "fired_at",
                 "expires_at",
+                "definition_json",
+                "last_checked_at",
+                "last_result_json",
+                "last_evidence",
+            ],
+            "thesis_claims": [
+                "id",
+                "ticker",
+                "claim",
+                "expected_evidence",
+                "disconfirming_evidence",
+                "source_requirements_json",
+                "cadence",
+                "confidence",
+                "status",
+                "linked_catalyst_ids_json",
+                "linked_kill_condition_ids_json",
+                "source_type",
+                "source_id",
+                "created_at",
+                "updated_at",
             ],
             "research_notes": [
                 "id",
@@ -536,6 +575,8 @@ class StateMigrator:
                 "input_hash",
                 "validation_status",
                 "source_quality_summary_json",
+                "report_id",
+                "idempotency_key",
             ],
         }
         tables = {table: columns for table, columns in tables.items() if _sqlite_table_exists(db, table)}
@@ -543,9 +584,9 @@ class StateMigrator:
         if self._source_completed("core", source_hash):
             return SourceResult("core", source_hash, counts)
         for table, columns in tables.items():
-            conflict = ["run_id"] if table == "workflow_runs" else ["id"]
+            conflict = ["run_id"] if table == "workflow_runs" else ["report_id"] if table == "report_runs" else ["id"]
             self._upsert_rows(table, columns, conflict, _sqlite_rows(db, table))
-        for table in [t for t in tables if t != "workflow_runs"]:
+        for table in [t for t in tables if t not in {"workflow_runs", "report_runs"}]:
             self._reset_identity(table)
         result = SourceResult("core", source_hash, counts)
         self._record_source(result)

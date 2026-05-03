@@ -312,6 +312,7 @@ from api.routers import (
     dossier,
     process_entities,
     recommendations,
+    report_sync,
     research_notes,
     triggers,
     workflow_runs,
@@ -328,6 +329,7 @@ app.include_router(recommendations.router, prefix=_V1, dependencies=_auth_dep, t
 app.include_router(research_notes.router, prefix=_V1, dependencies=_auth_dep, tags=["research"])
 app.include_router(workflow_runs.router, prefix=_V1, dependencies=_auth_dep, tags=["workflows"])
 app.include_router(admin_jobs.router, prefix=_V1, tags=["admin"])
+app.include_router(report_sync.router, prefix=_V1, tags=["reports"])
 
 # Optional routers (gracefully degraded if import failed)
 for _name, (_router, _tag, _healthy) in _optional_routers.items():

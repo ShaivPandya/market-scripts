@@ -1354,10 +1354,17 @@ def main():
     )
 
     issue_title = f"Daily Report — {today_str} | {stance_dict['stance']}"
+    issue_url = None
     try:
-        create_github_issue(issue_title, report_md)
+        issue_url = create_github_issue(issue_title, report_md)
     except Exception as e:
         log.error("GitHub Issue creation failed: %s", e, exc_info=True)
+    if issue_url:
+        metadata = {"issue_url": issue_url, "report_type": "daily", "as_of": today_str}
+        (OUTPUT_DIR / "report_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        archive_dir = OUTPUT_DIR / "history" / today_str
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        (archive_dir / "report_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     try:
         outcome_summary = evaluate_due_recommendations()
