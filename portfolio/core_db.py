@@ -456,6 +456,8 @@ CREATE TABLE IF NOT EXISTS source_record_refs (
     record_hash          TEXT NOT NULL,
     as_of                TEXT,
     summary_json         TEXT,
+    redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
+    retention_class      TEXT NOT NULL DEFAULT 'source_ref_90d',
     created_at           TEXT NOT NULL
 )
 """
@@ -470,6 +472,8 @@ CREATE TABLE IF NOT EXISTS workflow_artifact_records (
     summary_json         TEXT,
     approval_id          INTEGER,
     provenance_event_id  TEXT,
+    redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
+    retention_class      TEXT NOT NULL DEFAULT 'workflow_artifact_365d',
     created_at           TEXT NOT NULL
 )
 """
@@ -520,6 +524,7 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_provenance_links_event ON provenance_links(event_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_links_source ON provenance_links(source_ref_type, source_ref_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_links_target ON provenance_links(target_ref_type, target_ref_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_links_type_time ON provenance_links(link_type, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_source_record_refs_adapter ON source_record_refs(adapter_run_event_id)",
     "CREATE INDEX IF NOT EXISTS idx_source_record_refs_source ON source_record_refs(source_name, record_kind)",
     "CREATE INDEX IF NOT EXISTS idx_workflow_artifact_records_run ON workflow_artifact_records(workflow_run_id)",
@@ -663,6 +668,20 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
         "workflow_runs",
         {
             "provenance_event_id": "TEXT",
+        },
+    )
+    _add_missing(
+        "source_record_refs",
+        {
+            "redaction_policy": "TEXT NOT NULL DEFAULT 'audit_summary_v1'",
+            "retention_class": "TEXT NOT NULL DEFAULT 'source_ref_90d'",
+        },
+    )
+    _add_missing(
+        "workflow_artifact_records",
+        {
+            "redaction_policy": "TEXT NOT NULL DEFAULT 'audit_summary_v1'",
+            "retention_class": "TEXT NOT NULL DEFAULT 'workflow_artifact_365d'",
         },
     )
     conn.execute(
@@ -1135,6 +1154,69 @@ def _parse_workflow_artifact_row(row: Any) -> dict:
     return d
 
 
+def _provenance_timeline(
+    *,
+    events: list[dict],
+    links: list[dict],
+    source_records: list[dict],
+    workflow_artifacts: list[dict],
+) -> list[dict[str, Any]]:
+    timeline: list[dict[str, Any]] = []
+    for event in events:
+        timestamp = str(event.get("started_at") or event.get("completed_at") or "")
+        timeline.append(
+            {
+                "kind": "event",
+                "timestamp": timestamp,
+                "id": event.get("id"),
+                "label": event.get("event_name"),
+                "event_type": event.get("event_type"),
+                "status": event.get("status"),
+                "summary": event.get("summary"),
+            }
+        )
+    for link in links:
+        timeline.append(
+            {
+                "kind": "link",
+                "timestamp": str(link.get("created_at") or ""),
+                "id": link.get("id"),
+                "label": link.get("link_type"),
+                "source_ref_type": link.get("source_ref_type"),
+                "source_ref_id": link.get("source_ref_id"),
+                "target_ref_type": link.get("target_ref_type"),
+                "target_ref_id": link.get("target_ref_id"),
+            }
+        )
+    for record in source_records:
+        timeline.append(
+            {
+                "kind": "source_record",
+                "timestamp": str(record.get("created_at") or record.get("as_of") or ""),
+                "id": record.get("record_ref_id"),
+                "label": record.get("record_kind"),
+                "source_name": record.get("source_name"),
+                "summary": record.get("summary"),
+            }
+        )
+    for artifact in workflow_artifacts:
+        timeline.append(
+            {
+                "kind": "workflow_artifact",
+                "timestamp": str(artifact.get("created_at") or ""),
+                "id": artifact.get("artifact_id"),
+                "label": artifact.get("artifact_key"),
+                "workflow_run_id": artifact.get("workflow_run_id"),
+                "approval_id": artifact.get("approval_id"),
+                "summary": artifact.get("summary"),
+            }
+        )
+    timeline.sort(
+        key=lambda row: (str(row.get("timestamp") or ""), str(row.get("kind") or ""), str(row.get("id") or ""))
+    )
+    return timeline
+
+
 def upsert_provenance_event(
     *,
     event_id: str | None = None,
@@ -1306,6 +1388,8 @@ def upsert_source_record_ref(
     record_hash: str,
     as_of: str | None = None,
     summary: Any | None = None,
+    redaction_policy: str = "audit_summary_v1",
+    retention_class: str = "source_ref_90d",
     created_at: str | None = None,
 ) -> dict:
     conn = _get_conn()
@@ -1319,6 +1403,8 @@ def upsert_source_record_ref(
         "record_hash": record_hash,
         "as_of": as_of,
         "summary_json": _json_or_none(summary),
+        "redaction_policy": redaction_policy,
+        "retention_class": retention_class,
         "created_at": now,
     }
     columns = ", ".join(params)
@@ -1345,6 +1431,8 @@ def upsert_workflow_artifact_record(
     summary: Any | None = None,
     approval_id: int | None = None,
     provenance_event_id: str | None = None,
+    redaction_policy: str = "audit_summary_v1",
+    retention_class: str = "workflow_artifact_365d",
     created_at: str | None = None,
 ) -> dict:
     conn = _get_conn()
@@ -1358,6 +1446,8 @@ def upsert_workflow_artifact_record(
         "summary_json": _json_or_none(summary),
         "approval_id": approval_id,
         "provenance_event_id": provenance_event_id,
+        "redaction_policy": redaction_policy,
+        "retention_class": retention_class,
         "created_at": now,
     }
     columns = ", ".join(params)
@@ -1549,13 +1639,18 @@ def get_provenance_trace(
             ).fetchall()
             artifacts = [_parse_workflow_artifact_row(row) for row in rows]
 
+    links = sorted(links_by_id.values(), key=lambda row: (str(row.get("created_at") or ""), str(row.get("id") or "")))
     return {
         "events": events,
-        "links": sorted(
-            links_by_id.values(), key=lambda row: (str(row.get("created_at") or ""), str(row.get("id") or ""))
-        ),
+        "links": links,
         "source_records": source_records,
         "workflow_artifacts": artifacts,
+        "timeline": _provenance_timeline(
+            events=events,
+            links=links,
+            source_records=source_records,
+            workflow_artifacts=artifacts,
+        ),
         "seed": {
             "workflow_run_id": workflow_run_id,
             "ontology_run_id": ontology_run_id,

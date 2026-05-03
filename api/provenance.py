@@ -21,9 +21,71 @@ from api.logging_config import request_id_var
 
 logger = logging.getLogger("api.provenance")
 
+EVENT_SOURCE_ADAPTER_RUN = "source_adapter_run"
+EVENT_ONTOLOGY_RUN = "ontology_run"
+EVENT_AGENT_TURN = "agent_turn"
+EVENT_MODEL_CALL = "model_call"
+EVENT_TOOL_CALL = "tool_call"
+EVENT_WORKFLOW_RUN = "workflow_run"
+EVENT_WORKFLOW_ARTIFACT = "workflow_artifact"
+EVENT_APPROVAL = "approval"
+EVENT_ACTION_RUN = "action_run"
+
+REF_SOURCE_RECORD = "source_record"
+REF_SOURCE_ADAPTER_RUN = "source_adapter_run"
+REF_ONTOLOGY_RUN = "ontology_run"
+REF_ONTOLOGY_OBJECT_VERSION = "ontology_object_version"
+REF_RELATION_VERSION = "relation_version"
+REF_SCHEMA_DEFINITION = "schema_definition"
+REF_AGENT_SESSION = "agent_session"
+REF_MODEL_CALL = "model_call"
+REF_TOOL_CALL = "tool_call"
+REF_WORKFLOW_RUN = "workflow_run"
+REF_WORKFLOW_ARTIFACT = "workflow_artifact"
+REF_APPROVAL = "approval"
+REF_ACTION_RUN = "action_run"
+REF_AUDIT_EVENT = "audit_event"
+
+LINK_USED = "used"
+LINK_PRODUCED = "produced"
+LINK_SCHEMA_BOUND = "schema_bound"
+LINK_EXECUTED = "executed"
+LINK_EXECUTED_AS = "executed_as"
+LINK_TRIGGERED = "triggered"
+LINK_PROPOSED = "proposed"
+LINK_RESOLVED_BY = "resolved_by"
+LINK_APPROVED_EXECUTION = "approved_execution"
+LINK_AUDITED_BY = "audited_by"
+LINK_UPDATED = "updated"
+
 DEFAULT_REDACTION_POLICY = "audit_summary_v1"
 DEFAULT_RETENTION_CLASS = "provenance_365d"
 SOURCE_REF_RETENTION_CLASS = "source_ref_90d"
+WORKFLOW_ARTIFACT_RETENTION_CLASS = "workflow_artifact_365d"
+
+_HASH_ONLY_KEY_PARTS = (
+    "args",
+    "arguments",
+    "content",
+    "conversation",
+    "document",
+    "input",
+    "instructions",
+    "messages",
+    "output",
+    "prompt",
+    "raw",
+    "response",
+    "result",
+    "secret",
+    "synthesis",
+    "token",
+    "transcript",
+)
+_MAX_SUMMARY_DEPTH = 3
+_MAX_SUMMARY_KEYS = 24
+_MAX_SUMMARY_ITEMS = 5
+_MAX_SUMMARY_STRING = 160
 
 
 def stable_hash(value: Any, *, length: int = 16) -> str:
@@ -56,6 +118,61 @@ def output_hash(value: Any) -> str | None:
 
 
 def redacted_summary(value: Any) -> Any:
+    return _provenance_summary(value)
+
+
+def _hash_only(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {"redacted": True, "type": "none"}
+    if isinstance(value, str):
+        return {"redacted": True, "type": "text", "length": len(value), "sha256": stable_hash(value)}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return {"redacted": True, "type": "list", "count": len(value), "sha256": stable_hash(value)}
+    if isinstance(value, Mapping):
+        return {
+            "redacted": True,
+            "type": "dict",
+            "field_names": sorted(str(key) for key in value.keys())[:_MAX_SUMMARY_KEYS],
+            "sha256": stable_hash(value),
+        }
+    return {"redacted": True, "type": type(value).__name__, "sha256": stable_hash(value)}
+
+
+def _is_hash_only_key(key: Any) -> bool:
+    lowered = str(key or "").strip().lower()
+    if lowered.endswith("_hash") or lowered.endswith("_fingerprint") or lowered in {"hash", "sha256"}:
+        return False
+    return any(part in lowered for part in _HASH_ONLY_KEY_PARTS)
+
+
+def _provenance_summary(value: Any, *, _depth: int = 0, _key: str | None = None) -> Any:
+    if _key is not None and _is_hash_only_key(_key):
+        return _hash_only(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        if len(value) <= _MAX_SUMMARY_STRING:
+            return value
+        return {"type": "text", "length": len(value), "sha256": stable_hash(value)}
+    if _depth >= _MAX_SUMMARY_DEPTH:
+        return _hash_only(value)
+    if isinstance(value, Mapping):
+        keys = [str(key) for key in value.keys()]
+        out: dict[str, Any] = {"field_names": sorted(keys)[:_MAX_SUMMARY_KEYS]}
+        for key, item in list(value.items())[:_MAX_SUMMARY_KEYS]:
+            key_str = str(key)
+            out[key_str] = _provenance_summary(item, _depth=_depth + 1, _key=key_str)
+        if len(keys) > _MAX_SUMMARY_KEYS:
+            out["truncated_key_count"] = len(keys) - _MAX_SUMMARY_KEYS
+        return out
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        items = list(value)
+        return {
+            "type": "list",
+            "count": len(items),
+            "items": [_provenance_summary(item, _depth=_depth + 1) for item in items[:_MAX_SUMMARY_ITEMS]],
+            "sha256": stable_hash(value),
+        }
     return summarize_for_audit(value)
 
 
@@ -247,6 +364,7 @@ def record_source_ref(
     record_value: Any,
     as_of: str | None = None,
     summary: Any | None = None,
+    retention_class: str = SOURCE_REF_RETENTION_CLASS,
 ) -> dict | None:
     if not adapter_run_event_id:
         return None
@@ -265,6 +383,8 @@ def record_source_ref(
             record_hash=record_hash,
             as_of=as_of,
             summary=redacted_summary(summary),
+            redaction_policy=DEFAULT_REDACTION_POLICY,
+            retention_class=retention_class,
         )
     except Exception:
         logger.debug("Failed to record source ref source=%s kind=%s", source_name, record_kind, exc_info=True)
@@ -279,6 +399,7 @@ def record_workflow_artifact(
     artifact_value: Any,
     approval_id: int | None = None,
     provenance_event_id: str | None = None,
+    retention_class: str = WORKFLOW_ARTIFACT_RETENTION_CLASS,
 ) -> dict | None:
     artifact_hash = stable_hash(artifact_value)
     artifact_id = deterministic_id("workflow_artifact", workflow_run_id, artifact_key, artifact_index, artifact_hash)
@@ -294,6 +415,8 @@ def record_workflow_artifact(
             summary=redacted_summary(_shape_summary(artifact_value)),
             approval_id=approval_id,
             provenance_event_id=provenance_event_id,
+            redaction_policy=DEFAULT_REDACTION_POLICY,
+            retention_class=retention_class,
         )
     except Exception:
         logger.debug("Failed to record workflow artifact run=%s key=%s", workflow_run_id, artifact_key, exc_info=True)

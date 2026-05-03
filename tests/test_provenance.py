@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 import portfolio.core_db as core_db
-from api import agent_tools
+from api import agent_tools, provenance
 from ontology.policy import admin_actor, agent_actor
 
 
@@ -41,6 +42,28 @@ def test_workflow_run_provenance_uses_hashes_not_raw_synthesis():
     assert workflow_event["summary"]["artifact_count"] == 1
     assert "RAW SYNTHESIS" not in json.dumps(trace, default=str)
     assert "SECRET TOKEN" not in json.dumps(trace, default=str)
+    assert trace["timeline"]
+
+
+def test_provenance_constants_and_redaction_are_stable():
+    assert provenance.EVENT_WORKFLOW_RUN == "workflow_run"
+    assert provenance.EVENT_TOOL_CALL == "tool_call"
+    assert provenance.REF_SOURCE_RECORD == "source_record"
+    assert provenance.LINK_APPROVED_EXECUTION == "approved_execution"
+    assert provenance.LINK_UPDATED == "updated"
+
+    summary = provenance.redacted_summary(
+        {
+            "instructions": "never store this prompt",
+            "arguments": {"secret": "value"},
+            "output": {"raw": "sensitive tool output"},
+            "prompt_hash": "abc123",
+        }
+    )
+    serialized = json.dumps(summary, default=str)
+    assert "never store this prompt" not in serialized
+    assert "sensitive tool output" not in serialized
+    assert "abc123" in serialized
 
 
 def test_approval_provenance_redacts_sensitive_change_content():
@@ -92,6 +115,8 @@ def test_workflow_artifact_records_link_to_pending_approvals():
     assert len(approvals) == 1
     assert approvals[0]["origin_artifact_id"]
     assert trace["workflow_artifacts"][0]["approval_id"] == approvals[0]["id"]
+    assert trace["workflow_artifacts"][0]["retention_class"] == "workflow_artifact_365d"
+    assert trace["workflow_artifacts"][0]["redaction_policy"] == "audit_summary_v1"
     assert any(event["event_type"] == "workflow_artifact" for event in trace["events"])
     assert any(link["link_type"] == "proposed" for link in trace["links"])
 
@@ -122,6 +147,7 @@ def test_agent_tool_proposal_links_tool_call_to_approval():
     event_types = {event["event_type"] for event in trace["events"]}
 
     assert payload["status"] == "pending_approval_created"
+    assert payload["_meta"]["provenance_event_id"]
     assert approval["provenance_event_id"]
     assert approval["origin_provenance_event_id"]
     assert {"tool_call", "action_run", "approval"}.issubset(event_types)
@@ -131,3 +157,71 @@ def test_agent_tool_proposal_links_tool_call_to_approval():
         and link["link_type"] == "proposed"
         for link in trace["links"]
     )
+
+
+def test_workflow_tools_receive_real_provenance_context(monkeypatch):
+    from api import workflows
+
+    seen: list[dict] = []
+
+    def _fake_execute_tool(name, arguments, *, actor=None, provenance_context=None):
+        seen.append({"name": name, "arguments": arguments, "provenance_context": provenance_context})
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(workflows, "execute_tool", _fake_execute_tool)
+    monkeypatch.setattr(workflows, "get_tool_exposure", lambda _name: SimpleNamespace(access_mode="read"))
+
+    results = workflows._exec_parallel(
+        [("get_portfolio", {}), ("query_ontology", {"filters": {"tickers": ["MU"]}})],
+        actor=admin_actor("admin"),
+        workflow_run_id="wf-real-context",
+        workflow_name="test_workflow",
+    )
+
+    assert [name for name, _parsed, _elapsed in results] == ["get_portfolio", "query_ontology"]
+    seen_by_name = {item["name"]: item for item in seen}
+    assert seen_by_name["get_portfolio"]["provenance_context"]["workflow_run_id"] == "wf-real-context"
+    assert seen_by_name["get_portfolio"]["provenance_context"]["parent_event_id"] == "pv:workflow_run:wf-real-context"
+    assert seen_by_name["query_ontology"]["provenance_context"]["call_id"] == "test_workflow:1:query_ontology"
+
+
+def test_provenance_trace_api_accepts_entity_selector(auth_client):
+    provenance.start_event(
+        event_id="pv:test:workflow",
+        event_type=provenance.EVENT_WORKFLOW_RUN,
+        event_name="test_workflow",
+        actor=admin_actor("admin"),
+        workflow_run_id="wf-api-1",
+        summary={"status": "started"},
+    )
+    provenance.link_refs(
+        event_id="pv:test:workflow",
+        source_ref_type=provenance.REF_WORKFLOW_RUN,
+        source_ref_id="wf-api-1",
+        target_ref_type=provenance.REF_TOOL_CALL,
+        target_ref_id="tool-api-1",
+        link_type=provenance.LINK_EXECUTED,
+    )
+
+    resp = auth_client.get(
+        "/api/v1/provenance/trace",
+        params={"ref_type": "workflow_run", "ref_id": "wf-api-1"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["seed"]["ref_type"] == "workflow_run"
+    assert any(event["id"] == "pv:test:workflow" for event in body["events"])
+    assert body["timeline"]
+
+
+def test_provenance_storage_has_retention_columns_and_link_type_index():
+    conn = core_db._get_conn()
+
+    source_cols = {row[1] for row in conn.execute("PRAGMA table_info(source_record_refs)").fetchall()}
+    artifact_cols = {row[1] for row in conn.execute("PRAGMA table_info(workflow_artifact_records)").fetchall()}
+    indexes = {row[1] for row in conn.execute("PRAGMA index_list(provenance_links)").fetchall()}
+
+    assert {"redaction_policy", "retention_class"}.issubset(source_cols)
+    assert {"redaction_policy", "retention_class"}.issubset(artifact_cols)
+    assert "idx_provenance_links_type_time" in indexes

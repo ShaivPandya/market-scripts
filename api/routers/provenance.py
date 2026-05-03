@@ -29,8 +29,13 @@ def get_provenance_trace(
     action_run_id: int | None = None,
     agent_session_id: str | None = None,
     event_id: str | None = None,
+    ref_type: str | None = None,
+    ref_id: str | None = None,
+    max_depth: int = 3,
 ):
     _require_admin(actor)
+    if (ref_type is None) != (ref_id is None):
+        raise ValidationError("ref_type and ref_id must be provided together.")
     selectors = [
         workflow_run_id,
         ontology_run_id,
@@ -38,9 +43,12 @@ def get_provenance_trace(
         action_run_id,
         agent_session_id,
         event_id,
+        f"{ref_type}:{ref_id}" if ref_type is not None and ref_id is not None else None,
     ]
     if sum(value is not None for value in selectors) != 1:
         raise ValidationError("Provide exactly one provenance trace selector.")
+    if max_depth < 1 or max_depth > 8:
+        raise ValidationError("max_depth must be between 1 and 8.")
 
     from portfolio.core_db import get_provenance_trace
 
@@ -51,15 +59,20 @@ def get_provenance_trace(
         action_run_id=action_run_id,
         agent_session_id=agent_session_id,
         event_id=event_id,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        max_depth=max_depth,
     )
 
 
 @router.get("/provenance/entity/{ref_type}/{ref_id}")
-def get_entity_provenance(ref_type: str, ref_id: str, actor: ActorDep):
+def get_entity_provenance(ref_type: str, ref_id: str, actor: ActorDep, max_depth: int = 3):
     _require_admin(actor)
     if not ref_type.strip() or not ref_id.strip():
         raise ValidationError("ref_type and ref_id are required.")
+    if max_depth < 1 or max_depth > 8:
+        raise ValidationError("max_depth must be between 1 and 8.")
 
     from portfolio.core_db import get_provenance_trace
 
-    return get_provenance_trace(ref_type=ref_type, ref_id=ref_id)
+    return get_provenance_trace(ref_type=ref_type, ref_id=ref_id, max_depth=max_depth)

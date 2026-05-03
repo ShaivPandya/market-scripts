@@ -2095,6 +2095,8 @@ def execute_tool(
                 "status": "ok",
             }
         )
+        if provenance_event_id:
+            meta["provenance_event_id"] = provenance_event_id
         quality = payload.get("quality") if isinstance(payload, dict) else None
         if isinstance(quality, dict):
             meta["quality_ok"] = bool(quality.get("ok"))
@@ -2124,6 +2126,7 @@ def execute_tool(
                 "tool": name,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
                 "status": "denied",
+                **({"provenance_event_id": provenance_event_id} if provenance_event_id else {}),
             },
         )
         try:
@@ -2147,6 +2150,7 @@ def execute_tool(
                 "tool": name,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
                 "status": "error",
+                **({"provenance_event_id": provenance_event_id} if provenance_event_id else {}),
             },
         )
         try:

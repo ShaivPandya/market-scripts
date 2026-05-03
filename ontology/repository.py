@@ -2235,16 +2235,29 @@ def _record_snapshot_provenance(
         )
 
     for node in nodes:
+        object_ref_id = f"{run_id}:{node.id}"
         provenance.link_refs(
             event_id=event_id,
             source_ref_type="ontology_run",
             source_ref_id=run_id,
             target_ref_type="ontology_object_version",
-            target_ref_id=f"{run_id}:{node.id}",
+            target_ref_id=object_ref_id,
             target_ref_version=f"{node.schema_name}:{node.schema_version}",
             link_type="produced",
             metadata={"node_id": node.id, "node_type": node.type, "schema_name": node.schema_name},
         )
+        source_record_ref = _source_record_ref_for_node(node, provenance)
+        if source_record_ref:
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type="source_record",
+                source_ref_id=source_record_ref,
+                target_ref_type="ontology_object_version",
+                target_ref_id=object_ref_id,
+                target_ref_version=f"{node.schema_name}:{node.schema_version}",
+                link_type="used",
+                metadata={"node_id": node.id, "node_type": node.type},
+            )
 
     for edge in edges:
         relation_ref = f"{run_id}:{edge.source_id}:{edge.relation_type}:{edge.target_id}"
@@ -2264,6 +2277,65 @@ def _record_snapshot_provenance(
                 "schema_version": edge.schema_version,
             },
         )
+        source_record_ref = _source_record_ref_for_edge(edge, provenance)
+        if source_record_ref:
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type="source_record",
+                source_ref_id=source_record_ref,
+                target_ref_type="relation_version",
+                target_ref_id=relation_ref,
+                target_ref_version=f"{edge.relation_schema_name}:{edge.relation_schema_version}",
+                link_type="used",
+                metadata={
+                    "source_id": edge.source_id,
+                    "target_id": edge.target_id,
+                    "relation_type": edge.relation_type,
+                },
+            )
+
+
+def _source_record_ref(source_name: str, record_kind: str, record_key: Any, provenance: Any) -> str:
+    return provenance.deterministic_id(
+        "source_record",
+        source_name,
+        record_kind,
+        provenance.stable_hash(record_key),
+    )
+
+
+def _source_record_ref_for_node(node: OntologyNode, provenance: Any) -> str | None:
+    props = node.properties if isinstance(node.properties, dict) else {}
+    if node.type == "Position":
+        ticker = str(props.get("ticker") or node.label or "").strip().upper()
+        if ticker:
+            return _source_record_ref("portfolio", "portfolio_position", ticker, provenance)
+    if node.type == "Signal":
+        source = str(props.get("source") or "").strip()
+        if not source:
+            return None
+        if source == "sector_metrics":
+            sector = str(props.get("sector") or "").strip()
+            if sector:
+                return _source_record_ref("sector_metrics", "sector_metric", sector, provenance)
+        return _source_record_ref(source, "snapshot", source, provenance)
+    if node.type == "MacroIndicator":
+        source = str(node.id).removeprefix("macro_indicator:").strip()
+        if source:
+            return _source_record_ref(source, "snapshot", source, provenance)
+    return None
+
+
+def _source_record_ref_for_edge(edge: OntologyEdge, provenance: Any) -> str | None:
+    props = edge.properties if isinstance(edge.properties, dict) else {}
+    source = str(props.get("source") or "").strip()
+    if not source or source in {"manual", "test"}:
+        return None
+    if source == "sector_metrics":
+        sector = str(props.get("sector") or "").strip()
+        if sector:
+            return _source_record_ref("sector_metrics", "sector_metric", sector, provenance)
+    return _source_record_ref(source, "snapshot", source, provenance)
 
 
 def _normalize_live_edges_for_storage(

@@ -8,7 +8,7 @@ snapshot. It does not make the ontology graph the operational source of truth.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,7 +34,18 @@ from ontology.schemas.relations import (
     REFERENCES_ASSET,
 )
 from ontology.sector_mapper import SectorMapper
-from ontology.sources.dtos import PortfolioSnapshot, SectorMetricsSnapshot
+from ontology.sources.dtos import (
+    EconomicGrowthSnapshot,
+    LaborMarketSnapshot,
+    LiquiditySnapshot,
+    MarketBreadthSnapshot,
+    PortfolioSnapshot,
+    PositioningSnapshot,
+    SectorMetricsSnapshot,
+    SentimentSnapshot,
+    Top50BreadthSnapshot,
+    VixTermStructureSnapshot,
+)
 from ontology.sources.registry import build_adapter_registry, run_adapters, source_status_from_results
 
 SNAPSHOT_RETENTION_DAYS = 90
@@ -95,6 +106,7 @@ def ingest_into_repository(
         )
         source_results.update(deep_results)
         source_status.update(source_status_from_results(deep_results))
+    _link_source_adapter_events(source_results, provenance_event_id, run_id)
     _record_source_record_refs(source_results)
 
     nodes: dict[str, OntologyNode] = {}
@@ -506,6 +518,32 @@ def _run_adapters_with_provenance(
         return run_adapters(adapters)
 
 
+def _link_source_adapter_events(
+    source_results: dict[str, Any],
+    ontology_event_id: str | None,
+    ontology_run_id: str,
+) -> None:
+    if not ontology_event_id:
+        return
+    try:
+        from api import provenance
+    except Exception:
+        return
+    for source_name, result in source_results.items():
+        adapter_event_id = getattr(getattr(result, "lineage", None), "provenance_event_id", None)
+        if not adapter_event_id:
+            continue
+        provenance.link_refs(
+            event_id=adapter_event_id,
+            source_ref_type=provenance.REF_ONTOLOGY_RUN,
+            source_ref_id=ontology_run_id,
+            target_ref_type=provenance.REF_SOURCE_ADAPTER_RUN,
+            target_ref_id=str(adapter_event_id),
+            link_type=provenance.LINK_USED,
+            metadata={"source_name": source_name},
+        )
+
+
 def _record_source_record_refs(source_results: dict[str, Any]) -> None:
     try:
         from api import provenance
@@ -559,6 +597,19 @@ def _record_source_record_refs(source_results: dict[str, Any]) -> None:
                     summary={"sector": row.sector},
                 )
             continue
+        row_records = _source_rows_for_provenance(data, source_name, as_of)
+        if row_records:
+            for record_kind, record_key, record_value, record_as_of, summary in row_records:
+                provenance.record_source_ref(
+                    adapter_run_event_id=event_id,
+                    source_name=source_name,
+                    record_kind=record_kind,
+                    record_key=record_key,
+                    record_value=record_value,
+                    as_of=record_as_of,
+                    summary=summary,
+                )
+            continue
         provenance.record_source_ref(
             adapter_run_event_id=event_id,
             source_name=source_name,
@@ -577,6 +628,118 @@ def _record_source_record_refs(source_results: dict[str, Any]) -> None:
                 "quality": getattr(result, "quality", None),
             },
         )
+
+
+def _source_rows_for_provenance(
+    data: Any,
+    source_name: str,
+    as_of: str | None,
+) -> list[tuple[str, str, dict[str, Any], str | None, dict[str, Any]]]:
+    if isinstance(data, PositioningSnapshot):
+        return [
+            (
+                "positioning_row",
+                row.instrument,
+                _safe_record_value(row),
+                row.report_date or as_of,
+                {"instrument": row.instrument, "report_date": row.report_date},
+            )
+            for row in data.rows
+        ]
+    if isinstance(data, LaborMarketSnapshot):
+        return [
+            (
+                "labor_indicator",
+                key,
+                _safe_record_value(indicator),
+                indicator.date or data.timestamp or as_of,
+                {"indicator": key, "date": indicator.date, "label": indicator.label},
+            )
+            for key, indicator in data.latest.items()
+        ]
+    if isinstance(data, LiquiditySnapshot):
+        rows: list[tuple[str, str, dict[str, Any], str | None, dict[str, Any]]] = []
+        for region, value in data.regional_scores.items():
+            rows.append(
+                (
+                    "liquidity_region",
+                    str(region),
+                    {"region": region, "value": value},
+                    data.latest_date or as_of,
+                    {"region": region},
+                )
+            )
+        for idx, component in enumerate(data.components):
+            if not isinstance(component, dict):
+                continue
+            key = str(component.get("label") or component.get("name") or idx)
+            rows.append(
+                (
+                    "liquidity_component",
+                    key,
+                    dict(component),
+                    data.latest_date or as_of,
+                    {"component": key},
+                )
+            )
+        return rows
+    if isinstance(data, SentimentSnapshot):
+        rows = []
+        for name, value in data.put_call.items():
+            if isinstance(value, dict):
+                rows.append(
+                    ("sentiment_put_call", str(name), dict(value), str(value.get("as_of") or as_of), {"series": name})
+                )
+        for name, value in data.surveys.items():
+            if isinstance(value, dict):
+                rows.append(("sentiment_survey", str(name), dict(value), as_of, {"series": name}))
+        for idx, value in enumerate(data.volatility):
+            if isinstance(value, dict):
+                key = str(value.get("date") or idx)
+                rows.append(("sentiment_volatility", key, dict(value), str(value.get("date") or as_of), {"date": key}))
+        return rows
+    if isinstance(data, EconomicGrowthSnapshot):
+        return [
+            (
+                "economic_growth_bucket",
+                key,
+                value if isinstance(value, dict) else {"value": value},
+                data.timestamp or as_of,
+                {"bucket": key},
+            )
+            for key, value in {
+                "commodities": data.commodities,
+                "equities": data.equities,
+                "equity_relative_returns": data.equity_relative_returns,
+                "currencies": data.currencies,
+            }.items()
+            if value
+        ]
+    if isinstance(data, VixTermStructureSnapshot):
+        value = _safe_record_value(data)
+        return [("snapshot", source_name, value, data.date or as_of, {"source_name": source_name, "date": data.date})]
+    if isinstance(data, MarketBreadthSnapshot):
+        value = _safe_record_value(data)
+        return [
+            (
+                "snapshot",
+                source_name,
+                value,
+                data.as_of_date or as_of,
+                {"source_name": source_name, "as_of_date": data.as_of_date},
+            )
+        ]
+    if isinstance(data, Top50BreadthSnapshot):
+        return [("snapshot", source_name, _safe_record_value(data), as_of, {"source_name": source_name})]
+    return []
+
+
+def _safe_record_value(value: Any) -> dict[str, Any]:
+    if is_dataclass(value):
+        return asdict(value)
+    if isinstance(value, dict):
+        return dict(value)
+    return {"value": value}
 
 
 def _source_data(source_results: dict[str, Any], name: str) -> Any:

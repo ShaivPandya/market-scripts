@@ -715,6 +715,113 @@ def _finish_action_provenance(
         pass
 
 
+def _link_action_result_entities(
+    action: DomainAction,
+    context: ActionContext,
+    run_id: int,
+    output: dict[str, Any],
+    input_payload: dict[str, Any],
+) -> None:
+    try:
+        from api import provenance
+
+        event_id = _action_run_provenance_id(run_id)
+        for ref_type, ref_id, link_type in _action_result_refs(action.action_id, output, input_payload):
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type=provenance.REF_ACTION_RUN,
+                source_ref_id=str(run_id),
+                target_ref_type=ref_type,
+                target_ref_id=ref_id,
+                link_type=link_type,
+                metadata={
+                    "action_id": action.action_id,
+                    "approval_id": context.approval_id,
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                },
+            )
+    except Exception:
+        logger.debug(
+            "Failed to link action result entities run_id=%s action=%s", run_id, action.action_id, exc_info=True
+        )
+
+
+def _action_result_refs(
+    action_id: str,
+    output: dict[str, Any],
+    input_payload: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    try:
+        from api import provenance
+
+        produced = provenance.LINK_PRODUCED
+        updated = provenance.LINK_UPDATED
+        resolved = provenance.LINK_RESOLVED_BY
+    except Exception:
+        produced = "produced"
+        updated = "updated"
+        resolved = "resolved_by"
+
+    def _id(*keys: str) -> str | None:
+        for key in keys:
+            value = output.get(key)
+            if value is None:
+                value = input_payload.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+
+    def _ticker() -> str | None:
+        value = output.get("ticker") or input_payload.get("ticker")
+        return str(value).strip().upper() if value is not None and str(value).strip() else None
+
+    refs: list[tuple[str, str, str]] = []
+    if action_id == "update_portfolio_positions":
+        refs.append(("portfolio_positions", "current", updated))
+        for row in input_payload.get("positions") or []:
+            if isinstance(row, dict) and row.get("ticker"):
+                refs.append(("portfolio_position", str(row["ticker"]).strip().upper(), updated))
+    elif action_id == "update_hedge_positions":
+        refs.append(("hedge_positions", "current", updated))
+        for row in input_payload.get("positions") or []:
+            if isinstance(row, dict) and row.get("ticker"):
+                refs.append(("hedge_position", str(row["ticker"]).strip().upper(), updated))
+    elif action_id in {"change_thesis_status", "save_thesis_content"}:
+        if ticker := _ticker():
+            refs.append(("thesis", ticker, updated))
+    elif action_id == "save_evaluation":
+        if ticker := _ticker():
+            evaluated_at = _id("evaluated_at") or "latest"
+            refs.append(("thesis_evaluation", f"{ticker}:{evaluated_at}", produced))
+            refs.append(("thesis", ticker, updated))
+    elif action_id in {"create_catalyst", "update_catalyst_status"}:
+        if ref_id := _id("id", "catalyst_id"):
+            refs.append(("catalyst", ref_id, produced if action_id == "create_catalyst" else updated))
+    elif action_id in {"create_kill_condition", "update_kill_condition_status"}:
+        if ref_id := _id("id", "kill_condition_id"):
+            refs.append(("kill_condition", ref_id, produced if action_id == "create_kill_condition" else updated))
+    elif action_id in {"create_thesis_claim", "update_thesis_claim"}:
+        if ref_id := _id("id", "claim_id"):
+            refs.append(("thesis_claim", ref_id, produced if action_id == "create_thesis_claim" else updated))
+    elif action_id in {"create_action_item", "complete_action_item", "dismiss_action_item"}:
+        if ref_id := _id("id", "item_id"):
+            refs.append(("action_item", ref_id, produced if action_id == "create_action_item" else updated))
+    elif action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger"}:
+        if ref_id := _id("id", "trigger_id"):
+            refs.append(("watch_trigger", ref_id, produced if action_id == "create_watch_trigger" else updated))
+    elif action_id == "create_research_note":
+        if ref_id := _id("id"):
+            refs.append(("research_note", ref_id, produced))
+    elif action_id == "delete_portfolio_news_digest":
+        if ref_id := _id("digest_id"):
+            refs.append(("news_digest", ref_id, updated))
+    elif action_id == "resolve_approval":
+        if ref_id := _id("approval_id"):
+            refs.append(("approval", ref_id, resolved))
+    return refs
+
+
 def _audit_fail(
     run_id: int,
     message: str,
@@ -808,6 +915,7 @@ def execute_action(
 
         core_db.record_action_event(run_id, "complete", payload=result.output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=result.output)
+        _link_action_result_entities(action, context, run_id, result.output, normalized)
         _finish_action_provenance(
             run_id,
             status="succeeded",

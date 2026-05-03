@@ -711,6 +711,8 @@ class StateMigrator:
                 "record_hash",
                 "as_of",
                 "summary_json",
+                "redaction_policy",
+                "retention_class",
                 "created_at",
             ],
             "workflow_artifact_records": [
@@ -722,6 +724,8 @@ class StateMigrator:
                 "summary_json",
                 "approval_id",
                 "provenance_event_id",
+                "redaction_policy",
+                "retention_class",
                 "created_at",
             ],
         }

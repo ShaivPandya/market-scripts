@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Info } from "lucide-react"
+import { GitBranch, Info } from "lucide-react"
 import { useMutation } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchOntologyRuns, runOntologyQueryAsync, type OntologyResponse, type OntologyRunSummary } from "@/lib/api"
+import {
+  fetchOntologyRuns,
+  runOntologyQueryAsync,
+  type OntologyResponse,
+  type OntologyRunSummary,
+  type ProvenanceSelector,
+} from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { SelectInput, TextInput } from "@/components/shared/FormControls"
+import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
 
 type Intent = "auto" | "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
 type Timeframe = "This Week" | "Daily" | "Weekly" | "Monthly"
@@ -117,6 +124,7 @@ export function OntologyWorkbench() {
   const [cachedResult, setCachedResult] = useState<OntologyResponse | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
   const runsListId = "ontology-run-id-suggestions"
 
   const {
@@ -361,6 +369,19 @@ export function OntologyWorkbench() {
             <MetricCard title="Positions" value={String(data.aggregate?.position_count ?? rows.length)} />
           </div>
 
+          {data.run_id && (
+            <div className="mb-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setProvenanceSelector({ ontology_run_id: String(data.run_id) })}
+                className="theme-button-secondary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium"
+              >
+                <GitBranch size={14} />
+                Lineage
+              </button>
+            </div>
+          )}
+
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <MetricCard title="High Risk" value={String(data.aggregate?.risk_buckets?.high ?? 0)} />
             <MetricCard title="Medium Risk" value={String(data.aggregate?.risk_buckets?.medium ?? 0)} />
@@ -409,6 +430,13 @@ export function OntologyWorkbench() {
           </section>
         </>
       )}
+      <ProvenanceTraceDialog
+        open={provenanceSelector !== null}
+        onOpenChange={open => {
+          if (!open) setProvenanceSelector(null)
+        }}
+        selector={provenanceSelector}
+      />
     </div>
   )
 }

@@ -73,6 +73,7 @@ def _result(name, data, status="ok"):
             adapter=name,
             adapter_version="test",
             payload_fingerprint="abc",
+            provenance_event_id=f"pv:source_adapter_run:test:{name}",
         ),
     )
 
@@ -148,6 +149,9 @@ def test_ingestion_uses_adapter_results(monkeypatch):
     assert any(
         event["id"] == out.provenance_event_id and event["event_type"] == "ontology_run" for event in trace["events"]
     )
+    record_kinds = {record["record_kind"] for record in trace["source_records"]}
+    assert {"portfolio_position", "sector_metric", "snapshot"}.issubset(record_kinds)
+    assert all(record["retention_class"] == "source_ref_90d" for record in trace["source_records"])
     assert repo.saved is not None
     positions = [node for node in repo.saved["nodes"] if node.id == "position:MU"]
     assert positions

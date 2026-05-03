@@ -1132,6 +1132,16 @@ def test_save_snapshot_emits_success_and_failure_audits_with_lineage_and_counts(
     assert succeeded["after_summary"]["node_count"] == len(nodes)
     assert succeeded["source_lineage"]["source_status_counts"]["ok"] == 1
     assert succeeded["source_lineage"]["source_status_counts"]["partial"] == 1
+    trace = core_db.get_provenance_trace(ontology_run_id="run-audit")
+    assert any(
+        link["source_ref_type"] == "source_record"
+        and link["target_ref_type"] == "ontology_object_version"
+        and link["target_ref_id"] == "run-audit:position:MU"
+        and link["link_type"] == "used"
+        for link in trace["links"]
+    )
+    assert any(link["target_ref_type"] == "relation_version" for link in trace["links"])
+    assert any(link["target_ref_type"] == "schema_definition" for link in trace["links"])
 
     assert failed["object_refs"] == [{"type": "ontology_run", "id": "run-failed-audit"}]
     assert failed["after_summary"]["run_id"] == "run-failed-audit"
