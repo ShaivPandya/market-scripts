@@ -56,6 +56,13 @@ jobs:
         if: steps.ny_gate.outputs.should_run == 'true'
         run: pip install -r requirements.txt -c requirements-lock.txt
 
+      - name: Fetch portfolio state from app
+        if: steps.ny_gate.outputs.should_run == 'true'
+        env:
+          TALISMAN_API_URL: ${{ vars.TALISMAN_API_URL }}
+          API_PROXY_SECRET: ${{ secrets.API_PROXY_SECRET }}
+        run: python -m auto_report.fetch_state
+
       - name: Generate weekly report
         if: steps.ny_gate.outputs.should_run == 'true'
         env:

@@ -257,6 +257,54 @@ def test_get_latest_run_returns_most_recent(tmp_path):
     assert latest["run_id"] == "run-new"
 
 
+def test_snapshot_preserves_expanded_source_status_metadata(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+
+    source_status = {
+        "portfolio": {
+            "status": "ok",
+            "quality": "ok",
+            "source_name": "portfolio",
+            "source_version": "1",
+            "fetched_at": "2026-05-01T20:00:00+00:00",
+            "lineage": {
+                "raw_module": "portfolio.portfolio_dashboard",
+                "raw_function": "get_data",
+                "adapter": "portfolio",
+                "adapter_version": "1",
+                "payload_fingerprint": "abc",
+            },
+            "schema_drift": [
+                {
+                    "severity": "info",
+                    "path": "$.extra",
+                    "expected": "known field",
+                    "actual": "str",
+                    "action": "ignored",
+                }
+            ],
+        }
+    }
+
+    repo.save_snapshot(
+        run_id="run-source-meta",
+        as_of="2026-05-01T20:00:00+00:00",
+        source_status=source_status,
+        required_modules=["portfolio"],
+        optional_modules=[],
+        component_scores={},
+        nodes=_core_nodes(),
+        edges=_core_edges(),
+    )
+
+    saved = repo.get_run("run-source-meta")
+    assert saved is not None
+    assert saved["source_status"]["portfolio"]["quality"] == "ok"
+    assert saved["source_status"]["portfolio"]["lineage"]["payload_fingerprint"] == "abc"
+    assert saved["source_status"]["portfolio"]["schema_drift"][0]["severity"] == "info"
+
+
 def test_backfill_schema_versions_rewrites_legacy_optional_ids(tmp_path):
     db_path = tmp_path / "ontology.sqlite3"
     repo = OntologyRepository(db_path=db_path)

@@ -2,6 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from ontology.sources.dtos import (
+    EconomicGrowthSnapshot,
+    LaborMarketSnapshot,
+    LiquiditySnapshot,
+    MarketBreadthSnapshot,
+    PositioningSnapshot,
+    SectorMetricRow,
+    SectorMetricsSnapshot,
+    SentimentSnapshot,
+    Top50BreadthSnapshot,
+    VixTermStructureSnapshot,
+)
+
 W_VOLATILITY = 0.35
 W_BREADTH = 0.25
 W_SECTOR = 0.25
@@ -13,12 +26,10 @@ def clamp01(value: float) -> float:
 
 
 def compute_volatility_cluster(
-    vix_term_structure: dict[str, Any] | None, sentiment: dict[str, Any] | None
+    vix_term_structure: VixTermStructureSnapshot | dict[str, Any] | None,
+    sentiment: SentimentSnapshot | dict[str, Any] | None,
 ) -> tuple[float, list[dict[str, Any]]]:
-    latest = ((vix_term_structure or {}).get("latest_df") or [{}])[0]
-    ratio = _to_float(latest.get("Ratio"))
-    vix_signal = str(latest.get("Signal") or "Neutral")
-    vix_level = _to_float(latest.get("VIX"))
+    ratio, vix_signal, vix_level = _vix_values(vix_term_structure)
 
     if vix_signal == "Fear":
         base = 0.9
@@ -27,10 +38,7 @@ def compute_volatility_cluster(
     else:
         base = 0.45
 
-    sentiment_vol = (sentiment or {}).get("volatility")
-    vvix = None
-    if isinstance(sentiment_vol, list) and sentiment_vol:
-        vvix = _to_float((sentiment_vol[-1] or {}).get("vvix"))
+    vvix = _sentiment_latest_vvix(sentiment)
 
     adjustment = 0.0
     if vix_level is not None:
@@ -76,20 +84,11 @@ def compute_volatility_cluster(
 
 
 def compute_breadth_stress(
-    market_breadth: dict[str, Any] | None,
-    top50_breadth: dict[str, Any] | None,
+    market_breadth: MarketBreadthSnapshot | dict[str, Any] | None,
+    top50_breadth: Top50BreadthSnapshot | dict[str, Any] | None,
 ) -> tuple[float, list[dict[str, Any]]]:
-    m = market_breadth or {}
-    t = top50_breadth or {}
-
-    p200 = _to_float(m.get("pct_above_200dma"))
-    p20 = _to_float(m.get("pct_above_20dma"))
-    p20l = _to_float(m.get("pct_at_20day_low"))
-    p52l = _to_float(m.get("pct_at_52wk_low"))
-
-    t50 = _to_float(t.get("pct_below_50dma"))
-    tdist = _to_float(t.get("pct_3plus_dist"))
-    tbroke = _to_float(t.get("pct_broke_20low"))
+    p200, p20, p20l, p52l = _market_breadth_values(market_breadth)
+    t50, tdist, tbroke = _top50_breadth_values(top50_breadth)
 
     components = []
     if p200 is not None:
@@ -139,25 +138,21 @@ def compute_breadth_stress(
 
 
 def compute_sector_stress_map(
-    sector_metrics: dict[str, Any] | None,
+    sector_metrics: SectorMetricsSnapshot | dict[str, Any] | None,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
-    rows = (sector_metrics or {}).get("weights_df") or []
-    if not isinstance(rows, list):
-        rows = []
+    rows = _sector_metric_rows(sector_metrics)
 
     out: dict[str, float] = {}
     evidence: list[dict[str, Any]] = []
 
     for row in rows:
-        if not isinstance(row, dict):
-            continue
-        sector = str(row.get("Sector") or "").strip()
+        sector = _sector_row_sector(row)
         if not sector:
             continue
 
-        rel3m = _to_float(row.get("RelPerf_3M_pp"))
-        chg3m = _to_float(row.get("Chg_3M_pp"))
-        pct200 = _to_float(row.get("Pct_Above_200DMA"))
+        rel3m = _sector_row_float(row, "relperf_3m_pp", "RelPerf_3M_pp")
+        chg3m = _sector_row_float(row, "chg_3m_pp", "Chg_3M_pp")
+        pct200 = _sector_row_float(row, "pct_above_200dma", "Pct_Above_200DMA")
 
         components = []
         if rel3m is not None:
@@ -189,13 +184,12 @@ def compute_sector_stress_map(
 
 
 def compute_macro_regime(
-    liquidity: dict[str, Any] | None,
-    positioning: dict[str, Any] | None,
-    economic_growth: dict[str, Any] | None,
-    labor_market: dict[str, Any] | None,
+    liquidity: LiquiditySnapshot | dict[str, Any] | None,
+    positioning: PositioningSnapshot | dict[str, Any] | list[dict[str, Any]] | None,
+    economic_growth: EconomicGrowthSnapshot | dict[str, Any] | None,
+    labor_market: LaborMarketSnapshot | dict[str, Any] | None,
 ) -> tuple[float, list[dict[str, Any]]]:
-    liq = liquidity or {}
-    regime = str(liq.get("regime") or "normal").lower()
+    regime = _liquidity_regime(liquidity)
     base = {
         "stress": 1.0,
         "tight": 0.8,
@@ -297,7 +291,89 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _flatten_positioning_rows(positioning: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _vix_values(value: VixTermStructureSnapshot | dict[str, Any] | None) -> tuple[float | None, str, float | None]:
+    if isinstance(value, VixTermStructureSnapshot):
+        return value.ratio, value.signal, value.vix
+    latest = ((value or {}).get("latest_df") or [{}]) if isinstance(value, dict) else [{}]
+    row = latest[0] if isinstance(latest, list) and latest else {}
+    if not isinstance(row, dict):
+        row = {}
+    return _to_float(row.get("Ratio")), str(row.get("Signal") or "Neutral"), _to_float(row.get("VIX"))
+
+
+def _sentiment_latest_vvix(value: SentimentSnapshot | dict[str, Any] | None) -> float | None:
+    if isinstance(value, SentimentSnapshot):
+        return value.latest_vvix
+    sentiment_vol = (value or {}).get("volatility") if isinstance(value, dict) else None
+    if isinstance(sentiment_vol, list) and sentiment_vol:
+        latest = sentiment_vol[-1]
+        if isinstance(latest, dict):
+            return _to_float(latest.get("vvix"))
+    return None
+
+
+def _market_breadth_values(
+    value: MarketBreadthSnapshot | dict[str, Any] | None,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    if isinstance(value, MarketBreadthSnapshot):
+        return value.pct_above_200dma, value.pct_above_20dma, value.pct_at_20day_low, value.pct_at_52wk_low
+    data = value if isinstance(value, dict) else {}
+    return (
+        _to_float(data.get("pct_above_200dma")),
+        _to_float(data.get("pct_above_20dma")),
+        _to_float(data.get("pct_at_20day_low")),
+        _to_float(data.get("pct_at_52wk_low")),
+    )
+
+
+def _top50_breadth_values(
+    value: Top50BreadthSnapshot | dict[str, Any] | None,
+) -> tuple[float | None, float | None, float | None]:
+    if isinstance(value, Top50BreadthSnapshot):
+        return value.pct_below_50dma, value.pct_3plus_dist, value.pct_broke_20low
+    data = value if isinstance(value, dict) else {}
+    return (
+        _to_float(data.get("pct_below_50dma")),
+        _to_float(data.get("pct_3plus_dist")),
+        _to_float(data.get("pct_broke_20low")),
+    )
+
+
+def _sector_metric_rows(value: SectorMetricsSnapshot | dict[str, Any] | None) -> list[SectorMetricRow | dict[str, Any]]:
+    if isinstance(value, SectorMetricsSnapshot):
+        return list(value.rows)
+    rows = (value or {}).get("weights_df") if isinstance(value, dict) else []
+    return rows if isinstance(rows, list) else []
+
+
+def _sector_row_sector(row: SectorMetricRow | dict[str, Any]) -> str:
+    if isinstance(row, SectorMetricRow):
+        return row.sector.strip()
+    if isinstance(row, dict):
+        return str(row.get("Sector") or row.get("sector") or "").strip()
+    return ""
+
+
+def _sector_row_float(row: SectorMetricRow | dict[str, Any], attr: str, key: str) -> float | None:
+    if isinstance(row, SectorMetricRow):
+        return _to_float(getattr(row, attr))
+    return _to_float(row.get(key)) if isinstance(row, dict) else None
+
+
+def _liquidity_regime(value: LiquiditySnapshot | dict[str, Any] | None) -> str:
+    if isinstance(value, LiquiditySnapshot):
+        return str(value.regime or "normal").lower()
+    data = value if isinstance(value, dict) else {}
+    return str(data.get("regime") or "normal").lower()
+
+
+def _flatten_positioning_rows(
+    positioning: PositioningSnapshot | dict[str, Any] | list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if isinstance(positioning, PositioningSnapshot):
+        return [{"lf_z": row.lf_z} for row in positioning.rows]
+    if isinstance(positioning, list):
+        return [row for row in positioning if isinstance(row, dict) and "lf_z" in row]
     if not isinstance(positioning, dict):
         return []
     out: list[dict[str, Any]] = []
@@ -311,20 +387,28 @@ def _flatten_positioning_rows(positioning: dict[str, Any] | None) -> list[dict[s
     return out
 
 
-def _growth_risk_adjustment(data: dict[str, Any] | None) -> float | None:
-    if not isinstance(data, dict):
+def _growth_risk_adjustment(data: EconomicGrowthSnapshot | dict[str, Any] | None) -> float | None:
+    if isinstance(data, EconomicGrowthSnapshot):
+        buckets = {
+            "commodities": data.commodities,
+            "equities": data.equities,
+            "currencies": data.currencies,
+        }
+    elif isinstance(data, dict):
+        buckets = data
+    else:
         return None
     # Handle common return tables with period keys and float values.
     negatives = 0
     total = 0
     for category in ("commodities", "equities", "currencies"):
-        bucket = data.get(category)
+        bucket = buckets.get(category)
         if not isinstance(bucket, dict):
             continue
         for _, periods in bucket.items():
             if not isinstance(periods, dict):
                 continue
-            for p in ("1M", "3M", "6M"):
+            for p in ("1M", "3M", "6M", "1-mo", "3-mo", "6-mo"):
                 val = _to_float(periods.get(p))
                 if val is None:
                     continue
@@ -337,7 +421,13 @@ def _growth_risk_adjustment(data: dict[str, Any] | None) -> float | None:
     return clamp01((ratio - 0.45) * 0.4)
 
 
-def _labor_risk_adjustment(data: dict[str, Any] | None) -> float | None:
+def _labor_risk_adjustment(data: LaborMarketSnapshot | dict[str, Any] | None) -> float | None:
+    if isinstance(data, LaborMarketSnapshot):
+        change = data.initial_claims_change
+        if change is None:
+            return None
+        return clamp01(max(0.0, change) / 25.0)
+
     if not isinstance(data, dict):
         return None
     latest = data.get("latest")

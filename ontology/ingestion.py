@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -29,8 +27,9 @@ from ontology.schemas.relations import (
     REFERENCES_ASSET,
 )
 from ontology.sector_mapper import SectorMapper
+from ontology.sources.dtos import PortfolioSnapshot
+from ontology.sources.registry import build_adapter_registry, run_adapters, source_status_from_results
 
-ModuleFetcher = Callable[[], dict[str, Any] | list[Any]]
 SNAPSHOT_RETENTION_DAYS = 90
 
 
@@ -52,14 +51,14 @@ def ingest_into_repository(
     run_id = datetime.now(UTC).isoformat()
     source_status: dict[str, dict[str, Any]] = {}
 
-    required_fetchers, optional_fetchers, deep_fetchers = _build_fetchers(timeframe=timeframe)
+    required_adapters, optional_adapters, deep_adapters = build_adapter_registry(timeframe=timeframe)
 
-    combined_fetchers = {**required_fetchers, **optional_fetchers}
-    all_data = _run_fetchers(combined_fetchers, source_status)
-    required_data = all_data
-    optional_data = all_data
-    if include_deep_modules:
-        _run_fetchers(deep_fetchers, source_status)
+    source_results = run_adapters({**required_adapters, **optional_adapters})
+    source_status.update(source_status_from_results(source_results))
+    if include_deep_modules and deep_adapters:
+        deep_results = run_adapters(deep_adapters)
+        source_results.update(deep_results)
+        source_status.update(source_status_from_results(deep_results))
 
     nodes: dict[str, OntologyNode] = {}
     edges: dict[tuple[str, str, str], OntologyEdge] = {}
@@ -70,27 +69,26 @@ def ingest_into_repository(
     def add_edge(edge: OntologyEdge) -> None:
         edges[(edge.source_id, edge.target_id, edge.relation_type)] = edge
 
-    portfolio = _as_dict(required_data.get("portfolio"))
+    portfolio = _source_data(source_results, "portfolio")
+    if not isinstance(portfolio, PortfolioSnapshot):
+        portfolio = PortfolioSnapshot(positions={}, timeframe=timeframe, timestamp=None)
     sector_mapper = SectorMapper()
     position_ids: list[str] = []
 
     # Core entity graph: Position -> Asset -> Sector
-    metadata = _as_dict(portfolio.get("metadata"))
-    positions = _as_dict(portfolio.get("positions"))
-    portfolio_timestamp = portfolio.get("timestamp")
+    portfolio_timestamp = portfolio.timestamp
 
-    for ticker, meta_obj in metadata.items():
-        ticker_norm = str(ticker).strip().upper()
+    for ticker_norm, position in portfolio.positions.items():
+        ticker_norm = str(ticker_norm).strip().upper()
         if not ticker_norm:
             continue
 
-        meta = meta_obj if isinstance(meta_obj, dict) else {}
-        asset_class = str(meta.get("asset") or "unknown").strip().lower()
-        direction = str(meta.get("direction") or "unknown").strip().lower()
+        asset_class = str(position.asset or "unknown").strip().lower()
+        direction = str(position.direction or "unknown").strip().lower()
 
         position_id = f"position:{ticker_norm}"
         asset_id = f"asset:{ticker_norm}"
-        latest_price = _extract_latest_price(positions.get(ticker_norm) or positions.get(ticker))
+        latest_price = position.latest_price
 
         sector = sector_mapper.resolve_sector(ticker_norm, asset_class)
         sector_id = f"sector:{_slug(sector.sector)}"
@@ -155,16 +153,16 @@ def ingest_into_repository(
     _ingest_thesis_entities(add_node, add_edge, run_id, position_ids)
 
     # Compute global component scores from module outputs
-    vix_data = _as_dict(required_data.get("vix_term_structure"))
-    breadth_data = _as_dict(required_data.get("market_breadth"))
-    top50_data = _as_dict(required_data.get("top50_breadth"))
-    sector_metrics_data = _as_dict(required_data.get("sector_metrics"))
-    liquidity_data = _as_dict(required_data.get("liquidity"))
+    vix_data = _source_data(source_results, "vix_term_structure")
+    breadth_data = _source_data(source_results, "market_breadth")
+    top50_data = _source_data(source_results, "top50_breadth")
+    sector_metrics_data = _source_data(source_results, "sector_metrics")
+    liquidity_data = _source_data(source_results, "liquidity")
 
-    sentiment_data = _as_dict(optional_data.get("sentiment"))
-    positioning_data = _as_dict(optional_data.get("positioning_summary"))
-    economic_growth_data = _as_dict(optional_data.get("economic_growth"))
-    labor_market_data = _as_dict(optional_data.get("labor_market"))
+    sentiment_data = _source_data(source_results, "sentiment")
+    positioning_data = _source_data(source_results, "positioning_summary")
+    economic_growth_data = _source_data(source_results, "economic_growth")
+    labor_market_data = _source_data(source_results, "labor_market")
 
     volatility_cluster, vol_evidence = compute_volatility_cluster(vix_data, sentiment_data)
     breadth_stress, breadth_evidence = compute_breadth_stress(breadth_data, top50_data)
@@ -398,8 +396,8 @@ def ingest_into_repository(
     snapshot_edges = normalized_graph.edges
 
     as_of = str(portfolio_timestamp or datetime.now(UTC).isoformat())
-    required_modules = list(required_fetchers.keys())
-    optional_modules = list(optional_fetchers.keys()) + (list(deep_fetchers.keys()) if include_deep_modules else [])
+    required_modules = list(required_adapters.keys())
+    optional_modules = list(optional_adapters.keys()) + (list(deep_adapters.keys()) if include_deep_modules else [])
     component_scores = {
         "volatility_cluster": round(volatility_cluster, 4),
         "breadth_stress": round(breadth_stress, 4),
@@ -428,115 +426,9 @@ def ingest_into_repository(
     )
 
 
-def _build_fetchers(
-    timeframe: str,
-) -> tuple[dict[str, ModuleFetcher], dict[str, ModuleFetcher], dict[str, ModuleFetcher]]:
-    from api.routers.breakout import get_breakout
-    from api.routers.central_banks import get_central_banks
-    from api.routers.commodities import get_commodities
-    from api.routers.commodities_curve import get_commodities_curve
-    from api.routers.country_dashboard import get_country_dashboard
-    from api.routers.economic_growth import get_economic_growth
-    from api.routers.fx_dashboard import get_fx_dashboard
-    from api.routers.fx_model import list_pairs
-    from api.routers.index_dashboard import get_index_dashboard
-    from api.routers.industry import get_industry_monitor
-    from api.routers.labor_market import get_labor_market
-    from api.routers.liquidity import get_liquidity
-    from api.routers.market_technicals import (
-        get_market_breadth,
-        get_price_volume_signals,
-        get_top50_breadth,
-        get_vix_term_structure,
-    )
-    from api.routers.momentum import get_momentum
-    from api.routers.portfolio import get_portfolio
-    from api.routers.portfolio_news import list_portfolio_news
-    from api.routers.positioning import get_positioning_summary
-    from api.routers.sector_metrics import get_sector_metrics
-    from api.routers.sentiment import get_put_call, get_surveys, get_volatility
-    from api.routers.yield_curve import get_yield_curve
-
-    required: dict[str, ModuleFetcher] = {
-        "portfolio": lambda: get_portfolio(timeframe=timeframe, all_timeframes=False),
-        "market_breadth": get_market_breadth,
-        "top50_breadth": get_top50_breadth,
-        "vix_term_structure": get_vix_term_structure,
-        "sector_metrics": get_sector_metrics,
-        "liquidity": get_liquidity,
-    }
-
-    optional: dict[str, ModuleFetcher] = {
-        "sentiment": lambda: {
-            "put_call": get_put_call(lookback_days=180),
-            "surveys": get_surveys(),
-            "volatility": get_volatility(lookback_days=365),
-        },
-        "positioning_summary": get_positioning_summary,
-        "economic_growth": get_economic_growth,
-        "labor_market": get_labor_market,
-    }
-
-    deep: dict[str, ModuleFetcher] = {
-        "index_dashboard": lambda: get_index_dashboard(timeframe=timeframe),
-        "fx_dashboard": lambda: get_fx_dashboard(timeframe=timeframe),
-        "commodities": lambda: get_commodities(timeframe=timeframe),
-        "price_volume_signals": get_price_volume_signals,
-        "momentum": get_momentum,
-        "country_dashboard": lambda: get_country_dashboard(metric="Inflation"),
-        "breakout": get_breakout,
-        "yield_curve": lambda: get_yield_curve(lookback_days=90),
-        "central_banks": lambda: get_central_banks(refresh=False),
-        "industry_monitor": lambda: get_industry_monitor(refresh=False),
-        "portfolio_news": lambda: list_portfolio_news(refresh=False),
-        "commodities_curve": lambda: get_commodities_curve(commodity="CL", lookback_days=30),
-        "fx_model_pairs": list_pairs,
-    }
-
-    return required, optional, deep
-
-
-def _run_fetchers(fetchers: dict[str, ModuleFetcher], source_status: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    if not fetchers:
-        return out
-
-    with ThreadPoolExecutor(max_workers=min(len(fetchers), 10)) as pool:
-        futures = {pool.submit(fn): name for name, fn in fetchers.items()}
-        try:
-            for fut in as_completed(futures, timeout=120):
-                name = futures[fut]
-                try:
-                    data = fut.result(timeout=90)
-                    out[name] = data
-                    if _is_partial(name, data):
-                        source_status[name] = {"status": "partial", "detail": "incomplete payload"}
-                    else:
-                        source_status[name] = {"status": "ok"}
-                except Exception as exc:
-                    out[name] = {}
-                    source_status[name] = {"status": "error", "detail": str(exc)}
-        except FuturesTimeoutError:
-            for fut, name in futures.items():
-                if not fut.done():
-                    out[name] = {}
-                    source_status[name] = {"status": "error", "detail": "module timed out"}
-    return out
-
-
-def _is_partial(name: str, data: Any) -> bool:
-    if not isinstance(data, dict):
-        return False
-    if name == "sentiment":
-        surveys = data.get("surveys")
-        if isinstance(surveys, dict):
-            errs = surveys.get("errors")
-            if isinstance(errs, dict) and errs:
-                return True
-    errors = data.get("errors")
-    if isinstance(errors, dict) and errors:
-        return True
-    return False
+def _source_data(source_results: dict[str, Any], name: str) -> Any:
+    result = source_results.get(name)
+    return getattr(result, "data", None)
 
 
 def _ingest_thesis_entities(
