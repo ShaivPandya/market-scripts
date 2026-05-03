@@ -30,11 +30,20 @@ const DEFAULT_RESPONSE_PREFERENCES: AgentResponsePreferences = {
   custom_instructions: "",
 }
 
+const CHAT_TEXTAREA_MAX_HEIGHT = 120
+
 const LEVEL_OPTIONS: { value: AgentPreferenceLevel; label: string }[] = [
   { value: "less", label: "Less" },
   { value: "balanced", label: "Balanced" },
   { value: "more", label: "More" },
 ]
+
+function resizeChatTextarea(el: HTMLTextAreaElement) {
+  el.style.height = "auto"
+  const nextHeight = Math.min(el.scrollHeight, CHAT_TEXTAREA_MAX_HEIGHT)
+  el.style.height = `${nextHeight}px`
+  el.style.overflowY = el.scrollHeight > CHAT_TEXTAREA_MAX_HEIGHT ? "auto" : "hidden"
+}
 
 function loadResponsePreferences(): AgentResponsePreferences {
   try {
@@ -110,6 +119,10 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
       setTimeout(() => textareaRef.current?.focus(), 300)
     }
   }, [open])
+
+  useEffect(() => {
+    if (textareaRef.current) resizeChatTextarea(textareaRef.current)
+  }, [input, open])
 
   function handleSend() {
     const trimmed = input.trim()
@@ -547,12 +560,8 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   className={cn(
                     "theme-input max-h-[120px] flex-1 resize-none text-sm",
                   )}
-                  style={{ minHeight: "38px" }}
-                  onInput={e => {
-                    const el = e.currentTarget
-                    el.style.height = "auto"
-                    el.style.height = Math.min(el.scrollHeight, 120) + "px"
-                  }}
+                  style={{ minHeight: "38px", overflowY: "hidden" }}
+                  onInput={e => resizeChatTextarea(e.currentTarget)}
                   disabled={isStreaming}
                 />
                 {isStreaming ? (
