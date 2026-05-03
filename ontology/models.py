@@ -4,6 +4,16 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 EntityType = Literal["Asset", "Sector", "MacroIndicator", "Signal", "Position", "Thesis", "Evaluation", "Catalyst"]
+RelationType = Literal[
+    "references_asset",
+    "belongs_to_sector",
+    "has_thesis",
+    "evaluated_by",
+    "has_catalyst",
+    "emits_signal",
+    "affected_by",
+    "exposed_to_signal",
+]
 ParserSource = Literal["structured", "llm", "deterministic_fallback"]
 
 
@@ -21,7 +31,7 @@ class OntologyNode:
 class OntologyEdge:
     source_id: str
     target_id: str
-    relation_type: str
+    relation_type: RelationType
     properties: dict[str, Any] = field(default_factory=dict)
     schema_name: str = "legacy"
     schema_version: int = 0

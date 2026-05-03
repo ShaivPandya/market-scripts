@@ -11,7 +11,15 @@ from typing import Any
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
 from ontology.models import OntologyEdge, OntologyNode
-from ontology.schemas.registry import normalize_edge, normalize_graph, normalize_node
+from ontology.schemas.registry import (
+    OntologySchemaValidationError,
+    normalize_edge,
+    normalize_graph,
+    normalize_node,
+    validate_edge_relation,
+    validate_graph_relations,
+)
+from ontology.schemas.relations import RELATION_TYPE_SQL_VALUES, RelationCardinality, get_relation_definition
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -97,16 +105,18 @@ class OntologyRepository:
                 """
             )
             conn.execute(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS edges (
                     source_id TEXT NOT NULL,
                     target_id TEXT NOT NULL,
-                    relation_type TEXT NOT NULL,
+                    relation_type TEXT NOT NULL CHECK (relation_type IN ({RELATION_TYPE_SQL_VALUES})),
                     properties_json TEXT NOT NULL,
                     schema_name TEXT NOT NULL DEFAULT 'legacy',
                     schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    PRIMARY KEY (source_id, target_id, relation_type)
+                    PRIMARY KEY (source_id, target_id, relation_type),
+                    FOREIGN KEY (source_id) REFERENCES nodes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (target_id) REFERENCES nodes(id) ON DELETE CASCADE
                 )
                 """
             )
@@ -144,18 +154,20 @@ class OntologyRepository:
                 """
             )
             conn.execute(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS snapshot_edges (
                     run_id TEXT NOT NULL,
                     source_id TEXT NOT NULL,
                     target_id TEXT NOT NULL,
-                    relation_type TEXT NOT NULL,
+                    relation_type TEXT NOT NULL CHECK (relation_type IN ({RELATION_TYPE_SQL_VALUES})),
                     properties_json TEXT NOT NULL,
                     schema_name TEXT NOT NULL DEFAULT 'legacy',
                     schema_version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     PRIMARY KEY (run_id, source_id, target_id, relation_type),
-                    FOREIGN KEY (run_id) REFERENCES ontology_runs(run_id) ON DELETE CASCADE
+                    FOREIGN KEY (run_id) REFERENCES ontology_runs(run_id) ON DELETE CASCADE,
+                    FOREIGN KEY (run_id, source_id) REFERENCES snapshot_nodes(run_id, id) ON DELETE CASCADE,
+                    FOREIGN KEY (run_id, target_id) REFERENCES snapshot_nodes(run_id, id) ON DELETE CASCADE
                 )
                 """
             )
@@ -169,6 +181,7 @@ class OntologyRepository:
             )
             for table in ("nodes", "edges", "snapshot_nodes", "snapshot_edges"):
                 _ensure_schema_columns(conn, table)
+            _ensure_relation_indexes(conn)
 
     def upsert_nodes(self, nodes: list[OntologyNode]) -> None:
         if not nodes:
@@ -204,33 +217,36 @@ class OntologyRepository:
     def upsert_edges(self, edges: list[OntologyEdge]) -> None:
         if not edges:
             return
-        normalized_edges = [normalize_edge(e, allow_legacy=_allow_legacy_schemas()) for e in edges]
-        rows = [
-            (
-                e.source_id,
-                e.target_id,
-                e.relation_type,
-                json.dumps(e.properties, default=str),
-                e.schema_name,
-                e.schema_version,
-            )
-            for e in normalized_edges
-        ]
         with self._connect() as conn:
-            conn.executemany(
-                """
-                INSERT INTO edges(
-                    source_id, target_id, relation_type, properties_json, schema_name, schema_version, updated_at
+            normalized_edges = _normalize_live_edges_for_storage(conn, edges)
+            rows = [
+                (
+                    e.source_id,
+                    e.target_id,
+                    e.relation_type,
+                    json.dumps(e.properties, default=str),
+                    e.schema_name,
+                    e.schema_version,
                 )
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-                ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
-                  properties_json=excluded.properties_json,
-                  schema_name=excluded.schema_name,
-                  schema_version=excluded.schema_version,
-                  updated_at=datetime('now')
-                """,
-                rows,
-            )
+                for e in normalized_edges
+            ]
+            try:
+                conn.executemany(
+                    """
+                    INSERT INTO edges(
+                        source_id, target_id, relation_type, properties_json, schema_name, schema_version, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                    ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
+                      properties_json=excluded.properties_json,
+                      schema_name=excluded.schema_name,
+                      schema_version=excluded.schema_version,
+                      updated_at=datetime('now')
+                    """,
+                    rows,
+                )
+            except Exception as exc:
+                _raise_edge_integrity_error(exc)
 
     def upsert_graph(self, nodes: list[OntologyNode], edges: list[OntologyEdge]) -> None:
         normalized = normalize_graph(nodes, edges, allow_legacy=_allow_legacy_schemas())
@@ -278,63 +294,66 @@ class OntologyRepository:
         ]
 
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO ontology_runs(
-                    run_id,
-                    as_of,
-                    source_status_json,
-                    required_modules_json,
-                    optional_modules_json,
-                    component_scores_json,
-                    created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-                ON CONFLICT(run_id) DO UPDATE SET
-                    as_of=excluded.as_of,
-                    source_status_json=excluded.source_status_json,
-                    required_modules_json=excluded.required_modules_json,
-                    optional_modules_json=excluded.optional_modules_json,
-                    component_scores_json=excluded.component_scores_json
-                """,
-                (
-                    run_id,
-                    as_of,
-                    json.dumps(source_status, default=str),
-                    json.dumps(list(required_modules), default=str),
-                    json.dumps(list(optional_modules), default=str),
-                    json.dumps(component_scores, default=str),
-                ),
-            )
-            conn.execute("DELETE FROM snapshot_nodes WHERE run_id = ?", (run_id,))
-            conn.execute("DELETE FROM snapshot_edges WHERE run_id = ?", (run_id,))
-            if node_rows:
-                conn.executemany(
+            try:
+                conn.execute(
                     """
-                    INSERT INTO snapshot_nodes(
-                        run_id, id, type, label, properties_json, schema_name, schema_version, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                    """,
-                    node_rows,
-                )
-            if edge_rows:
-                conn.executemany(
-                    """
-                    INSERT INTO snapshot_edges(
+                    INSERT INTO ontology_runs(
                         run_id,
-                        source_id,
-                        target_id,
-                        relation_type,
-                        properties_json,
-                        schema_name,
-                        schema_version,
-                        updated_at
+                        as_of,
+                        source_status_json,
+                        required_modules_json,
+                        optional_modules_json,
+                        component_scores_json,
+                        created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                    ON CONFLICT(run_id) DO UPDATE SET
+                        as_of=excluded.as_of,
+                        source_status_json=excluded.source_status_json,
+                        required_modules_json=excluded.required_modules_json,
+                        optional_modules_json=excluded.optional_modules_json,
+                        component_scores_json=excluded.component_scores_json
                     """,
-                    edge_rows,
+                    (
+                        run_id,
+                        as_of,
+                        json.dumps(source_status, default=str),
+                        json.dumps(list(required_modules), default=str),
+                        json.dumps(list(optional_modules), default=str),
+                        json.dumps(component_scores, default=str),
+                    ),
                 )
+                conn.execute("DELETE FROM snapshot_nodes WHERE run_id = ?", (run_id,))
+                conn.execute("DELETE FROM snapshot_edges WHERE run_id = ?", (run_id,))
+                if node_rows:
+                    conn.executemany(
+                        """
+                        INSERT INTO snapshot_nodes(
+                            run_id, id, type, label, properties_json, schema_name, schema_version, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        """,
+                        node_rows,
+                    )
+                if edge_rows:
+                    conn.executemany(
+                        """
+                        INSERT INTO snapshot_edges(
+                            run_id,
+                            source_id,
+                            target_id,
+                            relation_type,
+                            properties_json,
+                            schema_name,
+                            schema_version,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        """,
+                        edge_rows,
+                    )
+            except Exception as exc:
+                _raise_edge_integrity_error(exc)
 
     def prune_runs_older_than(self, *, days: int) -> int:
         if days <= 0:
@@ -855,21 +874,18 @@ class OntologyRepository:
         may be canonicalized, so dependent edges are rewritten with the node ID
         map returned by the schema registry.
         """
-        report: dict[str, Any] = {"dry_run": dry_run, "scopes": [], "warnings": []}
+        report: dict[str, Any] = {"dry_run": dry_run, "scopes": [], "warnings": [], "errors": []}
         with self._connect() as conn:
             live_nodes = _fetch_node_envelopes(conn, table="nodes")
             live_edges = _fetch_edge_envelopes(conn, table="edges")
-            live_graph = normalize_graph(live_nodes, live_edges, allow_legacy=True, skip_optional_invalid=True)
-            report["scopes"].append(
-                {
-                    "scope": "live",
-                    "nodes": len(live_graph.nodes),
-                    "edges": len(live_graph.edges),
-                    "rewritten_ids": sum(1 for old, new in live_graph.node_id_map.items() if old != new),
-                }
+            live_graph = _normalize_backfill_scope(
+                report,
+                scope={"scope": "live"},
+                nodes=live_nodes,
+                edges=live_edges,
+                dry_run=dry_run,
             )
-            report["warnings"].extend(live_graph.warnings)
-            if not dry_run:
+            if live_graph is not None and not dry_run:
                 conn.execute("DELETE FROM edges")
                 conn.execute("DELETE FROM nodes")
                 _insert_live_nodes(conn, live_graph.nodes)
@@ -880,24 +896,59 @@ class OntologyRepository:
                 run_id = str(run_row["run_id"])
                 nodes = _fetch_node_envelopes(conn, table="snapshot_nodes", run_id=run_id)
                 edges = _fetch_edge_envelopes(conn, table="snapshot_edges", run_id=run_id)
-                graph = normalize_graph(nodes, edges, run_id=run_id, allow_legacy=True, skip_optional_invalid=True)
-                report["scopes"].append(
-                    {
-                        "scope": "snapshot",
-                        "run_id": run_id,
-                        "nodes": len(graph.nodes),
-                        "edges": len(graph.edges),
-                        "rewritten_ids": sum(1 for old, new in graph.node_id_map.items() if old != new),
-                    }
+                graph = _normalize_backfill_scope(
+                    report,
+                    scope={"scope": "snapshot", "run_id": run_id},
+                    nodes=nodes,
+                    edges=edges,
+                    dry_run=dry_run,
+                    run_id=run_id,
                 )
-                report["warnings"].extend(graph.warnings)
-                if not dry_run:
+                if graph is not None and not dry_run:
                     conn.execute("DELETE FROM snapshot_edges WHERE run_id = ?", (run_id,))
                     conn.execute("DELETE FROM snapshot_nodes WHERE run_id = ?", (run_id,))
                     _insert_snapshot_nodes(conn, run_id, graph.nodes)
                     _insert_snapshot_edges(conn, run_id, graph.edges)
 
         return report
+
+
+def _normalize_backfill_scope(
+    report: dict[str, Any],
+    *,
+    scope: dict[str, Any],
+    nodes: list[OntologyNode],
+    edges: list[OntologyEdge],
+    dry_run: bool,
+    run_id: str | None = None,
+) -> Any:
+    try:
+        graph = normalize_graph(
+            nodes,
+            edges,
+            run_id=run_id,
+            allow_legacy=True,
+            skip_optional_invalid=True,
+            require_core_edges=True,
+        )
+    except OntologySchemaValidationError as exc:
+        error = {**scope, "error": str(exc)}
+        report["errors"].append(error)
+        report["scopes"].append({**scope, "nodes": 0, "edges": 0, "rewritten_ids": 0, "error": str(exc)})
+        if not dry_run:
+            raise OntologySchemaValidationError(f"Cannot backfill ontology {scope}: {exc}") from exc
+        return None
+
+    report["scopes"].append(
+        {
+            **scope,
+            "nodes": len(graph.nodes),
+            "edges": len(graph.edges),
+            "rewritten_ids": sum(1 for old, new in graph.node_id_map.items() if old != new),
+        }
+    )
+    report["warnings"].extend(graph.warnings)
+    return graph
 
 
 def _load_json(raw: Any) -> dict[str, Any]:
@@ -933,6 +984,65 @@ def _ensure_schema_columns(conn: sqlite3.Connection, table: str) -> None:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_name TEXT NOT NULL DEFAULT 'legacy'")
     if "schema_version" not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_relation_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique_source_relation
+        ON edges(source_id, relation_type)
+        WHERE relation_type IN ('references_asset', 'belongs_to_sector')
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique_target_relation
+        ON edges(target_id, relation_type)
+        WHERE relation_type IN ('emits_signal', 'evaluated_by', 'has_catalyst')
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique_has_thesis_source
+        ON edges(source_id, relation_type)
+        WHERE relation_type = 'has_thesis'
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique_has_thesis_target
+        ON edges(target_id, relation_type)
+        WHERE relation_type = 'has_thesis'
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshot_edges_unique_run_source_relation
+        ON snapshot_edges(run_id, source_id, relation_type)
+        WHERE relation_type IN ('references_asset', 'belongs_to_sector')
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshot_edges_unique_run_target_relation
+        ON snapshot_edges(run_id, target_id, relation_type)
+        WHERE relation_type IN ('emits_signal', 'evaluated_by', 'has_catalyst')
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshot_edges_unique_has_thesis_run_source
+        ON snapshot_edges(run_id, source_id, relation_type)
+        WHERE relation_type = 'has_thesis'
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshot_edges_unique_has_thesis_run_target
+        ON snapshot_edges(run_id, target_id, relation_type)
+        WHERE relation_type = 'has_thesis'
+        """
+    )
 
 
 def _row_value(row: Any, key: str | None, default: Any = None) -> Any:
@@ -1161,3 +1271,65 @@ def _insert_snapshot_edges(
             for e in edges
         ],
     )
+
+
+def _normalize_live_edges_for_storage(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    edges: list[OntologyEdge],
+) -> list[OntologyEdge]:
+    endpoint_ids = {edge.source_id for edge in edges} | {edge.target_id for edge in edges}
+    node_types = _fetch_node_type_map(conn, endpoint_ids)
+    normalized_edges = [
+        validate_edge_relation(edge, node_types, allow_legacy=_allow_legacy_schemas()) for edge in edges
+    ]
+
+    cardinality_relations = {
+        edge.relation_type
+        for edge in normalized_edges
+        if get_relation_definition(edge.relation_type).cardinality != RelationCardinality.MANY_TO_MANY
+    }
+    if not cardinality_relations:
+        return normalized_edges
+
+    existing_edges = [
+        edge for edge in _fetch_edge_envelopes(conn, table="edges") if edge.relation_type in cardinality_relations
+    ]
+    combined = {(edge.source_id, edge.target_id, edge.relation_type): edge for edge in existing_edges}
+    combined.update({(edge.source_id, edge.target_id, edge.relation_type): edge for edge in normalized_edges})
+    combined_endpoint_ids = {edge.source_id for edge in combined.values()} | {
+        edge.target_id for edge in combined.values()
+    }
+    combined_node_types = _fetch_node_type_map(conn, combined_endpoint_ids)
+    relation_nodes = [
+        OntologyNode(id=node_id, type=node_type, label=node_id, properties={})
+        for node_id, node_type in combined_node_types.items()
+    ]
+    report = validate_graph_relations(
+        relation_nodes,
+        list(combined.values()),
+        require_core_edges=False,
+        skip_optional_invalid=False,
+    )
+    report.raise_for_errors()
+    return normalized_edges
+
+
+def _fetch_node_type_map(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    node_ids: set[str],
+) -> dict[str, str]:
+    if not node_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in node_ids)
+    rows = conn.execute(
+        f"SELECT id, type FROM nodes WHERE id IN ({placeholders})",
+        tuple(sorted(node_ids)),
+    ).fetchall()
+    return {str(row["id"]): str(row["type"]) for row in rows}
+
+
+def _raise_edge_integrity_error(exc: Exception) -> None:
+    module = exc.__class__.__module__
+    if isinstance(exc, sqlite3.IntegrityError) or module.startswith("psycopg"):
+        raise OntologySchemaValidationError(f"Ontology edge integrity violation: {exc}") from exc
+    raise exc

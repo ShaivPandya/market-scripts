@@ -182,8 +182,10 @@ def adapt_edge_payload(
         }
     return {
         "schema_version": 1,
-        "ontology_run_id": _optional_text(props.get("ontology_run_id") or run_id),
-        "source": _optional_text(props.get("source")),
+        "ontology_run_id": _text(props.get("ontology_run_id") or run_id, default="legacy"),
+        "source": _text(props.get("source"), default="legacy")
+        if relation_type == "belongs_to_sector"
+        else _optional_text(props.get("source")),
     }
 
 

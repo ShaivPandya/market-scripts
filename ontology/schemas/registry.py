@@ -29,11 +29,17 @@ from ontology.schemas.objects import (
     ThesisV1,
 )
 from ontology.schemas.relations import (
-    ALLOWED_RELATIONS,
+    BELONGS_TO_SECTOR,
+    EVALUATED_BY,
+    HAS_CATALYST,
+    HAS_THESIS,
     OPTIONAL_RELATIONS,
+    REFERENCES_ASSET,
+    RelationCardinality,
     dump_edge_properties,
     edge_schema_for_relation,
     edge_schema_name,
+    get_relation_definition,
 )
 
 NODE_SCHEMAS: dict[str, type] = {
@@ -59,6 +65,20 @@ class NormalizedGraph:
     edges: list[OntologyEdge]
     node_id_map: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class RelationValidationReport:
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+    def raise_for_errors(self) -> None:
+        if self.errors:
+            raise OntologySchemaValidationError("; ".join(self.errors))
 
 
 def normalize_node(
@@ -132,7 +152,10 @@ def normalize_edge(
         except Exception as exc:
             raise OntologySchemaValidationError(f"Invalid legacy edge {edge.relation_type}: {exc}") from exc
 
-    schema_cls = edge_schema_for_relation(edge.relation_type)
+    try:
+        schema_cls = edge_schema_for_relation(edge.relation_type)
+    except ValueError as exc:
+        raise OntologySchemaValidationError(str(exc)) from exc
     try:
         model = schema_cls.model_validate(payload)
     except ValidationError as exc:
@@ -150,6 +173,56 @@ def normalize_edge(
     )
 
 
+def validate_edge_relation(
+    edge: OntologyEdge,
+    node_types: dict[str, str],
+    *,
+    run_id: str | None = None,
+    allow_legacy: bool = True,
+    source_id: str | None = None,
+    target_id: str | None = None,
+) -> OntologyEdge:
+    relation_source_id = source_id or edge.source_id
+    relation_target_id = target_id or edge.target_id
+    _validate_relation(edge.relation_type, relation_source_id, relation_target_id, node_types)
+    normalized = normalize_edge(
+        edge,
+        run_id=run_id,
+        allow_legacy=allow_legacy,
+        source_id=relation_source_id,
+        target_id=relation_target_id,
+    )
+    _validate_required_relation_properties(normalized)
+    return normalized
+
+
+def validate_graph_relations(
+    nodes: list[OntologyNode],
+    edges: list[OntologyEdge],
+    *,
+    require_core_edges: bool = True,
+    skip_optional_invalid: bool = False,
+) -> RelationValidationReport:
+    report = RelationValidationReport()
+    node_types = {node.id: node.type for node in nodes}
+    valid_edges: list[OntologyEdge] = []
+
+    for edge in edges:
+        try:
+            valid_edges.append(validate_edge_relation(edge, node_types, allow_legacy=True))
+        except OntologySchemaValidationError as exc:
+            if skip_optional_invalid and edge.relation_type in OPTIONAL_RELATIONS:
+                report.warnings.append(str(exc))
+            else:
+                report.errors.append(str(exc))
+
+    report.errors.extend(_cardinality_errors(valid_edges))
+    if require_core_edges:
+        report.errors.extend(_core_edge_errors(nodes, valid_edges))
+    report.errors.extend(_optional_owner_errors(nodes, valid_edges))
+    return report
+
+
 def normalize_graph(
     nodes: list[OntologyNode],
     edges: list[OntologyEdge],
@@ -157,6 +230,7 @@ def normalize_graph(
     run_id: str | None = None,
     allow_legacy: bool = True,
     skip_optional_invalid: bool = False,
+    require_core_edges: bool = True,
 ) -> NormalizedGraph:
     normalized_nodes: dict[str, OntologyNode] = {}
     id_map: dict[str, str] = {}
@@ -187,9 +261,9 @@ def normalize_graph(
         source_id = id_map.get(edge.source_id, edge.source_id)
         target_id = id_map.get(edge.target_id, edge.target_id)
         try:
-            _validate_relation(edge.relation_type, source_id, target_id, node_types)
-            normalized = normalize_edge(
+            normalized = validate_edge_relation(
                 edge,
+                node_types,
                 run_id=run_id,
                 allow_legacy=allow_legacy,
                 source_id=source_id,
@@ -202,6 +276,15 @@ def normalize_graph(
             raise
 
         normalized_edges[(normalized.source_id, normalized.target_id, normalized.relation_type)] = normalized
+
+    relation_report = validate_graph_relations(
+        list(normalized_nodes.values()),
+        list(normalized_edges.values()),
+        require_core_edges=require_core_edges,
+        skip_optional_invalid=skip_optional_invalid,
+    )
+    warnings.extend(relation_report.warnings)
+    relation_report.raise_for_errors()
 
     return NormalizedGraph(
         nodes=list(normalized_nodes.values()),
@@ -257,9 +340,11 @@ def _validate_relation(
     target_id: str,
     node_types: dict[str, str],
 ) -> None:
-    expected = ALLOWED_RELATIONS.get(relation_type)
-    if expected is None:
-        raise OntologySchemaValidationError(f"Unsupported relation type: {relation_type}")
+    try:
+        definition = get_relation_definition(relation_type)
+    except ValueError as exc:
+        raise OntologySchemaValidationError(str(exc)) from exc
+    expected = (definition.source_type, definition.target_type)
     source_type = node_types.get(source_id)
     target_type = node_types.get(target_id)
     if source_type is None:
@@ -270,6 +355,102 @@ def _validate_relation(
         raise OntologySchemaValidationError(
             f"Edge {relation_type} must connect {expected[0]}->{expected[1]}, got {source_type}->{target_type}"
         )
+
+
+def _validate_required_relation_properties(edge: OntologyEdge) -> None:
+    try:
+        definition = get_relation_definition(edge.relation_type)
+    except ValueError as exc:
+        raise OntologySchemaValidationError(str(exc)) from exc
+    missing = [name for name in sorted(definition.required_properties) if _missing_property(edge.properties.get(name))]
+    if missing:
+        fields = ", ".join(missing)
+        raise OntologySchemaValidationError(
+            f"Edge {edge.relation_type} {edge.source_id}->{edge.target_id} is missing required properties: {fields}"
+        )
+
+
+def _missing_property(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _cardinality_errors(edges: list[OntologyEdge]) -> list[str]:
+    errors: list[str] = []
+    unique_edges = {(edge.source_id, edge.target_id, edge.relation_type): edge for edge in edges}
+    by_source: dict[tuple[str, str], set[str]] = {}
+    by_target: dict[tuple[str, str], set[str]] = {}
+
+    for edge in unique_edges.values():
+        definition = get_relation_definition(edge.relation_type)
+        if definition.cardinality in {RelationCardinality.SOURCE_UNIQUE, RelationCardinality.SOURCE_AND_TARGET_UNIQUE}:
+            by_source.setdefault((edge.relation_type, edge.source_id), set()).add(edge.target_id)
+        if definition.cardinality in {RelationCardinality.TARGET_UNIQUE, RelationCardinality.SOURCE_AND_TARGET_UNIQUE}:
+            by_target.setdefault((edge.relation_type, edge.target_id), set()).add(edge.source_id)
+
+    for (relation_type, source_id), target_ids in sorted(by_source.items()):
+        if len(target_ids) > 1:
+            errors.append(
+                f"Edge {relation_type} allows only one target for source {source_id}, got {sorted(target_ids)}"
+            )
+    for (relation_type, target_id), source_ids in sorted(by_target.items()):
+        if len(source_ids) > 1:
+            errors.append(
+                f"Edge {relation_type} allows only one source for target {target_id}, got {sorted(source_ids)}"
+            )
+    return errors
+
+
+def _core_edge_errors(nodes: list[OntologyNode], edges: list[OntologyEdge]) -> list[str]:
+    errors: list[str] = []
+    positions = sorted(node.id for node in nodes if node.type == "Position")
+    refs_by_position: dict[str, list[OntologyEdge]] = {node_id: [] for node_id in positions}
+    sectors_by_asset: dict[str, list[OntologyEdge]] = {}
+
+    for edge in edges:
+        if edge.relation_type == REFERENCES_ASSET and edge.source_id in refs_by_position:
+            refs_by_position[edge.source_id].append(edge)
+        if edge.relation_type == BELONGS_TO_SECTOR:
+            sectors_by_asset.setdefault(edge.source_id, []).append(edge)
+
+    referenced_assets: set[str] = set()
+    for ontology_position_id, references in refs_by_position.items():
+        if len(references) != 1:
+            errors.append(f"Position {ontology_position_id} must have exactly one {REFERENCES_ASSET} edge")
+            continue
+        referenced_assets.add(references[0].target_id)
+
+    for ontology_asset_id in sorted(referenced_assets):
+        if len(sectors_by_asset.get(ontology_asset_id, [])) != 1:
+            errors.append(f"Referenced asset {ontology_asset_id} must have exactly one {BELONGS_TO_SECTOR} edge")
+
+    return errors
+
+
+def _optional_owner_errors(nodes: list[OntologyNode], edges: list[OntologyEdge]) -> list[str]:
+    required_incoming = {
+        "Thesis": HAS_THESIS,
+        "Evaluation": EVALUATED_BY,
+        "Catalyst": HAS_CATALYST,
+    }
+    optional_nodes = {node.id: required_incoming[node.type] for node in nodes if node.type in required_incoming}
+    incoming: dict[tuple[str, str], int] = {
+        (relation_type, node_id): 0 for node_id, relation_type in optional_nodes.items()
+    }
+
+    for edge in edges:
+        key = (edge.relation_type, edge.target_id)
+        if key in incoming:
+            incoming[key] += 1
+
+    errors: list[str] = []
+    for node_id, relation_type in sorted(optional_nodes.items()):
+        if incoming[(relation_type, node_id)] != 1:
+            errors.append(f"{node_id} must have exactly one incoming {relation_type} owner edge")
+    return errors
 
 
 def _is_legacy_payload(properties: dict[str, Any], schema_version: int) -> bool:

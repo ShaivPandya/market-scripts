@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.repository import OntologyRepository
 from ontology.schemas.identity import catalyst_id, evaluation_id
+from ontology.schemas.registry import OntologySchemaValidationError
 
 
 def test_repository_upsert_and_join_queries(tmp_path):
@@ -184,8 +187,8 @@ def test_snapshot_prune_removes_old_runs(tmp_path):
     db_path = tmp_path / "ontology.sqlite3"
     repo = OntologyRepository(db_path=db_path)
 
-    nodes = [OntologyNode(id="position:MU", type="Position", label="MU", properties={"ticker": "MU"})]
-    edges: list[OntologyEdge] = []
+    nodes = _core_nodes()
+    edges = _core_edges()
 
     repo.save_snapshot(
         run_id="old-run",
@@ -221,8 +224,8 @@ def test_get_latest_run_returns_most_recent(tmp_path):
     db_path = tmp_path / "ontology.sqlite3"
     repo = OntologyRepository(db_path=db_path)
 
-    nodes = [OntologyNode(id="position:MU", type="Position", label="MU", properties={"ticker": "MU"})]
-    edges: list[OntologyEdge] = []
+    nodes = _core_nodes()
+    edges = _core_edges()
 
     repo.save_snapshot(
         run_id="run-old",
@@ -298,6 +301,20 @@ def test_backfill_schema_versions_rewrites_legacy_optional_ids(tmp_path):
                 ),
                 (
                     "run-legacy",
+                    "asset:MU",
+                    "Asset",
+                    "MU",
+                    json.dumps({"ticker": "MU", "asset": "equity"}),
+                ),
+                (
+                    "run-legacy",
+                    "sector:information_technology",
+                    "Sector",
+                    "Information Technology",
+                    json.dumps({"name": "Information Technology", "source": "test"}),
+                ),
+                (
+                    "run-legacy",
                     "thesis:MU",
                     "Thesis",
                     "Thesis: MU",
@@ -343,6 +360,14 @@ def test_backfill_schema_versions_rewrites_legacy_optional_ids(tmp_path):
             VALUES (?, ?, ?, ?, ?, datetime('now'))
             """,
             [
+                ("run-legacy", "position:MU", "asset:MU", "references_asset", "{}"),
+                (
+                    "run-legacy",
+                    "asset:MU",
+                    "sector:information_technology",
+                    "belongs_to_sector",
+                    json.dumps({"source": "test"}),
+                ),
                 ("run-legacy", "position:MU", "thesis:MU", "has_thesis", "{}"),
                 ("run-legacy", "thesis:MU", "evaluation:MU:2026-03-08T00:00:00Z", "evaluated_by", "{}"),
                 ("run-legacy", "thesis:MU", "catalyst:MU:0", "has_catalyst", "{}"),
@@ -358,5 +383,115 @@ def test_backfill_schema_versions_rewrites_legacy_optional_ids(tmp_path):
     ids = {node["id"] for node in graph["nodes"]}
     assert evaluation_id("MU", "2026-03-08T00:00:00Z") in ids
     assert catalyst_id("MU", "Demand recovery", "Demand improves") in ids
+    assert all(edge["properties"]["ontology_run_id"] == "run-legacy" for edge in graph["edges"])
+    belongs = [edge for edge in graph["edges"] if edge["relation_type"] == "belongs_to_sector"][0]
+    assert belongs["properties"]["source"] == "test"
     assert all(node["schema_version"] == 1 for node in graph["nodes"])
     assert all(edge["schema_version"] == 1 for edge in graph["edges"])
+
+
+def test_direct_sqlite_edge_insert_rejects_missing_endpoint(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    OntologyRepository(db_path=db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                INSERT INTO edges(source_id, target_id, relation_type, properties_json, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                """,
+                ("position:missing", "asset:missing", "references_asset", "{}"),
+            )
+
+
+def test_upsert_edges_rejects_cardinality_conflict(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    repo.upsert_graph(_core_nodes(), _core_edges())
+    repo.upsert_nodes(
+        [OntologyNode(id="asset:NVDA", type="Asset", label="NVDA", properties={"ticker": "NVDA", "asset": "equity"})]
+    )
+
+    with pytest.raises(OntologySchemaValidationError, match="only one target"):
+        repo.upsert_edges([OntologyEdge("position:MU", "asset:NVDA", "references_asset", {})])
+
+
+def test_backfill_dry_run_reports_relation_errors(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO nodes(id, type, label, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            """,
+            ("position:MU", "Position", "MU", json.dumps({"ticker": "MU"})),
+        )
+
+    report = repo.backfill_schema_versions(dry_run=True)
+
+    assert report["errors"]
+    assert "references_asset" in report["errors"][0]["error"]
+
+
+def test_backfill_write_rejects_cardinality_conflict(tmp_path):
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP INDEX idx_edges_unique_source_relation")
+        conn.executemany(
+            """
+            INSERT INTO nodes(id, type, label, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                ("position:MU", "Position", "MU", json.dumps({"ticker": "MU"})),
+                ("asset:MU", "Asset", "MU", json.dumps({"ticker": "MU", "asset": "equity"})),
+                ("asset:NVDA", "Asset", "NVDA", json.dumps({"ticker": "NVDA", "asset": "equity"})),
+                (
+                    "sector:information_technology",
+                    "Sector",
+                    "Information Technology",
+                    json.dumps({"name": "Information Technology"}),
+                ),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO edges(source_id, target_id, relation_type, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                ("position:MU", "asset:MU", "references_asset", "{}"),
+                ("position:MU", "asset:NVDA", "references_asset", "{}"),
+                ("asset:MU", "sector:information_technology", "belongs_to_sector", json.dumps({"source": "test"})),
+                ("asset:NVDA", "sector:information_technology", "belongs_to_sector", json.dumps({"source": "test"})),
+            ],
+        )
+
+    with pytest.raises(OntologySchemaValidationError, match="only one target"):
+        repo.backfill_schema_versions(dry_run=False)
+
+
+def _core_nodes() -> list[OntologyNode]:
+    return [
+        OntologyNode(id="position:MU", type="Position", label="MU", properties={"ticker": "MU"}),
+        OntologyNode(id="asset:MU", type="Asset", label="MU", properties={"ticker": "MU", "asset": "equity"}),
+        OntologyNode(
+            id="sector:information_technology",
+            type="Sector",
+            label="Information Technology",
+            properties={"name": "Information Technology"},
+        ),
+    ]
+
+
+def _core_edges() -> list[OntologyEdge]:
+    return [
+        OntologyEdge("position:MU", "asset:MU", "references_asset", {}),
+        OntologyEdge("asset:MU", "sector:information_technology", "belongs_to_sector", {"source": "test"}),
+    ]

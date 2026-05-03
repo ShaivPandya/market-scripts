@@ -18,6 +18,16 @@ from ontology.risk import (
     score_position,
 )
 from ontology.schemas.registry import normalize_graph
+from ontology.schemas.relations import (
+    AFFECTED_BY,
+    BELONGS_TO_SECTOR,
+    EMITS_SIGNAL,
+    EVALUATED_BY,
+    EXPOSED_TO_SIGNAL,
+    HAS_CATALYST,
+    HAS_THESIS,
+    REFERENCES_ASSET,
+)
 from ontology.sector_mapper import SectorMapper
 
 ModuleFetcher = Callable[[], dict[str, Any] | list[Any]]
@@ -127,7 +137,7 @@ def ingest_into_repository(
             OntologyEdge(
                 source_id=position_id,
                 target_id=asset_id,
-                relation_type="references_asset",
+                relation_type=REFERENCES_ASSET,
                 properties={"ontology_run_id": run_id},
             )
         )
@@ -135,7 +145,7 @@ def ingest_into_repository(
             OntologyEdge(
                 source_id=asset_id,
                 target_id=sector_id,
-                relation_type="belongs_to_sector",
+                relation_type=BELONGS_TO_SECTOR,
                 properties={"source": sector.source, "ontology_run_id": run_id},
             )
         )
@@ -222,7 +232,7 @@ def ingest_into_repository(
             OntologyEdge(
                 source_id="macro_indicator:sector_metrics",
                 target_id=signal_id,
-                relation_type="emits_signal",
+                relation_type=EMITS_SIGNAL,
                 properties={"ontology_run_id": run_id},
             )
         )
@@ -230,7 +240,7 @@ def ingest_into_repository(
             OntologyEdge(
                 source_id=f"sector:{_slug(sector_name)}",
                 target_id="macro_indicator:sector_metrics",
-                relation_type="affected_by",
+                relation_type=AFFECTED_BY,
                 properties={"ontology_run_id": run_id},
             )
         )
@@ -266,7 +276,7 @@ def ingest_into_repository(
                 OntologyEdge(
                     source_id="macro_indicator:sector_metrics",
                     target_id=signal_id,
-                    relation_type="emits_signal",
+                    relation_type=EMITS_SIGNAL,
                     properties={"ontology_run_id": run_id},
                 )
             )
@@ -274,7 +284,7 @@ def ingest_into_repository(
                 OntologyEdge(
                     source_id=f"sector:{_slug(sector_name)}",
                     target_id="macro_indicator:sector_metrics",
-                    relation_type="affected_by",
+                    relation_type=AFFECTED_BY,
                     properties={"ontology_run_id": run_id},
                 )
             )
@@ -358,7 +368,7 @@ def ingest_into_repository(
                 OntologyEdge(
                     source_id=position_id,
                     target_id=str(ev["signal_id"]),
-                    relation_type="exposed_to_signal",
+                    relation_type=EXPOSED_TO_SIGNAL,
                     properties={
                         "component": ev["component"],
                         "source": ev["source"],
@@ -579,7 +589,7 @@ def _ingest_thesis_entities(
             OntologyEdge(
                 source_id=position_id,
                 target_id=thesis_id,
-                relation_type="has_thesis",
+                relation_type=HAS_THESIS,
                 properties={"ontology_run_id": run_id},
             )
         )
@@ -609,7 +619,7 @@ def _ingest_thesis_entities(
                 OntologyEdge(
                     source_id=thesis_id,
                     target_id=eval_id,
-                    relation_type="evaluated_by",
+                    relation_type=EVALUATED_BY,
                     properties={"ontology_run_id": run_id},
                 )
             )
@@ -635,7 +645,7 @@ def _ingest_thesis_entities(
                 OntologyEdge(
                     source_id=thesis_id,
                     target_id=catalyst_id,
-                    relation_type="has_catalyst",
+                    relation_type=HAS_CATALYST,
                     properties={"ontology_run_id": run_id},
                 )
             )
@@ -730,7 +740,7 @@ def _resolve_sector_name_from_edges(
 ) -> str:
     asset_id = None
     for (src, tgt, rel), _edge in edge_map.items():
-        if src == position_id and rel == "references_asset":
+        if src == position_id and rel == REFERENCES_ASSET:
             asset_id = tgt
             break
     if asset_id is None:
@@ -738,7 +748,7 @@ def _resolve_sector_name_from_edges(
 
     sector_id = None
     for (src, tgt, rel), _edge in edge_map.items():
-        if src == asset_id and rel == "belongs_to_sector":
+        if src == asset_id and rel == BELONGS_TO_SECTOR:
             sector_id = tgt
             break
     if sector_id is None:
@@ -799,7 +809,7 @@ def _add_indicator_signals(
             OntologyEdge(
                 source_id=indicator_id,
                 target_id=signal_id,
-                relation_type="emits_signal",
+                relation_type=EMITS_SIGNAL,
                 properties={"ontology_run_id": run_id},
             )
         )
