@@ -27,7 +27,122 @@ _TARGET_UNIQUE_RELATIONS = "relation_type IN ('emits_signal', 'evaluated_by', 'h
 _HAS_THESIS = "relation_type = 'has_thesis'"
 
 
+def _delete_orphan_edges() -> None:
+    op.execute(
+        """
+        DELETE FROM ontology_edges AS e
+        WHERE NOT EXISTS (
+            SELECT 1 FROM ontology_nodes AS n WHERE n.id = e.source_id
+        )
+        OR NOT EXISTS (
+            SELECT 1 FROM ontology_nodes AS n WHERE n.id = e.target_id
+        )
+        """
+    )
+    op.execute(
+        """
+        DELETE FROM ontology_snapshot_edges AS e
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM ontology_snapshot_nodes AS n
+            WHERE n.run_id = e.run_id AND n.id = e.source_id
+        )
+        OR NOT EXISTS (
+            SELECT 1
+            FROM ontology_snapshot_nodes AS n
+            WHERE n.run_id = e.run_id AND n.id = e.target_id
+        )
+        """
+    )
+
+
+def _dedupe_edges_for_unique_indexes() -> None:
+    for table, partition_prefix in (
+        ("ontology_edges", ""),
+        ("ontology_snapshot_edges", "run_id, "),
+    ):
+        op.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE ctid IN (
+                SELECT ctid
+                FROM (
+                    SELECT
+                        ctid,
+                        row_number() OVER (
+                            PARTITION BY {partition_prefix}source_id, relation_type
+                            ORDER BY updated_at DESC, target_id
+                        ) AS rn
+                    FROM {table}
+                    WHERE {_SOURCE_UNIQUE_RELATIONS}
+                ) AS ranked
+                WHERE rn > 1
+            )
+            """
+        )
+        op.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE ctid IN (
+                SELECT ctid
+                FROM (
+                    SELECT
+                        ctid,
+                        row_number() OVER (
+                            PARTITION BY {partition_prefix}target_id, relation_type
+                            ORDER BY updated_at DESC, source_id
+                        ) AS rn
+                    FROM {table}
+                    WHERE {_TARGET_UNIQUE_RELATIONS}
+                ) AS ranked
+                WHERE rn > 1
+            )
+            """
+        )
+        op.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE ctid IN (
+                SELECT ctid
+                FROM (
+                    SELECT
+                        ctid,
+                        row_number() OVER (
+                            PARTITION BY {partition_prefix}source_id, relation_type
+                            ORDER BY updated_at DESC, target_id
+                        ) AS rn
+                    FROM {table}
+                    WHERE {_HAS_THESIS}
+                ) AS ranked
+                WHERE rn > 1
+            )
+            """
+        )
+        op.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE ctid IN (
+                SELECT ctid
+                FROM (
+                    SELECT
+                        ctid,
+                        row_number() OVER (
+                            PARTITION BY {partition_prefix}target_id, relation_type
+                            ORDER BY updated_at DESC, source_id
+                        ) AS rn
+                    FROM {table}
+                    WHERE {_HAS_THESIS}
+                ) AS ranked
+                WHERE rn > 1
+            )
+            """
+        )
+
+
 def upgrade() -> None:
+    _delete_orphan_edges()
+    _dedupe_edges_for_unique_indexes()
+
     op.create_check_constraint("ck_ontology_edges_relation_type", "ontology_edges", _RELATION_CHECK)
     op.create_check_constraint(
         "ck_ontology_snapshot_edges_relation_type",
