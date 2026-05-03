@@ -96,8 +96,11 @@ class OntologyQueryService:
         include_graph: bool = False,
         run_id: str | None = None,
         refresh_snapshot: bool = False,
+        schema_mode: str = "upgraded",
         actor: Actor | None = None,
     ) -> dict[str, Any]:
+        if schema_mode != "upgraded":
+            raise ValueError("Ontology semantic queries require schema_mode='upgraded'")
         actor = actor or admin_actor(source="service")
         try:
             require_allowed(self.policy.check_action(actor, OntologyAction.QUERY, {"intent": intent, "run_id": run_id}))
@@ -161,8 +164,11 @@ class OntologyQueryService:
                 else:
                     effective_filters["sectors"] = [token]
 
-        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=resolved_run_id)
-        all_evidence = self.repo.fetch_snapshot_all_position_signal_evidence(run_id=resolved_run_id)
+        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=resolved_run_id, schema_mode="upgraded")
+        all_evidence = self.repo.fetch_snapshot_all_position_signal_evidence(
+            run_id=resolved_run_id,
+            schema_mode="upgraded",
+        )
         results = []
         for row in rows:
             position_resource = _position_resource_from_row(row)
@@ -276,7 +282,7 @@ class OntologyQueryService:
             graph, graph_stats = filter_graph(
                 actor,
                 self.policy,
-                self.repo.fetch_snapshot_graph(run_id=resolved_run_id),
+                self.repo.fetch_snapshot_graph(run_id=resolved_run_id, schema_mode="upgraded"),
             )
             response["graph"] = graph
             _merge_auth_stats(auth_stats, graph_stats)
@@ -321,7 +327,7 @@ class OntologyQueryService:
         if not run_id:
             return False
 
-        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id)
+        rows = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id, schema_mode="upgraded")
         return len(rows) > 0
 
     def compare_snapshots(self, run_id_a: str, run_id_b: str, actor: Actor | None = None) -> dict[str, Any]:
@@ -352,8 +358,8 @@ class OntologyQueryService:
         if run_b is None:
             raise OntologyRunNotFoundError(run_id_b)
 
-        rows_a = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id_a)
-        rows_b = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id_b)
+        rows_a = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id_a, schema_mode="upgraded")
+        rows_b = self.repo.fetch_snapshot_position_asset_sector_rows(run_id=run_id_b, schema_mode="upgraded")
 
         def _positions_map(rows: list[dict]) -> dict[str, dict[str, Any]]:
             out: dict[str, dict[str, Any]] = {}
@@ -482,7 +488,11 @@ class OntologyQueryService:
             return None
 
     def _build_evidence(self, position_id: str, run_id: str, actor: Actor | None = None) -> list[dict[str, Any]]:
-        raw = self.repo.fetch_snapshot_position_signal_evidence(run_id=run_id, position_id=position_id)
+        raw = self.repo.fetch_snapshot_position_signal_evidence(
+            run_id=run_id,
+            position_id=position_id,
+            schema_mode="upgraded",
+        )
         position_resource = NodeResource(id=position_id, type="Position")
         return self._build_evidence_from_batch(raw, actor=actor, position_resource=position_resource)
 
@@ -846,7 +856,7 @@ def _enrich_with_thesis(
     actor = actor or admin_actor(source="service")
     policy = policy or DEFAULT_ONTOLOGY_POLICY
     auth_stats = auth_stats if auth_stats is not None else _empty_auth_stats()
-    graph, graph_stats = filter_graph(actor, policy, repo.fetch_snapshot_graph(run_id=run_id))
+    graph, graph_stats = filter_graph(actor, policy, repo.fetch_snapshot_graph(run_id=run_id, schema_mode="upgraded"))
     _merge_auth_stats(auth_stats, graph_stats)
     nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
     edges = graph.get("edges", []) if isinstance(graph, dict) else []

@@ -9,6 +9,24 @@ const client = axios.create({
   timeout: 60_000,
 })
 
+function schemaHeaders(method: string, url: string): Record<string, string> {
+  const base = new URL(client.defaults.baseURL ?? "/api/v1", window.location.origin)
+  const parsed = url.startsWith("http")
+    ? new URL(url)
+    : new URL(`${base.pathname.replace(/\/+$/, "")}/${url.replace(/^\/+/, "")}`, window.location.origin)
+  return {
+    "X-Request-Schema-Name": `${method.toLowerCase()}:${parsed.pathname}`,
+    "X-Request-Schema-Version": "1",
+  }
+}
+
+client.interceptors.request.use(config => {
+  const method = (config.method ?? "get").toLowerCase()
+  if (!["post", "put", "patch", "delete"].includes(method) || config.data == null || !config.url) return config
+  config.headers.set(schemaHeaders(method, config.url))
+  return config
+})
+
 function _truncate(s: string, maxLen: number) {
   if (s.length <= maxLen) return s
   return s.slice(0, maxLen - 1) + "…"
@@ -293,6 +311,7 @@ export type OntologyQueryBody = {
   include_graph?: boolean
   run_id?: string
   refresh_snapshot?: boolean
+  schema_mode?: "stored" | "upgraded"
 }
 
 export interface OntologyEvidence {
@@ -356,7 +375,9 @@ type OntologyJobResponse =
   | { job_id: string; status: "done"; result?: OntologyResponse }
 
 export const startOntologyQueryJob = (body: OntologyQueryBody) =>
-  client.post("/ontology/query/async", body, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)
+  client
+    .post("/ontology/query/async", { ...body, schema_mode: body.schema_mode ?? "upgraded" }, { timeout: 30_000 })
+    .then(r => r.data as OntologyJobResponse)
 
 export const fetchOntologyQueryJob = (job_id: string) =>
   client.get(`/ontology/query/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as OntologyJobResponse)

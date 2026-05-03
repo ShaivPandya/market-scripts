@@ -72,23 +72,23 @@ class _Repo:
     def list_runs(self, limit: int = 100):
         return [{"run_id": "run-1"}, {"run_id": "run-0"}]
 
-    def fetch_snapshot_position_asset_sector_rows(self, run_id: str):
+    def fetch_snapshot_position_asset_sector_rows(self, run_id: str, *, schema_mode="upgraded"):
         return [
             self._row("MU", 0.72, "medium", "Information Technology"),
             self._row("NVDA", 0.81, "high", "Information Technology"),
         ]
 
-    def fetch_snapshot_all_position_signal_evidence(self, run_id: str):
+    def fetch_snapshot_all_position_signal_evidence(self, run_id: str, *, schema_mode="upgraded"):
         return {
             "position:MU": [self._evidence("MU")],
             "position:NVDA": [self._evidence("NVDA")],
         }
 
-    def fetch_snapshot_position_signal_evidence(self, run_id: str, position_id: str):
+    def fetch_snapshot_position_signal_evidence(self, run_id: str, position_id: str, *, schema_mode="upgraded"):
         ticker = position_id.split(":")[-1] if ":" in position_id else "MU"
         return [self._evidence(ticker)]
 
-    def fetch_snapshot_graph(self, run_id: str):
+    def fetch_snapshot_graph(self, run_id: str, *, schema_mode="upgraded"):
         return {
             "nodes": [
                 {"id": "position:MU", "type": "Position", "label": "MU", "properties": {"ticker": "MU"}},
@@ -255,7 +255,10 @@ def test_ontology_api_denied_action_returns_403(auth_client, monkeypatch):
     service = OntologyQueryService(repository=_Repo(), policy=_Policy(denied_actions={OntologyAction.QUERY}))
     monkeypatch.setattr(ontology_router, "_service", service)
 
-    resp = auth_client.post("/api/v1/ontology/query", json={"intent": "portfolio_risk_exposure"})
+    resp = auth_client.post(
+        "/api/v1/ontology/query",
+        json={"intent": "portfolio_risk_exposure", "schema_mode": "upgraded"},
+    )
 
     assert resp.status_code == 403
 
@@ -298,7 +301,7 @@ def test_ontology_api_and_agent_propagate_actor(auth_client, monkeypatch):
     monkeypatch.setattr(ontology_router, "_service", _Service())
     resp = auth_client.post(
         "/api/v1/ontology/query",
-        json={"intent": "portfolio_risk_exposure", "query": "actor propagation check"},
+        json={"intent": "portfolio_risk_exposure", "query": "actor propagation check", "schema_mode": "upgraded"},
     )
     job = resp.json()
     done = auth_client.get(f"/api/v1/ontology/query/async/{job['job_id']}").json()
@@ -330,7 +333,7 @@ def test_ontology_api_and_agent_propagate_actor(auth_client, monkeypatch):
 def test_ontology_job_payload_includes_actor_and_cache_key_differs():
     import api.routers.ontology as ontology_router
 
-    req = ontology_router.OntologyQueryRequest(intent="portfolio_risk_exposure")
+    req = ontology_router.OntologyQueryRequest(intent="portfolio_risk_exposure", schema_mode="upgraded")
     first = ontology_router._job_request(req, admin_actor("admin"))
     second = ontology_router._job_request(req, admin_actor("other"))
 

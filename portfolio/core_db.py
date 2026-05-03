@@ -260,8 +260,11 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     entity_id       INTEGER,
     ticker          TEXT,
     action_id       TEXT,
+    action_schema_name TEXT,
     action_schema_version INTEGER,
     action_input_hash TEXT,
+    request_schema_name TEXT,
+    request_schema_version INTEGER,
     proposed_change TEXT NOT NULL,
     reason          TEXT,
     source_type     TEXT NOT NULL DEFAULT 'workflow'
@@ -285,7 +288,10 @@ _CREATE_ACTION_RUNS = """
 CREATE TABLE IF NOT EXISTS action_runs (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     action_id            TEXT NOT NULL,
+    action_schema_name   TEXT,
     action_schema_version INTEGER NOT NULL DEFAULT 1,
+    request_schema_name  TEXT,
+    request_schema_version INTEGER,
     actor_type           TEXT NOT NULL,
     actor_id             TEXT,
     source_type          TEXT,
@@ -538,8 +544,19 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "application_completed_at": "TEXT",
             "application_error": "TEXT",
             "action_id": "TEXT",
+            "action_schema_name": "TEXT",
             "action_schema_version": "INTEGER",
             "action_input_hash": "TEXT",
+            "request_schema_name": "TEXT",
+            "request_schema_version": "INTEGER",
+        },
+    )
+    _add_missing(
+        "action_runs",
+        {
+            "action_schema_name": "TEXT",
+            "request_schema_name": "TEXT",
+            "request_schema_version": "INTEGER",
         },
     )
     conn.execute(
@@ -641,6 +658,7 @@ def create_action_run(
     *,
     action_id: str,
     action_schema_version: int,
+    action_schema_name: str | None = None,
     actor_type: str,
     actor_id: str | None = None,
     source_type: str | None = None,
@@ -649,18 +667,24 @@ def create_action_run(
     parent_action_run_id: int | None = None,
     input_hash: str | None = None,
     input_payload: Any | None = None,
+    request_schema_name: str | None = None,
+    request_schema_version: int | None = None,
 ) -> dict:
     conn = _get_conn()
     now = _now()
     input_json = json.dumps(input_payload, default=str) if input_payload is not None else None
     with _lock:
         cur = conn.execute(
-            "INSERT INTO action_runs (action_id, action_schema_version, actor_type, actor_id, source_type, source_id, "
-            "approval_id, parent_action_run_id, input_hash, input_json, status, started_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO action_runs (action_id, action_schema_name, action_schema_version, request_schema_name, "
+            "request_schema_version, actor_type, actor_id, source_type, source_id, approval_id, parent_action_run_id, "
+            "input_hash, input_json, status, started_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 action_id,
+                action_schema_name,
                 action_schema_version,
+                request_schema_name,
+                request_schema_version,
                 actor_type,
                 actor_id,
                 source_type,
@@ -677,7 +701,10 @@ def create_action_run(
     return {
         "id": cur.lastrowid,
         "action_id": action_id,
+        "action_schema_name": action_schema_name,
         "action_schema_version": action_schema_version,
+        "request_schema_name": request_schema_name,
+        "request_schema_version": request_schema_version,
         "actor_type": actor_type,
         "actor_id": actor_id,
         "source_type": source_type,
@@ -2426,24 +2453,31 @@ def create_pending_approval(
     source_type: str = "workflow",
     source_id: str | None = None,
     action_id: str | None = None,
+    action_schema_name: str | None = None,
     action_schema_version: int | None = None,
     action_input_hash: str | None = None,
+    request_schema_name: str | None = None,
+    request_schema_version: int | None = None,
 ) -> dict:
     conn = _get_conn()
     now = _now()
     change_json = json.dumps(proposed_change, default=str)
     with _lock:
         cur = conn.execute(
-            "INSERT INTO pending_approvals (entity_type, entity_id, ticker, action_id, action_schema_version, "
-            "action_input_hash, proposed_change, reason, source_type, source_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO pending_approvals (entity_type, entity_id, ticker, action_id, action_schema_name, "
+            "action_schema_version, action_input_hash, request_schema_name, request_schema_version, proposed_change, "
+            "reason, source_type, source_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 entity_type,
                 entity_id,
                 ticker.upper() if ticker else None,
                 action_id,
+                action_schema_name,
                 action_schema_version,
                 action_input_hash,
+                request_schema_name,
+                request_schema_version,
                 change_json,
                 reason,
                 source_type,
@@ -2458,8 +2492,11 @@ def create_pending_approval(
         "entity_id": entity_id,
         "ticker": ticker.upper() if ticker else None,
         "action_id": action_id,
+        "action_schema_name": action_schema_name,
         "action_schema_version": action_schema_version,
         "action_input_hash": action_input_hash,
+        "request_schema_name": request_schema_name,
+        "request_schema_version": request_schema_version,
         "proposed_change": proposed_change,
         "reason": reason,
         "source_type": source_type,
@@ -2502,8 +2539,11 @@ def create_pending_approval_once(
     source_type: str = "workflow",
     source_id: str | None = None,
     action_id: str | None = None,
+    action_schema_name: str | None = None,
     action_schema_version: int | None = None,
     action_input_hash: str | None = None,
+    request_schema_name: str | None = None,
+    request_schema_version: int | None = None,
 ) -> dict:
     proposed_hash = _json_hash(proposed_change)
     normalized_ticker = ticker.upper() if ticker else None
@@ -2526,8 +2566,11 @@ def create_pending_approval_once(
         source_type=source_type,
         source_id=source_id,
         action_id=action_id,
+        action_schema_name=action_schema_name,
         action_schema_version=action_schema_version,
         action_input_hash=action_input_hash,
+        request_schema_name=request_schema_name,
+        request_schema_version=request_schema_version,
     )
 
 
@@ -2909,6 +2952,7 @@ def _apply_approval_side_effect_tx(
                 approval_id=int(approval["id"]),
                 parent_action_run_id=parent_action_run_id,
             ),
+            input_schema_version=int(approval.get("action_schema_version") or 1),
         )
         return
     entity_type = str(approval.get("entity_type") or "")

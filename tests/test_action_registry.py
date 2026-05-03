@@ -9,8 +9,12 @@ from portfolio.action_registry import (
     ActionAuthorizationError,
     ActionContext,
     ActionValidationError,
+    CreateActionItemInput,
+    DomainAction,
     execute_action,
     propose_action,
+    register_action_schema_version,
+    register_action_upgrade_adapter,
 )
 
 
@@ -246,6 +250,55 @@ def test_action_item_and_watch_trigger_actions_cover_lifecycle():
     assert fired["status"] == "fired"
     assert fired["last_result"] == {"price": 151}
     assert cancelled["status"] == "cancelled"
+
+
+def test_pending_approval_replays_old_action_schema_after_current_schema_evolves(monkeypatch):
+    from typing import Literal
+
+    import portfolio.action_registry as registry
+
+    approval = propose_action(
+        "create_action_item",
+        {"description": "Review MU", "action_type": "review", "ticker": "mu", "urgency": "high"},
+        ActionContext(actor_type="workflow", source_type="workflow", source_id="run-old-schema"),
+    )
+
+    class CreateActionItemInputV2(CreateActionItemInput):
+        schema_version: Literal[2] = 2
+        source: Literal["approval"] = "approval"
+
+    old_action = registry.get_action("create_action_item")
+    monkeypatch.setitem(
+        registry._ACTIONS,
+        "create_action_item",
+        DomainAction(
+            action_id=old_action.action_id,
+            input_model=CreateActionItemInputV2,
+            handler=old_action.handler,
+            schema_version=2,
+            execute_actor_types=old_action.execute_actor_types,
+            propose_actor_types=old_action.propose_actor_types,
+            approval_entity_type=old_action.approval_entity_type,
+            approval_payload=old_action.approval_payload,
+            approval_ticker=old_action.approval_ticker,
+        ),
+    )
+    register_action_schema_version("create_action_item", 1, CreateActionItemInput)
+    register_action_schema_version("create_action_item", 2, CreateActionItemInputV2)
+    register_action_upgrade_adapter(
+        "create_action_item",
+        1,
+        2,
+        lambda payload: {**payload, "source": "approval"},
+    )
+
+    resolved = core_db.resolve_approval(approval["id"], "approved")
+
+    assert resolved["application_status"] == "applied"
+    action = core_db.get_action_items()[0]
+    assert action["description"] == "Review MU"
+    child_run = core_db.get_action_runs("create_action_item", approval_id=approval["id"])[0]
+    assert child_run["action_schema_version"] == 1
 
 
 def test_thesis_claim_actions_normalize_sources_and_not_found_errors(monkeypatch):

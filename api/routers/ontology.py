@@ -50,6 +50,7 @@ class OntologyQueryRequest(BaseModel):
     include_graph: bool = False
     run_id: str | None = None
     refresh_snapshot: bool = False
+    schema_mode: Literal["stored", "upgraded"]
 
 
 class OntologyQueryJobRequest(OntologyQueryRequest):
@@ -82,6 +83,7 @@ def _execute_query(req: OntologyQueryJobRequest | OntologyQueryRequest) -> dict[
             include_graph=req.include_graph,
             run_id=req.run_id,
             refresh_snapshot=req.refresh_snapshot,
+            schema_mode=req.schema_mode,
         )
     except OntologyRunNotFoundError as exc:
         raise NotFoundError("Ontology run", str(exc)) from exc

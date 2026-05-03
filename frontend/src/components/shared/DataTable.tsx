@@ -15,9 +15,17 @@ interface DataTableProps {
   maxHeight?: string
   label?: string
   onRowClick?: (row: Record<string, unknown>) => void
+  mobileLayout?: "table" | "cards"
 }
 
-export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "600px", label, onRowClick }: DataTableProps) {
+export const DataTable = memo(function DataTable({
+  columns,
+  rows,
+  maxHeight = "600px",
+  label,
+  onRowClick,
+  mobileLayout = "table",
+}: DataTableProps) {
   const [copied, setCopied] = useState(false)
 
   const displayColumns = useMemo(
@@ -65,7 +73,7 @@ export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "6
     <button
       type="button"
       onClick={handleCopy}
-      className="theme-button-secondary inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium"
+      className="theme-button-base theme-button-secondary min-h-10 px-3 text-xs"
     >
       {copied ? (
         <>
@@ -84,20 +92,49 @@ export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "6
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        {label ? <h3 className="text-sm font-semibold text-app">{label}</h3> : <span />}
+        {label ? <h3 className="section-title text-sm">{label}</h3> : <span />}
         {copyButton}
       </div>
+      {mobileLayout === "cards" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {rows.map((row, ri) => (
+            <div
+              key={ri}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              className={`theme-surface p-4${onRowClick ? " cursor-pointer" : ""}`}
+            >
+              <dl className="space-y-2">
+                {displayColumns.map(col => {
+                  const raw = row[col.key]
+                  const display = col.format ? col.format(raw) : (raw ?? "N/A")
+                  const colorStr = col.colorFn ? col.colorFn(raw, row) : ""
+                  const color = colorStr.split(";")[0]?.trim() || undefined
+
+                  return (
+                    <div key={col.key} className="flex items-start justify-between gap-3">
+                      <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">{col.header}</dt>
+                      <dd className="text-right text-sm text-app" style={{ color }}>
+                        {String(display)}
+                      </dd>
+                    </div>
+                  )
+                })}
+              </dl>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div
         style={{ maxHeight, overflowY: "auto" }}
-        className="overflow-x-auto rounded-xl border border-app bg-card"
+        className="overflow-x-auto rounded-[1.2rem] border border-app bg-card"
       >
         <table className="w-full border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-muted-surface">
+          <thead className="sticky top-0 z-10 bg-card-muted">
             <tr>
               {displayColumns.map(col => (
                 <th
                   key={col.key}
-                  className="whitespace-nowrap border-b border-app px-3 py-2 text-left font-semibold text-muted"
+                  className="whitespace-nowrap border-b border-app px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle"
                   style={col.width ? { width: col.width } : undefined}
                 >
                   {col.header}
@@ -110,7 +147,7 @@ export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "6
               <tr
                 key={ri}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
-                className={`border-b border-app transition-colors hover:bg-muted-surface${onRowClick ? " cursor-pointer" : ""}`}
+                className={`border-b border-app/80 transition-colors hover:bg-hover${onRowClick ? " cursor-pointer" : ""}`}
               >
                 {displayColumns.map(col => {
                   const raw = row[col.key]
@@ -129,7 +166,7 @@ export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "6
                   return (
                     <td
                       key={col.key}
-                      className="whitespace-nowrap px-3 py-2"
+                      className="whitespace-nowrap px-4 py-3 text-app"
                       style={{
                         color: color || undefined,
                         fontWeight: fontWeight,
@@ -144,6 +181,7 @@ export const DataTable = memo(function DataTable({ columns, rows, maxHeight = "6
           </tbody>
         </table>
       </div>
+      )}
     </div>
   )
 })

@@ -58,6 +58,14 @@ interface AgentChatState {
 const STORAGE_KEY = "agent-chat"
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/, "")
 
+function schemaHeaders(method: string, url: string): Record<string, string> {
+  const parsed = new URL(url, window.location.origin)
+  return {
+    "X-Request-Schema-Name": `${method.toLowerCase()}:${parsed.pathname}`,
+    "X-Request-Schema-Version": "1",
+  }
+}
+
 function truncateText(value: string, maxLen: number): string {
   return value.length <= maxLen ? value : `${value.slice(0, maxLen - 1)}…`
 }
@@ -142,7 +150,7 @@ async function saveSessionToServer(messages: AgentMessage[], sessionId: string |
     if (sessionId) body.session_id = sessionId
     const resp = await fetch(`${BASE_URL}/memory/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...schemaHeaders("POST", `${BASE_URL}/memory/sessions`) },
       credentials: "include",
       body: JSON.stringify(body),
     })
@@ -158,6 +166,7 @@ async function summarizeSession(sessionId: string): Promise<void> {
   try {
     await fetch(`${BASE_URL}/memory/sessions/${sessionId}/summarize`, {
       method: "POST",
+      headers: schemaHeaders("POST", `${BASE_URL}/memory/sessions/${sessionId}/summarize`),
       credentials: "include",
     })
   } catch {
@@ -263,7 +272,7 @@ export function useAgentChat() {
     try {
       const response = await fetch(`${BASE_URL}/agent/chat/v2`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...schemaHeaders("POST", `${BASE_URL}/agent/chat/v2`) },
         credentials: "include",
         body: JSON.stringify({
           session_id: state.sessionId,

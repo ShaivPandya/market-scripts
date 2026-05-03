@@ -1,3 +1,5 @@
+import { Notice } from "./Notice"
+
 interface LoadingSpinnerProps {
   message?: string
 }
@@ -6,9 +8,8 @@ export function LoadingSpinner({ message = "Loading..." }: LoadingSpinnerProps) 
   return (
     <div className="flex items-center gap-3 py-8 text-muted">
       <div
-        className="h-5 w-5 animate-spin rounded-full border-2"
+        className="h-5 w-5 animate-spin rounded-full border-2 border-app border-t-[hsl(var(--accent))]"
         style={{
-          borderColor: "hsl(var(--muted-3))",
           borderTopColor: "hsl(var(--accent))",
         }}
       />
@@ -19,8 +20,6 @@ export function LoadingSpinner({ message = "Loading..." }: LoadingSpinnerProps) 
 
 export function ErrorMessage({ message }: { message: string }) {
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-      <strong>Error:</strong> {message}
-    </div>
+    <Notice tone="error"><strong>Error:</strong> {message}</Notice>
   )
 }

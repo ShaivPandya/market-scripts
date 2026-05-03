@@ -10,7 +10,9 @@ class _FakeService:
     def __init__(self, payload):
         self.payload = payload
 
-    def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+    def query(
+        self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False, schema_mode="upgraded"
+    ):
         out = dict(self.payload)
         out.setdefault("run_id", run_id or "run-1")
         out.setdefault("intent", intent or "portfolio_risk_exposure")
@@ -50,7 +52,7 @@ def _resolve_ontology_result(auth_client, resp):
 
 
 def test_ontology_query_requires_auth(client):
-    resp = client.post("/api/v1/ontology/query", json={"intent": "portfolio_risk_exposure"})
+    resp = client.post("/api/v1/ontology/query", json={"intent": "portfolio_risk_exposure", "schema_mode": "upgraded"})
     assert resp.status_code == 401
 
 
@@ -80,6 +82,7 @@ def test_ontology_query_structured_returns_schema(auth_client, monkeypatch):
             "intent": "portfolio_risk_exposure",
             "filters": {"tickers": ["MU"], "min_risk_score": 0.5},
             "timeframe": "Daily",
+            "schema_mode": "upgraded",
         },
     )
 
@@ -110,7 +113,7 @@ def test_ontology_query_nl_path_returns_interpreted_source(auth_client, monkeypa
 
     resp = auth_client.post(
         "/api/v1/ontology/query",
-        json={"query": "Which positions are in deteriorating macro conditions?"},
+        json={"query": "Which positions are in deteriorating macro conditions?", "schema_mode": "upgraded"},
     )
 
     data = _resolve_ontology_result(auth_client, resp)
@@ -140,7 +143,7 @@ def test_ontology_query_partial_failure_returns_200_with_degraded_confidence(aut
 
     resp = auth_client.post(
         "/api/v1/ontology/query",
-        json={"intent": "portfolio_risk_exposure"},
+        json={"intent": "portfolio_risk_exposure", "schema_mode": "upgraded"},
     )
 
     data = _resolve_ontology_result(auth_client, resp)
@@ -152,14 +155,24 @@ def test_ontology_query_unknown_run_id_returns_404(auth_client, monkeypatch):
     import api.routers.ontology as ontology_router
 
     class _MissingRunService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+        def query(
+            self,
+            query,
+            intent,
+            filters,
+            timeframe,
+            include_graph,
+            run_id,
+            refresh_snapshot=False,
+            schema_mode="upgraded",
+        ):
             raise OntologyRunNotFoundError(str(run_id))
 
     monkeypatch.setattr(ontology_router, "_service", _MissingRunService())
 
     resp = auth_client.post(
         "/api/v1/ontology/query",
-        json={"intent": "portfolio_risk_exposure", "run_id": "missing-run"},
+        json={"intent": "portfolio_risk_exposure", "run_id": "missing-run", "schema_mode": "upgraded"},
     )
 
     assert resp.status_code in (200, 202)
@@ -176,7 +189,17 @@ def test_ontology_query_passes_run_id(auth_client, monkeypatch):
     captured: dict[str, str | None] = {"run_id": None}
 
     class _CaptureRunService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+        def query(
+            self,
+            query,
+            intent,
+            filters,
+            timeframe,
+            include_graph,
+            run_id,
+            refresh_snapshot=False,
+            schema_mode="upgraded",
+        ):
             captured["run_id"] = run_id
             return {
                 "run_id": run_id or "run-1",
@@ -198,7 +221,7 @@ def test_ontology_query_passes_run_id(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/ontology/query",
-        json={"intent": "portfolio_risk_exposure", "run_id": "run-abc"},
+        json={"intent": "portfolio_risk_exposure", "run_id": "run-abc", "schema_mode": "upgraded"},
     )
 
     data = _resolve_ontology_result(auth_client, resp)
@@ -212,7 +235,17 @@ def test_ontology_query_passes_refresh_snapshot(auth_client, monkeypatch):
     captured: dict[str, bool] = {"refresh_snapshot": False}
 
     class _CaptureRefreshService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+        def query(
+            self,
+            query,
+            intent,
+            filters,
+            timeframe,
+            include_graph,
+            run_id,
+            refresh_snapshot=False,
+            schema_mode="upgraded",
+        ):
             captured["refresh_snapshot"] = bool(refresh_snapshot)
             return {
                 "run_id": "run-1",
@@ -234,7 +267,7 @@ def test_ontology_query_passes_refresh_snapshot(auth_client, monkeypatch):
 
     resp = auth_client.post(
         "/api/v1/ontology/query",
-        json={"intent": "portfolio_risk_exposure", "refresh_snapshot": True},
+        json={"intent": "portfolio_risk_exposure", "refresh_snapshot": True, "schema_mode": "upgraded"},
     )
     _resolve_ontology_result(auth_client, resp)
     assert captured["refresh_snapshot"] is True
@@ -258,7 +291,17 @@ def test_ontology_query_async_returns_done_result(auth_client, monkeypatch):
     query_text = f"async-run-{uuid.uuid4().hex}"
 
     class _AsyncService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+        def query(
+            self,
+            query,
+            intent,
+            filters,
+            timeframe,
+            include_graph,
+            run_id,
+            refresh_snapshot=False,
+            schema_mode="upgraded",
+        ):
             time.sleep(0.1)
             return {
                 "run_id": "run-async",
@@ -278,7 +321,9 @@ def test_ontology_query_async_returns_done_result(auth_client, monkeypatch):
 
     monkeypatch.setattr(ontology_router, "_service", _AsyncService())
 
-    started = auth_client.post("/api/v1/ontology/query/async", json={"query": query_text, "timeframe": "Daily"})
+    started = auth_client.post(
+        "/api/v1/ontology/query/async", json={"query": query_text, "timeframe": "Daily", "schema_mode": "upgraded"}
+    )
     assert started.status_code in (200, 202)
     started_payload = started.json()
     assert started_payload["status"] in {"queued", "running", "done"}
@@ -298,7 +343,17 @@ def test_ontology_query_async_dedupes_running_job(auth_client, monkeypatch):
     query_text = f"async-dedupe-{uuid.uuid4().hex}"
 
     class _SlowService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+        def query(
+            self,
+            query,
+            intent,
+            filters,
+            timeframe,
+            include_graph,
+            run_id,
+            refresh_snapshot=False,
+            schema_mode="upgraded",
+        ):
             time.sleep(0.25)
             return {
                 "run_id": "run-dedupe",
@@ -318,7 +373,7 @@ def test_ontology_query_async_dedupes_running_job(auth_client, monkeypatch):
 
     monkeypatch.setattr(ontology_router, "_service", _SlowService())
 
-    req = {"query": query_text, "timeframe": "Daily"}
+    req = {"query": query_text, "timeframe": "Daily", "schema_mode": "upgraded"}
     first = auth_client.post("/api/v1/ontology/query/async", json=req)
     second = auth_client.post("/api/v1/ontology/query/async", json=req)
     assert first.status_code in (200, 202)
@@ -338,12 +393,22 @@ def test_ontology_query_async_surfaces_worker_error(auth_client, monkeypatch):
     query_text = f"async-error-{uuid.uuid4().hex}"
 
     class _ErrorService:
-        def query(self, query, intent, filters, timeframe, include_graph, run_id, refresh_snapshot=False):
+        def query(
+            self,
+            query,
+            intent,
+            filters,
+            timeframe,
+            include_graph,
+            run_id,
+            refresh_snapshot=False,
+            schema_mode="upgraded",
+        ):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(ontology_router, "_service", _ErrorService())
 
-    started = auth_client.post("/api/v1/ontology/query/async", json={"query": query_text})
+    started = auth_client.post("/api/v1/ontology/query/async", json={"query": query_text, "schema_mode": "upgraded"})
     assert started.status_code in (200, 202)
     job_id = started.json()["job_id"]
 

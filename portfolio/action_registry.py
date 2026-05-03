@@ -103,6 +103,11 @@ class DomainAction:
     approval_ticker: TickerExtractor | None = None
 
 
+ActionUpgradeAdapter = Callable[[dict[str, Any]], dict[str, Any]]
+_ACTION_INPUT_MODELS: dict[tuple[ActionId, int], type[BaseModel]] = {}
+_ACTION_UPGRADE_ADAPTERS: dict[tuple[ActionId, int, int], ActionUpgradeAdapter] = {}
+
+
 class PortfolioPositionInput(BaseModel):
     ticker: str
     asset: Literal["equity", "commodity", "fx", "bond"]
@@ -423,6 +428,7 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
     run = core_db.create_action_run(
         action_id=action.action_id,
         action_schema_version=action.schema_version,
+        action_schema_name=action.action_id,
         actor_type=context.actor_type,
         actor_id=context.actor_id,
         source_type=context.source_type,
@@ -526,18 +532,31 @@ def _audit_fail(
 
 
 def execute_action(
-    action_id: ActionId, raw_input: dict[str, Any], context: ActionContext | None = None
+    action_id: ActionId,
+    raw_input: dict[str, Any],
+    context: ActionContext | None = None,
+    *,
+    input_schema_version: int | None = None,
 ) -> ActionResult:
     action = get_action(action_id)
     context = context or ActionContext()
-    run_id, _input_hash = _audit_start(action, raw_input, context)
+    audit_action = (
+        action
+        if input_schema_version in {None, action.schema_version}
+        else replace(action, schema_version=int(input_schema_version))
+    )
+    run_id, _input_hash = _audit_start(audit_action, raw_input, context)
     context = replace(context, action_run_id=run_id)
 
     from portfolio import core_db
 
     try:
         try:
-            typed_input = action.input_model.model_validate(raw_input)
+            typed_input = _validate_and_upgrade_action_input(
+                action,
+                raw_input,
+                input_schema_version=input_schema_version,
+            )
         except PydanticValidationError as exc:
             message = _validation_message(exc)
             core_db.record_action_event(run_id, "validation_failed", message=message, payload=exc.errors())
@@ -651,6 +670,7 @@ def propose_action(
             source_id=context.source_id,
             action_id=action.action_id,
             action_schema_version=action.schema_version,
+            action_schema_name=action.action_id,
             action_input_hash=input_hash,
         )
         output = {
@@ -701,6 +721,50 @@ def _ensure_unique_tickers(rows: list[BaseModel]) -> None:
         if ticker in seen:
             raise ActionValidationError(f"Duplicate ticker: '{ticker}'.")
         seen.add(ticker)
+
+
+def register_action_schema_version(action_id: ActionId, schema_version: int, model: type[BaseModel]) -> None:
+    _ACTION_INPUT_MODELS[(action_id, int(schema_version))] = model
+
+
+def register_action_upgrade_adapter(
+    action_id: ActionId,
+    from_version: int,
+    to_version: int,
+    adapter: ActionUpgradeAdapter,
+) -> None:
+    _ACTION_UPGRADE_ADAPTERS[(action_id, int(from_version), int(to_version))] = adapter
+
+
+def _validate_and_upgrade_action_input(
+    action: DomainAction,
+    raw_input: dict[str, Any],
+    *,
+    input_schema_version: int | None = None,
+) -> BaseModel:
+    supplied_version = int(input_schema_version or action.schema_version)
+    if supplied_version == action.schema_version:
+        return action.input_model.model_validate(raw_input)
+    if supplied_version > action.schema_version:
+        raise ActionValidationError(
+            f"Unsupported future action schema version {supplied_version} for {action.action_id}"
+        )
+
+    model = _ACTION_INPUT_MODELS.get((action.action_id, supplied_version))
+    if model is None:
+        raise ActionValidationError(f"Missing action schema definition for {action.action_id} v{supplied_version}")
+    payload = model.model_validate(raw_input).model_dump()
+    current_version = supplied_version
+    while current_version < action.schema_version:
+        adapter = _ACTION_UPGRADE_ADAPTERS.get((action.action_id, current_version, current_version + 1))
+        if adapter is None:
+            raise ActionValidationError(
+                f"Missing action schema upgrade adapter for {action.action_id} from "
+                f"v{current_version} to v{current_version + 1}"
+            )
+        payload = adapter(payload)
+        current_version += 1
+    return action.input_model.model_validate(payload)
 
 
 def _position_rows(input_model: UpdatePortfolioPositionsInput) -> list[dict[str, Any]]:
@@ -1247,6 +1311,10 @@ def get_action(action_id: ActionId) -> DomainAction:
         raise ActionValidationError(f"Unsupported action_id: {action_id}") from exc
 
 
+def iter_actions() -> list[DomainAction]:
+    return list(_ACTIONS.values())
+
+
 def list_actions() -> list[dict[str, Any]]:
     return [
         {
@@ -1256,3 +1324,7 @@ def list_actions() -> list[dict[str, Any]]:
         }
         for action in _ACTIONS.values()
     ]
+
+
+for _action in _ACTIONS.values():
+    register_action_schema_version(_action.action_id, _action.schema_version, _action.input_model)

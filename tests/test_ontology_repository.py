@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Literal
 
 import pytest
 
@@ -167,13 +168,13 @@ def test_snapshot_rows_are_run_scoped(tmp_path):
         edges=edges_run_2,
     )
 
-    rows_run_1 = repo.fetch_snapshot_position_asset_sector_rows("run-1")
-    rows_run_2 = repo.fetch_snapshot_position_asset_sector_rows("run-2")
+    rows_run_1 = repo.fetch_snapshot_position_asset_sector_rows("run-1", schema_mode="upgraded")
+    rows_run_2 = repo.fetch_snapshot_position_asset_sector_rows("run-2", schema_mode="upgraded")
     assert rows_run_1[0]["position_props"]["risk_level"] == "medium"
     assert rows_run_2[0]["position_props"]["risk_level"] == "high"
 
-    ev_run_1 = repo.fetch_snapshot_position_signal_evidence("run-1", "position:MU")
-    ev_run_2 = repo.fetch_snapshot_position_signal_evidence("run-2", "position:MU")
+    ev_run_1 = repo.fetch_snapshot_position_signal_evidence("run-1", "position:MU", schema_mode="upgraded")
+    ev_run_2 = repo.fetch_snapshot_position_signal_evidence("run-2", "position:MU", schema_mode="upgraded")
     assert ev_run_1[0]["signal_id"] == "signal:test:signal_1"
     assert ev_run_2[0]["signal_id"] == "signal:test:signal_2"
 
@@ -427,7 +428,7 @@ def test_backfill_schema_versions_rewrites_legacy_optional_ids(tmp_path):
     assert snapshot_report["rewritten_ids"] == 2
 
     repo.backfill_schema_versions(dry_run=False)
-    graph = repo.fetch_snapshot_graph("run-legacy")
+    graph = repo.fetch_snapshot_graph("run-legacy", schema_mode="upgraded")
     ids = {node["id"] for node in graph["nodes"]}
     assert evaluation_id("MU", "2026-03-08T00:00:00Z") in ids
     assert catalyst_id("MU", "Demand recovery", "Demand improves") in ids
@@ -436,6 +437,87 @@ def test_backfill_schema_versions_rewrites_legacy_optional_ids(tmp_path):
     assert belongs["properties"]["source"] == "test"
     assert all(node["schema_version"] == 1 for node in graph["nodes"])
     assert all(edge["schema_version"] == 1 for edge in graph["edges"])
+
+
+def test_legacy_snapshot_stored_mode_survives_test_schema_evolution(tmp_path, monkeypatch):
+    from ontology.schemas import registry
+    from ontology.schemas.objects import PositionV1
+
+    class PositionV2(PositionV1):
+        schema_version: Literal[2] = 2
+        risk_bucket: str
+
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    _insert_minimal_legacy_snapshot(db_path, run_id="run-legacy")
+
+    monkeypatch.setitem(registry.NODE_SCHEMAS, "Position", PositionV2)
+    monkeypatch.setitem(
+        registry.NODE_UPGRADE_ADAPTERS,
+        ("Position", 1, 2),
+        lambda payload: {**payload, "schema_version": 2, "risk_bucket": "evolved"},
+    )
+
+    stored = repo.fetch_snapshot_graph("run-legacy", schema_mode="stored")
+    upgraded = repo.fetch_snapshot_graph("run-legacy", schema_mode="upgraded")
+
+    stored_position = [node for node in stored["nodes"] if node["type"] == "Position"][0]
+    upgraded_position = [node for node in upgraded["nodes"] if node["type"] == "Position"][0]
+    assert "risk_bucket" not in stored_position["properties"]
+    assert upgraded_position["properties"]["schema_version"] == 2
+    assert upgraded_position["properties"]["risk_bucket"] == "evolved"
+
+
+def test_stored_snapshot_read_ignores_current_relation_cardinality_change(tmp_path, monkeypatch):
+    from ontology.schemas.relations import (
+        EXPOSED_TO_SIGNAL,
+        RELATION_REGISTRY,
+        RelationCardinality,
+        RelationDefinition,
+    )
+
+    db_path = tmp_path / "ontology.sqlite3"
+    repo = OntologyRepository(db_path=db_path)
+    _insert_minimal_legacy_snapshot(db_path, run_id="run-relation")
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO snapshot_nodes(run_id, id, type, label, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                ("run-relation", "signal:one", "Signal", "One", json.dumps({"source": "test"})),
+                ("run-relation", "signal:two", "Signal", "Two", json.dumps({"source": "test"})),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO snapshot_edges(run_id, source_id, target_id, relation_type, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                ("run-relation", "position:MU", "signal:one", "exposed_to_signal", "{}"),
+                ("run-relation", "position:MU", "signal:two", "exposed_to_signal", "{}"),
+            ],
+        )
+
+    current = RELATION_REGISTRY[EXPOSED_TO_SIGNAL]
+    monkeypatch.setitem(
+        RELATION_REGISTRY,
+        EXPOSED_TO_SIGNAL,
+        RelationDefinition(
+            name=current.name,
+            source_type=current.source_type,
+            target_type=current.target_type,
+            cardinality=RelationCardinality.SOURCE_UNIQUE,
+            required_properties=current.required_properties,
+            optional=current.optional,
+        ),
+    )
+
+    stored = repo.fetch_snapshot_graph("run-relation", schema_mode="stored")
+    exposures = [edge for edge in stored["edges"] if edge["relation_type"] == "exposed_to_signal"]
+    assert len(exposures) == 2
 
 
 def test_direct_sqlite_edge_insert_rejects_missing_endpoint(tmp_path):
@@ -543,3 +625,70 @@ def _core_edges() -> list[OntologyEdge]:
         OntologyEdge("position:MU", "asset:MU", "references_asset", {}),
         OntologyEdge("asset:MU", "sector:information_technology", "belongs_to_sector", {"source": "test"}),
     ]
+
+
+def _insert_minimal_legacy_snapshot(db_path, *, run_id: str) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO ontology_runs(
+                run_id,
+                as_of,
+                source_status_json,
+                required_modules_json,
+                optional_modules_json,
+                component_scores_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (run_id, "2026-03-08T00:00:00Z", "{}", "[]", "[]", "{}"),
+        )
+        conn.executemany(
+            """
+            INSERT INTO snapshot_nodes(run_id, id, type, label, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                (
+                    run_id,
+                    "position:MU",
+                    "Position",
+                    "MU",
+                    json.dumps(
+                        {
+                            "ticker": "MU",
+                            "asset": "equity",
+                            "direction": "long",
+                            "risk_score": 0.72,
+                            "risk_level": "medium",
+                            "ontology_run_id": run_id,
+                        }
+                    ),
+                ),
+                (run_id, "asset:MU", "Asset", "MU", json.dumps({"ticker": "MU", "asset": "equity"})),
+                (
+                    run_id,
+                    "sector:information_technology",
+                    "Sector",
+                    "Information Technology",
+                    json.dumps({"name": "Information Technology", "source": "test"}),
+                ),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO snapshot_edges(run_id, source_id, target_id, relation_type, properties_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            [
+                (run_id, "position:MU", "asset:MU", "references_asset", "{}"),
+                (
+                    run_id,
+                    "asset:MU",
+                    "sector:information_technology",
+                    "belongs_to_sector",
+                    json.dumps({"source": "test"}),
+                ),
+            ],
+        )

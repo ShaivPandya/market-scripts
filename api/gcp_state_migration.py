@@ -548,8 +548,11 @@ class StateMigrator:
                 "entity_id",
                 "ticker",
                 "action_id",
+                "action_schema_name",
                 "action_schema_version",
                 "action_input_hash",
+                "request_schema_name",
+                "request_schema_version",
                 "proposed_change",
                 "reason",
                 "source_type",
@@ -567,7 +570,10 @@ class StateMigrator:
             "action_runs": [
                 "id",
                 "action_id",
+                "action_schema_name",
                 "action_schema_version",
+                "request_schema_name",
+                "request_schema_version",
                 "actor_type",
                 "actor_id",
                 "source_type",
@@ -722,6 +728,8 @@ class StateMigrator:
                     "properties_json",
                     "schema_name",
                     "schema_version",
+                    "relation_schema_name",
+                    "relation_schema_version",
                     "updated_at",
                 ],
                 ["source_id", "target_id", "relation_type"],
@@ -754,11 +762,34 @@ class StateMigrator:
                     "properties_json",
                     "schema_name",
                     "schema_version",
+                    "relation_schema_name",
+                    "relation_schema_version",
                     "updated_at",
                 ],
                 ["run_id", "source_id", "target_id", "relation_type"],
             ),
+            "schema_definitions": (
+                "schema_definitions",
+                [
+                    "schema_kind",
+                    "schema_name",
+                    "schema_version",
+                    "definition_json",
+                    "definition_hash",
+                    "compatibility_json",
+                    "status",
+                    "created_at",
+                    "deprecated_at",
+                ],
+                ["schema_kind", "schema_name", "schema_version"],
+            ),
+            "ontology_run_schema_bindings": (
+                "ontology_run_schema_bindings",
+                ["run_id", "schema_kind", "schema_name", "schema_version", "definition_hash"],
+                ["run_id", "schema_kind", "schema_name", "schema_version"],
+            ),
         }
+        table_map = {table: value for table, value in table_map.items() if _sqlite_table_exists(db, table)}
         counts = {table: _sqlite_count(db, table) for table in table_map}
         if self._source_completed("ontology", source_hash):
             return SourceResult("ontology", source_hash, counts)
@@ -768,7 +799,46 @@ class StateMigrator:
                 for row in rows:
                     row["schema_name"] = row.get("schema_name") or "legacy"
                     row["schema_version"] = int(row.get("schema_version") or 0)
+                    if source_table in {"edges", "snapshot_edges"}:
+                        row["relation_schema_name"] = row.get("relation_schema_name") or "legacy"
+                        row["relation_schema_version"] = int(row.get("relation_schema_version") or 0)
             self._upsert_rows(target_table, columns, conflict, rows)
+        if "schema_definitions" not in table_map:
+            from ontology.schema_definitions import domain_action_schema_definitions, ontology_schema_definitions
+
+            now = datetime.now(UTC).isoformat()
+            definition_rows = []
+            for definition in [*ontology_schema_definitions(), *domain_action_schema_definitions()]:
+                row = definition.row()
+                definition_rows.append(
+                    {
+                        "schema_kind": row[0],
+                        "schema_name": row[1],
+                        "schema_version": row[2],
+                        "definition_json": row[3],
+                        "definition_hash": row[4],
+                        "compatibility_json": row[5],
+                        "status": row[6],
+                        "created_at": now,
+                        "deprecated_at": row[7],
+                    }
+                )
+            self._upsert_rows(
+                "schema_definitions",
+                [
+                    "schema_kind",
+                    "schema_name",
+                    "schema_version",
+                    "definition_json",
+                    "definition_hash",
+                    "compatibility_json",
+                    "status",
+                    "created_at",
+                    "deprecated_at",
+                ],
+                ["schema_kind", "schema_name", "schema_version"],
+                definition_rows,
+            )
         result = SourceResult("ontology", source_hash, counts)
         self._record_source(result)
         return result

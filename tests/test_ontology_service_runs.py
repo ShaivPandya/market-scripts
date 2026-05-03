@@ -72,21 +72,21 @@ class _FakeRepo:
         self.latest_run_requests += 1
         return self.latest_run
 
-    def fetch_snapshot_position_asset_sector_rows(self, run_id: str):
+    def fetch_snapshot_position_asset_sector_rows(self, run_id: str, *, schema_mode="upgraded"):
         return self.rows_by_run.get(run_id, [])
 
-    def fetch_snapshot_position_signal_evidence(self, run_id: str, position_id: str):
+    def fetch_snapshot_position_signal_evidence(self, run_id: str, position_id: str, *, schema_mode="upgraded"):
         if run_id == "run-historical":
             return [{"signal_id": "signal:test", "edge_props": {"name": "signal", "contribution": 0.5}}]
         return [{"signal_id": "signal:test", "edge_props": {"name": "signal", "contribution": 0.2}}]
 
-    def fetch_snapshot_all_position_signal_evidence(self, run_id: str):
+    def fetch_snapshot_all_position_signal_evidence(self, run_id: str, *, schema_mode="upgraded"):
         evidence = self.fetch_snapshot_position_signal_evidence(run_id, "")
         return {
             row["position_id"]: list(evidence) for row in (self.rows_by_run.get(run_id) or []) if row.get("position_id")
         }
 
-    def fetch_snapshot_graph(self, run_id: str):
+    def fetch_snapshot_graph(self, run_id: str, *, schema_mode="upgraded"):
         return {"nodes": [{"id": "position:MU"}], "edges": []}
 
 

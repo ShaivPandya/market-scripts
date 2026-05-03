@@ -53,6 +53,8 @@ NODE_SCHEMAS: dict[str, type] = {
     "Catalyst": CatalystV1,
 }
 OPTIONAL_NODE_TYPES = {"Thesis", "Evaluation", "Catalyst"}
+NodeUpgradeAdapter = Any
+NODE_UPGRADE_ADAPTERS: dict[tuple[str, int, int], NodeUpgradeAdapter] = {}
 
 
 class OntologySchemaValidationError(ValueError):
@@ -109,6 +111,17 @@ def normalize_node(
             )
         except Exception as exc:
             raise OntologySchemaValidationError(f"Invalid legacy node {node.id}: {exc}") from exc
+        payload_version = 1
+    else:
+        payload_version = int(payload.get("schema_version") or node.schema_version or 0)
+
+    current_version = _schema_version_for(schema_cls)
+    try:
+        payload = _upgrade_node_payload(node.type, payload, from_version=payload_version, to_version=current_version)
+    except Exception as exc:
+        raise OntologySchemaValidationError(
+            f"Missing compatible upgrade for {node.type} node {node.id}: {exc}"
+        ) from exc
 
     try:
         model = schema_cls.model_validate(payload)
@@ -128,7 +141,7 @@ def normalize_node(
         label=_label_for(node.type, label, model),
         properties=model.model_dump(mode="json"),
         schema_name=node.type,
-        schema_version=1,
+        schema_version=current_version,
     )
 
 
@@ -170,6 +183,8 @@ def normalize_edge(
         properties=dump_edge_properties(model),
         schema_name=edge_schema_name(edge.relation_type),
         schema_version=1,
+        relation_schema_name=edge.relation_type,
+        relation_schema_version=1,
     )
 
 
@@ -334,6 +349,15 @@ def node_from_schema(
     )
 
 
+def register_node_schema_upgrade_adapter(
+    node_type: str,
+    from_version: int,
+    to_version: int,
+    adapter: NodeUpgradeAdapter,
+) -> None:
+    NODE_UPGRADE_ADAPTERS[(node_type, int(from_version), int(to_version))] = adapter
+
+
 def _validate_relation(
     relation_type: str,
     source_id: str,
@@ -376,6 +400,37 @@ def _missing_property(value: Any) -> bool:
     if isinstance(value, str) and not value.strip():
         return True
     return False
+
+
+def _schema_version_for(schema_cls: type) -> int:
+    field = getattr(schema_cls, "model_fields", {}).get("schema_version")
+    default = getattr(field, "default", 1)
+    try:
+        return int(default)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _upgrade_node_payload(
+    node_type: str,
+    payload: dict[str, Any],
+    *,
+    from_version: int,
+    to_version: int,
+) -> dict[str, Any]:
+    current_version = int(from_version)
+    upgraded = dict(payload)
+    if current_version == to_version:
+        return upgraded
+    if current_version > to_version:
+        raise ValueError(f"future schema version {current_version} cannot be read as v{to_version}")
+    while current_version < to_version:
+        adapter = NODE_UPGRADE_ADAPTERS.get((node_type, current_version, current_version + 1))
+        if adapter is None:
+            raise ValueError(f"{node_type} v{current_version}->v{current_version + 1}")
+        upgraded = adapter(upgraded)
+        current_version += 1
+    return upgraded
 
 
 def _cardinality_errors(edges: list[OntologyEdge]) -> list[str]:

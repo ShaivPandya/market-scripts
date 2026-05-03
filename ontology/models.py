@@ -35,6 +35,8 @@ class OntologyEdge:
     properties: dict[str, Any] = field(default_factory=dict)
     schema_name: str = "legacy"
     schema_version: int = 0
+    relation_schema_name: str = "legacy"
+    relation_schema_version: int = 0
 
 
 @dataclass(slots=True)
