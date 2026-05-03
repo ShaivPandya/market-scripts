@@ -71,8 +71,8 @@ import logging
 import sqlite3
 import threading
 import uuid
-from collections.abc import Iterable
-from datetime import UTC, datetime
+from collections.abc import Callable, Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -82,6 +82,8 @@ from api.postgres_compat import PostgresCompatConnection
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent / "core.db"
+APPROVAL_APPLICATION_STATUSES = ("pending", "applying", "applied", "failed", "not_applicable")
+APPROVAL_APPLICATION_LEASE = timedelta(minutes=15)
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -266,7 +268,13 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
                     CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
     created_at      TEXT NOT NULL,
     resolved_at     TEXT,
-    resolved_note   TEXT
+    resolved_note   TEXT,
+    application_status       TEXT NOT NULL DEFAULT 'pending'
+                             CHECK (application_status IN ('pending', 'applying', 'applied', 'failed', 'not_applicable')),
+    application_attempts     INTEGER NOT NULL DEFAULT 0,
+    application_started_at   TEXT,
+    application_completed_at TEXT,
+    application_error        TEXT
 )
 """
 
@@ -339,6 +347,7 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_research_notes_ticker ON research_notes(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_ticker ON pending_approvals(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_pending_approvals_application_status ON pending_approvals(application_status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report ON recommendations(report_type, as_of DESC)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report_id ON recommendations(report_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_recommendations_idempotency ON recommendations(idempotency_key)",
@@ -439,6 +448,31 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "report_id": "TEXT",
             "idempotency_key": "TEXT",
         },
+    )
+    _add_missing(
+        "pending_approvals",
+        {
+            "application_status": (
+                "TEXT NOT NULL DEFAULT 'pending' "
+                "CHECK (application_status IN ('pending', 'applying', 'applied', 'failed', 'not_applicable'))"
+            ),
+            "application_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "application_started_at": "TEXT",
+            "application_completed_at": "TEXT",
+            "application_error": "TEXT",
+        },
+    )
+    conn.execute(
+        "UPDATE pending_approvals "
+        "SET application_status = 'applied', "
+        "application_completed_at = COALESCE(application_completed_at, resolved_at, created_at) "
+        "WHERE status = 'approved' AND application_status = 'pending'"
+    )
+    conn.execute(
+        "UPDATE pending_approvals "
+        "SET application_status = 'not_applicable', "
+        "application_completed_at = COALESCE(application_completed_at, resolved_at, created_at) "
+        "WHERE status IN ('rejected', 'expired') AND application_status = 'pending'"
     )
     _ensure_sqlite_watch_trigger_types(conn)
 
@@ -1750,6 +1784,23 @@ def get_latest_recommendation(report_type: str | None = None) -> dict | None:
     return results[0] if results else None
 
 
+def _update_recommendation_approval_tx(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    recommendation_id: int,
+    approval_id: int | None,
+    approval_status: str,
+) -> dict:
+    row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
+    if not row:
+        raise ValueError(f"No recommendation with id {recommendation_id}")
+    conn.execute(
+        "UPDATE recommendations SET approval_id = COALESCE(?, approval_id), approval_status = ? WHERE id = ?",
+        (approval_id, approval_status, recommendation_id),
+    )
+    updated = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
+    return _parse_recommendation_json_fields(_require_row_dict(updated))
+
+
 def update_recommendation_approval(
     recommendation_id: int,
     approval_id: int | None,
@@ -1757,16 +1808,9 @@ def update_recommendation_approval(
 ) -> dict:
     conn = _get_conn()
     with _lock:
-        row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
-        if not row:
-            raise ValueError(f"No recommendation with id {recommendation_id}")
-        conn.execute(
-            "UPDATE recommendations SET approval_id = COALESCE(?, approval_id), approval_status = ? WHERE id = ?",
-            (approval_id, approval_status, recommendation_id),
-        )
+        updated = _update_recommendation_approval_tx(conn, recommendation_id, approval_id, approval_status)
         conn.commit()
-        updated = conn.execute("SELECT * FROM recommendations WHERE id = ?", (recommendation_id,)).fetchone()
-    return _parse_recommendation_json_fields(_require_row_dict(updated))
+    return updated
 
 
 def supersede_report_recommendations(report_id: str, active_idempotency_keys: list[str]) -> int:
@@ -1814,6 +1858,31 @@ def update_recommendation_outcome(
 # Pending Approvals
 # ---------------------------------------------------------------------------
 
+ApprovalPostCommitCallback = Callable[[], None]
+ApprovalSideEffectHandler = Callable[
+    [sqlite3.Connection | PostgresCompatConnection, dict, dict, list[ApprovalPostCommitCallback]],
+    None,
+]
+
+
+class ApprovalApplicationError(RuntimeError):
+    """Raised when an approval side effect fails and remains retryable."""
+
+    def __init__(self, approval_id: int, error: str):
+        self.approval_id = approval_id
+        self.error = error
+        super().__init__(f"Approval {approval_id} application failed: {error}")
+
+
+def _parse_pending_approval_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    _parse_json_field(d, "proposed_change")
+    if d.get("application_attempts") is None:
+        d["application_attempts"] = 0
+    if not d.get("application_status"):
+        d["application_status"] = "pending"
+    return d
+
 
 def create_pending_approval(
     entity_type: str,
@@ -1857,6 +1926,11 @@ def create_pending_approval(
         "created_at": now,
         "resolved_at": None,
         "resolved_note": None,
+        "application_status": "pending",
+        "application_attempts": 0,
+        "application_started_at": None,
+        "application_completed_at": None,
+        "application_error": None,
     }
 
 
@@ -1894,6 +1968,7 @@ def create_pending_approval_once(
 def get_pending_approvals(
     status: str | None = "pending",
     ticker: str | None = None,
+    application_status: str | None = None,
 ) -> list[dict]:
     conn = _get_conn()
     clauses: list[str] = []
@@ -1904,16 +1979,18 @@ def get_pending_approvals(
     if ticker:
         clauses.append("ticker = ?")
         params.append(ticker.upper())
+    if application_status:
+        if application_status not in APPROVAL_APPLICATION_STATUSES:
+            raise ValueError(f"Invalid application_status: {application_status}")
+        clauses.append("application_status = ?")
+        params.append(application_status)
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     with _lock:
         rows = conn.execute(
             f"SELECT * FROM pending_approvals{where} ORDER BY created_at DESC",
             params,
         ).fetchall()
-    results = _rows_to_list(rows)
-    for d in results:
-        _parse_json_field(d, "proposed_change")
-    return results
+    return [_parse_pending_approval_row(row) for row in rows]
 
 
 def get_pending_approval(approval_id: int) -> dict | None:
@@ -1922,174 +1999,482 @@ def get_pending_approval(approval_id: int) -> dict | None:
         row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
     if not row:
         return None
-    d = _require_row_dict(row)
-    _parse_json_field(d, "proposed_change")
-    return d
+    return _parse_pending_approval_row(row)
 
 
 def resolve_approval(approval_id: int, status: str, resolved_note: str | None = None) -> dict:
-    """Resolve a pending approval (approve or reject).
-
-    When approved, applies the side effect based on entity_type.
-    """
+    """Resolve a pending approval and apply approved side effects safely."""
     if status not in ("approved", "rejected"):
         raise ValueError(f"Resolution status must be 'approved' or 'rejected', got '{status}'")
 
+    if status == "rejected":
+        return _reject_approval(approval_id, resolved_note)
+
+    conn = _get_conn()
+    approval, should_apply = _claim_approval_for_application(conn, approval_id)
+    if not should_apply:
+        return approval
+
+    callbacks: list[ApprovalPostCommitCallback] = []
+    try:
+        with _lock:
+            try:
+                _apply_approval_side_effect_tx(conn, approval, callbacks)
+                _update_linked_recommendation_approval_tx(conn, approval, approval_id, "approved")
+                now = _now()
+                conn.execute(
+                    "UPDATE pending_approvals "
+                    "SET status = 'approved', resolved_at = ?, resolved_note = ?, "
+                    "application_status = 'applied', application_completed_at = ?, application_error = NULL "
+                    "WHERE id = ?",
+                    (now, resolved_note, now, approval_id),
+                )
+                updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+    except Exception as exc:
+        _mark_approval_application_failed(approval_id, exc)
+        error = _approval_error_message(exc)
+        raise ApprovalApplicationError(approval_id, error) from exc
+
+    _run_approval_post_commit_callbacks(callbacks)
+    return _parse_pending_approval_row(updated)
+
+
+def _reject_approval(approval_id: int, resolved_note: str | None) -> dict:
     conn = _get_conn()
     now = _now()
     with _lock:
         row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
         if not row:
             raise ValueError(f"No pending approval with id {approval_id}")
-        current = _require_row_dict(row)
+        current = _parse_pending_approval_row(row)
         if current["status"] != "pending":
             raise ValueError(f"Approval {approval_id} is already {current['status']}")
+        application_status = str(current.get("application_status") or "pending")
+        if application_status == "applying" and not _approval_application_is_stale(current):
+            raise ValueError(f"Approval {approval_id} application is already in progress")
+
+        try:
+            _update_linked_recommendation_approval_tx(conn, current, approval_id, "rejected")
+            conn.execute(
+                "UPDATE pending_approvals "
+                "SET status = 'rejected', resolved_at = ?, resolved_note = ?, "
+                "application_status = 'not_applicable', application_completed_at = ?, application_error = NULL "
+                "WHERE id = ?",
+                (now, resolved_note, now, approval_id),
+            )
+            updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return _parse_pending_approval_row(updated)
+
+
+def _claim_approval_for_application(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval_id: int,
+) -> tuple[dict, bool]:
+    now = _now()
+    with _lock:
+        row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+        if not row:
+            raise ValueError(f"No pending approval with id {approval_id}")
+        current = _parse_pending_approval_row(row)
+        application_status = str(current.get("application_status") or "pending")
+        if current["status"] == "approved" and application_status == "applied":
+            return current, False
+        if current["status"] != "pending":
+            raise ValueError(f"Approval {approval_id} is already {current['status']}")
+        if application_status == "applying" and not _approval_application_is_stale(current):
+            raise ValueError(f"Approval {approval_id} application is already in progress")
+        if application_status not in {"pending", "failed", "applying"}:
+            raise ValueError(f"Approval {approval_id} cannot be applied from state {application_status}")
 
         conn.execute(
-            "UPDATE pending_approvals SET status = ?, resolved_at = ?, resolved_note = ? WHERE id = ?",
-            (status, now, resolved_note, approval_id),
+            "UPDATE pending_approvals "
+            "SET application_status = 'applying', application_attempts = COALESCE(application_attempts, 0) + 1, "
+            "application_started_at = ?, application_completed_at = NULL, application_error = NULL "
+            "WHERE id = ?",
+            (now, approval_id),
+        )
+        updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+        conn.commit()
+    return _parse_pending_approval_row(updated), True
+
+
+def _approval_application_is_stale(approval: dict) -> bool:
+    started_at = approval.get("application_started_at")
+    if not started_at:
+        return True
+    try:
+        started = datetime.fromisoformat(str(started_at))
+    except ValueError:
+        return True
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return datetime.now(UTC) - started >= APPROVAL_APPLICATION_LEASE
+
+
+def _mark_approval_application_failed(approval_id: int, exc: Exception) -> None:
+    conn = _get_conn()
+    now = _now()
+    error = _approval_error_message(exc)
+    with _lock:
+        conn.execute(
+            "UPDATE pending_approvals "
+            "SET application_status = 'failed', application_completed_at = ?, application_error = ? "
+            "WHERE id = ? AND status = 'pending'",
+            (now, error, approval_id),
         )
         conn.commit()
 
-    _parse_json_field(current, "proposed_change")
-    change = current.get("proposed_change")
-    if isinstance(change, dict) and change.get("recommendation_id") is not None:
-        try:
-            update_recommendation_approval(int(change["recommendation_id"]), approval_id, status)
-        except Exception:
-            logger.warning("Failed to update recommendation approval status", exc_info=True)
 
-    # Apply side effect if approved
-    if status == "approved":
-        _apply_approval_side_effect(current)
-
-    with _lock:
-        updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
-    d = _require_row_dict(updated)
-    _parse_json_field(d, "proposed_change")
-    return d
+def _approval_error_message(exc: Exception) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    return message[:1000]
 
 
-def _apply_approval_side_effect(approval: dict) -> None:
-    """Apply the side effect of an approved change."""
-    entity_type = approval["entity_type"]
-    change = approval.get("proposed_change", {})
-    if not isinstance(change, dict):
+def _approval_change(approval: dict) -> dict:
+    change = approval.get("proposed_change")
+    if isinstance(change, str):
         try:
             change = json.loads(change)
-        except Exception:
-            return
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("Approval proposed_change must be a JSON object") from exc
+    if not isinstance(change, dict):
+        raise ValueError("Approval proposed_change must be a JSON object")
+    return change
 
-    if entity_type == "thesis_status":
-        from portfolio.thesis_db import update_thesis_status
 
-        update_thesis_status(
-            change.get("ticker", approval.get("ticker", "")),
-            change.get("new_status", ""),
-            change.get("reason", ""),
-        )
+def _update_linked_recommendation_approval_tx(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    approval_id: int,
+    approval_status: str,
+) -> None:
+    change = approval.get("proposed_change")
+    if not isinstance(change, dict) or change.get("recommendation_id") is None:
+        return
+    _update_recommendation_approval_tx(conn, int(change["recommendation_id"]), approval_id, approval_status)
 
-    elif entity_type == "evaluation":
-        from portfolio.thesis_db import save_evaluations
 
-        evaluated_at = change.get("evaluated_at", _now())
-        evaluations = change.get("evaluations", [change])
-        save_evaluations(evaluated_at, evaluations)
+def _apply_approval_side_effect_tx(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    entity_type = str(approval.get("entity_type") or "")
+    handler = _APPROVAL_SIDE_EFFECT_HANDLERS.get(entity_type)
+    if handler is None:
+        raise ValueError(f"Unsupported approval entity_type: {entity_type}")
+    handler(conn, approval, _approval_change(approval), callbacks)
 
-    elif entity_type == "catalyst_status":
-        catalyst_id = change.get("catalyst_id") or approval.get("entity_id")
-        if catalyst_id:
-            update_catalyst_status(
-                int(catalyst_id),
-                change.get("status", "played_out"),
-                change.get("evidence"),
-            )
 
-    elif entity_type == "kill_condition_status":
-        kc_id = change.get("kill_condition_id") or approval.get("entity_id")
-        if kc_id:
-            update_kill_condition_status(int(kc_id), change.get("status", "triggered"))
-
-    elif entity_type == "action_item":
-        create_action_item(
-            description=change.get("description", ""),
-            action_type=change.get("action_type", "review"),
-            ticker=change.get("ticker", approval.get("ticker")),
-            urgency=change.get("urgency", "normal"),
-            source_type=approval.get("source_type", "workflow"),
-            source_id=approval.get("source_id"),
-        )
-
-    elif entity_type == "watch_trigger":
-        create_watch_trigger(
-            condition=change.get("condition", ""),
-            trigger_type=change.get("trigger_type", "custom"),
-            ticker=change.get("ticker", approval.get("ticker")),
-            source_type=approval.get("source_type", "workflow"),
-            source_id=approval.get("source_id"),
-            expires_at=change.get("expires_at"),
-            definition=change.get("definition"),
-        )
-
-    elif entity_type == "portfolio_positions":
-        from api.routers.portfolio_edit import PortfolioUpdateRequest, update_portfolio_positions
-
-        update_portfolio_positions(PortfolioUpdateRequest(positions=change.get("positions") or []))
-
-    elif entity_type == "hedge_positions":
-        from api.routers.portfolio_edit import HedgeUpdateRequest, update_hedge_positions
-
-        update_hedge_positions(HedgeUpdateRequest(positions=change.get("positions") or []))
-
-    elif entity_type == "thesis_content":
-        from api.routers.thesis import SaveThesisRequest, save_thesis
-
-        save_thesis(
-            str(change.get("ticker") or approval.get("ticker") or ""),
-            SaveThesisRequest(content=change.get("content", "")),
-        )
-
-    elif entity_type == "catalyst":
-        result = create_catalyst(
-            ticker=change.get("ticker", approval.get("ticker", "")),
-            description=change.get("description", ""),
-            category=change.get("category", "fundamental"),
-            target_date=change.get("target_date"),
-            created_by="agent",
-        )
+def _run_approval_post_commit_callbacks(callbacks: list[ApprovalPostCommitCallback]) -> None:
+    for callback in callbacks:
         try:
-            from portfolio.thesis_sync import sync_markdown_from_entities
-
-            sync_markdown_from_entities(result["ticker"])
+            callback()
         except Exception:
-            pass
+            logger.warning("Approval post-commit callback failed", exc_info=True)
 
-    elif entity_type == "kill_condition":
-        result = create_kill_condition(
-            ticker=change.get("ticker", approval.get("ticker", "")),
-            condition=change.get("condition", ""),
-            metric=change.get("metric"),
-            threshold=change.get("threshold"),
-            created_by="agent",
-        )
-        try:
-            from portfolio.thesis_sync import sync_markdown_from_entities
 
-            sync_markdown_from_entities(result["ticker"])
-        except Exception:
-            pass
+def _optional_ticker(value: Any) -> str | None:
+    ticker = str(value or "").strip().upper()
+    return ticker or None
 
-    elif entity_type == "research_note":
-        create_research_note(
-            title=change.get("title", ""),
-            content=change.get("content", ""),
-            ticker=change.get("ticker", approval.get("ticker")),
-            note_type=change.get("note_type", "general"),
-            source_type=approval.get("source_type", "workflow"),
-            source_id=approval.get("source_id"),
-        )
 
-    elif entity_type == "news_digest_delete":
-        from api.routers.portfolio_news import delete_portfolio_news_digest
+def _required_ticker(value: Any, entity_type: str) -> str:
+    ticker = _optional_ticker(value)
+    if not ticker:
+        raise ValueError(f"{entity_type} approval requires ticker")
+    return ticker
 
-        delete_portfolio_news_digest(str(change.get("digest_id") or ""))
+
+def _sync_markdown_callback(ticker: str) -> ApprovalPostCommitCallback:
+    def _callback() -> None:
+        from portfolio.thesis_sync import sync_markdown_from_entities
+
+        sync_markdown_from_entities(ticker)
+
+    return _callback
+
+
+def _handle_thesis_status_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del conn, callbacks
+    ticker = _required_ticker(change.get("ticker") or approval.get("ticker"), "thesis_status")
+    new_status = str(change.get("new_status") or "").strip().lower()
+    if not new_status:
+        raise ValueError("thesis_status approval requires new_status")
+    reason = str(change.get("reason") or "")
+
+    from portfolio.thesis_db import get_thesis_meta, update_thesis_status
+
+    current = get_thesis_meta(ticker)
+    if current and current.get("status") == new_status:
+        return
+    update_thesis_status(ticker, new_status, reason)
+
+
+def _handle_evaluation_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del conn, approval, callbacks
+    from portfolio.thesis_db import save_evaluations
+
+    evaluated_at = str(change.get("evaluated_at") or _now())
+    evaluations = change.get("evaluations", [change])
+    if not isinstance(evaluations, list):
+        raise ValueError("evaluation approval requires evaluations to be a list")
+    save_evaluations(evaluated_at, evaluations)
+
+
+def _handle_catalyst_status_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del callbacks
+    catalyst_id = change.get("catalyst_id") or approval.get("entity_id")
+    if not catalyst_id:
+        raise ValueError("catalyst_status approval requires catalyst_id")
+    now = _now()
+    row = conn.execute("SELECT * FROM catalysts WHERE id = ?", (int(catalyst_id),)).fetchone()
+    if not row:
+        raise ValueError(f"No catalyst with id {catalyst_id}")
+    updates = {"status": change.get("status", "played_out"), "updated_at": now}
+    if change.get("evidence") is not None:
+        updates["evidence"] = change.get("evidence")
+    set_clause = ", ".join(f"{key} = ?" for key in updates)
+    conn.execute(f"UPDATE catalysts SET {set_clause} WHERE id = ?", (*updates.values(), int(catalyst_id)))
+
+
+def _handle_kill_condition_status_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del callbacks
+    kc_id = change.get("kill_condition_id") or approval.get("entity_id")
+    if not kc_id:
+        raise ValueError("kill_condition_status approval requires kill_condition_id")
+    now = _now()
+    row = conn.execute("SELECT * FROM kill_conditions WHERE id = ?", (int(kc_id),)).fetchone()
+    if not row:
+        raise ValueError(f"No kill condition with id {kc_id}")
+    current = _require_row_dict(row)
+    status = change.get("status", "triggered")
+    triggered_at = now if status == "triggered" else current.get("triggered_at")
+    conn.execute(
+        "UPDATE kill_conditions SET status = ?, triggered_at = ?, updated_at = ? WHERE id = ?",
+        (status, triggered_at, now, int(kc_id)),
+    )
+
+
+def _handle_action_item_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del callbacks
+    now = _now()
+    conn.execute(
+        "INSERT INTO action_items (ticker, action_type, description, urgency, source_type, source_id, created_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            _optional_ticker(change.get("ticker") or approval.get("ticker")),
+            change.get("action_type", "review"),
+            change.get("description", ""),
+            change.get("urgency", "normal"),
+            approval.get("source_type", "workflow"),
+            approval.get("source_id"),
+            now,
+        ),
+    )
+
+
+def _handle_watch_trigger_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del callbacks
+    now = _now()
+    trigger_type = str(change.get("trigger_type") or "custom").strip().lower()
+    if trigger_type not in WATCH_TRIGGER_TYPES:
+        raise ValueError(f"Invalid watch trigger type: {trigger_type}")
+    definition = change.get("definition")
+    definition_json = json.dumps(definition, default=str) if definition else None
+    conn.execute(
+        "INSERT INTO watch_triggers (ticker, trigger_type, condition, source_type, source_id, created_at, expires_at, definition_json) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            _optional_ticker(change.get("ticker") or approval.get("ticker")),
+            trigger_type,
+            change.get("condition", ""),
+            approval.get("source_type", "workflow"),
+            approval.get("source_id"),
+            now,
+            change.get("expires_at"),
+            definition_json,
+        ),
+    )
+
+
+def _handle_portfolio_positions_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del conn, approval, callbacks
+    from api.routers.portfolio_edit import PortfolioUpdateRequest, update_portfolio_positions
+
+    update_portfolio_positions(PortfolioUpdateRequest(positions=change.get("positions") or []))
+
+
+def _handle_hedge_positions_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del conn, approval, callbacks
+    from api.routers.portfolio_edit import HedgeUpdateRequest, update_hedge_positions
+
+    update_hedge_positions(HedgeUpdateRequest(positions=change.get("positions") or []))
+
+
+def _handle_thesis_content_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del conn, callbacks
+    from api.routers.thesis import SaveThesisRequest, save_thesis
+
+    save_thesis(
+        _required_ticker(change.get("ticker") or approval.get("ticker"), "thesis_content"),
+        SaveThesisRequest(content=change.get("content", "")),
+    )
+
+
+def _handle_catalyst_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    now = _now()
+    ticker = _required_ticker(change.get("ticker") or approval.get("ticker"), "catalyst")
+    conn.execute(
+        "INSERT INTO catalysts (ticker, description, category, target_date, evidence, created_at, updated_at, created_by) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            ticker,
+            change.get("description", ""),
+            change.get("category", "fundamental"),
+            change.get("target_date"),
+            change.get("evidence"),
+            now,
+            now,
+            "agent",
+        ),
+    )
+    callbacks.append(_sync_markdown_callback(ticker))
+
+
+def _handle_kill_condition_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    now = _now()
+    ticker = _required_ticker(change.get("ticker") or approval.get("ticker"), "kill_condition")
+    conn.execute(
+        "INSERT INTO kill_conditions (ticker, condition, metric, threshold, created_at, updated_at, created_by) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            ticker,
+            change.get("condition", ""),
+            change.get("metric"),
+            change.get("threshold"),
+            now,
+            now,
+            "agent",
+        ),
+    )
+    callbacks.append(_sync_markdown_callback(ticker))
+
+
+def _handle_research_note_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del callbacks
+    now = _now()
+    conn.execute(
+        "INSERT INTO research_notes (ticker, title, content, note_type, source_type, source_id, created_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            _optional_ticker(change.get("ticker") or approval.get("ticker")),
+            change.get("title", ""),
+            change.get("content", ""),
+            change.get("note_type", "general"),
+            approval.get("source_type", "workflow"),
+            approval.get("source_id"),
+            now,
+        ),
+    )
+
+
+def _handle_news_digest_delete_approval(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    approval: dict,
+    change: dict,
+    callbacks: list[ApprovalPostCommitCallback],
+) -> None:
+    del conn, approval
+    from api.routers.portfolio_news import _delete_digest_index_best_effort
+    from portfolio.news_digests import delete_digest, validate_digest_id
+
+    digest_id = validate_digest_id(str(change.get("digest_id") or ""))
+    deleted = delete_digest(digest_id)
+    if deleted:
+        callbacks.append(lambda digest_id=digest_id: _delete_digest_index_best_effort(digest_id))
+
+
+_APPROVAL_SIDE_EFFECT_HANDLERS: dict[str, ApprovalSideEffectHandler] = {
+    "thesis_status": _handle_thesis_status_approval,
+    "evaluation": _handle_evaluation_approval,
+    "catalyst_status": _handle_catalyst_status_approval,
+    "kill_condition_status": _handle_kill_condition_status_approval,
+    "action_item": _handle_action_item_approval,
+    "watch_trigger": _handle_watch_trigger_approval,
+    "portfolio_positions": _handle_portfolio_positions_approval,
+    "hedge_positions": _handle_hedge_positions_approval,
+    "thesis_content": _handle_thesis_content_approval,
+    "catalyst": _handle_catalyst_approval,
+    "kill_condition": _handle_kill_condition_approval,
+    "research_note": _handle_research_note_approval,
+    "news_digest_delete": _handle_news_digest_delete_approval,
+}

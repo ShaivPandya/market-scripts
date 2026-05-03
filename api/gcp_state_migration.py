@@ -193,6 +193,25 @@ def _sqlite_count(db_path: Path, table: str) -> int:
         return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
+def _normalize_pending_approval_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in rows:
+        status = row.get("status")
+        application_status = row.get("application_status")
+        if application_status is None:
+            if status == "approved":
+                application_status = "applied"
+            elif status in {"rejected", "expired"}:
+                application_status = "not_applicable"
+            else:
+                application_status = "pending"
+            row["application_status"] = application_status
+        if row.get("application_attempts") is None:
+            row["application_attempts"] = 0
+        if application_status in {"applied", "not_applicable"} and row.get("application_completed_at") is None:
+            row["application_completed_at"] = row.get("resolved_at") or row.get("created_at")
+    return rows
+
+
 def _sqlite_table_exists(db_path: Path, table: str) -> bool:
     with sqlite3.connect(str(db_path)) as conn:
         row = conn.execute(
@@ -536,6 +555,11 @@ class StateMigrator:
                 "created_at",
                 "resolved_at",
                 "resolved_note",
+                "application_status",
+                "application_attempts",
+                "application_started_at",
+                "application_completed_at",
+                "application_error",
             ],
             "recommendations": [
                 "id",
@@ -585,7 +609,10 @@ class StateMigrator:
             return SourceResult("core", source_hash, counts)
         for table, columns in tables.items():
             conflict = ["run_id"] if table == "workflow_runs" else ["report_id"] if table == "report_runs" else ["id"]
-            self._upsert_rows(table, columns, conflict, _sqlite_rows(db, table))
+            rows = _sqlite_rows(db, table)
+            if table == "pending_approvals":
+                rows = _normalize_pending_approval_rows(rows)
+            self._upsert_rows(table, columns, conflict, rows)
         for table in [t for t in tables if t not in {"workflow_runs", "report_runs"}]:
             self._reset_identity(table)
         result = SourceResult("core", source_hash, counts)

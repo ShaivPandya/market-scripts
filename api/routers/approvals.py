@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from api.exceptions import NotFoundError, ValidationError
+from api.exceptions import ConflictError, NotFoundError, ValidationError
 
 router = APIRouter()
 
@@ -25,12 +23,18 @@ class BulkResolveRequest(BaseModel):
 def list_approvals(
     status: str | None = "pending",
     ticker: str | None = None,
+    application_status: str | None = None,
 ):
     from portfolio.core_db import get_pending_approvals
 
     if status == "all":
         status = None
-    approvals = get_pending_approvals(status=status, ticker=ticker)
+    if application_status == "all":
+        application_status = None
+    try:
+        approvals = get_pending_approvals(status=status, ticker=ticker, application_status=application_status)
+    except ValueError as e:
+        raise ValidationError(str(e)) from e
     return {"approvals": approvals, "count": len(approvals)}
 
 
@@ -46,10 +50,12 @@ def get_approval(approval_id: int):
 
 @router.post("/approvals/{approval_id}/approve")
 def approve_item(approval_id: int, body: ResolveRequest | None = None):
-    from portfolio.core_db import resolve_approval
+    from portfolio.core_db import ApprovalApplicationError, resolve_approval
 
     try:
         return resolve_approval(approval_id, "approved", body.note if body else None)
+    except ApprovalApplicationError as e:
+        raise ConflictError(str(e)) from e
     except ValueError as e:
         if "not found" in str(e).lower() or "No pending" in str(e):
             raise NotFoundError("Approval", str(approval_id)) from e
@@ -70,15 +76,17 @@ def reject_item(approval_id: int, body: ResolveRequest | None = None):
 
 @router.post("/approvals/bulk-approve")
 def bulk_approve(body: BulkResolveRequest):
-    from portfolio.core_db import resolve_approval
+    from portfolio.core_db import ApprovalApplicationError, resolve_approval
 
     results = []
     for aid in body.ids:
         try:
             resolve_approval(aid, "approved", body.note)
             results.append({"id": aid, "status": "approved"})
-        except ValueError:
-            results.append({"id": aid, "status": "error", "message": "Not found or already resolved"})
+        except ApprovalApplicationError as e:
+            results.append({"id": aid, "status": "failed", "message": str(e)})
+        except ValueError as e:
+            results.append({"id": aid, "status": "error", "message": str(e) or "Not found or already resolved"})
     return {"results": results}
 
 
@@ -91,6 +99,6 @@ def bulk_reject(body: BulkResolveRequest):
         try:
             resolve_approval(aid, "rejected", body.note)
             results.append({"id": aid, "status": "rejected"})
-        except ValueError:
-            results.append({"id": aid, "status": "error", "message": "Not found or already resolved"})
+        except ValueError as e:
+            results.append({"id": aid, "status": "error", "message": str(e) or "Not found or already resolved"})
     return {"results": results}

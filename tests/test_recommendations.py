@@ -235,7 +235,43 @@ def test_persist_actionable_recommendation_creates_pending_approval(temp_core_db
     core_db.resolve_approval(approvals[0]["id"], "approved")
     updated = core_db.get_recommendation(rows[0]["id"])
     assert updated["approval_status"] == "approved"
+    resolved = core_db.get_pending_approval(approvals[0]["id"])
+    assert resolved["status"] == "approved"
+    assert resolved["application_status"] == "applied"
     assert core_db.get_action_items(status="open")[0]["source_id"] == "daily:2026-05-02"
+
+
+def test_recommendation_approval_failure_keeps_state_pending_and_retryable(temp_core_db, monkeypatch):
+    rows = persist_recommendations(
+        _valid_payload("buy"),
+        source_report_path="/tmp/recommendations.md",
+        source_json_path="/tmp/recommendations.json",
+        prompt_metadata={"model": "test", "prompt_hash": "p", "input_hash": "i", "validation_status": "ok"},
+    )
+    approval = core_db.get_pending_approvals(status="pending")[0]
+    original = core_db._APPROVAL_SIDE_EFFECT_HANDLERS["action_item"]
+
+    def fail_after_insert(conn, current, change, callbacks):
+        original(conn, current, change, callbacks)
+        raise RuntimeError("recommendation apply failed")
+
+    monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", fail_after_insert)
+    with pytest.raises(core_db.ApprovalApplicationError, match="recommendation apply failed"):
+        core_db.resolve_approval(approval["id"], "approved")
+
+    failed_approval = core_db.get_pending_approval(approval["id"])
+    failed_recommendation = core_db.get_recommendation(rows[0]["id"])
+    assert failed_approval["status"] == "pending"
+    assert failed_approval["application_status"] == "failed"
+    assert failed_recommendation["approval_status"] == "pending"
+    assert core_db.get_action_items(status="open") == []
+
+    monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", original)
+    core_db.resolve_approval(approval["id"], "approved")
+
+    updated_recommendation = core_db.get_recommendation(rows[0]["id"])
+    assert updated_recommendation["approval_status"] == "approved"
+    assert len(core_db.get_action_items(status="open")) == 1
 
 
 def test_persist_do_nothing_recommendation_does_not_create_approval(temp_core_db):

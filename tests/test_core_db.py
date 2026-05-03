@@ -248,6 +248,7 @@ class TestPendingApprovals:
         )
         resolved = core_db.resolve_approval(approval["id"], "rejected", "Not needed")
         assert resolved["status"] == "rejected"
+        assert resolved["application_status"] == "not_applicable"
         assert resolved["resolved_note"] == "Not needed"
 
     def test_resolve_already_resolved_raises(self):
@@ -270,6 +271,130 @@ class TestPendingApprovals:
         items = core_db.get_action_items(ticker="MU")
         assert len(items) == 1
         assert items[0]["description"] == "Review MU thesis"
+        updated = core_db.get_pending_approval(approval["id"])
+        assert updated["status"] == "approved"
+        assert updated["application_status"] == "applied"
+        assert updated["application_attempts"] == 1
+        assert updated["application_error"] is None
+
+    def test_approve_failure_rolls_back_side_effect_and_can_retry(self, monkeypatch):
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+        )
+        original = core_db._APPROVAL_SIDE_EFFECT_HANDLERS["action_item"]
+
+        def fail_after_insert(conn, current, change, callbacks):
+            original(conn, current, change, callbacks)
+            raise RuntimeError("forced apply failure")
+
+        monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", fail_after_insert)
+
+        with pytest.raises(core_db.ApprovalApplicationError, match="forced apply failure"):
+            core_db.resolve_approval(approval["id"], "approved")
+
+        assert core_db.get_action_items(ticker="MU") == []
+        failed = core_db.get_pending_approval(approval["id"])
+        assert failed["status"] == "pending"
+        assert failed["application_status"] == "failed"
+        assert failed["application_attempts"] == 1
+        assert "forced apply failure" in failed["application_error"]
+
+        monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", original)
+        resolved = core_db.resolve_approval(approval["id"], "approved")
+
+        items = core_db.get_action_items(ticker="MU")
+        assert len(items) == 1
+        assert items[0]["description"] == "Review MU thesis"
+        assert resolved["status"] == "approved"
+        assert resolved["application_status"] == "applied"
+        assert resolved["application_attempts"] == 2
+
+    def test_approve_already_applied_is_idempotent(self):
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+        )
+        first = core_db.resolve_approval(approval["id"], "approved")
+        second = core_db.resolve_approval(approval["id"], "approved")
+
+        assert first["status"] == "approved"
+        assert second["status"] == "approved"
+        assert second["application_status"] == "applied"
+        assert second["application_attempts"] == 1
+        assert len(core_db.get_action_items(ticker="MU")) == 1
+
+    def test_reject_after_failed_apply_marks_not_applicable(self, monkeypatch):
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+        )
+
+        def fail_apply(conn, current, change, callbacks):
+            raise RuntimeError("cannot apply")
+
+        monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", fail_apply)
+        with pytest.raises(core_db.ApprovalApplicationError):
+            core_db.resolve_approval(approval["id"], "approved")
+
+        rejected = core_db.resolve_approval(approval["id"], "rejected", "Skip it")
+        assert rejected["status"] == "rejected"
+        assert rejected["application_status"] == "not_applicable"
+        assert rejected["resolved_note"] == "Skip it"
+
+    def test_approve_endpoint_surfaces_application_failure_as_conflict(self, monkeypatch):
+        from api.exceptions import ConflictError
+        from api.routers.approvals import approve_item
+
+        approval = core_db.create_pending_approval(
+            entity_type="action_item",
+            proposed_change={"description": "Review MU thesis", "action_type": "review", "ticker": "MU"},
+            ticker="MU",
+        )
+
+        def fail_apply(conn, current, change, callbacks):
+            raise RuntimeError("cannot apply")
+
+        monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", fail_apply)
+        with pytest.raises(ConflictError) as exc:
+            approve_item(approval["id"])
+
+        assert exc.value.status_code == 409
+        assert "cannot apply" in exc.value.message
+
+    def test_unknown_entity_type_fails_retryably(self):
+        approval = core_db.create_pending_approval(
+            entity_type="unknown_entity",
+            proposed_change={"description": "No handler"},
+        )
+
+        with pytest.raises(core_db.ApprovalApplicationError, match="Unsupported approval entity_type"):
+            core_db.resolve_approval(approval["id"], "approved")
+
+        failed = core_db.get_pending_approval(approval["id"])
+        assert failed["status"] == "pending"
+        assert failed["application_status"] == "failed"
+        assert failed["application_attempts"] == 1
+
+    def test_malformed_proposed_change_fails_retryably(self):
+        conn = core_db._get_conn()
+        with core_db._lock:
+            cur = conn.execute(
+                "INSERT INTO pending_approvals (entity_type, proposed_change, source_type, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("action_item", "{not-json", "workflow", "pending", "2026-05-03T00:00:00+00:00"),
+            )
+            conn.commit()
+
+        with pytest.raises(core_db.ApprovalApplicationError, match="proposed_change"):
+            core_db.resolve_approval(cur.lastrowid, "approved")
+
+        failed = core_db.get_pending_approval(cur.lastrowid)
+        assert failed["status"] == "pending"
+        assert failed["application_status"] == "failed"
 
     def test_approve_creates_watch_trigger(self):
         approval = core_db.create_pending_approval(
