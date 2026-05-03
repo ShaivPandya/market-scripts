@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from api.exceptions import NotFoundError, ValidationError
+from api.action_execution import execute_api_action
 
 router = APIRouter()
 
@@ -37,39 +37,20 @@ def list_catalysts(ticker: str):
 
 @router.post("/catalysts")
 def create_catalyst(body: CreateCatalystRequest):
-    from portfolio.core_db import create_catalyst
-
-    result = create_catalyst(
-        ticker=body.ticker,
-        description=body.description,
-        category=body.category,
-        target_date=body.target_date,
-        created_by="user",
+    return execute_api_action(
+        "create_catalyst",
+        body.model_dump(),
+        source_id="process_entities.create_catalyst",
     )
-    try:
-        from portfolio.thesis_sync import sync_markdown_from_entities
-
-        sync_markdown_from_entities(body.ticker)
-    except Exception:
-        pass
-    return result
 
 
 @router.put("/catalysts/{catalyst_id}/status")
 def update_catalyst_status(catalyst_id: int, body: UpdateCatalystStatusRequest):
-    from portfolio.core_db import update_catalyst_status
-
-    try:
-        result = update_catalyst_status(catalyst_id, body.status, body.evidence)
-    except ValueError as e:
-        raise NotFoundError("Catalyst", str(catalyst_id)) from e
-    try:
-        from portfolio.thesis_sync import sync_markdown_from_entities
-
-        sync_markdown_from_entities(result["ticker"])
-    except Exception:
-        pass
-    return result
+    return execute_api_action(
+        "update_catalyst_status",
+        {"catalyst_id": catalyst_id, "status": body.status, "evidence": body.evidence},
+        source_id="process_entities.update_catalyst_status",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -98,22 +79,11 @@ def list_kill_conditions(ticker: str):
 
 @router.post("/kill-conditions")
 def create_kill_condition(body: CreateKillConditionRequest):
-    from portfolio.core_db import create_kill_condition
-
-    result = create_kill_condition(
-        ticker=body.ticker,
-        condition=body.condition,
-        metric=body.metric,
-        threshold=body.threshold,
-        created_by="user",
+    return execute_api_action(
+        "create_kill_condition",
+        body.model_dump(),
+        source_id="process_entities.create_kill_condition",
     )
-    try:
-        from portfolio.thesis_sync import sync_markdown_from_entities
-
-        sync_markdown_from_entities(body.ticker)
-    except Exception:
-        pass
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -166,24 +136,6 @@ def _source_requirements_payload(values: list[SourceRequirementInput] | None) ->
     return result
 
 
-def _sync_claim_markdown(ticker: str | None) -> None:
-    if not ticker:
-        return
-    try:
-        from portfolio.thesis_sync import sync_markdown_from_entities
-
-        sync_markdown_from_entities(ticker)
-    except Exception:
-        pass
-
-
-def _raise_claim_error(exc: ValueError, claim_id: int | None = None) -> None:
-    message = str(exc)
-    if message.startswith("No thesis claim") and claim_id is not None:
-        raise NotFoundError("Thesis claim", str(claim_id)) from exc
-    raise ValidationError(message) from exc
-
-
 @router.get("/thesis-claims")
 def list_thesis_claims(
     ticker: str | None = None,
@@ -198,57 +150,41 @@ def list_thesis_claims(
 
 @router.post("/thesis-claims")
 def create_thesis_claim(body: CreateThesisClaimRequest):
-    from portfolio.core_db import create_thesis_claim
-
-    try:
-        result = create_thesis_claim(
-            {
-                "ticker": body.ticker,
-                "claim": body.claim,
-                "expected_evidence": body.expected_evidence,
-                "disconfirming_evidence": body.disconfirming_evidence,
-                "source_requirements": _source_requirements_payload(body.source_requirements),
-                "cadence": body.cadence,
-                "confidence": body.confidence,
-                "status": body.status,
-                "linked_catalyst_ids": body.linked_catalyst_ids,
-                "linked_kill_condition_ids": body.linked_kill_condition_ids,
-                "source_type": "user",
-            }
-        )
-    except ValueError as e:
-        _raise_claim_error(e)
-    _sync_claim_markdown(result.get("ticker"))
-    return result
+    return execute_api_action(
+        "create_thesis_claim",
+        {
+            "ticker": body.ticker,
+            "claim": body.claim,
+            "expected_evidence": body.expected_evidence,
+            "disconfirming_evidence": body.disconfirming_evidence,
+            "source_requirements": _source_requirements_payload(body.source_requirements),
+            "cadence": body.cadence,
+            "confidence": body.confidence,
+            "status": body.status,
+            "linked_catalyst_ids": body.linked_catalyst_ids,
+            "linked_kill_condition_ids": body.linked_kill_condition_ids,
+            "source_type": "user",
+        },
+        source_id="process_entities.create_thesis_claim",
+    )
 
 
 @router.put("/thesis-claims/{claim_id}")
 def update_thesis_claim(claim_id: int, body: UpdateThesisClaimRequest):
-    from portfolio.core_db import update_thesis_claim
-
     updates = body.model_dump(exclude_unset=True)
     if "source_requirements" in updates:
         updates["source_requirements"] = _source_requirements_payload(body.source_requirements)
-    try:
-        result = update_thesis_claim(claim_id, updates)
-    except ValueError as e:
-        _raise_claim_error(e, claim_id)
-    _sync_claim_markdown(result.get("ticker"))
-    return result
+    return execute_api_action(
+        "update_thesis_claim",
+        {"claim_id": claim_id, **updates},
+        source_id="process_entities.update_thesis_claim",
+    )
 
 
 @router.put("/kill-conditions/{kc_id}/status")
 def update_kill_condition_status(kc_id: int, body: UpdateKillConditionStatusRequest):
-    from portfolio.core_db import update_kill_condition_status
-
-    try:
-        result = update_kill_condition_status(kc_id, body.status)
-    except ValueError as e:
-        raise NotFoundError("Kill condition", str(kc_id)) from e
-    try:
-        from portfolio.thesis_sync import sync_markdown_from_entities
-
-        sync_markdown_from_entities(result["ticker"])
-    except Exception:
-        pass
-    return result
+    return execute_api_action(
+        "update_kill_condition_status",
+        {"kill_condition_id": kc_id, "status": body.status},
+        source_id="process_entities.update_kill_condition_status",
+    )

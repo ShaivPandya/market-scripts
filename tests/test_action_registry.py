@@ -145,3 +145,175 @@ def test_thesis_status_action_noops_same_status_without_history_row():
 
     assert result.output["changed"] is False
     assert len(thesis_db.get_status_history("MU")) == 1
+
+
+def test_process_actions_write_entities_and_run_markdown_callbacks(monkeypatch):
+    synced: list[str] = []
+
+    monkeypatch.setattr(
+        "portfolio.thesis_sync.sync_markdown_from_entities",
+        lambda ticker: synced.append(ticker),
+    )
+
+    catalyst = execute_action(
+        "create_catalyst",
+        {"ticker": "mu", "description": "HBM ramp", "category": "fundamental"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+    updated_catalyst = execute_action(
+        "update_catalyst_status",
+        {"catalyst_id": catalyst["id"], "status": "played_out", "evidence": "Confirmed"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+    kill_condition = execute_action(
+        "create_kill_condition",
+        {"ticker": "mu", "condition": "Demand rolls", "metric": "orders"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+    updated_kill_condition = execute_action(
+        "update_kill_condition_status",
+        {"kill_condition_id": kill_condition["id"], "status": "triggered"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+
+    assert updated_catalyst["status"] == "played_out"
+    assert updated_kill_condition["status"] == "triggered"
+    assert core_db.get_catalysts("MU")[0]["description"] == "HBM ramp"
+    assert core_db.get_kill_conditions("MU")[0]["condition"] == "Demand rolls"
+    assert synced == ["MU", "MU", "MU", "MU"]
+
+
+def test_action_item_and_watch_trigger_actions_cover_lifecycle():
+    action = execute_action(
+        "create_action_item",
+        {"description": "Review MU", "action_type": "review", "ticker": "mu", "urgency": "high"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+    completed = execute_action(
+        "complete_action_item",
+        {"item_id": action["id"], "resolution_note": "Done"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+    dismissed = execute_action(
+        "dismiss_action_item",
+        {
+            "item_id": execute_action(
+                "create_action_item",
+                {"description": "Dismiss me"},
+                ActionContext(actor_type="user", source_type="api", source_id="test"),
+            ).output["id"]
+        },
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+
+    trigger = execute_action(
+        "create_watch_trigger",
+        {"condition": "MU > 150", "trigger_type": "price_level", "ticker": "mu"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+    fired = execute_action(
+        "fire_watch_trigger",
+        {"trigger_id": trigger["id"], "result": {"price": 151}, "evidence": "Breakout"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+    cancelled = execute_action(
+        "cancel_watch_trigger",
+        {
+            "trigger_id": execute_action(
+                "create_watch_trigger",
+                {"condition": "Cancel me", "trigger_type": "custom"},
+                ActionContext(actor_type="user", source_type="api", source_id="test"),
+            ).output["id"]
+        },
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+
+    assert completed["status"] == "completed"
+    assert completed["resolution_note"] == "Done"
+    assert dismissed["status"] == "dismissed"
+    assert fired["status"] == "fired"
+    assert fired["last_result"] == {"price": 151}
+    assert cancelled["status"] == "cancelled"
+
+
+def test_thesis_claim_actions_normalize_sources_and_not_found_errors(monkeypatch):
+    monkeypatch.setattr("portfolio.thesis_sync.sync_markdown_from_entities", lambda _ticker: None)
+    created = execute_action(
+        "create_thesis_claim",
+        {
+            "ticker": "mu",
+            "claim": "HBM stays tight",
+            "source_requirements": ["earnings"],
+            "confidence": 0.6,
+        },
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+
+    updated = execute_action(
+        "update_thesis_claim",
+        {"claim_id": created["id"], "status": "supported", "confidence": 0.8},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+
+    assert updated["status"] == "supported"
+    assert updated["source_requirements"][0]["description"] == "earnings"
+    with pytest.raises(ActionValidationError, match="confidence"):
+        execute_action(
+            "create_thesis_claim",
+            {"ticker": "MU", "claim": "Bad", "confidence": 2},
+            ActionContext(actor_type="user", source_type="api", source_id="test"),
+        )
+
+
+def test_save_thesis_content_action_writes_meta_and_runs_callbacks(monkeypatch, tmp_path):
+    import portfolio.thesis_content as thesis_content
+
+    indexed: list[tuple[str, str]] = []
+    synced: list[str] = []
+    thesis_dir = tmp_path / "investment_theses"
+    thesis_dir.mkdir()
+    monkeypatch.setattr(thesis_content, "THESES_DIR", thesis_dir)
+    monkeypatch.setattr(
+        "api.retrieval.index_document",
+        lambda **kwargs: indexed.append((kwargs["ticker"], kwargs["content"])),
+    )
+    monkeypatch.setattr(
+        "portfolio.thesis_sync.sync_entities_from_markdown",
+        lambda ticker: synced.append(ticker),
+    )
+
+    result = execute_action(
+        "save_thesis_content",
+        {"ticker": "mu", "content": "# MU\n\n## Thesis\n- Good"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+
+    assert result == {"status": "ok", "ticker": "MU", "content": "# MU\n\n## Thesis\n- Good"}
+    assert (thesis_dir / "MU.md").read_text(encoding="utf-8").endswith("\n")
+    assert thesis_db.get_thesis_meta("MU")["status"] == "active"
+    assert indexed == [("MU", "# MU\n\n## Thesis\n- Good")]
+    assert synced == ["MU"]
+
+
+def test_resolve_approval_action_applies_action_backed_approval_without_duplicate_top_level_run():
+    approval = propose_action(
+        "create_action_item",
+        {"description": "Review MU", "ticker": "MU"},
+        ActionContext(actor_type="workflow", source_type="workflow", source_id="run-1"),
+        reason="Workflow generated",
+    )
+
+    resolved = execute_action(
+        "resolve_approval",
+        {"approval_id": approval["id"], "status": "approved", "note": "Apply"},
+        ActionContext(actor_type="user", source_type="api", source_id="test"),
+    ).output
+
+    assert resolved["status"] == "approved"
+    assert resolved["application_status"] == "applied"
+    assert core_db.get_action_items(ticker="MU")[0]["description"] == "Review MU"
+    resolve_runs = core_db.get_action_runs("resolve_approval")
+    child_runs = core_db.get_action_runs("create_action_item", approval_id=approval["id"])
+    assert len(resolve_runs) == 1
+    assert len(child_runs) == 1
+    assert child_runs[0]["parent_action_run_id"] == resolve_runs[0]["id"]

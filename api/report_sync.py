@@ -112,7 +112,7 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
 
 
 def _create_watch_trigger_approvals(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.core_db import create_pending_approval_once
+    from portfolio.action_registry import ActionContext, propose_action
 
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     count = 0
@@ -120,17 +120,17 @@ def _create_watch_trigger_approvals(report_type: str, as_of: str, report_id: str
         condition_s = str(condition).strip()
         if not condition_s:
             continue
-        create_pending_approval_once(
-            entity_type="watch_trigger",
-            proposed_change={
+        propose_action(
+            "create_watch_trigger",
+            {
                 "condition": condition_s,
                 "trigger_type": "macro",
                 "ticker": None,
                 "definition": None,
             },
+            ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id),
             reason=f"{report_type.title()} report watch trigger ({as_of})",
-            source_type="workflow",
-            source_id=report_id,
+            once=True,
         )
         count += 1
     return count

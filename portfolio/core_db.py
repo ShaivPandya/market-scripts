@@ -2243,6 +2243,22 @@ def resolve_approval(
     return result
 
 
+def apply_approval_resolution(
+    approval_id: int,
+    status: str,
+    resolved_note: str | None = None,
+    *,
+    parent_action_run_id: int | None = None,
+) -> dict:
+    """Resolve an approval without creating a top-level audit run."""
+    return _resolve_approval_impl(
+        approval_id,
+        status,
+        resolved_note,
+        parent_action_run_id=parent_action_run_id,
+    )
+
+
 def _resolve_approval_impl(
     approval_id: int,
     status: str,

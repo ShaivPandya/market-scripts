@@ -55,6 +55,7 @@ def persist_artifacts(
 
     Returns the number of approvals created.
     """
+    from portfolio.action_registry import ActionContext, propose_action
     from portfolio.core_db import create_pending_approval
 
     count = 0
@@ -78,13 +79,12 @@ def persist_artifacts(
         for item in action_items:
             if not isinstance(item, dict) or not item.get("description"):
                 continue
-            create_pending_approval(
-                entity_type="action_item",
-                proposed_change=item,
-                ticker=item.get("ticker", ticker),
+            item_ticker = item.get("ticker", ticker)
+            propose_action(
+                "create_action_item",
+                {**item, "ticker": item_ticker},
+                ActionContext(actor_type="workflow", source_type="workflow", source_id=run_id),
                 reason="Workflow-generated action item",
-                source_type="workflow",
-                source_id=run_id,
             )
             count += 1
 
@@ -94,13 +94,12 @@ def persist_artifacts(
         for trigger in watch_triggers:
             if not isinstance(trigger, dict) or not trigger.get("condition"):
                 continue
-            create_pending_approval(
-                entity_type="watch_trigger",
-                proposed_change=trigger,
-                ticker=trigger.get("ticker", ticker),
+            trigger_ticker = trigger.get("ticker", ticker)
+            propose_action(
+                "create_watch_trigger",
+                {**trigger, "ticker": trigger_ticker},
+                ActionContext(actor_type="workflow", source_type="workflow", source_id=run_id),
                 reason="Workflow-generated watch trigger",
-                source_type="workflow",
-                source_id=run_id,
             )
             count += 1
 
@@ -110,14 +109,12 @@ def persist_artifacts(
         for update in catalyst_updates:
             if not isinstance(update, dict):
                 continue
-            create_pending_approval(
-                entity_type="catalyst_status",
-                proposed_change=update,
-                entity_id=update.get("catalyst_id"),
-                ticker=ticker,
+            propose_action(
+                "update_catalyst_status",
+                {**update, "ticker": ticker},
+                ActionContext(actor_type="workflow", source_type="workflow", source_id=run_id),
                 reason="Workflow-suggested catalyst status change",
-                source_type="workflow",
-                source_id=run_id,
+                entity_id=update.get("catalyst_id"),
             )
             count += 1
 
@@ -127,14 +124,12 @@ def persist_artifacts(
         for update in kc_updates:
             if not isinstance(update, dict):
                 continue
-            create_pending_approval(
-                entity_type="kill_condition_status",
-                proposed_change=update,
-                entity_id=update.get("kill_condition_id"),
-                ticker=ticker,
+            propose_action(
+                "update_kill_condition_status",
+                {**update, "ticker": ticker},
+                ActionContext(actor_type="workflow", source_type="workflow", source_id=run_id),
                 reason="Workflow-suggested kill condition status change",
-                source_type="workflow",
-                source_id=run_id,
+                entity_id=update.get("kill_condition_id"),
             )
             count += 1
 
@@ -142,8 +137,6 @@ def persist_artifacts(
     thesis_change = artifacts.get("thesis_status_change")
     if isinstance(thesis_change, dict) and thesis_change.get("new_status"):
         if ticker:
-            from portfolio.action_registry import ActionContext, propose_action
-
             propose_action(
                 "change_thesis_status",
                 {

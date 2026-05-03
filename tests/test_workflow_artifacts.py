@@ -89,6 +89,9 @@ def test_persist_artifacts_creates_approvals():
     assert "evaluation" in types
     assert "action_item" in types
     assert "watch_trigger" in types
+    by_type = {a["entity_type"]: a for a in approvals}
+    assert by_type["action_item"]["action_id"] == "create_action_item"
+    assert by_type["watch_trigger"]["action_id"] == "create_watch_trigger"
 
 
 def test_persist_empty_artifacts():
@@ -106,6 +109,7 @@ def test_persist_thesis_status_change():
     approvals = core_db.get_pending_approvals()
     assert len(approvals) == 1
     assert approvals[0]["entity_type"] == "thesis_status"
+    assert approvals[0]["action_id"] == "change_thesis_status"
 
 
 def test_persist_kill_condition_updates():
@@ -117,3 +121,5 @@ def test_persist_kill_condition_updates():
     }
     count = persist_artifacts("test-run-abc", "MU", artifacts)
     assert count == 2
+    approvals = core_db.get_pending_approvals()
+    assert {a["action_id"] for a in approvals} == {"update_kill_condition_status"}

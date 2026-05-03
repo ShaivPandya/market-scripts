@@ -182,6 +182,219 @@ class ChangeThesisStatusInput(BaseModel):
         return str(value or "").strip()
 
 
+class TickerMixin(BaseModel):
+    ticker: str
+
+    @field_validator("ticker")
+    @classmethod
+    def _normalize_ticker(cls, value: str) -> str:
+        ticker = str(value or "").strip().upper()
+        if not ticker:
+            raise ValueError("Ticker cannot be empty.")
+        if not _TICKER_RE.match(ticker):
+            raise ValueError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
+        return ticker
+
+
+class OptionalTickerMixin(BaseModel):
+    ticker: str | None = None
+
+    @field_validator("ticker")
+    @classmethod
+    def _normalize_optional_ticker(cls, value: str | None) -> str | None:
+        ticker = str(value or "").strip().upper()
+        if not ticker:
+            return None
+        if not _TICKER_RE.match(ticker):
+            raise ValueError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
+        return ticker
+
+
+class CreateCatalystInput(TickerMixin):
+    description: str
+    category: Literal["fundamental", "technical", "macro", "event", "regulatory"] = "fundamental"
+    target_date: str | None = None
+    evidence: str | None = None
+
+    @field_validator("description")
+    @classmethod
+    def _strip_description(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Catalyst description cannot be empty.")
+        return text
+
+
+class UpdateCatalystStatusInput(OptionalTickerMixin):
+    catalyst_id: int
+    status: Literal["pending", "played_out", "failed", "superseded"]
+    evidence: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _support_legacy_status_shape(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "status" not in value and "new_status" in value:
+            value = {**value, "status": value.get("new_status")}
+        return value
+
+
+class CreateKillConditionInput(TickerMixin):
+    condition: str
+    metric: str | None = None
+    threshold: str | None = None
+
+    @field_validator("condition")
+    @classmethod
+    def _strip_condition(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Kill condition cannot be empty.")
+        return text
+
+
+class UpdateKillConditionStatusInput(OptionalTickerMixin):
+    kill_condition_id: int
+    status: Literal["active", "triggered", "retired"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _support_legacy_id_and_status_shape(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            updates = dict(value)
+            if "kill_condition_id" not in updates and "kc_id" in updates:
+                updates["kill_condition_id"] = updates.get("kc_id")
+            if "status" not in updates and "new_status" in updates:
+                updates["status"] = updates.get("new_status")
+            return updates
+        return value
+
+
+class SourceRequirementActionInput(BaseModel):
+    type: str = "custom"
+    description: str
+    required: bool = True
+    freshness_days: int | None = Field(default=None, ge=0)
+
+
+SourceRequirementActionValue = str | SourceRequirementActionInput
+
+
+class CreateThesisClaimInput(TickerMixin):
+    claim: str
+    expected_evidence: str | None = None
+    disconfirming_evidence: str | None = None
+    source_requirements: list[SourceRequirementActionValue] = Field(default_factory=list)
+    cadence: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: Literal["active", "supported", "challenged", "disconfirmed", "retired"] = "active"
+    linked_catalyst_ids: list[int] = Field(default_factory=list)
+    linked_kill_condition_ids: list[int] = Field(default_factory=list)
+    source_type: Literal["workflow", "agent", "user"] | None = None
+    source_id: str | None = None
+
+    @field_validator("claim")
+    @classmethod
+    def _strip_claim(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Thesis claim cannot be empty.")
+        return text
+
+
+class UpdateThesisClaimInput(BaseModel):
+    claim_id: int
+    claim: str | None = None
+    expected_evidence: str | None = None
+    disconfirming_evidence: str | None = None
+    source_requirements: list[SourceRequirementActionValue] | None = None
+    cadence: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: Literal["active", "supported", "challenged", "disconfirmed", "retired"] | None = None
+    linked_catalyst_ids: list[int] | None = None
+    linked_kill_condition_ids: list[int] | None = None
+
+
+class CreateActionItemInput(OptionalTickerMixin):
+    description: str
+    action_type: Literal["review", "resize", "research", "exit", "enter", "hedge", "other"] = "review"
+    urgency: Literal["low", "normal", "high", "urgent"] = "normal"
+
+    @field_validator("description")
+    @classmethod
+    def _strip_description(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Action item description cannot be empty.")
+        return text
+
+
+class CompleteActionItemInput(BaseModel):
+    item_id: int
+    resolution_note: str = ""
+
+    @field_validator("resolution_note")
+    @classmethod
+    def _strip_resolution_note(cls, value: str) -> str:
+        return str(value or "").strip()
+
+
+class DismissActionItemInput(BaseModel):
+    item_id: int
+
+
+class CreateWatchTriggerInput(OptionalTickerMixin):
+    condition: str
+    trigger_type: Literal[
+        "price_level",
+        "technical",
+        "fundamental",
+        "fundamental_news",
+        "event",
+        "news_event",
+        "macro",
+        "custom",
+    ] = "custom"
+    expires_at: str | None = None
+    definition: dict[str, Any] | None = None
+
+    @field_validator("condition")
+    @classmethod
+    def _strip_condition(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Watch trigger condition cannot be empty.")
+        return text
+
+
+class FireWatchTriggerInput(BaseModel):
+    trigger_id: int
+    result: dict[str, Any] | None = None
+    evidence: str | None = None
+
+
+class CancelWatchTriggerInput(BaseModel):
+    trigger_id: int
+
+
+class SaveThesisContentInput(TickerMixin):
+    content: str
+    preserve_exact_content: bool = False
+
+    @field_validator("content")
+    @classmethod
+    def _validate_content(cls, value: str) -> str:
+        text = str(value or "")
+        if not text.strip():
+            raise ValueError("Thesis content cannot be empty.")
+        return text
+
+
+class ResolveApprovalInput(BaseModel):
+    approval_id: int
+    status: Literal["approved", "rejected"]
+    note: str | None = None
+
+
 def _stable_hash(value: Any) -> str:
     raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -504,6 +717,274 @@ def _change_thesis_status(input_model: BaseModel, _context: ActionContext) -> Ac
     return ActionResult(updated)
 
 
+def _source_type_from_context(context: ActionContext) -> Literal["workflow", "agent", "user"]:
+    if context.source_type in {"workflow", "agent", "user"}:
+        return cast(Literal["workflow", "agent", "user"], context.source_type)
+    if context.actor_type in {"workflow", "agent"}:
+        return cast(Literal["workflow", "agent", "user"], context.actor_type)
+    return "user"
+
+
+def _source_requirements_payload(values: list[SourceRequirementActionValue] | None) -> list[Any]:
+    result: list[Any] = []
+    for value in values or []:
+        if isinstance(value, str):
+            result.append(value)
+        else:
+            result.append(value.model_dump())
+    return result
+
+
+def _sync_markdown_from_entities_callback(ticker: str | None) -> ActionCallback:
+    def _sync() -> None:
+        if not ticker:
+            return
+        from portfolio.thesis_sync import sync_markdown_from_entities
+
+        sync_markdown_from_entities(ticker)
+
+    return ActionCallback("sync_markdown_from_entities", _sync)
+
+
+def _sync_entities_from_markdown_callback(ticker: str) -> ActionCallback:
+    def _sync() -> None:
+        from portfolio.thesis_sync import sync_entities_from_markdown
+
+        sync_entities_from_markdown(ticker)
+
+    return ActionCallback("sync_entities_from_markdown", _sync)
+
+
+def _index_thesis_callback(ticker: str, content: str, source_path: str) -> ActionCallback:
+    def _index() -> None:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="thesis",
+            content=content,
+            ticker=ticker,
+            source_path=source_path,
+            doc_id=f"thesis-{ticker}",
+        )
+
+    return ActionCallback("index_thesis", _index)
+
+
+def _raise_not_found_or_validation(exc: ValueError, resource: str, identifier: int | str) -> None:
+    message = str(exc)
+    if message.lower().startswith(f"no {resource.lower()}"):
+        raise ActionNotFoundError(resource, str(identifier)) from exc
+    raise ActionValidationError(message) from exc
+
+
+def _create_catalyst(input_model: BaseModel, context: ActionContext) -> ActionResult:
+    typed = cast(CreateCatalystInput, input_model)
+    from portfolio import core_db
+
+    result = core_db.create_catalyst(
+        ticker=typed.ticker,
+        description=typed.description,
+        category=typed.category,
+        target_date=typed.target_date,
+        evidence=typed.evidence,
+        created_by=_source_type_from_context(context),
+    )
+    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
+
+
+def _update_catalyst_status(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(UpdateCatalystStatusInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.update_catalyst_status(typed.catalyst_id, typed.status, typed.evidence)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Catalyst", typed.catalyst_id)
+    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
+
+
+def _create_kill_condition(input_model: BaseModel, context: ActionContext) -> ActionResult:
+    typed = cast(CreateKillConditionInput, input_model)
+    from portfolio import core_db
+
+    result = core_db.create_kill_condition(
+        ticker=typed.ticker,
+        condition=typed.condition,
+        metric=typed.metric,
+        threshold=typed.threshold,
+        created_by=_source_type_from_context(context),
+    )
+    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
+
+
+def _update_kill_condition_status(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(UpdateKillConditionStatusInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.update_kill_condition_status(typed.kill_condition_id, typed.status)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Kill condition", typed.kill_condition_id)
+    return ActionResult(result, (_sync_markdown_from_entities_callback(result["ticker"]),))
+
+
+def _create_thesis_claim(input_model: BaseModel, context: ActionContext) -> ActionResult:
+    typed = cast(CreateThesisClaimInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.create_thesis_claim(
+            {
+                "ticker": typed.ticker,
+                "claim": typed.claim,
+                "expected_evidence": typed.expected_evidence,
+                "disconfirming_evidence": typed.disconfirming_evidence,
+                "source_requirements": _source_requirements_payload(typed.source_requirements),
+                "cadence": typed.cadence,
+                "confidence": typed.confidence,
+                "status": typed.status,
+                "linked_catalyst_ids": typed.linked_catalyst_ids,
+                "linked_kill_condition_ids": typed.linked_kill_condition_ids,
+                "source_type": typed.source_type or _source_type_from_context(context),
+                "source_id": typed.source_id or context.source_id,
+            }
+        )
+    except ValueError as exc:
+        raise ActionValidationError(str(exc)) from exc
+    return ActionResult(result, (_sync_markdown_from_entities_callback(result.get("ticker")),))
+
+
+def _update_thesis_claim(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(UpdateThesisClaimInput, input_model)
+    from portfolio import core_db
+
+    updates = typed.model_dump(exclude={"claim_id"}, exclude_unset=True)
+    if "source_requirements" in updates:
+        updates["source_requirements"] = _source_requirements_payload(typed.source_requirements)
+    try:
+        result = core_db.update_thesis_claim(typed.claim_id, updates)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Thesis claim", typed.claim_id)
+    return ActionResult(result, (_sync_markdown_from_entities_callback(result.get("ticker")),))
+
+
+def _create_action_item(input_model: BaseModel, context: ActionContext) -> ActionResult:
+    typed = cast(CreateActionItemInput, input_model)
+    from portfolio import core_db
+
+    result = core_db.create_action_item(
+        description=typed.description,
+        action_type=typed.action_type,
+        ticker=typed.ticker,
+        urgency=typed.urgency,
+        source_type=_source_type_from_context(context),
+        source_id=context.source_id,
+    )
+    return ActionResult(result)
+
+
+def _complete_action_item(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(CompleteActionItemInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.complete_action_item(typed.item_id, typed.resolution_note)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Action item", typed.item_id)
+    return ActionResult(result)
+
+
+def _dismiss_action_item(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(DismissActionItemInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.dismiss_action_item(typed.item_id)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Action item", typed.item_id)
+    return ActionResult(result)
+
+
+def _create_watch_trigger(input_model: BaseModel, context: ActionContext) -> ActionResult:
+    typed = cast(CreateWatchTriggerInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.create_watch_trigger(
+            condition=typed.condition,
+            trigger_type=typed.trigger_type,
+            ticker=typed.ticker,
+            source_type=_source_type_from_context(context),
+            source_id=context.source_id,
+            expires_at=typed.expires_at,
+            definition=typed.definition,
+        )
+    except ValueError as exc:
+        raise ActionValidationError(str(exc)) from exc
+    return ActionResult(result)
+
+
+def _fire_watch_trigger(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(FireWatchTriggerInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.fire_watch_trigger(typed.trigger_id, result=typed.result, evidence=typed.evidence)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
+    return ActionResult(result)
+
+
+def _cancel_watch_trigger(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(CancelWatchTriggerInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.cancel_watch_trigger(typed.trigger_id)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
+    return ActionResult(result)
+
+
+def _save_thesis_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(SaveThesisContentInput, input_model)
+    from portfolio.thesis_content import save_thesis_content
+
+    saved = save_thesis_content(
+        typed.ticker,
+        typed.content,
+        preserve_exact_content=typed.preserve_exact_content,
+    )
+    return ActionResult(
+        saved.output,
+        (
+            _index_thesis_callback(typed.ticker, saved.index_content, saved.source_path),
+            _sync_entities_from_markdown_callback(typed.ticker),
+        ),
+    )
+
+
+def _resolve_approval(input_model: BaseModel, context: ActionContext) -> ActionResult:
+    typed = cast(ResolveApprovalInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.apply_approval_resolution(
+            typed.approval_id,
+            typed.status,
+            typed.note,
+            parent_action_run_id=context.action_run_id,
+        )
+    except core_db.ApprovalApplicationError as exc:
+        raise ActionConflictError(str(exc)) from exc
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message.lower() or "no pending" in message.lower():
+            raise ActionNotFoundError("Approval", str(typed.approval_id)) from exc
+        raise ActionValidationError(message) from exc
+    return ActionResult(result)
+
+
 def _thesis_status_approval_payload(model: BaseModel) -> dict[str, Any]:
     typed = cast(ChangeThesisStatusInput, model)
     return {"ticker": typed.ticker, "new_status": typed.status, "reason": typed.reason}
@@ -535,6 +1016,102 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_entity_type="thesis_status",
         approval_payload=_thesis_status_approval_payload,
         approval_ticker=_ticker_from_model,
+    ),
+    "create_catalyst": DomainAction(
+        action_id="create_catalyst",
+        input_model=CreateCatalystInput,
+        handler=_create_catalyst,
+        approval_entity_type="catalyst",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "update_catalyst_status": DomainAction(
+        action_id="update_catalyst_status",
+        input_model=UpdateCatalystStatusInput,
+        handler=_update_catalyst_status,
+        approval_entity_type="catalyst_status",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "create_kill_condition": DomainAction(
+        action_id="create_kill_condition",
+        input_model=CreateKillConditionInput,
+        handler=_create_kill_condition,
+        approval_entity_type="kill_condition",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "update_kill_condition_status": DomainAction(
+        action_id="update_kill_condition_status",
+        input_model=UpdateKillConditionStatusInput,
+        handler=_update_kill_condition_status,
+        approval_entity_type="kill_condition_status",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "create_thesis_claim": DomainAction(
+        action_id="create_thesis_claim",
+        input_model=CreateThesisClaimInput,
+        handler=_create_thesis_claim,
+        approval_entity_type="thesis_claim",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "update_thesis_claim": DomainAction(
+        action_id="update_thesis_claim",
+        input_model=UpdateThesisClaimInput,
+        handler=_update_thesis_claim,
+        approval_entity_type="thesis_claim_update",
+        approval_payload=_model_payload,
+    ),
+    "create_action_item": DomainAction(
+        action_id="create_action_item",
+        input_model=CreateActionItemInput,
+        handler=_create_action_item,
+        approval_entity_type="action_item",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "complete_action_item": DomainAction(
+        action_id="complete_action_item",
+        input_model=CompleteActionItemInput,
+        handler=_complete_action_item,
+    ),
+    "dismiss_action_item": DomainAction(
+        action_id="dismiss_action_item",
+        input_model=DismissActionItemInput,
+        handler=_dismiss_action_item,
+    ),
+    "create_watch_trigger": DomainAction(
+        action_id="create_watch_trigger",
+        input_model=CreateWatchTriggerInput,
+        handler=_create_watch_trigger,
+        approval_entity_type="watch_trigger",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "fire_watch_trigger": DomainAction(
+        action_id="fire_watch_trigger",
+        input_model=FireWatchTriggerInput,
+        handler=_fire_watch_trigger,
+    ),
+    "cancel_watch_trigger": DomainAction(
+        action_id="cancel_watch_trigger",
+        input_model=CancelWatchTriggerInput,
+        handler=_cancel_watch_trigger,
+    ),
+    "save_thesis_content": DomainAction(
+        action_id="save_thesis_content",
+        input_model=SaveThesisContentInput,
+        handler=_save_thesis_content,
+        approval_entity_type="thesis_content",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+    ),
+    "resolve_approval": DomainAction(
+        action_id="resolve_approval",
+        input_model=ResolveApprovalInput,
+        handler=_resolve_approval,
     ),
 }
 

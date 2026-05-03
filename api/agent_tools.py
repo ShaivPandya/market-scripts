@@ -2740,19 +2740,19 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_action_item":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = (args.get("ticker") or "").strip().upper() or None
-        approval = create_pending_approval(
-            entity_type="action_item",
-            ticker=ticker,
-            proposed_change={
+        approval = propose_action(
+            "create_action_item",
+            {
                 "description": args["description"],
                 "action_type": args["action_type"],
+                "ticker": ticker,
                 "urgency": args.get("urgency", "normal"),
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
         )
         return {
             "status": "pending_approval_created",
@@ -2761,20 +2761,20 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_catalyst_status_change":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = args["ticker"].strip().upper()
-        approval = create_pending_approval(
-            entity_type="catalyst_status",
-            ticker=ticker,
-            entity_id=args["catalyst_id"],
-            proposed_change={
+        approval = propose_action(
+            "update_catalyst_status",
+            {
                 "catalyst_id": args["catalyst_id"],
                 "status": args["new_status"],
                 "evidence": args.get("evidence"),
+                "ticker": ticker,
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
+            entity_id=args["catalyst_id"],
         )
         return {
             "status": "pending_approval_created",
@@ -2783,19 +2783,19 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_kill_condition_status_change":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = args["ticker"].strip().upper()
-        approval = create_pending_approval(
-            entity_type="kill_condition_status",
-            ticker=ticker,
-            entity_id=args["kill_condition_id"],
-            proposed_change={
+        approval = propose_action(
+            "update_kill_condition_status",
+            {
                 "kill_condition_id": args["kill_condition_id"],
                 "status": args["new_status"],
+                "ticker": ticker,
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
+            entity_id=args["kill_condition_id"],
         )
         return {
             "status": "pending_approval_created",
@@ -2804,19 +2804,20 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_watch_trigger":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = (args.get("ticker") or "").strip().upper() or None
-        approval = create_pending_approval(
-            entity_type="watch_trigger",
-            ticker=ticker,
-            proposed_change={
+        approval = propose_action(
+            "create_watch_trigger",
+            {
                 "condition": args["condition"],
                 "trigger_type": args["trigger_type"],
+                "ticker": ticker,
+                "expires_at": args.get("expires_at"),
                 "definition": args.get("definition"),
             },
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
         )
         return {
             "status": "pending_approval_created",
@@ -3095,41 +3096,68 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         }, {"cache": "n/a"}
 
     if name == "propose_thesis_content_update":
+        from portfolio.action_registry import ActionContext, propose_action
+
         ticker = str(args["ticker"]).strip().upper()
-        return _create_pending(
-            "thesis_content",
+        approval = propose_action(
+            "save_thesis_content",
             {"ticker": ticker, "content": str(args["content"])},
-            ticker=ticker,
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_catalyst":
+        from portfolio.action_registry import ActionContext, propose_action
+
         ticker = str(args["ticker"]).strip().upper()
-        return _create_pending(
-            "catalyst",
+        approval = propose_action(
+            "create_catalyst",
             {
                 "ticker": ticker,
                 "description": args["description"],
                 "category": args.get("category", "fundamental"),
                 "target_date": args.get("target_date"),
             },
-            ticker=ticker,
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_kill_condition":
+        from portfolio.action_registry import ActionContext, propose_action
+
         ticker = str(args["ticker"]).strip().upper()
-        return _create_pending(
-            "kill_condition",
+        approval = propose_action(
+            "create_kill_condition",
             {
                 "ticker": ticker,
                 "condition": args["condition"],
                 "metric": args.get("metric"),
                 "threshold": args.get("threshold"),
             },
-            ticker=ticker,
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_research_note":
         ticker = str(args.get("ticker") or "").strip().upper() or None

@@ -147,6 +147,35 @@ def test_agent_capability_registry_does_not_expose_direct_mutations():
     assert proposal_tools <= names
 
 
+def test_agent_proposal_tools_create_action_backed_approvals(tmp_path, monkeypatch):
+    import portfolio.core_db as core_db
+
+    if core_db._conn:
+        core_db._conn.close()
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "core.db")
+    monkeypatch.setattr(core_db, "_conn", None)
+
+    payload, meta = agent_tools._dispatch(
+        "propose_catalyst",
+        {
+            "ticker": "mu",
+            "description": "HBM ramp",
+            "category": "fundamental",
+            "reason": "Track material catalyst",
+        },
+    )
+
+    approval = core_db.get_pending_approval(payload["approval_id"])
+    assert meta == {"cache": "n/a"}
+    assert payload["entity_type"] == "catalyst"
+    assert approval["action_id"] == "create_catalyst"
+    assert approval["action_schema_version"] == 1
+    assert approval["proposed_change"]["ticker"] == "MU"
+    if core_db._conn:
+        core_db._conn.close()
+    monkeypatch.setattr(core_db, "_conn", None)
+
+
 def test_agent_provider_tool_definitions_are_in_parity():
     anthropic_names = {tool["name"] for tool in agent_router.ANTHROPIC_TOOL_DEFINITIONS}
     openai_names = {tool["name"] for tool in agent_router.OPENAI_TOOL_DEFINITIONS}

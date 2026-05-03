@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from api.action_execution import execute_api_action
 from api.exceptions import NotFoundError
 
 router = APIRouter()
@@ -45,32 +46,26 @@ def get_action(item_id: int):
 
 @router.post("/actions")
 def create_action(body: CreateActionRequest):
-    from portfolio.core_db import create_action_item
-
-    return create_action_item(
-        description=body.description,
-        action_type=body.action_type,
-        ticker=body.ticker,
-        urgency=body.urgency,
-        source_type="user",
+    return execute_api_action(
+        "create_action_item",
+        body.model_dump(),
+        source_id="action_items.create_action",
     )
 
 
 @router.put("/actions/{item_id}/complete")
 def complete_action(item_id: int, body: CompleteActionRequest | None = None):
-    from portfolio.core_db import complete_action_item
-
-    try:
-        return complete_action_item(item_id, body.resolution_note if body else "")
-    except ValueError as e:
-        raise NotFoundError("Action item", str(item_id)) from e
+    return execute_api_action(
+        "complete_action_item",
+        {"item_id": item_id, "resolution_note": body.resolution_note if body else ""},
+        source_id="action_items.complete_action",
+    )
 
 
 @router.put("/actions/{item_id}/dismiss")
 def dismiss_action(item_id: int):
-    from portfolio.core_db import dismiss_action_item
-
-    try:
-        return dismiss_action_item(item_id)
-    except ValueError as e:
-        raise NotFoundError("Action item", str(item_id)) from e
+    return execute_api_action(
+        "dismiss_action_item",
+        {"item_id": item_id},
+        source_id="action_items.dismiss_action",
+    )

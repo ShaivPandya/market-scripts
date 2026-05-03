@@ -108,6 +108,7 @@ def test_daily_report_sync_is_idempotent_and_visible(auth_client, monkeypatch, t
     assert len(recommendations) == 1
     assert len([a for a in approvals if a["entity_type"] == "action_item"]) == 1
     assert len([a for a in approvals if a["entity_type"] == "watch_trigger"]) == 1
+    assert [a for a in approvals if a["entity_type"] == "watch_trigger"][0]["action_id"] == "create_watch_trigger"
     assert len(report_runs) == 1
     assert len(actions) == 1
 
