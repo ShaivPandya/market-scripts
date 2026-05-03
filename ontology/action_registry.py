@@ -6,6 +6,10 @@ This module owns two related registries:
   state-changing operations
 * agent tool exposures, which provide the AI-safe callable surface derived from
   typed inputs plus access and approval rules
+
+Despite living under ``ontology/``, state-changing domain actions execute
+against the canonical backing stores in ``portfolio_db``, ``thesis_db``, and
+``core_db``. Ontology snapshots only materialize those writes after ingestion.
 """
 
 from __future__ import annotations

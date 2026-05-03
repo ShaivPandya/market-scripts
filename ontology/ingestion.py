@@ -1,3 +1,10 @@
+"""Materialize ontology graph snapshots from canonical backing sources.
+
+This module reads portfolio, thesis, process, and market data through source
+adapters and backing-store APIs, then writes a typed semantic/risk graph
+snapshot. It does not make the ontology graph the operational source of truth.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -48,6 +55,7 @@ def ingest_into_repository(
     timeframe: str,
     include_deep_modules: bool,
 ) -> IngestionOutput:
+    """Build and persist one materialized ontology snapshot run."""
     run_id = datetime.now(UTC).isoformat()
     source_status: dict[str, dict[str, Any]] = {}
 

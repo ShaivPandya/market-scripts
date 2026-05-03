@@ -121,7 +121,7 @@ Core portfolio and research workflows:
 - Portfolio analyzer, optimizer, hedging tool, and portfolio sizer with async execution paths for heavier jobs.
 - Thesis and overview generation from uploaded PDFs, editable thesis/overview storage, thesis status tracking, and position dossiers.
 - Workspace entities: catalysts, kill conditions, approvals, actions, triggers, recommendations, research notes, and workflow runs.
-- Agent chat and memory for cross-cutting research questions over portfolio data, theses, market data, ontology runs, and workflow artifacts.
+- Agent chat and memory for cross-cutting research questions over portfolio data, theses, market data, materialized ontology risk snapshots, and workflow artifacts.
 
 Market and macro modules:
 
@@ -142,7 +142,7 @@ Market and macro modules:
 - `fx/` - FX dashboard and multi-currency macro model.
 - `commodities/` - Commodities dashboard, curve/research tools, and aluminum research.
 - `government_bonds/` - Fixed-income and yield-curve tooling.
-- `ontology/` - Research ontology ingestion, parsing, repository, risk, and sector mapping.
+- `ontology/` - Materialized semantic/risk graph ingestion, parsing, repository, risk, and sector mapping over portfolio, thesis, process, and market data. See [Ontology Materialization Boundary](docs/architecture/ontology.md).
 - `auto_report/` - Daily, weekly, and recommendation report generation.
 - `investment_theses/` and `investment_overviews/` - Markdown research documents.
 - `migrations/` - Alembic migrations for the production Postgres state schema.

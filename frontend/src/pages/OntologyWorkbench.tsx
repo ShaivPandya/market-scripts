@@ -225,13 +225,14 @@ export function OntologyWorkbench() {
           </button>
         </div>
         <p className="text-sm text-gray-400 mt-0.5">
-          Query portfolio-linked risk snapshots with natural language and structured filters.
+          Query materialized portfolio-linked risk snapshots with natural language and structured filters.
         </p>
         {showInfo && (
           <p className="text-xs text-gray-500 mt-2 max-w-xl leading-relaxed">
-            Links each portfolio position to macro conditions, sector dynamics, and cross-asset signals via a knowledge
-            graph. Filter by ticker, sector, asset class, or risk threshold to see which holdings carry elevated risk
-            and the evidence behind each score. Use snapshot run IDs to compare risk states across time.
+            Links each portfolio position to macro conditions, sector dynamics, and cross-asset signals via a
+            materialized semantic/risk graph. Filter by ticker, sector, asset class, or risk threshold to see which
+            holdings carry elevated risk and the evidence behind each score. Use snapshot run IDs to compare risk
+            states across time.
           </p>
         )}
       </div>

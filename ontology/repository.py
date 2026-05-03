@@ -110,6 +110,13 @@ def _resolve_default_db_path() -> Path:
 
 
 class OntologyRepository:
+    """Persist ontology graph rows and materialized snapshot runs.
+
+    The repository stores queryable graph snapshots and legacy live graph
+    tables. Canonical portfolio, thesis, and process state remains in the
+    backing stores that ingestion reads from.
+    """
+
     def __init__(self, db_path: Path | None = None):
         self._use_postgres = db_path is None and use_postgres_state()
         self.db_path = (
@@ -379,6 +386,7 @@ class OntologyRepository:
         nodes: list[OntologyNode],
         edges: list[OntologyEdge],
     ) -> None:
+        """Save one materialized semantic/risk graph run for read/query paths."""
         normalized = normalize_graph(nodes, edges, run_id=run_id, allow_legacy=_allow_legacy_schemas())
         nodes = normalized.nodes
         edges = normalized.edges
