@@ -604,7 +604,7 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                 "ticker": {"type": "string", "description": "Ticker symbol"},
                 "new_status": {
                     "type": "string",
-                    "description": "Proposed new status: active|under_review|suspended|closed",
+                    "description": "Proposed new status: active|under_review|invalidated",
                 },
                 "reason": {"type": "string", "description": "Explanation for the proposed change"},
             },
@@ -2724,15 +2724,14 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
     # Investing OS — propose tools (approval-gated writes)
     # -------------------------------------------------------------------
     if name == "propose_thesis_status_change":
-        from portfolio.core_db import create_pending_approval
+        from portfolio.action_registry import ActionContext, propose_action
 
         ticker = args["ticker"].strip().upper()
-        approval = create_pending_approval(
-            entity_type="thesis_status",
-            ticker=ticker,
-            proposed_change={"new_status": args["new_status"], "reason": args["reason"]},
+        approval = propose_action(
+            "change_thesis_status",
+            {"ticker": ticker, "status": args["new_status"], "reason": args["reason"]},
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=args["reason"],
-            source_type="agent",
         )
         return {
             "status": "pending_approval_created",
@@ -3062,18 +3061,38 @@ def _dispatch(name: str, args: dict) -> tuple[object, dict[str, Any]]:
         return recommend_hedging_adjustments(req), {"cache": "n/a"}
 
     if name == "propose_portfolio_positions_update":
-        return _create_pending(
-            "portfolio_positions",
+        from portfolio.action_registry import ActionContext, propose_action
+
+        approval = propose_action(
+            "update_portfolio_positions",
             {"positions": args["positions"]},
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_hedge_positions_update":
-        return _create_pending(
-            "hedge_positions",
+        from portfolio.action_registry import ActionContext, propose_action
+
+        approval = propose_action(
+            "update_hedge_positions",
             {"positions": args["positions"]},
+            ActionContext(actor_type="agent", source_type="agent"),
             reason=str(args["reason"]),
-        ), {"cache": "n/a"}
+        )
+        return {
+            "status": "pending_approval_created",
+            "approval_id": approval["id"],
+            "entity_type": approval["entity_type"],
+            "ticker": approval.get("ticker"),
+            "message": "Created pending approval. The user must approve it in Workspace before it is applied.",
+        }, {"cache": "n/a"}
 
     if name == "propose_thesis_content_update":
         ticker = str(args["ticker"]).strip().upper()

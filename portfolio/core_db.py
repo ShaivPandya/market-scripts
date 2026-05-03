@@ -259,6 +259,9 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     entity_type     TEXT NOT NULL,
     entity_id       INTEGER,
     ticker          TEXT,
+    action_id       TEXT,
+    action_schema_version INTEGER,
+    action_input_hash TEXT,
     proposed_change TEXT NOT NULL,
     reason          TEXT,
     source_type     TEXT NOT NULL DEFAULT 'workflow'
@@ -275,6 +278,39 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     application_started_at   TEXT,
     application_completed_at TEXT,
     application_error        TEXT
+)
+"""
+
+_CREATE_ACTION_RUNS = """
+CREATE TABLE IF NOT EXISTS action_runs (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_id            TEXT NOT NULL,
+    action_schema_version INTEGER NOT NULL DEFAULT 1,
+    actor_type           TEXT NOT NULL,
+    actor_id             TEXT,
+    source_type          TEXT,
+    source_id            TEXT,
+    approval_id          INTEGER,
+    parent_action_run_id INTEGER,
+    input_hash           TEXT,
+    input_json           TEXT,
+    output_json          TEXT,
+    status               TEXT NOT NULL DEFAULT 'running'
+                         CHECK (status IN ('running', 'succeeded', 'failed', 'rolled_back')),
+    error                TEXT,
+    started_at           TEXT NOT NULL,
+    completed_at         TEXT
+)
+"""
+
+_CREATE_ACTION_EVENTS = """
+CREATE TABLE IF NOT EXISTS action_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_run_id INTEGER NOT NULL,
+    event_type    TEXT NOT NULL,
+    message       TEXT,
+    payload_json  TEXT,
+    created_at    TEXT NOT NULL
 )
 """
 
@@ -348,6 +384,11 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_ticker ON pending_approvals(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_application_status ON pending_approvals(application_status)",
+    "CREATE INDEX IF NOT EXISTS idx_pending_approvals_action_id ON pending_approvals(action_id)",
+    "CREATE INDEX IF NOT EXISTS idx_action_runs_action_id ON action_runs(action_id)",
+    "CREATE INDEX IF NOT EXISTS idx_action_runs_status ON action_runs(status)",
+    "CREATE INDEX IF NOT EXISTS idx_action_runs_approval ON action_runs(approval_id)",
+    "CREATE INDEX IF NOT EXISTS idx_action_events_run ON action_events(action_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report ON recommendations(report_type, as_of DESC)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report_id ON recommendations(report_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_recommendations_idempotency ON recommendations(idempotency_key)",
@@ -361,7 +402,7 @@ _INDEXES = [
 # Connection management (same pattern as thesis_db.py)
 # ---------------------------------------------------------------------------
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _conn: sqlite3.Connection | PostgresCompatConnection | None = None
 
 
@@ -389,6 +430,8 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "watch_triggers",
                             "research_notes",
                             "pending_approvals",
+                            "action_runs",
+                            "action_events",
                             "recommendations",
                         }
                     )
@@ -412,6 +455,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_THESIS_CLAIMS,
         _CREATE_RESEARCH_NOTES,
         _CREATE_PENDING_APPROVALS,
+        _CREATE_ACTION_RUNS,
+        _CREATE_ACTION_EVENTS,
         _CREATE_RECOMMENDATIONS,
     ]:
         conn.execute(stmt)
@@ -460,6 +505,9 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "application_started_at": "TEXT",
             "application_completed_at": "TEXT",
             "application_error": "TEXT",
+            "action_id": "TEXT",
+            "action_schema_version": "INTEGER",
+            "action_input_hash": "TEXT",
         },
     )
     conn.execute(
@@ -555,6 +603,147 @@ def _json_hash(value: Any) -> str:
 
     raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def create_action_run(
+    *,
+    action_id: str,
+    action_schema_version: int,
+    actor_type: str,
+    actor_id: str | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    approval_id: int | None = None,
+    parent_action_run_id: int | None = None,
+    input_hash: str | None = None,
+    input_payload: Any | None = None,
+) -> dict:
+    conn = _get_conn()
+    now = _now()
+    input_json = json.dumps(input_payload, default=str) if input_payload is not None else None
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO action_runs (action_id, action_schema_version, actor_type, actor_id, source_type, source_id, "
+            "approval_id, parent_action_run_id, input_hash, input_json, status, started_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                action_id,
+                action_schema_version,
+                actor_type,
+                actor_id,
+                source_type,
+                source_id,
+                approval_id,
+                parent_action_run_id,
+                input_hash,
+                input_json,
+                "running",
+                now,
+            ),
+        )
+        conn.commit()
+    return {
+        "id": cur.lastrowid,
+        "action_id": action_id,
+        "action_schema_version": action_schema_version,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "source_type": source_type,
+        "source_id": source_id,
+        "approval_id": approval_id,
+        "parent_action_run_id": parent_action_run_id,
+        "input_hash": input_hash,
+        "input_json": input_json,
+        "status": "running",
+        "started_at": now,
+        "completed_at": None,
+        "error": None,
+    }
+
+
+def record_action_event(
+    action_run_id: int,
+    event_type: str,
+    *,
+    message: str | None = None,
+    payload: Any | None = None,
+) -> dict:
+    conn = _get_conn()
+    now = _now()
+    payload_json = json.dumps(payload, default=str) if payload is not None else None
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO action_events (action_run_id, event_type, message, payload_json, created_at) VALUES (?,?,?,?,?)",
+            (action_run_id, event_type, message, payload_json, now),
+        )
+        conn.commit()
+    return {
+        "id": cur.lastrowid,
+        "action_run_id": action_run_id,
+        "event_type": event_type,
+        "message": message,
+        "payload": payload,
+        "created_at": now,
+    }
+
+
+def complete_action_run(
+    action_run_id: int,
+    *,
+    status: str,
+    output_payload: Any | None = None,
+    error: str | None = None,
+) -> dict:
+    if status not in {"succeeded", "failed", "rolled_back"}:
+        raise ValueError(f"Invalid action run status: {status}")
+    conn = _get_conn()
+    now = _now()
+    output_json = json.dumps(output_payload, default=str) if output_payload is not None else None
+    with _lock:
+        conn.execute(
+            "UPDATE action_runs SET status = ?, output_json = ?, error = ?, completed_at = ? WHERE id = ?",
+            (status, output_json, error, now, action_run_id),
+        )
+        updated = conn.execute("SELECT * FROM action_runs WHERE id = ?", (action_run_id,)).fetchone()
+        conn.commit()
+    return _require_row_dict(updated)
+
+
+def get_action_run(action_run_id: int) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM action_runs WHERE id = ?", (action_run_id,)).fetchone()
+    return _row_to_dict(row)
+
+
+def get_action_runs(action_id: str | None = None, approval_id: int | None = None) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if action_id:
+        clauses.append("action_id = ?")
+        params.append(action_id)
+    if approval_id is not None:
+        clauses.append("approval_id = ?")
+        params.append(approval_id)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        rows = conn.execute(f"SELECT * FROM action_runs{where} ORDER BY id", params).fetchall()
+    return _rows_to_list(rows)
+
+
+def get_action_events(action_run_id: int) -> list[dict]:
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM action_events WHERE action_run_id = ? ORDER BY id",
+            (action_run_id,),
+        ).fetchall()
+    out = _rows_to_list(rows)
+    for row in out:
+        _parse_json_field(row, "payload_json")
+        row["payload"] = row.get("payload_json")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1893,18 +2082,25 @@ def create_pending_approval(
     reason: str | None = None,
     source_type: str = "workflow",
     source_id: str | None = None,
+    action_id: str | None = None,
+    action_schema_version: int | None = None,
+    action_input_hash: str | None = None,
 ) -> dict:
     conn = _get_conn()
     now = _now()
     change_json = json.dumps(proposed_change, default=str)
     with _lock:
         cur = conn.execute(
-            "INSERT INTO pending_approvals (entity_type, entity_id, ticker, proposed_change, reason, source_type, source_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO pending_approvals (entity_type, entity_id, ticker, action_id, action_schema_version, "
+            "action_input_hash, proposed_change, reason, source_type, source_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 entity_type,
                 entity_id,
                 ticker.upper() if ticker else None,
+                action_id,
+                action_schema_version,
+                action_input_hash,
                 change_json,
                 reason,
                 source_type,
@@ -1918,6 +2114,9 @@ def create_pending_approval(
         "entity_type": entity_type,
         "entity_id": entity_id,
         "ticker": ticker.upper() if ticker else None,
+        "action_id": action_id,
+        "action_schema_version": action_schema_version,
+        "action_input_hash": action_input_hash,
         "proposed_change": proposed_change,
         "reason": reason,
         "source_type": source_type,
@@ -1943,12 +2142,17 @@ def create_pending_approval_once(
     reason: str | None = None,
     source_type: str = "workflow",
     source_id: str | None = None,
+    action_id: str | None = None,
+    action_schema_version: int | None = None,
+    action_input_hash: str | None = None,
 ) -> dict:
     proposed_hash = _json_hash(proposed_change)
     normalized_ticker = ticker.upper() if ticker else None
     if source_id:
         for approval in get_pending_approvals(status=None, ticker=normalized_ticker):
             if approval.get("entity_type") != entity_type:
+                continue
+            if action_id and approval.get("action_id") != action_id:
                 continue
             if approval.get("source_type") != source_type or approval.get("source_id") != source_id:
                 continue
@@ -1962,6 +2166,9 @@ def create_pending_approval_once(
         reason=reason,
         source_type=source_type,
         source_id=source_id,
+        action_id=action_id,
+        action_schema_version=action_schema_version,
+        action_input_hash=action_input_hash,
     )
 
 
@@ -2002,8 +2209,47 @@ def get_pending_approval(approval_id: int) -> dict | None:
     return _parse_pending_approval_row(row)
 
 
-def resolve_approval(approval_id: int, status: str, resolved_note: str | None = None) -> dict:
+def resolve_approval(
+    approval_id: int,
+    status: str,
+    resolved_note: str | None = None,
+    *,
+    actor_type: str = "user",
+    actor_id: str | None = None,
+    parent_action_run_id: int | None = None,
+) -> dict:
     """Resolve a pending approval and apply approved side effects safely."""
+    run = create_action_run(
+        action_id="resolve_approval",
+        action_schema_version=1,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        approval_id=approval_id,
+        parent_action_run_id=parent_action_run_id,
+        input_hash=_json_hash({"approval_id": approval_id, "status": status, "resolved_note": resolved_note}),
+        input_payload={"approval_id": approval_id, "status": status, "resolved_note": resolved_note},
+    )
+    run_id = int(run["id"])
+    record_action_event(run_id, "start", payload={"approval_id": approval_id, "status": status})
+    try:
+        result = _resolve_approval_impl(approval_id, status, resolved_note, parent_action_run_id=run_id)
+    except Exception as exc:
+        error = _approval_error_message(exc)
+        record_action_event(run_id, "error", message=error)
+        complete_action_run(run_id, status="failed", error=error)
+        raise
+    record_action_event(run_id, "complete", payload={"status": result.get("status")})
+    complete_action_run(run_id, status="succeeded", output_payload=result)
+    return result
+
+
+def _resolve_approval_impl(
+    approval_id: int,
+    status: str,
+    resolved_note: str | None = None,
+    *,
+    parent_action_run_id: int | None = None,
+) -> dict:
     if status not in ("approved", "rejected"):
         raise ValueError(f"Resolution status must be 'approved' or 'rejected', got '{status}'")
 
@@ -2019,7 +2265,7 @@ def resolve_approval(approval_id: int, status: str, resolved_note: str | None = 
     try:
         with _lock:
             try:
-                _apply_approval_side_effect_tx(conn, approval, callbacks)
+                _apply_approval_side_effect_tx(conn, approval, callbacks, parent_action_run_id=parent_action_run_id)
                 _update_linked_recommendation_approval_tx(conn, approval, approval_id, "approved")
                 now = _now()
                 conn.execute(
@@ -2166,7 +2412,25 @@ def _apply_approval_side_effect_tx(
     conn: sqlite3.Connection | PostgresCompatConnection,
     approval: dict,
     callbacks: list[ApprovalPostCommitCallback],
+    *,
+    parent_action_run_id: int | None = None,
 ) -> None:
+    action_id = str(approval.get("action_id") or "").strip()
+    if action_id:
+        from portfolio.action_registry import ActionContext, execute_action
+
+        execute_action(
+            action_id,
+            _approval_change(approval),
+            ActionContext(
+                actor_type="approval_apply",
+                source_type=approval.get("source_type"),
+                source_id=approval.get("source_id"),
+                approval_id=int(approval["id"]),
+                parent_action_run_id=parent_action_run_id,
+            ),
+        )
+        return
     entity_type = str(approval.get("entity_type") or "")
     handler = _APPROVAL_SIDE_EFFECT_HANDLERS.get(entity_type)
     if handler is None:

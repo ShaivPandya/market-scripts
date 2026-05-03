@@ -13,6 +13,12 @@ from api.routers.portfolio_edit import _TICKER_RE
 from api.state_storage import exists_text, read_text, write_text
 from llm_utils import MODEL_MID, call_llm_pdf_text
 from paths import PROJECT_ROOT
+from portfolio.action_registry import (
+    ActionContext,
+    ActionNotFoundError,
+    ActionValidationError,
+    execute_action,
+)
 
 router = APIRouter()
 
@@ -351,15 +357,15 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    new_status = body.status.strip().lower()
-    if new_status not in ("active", "under_review", "invalidated"):
-        raise ValidationError(f"Invalid status: '{new_status}'. Must be active, under_review, or invalidated.")
-
-    from portfolio.thesis_db import update_thesis_status
-
     try:
-        return update_thesis_status(normalized_ticker, new_status, body.reason.strip())
-    except ValueError as e:
+        return execute_action(
+            "change_thesis_status",
+            {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
+            ActionContext(actor_type="user", source_type="api", source_id="thesis.change_thesis_status"),
+        ).output
+    except ActionValidationError as e:
+        raise ValidationError(e.message) from e
+    except ActionNotFoundError as e:
         raise NotFoundError("Thesis", normalized_ticker) from e
 
 

@@ -141,19 +141,20 @@ def persist_artifacts(
     # Thesis status change
     thesis_change = artifacts.get("thesis_status_change")
     if isinstance(thesis_change, dict) and thesis_change.get("new_status"):
-        create_pending_approval(
-            entity_type="thesis_status",
-            proposed_change={
-                "ticker": ticker,
-                "new_status": thesis_change["new_status"],
-                "reason": thesis_change.get("reason", ""),
-            },
-            ticker=ticker,
-            reason="Workflow-suggested thesis status change",
-            source_type="workflow",
-            source_id=run_id,
-        )
-        count += 1
+        if ticker:
+            from portfolio.action_registry import ActionContext, propose_action
+
+            propose_action(
+                "change_thesis_status",
+                {
+                    "ticker": ticker,
+                    "status": thesis_change["new_status"],
+                    "reason": thesis_change.get("reason", ""),
+                },
+                ActionContext(actor_type="workflow", source_type="workflow", source_id=run_id),
+                reason="Workflow-suggested thesis status change",
+            )
+            count += 1
 
     if count:
         logger.info("Persisted %d artifacts as pending approvals (run_id=%s)", count, run_id)
