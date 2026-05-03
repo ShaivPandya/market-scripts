@@ -40,13 +40,26 @@ def build_adapter_registry(
     return required, optional, deep
 
 
-def run_adapters(adapters: dict[str, SourceAdapter[Any]]) -> dict[str, SourceResult[Any]]:
+def run_adapters(
+    adapters: dict[str, SourceAdapter[Any]],
+    *,
+    provenance_parent_event_id: str | None = None,
+    ontology_run_id: str | None = None,
+) -> dict[str, SourceResult[Any]]:
     out: dict[str, SourceResult[Any]] = {}
     if not adapters:
         return out
 
     with ThreadPoolExecutor(max_workers=min(len(adapters), 10)) as pool:
-        futures = {pool.submit(run_source_adapter, adapter): name for name, adapter in adapters.items()}
+        futures = {
+            pool.submit(
+                run_source_adapter,
+                adapter,
+                provenance_parent_event_id=provenance_parent_event_id,
+                ontology_run_id=ontology_run_id,
+            ): name
+            for name, adapter in adapters.items()
+        }
         try:
             for fut in as_completed(futures, timeout=ADAPTER_TIMEOUT_SECONDS):
                 name = futures[fut]

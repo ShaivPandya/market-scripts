@@ -86,6 +86,7 @@ class ActionContext:
     approval_id: int | None = None
     parent_action_run_id: int | None = None
     action_run_id: int | None = None
+    provenance_event_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -545,6 +546,62 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
         input_payload=raw_input,
     )
     run_id = int(run["id"])
+    try:
+        from api import provenance
+
+        event_id = provenance.deterministic_id("pv:action_run", run_id)
+        provenance.start_event(
+            event_id=event_id,
+            event_type="action_run",
+            event_name=action.action_id,
+            actor=context,
+            parent_event_id=context.provenance_event_id,
+            action_run_id=run_id,
+            approval_id=context.approval_id,
+            input_value=raw_input,
+            summary={
+                "action_id": action.action_id,
+                "action_schema_name": action.action_id,
+                "action_schema_version": action.schema_version,
+                "actor_type": context.actor_type,
+            },
+            metadata={
+                "input_hash": input_hash,
+                "source_type": context.source_type,
+                "source_id": context.source_id,
+                "parent_action_run_id": context.parent_action_run_id,
+            },
+        )
+        core_db.set_action_run_provenance_event(run_id, event_id)
+        provenance.link_refs(
+            event_id=event_id,
+            source_ref_type="domain_action",
+            source_ref_id=action.action_id,
+            source_ref_version=str(action.schema_version),
+            target_ref_type="action_run",
+            target_ref_id=str(run_id),
+            link_type="executed_as",
+        )
+        if context.source_type and context.source_id:
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type=context.source_type,
+                source_ref_id=str(context.source_id),
+                target_ref_type="action_run",
+                target_ref_id=str(run_id),
+                link_type="triggered",
+            )
+        if context.approval_id is not None:
+            provenance.link_refs(
+                event_id=event_id,
+                source_ref_type="approval",
+                source_ref_id=str(context.approval_id),
+                target_ref_type="action_run",
+                target_ref_id=str(run_id),
+                link_type="approved_execution",
+            )
+    except Exception:
+        pass
     core_db.record_action_event(run_id, "start", payload={"action_id": action.action_id})
     _emit_domain_audit(
         action,
@@ -596,7 +653,7 @@ def _emit_domain_audit(
     metadata: Any | None = None,
     error: str | None = None,
 ) -> None:
-    emit_audit_event(
+    audit_event = emit_audit_event(
         action_name,
         "domain_action",
         status,
@@ -608,6 +665,54 @@ def _emit_domain_audit(
         metadata=metadata,
         error=error,
     )
+    if action_run_id is not None and audit_event:
+        try:
+            from api import provenance
+
+            provenance.link_refs(
+                event_id=_action_run_provenance_id(action_run_id),
+                source_ref_type="action_run",
+                source_ref_id=str(action_run_id),
+                target_ref_type="audit_event",
+                target_ref_id=str(audit_event.get("event_id") or audit_event.get("id")),
+                link_type="audited_by",
+                metadata={"action_name": action_name, "status": status},
+            )
+        except Exception:
+            pass
+
+
+def _action_run_provenance_id(run_id: int) -> str:
+    try:
+        from api import provenance
+
+        return provenance.deterministic_id("pv:action_run", run_id)
+    except Exception:
+        return f"pv:action_run:{run_id}"
+
+
+def _finish_action_provenance(
+    run_id: int,
+    *,
+    status: str,
+    output_value: Any | None = None,
+    summary: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+) -> None:
+    try:
+        from api import provenance
+
+        provenance.finish_event(
+            _action_run_provenance_id(run_id),
+            status=status,
+            output_value=output_value,
+            summary=summary,
+            metadata=metadata,
+            error=error,
+        )
+    except Exception:
+        pass
 
 
 def _audit_fail(
@@ -624,6 +729,13 @@ def _audit_fail(
 
     core_db.record_action_event(run_id, "error", message=message)
     core_db.complete_action_run(run_id, status="rolled_back" if rolled_back else "failed", error=message)
+    _finish_action_provenance(
+        run_id,
+        status="rolled_back" if rolled_back else "failed",
+        summary={"status": "rolled_back" if rolled_back else "failed"},
+        metadata={"audit_action_name": audit_action_name},
+        error=message,
+    )
     if action is not None and context is not None:
         _emit_domain_audit(
             action,
@@ -652,7 +764,7 @@ def execute_action(
         else replace(action, schema_version=int(input_schema_version))
     )
     run_id, _input_hash = _audit_start(audit_action, raw_input, context)
-    context = replace(context, action_run_id=run_id)
+    context = replace(context, action_run_id=run_id, provenance_event_id=_action_run_provenance_id(run_id))
 
     from portfolio import core_db
 
@@ -696,6 +808,13 @@ def execute_action(
 
         core_db.record_action_event(run_id, "complete", payload=result.output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=result.output)
+        _finish_action_provenance(
+            run_id,
+            status="succeeded",
+            output_value=result.output,
+            summary={"status": "succeeded", **result.output},
+            metadata={"action_id": action.action_id, "action_schema_version": action.schema_version},
+        )
         _emit_domain_audit(
             action,
             context,
@@ -745,6 +864,7 @@ def propose_action(
         execute_actor_types=action.propose_actor_types,
     )
     run_id, input_hash = _audit_start(proposal_action, raw_input, context)
+    proposal_event_id = _action_run_provenance_id(run_id)
 
     from portfolio import core_db
 
@@ -781,6 +901,24 @@ def propose_action(
             action_schema_name=action.action_id,
             action_input_hash=input_hash,
         )
+        try:
+            from api import provenance
+
+            core_db.set_pending_approval_provenance(
+                int(approval["id"]),
+                origin_provenance_event_id=proposal_event_id,
+            )
+            provenance.link_refs(
+                event_id=proposal_event_id,
+                source_ref_type="action_run",
+                source_ref_id=str(run_id),
+                target_ref_type="approval",
+                target_ref_id=str(approval["id"]),
+                link_type="proposed",
+                metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
+            )
+        except Exception:
+            pass
         output = {
             "status": "pending_approval_created",
             "approval_id": approval["id"],
@@ -789,6 +927,17 @@ def propose_action(
         }
         core_db.record_action_event(run_id, "approval_created", payload=output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=output)
+        _finish_action_provenance(
+            run_id,
+            status="succeeded",
+            output_value=output,
+            summary=output,
+            metadata={
+                "action_id": action.action_id,
+                "proposal_action_id": proposal_action.action_id,
+                "action_schema_version": action.schema_version,
+            },
+        )
         _emit_domain_audit(
             proposal_action,
             context,
@@ -2103,7 +2252,7 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
         items = [artifact_value] if isinstance(artifact_value, dict) else []
 
     count = 0
-    for item in items:
+    for item_index, item in enumerate(items):
         if binding.required_keys and any(not item.get(key) for key in binding.required_keys):
             continue
         payload = binding.payload_adapter(item, ticker) if binding.payload_adapter else dict(item)
@@ -2112,6 +2261,103 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
             if binding.entity_id_field and item.get(binding.entity_id_field)
             else None
         )
-        propose_action(binding.action_id, payload, context, reason=binding.reason, entity_id=entity_id)
+        artifact_event_id: str | None = None
+        try:
+            from api import provenance
+
+            artifact_event_id = provenance.deterministic_id("pv:workflow_artifact", run_id, artifact_key, item_index)
+            provenance.start_event(
+                event_id=artifact_event_id,
+                event_type="workflow_artifact",
+                event_name=artifact_key,
+                actor=context,
+                parent_event_id=provenance.deterministic_id("pv:workflow_run", run_id),
+                workflow_run_id=run_id,
+                input_value=item,
+                summary={
+                    "artifact_key": artifact_key,
+                    "artifact_index": item_index,
+                    "ticker": ticker,
+                    "action_id": binding.action_id,
+                    "entity_id": entity_id,
+                },
+                metadata={
+                    "item_keys": sorted(str(key) for key in item.keys()),
+                    "multiple": binding.multiple,
+                },
+            )
+            provenance.link_refs(
+                event_id=artifact_event_id,
+                source_ref_type="workflow_run",
+                source_ref_id=run_id,
+                target_ref_type="workflow_artifact",
+                target_ref_id=artifact_event_id,
+                link_type="produced",
+                metadata={"artifact_key": artifact_key, "artifact_index": item_index},
+            )
+        except Exception:
+            artifact_event_id = None
+        try:
+            approval = propose_action(
+                binding.action_id,
+                payload,
+                replace(context, provenance_event_id=artifact_event_id),
+                reason=binding.reason,
+                entity_id=entity_id,
+            )
+        except Exception as exc:
+            try:
+                from api import provenance
+
+                provenance.finish_event(
+                    artifact_event_id,
+                    status="failed",
+                    summary={
+                        "artifact_key": artifact_key,
+                        "artifact_index": item_index,
+                        "action_id": binding.action_id,
+                    },
+                    error=str(exc) or exc.__class__.__name__,
+                )
+            except Exception:
+                pass
+            raise
+        try:
+            from api import provenance
+            from portfolio import core_db
+
+            record = provenance.record_workflow_artifact(
+                workflow_run_id=run_id,
+                artifact_key=artifact_key,
+                artifact_index=item_index,
+                artifact_value=item,
+                approval_id=int(approval["id"]),
+                provenance_event_id=artifact_event_id,
+            )
+            artifact_id = str(record.get("artifact_id")) if record and record.get("artifact_id") else artifact_event_id
+            core_db.set_pending_approval_provenance(int(approval["id"]), origin_artifact_id=artifact_id)
+            provenance.link_refs(
+                event_id=artifact_event_id,
+                source_ref_type="workflow_artifact",
+                source_ref_id=artifact_id or artifact_key,
+                target_ref_type="approval",
+                target_ref_id=str(approval["id"]),
+                link_type="proposed",
+                metadata={"action_id": binding.action_id, "artifact_key": artifact_key},
+            )
+            provenance.finish_event(
+                artifact_event_id,
+                status="succeeded",
+                output_value={"approval_id": approval["id"], "artifact_id": artifact_id},
+                summary={
+                    "artifact_key": artifact_key,
+                    "artifact_index": item_index,
+                    "approval_id": approval["id"],
+                    "action_id": binding.action_id,
+                    "status": "pending_approval_created",
+                },
+            )
+        except Exception:
+            pass
         count += 1
     return count

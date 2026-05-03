@@ -701,7 +701,13 @@ def _execute_tools_parallel(
         futures = []
         for c in calls:
             started = time.perf_counter()
-            fut = pool.submit(_execute_tool_for_actor, c["name"], c["args"], actor)
+            fut = pool.submit(
+                _execute_tool_for_actor,
+                c["name"],
+                c["args"],
+                actor,
+                c.get("_provenance_context"),
+            )
             futures.append((c, fut, started))
         out: list[tuple[dict, str, float]] = []
         for c, fut, started in futures:
@@ -723,7 +729,13 @@ def _execute_tools_parallel_keepalive(
         future_meta = {}
         for c in calls:
             started = time.perf_counter()
-            fut = pool.submit(_execute_tool_for_actor, c["name"], c["args"], actor)
+            fut = pool.submit(
+                _execute_tool_for_actor,
+                c["name"],
+                c["args"],
+                actor,
+                c.get("_provenance_context"),
+            )
             future_meta[fut] = (c, started)
 
         pending = set(future_meta)
@@ -744,11 +756,22 @@ def _execute_tools_parallel_keepalive(
                 yield (c, result, elapsed_ms)
 
 
-def _execute_tool_for_actor(name: str, args: dict, actor: Actor | None) -> str:
+def _execute_tool_for_actor(
+    name: str,
+    args: dict,
+    actor: Actor | None,
+    provenance_context: dict[str, Any] | None = None,
+) -> str:
     params = inspect.signature(execute_tool).parameters.values()
-    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
-    if supports_actor:
-        return execute_tool(name, args, actor=actor)
+    param_names = {p.name for p in params}
+    supports_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+    kwargs: dict[str, Any] = {}
+    if supports_kwargs or "actor" in param_names:
+        kwargs["actor"] = actor
+    if provenance_context and (supports_kwargs or "provenance_context" in param_names):
+        kwargs["provenance_context"] = provenance_context
+    if kwargs:
+        return execute_tool(name, args, **kwargs)
     return execute_tool(name, args)
 
 
@@ -1024,6 +1047,171 @@ def _usage_dict(message: object) -> dict:
     return out
 
 
+def _start_agent_turn_provenance(
+    *,
+    session_id: str | None,
+    message: object,
+    provider: str,
+    actor: Actor | None,
+    workflow_name: str | None = None,
+    workflow_ticker: str | None = None,
+) -> str | None:
+    try:
+        from api import provenance
+
+        event_id = provenance.deterministic_id(
+            "pv:agent_turn",
+            session_id or "legacy",
+            provenance.stable_hash(message),
+            int(time.time() * 1_000_000),
+        )
+        provenance.start_event(
+            event_id=event_id,
+            event_type="agent_turn",
+            event_name="agent_chat",
+            actor=actor,
+            agent_session_id=session_id,
+            input_value=message,
+            summary={
+                "provider": provider,
+                "session_id": session_id,
+                "workflow_name": workflow_name,
+                "workflow_ticker": workflow_ticker,
+                "message_hash": provenance.stable_hash(message),
+            },
+            metadata={"message_type": type(message).__name__},
+        )
+        return event_id
+    except Exception:
+        logger.debug("Failed to start agent turn provenance session=%s", session_id, exc_info=True)
+        return None
+
+
+def _finish_agent_turn_provenance(
+    event_id: str | None,
+    *,
+    status: str,
+    output_value: object | None = None,
+    usage: dict | None = None,
+    error: str | None = None,
+) -> None:
+    try:
+        from api import provenance
+
+        provenance.finish_event(
+            event_id,
+            status=status,
+            output_value=output_value,
+            summary={"status": status, "usage": usage or {}},
+            metadata={"usage": usage or {}},
+            error=error,
+        )
+    except Exception:
+        logger.debug("Failed to finish agent turn provenance event=%s", event_id, exc_info=True)
+
+
+def _start_model_call_provenance(
+    *,
+    parent_event_id: str | None,
+    session_id: str | None,
+    workflow_run_id: str | None,
+    provider: str,
+    purpose: str,
+    stream_kwargs: dict[str, object],
+    actor: Actor | None,
+    attempt: int,
+    round_index: int | None = None,
+) -> str | None:
+    try:
+        from api import provenance
+
+        model = stream_kwargs.get("model")
+        conversation = stream_kwargs.get("messages") or stream_kwargs.get("input")
+        event_id = provenance.deterministic_id(
+            "pv:model_call",
+            session_id or workflow_run_id or "legacy",
+            purpose,
+            round_index,
+            attempt,
+            int(time.time() * 1_000_000),
+        )
+        provenance.start_event(
+            event_id=event_id,
+            event_type="model_call",
+            event_name=str(model or provider),
+            actor=actor,
+            parent_event_id=parent_event_id,
+            workflow_run_id=workflow_run_id,
+            agent_session_id=session_id,
+            input_value={
+                "instructions": stream_kwargs.get("instructions") or stream_kwargs.get("system"),
+                "conversation": conversation,
+            },
+            summary={
+                "provider": provider,
+                "model": model,
+                "purpose": purpose,
+                "attempt": attempt,
+                "round_index": round_index,
+                "tool_count": len(stream_kwargs.get("tools") or []),
+            },
+            metadata={
+                "max_tokens": stream_kwargs.get("max_tokens"),
+                "tool_choice": stream_kwargs.get("tool_choice"),
+                "reasoning": stream_kwargs.get("reasoning"),
+            },
+        )
+        return event_id
+    except Exception:
+        logger.debug("Failed to start model call provenance purpose=%s", purpose, exc_info=True)
+        return None
+
+
+def _finish_model_call_provenance(
+    event_id: str | None,
+    *,
+    status: str,
+    final_message: object | None = None,
+    output_text: str | None = None,
+    error: str | None = None,
+) -> None:
+    usage = _usage_dict(final_message) if final_message is not None else {}
+    try:
+        from api import provenance
+
+        provenance.finish_event(
+            event_id,
+            status=status,
+            output_value=output_text if output_text is not None else final_message,
+            summary={"status": status, "usage": usage},
+            metadata={"usage": usage},
+            error=error,
+        )
+    except Exception:
+        logger.debug("Failed to finish model call provenance event=%s", event_id, exc_info=True)
+
+
+def _attach_tool_provenance_context(
+    calls: list[dict],
+    *,
+    parent_event_id: str | None,
+    session_id: str | None,
+    workflow_run_id: str | None,
+    source: str,
+) -> None:
+    if not (parent_event_id or session_id or workflow_run_id):
+        return
+    for call in calls:
+        call_id = next((str(cid) for cid in call.get("call_ids", []) if cid), None)
+        call["_provenance_context"] = {
+            "parent_event_id": parent_event_id,
+            "agent_session_id": session_id,
+            "workflow_run_id": workflow_run_id,
+            "call_id": call_id,
+            "source": source,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -1054,6 +1242,14 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
     def generate():  # noqa: C901 — complex but linear control flow
         yield _sse_ping()
         client = _get_provider_client(provider, api_key)
+        agent_turn_event_id = _start_agent_turn_provenance(
+            session_id=None,
+            message=[m.model_dump() for m in req.messages],
+            provider=provider,
+            actor=tool_actor,
+            workflow_name=workflow_name,
+            workflow_ticker=workflow_ticker,
+        )
 
         # --- Workflow path: deterministic tool execution → single synthesis ---
         if workflow_name:
@@ -1066,6 +1262,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             "text": f"I need a ticker to run the **{wf_def.get('label', workflow_name)}** workflow. Which position would you like me to review?"
                         },
                     )
+                    _finish_agent_turn_provenance(agent_turn_event_id, status="succeeded", usage={})
                     yield _sse("done", {"usage": {}})
                     return
 
@@ -1091,14 +1288,35 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             max_tokens=LLM_MAX_TOKENS,
                             reasoning_effort=reasoning_effort,
                         )
+                        model_event_id = _start_model_call_provenance(
+                            parent_event_id=agent_turn_event_id,
+                            session_id=None,
+                            workflow_run_id=run_id,
+                            provider=provider,
+                            purpose="workflow_synthesis",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            attempt=attempt,
+                        )
                         final_message = yield from _stream_llm_response(
                             client,
                             provider,
                             stream_kwargs,
                             synthesis_chunks,
                         )
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="succeeded",
+                            final_message=final_message,
+                            output_text="".join(synthesis_chunks),
+                        )
                         break
                     except Exception as retry_exc:
+                        _finish_model_call_provenance(
+                            locals().get("model_event_id"),
+                            status="failed",
+                            error=str(retry_exc) or retry_exc.__class__.__name__,
+                        )
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
                             delay = RETRY_BASE_DELAY * (2**attempt)
                             logger.warning(
@@ -1126,6 +1344,12 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     logger.debug("Failed to persist workflow run %s", run_id, exc_info=True)
 
                 usage = _usage_dict(final_message)
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="succeeded",
+                    output_value=synthesis_text,
+                    usage=usage,
+                )
                 yield _sse("done", {"usage": usage, "workflow_run_id": run_id})
                 return
 
@@ -1137,6 +1361,12 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     fail_workflow_run(run_id, str(exc))
                 except Exception:
                     pass
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="failed",
+                    usage={},
+                    error=str(exc) or exc.__class__.__name__,
+                )
                 yield _sse("error", {"message": f"Workflow failed: {exc}"})
                 yield _sse("done", {"usage": {}})
                 return
@@ -1162,6 +1392,12 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                         "error",
                         {"message": (f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).")},
                     )
+                    _finish_agent_turn_provenance(
+                        agent_turn_event_id,
+                        status="failed",
+                        usage={},
+                        error=f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).",
+                    )
                     yield _sse("done", {"usage": {}})
                     return
 
@@ -1175,11 +1411,33 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     reasoning_effort=reasoning_effort,
                 )
 
+                model_event_id: str | None = None
                 for attempt in range(MAX_API_RETRIES):
                     try:
+                        model_event_id = _start_model_call_provenance(
+                            parent_event_id=agent_turn_event_id,
+                            session_id=None,
+                            workflow_run_id=None,
+                            provider=provider,
+                            purpose="agent_chat",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            attempt=attempt,
+                            round_index=continuation_round,
+                        )
                         final_message = yield from _stream_llm_response(client, provider, stream_kwargs)
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="succeeded",
+                            final_message=final_message,
+                        )
                         break
                     except Exception as retry_exc:
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="failed",
+                            error=str(retry_exc) or retry_exc.__class__.__name__,
+                        )
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
                             delay = RETRY_BASE_DELAY * (2**attempt)
                             logger.warning(
@@ -1230,6 +1488,13 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                         pending_calls.append(call_info)
 
                     if pending_calls:
+                        _attach_tool_provenance_context(
+                            pending_calls,
+                            parent_event_id=model_event_id,
+                            session_id=None,
+                            workflow_run_id=None,
+                            source="agent.chat",
+                        )
                         for tool_item in _execute_tools_parallel_keepalive(pending_calls, actor=tool_actor):
                             if tool_item is None:
                                 yield _sse_ping()
@@ -1305,11 +1570,23 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     continue
 
                 usage = _usage_dict(final_message)
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="succeeded",
+                    output_value=final_message,
+                    usage=usage,
+                )
                 yield _sse("done", {"usage": usage})
                 return
 
         except Exception as exc:
             logger.exception("Agent stream error")
+            _finish_agent_turn_provenance(
+                agent_turn_event_id,
+                status="failed",
+                usage={},
+                error=str(exc) or exc.__class__.__name__,
+            )
             yield _sse("error", {"message": _format_stream_error(exc)})
             yield _sse("done", {"usage": {}})
 
@@ -1361,16 +1638,29 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
         yield _sse_ping()
         from api.memory_manager import build_conversation_context, finalize_turn_async
 
+        agent_turn_event_id: str | None = None
         if casual and not workflow_name:
             from api import memory_db
 
             session = memory_db.get_or_create_session(req.session_id)
             session_id = str(session["session_id"])
+            agent_turn_event_id = _start_agent_turn_provenance(
+                session_id=session_id,
+                message=req.message,
+                provider=selected_provider(),
+                actor=tool_actor,
+            )
             text = _casual_response(req.message, req.response_preferences)
             yield _sse("delta", {"text": text})
             user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
             assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time()}
             finalize_turn_async(session_id, user_msg, assistant_msg)
+            _finish_agent_turn_provenance(
+                agent_turn_event_id,
+                status="succeeded",
+                output_value=text,
+                usage={},
+            )
             yield _sse("done", {"usage": {}, "session_id": session_id})
             return
 
@@ -1385,6 +1675,14 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             req.session_id,
             req.message,
             enable_retrieval=enable_retrieval,
+        )
+        agent_turn_event_id = _start_agent_turn_provenance(
+            session_id=session_id,
+            message=req.message,
+            provider=provider,
+            actor=tool_actor,
+            workflow_name=workflow_name,
+            workflow_ticker=workflow_ticker,
         )
         conversation = (
             raw_conversation if provider == PROVIDER_ANTHROPIC else _openai_conversation_from_context(raw_conversation)
@@ -1401,6 +1699,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             "text": f"I need a ticker to run the **{wf_def.get('label', workflow_name)}** workflow. Which position would you like me to review?"
                         },
                     )
+                    _finish_agent_turn_provenance(agent_turn_event_id, status="succeeded", usage={})
                     yield _sse("done", {"usage": {}, "session_id": session_id})
                     return
 
@@ -1424,14 +1723,35 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             max_tokens=LLM_MAX_TOKENS,
                             reasoning_effort=reasoning_effort,
                         )
+                        model_event_id = _start_model_call_provenance(
+                            parent_event_id=agent_turn_event_id,
+                            session_id=session_id,
+                            workflow_run_id=run_id,
+                            provider=provider,
+                            purpose="workflow_synthesis",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            attempt=attempt,
+                        )
                         final_message = yield from _stream_llm_response(
                             client,
                             provider,
                             stream_kwargs,
                             synthesis_chunks,
                         )
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="succeeded",
+                            final_message=final_message,
+                            output_text="".join(synthesis_chunks),
+                        )
                         break
                     except Exception as retry_exc:
+                        _finish_model_call_provenance(
+                            locals().get("model_event_id"),
+                            status="failed",
+                            error=str(retry_exc) or retry_exc.__class__.__name__,
+                        )
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
                             time.sleep(RETRY_BASE_DELAY * (2**attempt))
                             continue
@@ -1454,6 +1774,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
                 assistant_msg = {"role": "assistant", "content": synthesis_text, "timestamp": time.time()}
                 finalize_turn_async(session_id, user_msg, assistant_msg)
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="succeeded",
+                    output_value=synthesis_text,
+                    usage=usage,
+                )
                 yield _sse("done", {"usage": usage, "session_id": session_id, "workflow_run_id": run_id})
                 return
 
@@ -1465,6 +1791,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     fail_workflow_run(run_id, str(exc))
                 except Exception:
                     pass
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="failed",
+                    usage={},
+                    error=str(exc) or exc.__class__.__name__,
+                )
                 yield _sse("error", {"message": f"Workflow failed: {exc}"})
                 yield _sse("done", {"usage": {}, "session_id": session_id})
                 return
@@ -1485,6 +1817,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         "error",
                         {"message": f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds)."},
                     )
+                    _finish_agent_turn_provenance(
+                        agent_turn_event_id,
+                        status="failed",
+                        usage={},
+                        error=f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).",
+                    )
                     yield _sse("done", {"usage": {}, "session_id": session_id})
                     return
 
@@ -1498,16 +1836,39 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     reasoning_effort=reasoning_effort,
                 )
 
+                model_event_id: str | None = None
                 for attempt in range(MAX_API_RETRIES):
                     try:
+                        model_event_id = _start_model_call_provenance(
+                            parent_event_id=agent_turn_event_id,
+                            session_id=session_id,
+                            workflow_run_id=None,
+                            provider=provider,
+                            purpose="agent_chat",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            attempt=attempt,
+                            round_index=continuation_round,
+                        )
                         final_message = yield from _stream_llm_response(
                             client,
                             provider,
                             stream_kwargs,
                             text_parts,
                         )
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="succeeded",
+                            final_message=final_message,
+                            output_text="".join(text_parts),
+                        )
                         break
                     except Exception as retry_exc:
+                        _finish_model_call_provenance(
+                            model_event_id,
+                            status="failed",
+                            error=str(retry_exc) or retry_exc.__class__.__name__,
+                        )
                         if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
                             time.sleep(RETRY_BASE_DELAY * (2**attempt))
                             continue
@@ -1557,6 +1918,13 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         pending_calls.append(call_info)
 
                     if pending_calls:
+                        _attach_tool_provenance_context(
+                            pending_calls,
+                            parent_event_id=model_event_id,
+                            session_id=session_id,
+                            workflow_run_id=None,
+                            source="agent.chat.v2",
+                        )
                         for tool_item in _execute_tools_parallel_keepalive(pending_calls, actor=tool_actor):
                             if tool_item is None:
                                 yield _sse_ping()
@@ -1644,11 +2012,23 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
                 assistant_msg = {"role": "assistant", "content": full_text, "timestamp": time.time()}
                 finalize_turn_async(session_id, user_msg, assistant_msg)
+                _finish_agent_turn_provenance(
+                    agent_turn_event_id,
+                    status="succeeded",
+                    output_value=full_text,
+                    usage=usage,
+                )
                 yield _sse("done", {"usage": usage, "session_id": session_id})
                 return
 
         except Exception as exc:
             logger.exception("Agent v2 stream error")
+            _finish_agent_turn_provenance(
+                agent_turn_event_id,
+                status="failed",
+                usage={},
+                error=str(exc) or exc.__class__.__name__,
+            )
             yield _sse("error", {"message": _format_stream_error(exc)})
             yield _sse("done", {"usage": {}, "session_id": session_id})
 

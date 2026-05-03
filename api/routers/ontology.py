@@ -116,6 +116,23 @@ def list_ontology_runs(actor: ActorDep, limit: int = 100):
         raise DataFetchError(source="ontology", detail=str(exc)) from exc
 
 
+@router.get("/ontology/runs/{run_id}")
+def get_ontology_run(run_id: str, actor: ActorDep):
+    policy = getattr(_service, "policy", None)
+    if policy is not None:
+        require_allowed(policy.check_action(actor, OntologyAction.RUNS_LIST, {"run_id": run_id}))
+    run = _service.repo.get_run(run_id)
+    if run is None:
+        raise NotFoundError("Ontology run", run_id)
+    try:
+        from portfolio.core_db import provenance_summary
+
+        run["provenance_summary"] = provenance_summary(ontology_run_id=run_id)
+    except Exception:
+        run["provenance_summary"] = {"event_count": 0, "link_count": 0}
+    return run
+
+
 @router.post("/ontology/query")
 def query_ontology(req: OntologyQueryRequest, actor: ActorDep):
     _preflight_query_policy(req, actor)

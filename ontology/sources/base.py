@@ -39,6 +39,7 @@ class LineageMetadata:
     cache_hint: str | None = None
     snapshot_hint: str | None = None
     payload_fingerprint: str | None = None
+    provenance_event_id: str | None = None
     coverage: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,8 +89,41 @@ class SourceAdapter[T](Protocol):
     def normalize(self, raw: RawSourcePayload) -> SourceResult[T]: ...
 
 
-def run_source_adapter[T](adapter: SourceAdapter[T]) -> SourceResult[T]:
+def run_source_adapter[T](
+    adapter: SourceAdapter[T],
+    *,
+    provenance_parent_event_id: str | None = None,
+    ontology_run_id: str | None = None,
+) -> SourceResult[T]:
     started = time.perf_counter()
+    provenance_event_id: str | None = None
+    try:
+        from api import provenance
+
+        provenance_event_id = provenance.deterministic_id(
+            "pv:adapter",
+            ontology_run_id or "standalone",
+            adapter.source_name,
+        )
+        provenance.start_event(
+            event_id=provenance_event_id,
+            event_type="source_adapter_run",
+            event_name=adapter.source_name,
+            parent_event_id=provenance_parent_event_id,
+            ontology_run_id=ontology_run_id,
+            summary={
+                "source_name": adapter.source_name,
+                "source_version": adapter.source_version,
+                "raw_module": getattr(adapter, "raw_module", ""),
+                "raw_function": getattr(adapter, "raw_function", ""),
+            },
+            metadata={
+                "parameters": dict(getattr(adapter, "parameters", {}) or {}),
+                "required": bool(getattr(adapter, "required", False)),
+            },
+        )
+    except Exception:
+        provenance_event_id = None
     try:
         raw = adapter.fetch()
         result = adapter.normalize(raw)
@@ -97,6 +131,28 @@ def run_source_adapter[T](adapter: SourceAdapter[T]) -> SourceResult[T]:
         result = error_result(adapter, _sanitize_detail(str(exc)))
 
     duration_ms = (time.perf_counter() - started) * 1000.0
+    result.lineage.provenance_event_id = provenance_event_id
+    if provenance_event_id:
+        try:
+            from api import provenance
+
+            provenance.finish_event(
+                provenance_event_id,
+                status="succeeded" if result.status != "error" else "failed",
+                output_value={
+                    "status": result.status,
+                    "quality": result.quality,
+                    "payload_fingerprint": result.lineage.payload_fingerprint,
+                },
+                summary=result.to_status_dict(),
+                metadata={
+                    "duration_ms": round(duration_ms, 1),
+                    "schema_drift_count": len(result.schema_drift),
+                },
+                error=result.detail if result.status == "error" else None,
+            )
+        except Exception:
+            pass
     log.info(
         "ontology_source_adapter source=%s version=%s status=%s quality=%s duration_ms=%.1f as_of=%s drift_count=%d detail=%s",
         adapter.source_name,

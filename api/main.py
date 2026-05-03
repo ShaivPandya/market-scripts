@@ -362,6 +362,7 @@ from api.routers import (
     approvals,
     dossier,
     process_entities,
+    provenance,
     recommendations,
     report_sync,
     research_notes,
@@ -376,6 +377,7 @@ app.include_router(approvals.router, prefix=_V1, dependencies=_auth_dep, tags=["
 app.include_router(action_items.router, prefix=_V1, dependencies=_auth_dep, tags=["actions"])
 app.include_router(triggers.router, prefix=_V1, dependencies=_auth_dep, tags=["triggers"])
 app.include_router(process_entities.router, prefix=_V1, dependencies=_auth_dep, tags=["process"])
+app.include_router(provenance.router, prefix=_V1, dependencies=_auth_dep, tags=["provenance"])
 app.include_router(recommendations.router, prefix=_V1, dependencies=_auth_dep, tags=["recommendations"])
 app.include_router(research_notes.router, prefix=_V1, dependencies=_auth_dep, tags=["research"])
 app.include_router(workflow_runs.router, prefix=_V1, dependencies=_auth_dep, tags=["workflows"])

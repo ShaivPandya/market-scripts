@@ -192,6 +192,7 @@ class OntologyRepository:
                     required_modules_json TEXT NOT NULL,
                     optional_modules_json TEXT NOT NULL,
                     component_scores_json TEXT NOT NULL,
+                    provenance_event_id TEXT,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
                 """
@@ -244,6 +245,7 @@ class OntologyRepository:
                 _ensure_schema_columns(conn, table)
             for table in ("edges", "snapshot_edges"):
                 _ensure_relation_schema_columns(conn, table)
+            _ensure_ontology_run_provenance_column(conn)
             create_schema_registry_tables(conn)
             create_ontology_binding_tables(conn)
             seed_schema_definitions(conn, ontology_schema_definitions())
@@ -429,15 +431,17 @@ class OntologyRepository:
                         required_modules_json,
                         optional_modules_json,
                         component_scores_json,
+                        provenance_event_id,
                         created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     ON CONFLICT(run_id) DO UPDATE SET
                         as_of=excluded.as_of,
                         source_status_json=excluded.source_status_json,
                         required_modules_json=excluded.required_modules_json,
                         optional_modules_json=excluded.optional_modules_json,
-                        component_scores_json=excluded.component_scores_json
+                        component_scores_json=excluded.component_scores_json,
+                        provenance_event_id=excluded.provenance_event_id
                     """,
                     (
                         run_id,
@@ -446,6 +450,7 @@ class OntologyRepository:
                         json.dumps(list(required_modules), default=str),
                         json.dumps(list(optional_modules), default=str),
                         json.dumps(component_scores, default=str),
+                        _ontology_run_provenance_id(run_id),
                     ),
                 )
                 conn.execute("DELETE FROM snapshot_nodes WHERE run_id = ?", (run_id,))
@@ -535,6 +540,7 @@ class OntologyRepository:
                 "source_status": source_status,
             },
         )
+        _record_snapshot_provenance(run_id, source_status, nodes, edges, binding_rows)
 
     def prune_runs_older_than(self, *, days: int) -> int:
         if days <= 0:
@@ -567,6 +573,7 @@ class OntologyRepository:
                   required_modules_json,
                   optional_modules_json,
                   component_scores_json,
+                  provenance_event_id,
                   created_at
                 FROM ontology_runs
                 WHERE run_id = ?
@@ -582,6 +589,7 @@ class OntologyRepository:
             "required_modules": _load_json_list(row["required_modules_json"]),
             "optional_modules": _load_json_list(row["optional_modules_json"]),
             "component_scores": _load_json(row["component_scores_json"]),
+            "provenance_event_id": row["provenance_event_id"],
             "created_at": row["created_at"],
             "schema_bindings": self._get_schema_bindings(run_id),
         }
@@ -597,6 +605,7 @@ class OntologyRepository:
                   required_modules_json,
                   optional_modules_json,
                   component_scores_json,
+                  provenance_event_id,
                   created_at
                 FROM ontology_runs
                 ORDER BY created_at DESC, run_id DESC
@@ -612,6 +621,7 @@ class OntologyRepository:
             "required_modules": _load_json_list(row["required_modules_json"]),
             "optional_modules": _load_json_list(row["optional_modules_json"]),
             "component_scores": _load_json(row["component_scores_json"]),
+            "provenance_event_id": row["provenance_event_id"],
             "created_at": row["created_at"],
             "schema_bindings": self._get_schema_bindings(str(row["run_id"])),
         }
@@ -650,6 +660,7 @@ class OntologyRepository:
                   as_of,
                   source_status_json,
                   required_modules_json,
+                  provenance_event_id,
                   created_at
                 FROM ontology_runs
                 ORDER BY created_at DESC, run_id DESC
@@ -674,6 +685,7 @@ class OntologyRepository:
                     "run_id": row["run_id"],
                     "as_of": row["as_of"],
                     "created_at": row["created_at"],
+                    "provenance_event_id": row["provenance_event_id"],
                     "required_modules_ok": required_ok,
                 }
             )
@@ -1752,6 +1764,15 @@ def _allow_legacy_schemas() -> bool:
     return value not in {"1", "true", "yes", "on"}
 
 
+def _ontology_run_provenance_id(run_id: str) -> str:
+    try:
+        from api import provenance
+
+        return provenance.deterministic_id("pv:ontology_run", run_id)
+    except Exception:
+        return f"pv:ontology_run:{str(run_id).replace('+', '_')}"
+
+
 def _ensure_schema_columns(conn: sqlite3.Connection, table: str) -> None:
     existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if "schema_name" not in existing:
@@ -1766,6 +1787,12 @@ def _ensure_relation_schema_columns(conn: sqlite3.Connection, table: str) -> Non
         conn.execute(f"ALTER TABLE {table} ADD COLUMN relation_schema_name TEXT NOT NULL DEFAULT 'legacy'")
     if "relation_schema_version" not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN relation_schema_version INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_ontology_run_provenance_column(conn: sqlite3.Connection) -> None:
+    existing = {str(row["name"]) for row in conn.execute("PRAGMA table_info(ontology_runs)").fetchall()}
+    if "provenance_event_id" not in existing:
+        conn.execute("ALTER TABLE ontology_runs ADD COLUMN provenance_event_id TEXT")
 
 
 def _ensure_relation_indexes(conn: sqlite3.Connection) -> None:
@@ -2161,6 +2188,82 @@ def _schema_binding_rows(
         )
         for schema_kind, schema_name, schema_version in sorted(keys)
     ]
+
+
+def _record_snapshot_provenance(
+    run_id: str,
+    source_status: dict[str, Any],
+    nodes: list[OntologyNode],
+    edges: list[OntologyEdge],
+    binding_rows: list[tuple[str, str, str, int, str]],
+) -> None:
+    try:
+        from api import provenance
+    except Exception:
+        return
+
+    event_id = _ontology_run_provenance_id(run_id)
+    for source_name, state in source_status.items():
+        lineage = state.get("lineage") if isinstance(state, dict) else None
+        adapter_event_id = lineage.get("provenance_event_id") if isinstance(lineage, dict) else None
+        if not adapter_event_id:
+            continue
+        provenance.link_refs(
+            event_id=event_id,
+            source_ref_type="ontology_run",
+            source_ref_id=run_id,
+            target_ref_type="source_adapter_run",
+            target_ref_id=str(adapter_event_id),
+            link_type="used",
+            metadata={
+                "source_name": source_name,
+                "status": state.get("status") if isinstance(state, dict) else None,
+                "quality": state.get("quality") if isinstance(state, dict) else None,
+            },
+        )
+
+    for _run_id, schema_kind, schema_name, schema_version, definition_hash in binding_rows:
+        provenance.link_refs(
+            event_id=event_id,
+            source_ref_type="ontology_run",
+            source_ref_id=run_id,
+            target_ref_type="schema_definition",
+            target_ref_id=f"{schema_kind}:{schema_name}",
+            target_ref_version=str(schema_version),
+            link_type="schema_bound",
+            metadata={"definition_hash": definition_hash},
+        )
+
+    for node in nodes:
+        provenance.link_refs(
+            event_id=event_id,
+            source_ref_type="ontology_run",
+            source_ref_id=run_id,
+            target_ref_type="ontology_object_version",
+            target_ref_id=f"{run_id}:{node.id}",
+            target_ref_version=f"{node.schema_name}:{node.schema_version}",
+            link_type="produced",
+            metadata={"node_id": node.id, "node_type": node.type, "schema_name": node.schema_name},
+        )
+
+    for edge in edges:
+        relation_ref = f"{run_id}:{edge.source_id}:{edge.relation_type}:{edge.target_id}"
+        provenance.link_refs(
+            event_id=event_id,
+            source_ref_type="ontology_run",
+            source_ref_id=run_id,
+            target_ref_type="relation_version",
+            target_ref_id=relation_ref,
+            target_ref_version=f"{edge.relation_schema_name}:{edge.relation_schema_version}",
+            link_type="produced",
+            metadata={
+                "source_id": edge.source_id,
+                "target_id": edge.target_id,
+                "relation_type": edge.relation_type,
+                "schema_name": edge.schema_name,
+                "schema_version": edge.schema_version,
+            },
+        )
 
 
 def _normalize_live_edges_for_storage(

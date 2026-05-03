@@ -2031,7 +2031,12 @@ def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
+def execute_tool(
+    name: str,
+    arguments: dict,
+    actor: Actor | None = None,
+    provenance_context: dict[str, Any] | None = None,
+) -> str:
     """Run the tool identified by *name* and return a JSON string for the model.
 
     Errors are caught and returned as ``{"error": "..."}`` so the model can
@@ -2039,11 +2044,48 @@ def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
     """
     started = time.perf_counter()
     actor = actor or admin_actor(source="agent_tools")
+    safe_args = arguments if isinstance(arguments, dict) else {}
+    provenance_event_id: str | None = None
     try:
-        safe_args = arguments if isinstance(arguments, dict) else {}
+        from api import provenance
+
+        pv_context = provenance_context or {}
+        provenance_event_id = str(
+            pv_context.get("event_id")
+            or provenance.deterministic_id(
+                "pv:tool_call",
+                pv_context.get("agent_session_id") or pv_context.get("workflow_run_id") or "standalone",
+                pv_context.get("parent_event_id"),
+                name,
+                provenance.stable_hash(safe_args),
+                int(started * 1_000_000),
+            )
+        )
+        provenance.start_event(
+            event_id=provenance_event_id,
+            event_type="tool_call",
+            event_name=name,
+            actor=actor,
+            parent_event_id=pv_context.get("parent_event_id"),
+            workflow_run_id=pv_context.get("workflow_run_id"),
+            agent_session_id=pv_context.get("agent_session_id"),
+            input_value=safe_args,
+            summary={
+                "tool": name,
+                "arg_keys": sorted(str(key) for key in safe_args.keys()),
+                "call_id": pv_context.get("call_id"),
+            },
+            metadata={
+                "args_hash": provenance.stable_hash(safe_args),
+                "source": pv_context.get("source") or "agent_tools.execute_tool",
+            },
+        )
+    except Exception:
+        provenance_event_id = None
+    try:
         if not is_agent_tool_exposed(name):
             raise ValueError(f"Tool '{name}' is not exposed to the agent")
-        result, dispatch_meta = _call_dispatch(name, safe_args, actor=actor)
+        result, dispatch_meta = _call_dispatch(name, safe_args, actor=actor, provenance_event_id=provenance_event_id)
         payload, _compact_meta = _compact_tool_output(name, result)
         meta = dict(dispatch_meta)
         meta.update(
@@ -2057,6 +2099,23 @@ def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
         if isinstance(quality, dict):
             meta["quality_ok"] = bool(quality.get("ok"))
         payload = _attach_meta(payload, meta)
+        try:
+            from api import provenance
+
+            provenance.finish_event(
+                provenance_event_id,
+                status="succeeded",
+                output_value=payload,
+                summary={
+                    "tool": name,
+                    "duration_ms": meta["duration_ms"],
+                    "status": "ok",
+                    "quality_ok": meta.get("quality_ok"),
+                },
+                metadata={k: v for k, v in meta.items() if k != "tool"},
+            )
+        except Exception:
+            pass
         return _stable_json_dumps(payload)
     except PolicyDenied as exc:
         payload = _attach_meta(
@@ -2067,6 +2126,18 @@ def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
                 "status": "denied",
             },
         )
+        try:
+            from api import provenance
+
+            provenance.finish_event(
+                provenance_event_id,
+                status="denied",
+                output_value=payload,
+                summary={"tool": name, "status": "denied"},
+                error=exc.reason,
+            )
+        except Exception:
+            pass
         return _stable_json_dumps(payload)
     except Exception as exc:
         logger.exception("Tool %s failed", name)
@@ -2078,14 +2149,38 @@ def execute_tool(name: str, arguments: dict, actor: Actor | None = None) -> str:
                 "status": "error",
             },
         )
+        try:
+            from api import provenance
+
+            provenance.finish_event(
+                provenance_event_id,
+                status="failed",
+                output_value=payload,
+                summary={"tool": name, "status": "error"},
+                error=str(exc) or exc.__class__.__name__,
+            )
+        except Exception:
+            pass
         return _stable_json_dumps(payload)
 
 
-def _call_dispatch(name: str, args: dict, *, actor: Actor) -> tuple[object, dict[str, Any]]:
+def _call_dispatch(
+    name: str,
+    args: dict,
+    *,
+    actor: Actor,
+    provenance_event_id: str | None = None,
+) -> tuple[object, dict[str, Any]]:
     params = inspect.signature(_dispatch).parameters.values()
-    supports_actor = any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
-    if supports_actor:
-        return _dispatch(name, args, actor=actor)
+    param_names = {p.name for p in params}
+    supports_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+    kwargs: dict[str, Any] = {}
+    if supports_kwargs or "actor" in param_names:
+        kwargs["actor"] = actor
+    if provenance_event_id and (supports_kwargs or "provenance_event_id" in param_names):
+        kwargs["provenance_event_id"] = provenance_event_id
+    if kwargs:
+        return _dispatch(name, args, **kwargs)
     return _dispatch(name, args)
 
 
@@ -2265,17 +2360,23 @@ def _is_proposal_tool(name: str) -> bool:
         return False
 
 
-def _registry_agent_context(actor: Actor) -> RegistryActionContext:
+def _registry_agent_context(actor: Actor, provenance_event_id: str | None = None) -> RegistryActionContext:
     source_id = actor.parent_actor_id or actor.actor_id
     return RegistryActionContext(
         actor_type="agent",
         actor_id=actor.actor_id,
         source_type="agent",
         source_id=source_id,
+        provenance_event_id=provenance_event_id,
     )
 
 
-def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object, dict[str, Any]]:
+def _dispatch(
+    name: str,
+    args: dict,
+    actor: Actor | None = None,
+    provenance_event_id: str | None = None,
+) -> tuple[object, dict[str, Any]]:
     """Route a tool call to the corresponding data function."""
     actor = actor or admin_actor(source="agent_tools")
     force_refresh = bool(args.get("_force_refresh"))
@@ -2285,7 +2386,7 @@ def _dispatch(name: str, args: dict, actor: Actor | None = None) -> tuple[object
         return _fetch_with_cache(cache, key, loader, force_refresh=force_refresh)
 
     if _is_proposal_tool(name):
-        approval = propose_action_from_tool(name, args, _registry_agent_context(actor))
+        approval = propose_action_from_tool(name, args, _registry_agent_context(actor, provenance_event_id))
         return {
             "status": "pending_approval_created",
             "approval_id": approval["id"],

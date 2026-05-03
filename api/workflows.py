@@ -522,6 +522,71 @@ def _build_sections(results: list[tuple[str, dict, float]]) -> tuple[list[dict[s
     return sections, data_block
 
 
+def _record_workflow_tool_provenance(
+    *,
+    run_id: str,
+    workflow_name: str,
+    sections: list[dict[str, Any]],
+    actor: Actor | None,
+) -> None:
+    try:
+        from api import provenance
+
+        workflow_event_id = provenance.deterministic_id("pv:workflow_run", run_id)
+        for idx, section in enumerate(sections):
+            tool_name = str(section.get("tool") or f"tool_{idx}")
+            tool_event_id = provenance.deterministic_id("pv:workflow_tool_call", run_id, idx, tool_name)
+            data = section.get("data")
+            if isinstance(data, dict):
+                data_shape: dict[str, Any] = {
+                    "result_type": "dict",
+                    "result_keys": sorted(str(key) for key in data.keys())[:50],
+                }
+            elif isinstance(data, list):
+                data_shape = {"result_type": "list", "result_count": len(data)}
+            else:
+                data_shape = {"result_type": type(data).__name__}
+
+            provenance.start_event(
+                event_id=tool_event_id,
+                event_type="tool_call",
+                event_name=tool_name,
+                actor=actor,
+                parent_event_id=workflow_event_id,
+                workflow_run_id=run_id,
+                summary={
+                    "workflow_name": workflow_name,
+                    "tool": tool_name,
+                    "status": "succeeded",
+                    "duration_ms": section.get("duration_ms"),
+                },
+                metadata=data_shape,
+            )
+            provenance.finish_event(
+                tool_event_id,
+                status="succeeded",
+                output_value=data,
+                summary={
+                    "workflow_name": workflow_name,
+                    "tool": tool_name,
+                    "status": "succeeded",
+                    "duration_ms": section.get("duration_ms"),
+                },
+                metadata=data_shape,
+            )
+            provenance.link_refs(
+                event_id=tool_event_id,
+                source_ref_type="workflow_run",
+                source_ref_id=run_id,
+                target_ref_type="tool_call",
+                target_ref_id=tool_event_id,
+                link_type="executed",
+                metadata={"workflow_name": workflow_name, "tool_index": idx},
+            )
+    except Exception:
+        logger.debug("Failed to record workflow tool provenance run_id=%s", run_id, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -590,5 +655,12 @@ def execute_workflow(
             source_lineage={"run_id": run_id, "ephemeral": True},
         )
 
-    synthesis_prompt, sections = runner(ticker, actor or admin_actor(source="workflow"))
+    effective_actor = actor or admin_actor(source="workflow")
+    synthesis_prompt, sections = runner(ticker, effective_actor)
+    _record_workflow_tool_provenance(
+        run_id=run_id,
+        workflow_name=workflow_name,
+        sections=sections,
+        actor=effective_actor,
+    )
     return run_id, synthesis_prompt, sections

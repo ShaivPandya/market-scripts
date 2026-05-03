@@ -34,7 +34,7 @@ from ontology.schemas.relations import (
     REFERENCES_ASSET,
 )
 from ontology.sector_mapper import SectorMapper
-from ontology.sources.dtos import PortfolioSnapshot
+from ontology.sources.dtos import PortfolioSnapshot, SectorMetricsSnapshot
 from ontology.sources.registry import build_adapter_registry, run_adapters, source_status_from_results
 
 SNAPSHOT_RETENTION_DAYS = 90
@@ -48,6 +48,7 @@ class IngestionOutput:
     required_modules: list[str] = field(default_factory=list)
     optional_modules: list[str] = field(default_factory=list)
     component_scores: dict[str, float] = field(default_factory=dict)
+    provenance_event_id: str | None = None
 
 
 def ingest_into_repository(
@@ -58,15 +59,43 @@ def ingest_into_repository(
     """Build and persist one materialized ontology snapshot run."""
     run_id = datetime.now(UTC).isoformat()
     source_status: dict[str, dict[str, Any]] = {}
+    provenance_event_id: str | None = None
+    try:
+        from api import provenance
+
+        provenance_event_id = provenance.deterministic_id("pv:ontology_run", run_id)
+        provenance.start_event(
+            event_id=provenance_event_id,
+            event_type="ontology_run",
+            event_name="ontology.ingest",
+            ontology_run_id=run_id,
+            summary={
+                "run_id": run_id,
+                "timeframe": timeframe,
+                "include_deep_modules": include_deep_modules,
+            },
+            metadata={"retention_days": SNAPSHOT_RETENTION_DAYS},
+        )
+    except Exception:
+        provenance_event_id = None
 
     required_adapters, optional_adapters, deep_adapters = build_adapter_registry(timeframe=timeframe)
 
-    source_results = run_adapters({**required_adapters, **optional_adapters})
+    source_results = _run_adapters_with_provenance(
+        {**required_adapters, **optional_adapters},
+        provenance_parent_event_id=provenance_event_id,
+        ontology_run_id=run_id,
+    )
     source_status.update(source_status_from_results(source_results))
     if include_deep_modules and deep_adapters:
-        deep_results = run_adapters(deep_adapters)
+        deep_results = _run_adapters_with_provenance(
+            deep_adapters,
+            provenance_parent_event_id=provenance_event_id,
+            ontology_run_id=run_id,
+        )
         source_results.update(deep_results)
         source_status.update(source_status_from_results(deep_results))
+    _record_source_record_refs(source_results)
 
     nodes: dict[str, OntologyNode] = {}
     edges: dict[tuple[str, str, str], OntologyEdge] = {}
@@ -423,6 +452,31 @@ def ingest_into_repository(
         edges=snapshot_edges,
     )
     repo.prune_runs_older_than(days=SNAPSHOT_RETENTION_DAYS)
+    if provenance_event_id:
+        try:
+            from api import provenance
+
+            provenance.finish_event(
+                provenance_event_id,
+                status="succeeded",
+                output_value={
+                    "run_id": run_id,
+                    "node_count": len(snapshot_nodes),
+                    "edge_count": len(snapshot_edges),
+                    "source_status": source_status,
+                },
+                summary={
+                    "run_id": run_id,
+                    "as_of": as_of,
+                    "node_count": len(snapshot_nodes),
+                    "edge_count": len(snapshot_edges),
+                    "required_module_count": len(required_modules),
+                    "optional_module_count": len(optional_modules),
+                },
+                metadata={"component_scores": component_scores},
+            )
+        except Exception:
+            pass
 
     return IngestionOutput(
         run_id=run_id,
@@ -431,7 +485,98 @@ def ingest_into_repository(
         required_modules=required_modules,
         optional_modules=optional_modules,
         component_scores=component_scores,
+        provenance_event_id=provenance_event_id,
     )
+
+
+def _run_adapters_with_provenance(
+    adapters: dict[str, Any],
+    *,
+    provenance_parent_event_id: str | None,
+    ontology_run_id: str,
+) -> dict[str, Any]:
+    try:
+        return run_adapters(
+            adapters,
+            provenance_parent_event_id=provenance_parent_event_id,
+            ontology_run_id=ontology_run_id,
+        )
+    except TypeError:
+        # Compatibility with tests or external monkeypatches using the old signature.
+        return run_adapters(adapters)
+
+
+def _record_source_record_refs(source_results: dict[str, Any]) -> None:
+    try:
+        from api import provenance
+    except Exception:
+        return
+    for source_name, result in source_results.items():
+        event_id = getattr(getattr(result, "lineage", None), "provenance_event_id", None)
+        if not event_id:
+            continue
+        data = getattr(result, "data", None)
+        as_of = getattr(result, "as_of", None)
+        if isinstance(data, PortfolioSnapshot):
+            for ticker, position in data.positions.items():
+                provenance.record_source_ref(
+                    adapter_run_event_id=event_id,
+                    source_name=source_name,
+                    record_kind="portfolio_position",
+                    record_key=str(ticker).upper(),
+                    record_value={
+                        "ticker": position.ticker,
+                        "asset": position.asset,
+                        "direction": position.direction,
+                        "latest_price": position.latest_price,
+                        "series_points": position.series_points,
+                        "as_of": position.as_of,
+                    },
+                    as_of=position.as_of or as_of,
+                    summary={
+                        "ticker": position.ticker,
+                        "asset": position.asset,
+                        "direction": position.direction,
+                        "series_points": position.series_points,
+                    },
+                )
+            continue
+        if isinstance(data, SectorMetricsSnapshot):
+            for row in data.rows:
+                provenance.record_source_ref(
+                    adapter_run_event_id=event_id,
+                    source_name=source_name,
+                    record_kind="sector_metric",
+                    record_key=row.sector,
+                    record_value={
+                        "sector": row.sector,
+                        "weight_now": row.weight_now,
+                        "relperf_3m_pp": row.relperf_3m_pp,
+                        "relperf_12m_pp": row.relperf_12m_pp,
+                        "pct_above_200dma": row.pct_above_200dma,
+                    },
+                    as_of=data.timestamp or as_of,
+                    summary={"sector": row.sector},
+                )
+            continue
+        provenance.record_source_ref(
+            adapter_run_event_id=event_id,
+            source_name=source_name,
+            record_kind="snapshot",
+            record_key=source_name,
+            record_value={
+                "source_name": source_name,
+                "status": getattr(result, "status", None),
+                "quality": getattr(result, "quality", None),
+                "payload_fingerprint": getattr(getattr(result, "lineage", None), "payload_fingerprint", None),
+            },
+            as_of=as_of,
+            summary={
+                "source_name": source_name,
+                "status": getattr(result, "status", None),
+                "quality": getattr(result, "quality", None),
+            },
+        )
 
 
 def _source_data(source_results: dict[str, Any], name: str) -> Any:
