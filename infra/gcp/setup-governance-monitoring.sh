@@ -39,6 +39,13 @@ metric_config_file() {
     printf '  metricKind: DELTA\n'
     printf '  valueType: %s\n' "${value_type}"
     printf '  unit: "%s"\n' "${unit}"
+    if [[ "${value_type}" == "DISTRIBUTION" ]]; then
+      printf 'bucketOptions:\n'
+      printf '  exponentialBuckets:\n'
+      printf '    numFiniteBuckets: 12\n'
+      printf '    growthFactor: 2\n'
+      printf '    scale: 60\n'
+    fi
   } >"${file}"
 
   echo "${file}"
