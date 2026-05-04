@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SegmentedControl, SliderInput, TextInput } from "@/components/shared/FormControls"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { colorPositiveNegative } from "@/lib/colors"
-import { fetchPortfolioPositions, fetchSizerPrefill, runPortfolioSizerAsync } from "@/lib/api"
+import { fetchPortfolioPositions, fetchSizerJob, fetchSizerPrefill, startSizerJob } from "@/lib/api"
 
 type SizerTab = "Weights" | "Exposures" | "Constraints" | "Max Scaled"
 type ExposureAssetClass = "equity" | "fx" | "commodity" | "bond"
@@ -71,8 +71,9 @@ interface SizerRow {
 }
 
 const SIZER_STATE_KEY = ["portfolio-sizer", "state"] as const
-const MIN_BOOK_SIZE = 10_000
-const MAX_BOOK_SIZE = 10_000_000
+const MIN_BOOK_SIZE = 50_000
+const MAX_BOOK_SIZE = 150_000
+const SIZER_POLL_INTERVAL_MS = 2_000
 const SIZER_TABS: SizerTab[] = ["Weights", "Exposures", "Constraints", "Max Scaled"]
 const EXPOSURE_CLASSES: ExposureAssetClass[] = ["equity", "fx", "commodity", "bond"]
 const GROSS_LIMITS: Record<ExposureAssetClass, number> = {
@@ -255,16 +256,23 @@ export function PortfolioSizer() {
     targetLeverage: number
     rows: SizerRow[]
     result: SizerResponse | null
+    activeJobId: string | null
+    errorMessage: string | null
   }>(SIZER_STATE_KEY)
 
-  const [bookSize, setBookSize] = useState(cachedState?.bookSize ?? 100_000)
-  const [bookSizeInput, setBookSizeInput] = useState(cachedState?.bookSizeInput ?? String(cachedState?.bookSize ?? 100_000))
+  const initialBookSize = clampBookSize(cachedState?.bookSize ?? 100_000)
+  const [bookSize, setBookSize] = useState(initialBookSize)
+  const [bookSizeInput, setBookSizeInput] = useState(cachedState?.bookSizeInput ?? String(initialBookSize))
   const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
   const [rows, setRows] = useState<SizerRow[]>(cachedState?.rows && cachedState.rows.length > 0 ? cachedState.rows : [])
   const [cachedResult, setCachedResult] = useState<SizerResponse | null>(cachedState?.result ?? null)
+  const [activeJobId, setActiveJobId] = useState<string | null>(cachedState?.activeJobId ?? null)
+  const [isRunning, setIsRunning] = useState(Boolean(cachedState?.activeJobId))
+  const [errorMessage, setErrorMessage] = useState<string | null>(cachedState?.errorMessage ?? null)
   const [tab, setTab] = useState<SizerTab>("Weights")
   const [weightsViewMode, setWeightsViewMode] = useState<WeightsViewMode>("basic")
   const [currentHoldings, setCurrentHoldings] = useState<Record<string, number>>({})
+  const runSeqRef = useRef(0)
 
   useEffect(() => {
     if (cachedState?.rows && cachedState.rows.length > 0) return
@@ -290,21 +298,68 @@ export function PortfolioSizer() {
     return () => { canceled = true }
   }, [cachedState?.rows])
 
-  const mutation = useMutation({
-    mutationFn: runPortfolioSizerAsync,
-    onSuccess: result => {
-      setCachedResult((result as SizerResponse) ?? null)
-      fetchPortfolioPositions(true)
-        .then(({ positions }) => {
-          const map: Record<string, number> = {}
-          for (const p of positions) {
-            if (p.shares != null) map[p.ticker.toUpperCase()] = p.shares
-          }
-          setCurrentHoldings(map)
-        })
-        .catch(() => {})
-    },
-  })
+  const refreshCurrentHoldings = useCallback(() => {
+    fetchPortfolioPositions(true)
+      .then(({ positions }) => {
+        const map: Record<string, number> = {}
+        for (const p of positions) {
+          if (p.shares != null) map[p.ticker.toUpperCase()] = p.shares
+        }
+        setCurrentHoldings(map)
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleSizerResult = useCallback((result: unknown) => {
+    setCachedResult((result as SizerResponse) ?? null)
+    setActiveJobId(null)
+    setIsRunning(false)
+    setErrorMessage(null)
+    refreshCurrentHoldings()
+  }, [refreshCurrentHoldings])
+
+  useEffect(() => {
+    if (!activeJobId) return
+
+    const jobId = activeJobId
+    let canceled = false
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+    async function pollJob() {
+      try {
+        const job = await fetchSizerJob(jobId)
+        if (canceled) return
+
+        if (job.status === "done") {
+          handleSizerResult("result" in job ? job.result : undefined)
+          return
+        }
+        if (job.status === "error") {
+          setActiveJobId(null)
+          setIsRunning(false)
+          setErrorMessage(job.error || "Sizer failed")
+          return
+        }
+
+        setIsRunning(true)
+        timeoutId = setTimeout(pollJob, SIZER_POLL_INTERVAL_MS)
+      } catch (error) {
+        if (canceled) return
+        setActiveJobId(null)
+        setIsRunning(false)
+        setErrorMessage(error instanceof Error ? error.message : String(error))
+      }
+    }
+
+    setIsRunning(true)
+    setErrorMessage(null)
+    pollJob()
+
+    return () => {
+      canceled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [activeJobId, handleSizerResult])
 
   useEffect(() => {
     queryClient.setQueryData(SIZER_STATE_KEY, {
@@ -313,8 +368,10 @@ export function PortfolioSizer() {
       targetLeverage,
       rows,
       result: cachedResult,
+      activeJobId,
+      errorMessage,
     })
-  }, [bookSize, bookSizeInput, targetLeverage, rows, cachedResult, queryClient])
+  }, [bookSize, bookSizeInput, targetLeverage, rows, cachedResult, activeJobId, errorMessage, queryClient])
 
   useEffect(() => {
     setBookSizeInput(String(bookSize))
@@ -324,7 +381,7 @@ export function PortfolioSizer() {
     setRows(prev => prev.map(row => (row.id === id ? { ...row, conviction } : row)))
   }
 
-  function handleRun() {
+  async function handleRun() {
     const parsedBook = Number(bookSizeInput)
     const effectiveBook = Number.isFinite(parsedBook) ? clampBookSize(parsedBook) : bookSize
     setBookSize(effectiveBook)
@@ -336,10 +393,37 @@ export function PortfolioSizer() {
 
     if (positions.length === 0) return
 
-    mutation.mutate({ book: effectiveBook, target_leverage: targetLeverage, positions })
+    const runSeq = runSeqRef.current + 1
+    runSeqRef.current = runSeq
+    setIsRunning(true)
+    setErrorMessage(null)
+
+    try {
+      const started = await startSizerJob({ book: effectiveBook, target_leverage: targetLeverage, positions })
+      if (runSeq !== runSeqRef.current) return
+
+      if (started.status === "done") {
+        handleSizerResult("result" in started ? started.result : undefined)
+        return
+      }
+      if (started.status === "error") {
+        setActiveJobId(null)
+        setIsRunning(false)
+        setErrorMessage(started.error || "Sizer failed")
+        return
+      }
+
+      setActiveJobId(started.job_id)
+      setIsRunning(true)
+    } catch (error) {
+      if (runSeq !== runSeqRef.current) return
+      setActiveJobId(null)
+      setIsRunning(false)
+      setErrorMessage(error instanceof Error ? error.message : String(error))
+    }
   }
 
-  const data = (mutation.data as SizerResponse | undefined) ?? cachedResult
+  const data = cachedResult
   const weightsRows = toRows(data?.weights_df)
   const weightsHiddenKeys = weightsViewMode === "basic"
     ? (weightsRows.length === 0
@@ -449,10 +533,10 @@ export function PortfolioSizer() {
             onChange={v => setBookSize(clampBookSize(v))}
             min={MIN_BOOK_SIZE}
             max={MAX_BOOK_SIZE}
-            step={10_000}
+            step={1_000}
             formatValue={v => currencyFormatter.format(v)}
-            minLabel="$10k"
-            maxLabel="$10M"
+            minLabel="$50k"
+            maxLabel="$150k"
           />
 
           <SliderInput
@@ -475,7 +559,7 @@ export function PortfolioSizer() {
               onChange={setBookSizeInput}
               placeholder="100000"
             />
-            <p className="text-xs text-gray-400">$10k - $10M · applied on run</p>
+            <p className="text-xs text-gray-400">$50k - $150k · applied on run</p>
           </div>
         </div>
 
@@ -550,15 +634,15 @@ export function PortfolioSizer() {
           </div>
         </div>
 
-        <ActionButton onClick={handleRun} loading={mutation.isPending} loadingText="Sizing portfolio...">
+        <ActionButton onClick={handleRun} loading={isRunning} loadingText="Sizing portfolio...">
           Size Portfolio
         </ActionButton>
       </div>
 
-      {mutation.isPending && <LoadingSpinner message="Running portfolio sizer..." />}
-      {mutation.isError && <ErrorMessage message={String(mutation.error)} />}
+      {isRunning && <LoadingSpinner message="Running portfolio sizer..." />}
+      {errorMessage && <ErrorMessage message={errorMessage} />}
 
-      {data && !mutation.isPending && (
+      {data && !isRunning && (
         <div className="space-y-6">
           {hedgeDirectionWarning && (
             <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
@@ -856,7 +940,7 @@ export function PortfolioSizer() {
         </div>
       )}
 
-      {!data && !mutation.isPending && !mutation.isError && (
+      {!data && !isRunning && !errorMessage && (
         <p className="text-gray-400 text-sm">Set conviction levels above and click Size Portfolio.</p>
       )}
     </div>

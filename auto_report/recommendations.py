@@ -39,6 +39,11 @@ NON_APPROVAL_ACTIONS = {"hold", "watch", "avoid", "do_nothing"}
 QUALITY_OPTIONS = ("ok", "degraded", "stale", "failed")
 RECOMMENDATION_STATUSES = ("clear", "review_required", "blocked", "error")
 
+MAX_RECOMMENDATIONS_EVIDENCE_CHARS = 180_000
+MAX_RECOMMENDATIONS_COMMENTARY_CHARS = 24_000
+MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS = 32_000
+_COMPACT_MARKER_KEY = "_prompt_compaction"
+
 CRITICAL_SOURCES = {
     "daily": {
         "portfolio_positions",
@@ -111,6 +116,181 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return max(0.0, min(1.0, out))
+
+
+def _truncate_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    if max_chars <= 120:
+        return value[:max_chars]
+    marker = f"\n\n... [truncated {len(value) - max_chars} chars for recommendations prompt] ...\n\n"
+    head_len = max((max_chars - len(marker)) // 2, 1)
+    tail_len = max(max_chars - len(marker) - head_len, 1)
+    return (value[:head_len].rstrip() + marker + value[-tail_len:].lstrip())[:max_chars]
+
+
+def _is_probably_time_series(rows: list[Any]) -> bool:
+    if len(rows) < 8:
+        return False
+    sample = [row for row in rows[:8] if isinstance(row, dict)]
+    if len(sample) < 4:
+        return False
+    date_keys = {"date", "as_of", "timestamp", "time", "datetime", "published_at", "fetched_at"}
+    return any(date_keys & {str(key).lower() for key in row} for row in sample)
+
+
+def _compact_prompt_value(
+    value: Any,
+    *,
+    depth: int = 0,
+    max_depth: int = 6,
+    list_limit: int = 50,
+    dict_limit: int = 100,
+    string_limit: int = 6_000,
+) -> Any:
+    """Return a JSON-safe, prompt-sized copy of recommendation evidence."""
+    if isinstance(value, str):
+        return _truncate_text(value, string_limit)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if depth >= max_depth:
+        if isinstance(value, dict):
+            return {"_type": "dict", "keys": sorted(str(k) for k in value)[:dict_limit], "truncated_at_depth": depth}
+        if isinstance(value, list):
+            return {"_type": "list", "length": len(value), "truncated_at_depth": depth}
+        return str(value)
+    if isinstance(value, list):
+        if len(value) <= list_limit:
+            return [
+                _compact_prompt_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    list_limit=list_limit,
+                    dict_limit=dict_limit,
+                    string_limit=string_limit,
+                )
+                for item in value
+            ]
+        if _is_probably_time_series(value):
+            kept = value[-list_limit:]
+            mode = "latest"
+        else:
+            head = list_limit // 2
+            tail = list_limit - head
+            kept = [*value[:head], *value[-tail:]]
+            mode = "head_tail"
+        return {
+            "_type": "list",
+            "original_length": len(value),
+            "kept": mode,
+            "items": [
+                _compact_prompt_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    list_limit=list_limit,
+                    dict_limit=dict_limit,
+                    string_limit=string_limit,
+                )
+                for item in kept
+            ],
+        }
+    if isinstance(value, dict):
+        items = list(value.items())
+        if len(items) > dict_limit:
+            priority = []
+            priority_keys = set()
+            for key, item in items:
+                key_l = str(key).lower()
+                if key_l in {
+                    "ticker",
+                    "instrument",
+                    "summary",
+                    "latest",
+                    "data_quality",
+                    "risk_summary",
+                    "stance",
+                    "portfolio_positions",
+                    "risk_data",
+                    "sizer_summary",
+                    "weekly_summary",
+                    "market_data",
+                    "sources",
+                    "error",
+                }:
+                    priority.append((key, item))
+                    priority_keys.add(key)
+            remaining = [(key, item) for key, item in items if key not in priority_keys]
+            items = [*priority[:dict_limit], *remaining[: max(0, dict_limit - len(priority))]]
+        out = {
+            str(key): _compact_prompt_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                list_limit=list_limit,
+                dict_limit=dict_limit,
+                string_limit=string_limit,
+            )
+            for key, item in items
+        }
+        if len(value) > dict_limit:
+            out["_truncated_keys"] = len(value) - len(items)
+        return out
+    return str(value)
+
+
+def _json_for_prompt(value: Any, max_chars: int) -> str:
+    tiers = (
+        {"max_depth": 6, "list_limit": 50, "dict_limit": 100, "string_limit": 6_000},
+        {"max_depth": 5, "list_limit": 30, "dict_limit": 70, "string_limit": 3_000},
+        {"max_depth": 4, "list_limit": 15, "dict_limit": 40, "string_limit": 1_200},
+    )
+    for tier in tiers:
+        compacted = _compact_prompt_value(value, **tier)
+        text = json.dumps(compacted, indent=2, default=str)
+        if len(text) <= max_chars:
+            return text
+    summary = _compact_prompt_value(value, max_depth=3, list_limit=8, dict_limit=24, string_limit=600)
+    text = json.dumps(
+        {
+            _COMPACT_MARKER_KEY: {
+                "reason": "evidence exceeded recommendations prompt budget",
+                "max_chars": max_chars,
+            },
+            "summary": summary,
+        },
+        indent=2,
+        default=str,
+    )
+    if len(text) <= max_chars:
+        return text
+    if isinstance(value, dict):
+        top_level_keys = sorted(str(key) for key in value)[:80]
+    else:
+        top_level_keys = []
+    return json.dumps(
+        {
+            _COMPACT_MARKER_KEY: {
+                "reason": "evidence exceeded recommendations prompt budget after aggressive compaction",
+                "max_chars": max_chars,
+            },
+            "top_level_keys": top_level_keys,
+        },
+        indent=2,
+        default=str,
+    )
+
+
+def _compact_commentary_context(commentary_md: str) -> str:
+    text = commentary_md.strip()
+    if "\n## Sources" in text:
+        text = text.split("\n## Sources", 1)[0].rstrip()
+    return _truncate_text(text, MAX_RECOMMENDATIONS_COMMENTARY_CHARS)
+
+
+def _compact_extra_context(extra_context_md: str) -> str:
+    return _truncate_text(extra_context_md.strip(), MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS)
 
 
 def _parse_date(value: Any) -> date | None:
@@ -479,10 +659,19 @@ def build_recommendations_user_message(
     extra_context_md: str = "",
 ) -> str:
     horizon = "today / next 1-5 trading days" if report_type == "daily" else "next week / next 1-3 months"
-    bundle_json = json.dumps(evidence_bundle, indent=2, default=str)
+    bundle_json = _json_for_prompt(evidence_bundle, MAX_RECOMMENDATIONS_EVIDENCE_CHARS)
     quality_json = json.dumps(data_quality, indent=2, default=str)
+    commentary_context = _compact_commentary_context(commentary_md)
+    extra_context = _compact_extra_context(extra_context_md)
     stance_options = " | ".join(STANCE_OPTIONS)
     action_options = " | ".join(ACTION_OPTIONS)
+    log.info(
+        "Recommendation prompt context prepared (report_type=%s evidence_chars=%d commentary_chars=%d extra_chars=%d)",
+        report_type,
+        len(bundle_json),
+        len(commentary_context),
+        len(extra_context),
+    )
     return f"""Produce the {report_type} recommendations report for {as_of}.
 
 Current stance: {stance}
@@ -502,9 +691,9 @@ Decision horizon: {horizon}
 
 ## Commentary Context
 
-{commentary_md}
+{commentary_context}
 
-{extra_context_md}
+{extra_context}
 
 Write a short recommendations memo first. The memo must be decision-oriented and may not repeat the commentary.
 

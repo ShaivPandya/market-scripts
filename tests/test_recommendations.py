@@ -7,9 +7,13 @@ import pytest
 
 import portfolio.core_db as core_db
 from auto_report.recommendations import (
+    MAX_RECOMMENDATIONS_COMMENTARY_CHARS,
+    MAX_RECOMMENDATIONS_EVIDENCE_CHARS,
+    MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS,
     RECOMMENDATIONS_SEPARATOR,
     RecommendationValidationError,
     assess_report_data_quality,
+    build_recommendations_user_message,
     parse_recommendations_response,
     persist_recommendations,
     validate_recommendations_payload,
@@ -150,6 +154,58 @@ def test_parse_recommendations_response_requires_separator(data_quality_ok):
             stance="Neutral / Watchful",
             data_quality=data_quality_ok,
         )
+
+
+def test_build_recommendations_user_message_compacts_large_context(data_quality_ok):
+    evidence_bundle = {
+        "market_data": {
+            "indices": {
+                "data": {
+                    "indices": {
+                        "SPX": [
+                            {
+                                "date": f"2026-05-{(idx % 28) + 1:02d}",
+                                "value": idx,
+                                "raw_payload": "x" * 10_000,
+                            }
+                            for idx in range(250)
+                        ]
+                    }
+                }
+            },
+            "central_banks": {
+                "items": [{"title": f"speech {idx}", "content_preview": "y" * 20_000} for idx in range(80)]
+            },
+        },
+        "portfolio_positions": [{"ticker": f"T{idx}", "notes": "z" * 5_000} for idx in range(100)],
+        "data_quality": data_quality_ok,
+    }
+    commentary_md = (
+        "# Daily Commentary Report\n\n"
+        + ("market context\n" * 20_000)
+        + "\n## Sources\n- [source](https://example.com)"
+    )
+    extra_context_md = "## Deterministic Risk Tables\n\n" + ("risk table row\n" * 10_000)
+
+    message = build_recommendations_user_message(
+        report_type="daily",
+        as_of="2026-05-02",
+        stance="Neutral / Watchful",
+        data_quality=data_quality_ok,
+        evidence_bundle=evidence_bundle,
+        commentary_md=commentary_md,
+        extra_context_md=extra_context_md,
+    )
+
+    assert len(message) < (
+        MAX_RECOMMENDATIONS_EVIDENCE_CHARS
+        + MAX_RECOMMENDATIONS_COMMENTARY_CHARS
+        + MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS
+        + 20_000
+    )
+    assert "truncated" in message
+    assert "## Sources" not in message
+    assert "x" * 10_000 not in message
 
 
 def test_data_quality_blocks_failed_critical_source():
