@@ -57,7 +57,7 @@ Common local settings:
 - `FRED_API_KEY` for FRED-backed macro and rates modules.
 - `AUTH_PASSWORD_HASH` and `JWT_SECRET` for password-mode UI login.
 - `LLM_PROVIDER`, `ANTHROPIC_API_KEY`, and/or `OPENAI_API_KEY` for agent, thesis, overview, and report workflows.
-- `ESTAT_APP_ID`, `SODA_APP_TOKEN`, `EIA_API_KEY`, and IBKR settings for modules that use those data sources.
+- `ESTAT_APP_ID`, `SODA_APP_TOKEN`, and `EIA_API_KEY` for modules that use those data sources.
 
 Generate a bcrypt login hash with:
 
