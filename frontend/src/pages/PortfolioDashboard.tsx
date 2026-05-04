@@ -276,7 +276,6 @@ export function PortfolioDashboard() {
                       />
                       <span className="truncate text-sm font-semibold text-app">{position.ticker}</span>
                     </div>
-                    <p className="mt-1 text-xs text-subtle">Price Return</p>
                   </div>
                   <span className={`shrink-0 text-sm font-semibold tabular-nums ${position.returnPct >= 0 ? "text-positive" : "text-negative"}`}>
                     {formatPercent(position.returnPct)}
@@ -302,6 +301,8 @@ export function PortfolioDashboard() {
               zeroLine
               yFormatter={formatPercent}
               tooltipFormatter={formatPercent}
+              yAxisOrientation="right"
+              toggleableLegend
             />
           </div>
         </div>

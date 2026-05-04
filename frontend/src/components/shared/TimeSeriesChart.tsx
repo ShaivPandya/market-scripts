@@ -1,4 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
+import { useMemo, useState } from "react"
 import {
   LineChart,
   Line,
@@ -10,6 +11,7 @@ import {
   ReferenceLine,
   Legend,
 } from "recharts"
+import type { LegendPayload, YAxisOrientation } from "recharts"
 
 export interface DataPoint {
   date: string
@@ -43,6 +45,10 @@ interface TimeSeriesChartProps {
   multiData?: Record<string, unknown>[]
   /** Series definitions for multi-series mode */
   series?: SeriesDef[]
+  /** Which side should render the y-axis tick labels */
+  yAxisOrientation?: YAxisOrientation
+  /** Allow clicking legend items to hide/show multi-series lines */
+  toggleableLegend?: boolean
 }
 
 const DEFAULT_SERIES_COLORS = {
@@ -78,6 +84,12 @@ function shortYear(isoDate: string): string {
 }
 
 type ChartRow = DataPoint | Record<string, unknown>
+interface LegendVisibilityState {
+  seriesSignature: string
+  hiddenKeys: Set<string>
+}
+
+const EMPTY_HIDDEN_KEYS = new Set<string>()
 
 function getRowDate(row: ChartRow): string | null {
   return typeof row.date === "string" ? row.date : null
@@ -145,9 +157,55 @@ export function TimeSeriesChart({
   timeframe,
   multiData,
   series,
+  yAxisOrientation = "left",
+  toggleableLegend = false,
 }: TimeSeriesChartProps) {
   const isMulti = multiData != null && series != null
   const chartData: ChartRow[] = isMulti ? multiData : data
+  const seriesSignature = useMemo(
+    () => (series ?? []).map(s => `${s.key}:${s.name ?? s.key}`).join("|"),
+    [series],
+  )
+  const [legendVisibility, setLegendVisibility] = useState<LegendVisibilityState>(() => ({
+    seriesSignature: "",
+    hiddenKeys: new Set(),
+  }))
+  const hiddenSeries = legendVisibility.seriesSignature === seriesSignature
+    ? legendVisibility.hiddenKeys
+    : EMPTY_HIDDEN_KEYS
+
+  const toggleLegendSeries = (payload: LegendPayload) => {
+    if (!toggleableLegend) return
+    const dataKey = payload.dataKey != null ? String(payload.dataKey) : null
+    if (!dataKey) return
+
+    setLegendVisibility(prev => {
+      const prevHidden = prev.seriesSignature === seriesSignature ? prev.hiddenKeys : EMPTY_HIDDEN_KEYS
+      const next = new Set(prevHidden)
+      if (next.has(dataKey)) {
+        next.delete(dataKey)
+      } else {
+        next.add(dataKey)
+      }
+      return { seriesSignature, hiddenKeys: next }
+    })
+  }
+
+  const formatLegendLabel = (value: unknown, entry: LegendPayload) => {
+    const dataKey = entry.dataKey != null ? String(entry.dataKey) : null
+    const isHidden = dataKey != null && hiddenSeries.has(dataKey)
+    return (
+      <span
+        style={{
+          color: isHidden ? "hsl(var(--muted-foreground))" : entry.color,
+          opacity: isHidden ? 0.45 : 1,
+          textDecoration: isHidden ? "line-through" : "none",
+        }}
+      >
+        {String(value ?? "")}
+      </span>
+    )
+  }
 
   if (!chartData || chartData.length === 0) {
     return (
@@ -164,7 +222,10 @@ export function TimeSeriesChart({
     <div>
       {label && <p className="mb-1 text-xs font-medium text-muted">{label}</p>}
       <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+        <LineChart
+          data={chartData}
+          margin={{ top: 4, right: yAxisOrientation === "right" ? 0 : 8, left: yAxisOrientation === "right" ? 8 : 0, bottom: 0 }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--chart-grid))" />
           <XAxis
             dataKey="date"
@@ -181,6 +242,7 @@ export function TimeSeriesChart({
             minTickGap={30}
           />
           <YAxis
+            orientation={yAxisOrientation}
             domain={zeroLine ? [(dataMin: number) => Math.min(0, dataMin), "auto"] : ["auto", "auto"]}
             tick={{ fontSize: 10, fill: "hsl(var(--chart-axis))" }}
             tickLine={false}
@@ -216,6 +278,7 @@ export function TimeSeriesChart({
                   strokeWidth={s.strokeWidth ?? 1.5}
                   strokeOpacity={s.opacity ?? 1}
                   strokeDasharray={s.strokeDasharray}
+                  hide={hiddenSeries.has(s.key)}
                   connectNulls={false}
                 />
               ))
@@ -230,7 +293,18 @@ export function TimeSeriesChart({
                 />
               )
           }
-          {isMulti && <Legend wrapperStyle={{ fontSize: 11, color: "hsl(var(--muted-foreground))" }} />}
+          {isMulti && (
+            <Legend
+              wrapperStyle={{
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+                cursor: toggleableLegend ? "pointer" : "default",
+              }}
+              onClick={toggleableLegend ? toggleLegendSeries : undefined}
+              formatter={toggleableLegend ? formatLegendLabel : undefined}
+              inactiveColor="hsl(var(--muted-foreground))"
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>
