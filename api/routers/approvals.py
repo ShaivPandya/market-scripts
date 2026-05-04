@@ -52,9 +52,12 @@ def get_approval(approval_id: int):
 
 @router.post("/approvals/{approval_id}/approve")
 def approve_item(approval_id: int, body: ResolveRequest | None = None):
+    note = body.note if body else None
+    if not str(note or "").strip():
+        raise ValidationError("Approval note is required.")
     return execute_api_action(
         "resolve_approval",
-        {"approval_id": approval_id, "status": "approved", "note": body.note if body else None},
+        {"approval_id": approval_id, "status": "approved", "note": note},
         source_id="approvals.approve_item",
     )
 
@@ -70,6 +73,8 @@ def reject_item(approval_id: int, body: ResolveRequest | None = None):
 
 @router.post("/approvals/bulk-approve")
 def bulk_approve(body: BulkResolveRequest):
+    if not str(body.note or "").strip():
+        raise ValidationError("Bulk approval note is required.")
     results = []
     for aid in body.ids:
         try:

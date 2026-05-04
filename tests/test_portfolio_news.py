@@ -166,11 +166,15 @@ def test_router_upload_list_detail_delete(auth_client, monkeypatch, tmp_path):
         files={"file": ("05012026_digest.md", SAMPLE_DIGEST, "text/markdown")},
     )
     assert upload.status_code == 200
-    digest_id = upload.json()["digest"]["id"]
+    assert upload.json()["status"] == "pending_approval_created"
+    upload_approval_id = upload.json()["approval_id"]
+    approved = auth_client.post(f"/api/v1/approvals/{upload_approval_id}/approve", json={"note": "Apply upload"})
+    assert approved.status_code == 200
 
     listed = auth_client.get("/api/v1/portfolio-news")
     assert listed.status_code == 200
     assert listed.json()["counts"]["digests"] == 1
+    digest_id = listed.json()["items"][0]["id"]
 
     detail = auth_client.get(f"/api/v1/portfolio-news/{digest_id}")
     assert detail.status_code == 200
@@ -178,7 +182,10 @@ def test_router_upload_list_detail_delete(auth_client, monkeypatch, tmp_path):
 
     deleted = auth_client.delete(f"/api/v1/portfolio-news/{digest_id}")
     assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
+    assert deleted.json()["status"] == "pending_approval_created"
+    delete_approval_id = deleted.json()["approval_id"]
+    approved_delete = auth_client.post(f"/api/v1/approvals/{delete_approval_id}/approve", json={"note": "Apply delete"})
+    assert approved_delete.status_code == 200
 
 
 def test_router_delete_rejects_invalid_and_unknown_digest_ids(auth_client, monkeypatch, tmp_path):

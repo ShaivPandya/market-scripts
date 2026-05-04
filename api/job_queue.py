@@ -17,7 +17,7 @@ from typing import Any
 from api.postgres import connect, database_url
 
 ACTIVE_STATUSES = ("queued", "running")
-TERMINAL_STATUSES = ("completed", "failed")
+TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 
 _memory_jobs: dict[str, dict[str, Any]] = {}
 _memory_lock = threading.Lock()
@@ -316,14 +316,18 @@ def mark_job_running(job_id: str) -> None:
     now = _now()
     if not postgres_jobs_enabled():
         with _memory_lock:
-            if job_id in _memory_jobs:
+            if job_id in _memory_jobs and _memory_jobs[job_id].get("status") != "cancelled":
                 _memory_jobs[job_id]["status"] = "running"
                 _memory_jobs[job_id]["started_at"] = _memory_jobs[job_id].get("started_at") or now
                 _memory_jobs[job_id]["updated_at"] = now
         return
     with connect() as conn:
         conn.execute(
-            "UPDATE async_jobs SET status = 'running', started_at = COALESCE(started_at, %s), updated_at = %s WHERE job_id = %s",
+            """
+            UPDATE async_jobs
+            SET status = 'running', started_at = COALESCE(started_at, %s), updated_at = %s
+            WHERE job_id = %s AND status != 'cancelled'
+            """,
             (now, now, job_id),
         )
         conn.commit()
@@ -353,6 +357,8 @@ def complete_job(job_id: str, result: dict[str, Any] | None = None, *, result_tt
     if not postgres_jobs_enabled():
         with _memory_lock:
             if job_id in _memory_jobs:
+                if _memory_jobs[job_id].get("status") == "cancelled":
+                    return
                 _memory_jobs[job_id]["status"] = "completed"
                 _memory_jobs[job_id]["result_json"] = result or {}
                 _memory_jobs[job_id]["completed_at"] = now
@@ -373,6 +379,7 @@ def complete_job(job_id: str, result: dict[str, Any] | None = None, *, result_tt
                 result_expires_at = %s,
                 error = NULL
             WHERE job_id = %s
+              AND status != 'cancelled'
             """,
             (Jsonb(result or {}), now, now, expires_at, job_id),
         )
@@ -385,6 +392,8 @@ def fail_job(job_id: str, error: str, *, result_ttl_seconds: int | None = None) 
     if not postgres_jobs_enabled():
         with _memory_lock:
             if job_id in _memory_jobs:
+                if _memory_jobs[job_id].get("status") == "cancelled":
+                    return
                 _memory_jobs[job_id]["status"] = "failed"
                 _memory_jobs[job_id]["error"] = error
                 _memory_jobs[job_id]["completed_at"] = now
@@ -401,8 +410,38 @@ def fail_job(job_id: str, error: str, *, result_ttl_seconds: int | None = None) 
                 updated_at = %s,
                 result_expires_at = %s
             WHERE job_id = %s
+              AND status != 'cancelled'
             """,
             (error, now, now, expires_at, job_id),
+        )
+        conn.commit()
+
+
+def cancel_job(job_id: str, reason: str = "Job cancelled", *, result_ttl_seconds: int | None = None) -> None:
+    now = _now()
+    expires_at = _expires_in(result_ttl_seconds)
+    if not postgres_jobs_enabled():
+        with _memory_lock:
+            if job_id in _memory_jobs and _memory_jobs[job_id].get("status") in ACTIVE_STATUSES:
+                _memory_jobs[job_id]["status"] = "cancelled"
+                _memory_jobs[job_id]["error"] = reason
+                _memory_jobs[job_id]["completed_at"] = now
+                _memory_jobs[job_id]["updated_at"] = now
+                _memory_jobs[job_id]["result_expires_at"] = expires_at
+        return
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE async_jobs
+            SET status = 'cancelled',
+                error = %s,
+                completed_at = %s,
+                updated_at = %s,
+                result_expires_at = %s
+            WHERE job_id = %s
+              AND status = ANY(%s)
+            """,
+            (reason, now, now, expires_at, job_id, list(ACTIVE_STATUSES)),
         )
         conn.commit()
 

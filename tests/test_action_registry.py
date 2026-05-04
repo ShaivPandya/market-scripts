@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -19,6 +20,19 @@ from portfolio.action_registry import (
     register_action_schema_version,
     register_action_upgrade_adapter,
 )
+
+
+def _approve_action(action_id: str, payload: dict, *, reason: str = "test approval") -> dict:
+    approval = propose_action(
+        action_id,
+        payload,
+        ActionContext(actor_type="user", source_type="user", source_id=f"test:{action_id}"),
+        reason=reason,
+    )
+    core_db.resolve_approval(approval["id"], "approved", "Approved in test")
+    runs = core_db.get_action_runs(action_id, approval_id=approval["id"])
+    assert runs, f"missing child action run for {action_id}"
+    return json.loads(runs[-1]["output_json"])
 
 
 @pytest.fixture(autouse=True)
@@ -55,26 +69,31 @@ def _temp_action_state(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "_conn", None)
 
 
-def test_execute_portfolio_action_writes_positions_and_audit_events():
-    result = execute_action(
-        "update_portfolio_positions",
-        {
-            "positions": [
-                {
-                    "ticker": "mu",
-                    "asset": "equity",
-                    "direction": "long",
-                    "contrarian": False,
-                    "conviction": 4,
-                    "cost_basis": 100,
-                    "shares": 12,
-                }
-            ]
-        },
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    )
+def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positions():
+    payload = {
+        "positions": [
+            {
+                "ticker": "mu",
+                "asset": "equity",
+                "direction": "long",
+                "contrarian": False,
+                "conviction": 4,
+                "cost_basis": 100,
+                "shares": 12,
+            }
+        ]
+    }
+    with pytest.raises(ActionAuthorizationError):
+        execute_action(
+            "update_portfolio_positions",
+            payload,
+            ActionContext(actor_type="user", source_type="api", source_id="test"),
+        )
+    assert portfolio_db.get_positions() == []
 
-    assert result.output == {"status": "ok", "count": 1}
+    result = _approve_action("update_portfolio_positions", payload)
+
+    assert result == {"status": "ok", "count": 1}
     assert portfolio_db.get_positions() == [
         {
             "ticker": "MU",
@@ -88,17 +107,120 @@ def test_execute_portfolio_action_writes_positions_and_audit_events():
         }
     ]
     runs = core_db.get_action_runs("update_portfolio_positions")
-    assert len(runs) == 1
-    assert runs[0]["status"] == "succeeded"
-    events = [event["event_type"] for event in core_db.get_action_events(runs[0]["id"])]
+    assert len(runs) == 2
+    assert runs[-1]["status"] == "succeeded"
+    assert runs[-1]["approval_id"] is not None
+    events = [event["event_type"] for event in core_db.get_action_events(runs[-1]["id"])]
     assert "validated" in events
     assert "mutation_completed" in events
     assert "callback_completed" in events
     audit = core_db.get_audit_events(action_category="domain_action", limit=10)
-    assert [row["action_name"] for row in audit].count("domain.action.started") == 1
-    succeeded = [row for row in audit if row["action_name"] == "domain.action.succeeded"][0]
+    assert [row["action_name"] for row in audit].count("domain.action.started") >= 1
+    succeeded = [
+        row
+        for row in audit
+        if row["action_name"] == "domain.action.succeeded"
+        and row["object_refs"]
+        and row["object_refs"][0] == {"type": "domain_action", "id": "update_portfolio_positions"}
+    ][0]
     assert succeeded["object_refs"][0] == {"type": "domain_action", "id": "update_portfolio_positions"}
     assert succeeded["after_summary"]["status"] == "ok"
+
+
+def test_execute_action_shadow_writes_ontology_versions(monkeypatch):
+    captured: dict[str, list[dict]] = {"objects": [], "relations": []}
+
+    class FakeObjectService:
+        def write_object(self, object_type, business_key, properties, valid_from, **kwargs):
+            version_id = f"version-{len(captured['objects']) + 1}"
+            object_uid = f"{object_type}:{business_key}"
+            row = {
+                "version_id": version_id,
+                "object_uid": object_uid,
+                "object_type": object_type,
+                "business_key": business_key,
+                "properties": dict(properties),
+                "_meta": {"temporal": {"object_uid": object_uid, "version_id": version_id}},
+            }
+            captured["objects"].append({**row, "kwargs": kwargs, "valid_from": valid_from})
+            return row
+
+        def write_relation(self, source_uid, target_uid, relation_type, properties, valid_from, **kwargs):
+            captured["relations"].append(
+                {
+                    "source_uid": source_uid,
+                    "target_uid": target_uid,
+                    "relation_type": relation_type,
+                    "properties": dict(properties),
+                    "valid_from": valid_from,
+                    "kwargs": kwargs,
+                }
+            )
+            return {
+                "relation_uid": f"{relation_type}:{source_uid}->{target_uid}",
+                "_meta": {"temporal": {"version_id": f"relation-{len(captured['relations'])}"}},
+            }
+
+    import ontology.domain_write_service as domain_write_service
+
+    monkeypatch.setenv("ONTOLOGY_SHADOW_WRITES", "true")
+    monkeypatch.setattr(domain_write_service, "OntologyObjectService", FakeObjectService)
+
+    result = _approve_action(
+        "create_action_item",
+        {"description": "Review MU", "action_type": "review", "ticker": "MU", "urgency": "high"},
+    )
+
+    assert result["description"] == "Review MU"
+    object_types = [row["object_type"] for row in captured["objects"]]
+    assert "Approval" in object_types
+    assert "ActionRun" in object_types
+    assert "ActionItem" in object_types
+    action_item = next(row for row in captured["objects"] if row["object_type"] == "ActionItem")
+    assert action_item["properties"]["ticker"] == "MU"
+    assert action_item["kwargs"]["action_run_id"] is not None
+    assert action_item["kwargs"]["input_hash"]
+    assert captured["relations"][0]["relation_type"] == "action_run_mutates_object_version"
+    action_run = core_db.get_action_runs("create_action_item")[0]
+    events = [event["event_type"] for event in core_db.get_action_events(action_run["id"])]
+    assert "ontology_versions_written" in events
+
+
+def test_propose_action_shadow_writes_pending_approval(monkeypatch):
+    captured: list[dict] = []
+
+    class FakeObjectService:
+        def write_object(self, object_type, business_key, properties, valid_from, **kwargs):
+            captured.append(
+                {
+                    "object_type": object_type,
+                    "business_key": business_key,
+                    "properties": dict(properties),
+                    "valid_from": valid_from,
+                    "kwargs": kwargs,
+                    "_meta": {"temporal": {"version_id": "approval-version"}},
+                }
+            )
+            return captured[-1]
+
+    import ontology.domain_write_service as domain_write_service
+
+    monkeypatch.setenv("ONTOLOGY_SHADOW_WRITES", "true")
+    monkeypatch.setattr(domain_write_service, "OntologyObjectService", FakeObjectService)
+
+    approval = propose_action(
+        "create_action_item",
+        {"description": "Review CRWD", "action_type": "review", "ticker": "CRWD"},
+        ActionContext(actor_type="agent", source_type="agent", source_id="agent-1"),
+        reason="needs review",
+    )
+
+    assert approval["entity_type"] == "action_item"
+    assert captured[0]["object_type"] == "Approval"
+    assert captured[0]["properties"]["action_id"] == "create_action_item"
+    assert captured[0]["properties"]["ticker"] == "CRWD"
+    events = [event["event_type"] for event in core_db.get_action_events(1)]
+    assert "ontology_approval_version_written" in events
 
 
 def test_execute_action_denies_agent_direct_mutation_and_audits_failure():
@@ -146,7 +268,7 @@ def test_action_backed_approval_applies_registered_action():
     assert approval["entity_type"] == "hedge_positions"
     assert approval["action_id"] == "update_hedge_positions"
 
-    resolved = core_db.resolve_approval(approval["id"], "approved")
+    resolved = core_db.resolve_approval(approval["id"], "approved", "Approved in test")
 
     assert resolved["status"] == "approved"
     assert portfolio_db.get_hedge_positions()[0]["ticker"] == "SPY"
@@ -164,13 +286,12 @@ def test_thesis_status_action_noops_same_status_without_history_row():
     thesis_db.upsert_thesis_meta("MU", status="active")
     assert len(thesis_db.get_status_history("MU")) == 1
 
-    result = execute_action(
+    result = _approve_action(
         "change_thesis_status",
         {"ticker": "MU", "status": "active", "reason": "No change"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
     )
 
-    assert result.output["changed"] is False
+    assert result["changed"] is False
     assert len(thesis_db.get_status_history("MU")) == 1
 
 
@@ -182,26 +303,22 @@ def test_process_actions_write_entities_and_run_markdown_callbacks(monkeypatch):
         lambda ticker: synced.append(ticker),
     )
 
-    catalyst = execute_action(
+    catalyst = _approve_action(
         "create_catalyst",
         {"ticker": "mu", "description": "HBM ramp", "category": "fundamental"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
-    updated_catalyst = execute_action(
+    )
+    updated_catalyst = _approve_action(
         "update_catalyst_status",
         {"catalyst_id": catalyst["id"], "status": "played_out", "evidence": "Confirmed"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
-    kill_condition = execute_action(
+    )
+    kill_condition = _approve_action(
         "create_kill_condition",
         {"ticker": "mu", "condition": "Demand rolls", "metric": "orders"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
-    updated_kill_condition = execute_action(
+    )
+    updated_kill_condition = _approve_action(
         "update_kill_condition_status",
         {"kill_condition_id": kill_condition["id"], "status": "triggered"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
+    )
 
     assert updated_catalyst["status"] == "played_out"
     assert updated_kill_condition["status"] == "triggered"
@@ -211,49 +328,33 @@ def test_process_actions_write_entities_and_run_markdown_callbacks(monkeypatch):
 
 
 def test_action_item_and_watch_trigger_actions_cover_lifecycle():
-    action = execute_action(
+    action = _approve_action(
         "create_action_item",
         {"description": "Review MU", "action_type": "review", "ticker": "mu", "urgency": "high"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
-    completed = execute_action(
+    )
+    completed = _approve_action(
         "complete_action_item",
         {"item_id": action["id"], "resolution_note": "Done"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
-    dismissed = execute_action(
+    )
+    dismiss_source = _approve_action("create_action_item", {"description": "Dismiss me"})
+    dismissed = _approve_action(
         "dismiss_action_item",
-        {
-            "item_id": execute_action(
-                "create_action_item",
-                {"description": "Dismiss me"},
-                ActionContext(actor_type="user", source_type="api", source_id="test"),
-            ).output["id"]
-        },
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
+        {"item_id": dismiss_source["id"]},
+    )
 
-    trigger = execute_action(
+    trigger = _approve_action(
         "create_watch_trigger",
         {"condition": "MU > 150", "trigger_type": "price_level", "ticker": "mu"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
-    fired = execute_action(
+    )
+    fired = _approve_action(
         "fire_watch_trigger",
         {"trigger_id": trigger["id"], "result": {"price": 151}, "evidence": "Breakout"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
-    cancelled = execute_action(
+    )
+    cancel_source = _approve_action("create_watch_trigger", {"condition": "Cancel me", "trigger_type": "custom"})
+    cancelled = _approve_action(
         "cancel_watch_trigger",
-        {
-            "trigger_id": execute_action(
-                "create_watch_trigger",
-                {"condition": "Cancel me", "trigger_type": "custom"},
-                ActionContext(actor_type="user", source_type="api", source_id="test"),
-            ).output["id"]
-        },
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
+        {"trigger_id": cancel_source["id"]},
+    )
 
     assert completed["status"] == "completed"
     assert completed["resolution_note"] == "Done"
@@ -308,9 +409,9 @@ def test_legacy_approval_backed_actions_replay_through_registry(monkeypatch):
         reason="remove stale digest",
     )
 
-    core_db.resolve_approval(note_approval["id"], "approved")
-    core_db.resolve_approval(evaluation_approval["id"], "approved")
-    core_db.resolve_approval(delete_approval["id"], "approved")
+    core_db.resolve_approval(note_approval["id"], "approved", "Approved in test")
+    core_db.resolve_approval(evaluation_approval["id"], "approved", "Approved in test")
+    core_db.resolve_approval(delete_approval["id"], "approved", "Approved in test")
 
     assert core_db.get_research_notes(ticker="MU")[0]["title"] == "Follow-up"
     assert thesis_db.get_evaluations("MU", limit=1)[0]["thesis_status"] == "active"
@@ -333,6 +434,7 @@ def test_pending_approval_replays_old_action_schema_after_current_schema_evolves
         "create_action_item",
         {"description": "Review MU", "action_type": "review", "ticker": "mu", "urgency": "high"},
         ActionContext(actor_type="workflow", source_type="workflow", source_id="run-old-schema"),
+        reason="old schema test",
     )
 
     class CreateActionItemInputV2(CreateActionItemInput):
@@ -364,7 +466,7 @@ def test_pending_approval_replays_old_action_schema_after_current_schema_evolves
         lambda payload: {**payload, "source": "approval"},
     )
 
-    resolved = core_db.resolve_approval(approval["id"], "approved")
+    resolved = core_db.resolve_approval(approval["id"], "approved", "Approved in test")
 
     assert resolved["application_status"] == "applied"
     action = core_db.get_action_items()[0]
@@ -375,7 +477,7 @@ def test_pending_approval_replays_old_action_schema_after_current_schema_evolves
 
 def test_thesis_claim_actions_normalize_sources_and_not_found_errors(monkeypatch):
     monkeypatch.setattr("portfolio.thesis_sync.sync_markdown_from_entities", lambda _ticker: None)
-    created = execute_action(
+    created = _approve_action(
         "create_thesis_claim",
         {
             "ticker": "mu",
@@ -383,14 +485,12 @@ def test_thesis_claim_actions_normalize_sources_and_not_found_errors(monkeypatch
             "source_requirements": ["earnings"],
             "confidence": 0.6,
         },
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
+    )
 
-    updated = execute_action(
+    updated = _approve_action(
         "update_thesis_claim",
         {"claim_id": created["id"], "status": "supported", "confidence": 0.8},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
+    )
 
     assert updated["status"] == "supported"
     assert updated["source_requirements"][0]["description"] == "earnings"
@@ -419,11 +519,10 @@ def test_save_thesis_content_action_writes_meta_and_runs_callbacks(monkeypatch, 
         lambda ticker: synced.append(ticker),
     )
 
-    result = execute_action(
+    result = _approve_action(
         "save_thesis_content",
         {"ticker": "mu", "content": "# MU\n\n## Thesis\n- Good"},
-        ActionContext(actor_type="user", source_type="api", source_id="test"),
-    ).output
+    )
 
     assert result == {"status": "ok", "ticker": "MU", "content": "# MU\n\n## Thesis\n- Good"}
     assert (thesis_dir / "MU.md").read_text(encoding="utf-8").endswith("\n")

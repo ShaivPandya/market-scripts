@@ -246,9 +246,14 @@ class TemporalOntologyRepository:
                     write.temporal_confidence or "native",
                 ),
             ).fetchone()
+            out = _normalize_required_row(row)
+            _link_version_provenance_tx(
+                conn,
+                "ontology_object_version",
+                out.get("version_id"),
+                write.provenance_event_id,
+            )
             conn.commit()
-        out = _normalize_required_row(row)
-        _link_version_provenance("ontology_object_version", out.get("version_id"), write.provenance_event_id)
         return out
 
     def correct_object_version(
@@ -298,10 +303,42 @@ class TemporalOntologyRepository:
                 temporal_confidence=str(current_row.get("temporal_confidence") or "native"),
             )
             row = self._insert_object_version_without_closing(conn, replacement, tx_from=tx_from).fetchone()
+            out = _normalize_required_row(row)
+            _link_version_provenance_tx(
+                conn,
+                "ontology_object_version",
+                out.get("version_id"),
+                replacement.provenance_event_id,
+            )
             conn.commit()
-        out = _normalize_required_row(row)
-        _link_version_provenance("ontology_object_version", out.get("version_id"), replacement.provenance_event_id)
         return out
+
+    def expire_object_versions(
+        self,
+        object_uid: str,
+        *,
+        valid_from: datetime | str | None = None,
+        valid_to: datetime | str | None = None,
+        tx_to: datetime | str | None = None,
+    ) -> int:
+        """Close current transaction-time object versions for an object UID."""
+        tx_to_ts = _parse_optional_ts(tx_to) or _now()
+        valid_from_ts = _parse_optional_ts(valid_from) or datetime.min.replace(tzinfo=UTC)
+        valid_to_ts = _parse_optional_ts(valid_to)
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE ontology_object_versions
+                SET tx_to = %s
+                WHERE object_uid = %s
+                  AND tx_to IS NULL
+                  AND valid_from < COALESCE(%s, 'infinity'::timestamptz)
+                  AND COALESCE(valid_to, 'infinity'::timestamptz) > %s
+                """,
+                (tx_to_ts, object_uid, valid_to_ts, valid_from_ts),
+            )
+            conn.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     def write_relation_version(self, write: RelationVersionWrite) -> dict[str, Any]:
         version_id = uuid.uuid4()
@@ -380,10 +417,37 @@ class TemporalOntologyRepository:
                     write.temporal_confidence or "native",
                 ),
             ).fetchone()
+            out = _normalize_required_row(row)
+            _link_version_provenance_tx(conn, "relation_version", out.get("version_id"), write.provenance_event_id)
             conn.commit()
-        out = _normalize_required_row(row)
-        _link_version_provenance("relation_version", out.get("version_id"), write.provenance_event_id)
         return out
+
+    def expire_relation_versions(
+        self,
+        relation_uid: str,
+        *,
+        valid_from: datetime | str | None = None,
+        valid_to: datetime | str | None = None,
+        tx_to: datetime | str | None = None,
+    ) -> int:
+        """Close current transaction-time relation versions for a relation UID."""
+        tx_to_ts = _parse_optional_ts(tx_to) or _now()
+        valid_from_ts = _parse_optional_ts(valid_from) or datetime.min.replace(tzinfo=UTC)
+        valid_to_ts = _parse_optional_ts(valid_to)
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE ontology_relation_versions
+                SET tx_to = %s
+                WHERE relation_uid = %s
+                  AND tx_to IS NULL
+                  AND valid_from < COALESCE(%s, 'infinity'::timestamptz)
+                  AND COALESCE(valid_to, 'infinity'::timestamptz) > %s
+                """,
+                (tx_to_ts, relation_uid, valid_to_ts, valid_from_ts),
+            )
+            conn.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     def query_relations(
         self,
@@ -1095,6 +1159,62 @@ def payload_hash(value: Any, *, length: int = 32) -> str:
     return _stable_hash(value, length=length)
 
 
+def _link_version_provenance_tx(conn: Any, ref_type: str, ref_id: Any, event_id: str | None) -> None:
+    if not event_id or not ref_id:
+        return
+    lineage_root_id = f"{ref_type}:{ref_id}"
+    link_id = "pvlink:" + _stable_hash(
+        {
+            "event_id": event_id,
+            "source_ref_type": "source_adapter_run",
+            "source_ref_id": str(event_id),
+            "target_ref_type": ref_type,
+            "target_ref_id": str(ref_id),
+            "link_type": "produced",
+        },
+        length=32,
+    )
+    now = _now().isoformat()
+    conn.execute(
+        """
+        INSERT INTO provenance_links (
+            id,
+            event_id,
+            source_ref_type,
+            source_ref_id,
+            source_ref_version,
+            target_ref_type,
+            target_ref_id,
+            target_ref_version,
+            link_type,
+            metadata_json,
+            lineage_root_id,
+            created_at
+        )
+        VALUES (%s, %s, %s, %s, NULL, %s, %s, NULL, %s, NULL, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            event_id = EXCLUDED.event_id,
+            source_ref_type = EXCLUDED.source_ref_type,
+            source_ref_id = EXCLUDED.source_ref_id,
+            target_ref_type = EXCLUDED.target_ref_type,
+            target_ref_id = EXCLUDED.target_ref_id,
+            link_type = EXCLUDED.link_type,
+            lineage_root_id = EXCLUDED.lineage_root_id
+        """,
+        (
+            link_id,
+            event_id,
+            "source_adapter_run",
+            str(event_id),
+            ref_type,
+            str(ref_id),
+            "produced",
+            lineage_root_id,
+            now,
+        ),
+    )
+
+
 def _link_version_provenance(ref_type: str, ref_id: Any, event_id: str | None) -> None:
     if not event_id or not ref_id:
         return
@@ -1108,6 +1228,8 @@ def _link_version_provenance(ref_type: str, ref_id: Any, event_id: str | None) -
             target_ref_type=ref_type,
             target_ref_id=str(ref_id),
             link_type=provenance.LINK_PRODUCED,
+            lineage_root_id=f"{ref_type}:{ref_id}",
+            fail_closed=True,
         )
     except Exception:
-        pass
+        raise

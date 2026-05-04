@@ -79,6 +79,28 @@ function formatApiError(err: unknown): string | null {
   return status ? `${status}: Request failed` : "Request failed"
 }
 
+export interface StagedMutationOptions {
+  reason?: string
+  apply?: boolean
+  approval_note?: string
+}
+
+export interface StagedMutationResponse {
+  status: "pending_approval_created" | "applied" | string
+  approval_id: number
+  application_status: "pending" | "applying" | "applied" | "failed" | "not_applicable" | string
+  action_id: string
+  entity_type: string
+  ticker: string | null
+  proposed_change: Record<string, unknown>
+  summary?: {
+    reason?: string | null
+    risk_class?: string | null
+    approval_mode?: string | null
+    approval_note_required?: boolean
+  }
+}
+
 client.interceptors.response.use(
   res => res,
   err => {
@@ -174,8 +196,8 @@ export const fetchPortfolioPositions = (includeHedges = false) =>
     .get("/portfolio-positions", { params: includeHedges ? { include_hedges: true } : undefined })
     .then(r => r.data as { positions: PortfolioPosition[] })
 
-export const savePortfolioPositions = (positions: PortfolioPosition[]) =>
-  client.put("/portfolio-positions", { positions }).then(r => r.data)
+export const savePortfolioPositions = (positions: PortfolioPosition[], options?: StagedMutationOptions) =>
+  client.put("/portfolio-positions", { positions, ...options }).then(r => r.data as StagedMutationResponse)
 
 export interface HedgePosition {
   ticker: string
@@ -187,8 +209,8 @@ export interface HedgePosition {
 export const fetchHedgePositions = () =>
   client.get("/hedge-positions").then(r => r.data as { positions: HedgePosition[] })
 
-export const saveHedgePositions = (positions: HedgePosition[]) =>
-  client.put("/hedge-positions", { positions }).then(r => r.data)
+export const saveHedgePositions = (positions: HedgePosition[], options?: StagedMutationOptions) =>
+  client.put("/hedge-positions", { positions, ...options }).then(r => r.data as StagedMutationResponse)
 
 export type ThesisStatus = "populated" | "empty" | "missing"
 
@@ -200,10 +222,10 @@ export const fetchThesis = (ticker: string) =>
     .get(`/thesis/${encodeURIComponent(ticker)}`)
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 
-export const saveThesisContent = (ticker: string, content: string) =>
+export const saveThesisContent = (ticker: string, content: string, options?: StagedMutationOptions) =>
   client
-    .put(`/thesis/${encodeURIComponent(ticker)}`, { content })
-    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+    .put(`/thesis/${encodeURIComponent(ticker)}`, { content, ...options })
+    .then(r => r.data as StagedMutationResponse)
 
 export const uploadThesisDocument = (ticker: string, file: File) => {
   const formData = new FormData()
@@ -211,7 +233,7 @@ export const uploadThesisDocument = (ticker: string, file: File) => {
   formData.append("file", file)
   return client
     .post("/thesis/generate", formData, { timeout: 120_000 })
-    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+    .then(r => r.data as StagedMutationResponse)
 }
 
 // --- Overview ---
@@ -286,10 +308,11 @@ export const updateThesisStatus = (
   ticker: string,
   status: ThesisStatusValue,
   reason: string,
+  options?: StagedMutationOptions,
 ) =>
   client
-    .put(`/thesis/${encodeURIComponent(ticker)}/status`, { status, reason })
-    .then(r => r.data)
+    .put(`/thesis/${encodeURIComponent(ticker)}/status`, { status, reason, ...options })
+    .then(r => r.data as StagedMutationResponse)
 
 export const fetchMomentum = () =>
   client.get("/momentum").then(r => r.data)
@@ -1237,11 +1260,11 @@ export const fetchDossier = (ticker: string) =>
 // Approvals
 export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
-export const approveItem = (id: number, note?: string) =>
-  client.post(`/approvals/${id}/approve`, note ? { note } : {}).then(r => r.data)
+export const approveItem = (id: number, note = "Approved via UI") =>
+  client.post(`/approvals/${id}/approve`, { note }).then(r => r.data)
 export const rejectItem = (id: number, note?: string) =>
   client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data)
-export const bulkApprove = (ids: number[], note?: string) =>
+export const bulkApprove = (ids: number[], note = "Approved via UI") =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
 export const bulkReject = (ids: number[], note?: string) =>
   client.post("/approvals/bulk-reject", { ids, note }).then(r => r.data)
@@ -1249,30 +1272,30 @@ export const bulkReject = (ids: number[], note?: string) =>
 // Action Items
 export const fetchActions = (params?: { status?: string; ticker?: string }) =>
   client.get("/actions", { params }).then(r => r.data)
-export const createAction = (body: { description: string; action_type?: string; ticker?: string; urgency?: string }) =>
-  client.post("/actions", body).then(r => r.data)
-export const completeAction = (id: number, resolution_note?: string) =>
-  client.put(`/actions/${id}/complete`, { resolution_note: resolution_note ?? "" }).then(r => r.data)
-export const dismissAction = (id: number) =>
-  client.put(`/actions/${id}/dismiss`).then(r => r.data)
+export const createAction = (body: { description: string; action_type?: string; ticker?: string; urgency?: string } & StagedMutationOptions) =>
+  client.post("/actions", body).then(r => r.data as StagedMutationResponse)
+export const completeAction = (id: number, resolution_note?: string, options?: StagedMutationOptions) =>
+  client.put(`/actions/${id}/complete`, { resolution_note: resolution_note ?? "", ...options }).then(r => r.data as StagedMutationResponse)
+export const dismissAction = (id: number, options?: StagedMutationOptions) =>
+  client.put(`/actions/${id}/dismiss`, options ?? {}).then(r => r.data as StagedMutationResponse)
 
 // Watch Triggers
 export const fetchTriggers = (params?: { status?: string; ticker?: string }) =>
   client.get("/triggers", { params }).then(r => r.data)
-export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string; definition?: Record<string, unknown> }) =>
-  client.post("/triggers", body).then(r => r.data)
-export const fireTrigger = (id: number) =>
-  client.put(`/triggers/${id}/fire`).then(r => r.data)
-export const cancelTrigger = (id: number) =>
-  client.put(`/triggers/${id}/cancel`).then(r => r.data)
+export const createTrigger = (body: { condition: string; trigger_type?: string; ticker?: string; expires_at?: string; definition?: Record<string, unknown> } & StagedMutationOptions) =>
+  client.post("/triggers", body).then(r => r.data as StagedMutationResponse)
+export const fireTrigger = (id: number, options?: StagedMutationOptions) =>
+  client.put(`/triggers/${id}/fire`, options ?? {}).then(r => r.data as StagedMutationResponse)
+export const cancelTrigger = (id: number, options?: StagedMutationOptions) =>
+  client.put(`/triggers/${id}/cancel`, options ?? {}).then(r => r.data as StagedMutationResponse)
 
 // Catalysts
 export const fetchCatalysts = (ticker: string) =>
   client.get("/catalysts", { params: { ticker } }).then(r => r.data)
-export const createCatalyst = (body: { ticker: string; description: string; category?: string; target_date?: string }) =>
-  client.post("/catalysts", body).then(r => r.data)
-export const updateCatalystStatus = (id: number, status: string, evidence?: string) =>
-  client.put(`/catalysts/${id}/status`, { status, evidence }).then(r => r.data)
+export const createCatalyst = (body: { ticker: string; description: string; category?: string; target_date?: string } & StagedMutationOptions) =>
+  client.post("/catalysts", body).then(r => r.data as StagedMutationResponse)
+export const updateCatalystStatus = (id: number, status: string, evidence?: string, options?: StagedMutationOptions) =>
+  client.put(`/catalysts/${id}/status`, { status, evidence, ...options }).then(r => r.data as StagedMutationResponse)
 
 // Thesis Claims
 export interface SourceRequirement {
@@ -1318,24 +1341,24 @@ export type ThesisClaimPayload = {
   linked_kill_condition_ids?: number[]
 }
 
-export const createThesisClaim = (body: ThesisClaimPayload & { ticker: string; claim: string }) =>
-  client.post("/thesis-claims", body).then(r => r.data as ThesisClaim)
-export const updateThesisClaim = (id: number, body: ThesisClaimPayload) =>
-  client.put(`/thesis-claims/${id}`, body).then(r => r.data as ThesisClaim)
+export const createThesisClaim = (body: ThesisClaimPayload & { ticker: string; claim: string } & StagedMutationOptions) =>
+  client.post("/thesis-claims", body).then(r => r.data as StagedMutationResponse)
+export const updateThesisClaim = (id: number, body: ThesisClaimPayload & StagedMutationOptions) =>
+  client.put(`/thesis-claims/${id}`, body).then(r => r.data as StagedMutationResponse)
 
 // Kill Conditions
 export const fetchKillConditions = (ticker: string) =>
   client.get("/kill-conditions", { params: { ticker } }).then(r => r.data)
-export const createKillCondition = (body: { ticker: string; condition: string; metric?: string; threshold?: string }) =>
-  client.post("/kill-conditions", body).then(r => r.data)
-export const updateKillConditionStatus = (id: number, status: string) =>
-  client.put(`/kill-conditions/${id}/status`, { status }).then(r => r.data)
+export const createKillCondition = (body: { ticker: string; condition: string; metric?: string; threshold?: string } & StagedMutationOptions) =>
+  client.post("/kill-conditions", body).then(r => r.data as StagedMutationResponse)
+export const updateKillConditionStatus = (id: number, status: string, options?: StagedMutationOptions) =>
+  client.put(`/kill-conditions/${id}/status`, { status, ...options }).then(r => r.data as StagedMutationResponse)
 
 // Research Notes
 export const fetchResearchNotes = (params?: { ticker?: string; limit?: number }) =>
   client.get("/research-notes", { params }).then(r => r.data)
-export const createResearchNote = (body: { title: string; content: string; ticker?: string; note_type?: string }) =>
-  client.post("/research-notes", body).then(r => r.data)
+export const createResearchNote = (body: { title: string; content: string; ticker?: string; note_type?: string } & StagedMutationOptions) =>
+  client.post("/research-notes", body).then(r => r.data as StagedMutationResponse)
 
 // Workflow Runs
 interface AgentWorkflowResponse {

@@ -1,0 +1,75 @@
+{
+  "displayName": "Governance audit and provenance health",
+  "documentation": {
+    "content": "Alerts for production-grade audit/provenance durability. Configure log-based metrics for governance_outbox_drain dead letters, retry backlog age, critical audit write failures, lineage completeness warnings, and fail-closed business errors.",
+    "mimeType": "text/markdown"
+  },
+  "userLabels": {
+    "component": "governance",
+    "retention_class": "financial_lineage_7y"
+  },
+  "conditions": [
+    {
+      "displayName": "Governance outbox dead letters present",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_outbox_dead_letter_count\" resource.type=\"cloud_run_job\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "60s",
+        "aggregations": [{"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    },
+    {
+      "displayName": "Governance outbox oldest pending item too old",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_outbox_oldest_pending_age_seconds\" resource.type=\"cloud_run_job\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 900,
+        "duration": "300s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_PERCENTILE_99"}]
+      }
+    },
+    {
+      "displayName": "Governance outbox retries accumulating",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_outbox_failed_count\" resource.type=\"cloud_run_job\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 5,
+        "duration": "300s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    },
+    {
+      "displayName": "Critical governance write failure",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_critical_write_failure_count\" resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "60s",
+        "aggregations": [{"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    },
+    {
+      "displayName": "Lineage completeness warning",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_lineage_completeness_warning_count\" resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "300s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    },
+    {
+      "displayName": "Governance redaction violation detected",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_redaction_violation_count\" resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "60s",
+        "aggregations": [{"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true
+}

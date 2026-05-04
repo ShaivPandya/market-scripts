@@ -127,6 +127,10 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
           </div>
         )}
 
+        {!displayContent && message.statusText && (
+          <span className="text-xs text-muted">{message.statusText}</span>
+        )}
+
         {/* Streaming cursor */}
         {message.isStreaming && (
           <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle rounded-sm" />

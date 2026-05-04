@@ -30,6 +30,8 @@ def write_source_record(
     provenance_event_id: str | None = None,
     repository: TemporalOntologyRepository | None = None,
 ) -> dict[str, Any]:
+    if not provenance_event_id:
+        raise ValueError("Governed source record writes require provenance_event_id")
     repo = repository or TemporalOntologyRepository()
     return repo.write_source_record_version(
         SourceRecordWrite(
@@ -68,6 +70,8 @@ def write_source_result_records(
     lineage = getattr(result, "lineage", None)
     source_version = str(getattr(lineage, "adapter_version", "") or "unknown")
     provenance_event_id = getattr(lineage, "provenance_event_id", None)
+    if not provenance_event_id:
+        raise ValueError(f"Source result records for {source_name} require lineage.provenance_event_id")
     as_of = result.as_of
     fetched_at = result.fetched_at
     valid_from: datetime | str = as_of or fetched_at

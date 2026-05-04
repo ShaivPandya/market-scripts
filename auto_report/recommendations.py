@@ -37,7 +37,12 @@ ACTION_OPTIONS = (
 ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
 NON_APPROVAL_ACTIONS = {"hold", "watch", "avoid", "do_nothing"}
 QUALITY_OPTIONS = ("ok", "degraded", "stale", "failed")
-RECOMMENDATION_STATUSES = ("clear", "blocked", "error")
+RECOMMENDATION_STATUSES = ("clear", "review_required", "blocked", "error")
+
+MAX_RECOMMENDATIONS_EVIDENCE_CHARS = 180_000
+MAX_RECOMMENDATIONS_COMMENTARY_CHARS = 24_000
+MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS = 32_000
+_COMPACT_MARKER_KEY = "_prompt_compaction"
 
 CRITICAL_SOURCES = {
     "daily": {
@@ -111,6 +116,181 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return max(0.0, min(1.0, out))
+
+
+def _truncate_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    if max_chars <= 120:
+        return value[:max_chars]
+    marker = f"\n\n... [truncated {len(value) - max_chars} chars for recommendations prompt] ...\n\n"
+    head_len = max((max_chars - len(marker)) // 2, 1)
+    tail_len = max(max_chars - len(marker) - head_len, 1)
+    return (value[:head_len].rstrip() + marker + value[-tail_len:].lstrip())[:max_chars]
+
+
+def _is_probably_time_series(rows: list[Any]) -> bool:
+    if len(rows) < 8:
+        return False
+    sample = [row for row in rows[:8] if isinstance(row, dict)]
+    if len(sample) < 4:
+        return False
+    date_keys = {"date", "as_of", "timestamp", "time", "datetime", "published_at", "fetched_at"}
+    return any(date_keys & {str(key).lower() for key in row} for row in sample)
+
+
+def _compact_prompt_value(
+    value: Any,
+    *,
+    depth: int = 0,
+    max_depth: int = 6,
+    list_limit: int = 50,
+    dict_limit: int = 100,
+    string_limit: int = 6_000,
+) -> Any:
+    """Return a JSON-safe, prompt-sized copy of recommendation evidence."""
+    if isinstance(value, str):
+        return _truncate_text(value, string_limit)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if depth >= max_depth:
+        if isinstance(value, dict):
+            return {"_type": "dict", "keys": sorted(str(k) for k in value)[:dict_limit], "truncated_at_depth": depth}
+        if isinstance(value, list):
+            return {"_type": "list", "length": len(value), "truncated_at_depth": depth}
+        return str(value)
+    if isinstance(value, list):
+        if len(value) <= list_limit:
+            return [
+                _compact_prompt_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    list_limit=list_limit,
+                    dict_limit=dict_limit,
+                    string_limit=string_limit,
+                )
+                for item in value
+            ]
+        if _is_probably_time_series(value):
+            kept = value[-list_limit:]
+            mode = "latest"
+        else:
+            head = list_limit // 2
+            tail = list_limit - head
+            kept = [*value[:head], *value[-tail:]]
+            mode = "head_tail"
+        return {
+            "_type": "list",
+            "original_length": len(value),
+            "kept": mode,
+            "items": [
+                _compact_prompt_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    list_limit=list_limit,
+                    dict_limit=dict_limit,
+                    string_limit=string_limit,
+                )
+                for item in kept
+            ],
+        }
+    if isinstance(value, dict):
+        items = list(value.items())
+        if len(items) > dict_limit:
+            priority = []
+            priority_keys = set()
+            for key, item in items:
+                key_l = str(key).lower()
+                if key_l in {
+                    "ticker",
+                    "instrument",
+                    "summary",
+                    "latest",
+                    "data_quality",
+                    "risk_summary",
+                    "stance",
+                    "portfolio_positions",
+                    "risk_data",
+                    "sizer_summary",
+                    "weekly_summary",
+                    "market_data",
+                    "sources",
+                    "error",
+                }:
+                    priority.append((key, item))
+                    priority_keys.add(key)
+            remaining = [(key, item) for key, item in items if key not in priority_keys]
+            items = [*priority[:dict_limit], *remaining[: max(0, dict_limit - len(priority))]]
+        out = {
+            str(key): _compact_prompt_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                list_limit=list_limit,
+                dict_limit=dict_limit,
+                string_limit=string_limit,
+            )
+            for key, item in items
+        }
+        if len(value) > dict_limit:
+            out["_truncated_keys"] = len(value) - len(items)
+        return out
+    return str(value)
+
+
+def _json_for_prompt(value: Any, max_chars: int) -> str:
+    tiers = (
+        {"max_depth": 6, "list_limit": 50, "dict_limit": 100, "string_limit": 6_000},
+        {"max_depth": 5, "list_limit": 30, "dict_limit": 70, "string_limit": 3_000},
+        {"max_depth": 4, "list_limit": 15, "dict_limit": 40, "string_limit": 1_200},
+    )
+    for tier in tiers:
+        compacted = _compact_prompt_value(value, **tier)
+        text = json.dumps(compacted, indent=2, default=str)
+        if len(text) <= max_chars:
+            return text
+    summary = _compact_prompt_value(value, max_depth=3, list_limit=8, dict_limit=24, string_limit=600)
+    text = json.dumps(
+        {
+            _COMPACT_MARKER_KEY: {
+                "reason": "evidence exceeded recommendations prompt budget",
+                "max_chars": max_chars,
+            },
+            "summary": summary,
+        },
+        indent=2,
+        default=str,
+    )
+    if len(text) <= max_chars:
+        return text
+    if isinstance(value, dict):
+        top_level_keys = sorted(str(key) for key in value)[:80]
+    else:
+        top_level_keys = []
+    return json.dumps(
+        {
+            _COMPACT_MARKER_KEY: {
+                "reason": "evidence exceeded recommendations prompt budget after aggressive compaction",
+                "max_chars": max_chars,
+            },
+            "top_level_keys": top_level_keys,
+        },
+        indent=2,
+        default=str,
+    )
+
+
+def _compact_commentary_context(commentary_md: str) -> str:
+    text = commentary_md.strip()
+    if "\n## Sources" in text:
+        text = text.split("\n## Sources", 1)[0].rstrip()
+    return _truncate_text(text, MAX_RECOMMENDATIONS_COMMENTARY_CHARS)
+
+
+def _compact_extra_context(extra_context_md: str) -> str:
+    return _truncate_text(extra_context_md.strip(), MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS)
 
 
 def _parse_date(value: Any) -> date | None:
@@ -348,7 +528,7 @@ def validate_recommendations_payload(
     elif normalized["stance"] != stance:
         errors.append(f"stance must match pipeline stance {stance!r}")
     if normalized["recommendation_status"] not in RECOMMENDATION_STATUSES:
-        errors.append("recommendation_status must be clear, blocked, or error")
+        errors.append("recommendation_status must be clear, review_required, blocked, or error")
     if normalized["critical_data_quality"] not in QUALITY_OPTIONS:
         errors.append("critical_data_quality must be ok, degraded, stale, or failed")
 
@@ -407,7 +587,7 @@ def validate_recommendations_payload(
         else:
             ticker = None
         approval_required = bool(raw_action.get("approval_required"))
-        if normalized["recommendation_status"] == "clear" and action in ACTIONABLE_ACTIONS:
+        if normalized["recommendation_status"] in {"clear", "review_required"} and action in ACTIONABLE_ACTIONS:
             approval_required = True
         else:
             approval_required = False
@@ -479,10 +659,19 @@ def build_recommendations_user_message(
     extra_context_md: str = "",
 ) -> str:
     horizon = "today / next 1-5 trading days" if report_type == "daily" else "next week / next 1-3 months"
-    bundle_json = json.dumps(evidence_bundle, indent=2, default=str)
+    bundle_json = _json_for_prompt(evidence_bundle, MAX_RECOMMENDATIONS_EVIDENCE_CHARS)
     quality_json = json.dumps(data_quality, indent=2, default=str)
+    commentary_context = _compact_commentary_context(commentary_md)
+    extra_context = _compact_extra_context(extra_context_md)
     stance_options = " | ".join(STANCE_OPTIONS)
     action_options = " | ".join(ACTION_OPTIONS)
+    log.info(
+        "Recommendation prompt context prepared (report_type=%s evidence_chars=%d commentary_chars=%d extra_chars=%d)",
+        report_type,
+        len(bundle_json),
+        len(commentary_context),
+        len(extra_context),
+    )
     return f"""Produce the {report_type} recommendations report for {as_of}.
 
 Current stance: {stance}
@@ -502,14 +691,15 @@ Decision horizon: {horizon}
 
 ## Commentary Context
 
-{commentary_md}
+{commentary_context}
 
-{extra_context_md}
+{extra_context}
 
 Write a short recommendations memo first. The memo must be decision-oriented and may not repeat the commentary.
 
 Hard rules:
 - If critical data quality is stale or failed, set recommendation_status to blocked and use only watch or do_nothing.
+- Do not self-certify suitability. The deterministic financial policy gate runs after JSON validation and can downgrade clear actions to review_required or blocked.
 - Commentary is context only; it cannot by itself justify an action.
 - do_nothing is an active recommendation when no fat pitch exists.
 - New entries normally start at one-third intended size.
@@ -525,7 +715,7 @@ After the memo, output the separator `{RECOMMENDATIONS_SEPARATOR}` on its own li
   "report_type": "{report_type}",
   "as_of": "{as_of}",
   "stance": "<{stance_options}>",
-  "recommendation_status": "<clear|blocked|error>",
+  "recommendation_status": "<clear|review_required|blocked|error>",
   "critical_data_quality": "<ok|degraded|stale|failed>",
   "blocked_reasons": [],
   "do_nothing_rationale": "",
@@ -604,6 +794,21 @@ def format_recommendations_markdown(payload: dict) -> str:
     if blocked:
         lines.append("- Blocked reasons:")
         lines.extend(f"  - {reason}" for reason in blocked)
+    gate = payload.get("policy_gate_result")
+    if isinstance(gate, dict):
+        lines.append(f"- Policy gate: **{gate.get('decision', 'unknown')}**")
+        warnings = gate.get("warnings") or []
+        failures = gate.get("failure_reasons") or []
+        if failures:
+            lines.append(
+                "- Policy failures: "
+                + "; ".join(str(item.get("message") if isinstance(item, dict) else item) for item in failures)
+            )
+        if warnings:
+            lines.append(
+                "- Policy warnings: "
+                + "; ".join(str(item.get("message") if isinstance(item, dict) else item) for item in warnings)
+            )
     if payload.get("do_nothing_rationale"):
         lines.extend(["", "## Do Nothing Rationale", str(payload["do_nothing_rationale"])])
     if payload.get("what_changed"):
@@ -649,18 +854,19 @@ def persist_recommendations(
     source_json_path: str,
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
-    from portfolio.core_db import (
-        create_pending_approval,
-        create_recommendation,
-        supersede_report_recommendations,
-        update_recommendation_approval,
-        upsert_recommendation,
-    )
+    from portfolio import core_db
+    from portfolio.action_registry import ActionContext, propose_action
+    from portfolio.policy_gate import attach_policy_gate_to_recommendation
 
     prompt_metadata = prompt_metadata or {}
     report_id = prompt_metadata.get("report_id")
-    active_idempotency_keys: list[str] = []
     persisted: list[dict] = []
+    context = ActionContext(
+        actor_type="workflow",
+        source_type="workflow",
+        source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
+    )
+    active_idempotency_keys: list[str] = []
     for action in payload.get("recommended_actions", []):
         action_hash = stable_hash(
             {
@@ -702,31 +908,66 @@ def persist_recommendations(
             "idempotency_key": idempotency_key,
             **prompt_metadata,
         }
-        rec = upsert_recommendation(record) if idempotency_key else create_recommendation(record)
-        if payload["recommendation_status"] == "clear" and action["action"] in ACTIONABLE_ACTIONS:
-            if rec.get("approval_id") is None and rec.get("approval_status") in {None, "none"}:
-                description = f"{action['action'].replace('_', ' ').title()} {action.get('instrument') or action.get('ticker') or 'portfolio'}"
-                if action.get("target_change"):
-                    description += f" ({action['target_change']})"
-                approval = create_pending_approval(
-                    entity_type="action_item",
-                    proposed_change={
-                        "recommendation_id": rec["id"],
-                        "ticker": action.get("ticker"),
-                        "description": description,
-                        "action_type": _approval_action_type(action["action"]),
-                        "urgency": "high" if action["action"] in {"exit", "reduce"} else "normal",
-                        "reason": action.get("rationale", ""),
-                    },
-                    ticker=action.get("ticker"),
-                    reason=action.get("rationale", ""),
-                    source_type="workflow",
+        record, gate = attach_policy_gate_to_recommendation(
+            record,
+            source_quality={
+                "critical_data_quality": payload.get("critical_data_quality"),
+                "overall_status": payload.get("critical_data_quality"),
+            },
+            context={"report_type": payload["report_type"], "as_of": payload["as_of"], "report_id": report_id},
+        )
+        if gate and gate.get("decision") == "review_required" and record.get("recommendation_status") == "clear":
+            record["recommendation_status"] = "review_required"
+            record["status"] = "open"
+        elif gate and gate.get("decision") in {"blocked", "error"}:
+            record["recommendation_status"] = "blocked"
+            record["status"] = "blocked"
+            policy_reason = f"policy_gate:{gate.get('decision')}"
+            if policy_reason not in record.get("blocked_reasons", []):
+                record["blocked_reasons"] = [*record.get("blocked_reasons", []), policy_reason]
+        if gate and not record.get("policy_gate_result_id"):
+            gate_target_id = idempotency_key or action_hash
+            existing_gate_rows = core_db.list_policy_gate_results(
+                action_id="create_recommendation",
+                target_type="recommendation",
+                target_id=gate_target_id,
+                limit=1,
+            )
+            gate_row = (
+                existing_gate_rows[0]
+                if existing_gate_rows
+                else core_db.create_policy_gate_result(
+                    gate,
+                    action_id="create_recommendation",
+                    source_type="report_run",
                     source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
+                    target_type="recommendation",
+                    target_id=gate_target_id,
+                    payload=record,
                 )
-                rec = update_recommendation_approval(rec["id"], approval["id"], "pending")
-        persisted.append(rec)
+            )
+            persisted_gate = gate_row.get("result_json") if existing_gate_rows else gate
+            if isinstance(persisted_gate, dict):
+                gate = dict(persisted_gate)
+            gate["policy_gate_result_id"] = gate_row["id"]
+            record["policy_gate_result_id"] = gate_row["id"]
+            record["policy_gate_result"] = gate
+            record["policy_gate_status"] = gate.get("decision")
+            record["policy_gate_decision"] = gate.get("decision")
+            record["policy_gate_review_required"] = bool(gate.get("review_required"))
+            record["policy_gate_failures"] = gate.get("failure_reasons", [])
+            record["policy_gate_warnings"] = gate.get("warnings", [])
+            record["policy_gate_disclosures"] = gate.get("disclosures", [])
+        approval = propose_action(
+            "create_recommendation",
+            {"record": record},
+            context,
+            reason=f"{payload['report_type'].title()} recommendation for {action.get('instrument') or action.get('ticker') or 'portfolio'}",
+            once=True,
+        )
+        persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
     if report_id:
-        supersede_report_recommendations(str(report_id), active_idempotency_keys)
+        core_db.supersede_report_recommendations(report_id, active_idempotency_keys)
     return persisted
 
 

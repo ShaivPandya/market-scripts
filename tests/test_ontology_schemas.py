@@ -4,8 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from ontology.models import OntologyEdge, OntologyNode
-from ontology.schemas.identity import evaluation_id, signal_id
-from ontology.schemas.objects import PositionV1
+from ontology.schemas.identity import action_item_id, evaluation_id, hedge_position_id, signal_id
+from ontology.schemas.objects import ActionItemV1, HedgePositionV1, PositionV1
 from ontology.schemas.registry import OntologySchemaValidationError, normalize_graph, normalize_node
 
 
@@ -44,6 +44,36 @@ def test_position_schema_normalizes_and_checks_risk_level():
             macro_regime=0.4,
             ontology_run_id="run-1",
         )
+
+
+def test_operational_object_schemas_have_stable_identities():
+    hedge = normalize_node(
+        OntologyNode(
+            id=hedge_position_id("MU"),
+            type="HedgePosition",
+            label="MU hedge",
+            properties=HedgePositionV1(ticker="mu", direction="short").model_dump(mode="json"),
+            schema_name="HedgePosition",
+            schema_version=1,
+        ),
+        allow_legacy=False,
+    )
+    action_item = normalize_node(
+        OntologyNode(
+            id=action_item_id(42),
+            type="ActionItem",
+            label="Review MU",
+            properties=ActionItemV1(legacy_id=42, description="Review MU").model_dump(mode="json"),
+            schema_name="ActionItem",
+            schema_version=1,
+        ),
+        allow_legacy=False,
+    )
+
+    assert hedge.id == "hedge_position:MU"
+    assert hedge.properties["ticker"] == "MU"
+    assert action_item.id == "action_item:42"
+    assert action_item.properties["status"] == "open"
 
 
 def test_legacy_signal_node_is_canonicalized_to_stable_identity():

@@ -703,14 +703,8 @@ def _research_note_content(trigger: dict[str, Any], result: dict[str, Any]) -> s
 
 
 def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from portfolio.core_db import (
-        create_action_item_once,
-        create_research_note_once,
-        fire_watch_trigger,
-        get_watch_triggers,
-        update_watch_trigger_check,
-        update_watch_trigger_definition,
-    )
+    from portfolio.action_registry import ActionContext, propose_action
+    from portfolio.core_db import get_watch_triggers
 
     checked = 0
     fired = 0
@@ -722,41 +716,87 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
         try:
             result = evaluate_trigger(trigger)
             if result.get("inferred_definition") and not trigger.get("definition_json"):
-                update_watch_trigger_definition(trigger_id, result["inferred_definition"])
+                propose_action(
+                    "update_watch_trigger_definition",
+                    {"trigger_id": trigger_id, "definition": result["inferred_definition"]},
+                    ActionContext(
+                        actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"
+                    ),
+                    reason=f"Infer watch trigger definition for {trigger_id}",
+                    entity_id=trigger_id,
+                    once=True,
+                )
             evidence = str(result.get("evidence") or "")
             if result.get("skipped"):
                 skipped += 1
-                update_watch_trigger_check(trigger_id, result=result, evidence=evidence)
+                propose_action(
+                    "update_watch_trigger_check",
+                    {"trigger_id": trigger_id, "result": result, "evidence": evidence},
+                    ActionContext(
+                        actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"
+                    ),
+                    reason=f"Record skipped watch trigger check for {trigger_id}",
+                    entity_id=trigger_id,
+                    once=True,
+                )
                 continue
             if result.get("fired"):
                 fired += 1
-                updated = fire_watch_trigger(trigger_id, result=result, evidence=evidence)
                 fingerprint = _result_fingerprint(result)
                 source_id = f"watch_trigger:{trigger_id}:{fingerprint}"
-                create_action_item_once(
-                    description=_action_description(updated, result),
-                    action_type="review",
-                    ticker=updated.get("ticker"),
-                    urgency="high",
-                    source_type="workflow",
-                    source_id=source_id,
+                context = ActionContext(actor_type="workflow", source_type="workflow", source_id=source_id)
+                propose_action(
+                    "fire_watch_trigger",
+                    {"trigger_id": trigger_id, "result": result, "evidence": evidence},
+                    context,
+                    reason=f"Watch trigger {trigger_id} fired",
+                    entity_id=trigger_id,
+                    once=True,
+                )
+                propose_action(
+                    "create_action_item",
+                    {
+                        "description": _action_description(trigger, result),
+                        "action_type": "review",
+                        "ticker": trigger.get("ticker"),
+                        "urgency": "high",
+                    },
+                    context,
+                    reason=f"Create action item for fired watch trigger {trigger_id}",
+                    once=True,
                 )
                 if result.get("news") or result.get("news_enrichment"):
-                    create_research_note_once(
-                        title=f"Watch trigger evidence: {_clean_text(updated.get('condition'))[:120]}",
-                        content=_research_note_content(updated, result)[:20000],
-                        ticker=updated.get("ticker"),
-                        note_type="workflow_output",
-                        source_type="workflow",
-                        source_id=source_id,
+                    propose_action(
+                        "create_research_note",
+                        {
+                            "title": f"Watch trigger evidence: {_clean_text(trigger.get('condition'))[:120]}",
+                            "content": _research_note_content(trigger, result)[:20000],
+                            "ticker": trigger.get("ticker"),
+                            "note_type": "workflow_output",
+                        },
+                        context,
+                        reason=f"Create evidence note for fired watch trigger {trigger_id}",
+                        once=True,
                     )
             else:
-                update_watch_trigger_check(trigger_id, result=result, evidence=evidence)
+                propose_action(
+                    "update_watch_trigger_check",
+                    {"trigger_id": trigger_id, "result": result, "evidence": evidence},
+                    ActionContext(
+                        actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"
+                    ),
+                    reason=f"Record watch trigger check for {trigger_id}",
+                    entity_id=trigger_id,
+                    once=True,
+                )
         except Exception as exc:
             errors += 1
-            update_watch_trigger_check(
-                trigger_id,
-                result={"error": str(exc), "fired": False},
-                evidence=str(exc),
+            propose_action(
+                "update_watch_trigger_check",
+                {"trigger_id": trigger_id, "result": {"error": str(exc), "fired": False}, "evidence": str(exc)},
+                ActionContext(actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"),
+                reason=f"Record watch trigger monitor error for {trigger_id}",
+                entity_id=trigger_id,
+                once=True,
             )
     return {"checked": checked, "fired": fired, "skipped": skipped, "errors": errors}

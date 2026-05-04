@@ -8,6 +8,7 @@ from pathlib import Path
 
 def test_async_jobs_migration_contract():
     migration = Path("migrations/versions/20260429_0002_async_jobs_rq.py").read_text(encoding="utf-8")
+    event_migration = Path("migrations/versions/20260503_0014_async_job_events.py").read_text(encoding="utf-8")
     queue = Path("api/job_queue.py").read_text(encoding="utf-8")
 
     assert 'down_revision: str | None = "20260429_0001"' in migration
@@ -18,6 +19,8 @@ def test_async_jobs_migration_contract():
     assert "status IN ('queued', 'running') AND cache_key IS NOT NULL" in migration
     assert "ON CONFLICT (job_type, cache_key)" in queue
     assert "DO NOTHING" in queue
+    assert "async_job_events" in event_migration
+    assert 'PrimaryKeyConstraint("job_id", "seq")' in event_migration
 
 
 def test_async_job_storage_stays_local_when_backend_is_local(monkeypatch):

@@ -360,8 +360,10 @@ class TestPendingApprovals:
             raise RuntimeError("cannot apply")
 
         monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", fail_apply)
+        from api.routers.approvals import ResolveRequest
+
         with pytest.raises(ConflictError) as exc:
-            approve_item(approval["id"])
+            approve_item(approval["id"], ResolveRequest(note="Apply in test"))
 
         assert exc.value.status_code == 409
         assert "cannot apply" in exc.value.message

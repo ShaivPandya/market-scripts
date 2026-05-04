@@ -179,10 +179,12 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   }
 
   function handleQuickPrompt(prompt: string) {
+    if (isStreaming) return
     sendMessage(prompt, screenContext, activePreferences)
   }
 
   function handleWorkflow(wf: AgentWorkflow) {
+    if (isStreaming) return
     const ticker = workflowTicker.trim().toUpperCase()
     if (wf.requiresTicker && !ticker) return
     const cmd = wf.requiresTicker
@@ -194,7 +196,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   }
 
   function renderWorkflowButton(wf: AgentWorkflow) {
-    const disabled = wf.requiresTicker && !workflowTicker.trim()
+    const disabled = isStreaming || (wf.requiresTicker && !workflowTicker.trim())
     return (
       <button
         key={wf.name}
@@ -545,7 +547,8 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                         key={prompt}
                         type="button"
                         onClick={() => handleQuickPrompt(prompt)}
-                        className="theme-button-secondary min-h-11 rounded-[1rem] px-3 py-2 text-left text-xs text-muted transition-colors hover:text-app"
+                        disabled={isStreaming}
+                        className="theme-button-secondary min-h-11 rounded-[1rem] px-3 py-2 text-left text-xs text-muted transition-colors hover:text-app disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {prompt}
                       </button>
@@ -648,7 +651,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   <button
                     type="button"
                     onClick={handleSend}
-                    disabled={!input.trim()}
+                    disabled={!input.trim() || isStreaming}
                     className="theme-button-primary flex h-11 w-11 flex-none items-center justify-center rounded-full text-[hsl(var(--accent-foreground))] disabled:cursor-not-allowed disabled:opacity-40"
                     title="Send message"
                   >

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from api.action_execution import execute_api_action
+from api.action_execution import stage_api_action
 
 router = APIRouter()
 
@@ -20,11 +20,17 @@ class CreateCatalystRequest(BaseModel):
     description: str
     category: str = "fundamental"
     target_date: str | None = None
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 class UpdateCatalystStatusRequest(BaseModel):
     status: str
     evidence: str | None = None
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.get("/catalysts")
@@ -37,19 +43,26 @@ def list_catalysts(ticker: str):
 
 @router.post("/catalysts")
 def create_catalyst(body: CreateCatalystRequest):
-    return execute_api_action(
+    return stage_api_action(
         "create_catalyst",
-        body.model_dump(),
+        body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="process_entities.create_catalyst",
+        reason=body.reason or f"Create catalyst for {body.ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
     )
 
 
 @router.put("/catalysts/{catalyst_id}/status")
 def update_catalyst_status(catalyst_id: int, body: UpdateCatalystStatusRequest):
-    return execute_api_action(
+    return stage_api_action(
         "update_catalyst_status",
         {"catalyst_id": catalyst_id, "status": body.status, "evidence": body.evidence},
         source_id="process_entities.update_catalyst_status",
+        reason=body.reason or f"Update catalyst {catalyst_id} status",
+        apply=body.apply,
+        approval_note=body.approval_note,
+        entity_id=catalyst_id,
     )
 
 
@@ -63,10 +76,16 @@ class CreateKillConditionRequest(BaseModel):
     condition: str
     metric: str | None = None
     threshold: str | None = None
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 class UpdateKillConditionStatusRequest(BaseModel):
     status: str
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.get("/kill-conditions")
@@ -79,10 +98,13 @@ def list_kill_conditions(ticker: str):
 
 @router.post("/kill-conditions")
 def create_kill_condition(body: CreateKillConditionRequest):
-    return execute_api_action(
+    return stage_api_action(
         "create_kill_condition",
-        body.model_dump(),
+        body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="process_entities.create_kill_condition",
+        reason=body.reason or f"Create kill condition for {body.ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
     )
 
 
@@ -112,6 +134,9 @@ class CreateThesisClaimRequest(BaseModel):
     status: str = "active"
     linked_catalyst_ids: list[int] = Field(default_factory=list)
     linked_kill_condition_ids: list[int] = Field(default_factory=list)
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 class UpdateThesisClaimRequest(BaseModel):
@@ -124,6 +149,9 @@ class UpdateThesisClaimRequest(BaseModel):
     status: str | None = None
     linked_catalyst_ids: list[int] | None = None
     linked_kill_condition_ids: list[int] | None = None
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 def _source_requirements_payload(values: list[SourceRequirementInput] | None) -> list:
@@ -150,7 +178,7 @@ def list_thesis_claims(
 
 @router.post("/thesis-claims")
 def create_thesis_claim(body: CreateThesisClaimRequest):
-    return execute_api_action(
+    return stage_api_action(
         "create_thesis_claim",
         {
             "ticker": body.ticker,
@@ -166,25 +194,36 @@ def create_thesis_claim(body: CreateThesisClaimRequest):
             "source_type": "user",
         },
         source_id="process_entities.create_thesis_claim",
+        reason=body.reason or f"Create thesis claim for {body.ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
     )
 
 
 @router.put("/thesis-claims/{claim_id}")
 def update_thesis_claim(claim_id: int, body: UpdateThesisClaimRequest):
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(exclude_unset=True, exclude={"reason", "apply", "approval_note"})
     if "source_requirements" in updates:
         updates["source_requirements"] = _source_requirements_payload(body.source_requirements)
-    return execute_api_action(
+    return stage_api_action(
         "update_thesis_claim",
         {"claim_id": claim_id, **updates},
         source_id="process_entities.update_thesis_claim",
+        reason=body.reason or f"Update thesis claim {claim_id}",
+        apply=body.apply,
+        approval_note=body.approval_note,
+        entity_id=claim_id,
     )
 
 
 @router.put("/kill-conditions/{kc_id}/status")
 def update_kill_condition_status(kc_id: int, body: UpdateKillConditionStatusRequest):
-    return execute_api_action(
+    return stage_api_action(
         "update_kill_condition_status",
         {"kill_condition_id": kc_id, "status": body.status},
         source_id="process_entities.update_kill_condition_status",
+        reason=body.reason or f"Update kill condition {kc_id} status",
+        apply=body.apply,
+        approval_note=body.approval_note,
+        entity_id=kc_id,
     )

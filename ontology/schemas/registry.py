@@ -9,26 +9,74 @@ from pydantic import ValidationError
 from ontology.models import EntityType, OntologyEdge, OntologyNode
 from ontology.schemas.base import OntologySchemaBase
 from ontology.schemas.identity import (
+    account_id,
+    action_event_id,
+    action_item_id,
+    action_run_id,
+    approval_id,
     asset_id,
     catalyst_id,
+    document_artifact_id,
     evaluation_id,
+    hedge_position_id,
+    investment_policy_id,
+    investor_id,
+    kill_condition_id,
     macro_indicator_id,
+    mandate_id,
+    policy_gate_result_id,
+    portfolio_id,
     position_id,
+    recommendation_id,
+    report_run_id,
+    research_note_id,
+    risk_limit_id,
+    risk_metric_id,
+    scenario_id,
     sector_id,
     signal_id,
+    thesis_claim_id,
     thesis_id,
+    trade_proposal_id,
+    watch_trigger_id,
+    workflow_artifact_id,
+    workflow_run_id,
 )
 from ontology.schemas.legacy import adapt_edge_payload, adapt_node_payload
 from ontology.schemas.objects import (
+    AccountV1,
+    ActionEventV1,
+    ActionItemV1,
+    ActionRunV1,
+    ApprovalV1,
     AssetV1,
     CatalystV1,
+    DocumentArtifactV1,
     EvaluationV1,
+    HedgePositionV1,
+    InvestmentPolicyV1,
+    InvestorV1,
+    KillConditionV1,
     MacroIndicatorV1,
+    MandateV1,
     OntologyObjectV1,
+    PolicyGateResultV1,
+    PortfolioV1,
     PositionV1,
+    RecommendationV1,
+    ReportRunV1,
+    ResearchNoteV1,
+    RiskLimitV1,
+    RiskMetricV1,
+    ScenarioV1,
     SectorV1,
     SignalV1,
+    ThesisClaimV1,
     ThesisV1,
+    TradeProposalV1,
+    WatchTriggerV1,
+    WorkflowArtifactV1,
+    WorkflowRunV1,
 )
 from ontology.schemas.relations import (
     BELONGS_TO_SECTOR,
@@ -46,15 +94,66 @@ from ontology.schemas.relations import (
 
 NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Position": PositionV1,
+    "HedgePosition": HedgePositionV1,
     "Asset": AssetV1,
+    "Investor": InvestorV1,
+    "Account": AccountV1,
+    "Portfolio": PortfolioV1,
+    "Mandate": MandateV1,
+    "InvestmentPolicy": InvestmentPolicyV1,
+    "RiskLimit": RiskLimitV1,
+    "RiskMetric": RiskMetricV1,
+    "Scenario": ScenarioV1,
+    "PolicyGateResult": PolicyGateResultV1,
+    "TradeProposal": TradeProposalV1,
     "Sector": SectorV1,
     "MacroIndicator": MacroIndicatorV1,
     "Signal": SignalV1,
     "Thesis": ThesisV1,
     "Evaluation": EvaluationV1,
     "Catalyst": CatalystV1,
+    "KillCondition": KillConditionV1,
+    "ThesisClaim": ThesisClaimV1,
+    "ActionItem": ActionItemV1,
+    "WatchTrigger": WatchTriggerV1,
+    "ResearchNote": ResearchNoteV1,
+    "Approval": ApprovalV1,
+    "ActionRun": ActionRunV1,
+    "ActionEvent": ActionEventV1,
+    "WorkflowRun": WorkflowRunV1,
+    "WorkflowArtifact": WorkflowArtifactV1,
+    "Recommendation": RecommendationV1,
+    "ReportRun": ReportRunV1,
+    "DocumentArtifact": DocumentArtifactV1,
 }
-OPTIONAL_NODE_TYPES = {"Thesis", "Evaluation", "Catalyst"}
+OPTIONAL_NODE_TYPES = {
+    "Thesis",
+    "Evaluation",
+    "Catalyst",
+    "KillCondition",
+    "ThesisClaim",
+    "ActionItem",
+    "WatchTrigger",
+    "ResearchNote",
+    "Approval",
+    "ActionRun",
+    "ActionEvent",
+    "WorkflowRun",
+    "WorkflowArtifact",
+    "Recommendation",
+    "ReportRun",
+    "DocumentArtifact",
+    "Investor",
+    "Account",
+    "Portfolio",
+    "Mandate",
+    "InvestmentPolicy",
+    "RiskLimit",
+    "RiskMetric",
+    "Scenario",
+    "PolicyGateResult",
+    "TradeProposal",
+}
 NodeUpgradeAdapter = Any
 NODE_UPGRADE_ADAPTERS: dict[tuple[str, int, int], NodeUpgradeAdapter] = {}
 
@@ -318,8 +417,30 @@ def normalize_graph(
 def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
     if isinstance(model, PositionV1):
         return position_id(model.ticker)
+    if isinstance(model, HedgePositionV1):
+        return hedge_position_id(model.ticker)
     if isinstance(model, AssetV1):
         return asset_id(model.ticker)
+    if isinstance(model, InvestorV1):
+        return investor_id(model.investor_id)
+    if isinstance(model, AccountV1):
+        return account_id(model.account_id)
+    if isinstance(model, PortfolioV1):
+        return portfolio_id(model.portfolio_id)
+    if isinstance(model, MandateV1):
+        return mandate_id(model.mandate_id)
+    if isinstance(model, InvestmentPolicyV1):
+        return investment_policy_id(model.policy_id)
+    if isinstance(model, RiskLimitV1):
+        return risk_limit_id(model.limit_id)
+    if isinstance(model, RiskMetricV1):
+        return risk_metric_id(model.metric_id)
+    if isinstance(model, ScenarioV1):
+        return scenario_id(model.scenario_id)
+    if isinstance(model, PolicyGateResultV1):
+        return policy_gate_result_id(model.gate_result_id)
+    if isinstance(model, TradeProposalV1):
+        return trade_proposal_id(model.proposal_id)
     if isinstance(model, SectorV1):
         return sector_id(model.name)
     if isinstance(model, MacroIndicatorV1):
@@ -332,6 +453,32 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return evaluation_id(model.ticker, model.evaluated_at)
     if isinstance(model, CatalystV1):
         return catalyst_id(model.ticker, model.name, model.description)
+    if isinstance(model, KillConditionV1):
+        return kill_condition_id(model.ticker, model.legacy_id or model.condition)
+    if isinstance(model, ThesisClaimV1):
+        return thesis_claim_id(model.ticker, model.legacy_id or model.claim)
+    if isinstance(model, ActionItemV1):
+        return action_item_id(model.legacy_id or model.description)
+    if isinstance(model, WatchTriggerV1):
+        return watch_trigger_id(model.legacy_id or model.condition)
+    if isinstance(model, ResearchNoteV1):
+        return research_note_id(model.legacy_id or model.title)
+    if isinstance(model, ApprovalV1):
+        return approval_id(model.legacy_id or f"{model.entity_type}:{model.action_input_hash or model.created_at}")
+    if isinstance(model, ActionRunV1):
+        return action_run_id(model.legacy_id or f"{model.action_id}:{model.started_at}")
+    if isinstance(model, ActionEventV1):
+        return action_event_id(model.legacy_id or f"{model.action_run_id}:{model.event_type}:{model.created_at}")
+    if isinstance(model, WorkflowRunV1):
+        return workflow_run_id(model.run_id)
+    if isinstance(model, WorkflowArtifactV1):
+        return workflow_artifact_id(model.artifact_id)
+    if isinstance(model, RecommendationV1):
+        return recommendation_id(model.legacy_id or f"{model.report_type}:{model.as_of}:{model.action}:{model.ticker}")
+    if isinstance(model, ReportRunV1):
+        return report_run_id(model.report_id)
+    if isinstance(model, DocumentArtifactV1):
+        return document_artifact_id(model.document_type, model.document_id)
     raise OntologySchemaValidationError(f"Unsupported node schema for type {node_type}")
 
 

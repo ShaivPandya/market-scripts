@@ -25,6 +25,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-frontend.sh` — builds `frontend/dist` and deploys Firebase Hosting for the configured `PROJECT_ID`.
 - `deploy-all.sh` — deploys the full production stack by running `deploy-backend.sh` first and `deploy-frontend.sh` second. `SKIP_BUILD=1` skips the backend container build; `SKIP_FRONTEND_BUILD=1` deploys the existing `frontend/dist`.
 - `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23z UTC, market-snapshot-refresh weekday 23:15z UTC) and delete the old high-frequency cache-warm job unless `SCHEDULE_CACHE_WARM=1` is set. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo.
+- `setup-governance-monitoring.sh` — idempotently creates/updates governance audit/provenance log-based metrics and the alert policy in `monitoring-governance-alerts.json`.
 - `cleanup-stale.sh` — dry-runs (or `--apply` deletes) GCP resources that pre-date the current scripts and are no longer referenced.
 
 First-time setup:
@@ -38,6 +39,7 @@ cp infra/gcp/config.example.sh infra/gcp/config.sh   # then edit
 ./infra/gcp/deploy-all.sh          # deploy backend, then frontend, at the current SHA
 ./infra/gcp/iam.sh                 # re-run to bind job executor roles on the now-deployed jobs
 ./infra/gcp/setup-scheduler.sh     # wire up Cloud Scheduler
+./infra/gcp/setup-governance-monitoring.sh
 ```
 
 Routine deploys:

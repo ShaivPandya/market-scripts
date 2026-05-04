@@ -223,3 +223,10 @@ def invalidate_all() -> None:
         clear_memory_jobs()
     except Exception:
         logger.debug("api cache invalidate_all: async job cleanup failed", exc_info=True)
+
+    try:
+        from api.job_events import clear_memory_events
+
+        clear_memory_events()
+    except Exception:
+        logger.debug("api cache invalidate_all: async job event cleanup failed", exc_info=True)

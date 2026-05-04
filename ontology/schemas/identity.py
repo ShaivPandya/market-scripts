@@ -41,6 +41,46 @@ def asset_id(ticker: object) -> str:
     return f"asset:{canonical_ticker(ticker)}"
 
 
+def investor_id(identifier: object) -> str:
+    return f"investor:{slug(identifier)}"
+
+
+def account_id(identifier: object) -> str:
+    return f"account:{slug(identifier)}"
+
+
+def portfolio_id(identifier: object) -> str:
+    return f"portfolio:{slug(identifier)}"
+
+
+def mandate_id(identifier: object) -> str:
+    return f"mandate:{slug(identifier)}"
+
+
+def investment_policy_id(identifier: object) -> str:
+    return f"investment_policy:{slug(identifier)}"
+
+
+def risk_limit_id(identifier: object) -> str:
+    return f"risk_limit:{slug(identifier)}"
+
+
+def risk_metric_id(identifier: object) -> str:
+    return f"risk_metric:{slug(identifier)}"
+
+
+def scenario_id(identifier: object) -> str:
+    return f"scenario:{slug(identifier)}"
+
+
+def policy_gate_result_id(identifier: object) -> str:
+    return f"policy_gate_result:{slug(identifier)}"
+
+
+def trade_proposal_id(identifier: object) -> str:
+    return f"trade_proposal:{slug(identifier)}"
+
+
 def sector_id(name: object) -> str:
     return f"sector:{slug(name)}"
 
@@ -63,3 +103,59 @@ def evaluation_id(ticker: object, evaluated_at: object) -> str:
 
 def catalyst_id(ticker: object, name: object, description: object) -> str:
     return f"catalyst:{canonical_ticker(ticker)}:{slug(name)}:{short_hash(description)}"
+
+
+def hedge_position_id(ticker: object) -> str:
+    return f"hedge_position:{canonical_ticker(ticker)}"
+
+
+def kill_condition_id(ticker: object, identifier: object) -> str:
+    return f"kill_condition:{canonical_ticker(ticker)}:{slug(identifier)}"
+
+
+def thesis_claim_id(ticker: object, identifier: object) -> str:
+    return f"thesis_claim:{canonical_ticker(ticker)}:{slug(identifier)}"
+
+
+def action_item_id(identifier: object) -> str:
+    return f"action_item:{slug(identifier)}"
+
+
+def watch_trigger_id(identifier: object) -> str:
+    return f"watch_trigger:{slug(identifier)}"
+
+
+def research_note_id(identifier: object) -> str:
+    return f"research_note:{slug(identifier)}"
+
+
+def approval_id(identifier: object) -> str:
+    return f"approval:{slug(identifier)}"
+
+
+def action_run_id(identifier: object) -> str:
+    return f"action_run:{slug(identifier)}"
+
+
+def action_event_id(identifier: object) -> str:
+    return f"action_event:{slug(identifier)}"
+
+
+def workflow_run_id(identifier: object) -> str:
+    return f"workflow_run:{slug(identifier)}"
+
+
+def workflow_artifact_id(identifier: object) -> str:
+    return f"workflow_artifact:{slug(identifier)}"
+
+
+def recommendation_id(identifier: object) -> str:
+    return f"recommendation:{slug(identifier)}"
+
+
+def report_run_id(identifier: object) -> str:
+    return f"report_run:{slug(identifier)}"
+
+
+def document_artifact_id(kind: object, identifier: object) -> str:
+    return f"document_artifact:{slug(kind)}:{slug(identifier)}"

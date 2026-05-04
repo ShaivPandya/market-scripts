@@ -44,6 +44,10 @@ _MAX_KEYS = 24
 _MAX_DEPTH = 3
 
 
+class AuditWriteError(RuntimeError):
+    """Raised when a caller requires an audit row before proceeding."""
+
+
 def _stable_hash(value: Any) -> str:
     try:
         raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
@@ -152,11 +156,20 @@ def emit_audit_event(
     metadata: Any | None = None,
     error: str | None = None,
     request_id: str | None = None,
+    fail_closed: bool = False,
+    schema_version: int = 1,
+    criticality: str = "operational",
+    lineage_root_id: str | None = None,
+    idempotency_key: str | None = None,
+    producer_name: str | None = None,
+    producer_version: str | None = None,
+    redaction_policy: str = "audit_summary_v1",
+    retention_class: str = "audit_365d",
 ) -> dict[str, Any] | None:
-    """Best-effort append-only audit writer.
+    """Append one audit event.
 
-    Audit write failures are logged and swallowed so operational paths do not
-    fail because the audit subsystem is temporarily unavailable.
+    Operational callers keep best-effort behavior. Critical financial paths
+    pass ``fail_closed=True`` so missing audit rows stop the business write.
     """
 
     actor_id, actor_type, parent_actor_id = _actor_fields(actor)
@@ -179,7 +192,17 @@ def emit_audit_event(
             source_lineage=summarize_for_audit(source_lineage),
             metadata=summarize_for_audit(metadata),
             error=error,
+            schema_version=schema_version,
+            criticality=criticality,
+            lineage_root_id=lineage_root_id,
+            idempotency_key=idempotency_key,
+            producer_name=producer_name,
+            producer_version=producer_version,
+            redaction_policy=redaction_policy,
+            retention_class=retention_class,
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to write audit event action=%s status=%s", action_name, status, exc_info=True)
+        if fail_closed:
+            raise AuditWriteError(f"Failed to write mandatory audit event {action_name}:{status}") from exc
         return None

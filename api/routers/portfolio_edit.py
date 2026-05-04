@@ -6,8 +6,9 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.exceptions import DataFetchError
-from portfolio.action_registry import ActionConflictError, ActionContext, ActionValidationError, execute_action
+from api.action_execution import stage_api_action
+from api.exceptions import AppError, DataFetchError
+from portfolio.action_registry import ActionConflictError, ActionValidationError
 
 router = APIRouter()
 
@@ -26,6 +27,9 @@ class PortfolioPosition(BaseModel):
 
 class PortfolioUpdateRequest(BaseModel):
     positions: list[PortfolioPosition]
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.get("/portfolio-positions")
@@ -41,11 +45,17 @@ def get_portfolio_positions(include_hedges: bool = False):
 @router.put("/portfolio-positions")
 def update_portfolio_positions(req: PortfolioUpdateRequest):
     try:
-        result = execute_action(
+        result = stage_api_action(
             "update_portfolio_positions",
-            req.model_dump(),
-            ActionContext(actor_type="user", source_type="api", source_id="portfolio_edit.update_portfolio_positions"),
-        ).output
+            {"positions": [position.model_dump() for position in req.positions]},
+            source_id="portfolio_edit.update_portfolio_positions",
+            reason=req.reason,
+            apply=req.apply,
+            approval_note=req.approval_note,
+            validation_status_code=400,
+        )
+    except (HTTPException, AppError):
+        raise
     except ActionValidationError as e:
         raise HTTPException(status_code=400, detail=e.message) from e
     except ActionConflictError as e:
@@ -70,6 +80,9 @@ class HedgePosition(BaseModel):
 
 class HedgeUpdateRequest(BaseModel):
     positions: list[HedgePosition]
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.get("/hedge-positions")
@@ -85,11 +98,17 @@ def get_hedge_positions_endpoint():
 @router.put("/hedge-positions")
 def update_hedge_positions(req: HedgeUpdateRequest):
     try:
-        result = execute_action(
+        result = stage_api_action(
             "update_hedge_positions",
-            req.model_dump(),
-            ActionContext(actor_type="user", source_type="api", source_id="portfolio_edit.update_hedge_positions"),
-        ).output
+            {"positions": [position.model_dump() for position in req.positions]},
+            source_id="portfolio_edit.update_hedge_positions",
+            reason=req.reason,
+            apply=req.apply,
+            approval_note=req.approval_note,
+            validation_status_code=400,
+        )
+    except (HTTPException, AppError):
+        raise
     except ActionValidationError as e:
         raise HTTPException(status_code=400, detail=e.message) from e
     except ActionConflictError as e:

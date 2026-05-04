@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
 
-from api.action_execution import execute_api_action
+from api.action_execution import stage_api_action
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.request_limits import read_upload_file_bytes
 from api.routers.portfolio_edit import _TICKER_RE
@@ -15,10 +15,8 @@ from llm_utils import MODEL_MID, call_llm_pdf_text
 from paths import PROJECT_ROOT
 from portfolio import thesis_content
 from portfolio.action_registry import (
-    ActionContext,
     ActionNotFoundError,
     ActionValidationError,
-    execute_action,
 )
 
 router = APIRouter()
@@ -210,10 +208,11 @@ async def generate_thesis(
         raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
     _configure_thesis_content_storage()
-    return execute_api_action(
+    return stage_api_action(
         "save_thesis_content",
         {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
         source_id="thesis.generate_thesis",
+        reason=f"Generate thesis for {normalized_ticker} from uploaded document",
     )
 
 
@@ -325,6 +324,8 @@ def get_thesis_detail(ticker: str):
 class StatusChangeRequest(BaseModel):
     status: str
     reason: str = ""
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.put("/thesis/{ticker}/status")
@@ -333,11 +334,14 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
     _validate_ticker(normalized_ticker)
 
     try:
-        return execute_action(
+        return stage_api_action(
             "change_thesis_status",
             {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
-            ActionContext(actor_type="user", source_type="api", source_id="thesis.change_thesis_status"),
-        ).output
+            source_id="thesis.change_thesis_status",
+            reason=body.reason or f"Change thesis status for {normalized_ticker}",
+            apply=body.apply,
+            approval_note=body.approval_note,
+        )
     except ActionValidationError as e:
         raise ValidationError(e.message) from e
     except ActionNotFoundError as e:
@@ -346,6 +350,9 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
 
 class SaveThesisRequest(BaseModel):
     content: str = Field(..., max_length=MAX_UPLOAD_SIZE_BYTES)
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.put("/thesis/{ticker}")
@@ -359,10 +366,13 @@ def save_thesis(ticker: str, body: SaveThesisRequest):
         raise ValidationError("Thesis content cannot be empty.")
 
     _configure_thesis_content_storage()
-    return execute_api_action(
+    return stage_api_action(
         "save_thesis_content",
         {"ticker": normalized_ticker, "content": content},
         source_id="thesis.save_thesis",
+        reason=body.reason or f"Update thesis content for {normalized_ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
     )
 
 

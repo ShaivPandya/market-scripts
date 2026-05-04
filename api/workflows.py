@@ -775,36 +775,25 @@ def execute_workflow(
     if runner is None:
         raise ValueError(f"Workflow '{workflow_name}' is defined but has no implementation")
 
-    # Create persistent run record
-    run_id: str | None = None
-    try:
-        from portfolio.core_db import create_workflow_run
+    # Governed workflows must have a durable run id before tool execution.
+    from portfolio.core_db import create_workflow_run
 
-        run = create_workflow_run(workflow_name, ticker)
-        run_id = run["run_id"]
-        emit_audit_event(
-            "workflow.execution.started",
-            "workflow",
-            "started",
-            actor=actor or admin_actor(source="workflow"),
-            object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": workflow_name}],
-            after_summary={"workflow_name": workflow_name, "ticker": ticker, "status": "running"},
-            source_lineage={"run_id": run_id},
-        )
-    except Exception:
-        import uuid
-
-        run_id = uuid.uuid4().hex
-        logger.warning("Failed to create workflow run record, using ephemeral id=%s", run_id)
-        emit_audit_event(
-            "workflow.execution.started",
-            "workflow",
-            "started",
-            actor=actor or admin_actor(source="workflow"),
-            object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": workflow_name}],
-            after_summary={"workflow_name": workflow_name, "ticker": ticker, "status": "ephemeral"},
-            source_lineage={"run_id": run_id, "ephemeral": True},
-        )
+    run = create_workflow_run(workflow_name, ticker)
+    run_id = run["run_id"]
+    emit_audit_event(
+        "workflow.execution.started",
+        "workflow",
+        "started",
+        actor=actor or admin_actor(source="workflow"),
+        object_refs=[{"type": "workflow_run", "id": run_id}, {"type": "workflow", "id": workflow_name}],
+        after_summary={"workflow_name": workflow_name, "ticker": ticker, "status": "running"},
+        source_lineage={"run_id": run_id},
+        fail_closed=True,
+        criticality="financial_critical",
+        lineage_root_id=f"workflow_run:{run_id}",
+        idempotency_key=f"workflow.execution.started:{run_id}",
+        retention_class="financial_lineage_7y",
+    )
 
     effective_actor = actor or admin_actor(source="workflow")
     synthesis_prompt, sections = runner(ticker, effective_actor, run_id)

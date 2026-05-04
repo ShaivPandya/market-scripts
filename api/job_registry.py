@@ -19,6 +19,7 @@ class JobSpec:
     timeout_s: int = 180
     completed_ttl_s: int = 24 * 60 * 60
     failed_ttl_s: int = 7 * 24 * 60 * 60
+    stale_grace_s: int | None = None
     error_message: str = "Job failed"
     supports_progress: bool = False
     initial_progress: dict[str, Any] | None = None
@@ -88,15 +89,28 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Hedging tool failed",
     ),
+    "agent_chat_turn": JobSpec(
+        job_type="agent_chat_turn",
+        request_model="api.routers.agent.AgentChatJobRequest",
+        compute_func="api.routers.agent._run_agent_chat_turn_job",
+        cache_key_func="api.routers.agent._agent_chat_job_cache_key",
+        queue_name=_env_queue("ASYNC_QUEUE_AGENT", "agent"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_AGENT_CHAT_SECONDS", 20 * 60),
+        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        stale_grace_s=_env_int("ASYNC_STALE_GRACE_AGENT_CHAT_SECONDS", 60),
+        error_message="Agent chat turn failed",
+    ),
     "sizer": JobSpec(
         job_type="sizer",
         request_model="api.routers.sizer.SizerRequest",
         compute_func="api.routers.sizer._compute_sizer_result",
         cache_key_func="api.routers.sizer._cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_SIZER", "default"),
-        timeout_s=_env_int("ASYNC_TIMEOUT_SIZER_SECONDS", 180),
+        timeout_s=_env_int("ASYNC_TIMEOUT_SIZER_SECONDS", 30),
         completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        stale_grace_s=_env_int("ASYNC_STALE_GRACE_SIZER_SECONDS", 15),
         error_message="Portfolio sizer failed",
     ),
     "ontology": JobSpec(
@@ -192,6 +206,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Async job sweep failed",
+    ),
+    "governance_outbox_drain": JobSpec(
+        job_type="governance_outbox_drain",
+        request_model=None,
+        compute_func="api.maintenance_jobs.drain_governance_outbox",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_GOVERNANCE_OUTBOX_SECONDS", 5 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Governance outbox drain failed",
     ),
     "watch_trigger_monitor": JobSpec(
         job_type="watch_trigger_monitor",

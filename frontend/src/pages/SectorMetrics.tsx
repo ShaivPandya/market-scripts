@@ -2,7 +2,7 @@ import { useMutation } from "@tanstack/react-query"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { useSessionAiOverview } from "@/hooks/useSessionAiOverview"
-import { fetchSectorMetrics, analyzeSectorMetrics } from "@/lib/api"
+import { fetchSectorMetrics, analyzeSectorMetrics, refreshMarketSnapshots } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -63,7 +63,7 @@ export function SectorMetrics() {
             <Sparkles size={14} />
             AI Overview
           </button>
-          <RefreshButton queryKeys={[["sector-metrics"]]} />
+          <RefreshButton queryKeys={[["sector-metrics"]]} beforeRefetch={refreshMarketSnapshots} />
         </div>
       </div>
 

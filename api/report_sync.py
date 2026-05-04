@@ -46,17 +46,23 @@ def _extract_as_of(report_type: str, payload: dict[str, Any]) -> str:
 
 
 def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.core_db import create_research_note_once
+    from portfolio.action_registry import ActionContext, propose_action
+
+    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
 
     count = 0
     report_md = str(payload.get("report_md") or payload.get("report") or "").strip()
     if report_md:
-        create_research_note_once(
-            title=f"{report_type.title()} Report - {as_of}",
-            content=report_md[:20000],
-            note_type="workflow_output",
-            source_type="workflow",
-            source_id=report_id,
+        propose_action(
+            "create_research_note",
+            {
+                "title": f"{report_type.title()} Report - {as_of}",
+                "content": report_md[:20000],
+                "note_type": "workflow_output",
+            },
+            context,
+            reason=f"{report_type.title()} report note ({as_of})",
+            once=True,
         )
         count += 1
 
@@ -66,22 +72,27 @@ def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: 
         if not isinstance(item, dict) or not item.get("summary"):
             continue
         ticker = str(item.get("ticker") or "").upper() or None
-        create_research_note_once(
-            title=f"{ticker or 'Portfolio'} thesis development - {as_of}",
-            content=str(item["summary"]),
-            ticker=ticker,
-            note_type="risk_assessment" if item.get("type") in {"contradicts_thesis", "new_risk"} else "general",
-            source_type="workflow",
-            source_id=report_id,
+        propose_action(
+            "create_research_note",
+            {
+                "title": f"{ticker or 'Portfolio'} thesis development - {as_of}",
+                "content": str(item["summary"]),
+                "ticker": ticker,
+                "note_type": "risk_assessment" if item.get("type") in {"contradicts_thesis", "new_risk"} else "general",
+            },
+            context,
+            reason=f"{report_type.title()} thesis development note ({as_of})",
+            once=True,
         )
         count += 1
     return count
 
 
 def _create_report_action_items(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.core_db import create_action_item_once
+    from portfolio.action_registry import ActionContext, propose_action
 
     summary = _as_dict(payload.get("summary"))
+    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
     count = 0
 
     if report_type == "daily":
@@ -89,13 +100,17 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
             ticker_s = str(ticker).strip().upper()
             if not ticker_s:
                 continue
-            create_action_item_once(
-                description=f"Review daily report flag for {ticker_s} ({as_of})",
-                action_type="review",
-                ticker=ticker_s,
-                urgency="normal",
-                source_type="workflow",
-                source_id=report_id,
+            propose_action(
+                "create_action_item",
+                {
+                    "description": f"Review daily report flag for {ticker_s} ({as_of})",
+                    "action_type": "review",
+                    "ticker": ticker_s,
+                    "urgency": "normal",
+                },
+                context,
+                reason=f"Daily report flagged {ticker_s} ({as_of})",
+                once=True,
             )
             count += 1
     thesis = _as_dict(summary.get("thesis_monitoring"))
@@ -103,13 +118,17 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
         ticker_s = str(ticker).strip().upper()
         if not ticker_s:
             continue
-        create_action_item_once(
-            description=f"Reassess thesis after {report_type} report for {ticker_s} ({as_of})",
-            action_type="review",
-            ticker=ticker_s,
-            urgency="high",
-            source_type="workflow",
-            source_id=report_id,
+        propose_action(
+            "create_action_item",
+            {
+                "description": f"Reassess thesis after {report_type} report for {ticker_s} ({as_of})",
+                "action_type": "review",
+                "ticker": ticker_s,
+                "urgency": "high",
+            },
+            context,
+            reason=f"{report_type.title()} report thesis reassessment for {ticker_s} ({as_of})",
+            once=True,
         )
         count += 1
     return count
@@ -146,23 +165,40 @@ def _persist_weekly_thesis_evaluations(as_of: str, payload: dict[str, Any]) -> i
     evals = thesis.get("thesis_evaluations")
     if not isinstance(evals, list) or not evals:
         return 0
-    from portfolio.thesis_db import save_evaluations, upsert_thesis_meta
+    from portfolio.action_registry import ActionContext, propose_action
 
-    saved = save_evaluations(as_of, evals)
-    for ticker in thesis.get("positions_reviewed", []):
-        if ticker:
-            upsert_thesis_meta(str(ticker).upper())
-    return saved
+    report_id = str(payload.get("report_id") or f"weekly:{as_of}")
+    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
+    count = 0
+    for evaluation in evals:
+        if not isinstance(evaluation, dict) or not evaluation.get("ticker"):
+            continue
+        propose_action(
+            "save_evaluation",
+            {"evaluated_at": as_of, **evaluation},
+            context,
+            reason=f"Weekly thesis evaluation for {str(evaluation.get('ticker')).upper()} ({as_of})",
+            once=True,
+        )
+        count += 1
+    return count
 
 
 def _persist_thesis_claims(report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.core_db import create_thesis_claim_once
+    from portfolio.action_registry import ActionContext, propose_action
 
+    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
     count = 0
     for claim in _as_list(payload.get("thesis_claims")):
         if not isinstance(claim, dict) or not claim.get("ticker") or not claim.get("claim"):
             continue
-        create_thesis_claim_once({**claim, "source_type": "workflow", "source_id": report_id})
+        propose_action(
+            "create_thesis_claim",
+            {**claim, "source_type": "workflow", "source_id": report_id},
+            context,
+            reason=f"Report thesis claim for {str(claim.get('ticker')).upper()}",
+            once=True,
+        )
         count += 1
     return count
 
