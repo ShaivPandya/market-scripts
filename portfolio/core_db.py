@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS recommendations (
     source_json_path            TEXT,
     stance                      TEXT NOT NULL,
     recommendation_status       TEXT NOT NULL
-                                CHECK (recommendation_status IN ('clear', 'blocked', 'error')),
+                                CHECK (recommendation_status IN ('clear', 'review_required', 'blocked', 'error')),
     critical_data_quality       TEXT NOT NULL
                                 CHECK (critical_data_quality IN ('ok', 'degraded', 'stale', 'failed')),
     blocked_reasons_json        TEXT,
@@ -381,7 +381,40 @@ CREATE TABLE IF NOT EXISTS recommendations (
     validation_status           TEXT,
     source_quality_summary_json TEXT,
     report_id                   TEXT,
-    idempotency_key             TEXT
+    idempotency_key             TEXT,
+    policy_gate_result_id       INTEGER,
+    policy_gate_status          TEXT,
+    policy_gate_decision        TEXT,
+    policy_gate_review_required INTEGER NOT NULL DEFAULT 0,
+    policy_gate_failures_json   TEXT,
+    policy_gate_warnings_json   TEXT,
+    policy_gate_disclosures_json TEXT,
+    account_id                  TEXT,
+    portfolio_id                TEXT,
+    policy_id                   TEXT,
+    trade_proposal_json         TEXT
+)
+"""
+
+_CREATE_POLICY_GATE_RESULTS = """
+CREATE TABLE IF NOT EXISTS policy_gate_results (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at              TEXT NOT NULL,
+    decision                TEXT NOT NULL
+                            CHECK (decision IN ('pass', 'warn', 'review_required', 'blocked', 'error')),
+    review_required         INTEGER NOT NULL DEFAULT 0,
+    override_acknowledged   INTEGER NOT NULL DEFAULT 0,
+    account_id              TEXT,
+    portfolio_id            TEXT,
+    policy_id               TEXT,
+    mandate_id              TEXT,
+    action_id               TEXT,
+    source_type             TEXT,
+    source_id               TEXT,
+    target_type             TEXT,
+    target_id               TEXT,
+    payload_hash            TEXT,
+    result_json             TEXT NOT NULL
 )
 """
 
@@ -516,6 +549,10 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_recommendations_status ON recommendations(status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_approval ON recommendations(approval_status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_outcome ON recommendations(outcome_status)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_policy_gate ON recommendations(policy_gate_decision)",
+    "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_decision ON policy_gate_results(decision, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_target ON policy_gate_results(target_type, target_id)",
+    "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_action ON policy_gate_results(action_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_request ON audit_events(request_id)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_actor_time ON audit_events(actor_id, occurred_at)",
@@ -574,6 +611,7 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "action_runs",
                             "action_events",
                             "recommendations",
+                            "policy_gate_results",
                             "audit_events",
                         }
                     )
@@ -600,6 +638,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_ACTION_RUNS,
         _CREATE_ACTION_EVENTS,
         _CREATE_RECOMMENDATIONS,
+        _CREATE_POLICY_GATE_RESULTS,
         _CREATE_AUDIT_EVENTS,
         _CREATE_PROVENANCE_EVENTS,
         _CREATE_PROVENANCE_LINKS,
@@ -639,6 +678,17 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
         {
             "report_id": "TEXT",
             "idempotency_key": "TEXT",
+            "policy_gate_result_id": "INTEGER",
+            "policy_gate_status": "TEXT",
+            "policy_gate_decision": "TEXT",
+            "policy_gate_review_required": "INTEGER NOT NULL DEFAULT 0",
+            "policy_gate_failures_json": "TEXT",
+            "policy_gate_warnings_json": "TEXT",
+            "policy_gate_disclosures_json": "TEXT",
+            "account_id": "TEXT",
+            "portfolio_id": "TEXT",
+            "policy_id": "TEXT",
+            "trade_proposal_json": "TEXT",
         },
     )
     _add_missing(
@@ -713,6 +763,7 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
         "WHERE status IN ('rejected', 'expired') AND application_status = 'pending'"
     )
     _ensure_sqlite_watch_trigger_types(conn)
+    _ensure_sqlite_recommendation_status_types(conn)
 
 
 def _ensure_sqlite_watch_trigger_types(conn: sqlite3.Connection) -> None:
@@ -754,6 +805,30 @@ def _ensure_sqlite_watch_trigger_types(conn: sqlite3.Connection) -> None:
     ]
     cols_sql = ", ".join(copy_cols)
     conn.execute(f"INSERT INTO watch_triggers ({cols_sql}) SELECT {cols_sql} FROM {legacy_table}")
+    conn.execute(f"DROP TABLE {legacy_table}")
+
+
+def _ensure_sqlite_recommendation_status_types(conn: sqlite3.Connection) -> None:
+    """Rebuild legacy recommendations tables whose status CHECK enum is stale."""
+
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recommendations'").fetchone()
+    create_sql = str(row[0] if row else "")
+    if not create_sql or "review_required" in create_sql:
+        return
+    if "CHECK" not in create_sql or "recommendation_status" not in create_sql:
+        return
+
+    legacy_table = "recommendations_legacy_status_upgrade"
+    conn.execute(f"DROP TABLE IF EXISTS {legacy_table}")
+    conn.execute(f"ALTER TABLE recommendations RENAME TO {legacy_table}")
+    conn.execute(_CREATE_RECOMMENDATIONS)
+
+    legacy_cols = {str(col[1]) for col in conn.execute(f"PRAGMA table_info({legacy_table})").fetchall()}
+    target_cols = {str(col[1]) for col in conn.execute("PRAGMA table_info(recommendations)").fetchall()}
+    copy_cols = [col for col in target_cols if col in legacy_cols]
+    cols_sql = ", ".join(copy_cols)
+    if cols_sql:
+        conn.execute(f"INSERT INTO recommendations ({cols_sql}) SELECT {cols_sql} FROM {legacy_table}")
     conn.execute(f"DROP TABLE {legacy_table}")
 
 
@@ -2928,6 +3003,10 @@ _RECOMMENDATION_JSON_FIELDS = (
     "opportunity_cost_json",
     "outcome_json",
     "source_quality_summary_json",
+    "policy_gate_failures_json",
+    "policy_gate_warnings_json",
+    "policy_gate_disclosures_json",
+    "trade_proposal_json",
 )
 
 
@@ -2941,11 +3020,121 @@ def _parse_recommendation_json_fields(d: dict) -> dict:
     return d
 
 
+def _parse_policy_gate_result_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    _parse_json_field(d, "result_json")
+    d["review_required"] = bool(d.get("review_required"))
+    d["override_acknowledged"] = bool(d.get("override_acknowledged"))
+    return d
+
+
+def create_policy_gate_result(
+    result: dict,
+    *,
+    action_id: str | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    target_type: str | None = None,
+    target_id: str | int | None = None,
+    payload: dict | None = None,
+) -> dict:
+    conn = _get_conn()
+    created_at = result.get("evaluated_at") or _now()
+    decision = str(result.get("decision") or "error")
+    params = {
+        "created_at": created_at,
+        "decision": decision,
+        "review_required": 1 if result.get("review_required") else 0,
+        "override_acknowledged": 1 if result.get("override_acknowledged") else 0,
+        "account_id": result.get("account_id"),
+        "portfolio_id": result.get("portfolio_id"),
+        "policy_id": result.get("policy_id"),
+        "mandate_id": result.get("mandate_id"),
+        "action_id": action_id or result.get("action_id"),
+        "source_type": source_type,
+        "source_id": source_id,
+        "target_type": target_type,
+        "target_id": str(target_id) if target_id is not None else None,
+        "payload_hash": _json_hash(payload) if payload is not None else None,
+        "result_json": json.dumps(result, default=str),
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    with _lock:
+        cur = conn.execute(
+            f"INSERT INTO policy_gate_results ({columns}) VALUES ({placeholders})",
+            tuple(params.values()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM policy_gate_results WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_policy_gate_result_row(row)
+
+
+def get_policy_gate_result(result_id: int) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM policy_gate_results WHERE id = ?", (result_id,)).fetchone()
+    if not row:
+        return None
+    return _parse_policy_gate_result_row(row)
+
+
+def list_policy_gate_results(
+    *,
+    decision: str | None = None,
+    target_type: str | None = None,
+    target_id: str | int | None = None,
+    action_id: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if decision:
+        clauses.append("decision = ?")
+        params.append(decision)
+    if target_type:
+        clauses.append("target_type = ?")
+        params.append(target_type)
+    if target_id is not None:
+        clauses.append("target_id = ?")
+        params.append(str(target_id))
+    if action_id:
+        clauses.append("action_id = ?")
+        params.append(action_id)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM policy_gate_results{where} ORDER BY created_at DESC, id DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+    return [_parse_policy_gate_result_row(row) for row in rows]
+
+
+def _ensure_policy_gate_result_for_recommendation(record: dict) -> int | None:
+    if record.get("policy_gate_result_id"):
+        return int(record["policy_gate_result_id"])
+    result = record.get("policy_gate_result")
+    if not isinstance(result, dict):
+        return None
+    row = create_policy_gate_result(
+        result,
+        action_id="create_recommendation",
+        source_type=record.get("source_type") or "recommendation",
+        source_id=record.get("report_id") or record.get("idempotency_key"),
+        target_type="recommendation",
+        target_id=record.get("idempotency_key") or record.get("ticker") or record.get("instrument"),
+        payload=record,
+    )
+    return int(row["id"])
+
+
 def create_recommendation(record: dict) -> dict:
     _guard_legacy_domain_write("core_db.create_recommendation")
     conn = _get_conn()
     now = record.get("created_at") or _now()
     ticker = record.get("ticker")
+    policy_gate_result_id = _ensure_policy_gate_result_for_recommendation(record)
     status = record.get("status") or (
         "blocked"
         if record.get("recommendation_status") == "blocked"
@@ -2992,6 +3181,17 @@ def create_recommendation(record: dict) -> dict:
         "source_quality_summary_json": _encode_json(record.get("source_quality_summary", {})),
         "report_id": record.get("report_id"),
         "idempotency_key": record.get("idempotency_key"),
+        "policy_gate_result_id": policy_gate_result_id,
+        "policy_gate_status": record.get("policy_gate_status") or record.get("policy_gate_decision"),
+        "policy_gate_decision": record.get("policy_gate_decision"),
+        "policy_gate_review_required": 1 if record.get("policy_gate_review_required") else 0,
+        "policy_gate_failures_json": _encode_json(record.get("policy_gate_failures", [])),
+        "policy_gate_warnings_json": _encode_json(record.get("policy_gate_warnings", [])),
+        "policy_gate_disclosures_json": _encode_json(record.get("policy_gate_disclosures", [])),
+        "account_id": record.get("account_id"),
+        "portfolio_id": record.get("portfolio_id"),
+        "policy_id": record.get("policy_id"),
+        "trade_proposal_json": _encode_json(record.get("trade_proposal", {})),
     }
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
@@ -3013,6 +3213,7 @@ def upsert_recommendation(record: dict) -> dict:
     conn = _get_conn()
     now = record.get("created_at") or _now()
     ticker = record.get("ticker")
+    policy_gate_result_id = _ensure_policy_gate_result_for_recommendation(record)
     status = record.get("status") or (
         "blocked"
         if record.get("recommendation_status") == "blocked"
@@ -3059,6 +3260,17 @@ def upsert_recommendation(record: dict) -> dict:
         "source_quality_summary_json": _encode_json(record.get("source_quality_summary", {})),
         "report_id": record.get("report_id"),
         "idempotency_key": record["idempotency_key"],
+        "policy_gate_result_id": policy_gate_result_id,
+        "policy_gate_status": record.get("policy_gate_status") or record.get("policy_gate_decision"),
+        "policy_gate_decision": record.get("policy_gate_decision"),
+        "policy_gate_review_required": 1 if record.get("policy_gate_review_required") else 0,
+        "policy_gate_failures_json": _encode_json(record.get("policy_gate_failures", [])),
+        "policy_gate_warnings_json": _encode_json(record.get("policy_gate_warnings", [])),
+        "policy_gate_disclosures_json": _encode_json(record.get("policy_gate_disclosures", [])),
+        "account_id": record.get("account_id"),
+        "portfolio_id": record.get("portfolio_id"),
+        "policy_id": record.get("policy_id"),
+        "trade_proposal_json": _encode_json(record.get("trade_proposal", {})),
     }
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)

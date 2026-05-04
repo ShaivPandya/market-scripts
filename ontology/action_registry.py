@@ -1246,6 +1246,26 @@ def propose_action(
         approval_payload = (
             approval_spec.payload_builder(typed_input) if approval_spec.payload_builder else _model_payload(typed_input)
         )
+        try:
+            from portfolio.policy_gate import PolicyGateBlockedError, ensure_policy_gate_for_action
+
+            approval_payload, policy_gate = ensure_policy_gate_for_action(
+                action.action_id,
+                approval_payload,
+                context={
+                    "actor_type": context.actor_type,
+                    "actor_id": context.actor_id,
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "proposal_action_run_id": run_id,
+                },
+            )
+            if policy_gate:
+                core_db.record_action_event(run_id, "policy_gate_evaluated", payload=policy_gate)
+        except PolicyGateBlockedError as exc:
+            message = str(exc).strip() or "Policy gate blocked the action"
+            core_db.record_action_event(run_id, "policy_gate_blocked", message=message)
+            raise ActionValidationError(message) from exc
         ticker = approval_spec.ticker_extractor(typed_input) if approval_spec.ticker_extractor else None
         base_state_hash = compute_action_base_state_hash(action.action_id, approval_payload)
         use_once = once or approval_spec.once
@@ -1882,14 +1902,20 @@ def _create_recommendation(input_model: BaseModel, _context: ActionContext) -> A
         if record.get("idempotency_key")
         else core_db.create_recommendation(record)
     )
-    if result.get("recommendation_status") == "clear" and result.get("action") in {
-        "buy",
-        "sell",
-        "reduce",
-        "exit",
-        "rebalance",
-        "hedge",
-    }:
+    policy_gate_decision = str(result.get("policy_gate_decision") or result.get("policy_gate_status") or "").lower()
+    if (
+        result.get("recommendation_status") == "clear"
+        and policy_gate_decision in {"pass", "warn"}
+        and result.get("action")
+        in {
+            "buy",
+            "sell",
+            "reduce",
+            "exit",
+            "rebalance",
+            "hedge",
+        }
+    ):
         description = f"{str(result.get('action') or '').replace('_', ' ').title()} {result.get('instrument') or result.get('ticker') or 'portfolio'}"
         if result.get("target_change"):
             description += f" ({result['target_change']})"

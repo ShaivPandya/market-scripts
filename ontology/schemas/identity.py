@@ -41,6 +41,46 @@ def asset_id(ticker: object) -> str:
     return f"asset:{canonical_ticker(ticker)}"
 
 
+def investor_id(identifier: object) -> str:
+    return f"investor:{slug(identifier)}"
+
+
+def account_id(identifier: object) -> str:
+    return f"account:{slug(identifier)}"
+
+
+def portfolio_id(identifier: object) -> str:
+    return f"portfolio:{slug(identifier)}"
+
+
+def mandate_id(identifier: object) -> str:
+    return f"mandate:{slug(identifier)}"
+
+
+def investment_policy_id(identifier: object) -> str:
+    return f"investment_policy:{slug(identifier)}"
+
+
+def risk_limit_id(identifier: object) -> str:
+    return f"risk_limit:{slug(identifier)}"
+
+
+def risk_metric_id(identifier: object) -> str:
+    return f"risk_metric:{slug(identifier)}"
+
+
+def scenario_id(identifier: object) -> str:
+    return f"scenario:{slug(identifier)}"
+
+
+def policy_gate_result_id(identifier: object) -> str:
+    return f"policy_gate_result:{slug(identifier)}"
+
+
+def trade_proposal_id(identifier: object) -> str:
+    return f"trade_proposal:{slug(identifier)}"
+
+
 def sector_id(name: object) -> str:
     return f"sector:{slug(name)}"
 

@@ -362,6 +362,7 @@ from api.routers import (
     approvals,
     domain_actions,
     dossier,
+    policy_gate,
     process_entities,
     provenance,
     recommendations,
@@ -381,6 +382,7 @@ app.include_router(triggers.router, prefix=_V1, dependencies=_auth_dep, tags=["t
 app.include_router(process_entities.router, prefix=_V1, dependencies=_auth_dep, tags=["process"])
 app.include_router(provenance.router, prefix=_V1, dependencies=_auth_dep, tags=["provenance"])
 app.include_router(recommendations.router, prefix=_V1, dependencies=_auth_dep, tags=["recommendations"])
+app.include_router(policy_gate.router, prefix=_V1, dependencies=_auth_dep, tags=["policy-gate"])
 app.include_router(research_notes.router, prefix=_V1, dependencies=_auth_dep, tags=["research"])
 app.include_router(workflow_runs.router, prefix=_V1, dependencies=_auth_dep, tags=["workflows"])
 app.include_router(admin_jobs.router, prefix=_V1, tags=["admin"])

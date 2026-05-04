@@ -37,7 +37,7 @@ ACTION_OPTIONS = (
 ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
 NON_APPROVAL_ACTIONS = {"hold", "watch", "avoid", "do_nothing"}
 QUALITY_OPTIONS = ("ok", "degraded", "stale", "failed")
-RECOMMENDATION_STATUSES = ("clear", "blocked", "error")
+RECOMMENDATION_STATUSES = ("clear", "review_required", "blocked", "error")
 
 CRITICAL_SOURCES = {
     "daily": {
@@ -348,7 +348,7 @@ def validate_recommendations_payload(
     elif normalized["stance"] != stance:
         errors.append(f"stance must match pipeline stance {stance!r}")
     if normalized["recommendation_status"] not in RECOMMENDATION_STATUSES:
-        errors.append("recommendation_status must be clear, blocked, or error")
+        errors.append("recommendation_status must be clear, review_required, blocked, or error")
     if normalized["critical_data_quality"] not in QUALITY_OPTIONS:
         errors.append("critical_data_quality must be ok, degraded, stale, or failed")
 
@@ -407,7 +407,7 @@ def validate_recommendations_payload(
         else:
             ticker = None
         approval_required = bool(raw_action.get("approval_required"))
-        if normalized["recommendation_status"] == "clear" and action in ACTIONABLE_ACTIONS:
+        if normalized["recommendation_status"] in {"clear", "review_required"} and action in ACTIONABLE_ACTIONS:
             approval_required = True
         else:
             approval_required = False
@@ -510,6 +510,7 @@ Write a short recommendations memo first. The memo must be decision-oriented and
 
 Hard rules:
 - If critical data quality is stale or failed, set recommendation_status to blocked and use only watch or do_nothing.
+- Do not self-certify suitability. The deterministic financial policy gate runs after JSON validation and can downgrade clear actions to review_required or blocked.
 - Commentary is context only; it cannot by itself justify an action.
 - do_nothing is an active recommendation when no fat pitch exists.
 - New entries normally start at one-third intended size.
@@ -525,7 +526,7 @@ After the memo, output the separator `{RECOMMENDATIONS_SEPARATOR}` on its own li
   "report_type": "{report_type}",
   "as_of": "{as_of}",
   "stance": "<{stance_options}>",
-  "recommendation_status": "<clear|blocked|error>",
+  "recommendation_status": "<clear|review_required|blocked|error>",
   "critical_data_quality": "<ok|degraded|stale|failed>",
   "blocked_reasons": [],
   "do_nothing_rationale": "",
@@ -604,6 +605,21 @@ def format_recommendations_markdown(payload: dict) -> str:
     if blocked:
         lines.append("- Blocked reasons:")
         lines.extend(f"  - {reason}" for reason in blocked)
+    gate = payload.get("policy_gate_result")
+    if isinstance(gate, dict):
+        lines.append(f"- Policy gate: **{gate.get('decision', 'unknown')}**")
+        warnings = gate.get("warnings") or []
+        failures = gate.get("failure_reasons") or []
+        if failures:
+            lines.append(
+                "- Policy failures: "
+                + "; ".join(str(item.get("message") if isinstance(item, dict) else item) for item in failures)
+            )
+        if warnings:
+            lines.append(
+                "- Policy warnings: "
+                + "; ".join(str(item.get("message") if isinstance(item, dict) else item) for item in warnings)
+            )
     if payload.get("do_nothing_rationale"):
         lines.extend(["", "## Do Nothing Rationale", str(payload["do_nothing_rationale"])])
     if payload.get("what_changed"):
@@ -650,6 +666,7 @@ def persist_recommendations(
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
     from portfolio.action_registry import ActionContext, propose_action
+    from portfolio.policy_gate import attach_policy_gate_to_recommendation
 
     prompt_metadata = prompt_metadata or {}
     report_id = prompt_metadata.get("report_id")
@@ -698,6 +715,23 @@ def persist_recommendations(
             "idempotency_key": idempotency_key,
             **prompt_metadata,
         }
+        record, gate = attach_policy_gate_to_recommendation(
+            record,
+            source_quality={
+                "critical_data_quality": payload.get("critical_data_quality"),
+                "overall_status": payload.get("critical_data_quality"),
+            },
+            context={"report_type": payload["report_type"], "as_of": payload["as_of"], "report_id": report_id},
+        )
+        if gate and gate.get("decision") == "review_required" and record.get("recommendation_status") == "clear":
+            record["recommendation_status"] = "review_required"
+            record["status"] = "open"
+        elif gate and gate.get("decision") in {"blocked", "error"}:
+            record["recommendation_status"] = "blocked"
+            record["status"] = "blocked"
+            policy_reason = f"policy_gate:{gate.get('decision')}"
+            if policy_reason not in record.get("blocked_reasons", []):
+                record["blocked_reasons"] = [*record.get("blocked_reasons", []), policy_reason]
         approval = propose_action(
             "create_recommendation",
             {"record": record},

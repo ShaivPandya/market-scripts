@@ -31,6 +31,18 @@ ACTION_RUN_MUTATES_OBJECT_VERSION: RelationType = "action_run_mutates_object_ver
 WORKFLOW_RUN_PRODUCES_ARTIFACT: RelationType = "workflow_run_produces_artifact"
 REPORT_RUN_PRODUCES_RECOMMENDATION: RelationType = "report_run_produces_recommendation"
 SOURCE_RECORD_MATERIALIZES_OBJECT: RelationType = "source_record_materializes_object"
+INVESTOR_OWNS_ACCOUNT: RelationType = "investor_owns_account"
+ACCOUNT_HAS_PORTFOLIO: RelationType = "account_has_portfolio"
+ACCOUNT_GOVERNED_BY_POLICY: RelationType = "account_governed_by_policy"
+POLICY_HAS_MANDATE: RelationType = "policy_has_mandate"
+POLICY_HAS_RISK_LIMIT: RelationType = "policy_has_risk_limit"
+RECOMMENDATION_TARGETS_ACCOUNT: RelationType = "recommendation_targets_account"
+RECOMMENDATION_TARGETS_PORTFOLIO: RelationType = "recommendation_targets_portfolio"
+TRADE_PROPOSAL_DERIVES_FROM_RECOMMENDATION: RelationType = "trade_proposal_derives_from_recommendation"
+POLICY_GATE_EVALUATES_RECOMMENDATION: RelationType = "policy_gate_evaluates_recommendation"
+POLICY_GATE_EVALUATES_TRADE_PROPOSAL: RelationType = "policy_gate_evaluates_trade_proposal"
+POLICY_GATE_USES_RISK_METRIC: RelationType = "policy_gate_uses_risk_metric"
+POLICY_GATE_USES_SCENARIO: RelationType = "policy_gate_uses_scenario"
 
 
 class RelationCardinality(StrEnum):
@@ -214,6 +226,102 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         target_type="DocumentArtifact",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id", "source_record_id", "object_uid"}),
+        optional=True,
+    ),
+    INVESTOR_OWNS_ACCOUNT: RelationDefinition(
+        name=INVESTOR_OWNS_ACCOUNT,
+        source_type="Investor",
+        target_type="Account",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ACCOUNT_HAS_PORTFOLIO: RelationDefinition(
+        name=ACCOUNT_HAS_PORTFOLIO,
+        source_type="Account",
+        target_type="Portfolio",
+        cardinality=RelationCardinality.SOURCE_UNIQUE,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ACCOUNT_GOVERNED_BY_POLICY: RelationDefinition(
+        name=ACCOUNT_GOVERNED_BY_POLICY,
+        source_type="Account",
+        target_type="InvestmentPolicy",
+        cardinality=RelationCardinality.SOURCE_UNIQUE,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    POLICY_HAS_MANDATE: RelationDefinition(
+        name=POLICY_HAS_MANDATE,
+        source_type="InvestmentPolicy",
+        target_type="Mandate",
+        cardinality=RelationCardinality.SOURCE_UNIQUE,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    POLICY_HAS_RISK_LIMIT: RelationDefinition(
+        name=POLICY_HAS_RISK_LIMIT,
+        source_type="InvestmentPolicy",
+        target_type="RiskLimit",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_TARGETS_ACCOUNT: RelationDefinition(
+        name=RECOMMENDATION_TARGETS_ACCOUNT,
+        source_type="Recommendation",
+        target_type="Account",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_TARGETS_PORTFOLIO: RelationDefinition(
+        name=RECOMMENDATION_TARGETS_PORTFOLIO,
+        source_type="Recommendation",
+        target_type="Portfolio",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    TRADE_PROPOSAL_DERIVES_FROM_RECOMMENDATION: RelationDefinition(
+        name=TRADE_PROPOSAL_DERIVES_FROM_RECOMMENDATION,
+        source_type="TradeProposal",
+        target_type="Recommendation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    POLICY_GATE_EVALUATES_RECOMMENDATION: RelationDefinition(
+        name=POLICY_GATE_EVALUATES_RECOMMENDATION,
+        source_type="PolicyGateResult",
+        target_type="Recommendation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    POLICY_GATE_EVALUATES_TRADE_PROPOSAL: RelationDefinition(
+        name=POLICY_GATE_EVALUATES_TRADE_PROPOSAL,
+        source_type="PolicyGateResult",
+        target_type="TradeProposal",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    POLICY_GATE_USES_RISK_METRIC: RelationDefinition(
+        name=POLICY_GATE_USES_RISK_METRIC,
+        source_type="PolicyGateResult",
+        target_type="RiskMetric",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    POLICY_GATE_USES_SCENARIO: RelationDefinition(
+        name=POLICY_GATE_USES_SCENARIO,
+        source_type="PolicyGateResult",
+        target_type="Scenario",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
 }

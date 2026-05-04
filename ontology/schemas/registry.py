@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from ontology.models import EntityType, OntologyEdge, OntologyNode
 from ontology.schemas.base import OntologySchemaBase
 from ontology.schemas.identity import (
+    account_id,
     action_event_id,
     action_item_id,
     action_run_id,
@@ -18,22 +19,32 @@ from ontology.schemas.identity import (
     document_artifact_id,
     evaluation_id,
     hedge_position_id,
+    investment_policy_id,
+    investor_id,
     kill_condition_id,
     macro_indicator_id,
+    mandate_id,
+    policy_gate_result_id,
+    portfolio_id,
     position_id,
     recommendation_id,
     report_run_id,
     research_note_id,
+    risk_limit_id,
+    risk_metric_id,
+    scenario_id,
     sector_id,
     signal_id,
     thesis_claim_id,
     thesis_id,
+    trade_proposal_id,
     watch_trigger_id,
     workflow_artifact_id,
     workflow_run_id,
 )
 from ontology.schemas.legacy import adapt_edge_payload, adapt_node_payload
 from ontology.schemas.objects import (
+    AccountV1,
     ActionEventV1,
     ActionItemV1,
     ActionRunV1,
@@ -43,17 +54,26 @@ from ontology.schemas.objects import (
     DocumentArtifactV1,
     EvaluationV1,
     HedgePositionV1,
+    InvestmentPolicyV1,
+    InvestorV1,
     KillConditionV1,
     MacroIndicatorV1,
+    MandateV1,
     OntologyObjectV1,
+    PolicyGateResultV1,
+    PortfolioV1,
     PositionV1,
     RecommendationV1,
     ReportRunV1,
     ResearchNoteV1,
+    RiskLimitV1,
+    RiskMetricV1,
+    ScenarioV1,
     SectorV1,
     SignalV1,
     ThesisClaimV1,
     ThesisV1,
+    TradeProposalV1,
     WatchTriggerV1,
     WorkflowArtifactV1,
     WorkflowRunV1,
@@ -76,6 +96,16 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Position": PositionV1,
     "HedgePosition": HedgePositionV1,
     "Asset": AssetV1,
+    "Investor": InvestorV1,
+    "Account": AccountV1,
+    "Portfolio": PortfolioV1,
+    "Mandate": MandateV1,
+    "InvestmentPolicy": InvestmentPolicyV1,
+    "RiskLimit": RiskLimitV1,
+    "RiskMetric": RiskMetricV1,
+    "Scenario": ScenarioV1,
+    "PolicyGateResult": PolicyGateResultV1,
+    "TradeProposal": TradeProposalV1,
     "Sector": SectorV1,
     "MacroIndicator": MacroIndicatorV1,
     "Signal": SignalV1,
@@ -113,6 +143,16 @@ OPTIONAL_NODE_TYPES = {
     "Recommendation",
     "ReportRun",
     "DocumentArtifact",
+    "Investor",
+    "Account",
+    "Portfolio",
+    "Mandate",
+    "InvestmentPolicy",
+    "RiskLimit",
+    "RiskMetric",
+    "Scenario",
+    "PolicyGateResult",
+    "TradeProposal",
 }
 NodeUpgradeAdapter = Any
 NODE_UPGRADE_ADAPTERS: dict[tuple[str, int, int], NodeUpgradeAdapter] = {}
@@ -381,6 +421,26 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return hedge_position_id(model.ticker)
     if isinstance(model, AssetV1):
         return asset_id(model.ticker)
+    if isinstance(model, InvestorV1):
+        return investor_id(model.investor_id)
+    if isinstance(model, AccountV1):
+        return account_id(model.account_id)
+    if isinstance(model, PortfolioV1):
+        return portfolio_id(model.portfolio_id)
+    if isinstance(model, MandateV1):
+        return mandate_id(model.mandate_id)
+    if isinstance(model, InvestmentPolicyV1):
+        return investment_policy_id(model.policy_id)
+    if isinstance(model, RiskLimitV1):
+        return risk_limit_id(model.limit_id)
+    if isinstance(model, RiskMetricV1):
+        return risk_metric_id(model.metric_id)
+    if isinstance(model, ScenarioV1):
+        return scenario_id(model.scenario_id)
+    if isinstance(model, PolicyGateResultV1):
+        return policy_gate_result_id(model.gate_result_id)
+    if isinstance(model, TradeProposalV1):
+        return trade_proposal_id(model.proposal_id)
     if isinstance(model, SectorV1):
         return sector_id(model.name)
     if isinstance(model, MacroIndicatorV1):

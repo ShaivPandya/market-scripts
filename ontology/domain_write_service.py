@@ -417,6 +417,31 @@ def action_mutations(
                 _row_time(row, now),
             )
         ]
+    if action_id == "create_recommendation":
+        record = input_payload.get("record") if isinstance(input_payload.get("record"), Mapping) else input_payload
+        row = {**dict(record), **dict(output)}
+        mutations = [
+            OntologyMutation(
+                "Recommendation",
+                str(row.get("id") or row.get("legacy_id") or row.get("idempotency_key") or row.get("instrument") or ""),
+                _recommendation_properties(row),
+                _row_time(row, now),
+            )
+        ]
+        gate = row.get("policy_gate_result")
+        if isinstance(gate, Mapping):
+            gate_id = str(
+                row.get("policy_gate_result_id") or gate.get("id") or gate.get("evaluated_at") or _stable_hash(gate)
+            )
+            mutations.append(
+                OntologyMutation(
+                    "PolicyGateResult",
+                    gate_id,
+                    _policy_gate_result_properties(gate, gate_result_id=gate_id),
+                    str(gate.get("evaluated_at") or now),
+                )
+            )
+        return mutations
     if action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger"}:
         row = {**dict(input_payload), **dict(output)}
         return [
@@ -551,6 +576,42 @@ def _action_item_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "created_at": row.get("created_at"),
         "completed_at": row.get("completed_at"),
         "resolution_note": row.get("resolution_note"),
+    }
+
+
+def _recommendation_properties(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "legacy_id": _optional_int(row.get("id")),
+        "report_type": row.get("report_type"),
+        "as_of": row.get("as_of"),
+        "action": str(row.get("action") or "watch"),
+        "ticker": _optional_ticker(row.get("ticker")),
+        "instrument": row.get("instrument"),
+        "status": row.get("recommendation_status") or row.get("status"),
+        "approval_id": _optional_int(row.get("approval_id")),
+        "approval_status": row.get("approval_status"),
+        "outcome_status": row.get("outcome_status"),
+        "account_id": row.get("account_id"),
+        "portfolio_id": row.get("portfolio_id"),
+        "policy_id": row.get("policy_id"),
+        "policy_gate_result_id": _optional_int(row.get("policy_gate_result_id")),
+        "policy_gate_decision": row.get("policy_gate_decision"),
+        "policy_gate_review_required": bool(row.get("policy_gate_review_required")),
+        "payload": {key: _jsonable(value) for key, value in row.items() if key not in {"policy_gate_result"}},
+    }
+
+
+def _policy_gate_result_properties(row: Mapping[str, Any], *, gate_result_id: str) -> dict[str, Any]:
+    return {
+        "gate_result_id": gate_result_id,
+        "decision": str(row.get("decision") or "error"),
+        "review_required": bool(row.get("review_required")),
+        "failure_reasons": _dicts(row.get("failure_reasons")),
+        "warnings": _dicts(row.get("warnings")),
+        "account_id": row.get("account_id"),
+        "portfolio_id": row.get("portfolio_id"),
+        "policy_id": row.get("policy_id"),
+        "evaluated_at": row.get("evaluated_at"),
     }
 
 
@@ -717,6 +778,10 @@ def _hash_text(value: str) -> str:
 def _stable_hash(value: Any) -> str:
     raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _jsonable(value: Any) -> Any:
+    return json.loads(json.dumps(value, default=str))
 
 
 def _temporal(row: Mapping[str, Any]) -> Mapping[str, Any]:

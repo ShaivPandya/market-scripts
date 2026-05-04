@@ -67,6 +67,22 @@ interface Approval {
   proposed_change: Record<string, unknown>
 }
 
+interface PolicyGateReason {
+  code?: string
+  check?: string
+  message?: string
+  observed?: unknown
+  limit?: unknown
+}
+
+interface PolicyGateResult {
+  decision?: string
+  review_required?: boolean
+  failure_reasons?: PolicyGateReason[]
+  warnings?: PolicyGateReason[]
+  disclosures?: string[]
+}
+
 interface ActionItem {
   id: number
   ticker: string | null
@@ -110,6 +126,11 @@ interface Recommendation {
   confidence: number | null
   approval_status: string
   blocked_reasons_json?: string[]
+  policy_gate_decision?: string | null
+  policy_gate_review_required?: boolean | number | null
+  policy_gate_failures_json?: PolicyGateReason[]
+  policy_gate_warnings_json?: PolicyGateReason[]
+  policy_gate_disclosures_json?: string[]
 }
 
 const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error"; label: string }> = {
@@ -128,6 +149,9 @@ const URGENCY_COLORS: Record<string, string> = {
   low: "text-gray-600 bg-gray-50 dark:text-gray-400 dark:bg-gray-800",
 }
 
+const ACTIONABLE_RECOMMENDATION_ACTIONS = new Set(["buy", "sell", "reduce", "exit", "rebalance", "hedge"])
+const FINANCIAL_ACTION_ITEM_TYPES = new Set(["enter", "exit", "resize", "hedge"])
+
 function formatPnl(value: number | null | undefined): string {
   if (value == null) return "--"
   const sign = value >= 0 ? "+" : ""
@@ -141,6 +165,92 @@ function formatTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function policyGateFromRecommendation(rec: Recommendation): PolicyGateResult | null {
+  if (!rec.policy_gate_decision) return null
+  return {
+    decision: rec.policy_gate_decision,
+    review_required: Boolean(rec.policy_gate_review_required),
+    failure_reasons: rec.policy_gate_failures_json ?? [],
+    warnings: rec.policy_gate_warnings_json ?? [],
+    disclosures: rec.policy_gate_disclosures_json ?? [],
+  }
+}
+
+function recommendationNeedsPolicyGate(rec: Recommendation): boolean {
+  return Boolean(rec.policy_gate_decision) || ACTIONABLE_RECOMMENDATION_ACTIONS.has(rec.action)
+}
+
+function policyGateFromApproval(approval: Approval): PolicyGateResult | null {
+  const proposed = approval.proposed_change
+  const direct = proposed.policy_gate_result
+  if (isPolicyGateResult(direct)) return direct
+  const record = proposed.record
+  if (record && typeof record === "object" && !Array.isArray(record)) {
+    const nested = (record as Record<string, unknown>).policy_gate_result
+    if (isPolicyGateResult(nested)) return nested
+  }
+  return null
+}
+
+function approvalNeedsPolicyGate(approval: Approval, gate: PolicyGateResult | null): boolean {
+  if (gate) return true
+  if (approval.action_id === "update_portfolio_positions" || approval.action_id === "update_hedge_positions") return true
+  if (approval.action_id === "create_action_item") {
+    return FINANCIAL_ACTION_ITEM_TYPES.has(String(approval.proposed_change.action_type || ""))
+  }
+  if (approval.action_id === "create_recommendation") {
+    const record = approval.proposed_change.record
+    if (record && typeof record === "object" && !Array.isArray(record)) {
+      return ACTIONABLE_RECOMMENDATION_ACTIONS.has(String((record as Record<string, unknown>).action || ""))
+    }
+  }
+  return false
+}
+
+function isPolicyGateResult(value: unknown): value is PolicyGateResult {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && "decision" in value)
+}
+
+function gateTone(decision?: string): string {
+  if (decision === "pass") return "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950"
+  if (decision === "warn") return "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
+  if (decision === "review_required") return "text-orange-700 bg-orange-50 dark:text-orange-400 dark:bg-orange-950"
+  return "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950"
+}
+
+function reasonText(reason: PolicyGateReason): string {
+  return reason.message || reason.code || reason.check || "Policy gate issue"
+}
+
+function PolicyGatePanel({ gate }: { gate: PolicyGateResult | null }) {
+  if (!gate) {
+    return (
+      <div className="mt-2 border-t border-app pt-2 text-[11px] text-amber-700 dark:text-amber-300">
+        Policy gate missing. Actionable recommendations require a stored gate result before approval.
+      </div>
+    )
+  }
+  const failures = gate.failure_reasons ?? []
+  const warnings = gate.warnings ?? []
+  const topItems = [...failures, ...warnings].slice(0, 3)
+  return (
+    <div className="mt-2 border-t border-app pt-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn("rounded px-1.5 py-0.5 font-medium", gateTone(gate.decision))}>
+          Policy {String(gate.decision || "unknown").replace(/_/g, " ")}
+        </span>
+        {gate.review_required && <span className="text-orange-700 dark:text-orange-300">approval note review required</span>}
+        <span className="text-subtle">decision support only; human approval required</span>
+      </div>
+      {topItems.length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-muted">
+          {topItems.map((item, idx) => <li key={`${item.code || item.check || "gate"}-${idx}`}>{reasonText(item)}</li>)}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 export function Workspace() {
@@ -282,6 +392,7 @@ export function Workspace() {
                     </span>
                   </div>
                   <p className="mt-2 text-xs text-muted line-clamp-2">{rec!.rationale}</p>
+                  {recommendationNeedsPolicyGate(rec!) && <PolicyGatePanel gate={policyGateFromRecommendation(rec!)} />}
                 </div>
               ))}
             </div>
@@ -309,6 +420,7 @@ export function Workspace() {
                       <span className="ml-auto text-xs text-subtle">{rec.approval_status}</span>
                     </div>
                     <p className="mt-1 text-xs text-muted line-clamp-2">{rec.rationale}</p>
+                    {recommendationNeedsPolicyGate(rec) && <PolicyGatePanel gate={policyGateFromRecommendation(rec)} />}
                   </div>
                 ))}
               </div>
@@ -364,6 +476,7 @@ export function Workspace() {
               {data.pending_approvals.items.map(a => {
                 const key = `approval-${a.id}`
                 const expanded = expandedIds.has(key)
+                const gate = policyGateFromApproval(a)
                 return (
                   <div
                     key={a.id}
@@ -395,6 +508,9 @@ export function Workspace() {
                             {[a.source_type, a.source_id].filter(Boolean).join(" · ")}
                             {a.application_attempts ? ` · attempts ${a.application_attempts}` : ""}
                           </p>
+                        )}
+                        {approvalNeedsPolicyGate(a, gate) && (
+                          <PolicyGatePanel gate={gate} />
                         )}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">

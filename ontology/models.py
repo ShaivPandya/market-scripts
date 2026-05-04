@@ -5,6 +5,16 @@ from typing import Any, Literal
 
 EntityType = Literal[
     "Asset",
+    "Investor",
+    "Account",
+    "Portfolio",
+    "Mandate",
+    "InvestmentPolicy",
+    "RiskLimit",
+    "RiskMetric",
+    "Scenario",
+    "PolicyGateResult",
+    "TradeProposal",
     "Sector",
     "MacroIndicator",
     "Signal",
@@ -49,6 +59,18 @@ RelationType = Literal[
     "workflow_run_produces_artifact",
     "report_run_produces_recommendation",
     "source_record_materializes_object",
+    "investor_owns_account",
+    "account_has_portfolio",
+    "account_governed_by_policy",
+    "policy_has_mandate",
+    "policy_has_risk_limit",
+    "recommendation_targets_account",
+    "recommendation_targets_portfolio",
+    "trade_proposal_derives_from_recommendation",
+    "policy_gate_evaluates_recommendation",
+    "policy_gate_evaluates_trade_proposal",
+    "policy_gate_uses_risk_metric",
+    "policy_gate_uses_scenario",
 ]
 ParserSource = Literal["structured", "llm", "deterministic_fallback"]
 

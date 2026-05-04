@@ -91,6 +91,239 @@ class AssetV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class InvestorV1(OntologySchemaBase):
+    investor_id: NonBlankStr
+    name: NonBlankStr
+    suitability_profile: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("investor_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("name", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("suitability_profile", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class AccountV1(OntologySchemaBase):
+    account_id: NonBlankStr
+    investor_id: NonBlankStr
+    account_type: str | None = None
+    tax_status: NonBlankStr = "unknown"
+    tax_lot_data_available: bool | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("account_id", "investor_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("tax_status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("account_type", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class PortfolioV1(OntologySchemaBase):
+    portfolio_id: NonBlankStr
+    account_id: NonBlankStr
+    base_currency: NonBlankStr = "USD"
+    benchmark: str | None = None
+    cash: float | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("portfolio_id", "account_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("base_currency", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("benchmark", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class MandateV1(OntologySchemaBase):
+    mandate_id: NonBlankStr
+    benchmark: str | None = None
+    permitted_asset_classes: list[str] = Field(default_factory=list)
+    permitted_actions: list[str] = Field(default_factory=list)
+    liquidity_needs: str | None = None
+    time_horizon_days_min: int | None = None
+    time_horizon_days_max: int | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("mandate_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("benchmark", "liquidity_needs", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @field_validator("ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+
+class InvestmentPolicyV1(OntologySchemaBase):
+    policy_id: NonBlankStr
+    account_id: NonBlankStr
+    mandate_id: NonBlankStr
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    disclosures: list[str] = Field(default_factory=list)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("policy_id", "account_id", "mandate_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+
+class RiskLimitV1(OntologySchemaBase):
+    limit_id: NonBlankStr
+    policy_id: NonBlankStr
+    metric: NonBlankStr
+    comparator: NonBlankStr
+    threshold: float | str
+    severity: NonBlankStr = "fail"
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("limit_id", "policy_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("metric", "comparator", "severity", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+
+class RiskMetricV1(OntologySchemaBase):
+    metric_id: NonBlankStr
+    metric: NonBlankStr
+    value: float | int | str | bool | None = None
+    as_of: str | None = None
+    source: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("metric_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("metric", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("as_of", "source", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ScenarioV1(OntologySchemaBase):
+    scenario_id: NonBlankStr
+    name: NonBlankStr
+    result: dict[str, Any] = Field(default_factory=dict)
+    loss_pct: float | None = None
+    status: NonBlankStr = "unknown"
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("scenario_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("name", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+
+class PolicyGateResultV1(OntologySchemaBase):
+    gate_result_id: NonBlankStr
+    decision: NonBlankStr
+    review_required: bool = False
+    failure_reasons: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    account_id: str | None = None
+    portfolio_id: str | None = None
+    policy_id: str | None = None
+    evaluated_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("gate_result_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("decision", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("account_id", "portfolio_id", "policy_id", "evaluated_at", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class TradeProposalV1(OntologySchemaBase):
+    proposal_id: NonBlankStr
+    recommendation_id: str | None = None
+    account_id: str | None = None
+    action: NonBlankStr
+    instrument: NonBlankStr
+    proposed_change: dict[str, Any] = Field(default_factory=dict)
+    approval_id: int | None = None
+    status: NonBlankStr = "staged"
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("proposal_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("action", "instrument", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("recommendation_id", "account_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class SectorV1(OntologySchemaBase):
     name: NonBlankStr
     sector_source: NonBlankStr
@@ -606,6 +839,12 @@ class RecommendationV1(OntologySchemaBase):
     approval_id: int | None = None
     approval_status: str | None = None
     outcome_status: str | None = None
+    account_id: str | None = None
+    portfolio_id: str | None = None
+    policy_id: str | None = None
+    policy_gate_result_id: int | None = None
+    policy_gate_decision: str | None = None
+    policy_gate_review_required: bool = False
     payload: dict[str, Any] = Field(default_factory=dict)
     ontology_run_id: NonBlankStr = "operational"
 
@@ -619,7 +858,19 @@ class RecommendationV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("report_type", "as_of", "instrument", "status", "approval_status", "outcome_status", mode="before")
+    @field_validator(
+        "report_type",
+        "as_of",
+        "instrument",
+        "status",
+        "approval_status",
+        "outcome_status",
+        "account_id",
+        "portfolio_id",
+        "policy_id",
+        "policy_gate_decision",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -702,6 +953,16 @@ class DocumentArtifactV1(OntologySchemaBase):
 OntologyObjectV1 = (
     PositionV1
     | AssetV1
+    | InvestorV1
+    | AccountV1
+    | PortfolioV1
+    | MandateV1
+    | InvestmentPolicyV1
+    | RiskLimitV1
+    | RiskMetricV1
+    | ScenarioV1
+    | PolicyGateResultV1
+    | TradeProposalV1
     | SectorV1
     | MacroIndicatorV1
     | SignalV1
