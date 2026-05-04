@@ -416,6 +416,8 @@ def evaluate_tool_call(
 def _check_rate_limit(tool: ToolExposure, context: ExecutionContext) -> None:
     limit_raw = tool.rate_limit.get("limit") if isinstance(tool.rate_limit, Mapping) else None
     window_raw = tool.rate_limit.get("window_s") if isinstance(tool.rate_limit, Mapping) else None
+    if limit_raw is None or window_raw is None:
+        return
     try:
         limit = int(limit_raw)
         window_s = float(window_raw)
