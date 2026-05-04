@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -75,6 +76,15 @@ def test_governance_outbox_replays_idempotently_and_redacts():
     assert len(audits) == 1
     assert "RAW PROMPT" not in serialized
     assert "SECRET TOOL OUTPUT" not in serialized
+
+
+def test_governance_lineage_migration_creates_policy_gate_schema():
+    migration = Path("migrations/versions/20260503_0012_governance_outbox_lineage.py").read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS policy_gate_results" in migration
+    assert "idx_policy_gate_results_decision" in migration
+    assert "policy_gate_result_id integer" in migration
+    assert "policy_gate_warnings_json text" in migration
 
 
 def test_approval_creation_requires_and_records_financial_lineage():
