@@ -5,9 +5,13 @@ import pytest
 from pydantic import ValidationError
 
 from api.routers.analyzer import AnalyzerRequest, _cache_key
+from portfolio.portfolio_optimizer import portfolio_analyzer as analyzer_module
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
+    INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
+    INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
     compute_valuation_signal,
     normalize_analyzer_scenario,
+    overlay_anchor_long_equity_signals,
 )
 
 
@@ -111,3 +115,53 @@ def test_valuation_signal_excludes_invalid_or_missing_multiples():
 
     assert signal["A"] > signal["B"]
     assert math.isnan(signal["NON_EQUITY"])
+
+
+def test_interactive_anchor_overlay_uses_reduced_scoring_universe(monkeypatch):
+    captured: dict[str, int] = {}
+
+    def fake_anchor_signals(**kwargs):
+        captured["anchor_top_n"] = kwargs["anchor_top_n"]
+        captured["anchor_min_unique"] = kwargs["anchor_min_unique"]
+        return (
+            pd.DataFrame(
+                {
+                    "composite_signal": [1.0],
+                    "quality_signal": [0.5],
+                    "eps_mom_signal": [0.25],
+                    "rev_mom_signal": [0.75],
+                    "price_mom_signal": [0.1],
+                },
+                index=["AAA"],
+            ),
+            {
+                "signal_anchor_mode": "spdr_sector_top3_anchor",
+                "signal_anchor_universe_size": 24,
+                "signal_anchor_scoring_universe_size": 25,
+                "signal_anchor_fallback_used": False,
+            },
+        )
+
+    monkeypatch.setattr(analyzer_module, "generate_anchor_normalized_long_equity_signals", fake_anchor_signals)
+    meta = pd.DataFrame({"direction": ["long"], "asset": ["equity"]}, index=["AAA"])
+    signal = pd.Series([0.0], index=["AAA"])
+    subcomponents = {
+        "quality_signal": pd.Series([0.0], index=["AAA"]),
+        "eps_mom_signal": pd.Series([0.0], index=["AAA"]),
+        "rev_mom_signal": pd.Series([0.0], index=["AAA"]),
+        "price_mom_signal": pd.Series([0.0], index=["AAA"]),
+    }
+
+    overlay_anchor_long_equity_signals(
+        ["AAA"],
+        meta,
+        signal,
+        subcomponents,
+        anchor_top_n=INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
+        anchor_min_unique=INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
+    )
+
+    assert captured == {
+        "anchor_top_n": INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
+        "anchor_min_unique": INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
+    }

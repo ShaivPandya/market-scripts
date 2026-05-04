@@ -218,6 +218,8 @@ VOL_POWER_SHORT = 1.4  # power for inverse-vol weighting for shorts: 1/σ^p
 LONG_SIGNAL_CAP = 3.0
 LONG_WEIGHTING_MODE = "all_longs_absolute_signal_0_to_20"
 SIGNAL_ANCHOR_MODE = "spdr_sector_top10_anchor"
+INTERACTIVE_SIGNAL_ANCHOR_TOP_N = 3
+INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE = 20
 
 SCENARIO_FACTOR_DEFAULTS = {
     "quality": 0.30,
@@ -1527,6 +1529,8 @@ def overlay_anchor_long_equity_signals(
     signal_subcomponents: dict[str, pd.Series],
     years: int = 5,
     use_edgar: bool = False,
+    anchor_top_n: int = 10,
+    anchor_min_unique: int = 60,
 ) -> tuple[pd.Series, dict[str, pd.Series], dict[str, object]]:
     """
     Overlay long-equity composite/factor signals from the anchor universe model.
@@ -1556,6 +1560,8 @@ def overlay_anchor_long_equity_signals(
             years=years,
             use_edgar=use_edgar,
             benchmark=MARKET_TICKER_LONG,
+            anchor_top_n=anchor_top_n,
+            anchor_min_unique=anchor_min_unique,
         )
     except Exception as e:
         metadata["reason"] = f"anchor_overlay_exception:{e}"
@@ -1692,6 +1698,8 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
             signal_subcomponents=signal_subcomponents,
             years=5,
             use_edgar=False,
+            anchor_top_n=INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
+            anchor_min_unique=INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
         )
 
         signal_effective = signal_composite.copy()

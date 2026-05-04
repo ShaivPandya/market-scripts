@@ -927,10 +927,12 @@ type AnalyzerRequest = {
 export const runPortfolioAnalyzer = (body: AnalyzerRequest = {}) =>
   runPortfolioAnalyzerAsync(body)
 
+type AnalyzerJobBase = { job_id: string; timeout_s?: number }
+
 type AnalyzerJobResponse =
-  | { job_id: string; status: "queued" | "running" }
-  | { job_id: string; status: "error"; error?: string }
-  | { job_id: string; status: "done"; result?: unknown }
+  | (AnalyzerJobBase & { status: "queued" | "running" })
+  | (AnalyzerJobBase & { status: "error"; error?: string })
+  | (AnalyzerJobBase & { status: "done"; result?: unknown })
 
 export const startPortfolioAnalyzerJob = (body: AnalyzerRequest = {}) =>
   client.post("/portfolio-analyzer/async", body, { timeout: 30_000 }).then(r => r.data as AnalyzerJobResponse)
@@ -938,20 +940,54 @@ export const startPortfolioAnalyzerJob = (body: AnalyzerRequest = {}) =>
 export const fetchPortfolioAnalyzerJob = (job_id: string) =>
   client.get(`/portfolio-analyzer/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 }).then(r => r.data as AnalyzerJobResponse)
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function isRetryableAnalyzerError(err: unknown) {
+  if (!axios.isAxiosError(err)) return false
+  if (!err.response) return true
+  return [408, 429, 500, 502, 503, 504].includes(err.response.status)
+}
+
+async function withAnalyzerRetry<T>(operation: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation()
+    } catch (err) {
+      lastError = err
+      if (attempt >= attempts || !isRetryableAnalyzerError(err)) throw err
+      await sleep(750 * attempt)
+    }
+  }
+  throw lastError
+}
+
 export async function runPortfolioAnalyzerAsync(body: AnalyzerRequest = {}) {
-  const started = await startPortfolioAnalyzerJob(body)
+  const started = await withAnalyzerRetry(() => startPortfolioAnalyzerJob(body))
   if (started.status === "done" && "result" in started && started.result != null) return started.result
   if (started.status === "error") throw new Error(started.error || "Portfolio analyzer failed")
 
   const job_id = started.job_id
-  const deadline = Date.now() + 180_000
+  const serverTimeoutMs = Number.isFinite(started.timeout_s) ? Math.max(180, Number(started.timeout_s)) * 1000 : 180_000
+  const deadline = Date.now() + serverTimeoutMs + 30_000
+  let transientPollErrors = 0
 
   // Poll until completion; each request is short to avoid edge proxy timeouts.
   for (; ;) {
     if (Date.now() > deadline) throw new Error("Timeout: Portfolio analyzer is taking too long. Try again.")
 
-    await new Promise(r => setTimeout(r, 2000))
-    const job = await fetchPortfolioAnalyzerJob(job_id)
+    await sleep(2000)
+    let job: AnalyzerJobResponse
+    try {
+      job = await fetchPortfolioAnalyzerJob(job_id)
+      transientPollErrors = 0
+    } catch (err) {
+      if (!isRetryableAnalyzerError(err) || transientPollErrors >= 5) throw err
+      transientPollErrors += 1
+      continue
+    }
 
     if (job.status === "done") {
       if ("result" in job && job.result != null) return job.result

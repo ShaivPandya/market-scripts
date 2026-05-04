@@ -161,11 +161,52 @@ const COLUMN_ORDER = [
 function cloneScenario<T extends AnalyzerScenarioState>(scenario: T): T {
   return {
     preset: scenario.preset,
-    factor_weights: { ...scenario.factor_weights },
-    fundamental_momentum_weights: { ...scenario.fundamental_momentum_weights },
-    valuation_weights: { ...scenario.valuation_weights },
+    factor_weights: normalizeWeightGroup(scenario.factor_weights),
+    fundamental_momentum_weights: normalizeWeightGroup(scenario.fundamental_momentum_weights),
+    valuation_weights: normalizeWeightGroup(scenario.valuation_weights),
     brakes: { ...scenario.brakes },
   } as T
+}
+
+function clampUnit(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+function normalizeWeightGroup<T extends Record<string, number>>(weights: T): T {
+  const entries = Object.entries(weights) as [keyof T, number][]
+  const total = entries.reduce((sum, [, value]) => sum + Math.max(0, Number.isFinite(value) ? value : 0), 0)
+
+  if (total <= 0) {
+    const equalWeight = entries.length > 0 ? 1 / entries.length : 0
+    return Object.fromEntries(entries.map(([key]) => [key, equalWeight])) as T
+  }
+
+  return Object.fromEntries(
+    entries.map(([key, value]) => [key, Math.max(0, Number.isFinite(value) ? value : 0) / total]),
+  ) as T
+}
+
+function rebalanceWeightGroup<T extends Record<string, number>>(weights: T, key: keyof T, value: number): T {
+  const nextValue = clampUnit(value)
+  const entries = Object.entries(weights) as [keyof T, number][]
+  const otherEntries = entries.filter(([entryKey]) => entryKey !== key)
+  const remaining = 1 - nextValue
+  const otherTotal = otherEntries.reduce(
+    (sum, [, entryValue]) => sum + Math.max(0, Number.isFinite(entryValue) ? entryValue : 0),
+    0,
+  )
+
+  const nextEntries = entries.map(([entryKey, entryValue]) => {
+    if (entryKey === key) return [entryKey, nextValue]
+    const adjustedValue =
+      otherTotal > 0
+        ? (Math.max(0, Number.isFinite(entryValue) ? entryValue : 0) / otherTotal) * remaining
+        : remaining / Math.max(1, otherEntries.length)
+    return [entryKey, adjustedValue]
+  })
+
+  return normalizeWeightGroup(Object.fromEntries(nextEntries) as T)
 }
 
 function toRows(value: unknown): Record<string, unknown>[] {
@@ -257,9 +298,9 @@ function buildColumns(rows: Record<string, unknown>[]): ColumnDef[] {
 function toScenarioRequest(scenario: AnalyzerScenarioState): AnalyzerScenarioRequest {
   return {
     preset: scenario.preset,
-    factor_weights: { ...scenario.factor_weights },
-    fundamental_momentum_weights: { ...scenario.fundamental_momentum_weights },
-    valuation_weights: { ...scenario.valuation_weights },
+    factor_weights: normalizeWeightGroup(scenario.factor_weights),
+    fundamental_momentum_weights: normalizeWeightGroup(scenario.fundamental_momentum_weights),
+    valuation_weights: normalizeWeightGroup(scenario.valuation_weights),
     brakes: { ...scenario.brakes },
   }
 }
@@ -324,19 +365,19 @@ export function PortfolioAnalyzer() {
   }
 
   function setFactorWeight(key: keyof AnalyzerScenarioState["factor_weights"], value: number) {
-    setScenario(prev => ({ ...prev, preset: "custom", factor_weights: { ...prev.factor_weights, [key]: value } }))
+    setScenario(prev => ({ ...prev, preset: "custom", factor_weights: rebalanceWeightGroup(prev.factor_weights, key, value) }))
   }
 
   function setFundamentalWeight(key: keyof AnalyzerScenarioState["fundamental_momentum_weights"], value: number) {
     setScenario(prev => ({
       ...prev,
       preset: "custom",
-      fundamental_momentum_weights: { ...prev.fundamental_momentum_weights, [key]: value },
+      fundamental_momentum_weights: rebalanceWeightGroup(prev.fundamental_momentum_weights, key, value),
     }))
   }
 
   function setValuationWeight(key: keyof AnalyzerScenarioState["valuation_weights"], value: number) {
-    setScenario(prev => ({ ...prev, preset: "custom", valuation_weights: { ...prev.valuation_weights, [key]: value } }))
+    setScenario(prev => ({ ...prev, preset: "custom", valuation_weights: rebalanceWeightGroup(prev.valuation_weights, key, value) }))
   }
 
   function setBrake(key: keyof AnalyzerScenarioState["brakes"], value: number) {
