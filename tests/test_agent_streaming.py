@@ -639,6 +639,63 @@ def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_cl
     assert finalized
 
 
+def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-wf",
+        ),
+    )
+    finalized: list[dict] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "execute_workflow",
+        lambda *_args, **_kwargs: (
+            "run-wf",
+            "synthesis prompt",
+            [
+                {"tool": "get_thesis", "data": {}, "duration_ms": 1.0},
+                {"tool": "query_ontology", "data": {}, "duration_ms": 2.0},
+            ],
+        ),
+    )
+    monkeypatch.setattr("api.workflow_artifacts.extract_artifacts", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("api.workflow_artifacts.persist_artifacts", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr("portfolio.core_db.complete_workflow_run", lambda *_args, **_kwargs: None)
+
+    streams = [
+        (
+            [_event_text_delta('Analysis\n```artifacts\n{"evaluation_draft": {"ticker": "NVDA"}}\n```')],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "Analysis"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "/workflow:thesis_review:NVDA"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["session_id"] == "session-wf"
+    assert done_events[-1]["tools_used"] == ["get_thesis", "query_ontology"]
+    assert done_events[-1]["tool_calls"][0]["status"] == "ok"
+    assert finalized[0]["toolCalls"] == done_events[-1]["tool_calls"]
+
+
 # ---------------------------------------------------------------------------
 # Provider history shape: assistant turns must use output_text for OpenAI
 # (regression: the Responses API rejects input_text on assistant content)

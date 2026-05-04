@@ -18,22 +18,6 @@ import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog
 type Intent = "auto" | "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
 type Timeframe = "This Week" | "Daily" | "Weekly" | "Monthly"
 
-interface OntologyEvidence {
-  source?: string
-  name?: string
-  contribution?: number
-}
-
-interface OntologyRow {
-  ticker?: string
-  asset?: string
-  direction?: string
-  sector?: string
-  risk_score?: number
-  risk_level?: string
-  evidence?: OntologyEvidence[]
-}
-
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 function formatTimestampLabel(rawValue: string | undefined): string {

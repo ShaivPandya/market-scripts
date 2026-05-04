@@ -1270,6 +1270,9 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
 
                 # Emit tool calls as they execute
                 run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker, actor=tool_actor)
+                workflow_tool_calls = [
+                    {"name": str(section["tool"]), "id": str(section["tool"]), "status": "ok"} for section in sections
+                ]
                 for section in sections:
                     yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
@@ -1352,7 +1355,15 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     output_value=synthesis_text,
                     usage=usage,
                 )
-                yield _sse("done", {"usage": usage, "workflow_run_id": run_id})
+                yield _sse(
+                    "done",
+                    {
+                        "usage": usage,
+                        "workflow_run_id": run_id,
+                        "tool_calls": workflow_tool_calls,
+                        "tools_used": [call["name"] for call in workflow_tool_calls],
+                    },
+                )
                 return
 
             except Exception as exc:
@@ -1706,6 +1717,9 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     return
 
                 run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker, actor=tool_actor)
+                workflow_tool_calls = [
+                    {"name": str(section["tool"]), "id": str(section["tool"]), "status": "ok"} for section in sections
+                ]
                 for section in sections:
                     yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
@@ -1774,7 +1788,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 usage = _usage_dict(final_message)
                 # Finalize turn before last yield
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
-                assistant_msg = {"role": "assistant", "content": synthesis_text, "timestamp": time.time()}
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": synthesis_text,
+                    "timestamp": time.time(),
+                    "toolCalls": workflow_tool_calls,
+                }
                 finalize_turn_async(session_id, user_msg, assistant_msg)
                 _finish_agent_turn_provenance(
                     agent_turn_event_id,
@@ -1782,7 +1801,16 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     output_value=synthesis_text,
                     usage=usage,
                 )
-                yield _sse("done", {"usage": usage, "session_id": session_id, "workflow_run_id": run_id})
+                yield _sse(
+                    "done",
+                    {
+                        "usage": usage,
+                        "session_id": session_id,
+                        "workflow_run_id": run_id,
+                        "tool_calls": workflow_tool_calls,
+                        "tools_used": [call["name"] for call in workflow_tool_calls],
+                    },
+                )
                 return
 
             except Exception as exc:

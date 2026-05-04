@@ -311,6 +311,47 @@ def _score_liquidity(liquidity: dict[str, Any]) -> tuple[float | None, dict[str,
     return score, {"regime": regime, "composite_score": composite}
 
 
+def _has_usable_liquidity_payload(value: Any) -> bool:
+    data = _as_dict(value)
+    return _to_float(data.get("composite_score")) is not None
+
+
+def _should_live_fill_liquidity(raw: dict[str, Any], module_status: dict[str, dict[str, Any]]) -> bool:
+    if _has_usable_liquidity_payload(raw.get("liquidity")):
+        return False
+    state = module_status.get("liquidity")
+    if not isinstance(state, dict):
+        return False
+    detail = str(state.get("detail") or "")
+    return "Snapshot unavailable" in detail
+
+
+def _fill_liquidity_snapshot_gap(raw: dict[str, Any], module_status: dict[str, dict[str, Any]]) -> None:
+    """Use the live liquidity source when only the durable module snapshot is missing."""
+    if not _should_live_fill_liquidity(raw, module_status):
+        return
+
+    try:
+        from macro.liquidity.liquidity import get_snapshot as get_liquidity_snapshot
+
+        liquidity = get_liquidity_snapshot()
+    except Exception as exc:
+        module_status["liquidity"] = {
+            "status": "error",
+            "detail": f"Snapshot unavailable and live liquidity fetch failed: {exc}",
+        }
+        return
+
+    raw["liquidity"] = liquidity
+    if _has_usable_liquidity_payload(liquidity):
+        module_status["liquidity"] = {"status": "ok", "detail": "live fallback"}
+    else:
+        module_status["liquidity"] = {
+            "status": "error",
+            "detail": "Live liquidity fallback returned no composite_score",
+        }
+
+
 def _score_positioning(rows: Any) -> tuple[float | None, dict[str, Any]]:
     clean_rows = _as_rows(rows)
     if not clean_rows:
@@ -897,6 +938,7 @@ def build_signal_aggregator_from_payloads(
 ) -> dict[str, Any]:
     """Build a signal-aggregator response from already-fetched module payloads."""
     lookback = max(26, min(int(lookback_weeks), 520))
+    _fill_liquidity_snapshot_gap(raw, module_status)
 
     vix_data = _as_dict(raw.get("vix_term_structure"))
     breadth_data = _as_dict(raw.get("market_breadth"))

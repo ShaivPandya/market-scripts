@@ -1,13 +1,12 @@
 import { useMemo, useState } from "react"
 import { useRegisterScreenContext } from "@/contexts/ScreenContext"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Info } from "lucide-react"
-import { fetchSignalAggregator, refreshMarketSnapshots } from "@/lib/api"
+import { fetchSignalAggregator } from "@/lib/api"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { TimeSeriesChart, type DataPoint } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
-import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SelectInput, TextInput } from "@/components/shared/FormControls"
 
 const DEFAULT_INSTRUMENTS = "SP500,NASDAQ,RUSSELL,US10Y,EUR"
@@ -102,16 +101,24 @@ function summarizeHighlights(highlights?: Record<string, unknown>): string {
 }
 
 export function SignalAggregator() {
+  const queryClient = useQueryClient()
   const [showInfo, setShowInfo] = useState(false)
   const [lookbackInput, setLookbackInput] = useState("156")
   const [instrumentInput, setInstrumentInput] = useState(DEFAULT_INSTRUMENTS)
   const [appliedLookback, setAppliedLookback] = useState(156)
   const [appliedInstruments, setAppliedInstruments] = useState(DEFAULT_INSTRUMENTS)
+  const [applyNonce, setApplyNonce] = useState(0)
   const [hasAppliedFilters, setHasAppliedFilters] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
 
+  const queryKey = useMemo(
+    () => ["signal-aggregator", appliedLookback, appliedInstruments, applyNonce] as const,
+    [appliedLookback, appliedInstruments, applyNonce],
+  )
+
   const { data, isLoading, error } = useQuery<SignalAggregatorResponse>({
-    queryKey: ["signal-aggregator", appliedLookback, appliedInstruments],
+    queryKey,
     queryFn: () =>
       fetchSignalAggregator({
         lookback_weeks: appliedLookback,
@@ -297,7 +304,28 @@ export function SignalAggregator() {
     setAppliedLookback(bounded)
     setLookbackInput(String(bounded))
     setAppliedInstruments(instrumentInput.trim() || DEFAULT_INSTRUMENTS)
+    setApplyNonce(n => n + 1)
+    setRefreshError(null)
     setHasAppliedFilters(true)
+  }
+
+  async function refreshData() {
+    const params = {
+      lookback_weeks: appliedLookback,
+      positioning_instruments: appliedInstruments,
+      force_refresh: true,
+    }
+    setIsRefreshing(true)
+    setRefreshError(null)
+    try {
+      const refreshed = await fetchSignalAggregator(params)
+      queryClient.setQueryData(queryKey, refreshed)
+      setHasAppliedFilters(true)
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   return (
@@ -334,12 +362,14 @@ export function SignalAggregator() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <RefreshButton
-            queryKeys={[["signal-aggregator", appliedLookback, appliedInstruments]]}
-            beforeRefetch={refreshMarketSnapshots}
-            onSuccess={() => setRefreshError(null)}
-            onError={err => setRefreshError(err instanceof Error ? err.message : String(err))}
-          />
+          <button
+            type="button"
+            onClick={refreshData}
+            disabled={isRefreshing}
+            className="theme-button-base theme-button-secondary px-4 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isRefreshing ? "Refreshing..." : "Refresh Data"}
+          </button>
         </div>
       </div>
       {refreshError && (

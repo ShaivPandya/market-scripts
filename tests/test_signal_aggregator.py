@@ -75,6 +75,42 @@ def test_build_signal_aggregator_degraded_reweights(monkeypatch):
     assert result["regime"]["label"] in {"risk-on", "transitional", "risk-off"}
 
 
+def test_build_signal_aggregator_live_fills_missing_liquidity_snapshot(monkeypatch):
+    from api import signal_aggregator as sa
+
+    raw = {
+        "vix_term_structure": {"latest_df": [{"Ratio": 1.1, "VIX": 15.0, "Date": "2026-05-01"}]},
+        "market_breadth": {"pct_above_200dma": 60.0, "pct_above_20dma": 55.0, "pct_at_20day_low": 10.0},
+        "top50_breadth": {"pct_below_50dma": 20.0, "pct_3plus_dist": 10.0, "pct_broke_20low": 5.0},
+        "liquidity": None,
+        "sector_metrics": {
+            "timestamp": "2026-05-01T22:00:00",
+            "weights_df": [{"RelPerf_3M_pp": 1.0, "Chg_3M_pp": 1.0, "Pct_Above_200DMA": 5.0, "Weight_Now": 100.0}],
+        },
+        "momentum": {"results": [{"avg10_rel_roc": 0.2, "rel_roc42": 0.3}]},
+    }
+    status = {
+        "vix_term_structure": {"status": "ok"},
+        "market_breadth": {"status": "ok"},
+        "top50_breadth": {"status": "ok"},
+        "liquidity": {"status": "error", "detail": "Snapshot unavailable: liquidity:current:v1"},
+        "sector_metrics": {"status": "ok"},
+        "momentum": {"status": "ok"},
+    }
+
+    monkeypatch.setattr(
+        "macro.liquidity.liquidity.get_snapshot",
+        lambda: {"latest_date": "2026-05-01", "composite_score": -0.5, "regime": "tight"},
+    )
+
+    result = sa.build_signal_aggregator_from_payloads(raw, status, include_history=False)
+    factors = {f["key"]: f for f in result["factors"]}
+
+    assert result["module_status"]["liquidity"]["status"] == "ok"
+    assert factors["liquidity"]["status"] == "ok"
+    assert "liquidity" not in result["failed_modules"]
+
+
 def test_signal_aggregator_endpoint_uses_query_params(auth_client, monkeypatch):
     import api.routers.signal_aggregator as signal_router
 
@@ -117,6 +153,97 @@ def test_signal_aggregator_endpoint_uses_query_params(auth_client, monkeypatch):
     assert body["status"] == "ok"
     assert body["history"]["lookback_weeks"] == 104
     assert calls == [(104, "SP500,EUR", True)]
+
+
+def test_signal_aggregator_endpoint_force_refresh_bypasses_snapshot(auth_client, monkeypatch):
+    import api.routers.signal_aggregator as signal_router
+
+    calls: list[str] = []
+
+    def fake_build(lookback_weeks: int, positioning_instruments: str, include_raw_modules: bool):
+        calls.append(positioning_instruments)
+        return {
+            "status": "ok",
+            "as_of": "2026-03-07",
+            "regime": {"label": "risk-on", "score": 20.0, "confidence": 1.0, "history_percentile": None},
+            "weights": {"configured": {}, "effective": {}},
+            "factors": [],
+            "module_status": {},
+            "failed_modules": [],
+            "history": {
+                "frequency": "weekly",
+                "lookback_weeks": lookback_weeks,
+                "coverage": {},
+                "series": [],
+                "episodes": [],
+            },
+        }
+
+    def fail_cache_read(*args, **kwargs):
+        raise AssertionError("cache should not be read")
+
+    monkeypatch.setattr(signal_router, "get_cached", fail_cache_read)
+    monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        signal_router,
+        "get_signal_aggregator_snapshot_or_module_response",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("snapshot should not be read")),
+    )
+    monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
+
+    resp = auth_client.get(
+        "/api/v1/signal-aggregator",
+        params={
+            "lookback_weeks": 104,
+            "positioning_instruments": "sp500, eur",
+            "force_refresh": "true",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert calls == ["SP500,EUR"]
+
+
+def test_signal_aggregator_endpoint_cache_key_includes_positioning(auth_client, monkeypatch):
+    import api.routers.signal_aggregator as signal_router
+
+    cache_keys: list[str] = []
+
+    def fake_get_cached(_cache, key: str):
+        cache_keys.append(key)
+        return None
+
+    def fake_build(lookback_weeks: int, positioning_instruments: str, include_raw_modules: bool):
+        return {
+            "status": "ok",
+            "as_of": "2026-03-07",
+            "regime": {"label": "risk-on", "score": 20.0, "confidence": 1.0, "history_percentile": None},
+            "weights": {"configured": {}, "effective": {}},
+            "factors": [],
+            "module_status": {},
+            "failed_modules": [],
+            "history": {
+                "frequency": "weekly",
+                "lookback_weeks": lookback_weeks,
+                "coverage": {},
+                "series": [],
+                "episodes": [],
+            },
+        }
+
+    monkeypatch.setattr(signal_router, "get_cached", fake_get_cached)
+    monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
+    monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
+
+    auth_client.get("/api/v1/signal-aggregator", params={"positioning_instruments": "SP500,EUR"})
+    auth_client.get("/api/v1/signal-aggregator", params={"positioning_instruments": "NASDAQ,US10Y"})
+
+    assert len(cache_keys) == 2
+    assert cache_keys[0] != cache_keys[1]
+    assert "positioning=SP500,EUR" in cache_keys[0]
+    assert "positioning=NASDAQ,US10Y" in cache_keys[1]
 
 
 def test_signal_aggregator_endpoint_degraded_payload(auth_client, monkeypatch):

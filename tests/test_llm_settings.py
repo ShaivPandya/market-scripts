@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import llm_utils
@@ -84,3 +86,57 @@ def test_put_llm_settings_rejects_missing_provider_key(temp_llm_settings, auth_c
 
     assert response.status_code == 422
     assert "OPENAI_API_KEY" in response.text
+
+
+def test_get_agent_response_preferences_returns_defaults(temp_llm_settings, auth_client):
+    response = auth_client.get("/api/v1/settings/agent-response-preferences")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "personality": "pragmatic",
+        "warmth": "less",
+        "enthusiasm": "less",
+        "headers_lists": "less",
+        "emoji": "less",
+        "fast_answers": True,
+        "thinking_enabled": False,
+        "custom_instructions": "",
+    }
+    assert not temp_llm_settings.DB_PATH.exists()
+
+
+def test_put_agent_response_preferences_persists_preferences(temp_llm_settings, auth_client):
+    response = auth_client.put(
+        "/api/v1/settings/agent-response-preferences",
+        json={
+            "thinking_enabled": True,
+            "custom_instructions": "  End responses after answering. Do not ask follow-up questions.  ",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["thinking_enabled"] is True
+    assert payload["custom_instructions"] == "End responses after answering. Do not ask follow-up questions."
+
+    row = temp_llm_settings.get_setting("agent.response_preferences")
+    assert row is not None
+    saved = json.loads(row["value"])
+    assert saved["thinking_enabled"] is True
+    assert saved["custom_instructions"] == "End responses after answering. Do not ask follow-up questions."
+
+    get_response = auth_client.get("/api/v1/settings/agent-response-preferences")
+    assert get_response.status_code == 200
+    assert get_response.json()["thinking_enabled"] is True
+    assert (
+        get_response.json()["custom_instructions"] == "End responses after answering. Do not ask follow-up questions."
+    )
+
+
+def test_put_agent_response_preferences_rejects_invalid_values(temp_llm_settings, auth_client):
+    response = auth_client.put(
+        "/api/v1/settings/agent-response-preferences",
+        json={"personality": "other"},
+    )
+
+    assert response.status_code == 422

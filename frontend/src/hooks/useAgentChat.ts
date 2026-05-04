@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ScreenContext } from "@/contexts/ScreenContext"
+import type { AgentResponsePreferences } from "@/lib/api"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,20 +29,6 @@ export interface SessionSummary {
   key_tickers: string[] | null
   key_topics: string[] | null
   summary: string | null
-}
-
-export type AgentPreferenceLevel = "less" | "balanced" | "more"
-export type AgentPersonality = "friendly" | "pragmatic"
-
-export interface AgentResponsePreferences {
-  personality: AgentPersonality
-  warmth: AgentPreferenceLevel
-  enthusiasm: AgentPreferenceLevel
-  headers_lists: AgentPreferenceLevel
-  emoji: AgentPreferenceLevel
-  fast_answers: boolean
-  thinking_enabled: boolean
-  custom_instructions?: string | null
 }
 
 interface AgentChatState {
@@ -87,6 +74,39 @@ function extractJsonError(data: unknown): string | null {
     if (typeof value === "string" && value.trim()) return value.trim()
   }
   return null
+}
+
+function normalizeToolStatus(value: unknown): ToolCall["status"] {
+  return value === "pending" || value === "error" ? value : "ok"
+}
+
+function normalizeToolCalls(value: unknown): ToolCall[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item, index): ToolCall[] => {
+    if (typeof item === "string" && item.trim()) {
+      return [{ name: item, id: item, status: "ok" }]
+    }
+    if (!item || typeof item !== "object") return []
+    const rec = item as Record<string, unknown>
+    const name = typeof rec.name === "string" ? rec.name : typeof rec.tool === "string" ? rec.tool : null
+    if (!name) return []
+    const id = typeof rec.id === "string" ? rec.id : typeof rec.call_id === "string" ? rec.call_id : `${name}-${index}`
+    return [{ name, id, status: normalizeToolStatus(rec.status) }]
+  })
+}
+
+function mergeToolCalls(existing: ToolCall[] | undefined, incoming: ToolCall[]): ToolCall[] {
+  if (!incoming.length) return existing ?? []
+  const byId = new Map<string, ToolCall>()
+  for (const call of existing ?? []) byId.set(call.id, call)
+  for (const call of incoming) byId.set(call.id, { ...byId.get(call.id), ...call })
+  return [...byId.values()]
+}
+
+function toolCallsFromDonePayload(data: Record<string, unknown>): ToolCall[] {
+  const explicit = normalizeToolCalls(data.tool_calls)
+  if (explicit.length) return explicit
+  return normalizeToolCalls(data.tools_used)
 }
 
 function formatChatHttpError(response: Response, body: string): string {
@@ -173,6 +193,7 @@ export async function fetchSession(sessionId: string): Promise<{ transcript: Age
       role: m.role as "user" | "assistant",
       content: (m.content as string) ?? "",
       timestamp: (m.timestamp as number) ?? Date.now(),
+      toolCalls: normalizeToolCalls(m.toolCalls ?? m.tool_calls),
       isStreaming: false,
     }))
     return { transcript }
@@ -320,14 +341,10 @@ export function useAgentChat() {
                   m.id === assistantId
                     ? {
                         ...m,
-                        toolCalls: [
-                          ...(m.toolCalls ?? []),
-                          {
-                            name: data.name as string,
-                            id: data.id as string,
-                            status: "pending" as const,
-                          },
-                        ],
+                        toolCalls: mergeToolCalls(
+                          m.toolCalls,
+                          normalizeToolCalls([{ name: data.name, id: data.id, status: "pending" }]),
+                        ),
                       }
                     : m,
                 ),
@@ -339,14 +356,7 @@ export function useAgentChat() {
                 ...prev,
                 messages: prev.messages.map(m =>
                   m.id === assistantId
-                    ? {
-                        ...m,
-                        toolCalls: m.toolCalls?.map(tc =>
-                          tc.id === data.id
-                            ? { ...tc, status: (data.status as "ok" | "error") }
-                            : tc,
-                        ),
-                      }
+                    ? { ...m, toolCalls: mergeToolCalls(m.toolCalls, normalizeToolCalls([data])) }
                     : m,
                 ),
               }))
@@ -358,7 +368,13 @@ export function useAgentChat() {
                 isStreaming: false,
                 sessionId: (data.session_id as string) ?? prev.sessionId,
                 messages: prev.messages.map(m =>
-                  m.id === assistantId ? { ...m, isStreaming: false } : m,
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        toolCalls: mergeToolCalls(m.toolCalls, toolCallsFromDonePayload(data)),
+                        isStreaming: false,
+                      }
+                    : m,
                 ),
               }))
               break

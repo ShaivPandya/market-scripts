@@ -126,6 +126,30 @@ export const fetchLLMSettings = () =>
 export const updateLLMSettings = (provider: LLMProvider) =>
   client.put("/settings/llm", { provider }).then(r => r.data as LLMSettings)
 
+export type AgentPreferenceLevel = "less" | "balanced" | "more"
+export type AgentPersonality = "friendly" | "pragmatic"
+
+export interface AgentResponsePreferences {
+  personality: AgentPersonality
+  warmth: AgentPreferenceLevel
+  enthusiasm: AgentPreferenceLevel
+  headers_lists: AgentPreferenceLevel
+  emoji: AgentPreferenceLevel
+  fast_answers: boolean
+  thinking_enabled: boolean
+  custom_instructions?: string | null
+}
+
+export const fetchAgentResponsePreferences = () =>
+  client
+    .get("/settings/agent-response-preferences")
+    .then(r => r.data as AgentResponsePreferences)
+
+export const updateAgentResponsePreferences = (preferences: AgentResponsePreferences) =>
+  client
+    .put("/settings/agent-response-preferences", preferences)
+    .then(r => r.data as AgentResponsePreferences)
+
 // ─── GET endpoints ───────────────────────────────────────────────────────────
 
 export const fetchPortfolio = (timeframe: string) =>
@@ -274,6 +298,7 @@ export const fetchSignalAggregator = (params?: {
   lookback_weeks?: number
   positioning_instruments?: string
   include_raw_modules?: boolean
+  force_refresh?: boolean
 }) => client.get("/signal-aggregator", { params, timeout: 180_000 }).then(r => r.data)
 
 export const fetchIndexDashboard = (timeframe: string) =>

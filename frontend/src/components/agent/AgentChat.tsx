@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2, History, ArrowLeft, Zap, ChevronDown, SquarePen, SlidersHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { fetchAgentWorkflows, type AgentWorkflow } from "@/lib/api"
-import { useAgentChat, fetchSessionHistory, deleteSession, type AgentPreferenceLevel, type AgentResponsePreferences, type SessionSummary } from "@/hooks/useAgentChat"
+import {
+  fetchAgentResponsePreferences,
+  fetchAgentWorkflows,
+  updateAgentResponsePreferences,
+  type AgentPreferenceLevel,
+  type AgentResponsePreferences,
+  type AgentWorkflow,
+} from "@/lib/api"
+import { useAgentChat, fetchSessionHistory, deleteSession, type SessionSummary } from "@/hooks/useAgentChat"
 import { AgentMessage } from "./AgentMessage"
 import type { ScreenContext } from "@/contexts/ScreenContext"
 
@@ -20,6 +27,7 @@ const QUICK_PROMPTS = [
 ]
 
 const PREFERENCES_STORAGE_KEY = "agent-response-preferences"
+const RESPONSE_PREFERENCES_QUERY_KEY = ["agent-response-preferences"] as const
 
 const DEFAULT_RESPONSE_PREFERENCES: AgentResponsePreferences = {
   personality: "pragmatic",
@@ -80,6 +88,7 @@ interface AgentChatProps {
 
 export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const { messages, isStreaming, error, sendMessage, stopStreaming, clearChat, loadSession } = useAgentChat()
+  const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const [isWide, setIsWide] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
@@ -88,8 +97,9 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [workflowTicker, setWorkflowTicker] = useState("")
   const [showWorkflows, setShowWorkflows] = useState(false)
-  const [preferences, setPreferences] = useState<AgentResponsePreferences>(loadResponsePreferences)
-  const [draftPreferences, setDraftPreferences] = useState<AgentResponsePreferences>(preferences)
+  const [cachedPreferences] = useState<AgentResponsePreferences>(loadResponsePreferences)
+  const [draftPreferences, setDraftPreferences] = useState<AgentResponsePreferences>(cachedPreferences)
+  const [preferenceSaveError, setPreferenceSaveError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const workflowsQuery = useQuery({
@@ -99,9 +109,33 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     staleTime: 5 * 60 * 1000,
     retry: 1,
   })
+  const preferencesQuery = useQuery({
+    queryKey: RESPONSE_PREFERENCES_QUERY_KEY,
+    queryFn: fetchAgentResponsePreferences,
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  })
+  const preferencesMutation = useMutation({
+    mutationFn: updateAgentResponsePreferences,
+    onSuccess: savedPreferences => {
+      const next = normalizePreferences(savedPreferences)
+      queryClient.setQueryData(RESPONSE_PREFERENCES_QUERY_KEY, next)
+      setDraftPreferences(next)
+      localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(next))
+      setPreferenceSaveError(null)
+      setShowPreferences(false)
+    },
+    onError: err => {
+      setPreferenceSaveError(err instanceof Error ? err.message : "Failed to save preferences")
+    },
+  })
   const workflows = workflowsQuery.data ?? []
   const portfolioWorkflows = workflows.filter(wf => !wf.requiresTicker)
   const positionWorkflows = workflows.filter(wf => wf.requiresTicker)
+  const activePreferences = preferencesQuery.data
+    ? normalizePreferences(preferencesQuery.data)
+    : cachedPreferences
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -119,11 +153,22 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     if (textareaRef.current) resizeChatTextarea(textareaRef.current)
   }, [input, open])
 
+  useEffect(() => {
+    if (preferencesQuery.data) {
+      localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(normalizePreferences(preferencesQuery.data)))
+    }
+  }, [preferencesQuery.data])
+
+  function updateDraftPreferences(updater: (prev: AgentResponsePreferences) => AgentResponsePreferences) {
+    setDraftPreferences(updater)
+    setPreferenceSaveError(null)
+  }
+
   function handleSend() {
     const trimmed = input.trim()
     if (!trimmed || isStreaming) return
     setInput("")
-    sendMessage(trimmed, screenContext, preferences)
+    sendMessage(trimmed, screenContext, activePreferences)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -134,7 +179,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   }
 
   function handleQuickPrompt(prompt: string) {
-    sendMessage(prompt, screenContext, preferences)
+    sendMessage(prompt, screenContext, activePreferences)
   }
 
   function handleWorkflow(wf: AgentWorkflow) {
@@ -143,7 +188,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     const cmd = wf.requiresTicker
       ? `/workflow:${wf.name}:${ticker}`
       : `/workflow:${wf.name}`
-    sendMessage(cmd, screenContext, preferences)
+    sendMessage(cmd, screenContext, activePreferences)
     setWorkflowTicker("")
     setShowWorkflows(false)
   }
@@ -174,16 +219,16 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   }
 
   function handleShowPreferences() {
-    setDraftPreferences(preferences)
+    setDraftPreferences(activePreferences)
+    setPreferenceSaveError(null)
     setShowHistory(false)
     setShowPreferences(true)
   }
 
   function handleSavePreferences() {
+    if (preferencesMutation.isPending) return
     const next = normalizePreferences(draftPreferences)
-    setPreferences(next)
-    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(next))
-    setShowPreferences(false)
+    preferencesMutation.mutate(next)
   }
 
   type LevelPreferenceKey = "warmth" | "enthusiasm" | "headers_lists" | "emoji"
@@ -194,7 +239,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
         <span className="text-sm text-app">{label}</span>
         <select
           value={draftPreferences[key]}
-          onChange={e => setDraftPreferences(prev => ({ ...prev, [key]: e.target.value as AgentPreferenceLevel }))}
+          onChange={e => updateDraftPreferences(prev => ({ ...prev, [key]: e.target.value as AgentPreferenceLevel }))}
           className="theme-input w-28 px-2 py-1.5 text-sm"
         >
           {LEVEL_OPTIONS.map(opt => (
@@ -401,7 +446,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   </span>
                   <select
                     value={draftPreferences.personality}
-                    onChange={e => setDraftPreferences(prev => ({
+                    onChange={e => updateDraftPreferences(prev => ({
                       ...prev,
                       personality: e.target.value as AgentResponsePreferences["personality"],
                     }))}
@@ -429,7 +474,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   <input
                     type="checkbox"
                     checked={draftPreferences.fast_answers}
-                    onChange={e => setDraftPreferences(prev => ({ ...prev, fast_answers: e.target.checked }))}
+                    onChange={e => updateDraftPreferences(prev => ({ ...prev, fast_answers: e.target.checked }))}
                     className="h-4 w-4 accent-[hsl(var(--accent))]"
                   />
                 </label>
@@ -444,7 +489,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                   <input
                     type="checkbox"
                     checked={draftPreferences.thinking_enabled}
-                    onChange={e => setDraftPreferences(prev => ({ ...prev, thinking_enabled: e.target.checked }))}
+                    onChange={e => updateDraftPreferences(prev => ({ ...prev, thinking_enabled: e.target.checked }))}
                     className="h-4 w-4 accent-[hsl(var(--accent))]"
                   />
                 </label>
@@ -454,7 +499,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                 <label className="block text-sm font-medium text-app mb-2">Custom Instructions</label>
                 <textarea
                   value={draftPreferences.custom_instructions ?? ""}
-                  onChange={e => setDraftPreferences(prev => ({ ...prev, custom_instructions: e.target.value }))}
+                  onChange={e => updateDraftPreferences(prev => ({ ...prev, custom_instructions: e.target.value }))}
                   placeholder="End responses after answering. Do not ask follow-up questions."
                   rows={6}
                   maxLength={2000}
@@ -462,13 +507,22 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                 />
               </section>
 
-              <div className="flex justify-end">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  {preferenceSaveError && (
+                    <p className="text-xs text-negative">{preferenceSaveError}</p>
+                  )}
+                  {preferencesQuery.isError && !preferenceSaveError && (
+                    <p className="text-xs text-muted">Saved preferences unavailable. Showing this browser's cache.</p>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={handleSavePreferences}
-                  className="theme-button-base theme-button-primary px-4"
+                  disabled={preferencesMutation.isPending}
+                  className="theme-button-base theme-button-primary px-4 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Save
+                  {preferencesMutation.isPending ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>
