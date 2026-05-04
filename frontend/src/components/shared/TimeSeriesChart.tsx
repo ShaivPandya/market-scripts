@@ -18,6 +18,7 @@ export interface DataPoint {
 
 export interface SeriesDef {
   key: string
+  name?: string
   color?: string
   strokeWidth?: number
   /** Maps to strokeOpacity on the Line element */
@@ -76,14 +77,22 @@ function shortYear(isoDate: string): string {
   }
 }
 
-function getThisWeekTicks(data: DataPoint[]): string[] {
+type ChartRow = DataPoint | Record<string, unknown>
+
+function getRowDate(row: ChartRow): string | null {
+  return typeof row.date === "string" ? row.date : null
+}
+
+function getThisWeekTicks(data: ChartRow[]): string[] {
   const seen = new Set<string>()
   const ticks: string[] = []
   for (const pt of data) {
-    const day = pt.date.substring(0, 10)
+    const date = getRowDate(pt)
+    if (!date) continue
+    const day = date.substring(0, 10)
     if (!seen.has(day)) {
       seen.add(day)
-      ticks.push(pt.date)
+      ticks.push(date)
     }
   }
   return ticks
@@ -95,27 +104,31 @@ export function calcReturn(data: DataPoint[]): number | null {
   return (vals[vals.length - 1] - vals[0]) / vals[0] * 100
 }
 
-function getMonthTicks(data: DataPoint[]): string[] {
+function getMonthTicks(data: ChartRow[]): string[] {
   const seen = new Set<string>()
   const ticks: string[] = []
   for (const pt of data) {
-    const month = pt.date.substring(0, 7)
+    const date = getRowDate(pt)
+    if (!date) continue
+    const month = date.substring(0, 7)
     if (!seen.has(month)) {
       seen.add(month)
-      ticks.push(pt.date)
+      ticks.push(date)
     }
   }
   return ticks
 }
 
-function getYearTicks(data: DataPoint[]): string[] {
+function getYearTicks(data: ChartRow[]): string[] {
   const seen = new Set<string>()
   const ticks: string[] = []
   for (const pt of data) {
-    const year = pt.date.substring(0, 4)
+    const date = getRowDate(pt)
+    if (!date) continue
+    const year = date.substring(0, 4)
     if (!seen.has(year)) {
       seen.add(year)
-      ticks.push(pt.date)
+      ticks.push(date)
     }
   }
   return ticks
@@ -134,7 +147,7 @@ export function TimeSeriesChart({
   series,
 }: TimeSeriesChartProps) {
   const isMulti = multiData != null && series != null
-  const chartData = isMulti ? multiData : data
+  const chartData: ChartRow[] = isMulti ? multiData : data
 
   if (!chartData || chartData.length === 0) {
     return (
@@ -157,9 +170,9 @@ export function TimeSeriesChart({
             dataKey="date"
             tickFormatter={timeframe === "Monthly" ? shortYear : timeframe === "Weekly" ? shortMonth : shortDate}
             ticks={
-              timeframe === "This Week" ? getThisWeekTicks(data) :
-              timeframe === "Monthly" ? getYearTicks(data) :
-              timeframe === "Daily" ? getMonthTicks(data) :
+              timeframe === "This Week" ? getThisWeekTicks(chartData) :
+              timeframe === "Monthly" ? getYearTicks(chartData) :
+              timeframe === "Daily" ? getMonthTicks(chartData) :
               undefined
             }
             tick={{ fontSize: 10, fill: "hsl(var(--chart-axis))" }}
@@ -197,6 +210,7 @@ export function TimeSeriesChart({
                   key={s.key}
                   type="monotone"
                   dataKey={s.key}
+                  name={s.name ?? s.key}
                   stroke={s.color ?? color}
                   dot={false}
                   strokeWidth={s.strokeWidth ?? 1.5}
