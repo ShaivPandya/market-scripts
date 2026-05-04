@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 import portfolio.core_db as core_db
+from auto_report import auto_daily_report
 from auto_report.recommendations import (
+    ACTION_OPTIONS,
     MAX_RECOMMENDATIONS_COMMENTARY_CHARS,
     MAX_RECOMMENDATIONS_EVIDENCE_CHARS,
     MAX_RECOMMENDATIONS_EXTRA_CONTEXT_CHARS,
@@ -115,6 +117,26 @@ def test_validate_recommendations_payload_rejects_invalid_action(data_quality_ok
         )
 
 
+def test_validate_recommendations_payload_normalizes_review_action_to_watch(data_quality_ok):
+    payload = _valid_payload()
+    payload["recommended_actions"][0]["action"] = "review"
+    payload["recommended_actions"][0]["approval_required"] = True
+    payload["recommended_actions"][0]["rationale"] = "Review the setup but do not trade."
+
+    normalized = validate_recommendations_payload(
+        payload,
+        report_type="daily",
+        as_of="2026-05-02",
+        stance="Neutral / Watchful",
+        data_quality=data_quality_ok,
+    )
+
+    action = normalized["recommended_actions"][0]
+    assert action["action"] == "watch"
+    assert action["approval_required"] is False
+    assert action["rationale"] == "Review the setup but do not trade."
+
+
 def test_validate_recommendations_payload_rejects_missing_required_fields(data_quality_ok):
     payload = _valid_payload()
     del payload["do_nothing_rationale"]
@@ -206,6 +228,53 @@ def test_build_recommendations_user_message_compacts_large_context(data_quality_
     assert "truncated" in message
     assert "## Sources" not in message
     assert "x" * 10_000 not in message
+
+
+def test_build_recommendations_user_message_uses_only_legal_action_values(data_quality_ok):
+    message = build_recommendations_user_message(
+        report_type="daily",
+        as_of="2026-05-02",
+        stance="Neutral / Watchful",
+        data_quality=data_quality_ok,
+        evidence_bundle={},
+        commentary_md="",
+    )
+
+    assert "or review" not in message
+    assert "- If the expected onset window failed, recommend reduce, exit, or watch." in message
+    assert f"- Use only these actions: {' | '.join(ACTION_OPTIONS)}." in message
+    assert "`review` is not an action" in message
+
+
+def test_daily_recommendation_generation_accepts_review_action_as_watch(data_quality_ok, monkeypatch):
+    payload = _valid_payload()
+    payload["recommended_actions"][0]["action"] = "review"
+    payload["recommended_actions"][0]["approval_required"] = True
+    raw_text = "Decision memo\n" + RECOMMENDATIONS_SEPARATOR + "\n" + json.dumps(payload)
+
+    def fake_call_report_llm(**_kwargs):
+        return raw_text, []
+
+    def fail_repair(*_args, **_kwargs):
+        raise AssertionError("review action should normalize before repair fallback")
+
+    monkeypatch.setattr(auto_daily_report, "call_report_llm", fake_call_report_llm)
+    monkeypatch.setattr(auto_daily_report, "repair_recommendations_response", fail_repair)
+
+    recommendations_md, recommendations_payload = auto_daily_report._generate_daily_recommendations(
+        today_str="2026-05-02",
+        stance_dict={"stance": "Neutral / Watchful"},
+        data_quality=data_quality_ok,
+        evidence_bundle={},
+        commentary_md="",
+        risk_summary_md="",
+        adjustments_md="",
+    )
+
+    assert recommendations_payload["recommendation_status"] == "clear"
+    assert recommendations_payload["recommended_actions"][0]["action"] == "watch"
+    assert recommendations_payload["recommended_actions"][0]["approval_required"] is False
+    assert "Status: **error**" not in recommendations_md
 
 
 def test_data_quality_blocks_failed_critical_source():

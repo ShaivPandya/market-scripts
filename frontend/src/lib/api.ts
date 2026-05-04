@@ -892,10 +892,36 @@ export const runPriceRatioChart = (body: {
   end_date?: string
 }) => client.post("/chart/ratio", body).then(r => r.data)
 
+export type AnalyzerScenarioRequest = {
+  preset?: string
+  factor_weights?: {
+    quality: number
+    price_momentum: number
+    fundamental_momentum: number
+    valuation: number
+  }
+  fundamental_momentum_weights?: {
+    revenue: number
+    eps: number
+  }
+  valuation_weights?: {
+    price_sales: number
+    price_operating_income: number
+    price_fcf: number
+    price_earnings: number
+  }
+  brakes?: {
+    drawdown_sensitivity: number
+    contrarian_penalty: number
+    short_squeeze_brake: number
+  }
+}
+
 type AnalyzerRequest = {
   book?: number
   target_leverage?: number
   beta_neutral?: boolean
+  scenario?: AnalyzerScenarioRequest
 }
 
 export const runPortfolioAnalyzer = (body: AnalyzerRequest = {}) =>

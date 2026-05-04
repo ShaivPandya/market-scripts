@@ -575,6 +575,8 @@ def validate_recommendations_payload(
         if missing_action_fields:
             errors.append(f"recommended_actions[{idx}] missing required fields: {', '.join(missing_action_fields)}")
         action = str(raw_action.get("action") or "").lower()
+        if action == "review":
+            action = "watch"
         if action not in ACTION_OPTIONS:
             errors.append(f"recommended_actions[{idx}].action is invalid: {action!r}")
             continue
@@ -704,10 +706,11 @@ Hard rules:
 - do_nothing is an active recommendation when no fat pitch exists.
 - New entries normally start at one-third intended size.
 - Adds require validation from price action, news, and/or fundamentals.
-- If the expected onset window failed, recommend reduce, exit, or review.
+- If the expected onset window failed, recommend reduce, exit, or watch.
 - Default hedge is position reduction. Hedge overlays require explicit justification.
 - Use the shared stance enum exactly: {stance_options}.
 - Use only these actions: {action_options}.
+- `review` is not an action. Use recommendation_status `review_required` when human review is needed, and use action `watch` for non-directional review/monitoring items.
 
 After the memo, output the separator `{RECOMMENDATIONS_SEPARATOR}` on its own line, then a JSON block matching this contract:
 ```json
@@ -757,10 +760,16 @@ def repair_recommendations_response(
 ) -> tuple[str, dict]:
     from auto_report.shared import call_report_llm
 
+    action_options = " | ".join(ACTION_OPTIONS)
     prompt = f"""Repair the recommendations output so it strictly matches the JSON contract.
 
 Validation error:
 {validation_error}
+
+Allowed recommended_actions[].action values:
+{action_options}
+
+If any recommended_actions[].action is `review`, convert that action to `watch` and preserve its rationale, evidence, and monitoring intent. `review_required` is only a recommendation_status value, not an action.
 
 Original output:
 ```
@@ -772,7 +781,7 @@ Return a concise memo, then `{RECOMMENDATIONS_SEPARATOR}`, then valid JSON only.
         system_msg="You repair malformed investment recommendation JSON. Do not change the intent unless required by schema or blocked data-quality rules.",
         user_msg=prompt,
         allowed_domains=None,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     return parse_recommendations_response(
         repaired,

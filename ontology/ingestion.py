@@ -125,6 +125,23 @@ def ingest_into_repository(
     def add_edge(edge: OntologyEdge) -> None:
         edges[(edge.source_id, edge.target_id, edge.relation_type)] = edge
 
+    def ensure_sector_node(sector_name: str, sector_source: str) -> str:
+        sector_label = str(sector_name or "Unknown Equity").strip() or "Unknown Equity"
+        sector_id = f"sector:{_slug(sector_label)}"
+        if sector_id not in nodes:
+            add_node(
+                OntologyNode(
+                    id=sector_id,
+                    type="Sector",
+                    label=sector_label,
+                    properties={
+                        "name": sector_label,
+                        "sector_source": str(sector_source or "unknown").strip() or "unknown",
+                    },
+                )
+            )
+        return sector_id
+
     portfolio = _source_data(source_results, "portfolio")
     if not isinstance(portfolio, PortfolioSnapshot):
         portfolio = PortfolioSnapshot(positions={}, timeframe=timeframe, timestamp=None)
@@ -147,7 +164,7 @@ def ingest_into_repository(
         latest_price = position.latest_price
 
         sector = sector_mapper.resolve_sector(ticker_norm, asset_class)
-        sector_id = f"sector:{_slug(sector.sector)}"
+        sector_id = ensure_sector_node(sector.sector, sector.source)
 
         add_node(
             OntologyNode(
@@ -173,17 +190,6 @@ def ingest_into_repository(
                 properties={
                     "ticker": ticker_norm,
                     "asset": asset_class,
-                },
-            )
-        )
-        add_node(
-            OntologyNode(
-                id=sector_id,
-                type="Sector",
-                label=sector.sector,
-                properties={
-                    "name": sector.sector,
-                    "sector_source": sector.source,
                 },
             )
         )
@@ -268,6 +274,7 @@ def ingest_into_repository(
 
     for item in sector_evidence:
         sector_name = str(item.get("sector") or "Unknown Equity")
+        sector_id = ensure_sector_node(sector_name, "sector_metrics")
         signal_id = f"signal:sector_metrics:{_slug(sector_name)}"
         sector_signal_by_name[sector_name] = signal_id
         add_node(
@@ -292,7 +299,7 @@ def ingest_into_repository(
         )
         add_edge(
             OntologyEdge(
-                source_id=f"sector:{_slug(sector_name)}",
+                source_id=sector_id,
                 target_id="macro_indicator:sector_metrics",
                 relation_type=AFFECTED_BY,
                 properties={"ontology_run_id": run_id},
@@ -308,6 +315,7 @@ def ingest_into_repository(
         if sector_name not in sector_signal_by_name:
             signal_id = f"signal:sector_metrics:{_slug(sector_name)}"
             sector_signal_by_name[sector_name] = signal_id
+            sector_id = ensure_sector_node(sector_name, "sector_metrics")
             add_node(
                 OntologyNode(
                     id=signal_id,
@@ -336,7 +344,7 @@ def ingest_into_repository(
             )
             add_edge(
                 OntologyEdge(
-                    source_id=f"sector:{_slug(sector_name)}",
+                    source_id=sector_id,
                     target_id="macro_indicator:sector_metrics",
                     relation_type=AFFECTED_BY,
                     properties={"ontology_run_id": run_id},

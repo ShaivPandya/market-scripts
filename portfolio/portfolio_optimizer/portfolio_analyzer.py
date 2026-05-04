@@ -140,7 +140,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, Optional, Tuple  # noqa: UP035
+from typing import Any, Dict, Mapping, Optional, Tuple  # noqa: UP035
 
 import cvxpy as cp
 import numpy as np
@@ -157,8 +157,10 @@ LOGGER = logging.getLogger(__name__)
 
 from portfolio.portfolio_optimizer.composite_signal import (
     DEFAULT_WEIGHTS_SHORT,
+    combine_signals,
     generate_anchor_normalized_long_equity_signals,
     generate_composite_signals,
+    zscore_of_ranks,
 )
 
 console = Console()
@@ -217,6 +219,40 @@ LONG_SIGNAL_CAP = 3.0
 LONG_WEIGHTING_MODE = "all_longs_absolute_signal_0_to_20"
 SIGNAL_ANCHOR_MODE = "spdr_sector_top10_anchor"
 
+SCENARIO_FACTOR_DEFAULTS = {
+    "quality": 0.30,
+    "price_momentum": 0.40,
+    "fundamental_momentum": 0.30,
+    "valuation": 0.0,
+}
+SCENARIO_FUNDAMENTAL_DEFAULTS = {
+    "revenue": 2.0,
+    "eps": 1.0,
+}
+SCENARIO_VALUATION_DEFAULTS = {
+    "price_sales": 1.0,
+    "price_operating_income": 1.0,
+    "price_fcf": 1.0,
+    "price_earnings": 1.0,
+}
+SCENARIO_BRAKE_DEFAULTS = {
+    "drawdown_sensitivity": 0.0,
+    "contrarian_penalty": 0.0,
+    "short_squeeze_brake": 0.0,
+}
+VALUATION_COLUMNS = (
+    "price_sales",
+    "price_operating_income",
+    "price_fcf",
+    "price_earnings",
+)
+VALUATION_LABELS = {
+    "price_sales": "P/S",
+    "price_operating_income": "P/Operating Income",
+    "price_fcf": "P/FCF",
+    "price_earnings": "P/E",
+}
+
 
 # -----------------------------
 # Currency metadata for non-USD instruments
@@ -232,6 +268,317 @@ FX_PAIR_INFO: dict[str, tuple[str, str]] = {
     # Example:
     # "USDJPY": ("USD", "JPY"),
 }
+
+
+@dataclass
+class ValuationMetrics:
+    price_sales: float = np.nan
+    price_operating_income: float = np.nan
+    price_fcf: float = np.nan
+    price_earnings: float = np.nan
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+    return out if np.isfinite(out) else np.nan
+
+
+def _nonnegative_weight_group(
+    values: Mapping[str, Any] | None,
+    defaults: Mapping[str, float],
+    *,
+    group_name: str,
+) -> dict[str, float]:
+    raw = dict(values or {})
+    out = {key: max(0.0, _safe_float(raw.get(key, default))) for key, default in defaults.items()}
+    total = sum(out.values())
+    if total <= 0:
+        raise ValueError(f"{group_name} must include at least one positive weight.")
+    return {key: value / total for key, value in out.items()}
+
+
+def _clamped_brakes(values: Mapping[str, Any] | None) -> dict[str, float]:
+    raw = dict(values or {})
+    return {
+        key: float(min(1.0, max(0.0, _safe_float(raw.get(key, default)))))
+        for key, default in SCENARIO_BRAKE_DEFAULTS.items()
+    }
+
+
+def normalize_analyzer_scenario(scenario: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    raw = dict(scenario or {})
+    return {
+        "preset": str(raw.get("preset") or "balanced"),
+        "factor_weights": _nonnegative_weight_group(
+            raw.get("factor_weights"),
+            SCENARIO_FACTOR_DEFAULTS,
+            group_name="factor_weights",
+        ),
+        "fundamental_momentum_weights": _nonnegative_weight_group(
+            raw.get("fundamental_momentum_weights"),
+            SCENARIO_FUNDAMENTAL_DEFAULTS,
+            group_name="fundamental_momentum_weights",
+        ),
+        "valuation_weights": _nonnegative_weight_group(
+            raw.get("valuation_weights"),
+            SCENARIO_VALUATION_DEFAULTS,
+            group_name="valuation_weights",
+        ),
+        "brakes": _clamped_brakes(raw.get("brakes")),
+    }
+
+
+def _get_yf_statement(ticker_obj: yf.Ticker, attr_names: tuple[str, ...]) -> pd.DataFrame | None:
+    for attr in attr_names:
+        try:
+            value = getattr(ticker_obj, attr)
+            df = value() if callable(value) else value
+        except Exception:
+            continue
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return df
+    return None
+
+
+def _statement_row_sum(stmt: pd.DataFrame | None, keys: tuple[str, ...], periods: int) -> float:
+    if stmt is None or stmt.empty:
+        return np.nan
+    for key in keys:
+        if key not in stmt.index:
+            continue
+        row = pd.to_numeric(stmt.loc[key], errors="coerce").dropna()
+        if row.empty:
+            continue
+        return float(row.iloc[:periods].sum())
+    return np.nan
+
+
+def _ttm_or_latest(
+    quarterly_stmt: pd.DataFrame | None,
+    annual_stmt: pd.DataFrame | None,
+    keys: tuple[str, ...],
+) -> float:
+    quarterly_value = _statement_row_sum(quarterly_stmt, keys, 4)
+    if np.isfinite(quarterly_value):
+        return quarterly_value
+    annual_value = _statement_row_sum(annual_stmt, keys, 1)
+    return annual_value if np.isfinite(annual_value) else np.nan
+
+
+def _price_multiple(market_cap: float, denominator: float) -> float:
+    if not np.isfinite(market_cap) or market_cap <= 0:
+        return np.nan
+    if not np.isfinite(denominator) or denominator <= 0:
+        return np.nan
+    return float(market_cap / denominator)
+
+
+def fetch_valuation_metrics(ticker: str) -> ValuationMetrics:
+    revenue_keys = (
+        "Total Revenue",
+        "TotalRevenue",
+        "Operating Revenue",
+        "OperatingRevenue",
+        "Revenue",
+        "Revenues",
+    )
+    operating_income_keys = (
+        "Operating Income",
+        "OperatingIncome",
+        "Operating Income Loss",
+        "OperatingIncomeLoss",
+        "Income From Operations",
+        "IncomeLossFromOperations",
+        "EBIT",
+    )
+    net_income_keys = (
+        "Net Income",
+        "NetIncome",
+        "Net Income Common Stockholders",
+        "NetIncomeCommonStockholders",
+        "Net Income Continuous Operations",
+        "NetIncomeContinuousOperations",
+    )
+    operating_cash_flow_keys = (
+        "Operating Cash Flow",
+        "OperatingCashFlow",
+        "Total Cash From Operating Activities",
+        "Net Cash Provided By Operating Activities",
+    )
+    capex_keys = (
+        "Capital Expenditure",
+        "CapitalExpenditure",
+        "Capital Expenditures",
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+    )
+
+    info: dict[str, Any] = {}
+    try:
+        info = yf_ticker_info(ticker)
+    except Exception:
+        info = {}
+
+    market_cap = _safe_float(info.get("marketCap"))
+    trailing_pe = _safe_float(info.get("trailingPE"))
+
+    ticker_obj = yf.Ticker(ticker)
+    quarterly_income = _get_yf_statement(ticker_obj, ("quarterly_income_stmt", "quarterly_financials"))
+    annual_income = _get_yf_statement(ticker_obj, ("income_stmt", "financials"))
+    quarterly_cashflow = _get_yf_statement(ticker_obj, ("quarterly_cashflow", "quarterly_cash_flow"))
+    annual_cashflow = _get_yf_statement(ticker_obj, ("cashflow", "cash_flow"))
+
+    revenue_ttm = _ttm_or_latest(quarterly_income, annual_income, revenue_keys)
+    operating_income_ttm = _ttm_or_latest(quarterly_income, annual_income, operating_income_keys)
+    net_income_ttm = _ttm_or_latest(quarterly_income, annual_income, net_income_keys)
+    operating_cash_flow_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, operating_cash_flow_keys)
+    capex_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, capex_keys)
+    if np.isfinite(operating_cash_flow_ttm) and np.isfinite(capex_ttm):
+        fcf_ttm = operating_cash_flow_ttm + capex_ttm if capex_ttm < 0 else operating_cash_flow_ttm - capex_ttm
+    else:
+        fcf_ttm = np.nan
+
+    price_earnings = _price_multiple(market_cap, net_income_ttm)
+    if not np.isfinite(price_earnings) and np.isfinite(trailing_pe) and trailing_pe > 0:
+        price_earnings = trailing_pe
+
+    return ValuationMetrics(
+        price_sales=_price_multiple(market_cap, revenue_ttm),
+        price_operating_income=_price_multiple(market_cap, operating_income_ttm),
+        price_fcf=_price_multiple(market_cap, fcf_ttm),
+        price_earnings=price_earnings,
+    )
+
+
+def fetch_valuation_metrics_batch(tickers: list[str]) -> pd.DataFrame:
+    if not tickers:
+        return pd.DataFrame(columns=list(VALUATION_COLUMNS))
+
+    rows: dict[str, ValuationMetrics] = {}
+    max_workers = min(6, len(tickers))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(fetch_valuation_metrics, ticker): ticker for ticker in tickers}
+        for future in as_completed(futures):
+            ticker = futures[future]
+            try:
+                rows[ticker] = future.result()
+            except Exception as e:
+                LOGGER.warning("%s: Valuation fetch failed (%s)", ticker, e)
+
+    if not rows:
+        return pd.DataFrame(columns=list(VALUATION_COLUMNS))
+    return pd.DataFrame({ticker: vars(metrics) for ticker, metrics in rows.items()}).T.reindex(
+        columns=VALUATION_COLUMNS
+    )
+
+
+def compute_valuation_signal(raw_df: pd.DataFrame, weights: Mapping[str, float]) -> pd.Series:
+    if raw_df is None or raw_df.empty:
+        return pd.Series(dtype="float64")
+
+    signal_df = pd.DataFrame(index=raw_df.index)
+    for column in VALUATION_COLUMNS:
+        values = pd.to_numeric(raw_df.get(column), errors="coerce")
+        positive = values.where(values > 0)
+        signal_df[column] = zscore_of_ranks(-positive)
+
+    composite = pd.Series(np.nan, index=raw_df.index, dtype="float64")
+    for ticker in raw_df.index:
+        available = signal_df.loc[ticker].dropna()
+        available_weights = {k: float(weights.get(k, 0.0)) for k in available.index if float(weights.get(k, 0.0)) > 0}
+        weight_sum = sum(available_weights.values())
+        if weight_sum <= 0:
+            continue
+        composite.loc[ticker] = sum((available_weights[k] / weight_sum) * available[k] for k in available_weights)
+
+    return zscore_of_ranks(composite)
+
+
+def _combine_weighted_components(
+    components: Mapping[str, pd.Series],
+    weights: Mapping[str, float],
+    tickers: list[str],
+) -> pd.Series:
+    active_components = {key: series.reindex(tickers) for key, series in components.items() if weights.get(key, 0) > 0}
+    active_weights = {key: value for key, value in weights.items() if value > 0 and key in active_components}
+    if not active_components or not active_weights:
+        return pd.Series(0.0, index=tickers, dtype="float64")
+    return combine_signals(active_components, active_weights, tickers).reindex(tickers).fillna(0.0)
+
+
+def _compute_scenario_penalties(
+    meta: pd.DataFrame,
+    tickers: list[str],
+    brakes: Mapping[str, float],
+) -> tuple[pd.Series, dict[str, pd.Series]]:
+    direction = meta["direction_intended"].reindex(tickers).fillna(meta["direction"].reindex(tickers)).astype(str)
+    direction = direction.str.strip().str.lower()
+    is_long = direction.eq("long")
+    is_short = direction.eq("short")
+
+    drawdown = pd.to_numeric(meta["drawdown_52w"].reindex(tickers), errors="coerce").fillna(0.0)
+    drawdown_penalty = ((drawdown - CONTRARIAN_DD_THRESHOLD).clip(lower=0.0) / 0.75).clip(upper=1.0)
+    drawdown_penalty = drawdown_penalty.where(is_long, 0.0) * 1.5 * float(brakes.get("drawdown_sensitivity", 0.0))
+
+    contrarian = meta["contrarian"].reindex(tickers).fillna(False).astype(bool)
+    contrarian_eligible = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool)
+    contrarian_penalty = (contrarian & ~contrarian_eligible).astype(float) * float(
+        brakes.get("contrarian_penalty", 0.0)
+    )
+
+    no_new_high = meta["no_new_high_20d"].reindex(tickers).fillna(False).astype(bool)
+    avg20 = pd.to_numeric(meta["avg20_roc63"].reindex(tickers), errors="coerce").fillna(0.0)
+    avg10 = pd.to_numeric(meta["avg10_rel_roc"].reindex(tickers), errors="coerce").fillna(0.0)
+    high_penalty = (~no_new_high).astype(float) * 0.7
+    momentum_penalty = (avg20.clip(lower=0.0) / 20.0).clip(upper=0.5) + (avg10.clip(lower=0.0) / 10.0).clip(upper=0.5)
+    short_squeeze_penalty = (high_penalty + momentum_penalty).clip(upper=1.5).where(is_short, 0.0)
+    short_squeeze_penalty = short_squeeze_penalty * float(brakes.get("short_squeeze_brake", 0.0))
+
+    parts = {
+        "Drawdown brake": drawdown_penalty.reindex(tickers).fillna(0.0),
+        "Contrarian brake": contrarian_penalty.reindex(tickers).fillna(0.0),
+        "Short squeeze brake": short_squeeze_penalty.reindex(tickers).fillna(0.0),
+    }
+    total = sum(parts.values(), pd.Series(0.0, index=tickers, dtype="float64"))
+    return total.reindex(tickers).fillna(0.0), parts
+
+
+def _scenario_drivers(
+    tickers: list[str],
+    components: Mapping[str, pd.Series],
+    factor_weights: Mapping[str, float],
+    penalty_parts: Mapping[str, pd.Series],
+    score_delta: pd.Series,
+) -> list[str]:
+    component_labels = {
+        "quality": "Quality",
+        "price_momentum": "Price momentum",
+        "fundamental_momentum": "Fundamental momentum",
+        "valuation": "Valuation",
+    }
+    out: list[str] = []
+    for ticker in tickers:
+        factor_candidates: list[tuple[float, str]] = []
+        for key, series in components.items():
+            value = _safe_float(series.get(ticker))
+            if not np.isfinite(value):
+                continue
+            factor_candidates.append((abs(float(factor_weights.get(key, 0.0)) * value), component_labels.get(key, key)))
+
+        penalty_candidates = [(_safe_float(series.get(ticker)), label) for label, series in penalty_parts.items()]
+        penalty_candidates = [(value, label) for value, label in penalty_candidates if np.isfinite(value) and value > 0]
+
+        top_factor = max(factor_candidates, default=(0.0, "Scenario mix"), key=lambda item: item[0])
+        top_penalty = max(penalty_candidates, default=(0.0, ""), key=lambda item: item[0])
+
+        delta = _safe_float(score_delta.get(ticker))
+        if top_penalty[0] > 0 and (delta < 0 or top_penalty[0] >= top_factor[0]):
+            out.append(top_penalty[1])
+        else:
+            out.append(top_factor[1])
+    return out
 
 
 # -----------------------------
@@ -1263,7 +1610,7 @@ def overlay_anchor_long_equity_signals(
     return signal_composite_out, sub_out, metadata
 
 
-def analyze_portfolio() -> dict:
+def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
     """
     Build an informational signal table for conviction analysis.
 
@@ -1273,6 +1620,7 @@ def analyze_portfolio() -> dict:
     from datetime import datetime
 
     try:
+        scenario_config = normalize_analyzer_scenario(scenario)
         meta = _get_positions_df()
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
@@ -1359,6 +1707,44 @@ def analyze_portfolio() -> dict:
             )
             signal_effective.loc[contrarian_tickers] = contrarian_signal
 
+        valuation_tickers = [t for t in active_tickers if str(meta.loc[t, "asset"]).strip().lower() == "equity"]
+        valuation_df = fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
+        valuation_signal = compute_valuation_signal(
+            valuation_df,
+            scenario_config["valuation_weights"],
+        ).reindex(tickers)
+
+        fundamental_momentum_signal = _combine_weighted_components(
+            {
+                "revenue": signal_subcomponents["rev_mom_signal"],
+                "eps": signal_subcomponents["eps_mom_signal"],
+            },
+            scenario_config["fundamental_momentum_weights"],
+            tickers,
+        )
+        scenario_components = {
+            "quality": signal_subcomponents["quality_signal"].reindex(tickers),
+            "price_momentum": signal_subcomponents["price_mom_signal"].reindex(tickers),
+            "fundamental_momentum": fundamental_momentum_signal.reindex(tickers),
+            "valuation": valuation_signal.reindex(tickers),
+        }
+        scenario_base_score = _combine_weighted_components(
+            scenario_components,
+            scenario_config["factor_weights"],
+            tickers,
+        )
+        scenario_penalty, penalty_parts = _compute_scenario_penalties(meta, tickers, scenario_config["brakes"])
+        scenario_score = (scenario_base_score - scenario_penalty).reindex(tickers).fillna(0.0)
+        baseline_score = signal_effective.reindex(tickers).fillna(0.0)
+        score_delta = scenario_score - baseline_score
+        scenario_driver = _scenario_drivers(
+            tickers,
+            scenario_components,
+            scenario_config["factor_weights"],
+            penalty_parts,
+            score_delta,
+        )
+
         direction_display = meta["direction_intended"].fillna(meta["direction"]).astype(str).str.strip().str.lower()
 
         weights_df = pd.DataFrame(
@@ -1375,18 +1761,32 @@ def analyze_portfolio() -> dict:
                 "avg20_roc63": meta["avg20_roc63"].values,
                 "avg10_rel_roc": meta["avg10_rel_roc"].values,
                 "signal": signal_effective.values,
+                "baseline_score": baseline_score.values,
+                "scenario_score": scenario_score.values,
+                "score_delta": score_delta.values,
+                "scenario_driver": scenario_driver,
+                "scenario_penalty": scenario_penalty.values,
                 "quality_signal": signal_subcomponents["quality_signal"].values,
                 "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
                 "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
                 "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
+                "fundamental_momentum_signal": fundamental_momentum_signal.values,
+                "valuation_signal": valuation_signal.values,
+                "price_sales": valuation_df["price_sales"].values,
+                "price_operating_income": valuation_df["price_operating_income"].values,
+                "price_fcf": valuation_df["price_fcf"].values,
+                "price_earnings": valuation_df["price_earnings"].values,
             }
         )
-        weights_df = weights_df.sort_values(["signal", "ticker"], ascending=[False, True]).reset_index(drop=True)
+        weights_df = weights_df.sort_values(["scenario_score", "ticker"], ascending=[False, True]).reset_index(
+            drop=True
+        )
 
         return {
             "status": "ok",
             "error": None,
             "timestamp": datetime.now(),
+            "scenario": scenario_config,
             "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
             "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
             "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
@@ -1839,7 +2239,12 @@ def optimize_portfolio(
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
-def get_data(book: float | None = None, target_leverage: float | None = None, beta_neutral: bool = True) -> dict:
+def get_data(
+    book: float | None = None,
+    target_leverage: float | None = None,
+    beta_neutral: bool = True,
+    scenario: Mapping[str, Any] | None = None,
+) -> dict:
     """
     Fetch portfolio analyzer results for GUI consumption.
 
@@ -1852,7 +2257,7 @@ def get_data(book: float | None = None, target_leverage: float | None = None, be
         Dictionary with analyzer results or error.
     """
     _ = (book, target_leverage, beta_neutral)
-    return analyze_portfolio()
+    return analyze_portfolio(scenario=scenario)
 
 
 # -----------------------------

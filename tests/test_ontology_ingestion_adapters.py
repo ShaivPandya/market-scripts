@@ -119,7 +119,17 @@ def test_ingestion_uses_adapter_results(monkeypatch):
                         -4,
                         None,
                         -3,
-                    )
+                    ),
+                    SectorMetricRow(
+                        "Communication Services",
+                        9,
+                        None,
+                        -0.5,
+                        None,
+                        -2,
+                        None,
+                        -1,
+                    ),
                 ],
                 timestamp="2026-05-01T20:00:00+00:00",
             ),
@@ -156,6 +166,13 @@ def test_ingestion_uses_adapter_results(monkeypatch):
     positions = [node for node in repo.saved["nodes"] if node.id == "position:MU"]
     assert positions
     assert positions[0].properties["latest_price"] == 100.0
+    assert any(node.id == "sector:communication_services" for node in repo.saved["nodes"])
+    assert any(
+        edge.source_id == "sector:communication_services"
+        and edge.target_id == "macro_indicator:sector_metrics"
+        and edge.relation_type == "affected_by"
+        for edge in repo.saved["edges"]
+    )
 
 
 def test_ingestion_no_longer_imports_api_routers():

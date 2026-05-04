@@ -2404,22 +2404,32 @@ def get_governance_outbox_metrics() -> dict[str, Any]:
 def set_workflow_run_provenance_event(run_id: str, provenance_event_id: str | None) -> None:
     conn = _get_conn()
     with _lock:
-        conn.execute(
-            "UPDATE workflow_runs SET provenance_event_id = ?, lineage_completeness = CASE "
-            "WHEN ? IS NOT NULL THEN 'complete' ELSE lineage_completeness END WHERE run_id = ?",
-            (provenance_event_id, provenance_event_id, run_id),
-        )
+        if provenance_event_id is not None:
+            conn.execute(
+                "UPDATE workflow_runs SET provenance_event_id = ?, lineage_completeness = 'complete' WHERE run_id = ?",
+                (provenance_event_id, run_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE workflow_runs SET provenance_event_id = ? WHERE run_id = ?",
+                (provenance_event_id, run_id),
+            )
         conn.commit()
 
 
 def set_action_run_provenance_event(action_run_id: int, provenance_event_id: str | None) -> None:
     conn = _get_conn()
     with _lock:
-        conn.execute(
-            "UPDATE action_runs SET provenance_event_id = ?, lineage_completeness = CASE "
-            "WHEN ? IS NOT NULL THEN 'complete' ELSE lineage_completeness END WHERE id = ?",
-            (provenance_event_id, provenance_event_id, action_run_id),
-        )
+        if provenance_event_id is not None:
+            conn.execute(
+                "UPDATE action_runs SET provenance_event_id = ?, lineage_completeness = 'complete' WHERE id = ?",
+                (provenance_event_id, action_run_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE action_runs SET provenance_event_id = ? WHERE id = ?",
+                (provenance_event_id, action_run_id),
+            )
         conn.commit()
 
 
@@ -2467,20 +2477,29 @@ def set_pending_approval_provenance(
 ) -> None:
     conn = _get_conn()
     with _lock:
-        conn.execute(
-            """
-            UPDATE pending_approvals
-            SET provenance_event_id = COALESCE(?, provenance_event_id),
-                origin_provenance_event_id = COALESCE(?, origin_provenance_event_id),
-                origin_artifact_id = COALESCE(?, origin_artifact_id),
-                lineage_completeness = CASE
-                    WHEN ? IS NOT NULL THEN 'complete'
-                    ELSE lineage_completeness
-                END
-            WHERE id = ?
-            """,
-            (provenance_event_id, origin_provenance_event_id, origin_artifact_id, provenance_event_id, approval_id),
-        )
+        if provenance_event_id is not None:
+            conn.execute(
+                """
+                UPDATE pending_approvals
+                SET provenance_event_id = COALESCE(?, provenance_event_id),
+                    origin_provenance_event_id = COALESCE(?, origin_provenance_event_id),
+                    origin_artifact_id = COALESCE(?, origin_artifact_id),
+                    lineage_completeness = 'complete'
+                WHERE id = ?
+                """,
+                (provenance_event_id, origin_provenance_event_id, origin_artifact_id, approval_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE pending_approvals
+                SET provenance_event_id = COALESCE(?, provenance_event_id),
+                    origin_provenance_event_id = COALESCE(?, origin_provenance_event_id),
+                    origin_artifact_id = COALESCE(?, origin_artifact_id)
+                WHERE id = ?
+                """,
+                (provenance_event_id, origin_provenance_event_id, origin_artifact_id, approval_id),
+            )
         conn.commit()
 
 
