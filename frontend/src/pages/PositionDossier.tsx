@@ -220,20 +220,24 @@ export function PositionDossier() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <button type="button" onClick={() => navigate(backTarget.path)} className="text-sm text-muted hover:text-app">&larr; {backTarget.label}</button>
-          <h1 className="text-2xl font-bold text-app">{data.ticker}</h1>
-          {meta?.status && (
-            <span className={cn("text-xs px-2 py-0.5 rounded font-medium", STATUS_COLORS[meta.status] ?? STATUS_COLORS.active)}>
-              {meta.status.replace(/_/g, " ")}
-            </span>
-          )}
-          {data.position?.direction != null && <span className="text-sm text-muted">{String(data.position.direction)}</span>}
-          <ThesisUpload ticker={ticker!} status={(thesisStatus?.[ticker!] ?? "missing") as ThesisStatus} />
-          {isEquity && <OverviewUpload ticker={ticker!} hasContent={!!data.overview_content} />}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+            <button type="button" onClick={() => navigate(backTarget.path)} className="shrink-0 text-sm text-muted hover:text-app">&larr; {backTarget.label}</button>
+            <h1 className="text-2xl font-bold text-app">{data.ticker}</h1>
+            {meta?.status && (
+              <span className={cn("shrink-0 text-xs px-2 py-0.5 rounded font-medium", STATUS_COLORS[meta.status] ?? STATUS_COLORS.active)}>
+                {meta.status.replace(/_/g, " ")}
+              </span>
+            )}
+            {data.position?.direction != null && <span className="text-sm text-muted">{String(data.position.direction)}</span>}
+          </div>
+          <div className="flex max-w-full flex-wrap items-center gap-2">
+            <ThesisUpload ticker={ticker!} status={(thesisStatus?.[ticker!] ?? "missing") as ThesisStatus} />
+            {isEquity && <OverviewUpload ticker={ticker!} hasContent={!!data.overview_content} />}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           {meta && (
             <button
               type="button"
@@ -269,13 +273,13 @@ export function PositionDossier() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-4 overflow-x-auto border-b border-app">
+      <div className="mb-4 flex w-full max-w-full gap-1 overflow-x-auto overscroll-x-contain border-b border-app [-webkit-overflow-scrolling:touch]">
         {visibleTabs.map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={cn(
-              "px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors",
+              "shrink-0 px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors",
               activeTab === t
                 ? "border-blue-500 text-blue-600 dark:text-blue-400"
                 : "border-transparent text-muted hover:text-app",

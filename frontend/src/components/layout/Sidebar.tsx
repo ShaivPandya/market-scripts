@@ -113,8 +113,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   return (
     <nav
       className={[
-        "md:w-[18.5rem] md:shrink-0 md:static md:translate-x-0 md:h-screen md:sticky md:top-0",
-        "fixed top-0 left-0 z-30 h-full w-[min(22rem,calc(100vw-1rem))]",
+        "md:w-[17.5rem] md:shrink-0 md:static md:translate-x-0 md:h-screen md:sticky md:top-0",
+        "fixed top-0 left-0 z-30 h-full w-[min(21rem,calc(100vw-1rem))]",
         "transition-transform duration-300",
         isOpen ? "translate-x-0" : "-translate-x-full",
         "theme-sidebar border-r border-strong flex flex-col",

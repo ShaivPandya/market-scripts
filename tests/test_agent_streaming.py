@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -694,6 +695,28 @@ def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeyp
     assert done_events[-1]["tools_used"] == ["get_thesis", "query_ontology"]
     assert done_events[-1]["tool_calls"][0]["status"] == "ok"
     assert finalized[0]["toolCalls"] == done_events[-1]["tool_calls"]
+
+
+def test_workflow_execution_emits_keepalive_while_blocked(monkeypatch):
+    monkeypatch.setattr(agent_router, "SSE_KEEPALIVE_INTERVAL_S", 0.001)
+
+    def slow_execute_workflow(*_args, **_kwargs):
+        time.sleep(0.02)
+        return "run-slow", "synthesis prompt", []
+
+    monkeypatch.setattr(agent_router, "execute_workflow", slow_execute_workflow)
+
+    gen = agent_router._execute_workflow_keepalive("thesis_review", "NVDA", actor=None)
+    frames: list[str] = []
+    while True:
+        try:
+            frames.append(next(gen))
+        except StopIteration as stop:
+            result = stop.value
+            break
+
+    assert any("event: ping" in frame for frame in frames)
+    assert result == ("run-slow", "synthesis prompt", [])
 
 
 # ---------------------------------------------------------------------------

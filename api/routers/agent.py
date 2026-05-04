@@ -757,6 +757,33 @@ def _execute_tools_parallel_keepalive(
                 yield (c, result, elapsed_ms)
 
 
+def _execute_workflow_keepalive(
+    workflow_name: str,
+    workflow_ticker: str | None,
+    *,
+    actor: Actor | None,
+):
+    """Run a deterministic workflow while emitting SSE keepalive frames."""
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(execute_workflow, workflow_name, workflow_ticker, actor)
+    try:
+        pending = {future}
+        while pending:
+            done, pending = wait(
+                pending,
+                timeout=SSE_KEEPALIVE_INTERVAL_S,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
+                yield _sse_ping()
+                continue
+            return future.result()
+    finally:
+        if not future.done():
+            future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _execute_tool_for_actor(
     name: str,
     args: dict,
@@ -1269,7 +1296,11 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                     return
 
                 # Emit tool calls as they execute
-                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker, actor=tool_actor)
+                run_id, synthesis_prompt, sections = yield from _execute_workflow_keepalive(
+                    workflow_name,
+                    workflow_ticker,
+                    actor=tool_actor,
+                )
                 workflow_tool_calls = [
                     {"name": str(section["tool"]), "id": str(section["tool"]), "status": "ok"} for section in sections
                 ]
@@ -1716,7 +1747,11 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     yield _sse("done", {"usage": {}, "session_id": session_id})
                     return
 
-                run_id, synthesis_prompt, sections = execute_workflow(workflow_name, workflow_ticker, actor=tool_actor)
+                run_id, synthesis_prompt, sections = yield from _execute_workflow_keepalive(
+                    workflow_name,
+                    workflow_ticker,
+                    actor=tool_actor,
+                )
                 workflow_tool_calls = [
                     {"name": str(section["tool"]), "id": str(section["tool"]), "status": "ok"} for section in sections
                 ]
