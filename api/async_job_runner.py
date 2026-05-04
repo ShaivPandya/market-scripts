@@ -331,6 +331,7 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
 
 def job_response(row: dict[str, Any]) -> dict[str, Any]:
     job_id = str(row.get("job_id") or "")
+    job_type = str(row.get("job_type") or "")
     status = str(row.get("status") or "queued")
     progress = row.get("progress_json")
     if progress == {}:
@@ -342,6 +343,9 @@ def job_response(row: dict[str, Any]) -> dict[str, Any]:
         payload = {"job_id": job_id, "status": "error", "error": row.get("error") or "Job failed"}
     else:
         payload = {"job_id": job_id, "status": status}
+
+    if job_type:
+        payload["timeout_s"] = get_job_spec(job_type).timeout_s
 
     if isinstance(progress, dict) and progress:
         payload["progress"] = progress

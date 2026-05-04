@@ -460,9 +460,20 @@ export const queryOntology = (body: OntologyQueryBody) =>
   runOntologyQueryAsync(body)
 
 type OntologyJobResponse =
-  | { job_id: string; status: "queued" | "running" }
-  | { job_id: string; status: "error"; error?: string }
-  | { job_id: string; status: "done"; result?: OntologyResponse }
+  | { job_id: string; status: "queued" | "running"; timeout_s?: number }
+  | { job_id: string; status: "error"; error?: string; timeout_s?: number }
+  | { job_id: string; status: "done"; result?: OntologyResponse; timeout_s?: number }
+
+const DEFAULT_ONTOLOGY_JOB_TIMEOUT_MS = 300_000
+const ONTOLOGY_JOB_TIMEOUT_BUFFER_MS = 45_000
+const ONTOLOGY_JOB_POLL_INTERVAL_MS = 2_000
+
+function ontologyJobDeadline(started: OntologyJobResponse): number {
+  const timeoutMs = typeof started.timeout_s === "number" && Number.isFinite(started.timeout_s)
+    ? Math.max(0, started.timeout_s * 1000)
+    : DEFAULT_ONTOLOGY_JOB_TIMEOUT_MS
+  return Date.now() + timeoutMs + ONTOLOGY_JOB_TIMEOUT_BUFFER_MS
+}
 
 export const startOntologyQueryJob = (body: OntologyQueryBody) =>
   client
@@ -478,13 +489,13 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: Ab
   if (started.status === "error") throw new Error(started.error || "Ontology query failed")
 
   const job_id = started.job_id
-  const deadline = Date.now() + 180_000
+  const deadline = ontologyJobDeadline(started)
 
   for (; ;) {
     if (signal?.aborted) throw new DOMException("Query cancelled", "AbortError")
-    if (Date.now() > deadline) throw new Error("Timeout: Ontology query is taking too long. Try again.")
+    if (Date.now() > deadline) throw new Error("Timeout: Ontology query is still running. Try again shortly.")
 
-    await new Promise(r => setTimeout(r, 2000))
+    await new Promise(r => setTimeout(r, ONTOLOGY_JOB_POLL_INTERVAL_MS))
     const job = await fetchOntologyQueryJob(job_id)
 
     if (job.status === "done") {

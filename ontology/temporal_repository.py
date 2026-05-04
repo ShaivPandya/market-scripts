@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -172,7 +172,7 @@ class TemporalOntologyRepository:
         params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
         with self._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
-        return [_normalize_row(row) for row in rows]
+        return _normalize_rows(rows)
 
     def write_object_version(self, write: ObjectVersionWrite) -> dict[str, Any]:
         version_id = uuid.uuid4()
@@ -247,7 +247,7 @@ class TemporalOntologyRepository:
                 ),
             ).fetchone()
             conn.commit()
-        out = _normalize_row(row)
+        out = _normalize_required_row(row)
         _link_version_provenance("ontology_object_version", out.get("version_id"), write.provenance_event_id)
         return out
 
@@ -273,7 +273,7 @@ class TemporalOntologyRepository:
             ).fetchone()
             if current is None:
                 raise KeyError(f"Current object version not found: {version_id}")
-            current_row = _normalize_row(current)
+            current_row = _normalize_required_row(current)
             conn.execute(
                 "UPDATE ontology_object_versions SET tx_to = %s WHERE version_id = %s AND tx_to IS NULL",
                 (tx_from, _uuid(version_id)),
@@ -299,7 +299,7 @@ class TemporalOntologyRepository:
             )
             row = self._insert_object_version_without_closing(conn, replacement, tx_from=tx_from).fetchone()
             conn.commit()
-        out = _normalize_row(row)
+        out = _normalize_required_row(row)
         _link_version_provenance("ontology_object_version", out.get("version_id"), replacement.provenance_event_id)
         return out
 
@@ -381,7 +381,7 @@ class TemporalOntologyRepository:
                 ),
             ).fetchone()
             conn.commit()
-        out = _normalize_row(row)
+        out = _normalize_required_row(row)
         _link_version_provenance("relation_version", out.get("version_id"), write.provenance_event_id)
         return out
 
@@ -425,7 +425,7 @@ class TemporalOntologyRepository:
         params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
         with self._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
-        return [_normalize_row(row) for row in rows]
+        return _normalize_rows(rows)
 
     def write_source_record_version(self, write: SourceRecordWrite) -> dict[str, Any]:
         valid_from = _parse_ts(write.valid_from)
@@ -521,7 +521,7 @@ class TemporalOntologyRepository:
                 ),
             ).fetchone()
             conn.commit()
-        return _normalize_row(row)
+        return _normalize_required_row(row)
 
     def query_source_records(
         self,
@@ -561,7 +561,7 @@ class TemporalOntologyRepository:
         params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
         with self._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
-        return [_normalize_row(row) for row in rows]
+        return _normalize_rows(rows)
 
     def write_computed_snapshot_version(self, write: SnapshotVersionWrite) -> dict[str, Any]:
         valid_from = _parse_ts(write.valid_from)
@@ -636,7 +636,7 @@ class TemporalOntologyRepository:
                 ),
             ).fetchone()
             conn.commit()
-        return _normalize_row(row)
+        return _normalize_required_row(row)
 
     def read_computed_snapshot_version(
         self,
@@ -1020,6 +1020,17 @@ def _normalize_row(row: Any) -> dict[str, Any] | None:
             except Exception:
                 pass
     return out
+
+
+def _normalize_required_row(row: Any) -> dict[str, Any]:
+    normalized = _normalize_row(row)
+    if normalized is None:
+        raise RuntimeError("Expected database statement to return a row.")
+    return normalized
+
+
+def _normalize_rows(rows: Iterable[Any]) -> list[dict[str, Any]]:
+    return [_normalize_required_row(row) for row in rows]
 
 
 def _parse_ts(value: datetime | date | str) -> datetime:

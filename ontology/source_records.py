@@ -68,8 +68,9 @@ def write_source_result_records(
     lineage = getattr(result, "lineage", None)
     source_version = str(getattr(lineage, "adapter_version", "") or "unknown")
     provenance_event_id = getattr(lineage, "provenance_event_id", None)
-    as_of = getattr(result, "as_of", None)
-    valid_from = as_of or getattr(result, "fetched_at", None)
+    as_of = result.as_of
+    fetched_at = result.fetched_at
+    valid_from: datetime | str = as_of or fetched_at
     status = str(getattr(result, "status", "ok") or "ok")
     quality = str(getattr(result, "quality", "ok") or "ok")
     dataset_name = dataset or source_name
@@ -91,7 +92,7 @@ def write_source_result_records(
                     status=status,
                     quality=quality,
                     as_of=as_of,
-                    load_time=getattr(result, "fetched_at", None),
+                    load_time=fetched_at,
                     valid_from=valid_from,
                     provenance_event_id=provenance_event_id,
                 )

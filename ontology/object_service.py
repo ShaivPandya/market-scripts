@@ -277,7 +277,9 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
     if object_type == "MacroIndicator":
         return macro_indicator_id(str(props.get("indicator_key") or key))
     if object_type == "Signal":
-        return signal_id(str(props.get("signal_key") or key))
+        source = props.get("source") or props.get("module") or props.get("adapter") or "unknown"
+        name = props.get("name") or props.get("signal_key") or key
+        return signal_id(source, name)
     if object_type == "Thesis":
         return thesis_id(canonical_ticker(props.get("ticker") or key))
     if object_type == "Evaluation":
@@ -287,7 +289,8 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
     if object_type == "Catalyst":
         ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
         name = str(props.get("name") or props.get("description") or key)
-        return catalyst_id(ticker, name)
+        description = str(props.get("description") or name)
+        return catalyst_id(ticker, name, description)
     return f"{_slug(object_type)}:{_slug(key)}"
 
 
@@ -311,8 +314,8 @@ def with_temporal_meta(row: dict[str, Any]) -> dict[str, Any]:
         "tx_to": _iso(payload.get("tx_to")),
         "temporal_confidence": payload.get("temporal_confidence"),
     }
-    meta = payload.get("_meta") if isinstance(payload.get("_meta"), dict) else {}
-    meta = dict(meta)
+    meta_raw = payload.get("_meta")
+    meta = dict(meta_raw) if isinstance(meta_raw, Mapping) else {}
     meta["temporal"] = {key: value for key, value in temporal.items() if value is not None}
     payload["_meta"] = meta
     return payload
@@ -353,5 +356,5 @@ def _iso(value: Any) -> str | None:
     if value is None:
         return None
     if hasattr(value, "isoformat"):
-        return value.isoformat()
+        return str(value.isoformat())
     return str(value)
