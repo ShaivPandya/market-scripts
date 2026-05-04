@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
+from api.decision_state import analysis_metadata
 from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
@@ -81,6 +82,7 @@ def _compute_sizer_result(req: SizerRequest) -> dict[str, Any]:
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
+    result.update(analysis_metadata(quality_state="ok"))
     return result
 
 

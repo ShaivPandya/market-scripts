@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
+from api.decision_state import analysis_metadata
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
@@ -69,6 +70,7 @@ def _compute_hedging_result(req: HedgingRequest) -> dict[str, Any]:
             result[k] = serialize_dataframe(v.reset_index())
         else:
             result[k] = serialize_value(v)
+    result.update(analysis_metadata(quality_state="ok"))
     return result
 
 
@@ -231,19 +233,19 @@ def _build_recommend_prompt(req: HedgingRecommendRequest) -> str:
 
     data_block = "\n".join(lines)
 
-    return f"""You are a portfolio risk analyst advising a professional investor. Based on the hedging analysis below, provide specific, actionable recommendations for portfolio adjustments.
+    return f"""You are a portfolio risk analyst advising a professional investor. Based on the hedging analysis below, provide candidate hedge adjustments for decision support.
 
 {data_block}
 
-Provide 4-6 concise recommendations covering:
+Provide 4-6 concise decision-support notes covering:
 1. Whether the hedge sizing is appropriate and any adjustments needed
-2. Positions with outsized beta contributions that could be trimmed or increased
+2. Positions with outsized beta contributions that could be reviewed for a possible internal proposal
 3. Whether portfolio directionality (net long/short bias) is well-balanced
 4. Concentration risk — any single position dominating the risk profile
 5. Post-hedge volatility assessment and whether it is acceptable
-6. Specific trades to consider (trim, add, swap, or rebalance)
+6. Candidate adjustments to review, using internal proposal language rather than order or broker execution language
 
-Be direct and specific. Reference actual tickers and numbers. Write for a professional investor who wants signal, not noise. Use plain text paragraphs, no markdown headers or bullet points."""
+Be direct and specific. Reference actual tickers and numbers. Do not describe any item as an executable trade or order. Write for a professional investor who wants signal, not noise. Use plain text paragraphs, no markdown headers or bullet points."""
 
 
 @router.post("/hedging-tool/recommend")
@@ -268,4 +270,7 @@ def recommend_hedging_adjustments(req: HedgingRecommendRequest):
     except Exception as exc:
         raise DataFetchError(source="hedging_recommend", detail=str(exc)) from exc
 
-    return {"analysis": analysis}
+    return {
+        "analysis": analysis,
+        **analysis_metadata(quality_state="ok"),
+    }

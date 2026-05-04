@@ -816,15 +816,17 @@ def format_recommendations_markdown(payload: dict) -> str:
         lines.append("## What Changed")
         lines.extend(f"- {item}" for item in payload["what_changed"])
     lines.append("")
-    lines.append("## Recommended Actions")
+    lines.append("## Decision-Support Recommendations")
     for action in payload.get("recommended_actions", []):
         label = action.get("instrument") or action.get("ticker") or "portfolio"
         lines.append("")
         lines.append(f"### {str(action.get('action', '')).replace('_', ' ').title()} - {label}")
         lines.append(f"- Horizon: {action.get('horizon', '')}")
-        lines.append(f"- Target change: {action.get('target_change') or 'none'}")
+        lines.append(f"- Candidate internal adjustment: {action.get('target_change') or 'none'}")
         lines.append(f"- Confidence: {action.get('confidence', 0):.2f}")
-        lines.append(f"- Approval required: {'yes' if action.get('approval_required') else 'no'}")
+        lines.append(
+            f"- Internal approval required before state change: {'yes' if action.get('approval_required') else 'no'}"
+        )
         lines.append(f"- Rationale: {action.get('rationale', '')}")
         if action.get("invalidation"):
             lines.append(f"- Invalidation: {action['invalidation']}")

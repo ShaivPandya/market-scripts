@@ -22,7 +22,9 @@ import {
   runOntologyQueryAsync,
   type OntologyEvidence,
   type OntologyResponse,
+  type ApprovalRecord,
   type SourceRequirement,
+  type StagedMutationResponse,
   type ThesisClaim,
   type ThesisClaimStatus,
   type ThesisStatus,
@@ -35,6 +37,13 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { Dialog } from "@/components/shared/Dialog"
 import { ActionButton, SegmentedControl, SelectInput, TextInput } from "@/components/shared/FormControls"
+import {
+  DecisionStateBadge,
+  EffectScopeBadge,
+  PolicyStateBadge,
+  QualityStateBadge,
+} from "@/components/shared/DecisionStateBadge"
+import { approvalDecisionState } from "@/lib/decisionState"
 import { ThesisUpload } from "@/components/ThesisUpload"
 import { OverviewUpload } from "@/components/OverviewUpload"
 import { cn } from "@/lib/utils"
@@ -58,7 +67,7 @@ interface DossierData {
   action_items: ActionItem[]
   watch_triggers: Trigger[]
   research_notes: ResearchNote[]
-  pending_approvals: Approval[]
+  pending_approvals: ApprovalRecord[]
 }
 
 interface ThesisMeta {
@@ -86,8 +95,6 @@ interface WorkflowRun { run_id: string; workflow_name: string; status: string; s
 interface ActionItem { id: number; description: string; action_type: string; urgency: string; status: string; created_at: string }
 interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
 interface ResearchNote { id: number; title: string; content: string; note_type: string | null; created_at: string }
-interface Approval { id: number; entity_type: string; reason: string | null; created_at: string; proposed_change: Record<string, unknown> }
-
 interface ParsedFinancialMetric { value: string | null; context: string }
 interface DebtTranche { tranche: string; rate: string; maturity: string }
 interface ParsedDebt { summary: string; tranches: DebtTranche[] }
@@ -136,6 +143,19 @@ function formatTime(iso: string): string {
   }
 }
 
+function ProposalNotice({ proposal }: { proposal: StagedMutationResponse | null }) {
+  if (!proposal) return null
+  return (
+    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+      <div className="flex flex-wrap items-center gap-2">
+        <DecisionStateBadge state={proposal.decision_state ?? "pending_approval"} />
+        <EffectScopeBadge scope={proposal.effect_scope ?? "internal_state"} />
+        <span>Proposal #{proposal.approval_id} staged. Approval is required before app state changes.</span>
+      </div>
+    </div>
+  )
+}
+
 export function PositionDossier() {
   const { ticker } = useParams<{ ticker: string }>()
   const navigate = useNavigate()
@@ -153,6 +173,10 @@ export function PositionDossier() {
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [newStatus, setNewStatus] = useState<ThesisStatusValue>("under_review")
   const [statusReason, setStatusReason] = useState("")
+  const [lastProposal, setLastProposal] = useState<StagedMutationResponse | null>(null)
+  const [approvalReview, setApprovalReview] = useState<{ approval: ApprovalRecord; action: "approve" | "reject" } | null>(null)
+  const [approvalNote, setApprovalNote] = useState("")
+  const [approvalError, setApprovalError] = useState<string | null>(null)
 
   const { data, isLoading, error } = useApiQuery<DossierData>(
     ["dossier", ticker],
@@ -167,7 +191,8 @@ export function PositionDossier() {
 
   const statusMutation = useMutation({
     mutationFn: () => updateThesisStatus(ticker!, newStatus, statusReason),
-    onSuccess: () => {
+    onSuccess: result => {
+      setLastProposal(result as StagedMutationResponse)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       qc.invalidateQueries({ queryKey: ["thesis"] })
       setStatusDialogOpen(false)
@@ -184,12 +209,31 @@ export function PositionDossier() {
     })
   }
 
-  async function handleApproval(id: number, action: "approve" | "reject") {
+  function openApprovalReview(approval: ApprovalRecord, action: "approve" | "reject") {
+    setApprovalReview({ approval, action })
+    setApprovalNote("")
+    setApprovalError(null)
+  }
+
+  async function handleApproval(id: number, action: "approve" | "reject", note?: string) {
     setProcessingIds(prev => new Set(prev).add(id))
+    setApprovalError(null)
     try {
-      if (action === "approve") await approveItem(id)
-      else await rejectItem(id)
+      if (action === "approve") {
+        const trimmed = String(note || "").trim()
+        if (!trimmed) {
+          setApprovalError("Approval note is required before applying an internal state change.")
+          return
+        }
+        await approveItem(id, trimmed)
+      } else {
+        await rejectItem(id, note?.trim() || undefined)
+      }
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      setApprovalReview(null)
+      setApprovalNote("")
+    } catch (err) {
+      setApprovalError(err instanceof Error ? err.message : String(err))
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
     }
@@ -247,7 +291,7 @@ export function PositionDossier() {
               }}
               className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors"
             >
-              Change Status
+              Propose Status Change
             </button>
           )}
           <RefreshButton queryKeys={[["dossier", ticker]]} />
@@ -269,6 +313,18 @@ export function PositionDossier() {
             </div>
           )}
           {pos.weight != null && <div><span className="text-subtle">Weight</span> <span className="font-medium text-app ml-1">{Number(pos.weight).toFixed(1)}%</span></div>}
+        </div>
+      )}
+
+      {lastProposal && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <div className="flex flex-wrap items-center gap-2">
+            <DecisionStateBadge state={lastProposal.decision_state ?? "pending_approval"} />
+            <EffectScopeBadge scope={lastProposal.effect_scope ?? "internal_state"} />
+            <span>
+              Proposal #{lastProposal.approval_id} staged for {lastProposal.action_id.replace(/_/g, " ")}. It will not change app state until approved and applied.
+            </span>
+          </div>
         </div>
       )}
 
@@ -322,26 +378,35 @@ export function PositionDossier() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        <DecisionStateBadge state={approvalDecisionState(a)} />
+                        <EffectScopeBadge scope={a.effect_scope ?? "internal_state"} />
+                        <PolicyStateBadge state={a.policy_state ?? a.policy_gate?.decision ?? "missing"} />
+                        <QualityStateBadge state={a.quality_state ?? "missing"} />
+                      </div>
                       {a.reason && (
                         <p onClick={() => toggleExpanded(key)} className={cn("text-xs text-muted mt-0.5 cursor-pointer", !expanded && "line-clamp-1")}>
                           {a.reason}
                         </p>
                       )}
+                      {a.application_error && (
+                        <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">Application failed: {a.application_error}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => handleApproval(a.id, "approve")}
-                        disabled={processingIds.has(a.id)}
+                        onClick={() => openApprovalReview(a, "approve")}
+                        disabled={processingIds.has(a.id) || a.can_approve === false}
                         className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
                       >
-                        Approve
+                        {a.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
                       </button>
                       <button
-                        onClick={() => handleApproval(a.id, "reject")}
-                        disabled={processingIds.has(a.id)}
+                        onClick={() => openApprovalReview(a, "reject")}
+                        disabled={processingIds.has(a.id) || a.can_reject === false}
                         className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 disabled:opacity-50"
                       >
-                        Reject
+                        Reject Proposal
                       </button>
                     </div>
                   </div>
@@ -357,7 +422,7 @@ export function PositionDossier() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
           {data.action_items.length > 0 && (
             <section className="theme-surface rounded-xl p-4">
-              <h2 className="text-sm font-semibold text-app mb-3">Action Items</h2>
+              <h2 className="text-sm font-semibold text-app mb-3">Internal Action Items</h2>
               <div className="space-y-2 max-h-[400px] overflow-y-auto">
                 {data.action_items.map(a => {
                   const key = `action-${a.id}`
@@ -380,14 +445,14 @@ export function PositionDossier() {
                           disabled={processingIds.has(a.id)}
                           className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
                         >
-                          Complete
+                          Propose Complete
                         </button>
                         <button
                           onClick={() => handleActionItem(a.id, "dismiss")}
                           disabled={processingIds.has(a.id)}
                           className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
                         >
-                          Dismiss
+                          Propose Dismiss
                         </button>
                       </div>
                     </div>
@@ -419,12 +484,90 @@ export function PositionDossier() {
         </div>
       )}
 
+      <Dialog
+        open={approvalReview !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setApprovalReview(null)
+            setApprovalNote("")
+            setApprovalError(null)
+          }
+        }}
+        title={approvalReview?.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
+        description={
+          approvalReview?.action === "approve"
+            ? "Approval applies the staged internal state change. This is not an external execution."
+            : "Rejecting leaves the proposal in audit history and does not apply the staged change."
+        }
+        maxWidth="max-w-3xl"
+      >
+        {approvalReview && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <DecisionStateBadge state={approvalDecisionState(approvalReview.approval)} />
+              <EffectScopeBadge scope={approvalReview.approval.effect_scope ?? "internal_state"} />
+              <PolicyStateBadge state={approvalReview.approval.policy_state ?? approvalReview.approval.policy_gate?.decision ?? "missing"} />
+              <QualityStateBadge state={approvalReview.approval.quality_state ?? "missing"} />
+            </div>
+            <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
+              <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
+                <span>Approval #{approvalReview.approval.id}</span>
+                <span>{approvalReview.approval.action_id || approvalReview.approval.entity_type}</span>
+                <span>Application: {approvalReview.approval.application_status || "pending"}</span>
+              </div>
+              {approvalReview.approval.reason && <p className="mb-2">{approvalReview.approval.reason}</p>}
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-app bg-[hsl(var(--background-card))] p-3 font-mono text-[11px] text-app">
+                {summarizeProposedChange(approvalReview.approval.proposed_change)}
+              </pre>
+            </div>
+            <div>
+              <label htmlFor="dossier-approval-note" className="theme-field-label">
+                {approvalReview.action === "approve" ? "Approval note" : "Rejection note"}
+              </label>
+              <textarea
+                id="dossier-approval-note"
+                value={approvalNote}
+                onChange={e => setApprovalNote(e.target.value)}
+                className="theme-input mt-1 min-h-[90px] w-full"
+                placeholder={approvalReview.action === "approve" ? "State why this internal change is approved." : "Optional reason for rejecting this proposal."}
+              />
+              {approvalReview.action === "approve" && (
+                <p className="theme-field-caption mt-1">Required. Approval applies app state only; it does not execute an order.</p>
+              )}
+            </div>
+            {approvalError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {approvalError}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setApprovalReview(null)}
+                className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app"
+              >
+                Cancel
+              </button>
+              <ActionButton
+                onClick={() => handleApproval(approvalReview.approval.id, approvalReview.action, approvalNote)}
+                loading={processingIds.has(approvalReview.approval.id)}
+                loadingText={approvalReview.action === "approve" ? "Applying..." : "Rejecting..."}
+                disabled={approvalReview.action === "approve" && !approvalNote.trim()}
+                className="w-auto px-4"
+              >
+                {approvalReview.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
+              </ActionButton>
+            </div>
+          </div>
+        )}
+      </Dialog>
+
       {/* Status change dialog */}
       <Dialog
         open={statusDialogOpen}
         onOpenChange={setStatusDialogOpen}
-        title="Change Thesis Status"
-        description={`Update the status for ${ticker}`}
+        title="Propose Thesis Status Change"
+        description={`Stage a status change proposal for ${ticker}. Approval is required before internal state changes.`}
       >
         <div className="space-y-4">
           <SelectInput
@@ -451,9 +594,9 @@ export function PositionDossier() {
           <ActionButton
             onClick={() => statusMutation.mutate()}
             loading={statusMutation.isPending}
-            loadingText="Updating..."
+            loadingText="Staging proposal..."
           >
-            Update Status
+            Propose Status Change
           </ActionButton>
         </div>
       </Dialog>
@@ -739,7 +882,7 @@ function OverviewTab({ content, parsed, ticker }: { content: string | null; pars
             />
             {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
             <div className="flex gap-2 mt-2">
-              <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+              <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save Overview</ActionButton>
               <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
             </div>
           </div>
@@ -758,7 +901,7 @@ function OverviewTab({ content, parsed, ticker }: { content: string | null; pars
         />
         {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
         <div className="flex gap-2 mt-2">
-          <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+          <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save Overview</ActionButton>
           <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
         </div>
       </div>
@@ -804,10 +947,12 @@ function OverviewTab({ content, parsed, ticker }: { content: string | null; pars
 function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]; ticker: string; position: Record<string, unknown> | null }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
+  const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const saveMutation = useMutation({
     mutationFn: () => saveThesisContent(ticker, draft),
-    onSuccess: () => {
+    onSuccess: result => {
+      setProposal(result as StagedMutationResponse)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       qc.invalidateQueries({ queryKey: ["thesis"] })
       setEditing(false)
@@ -822,9 +967,10 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
   if (!thesis.content && !thesis.meta) {
     return (
       <div>
+        <ProposalNotice proposal={proposal} />
         <p className="text-sm text-muted mb-3">No thesis on file for this position.</p>
         <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
-          Write Thesis
+          Draft Thesis Proposal
         </button>
         {editing && (
           <div className="mt-3">
@@ -836,7 +982,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
             />
             {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
             <div className="flex gap-2 mt-2">
-              <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+              <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Staging proposal...">Submit Proposed Thesis</ActionButton>
               <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
             </div>
           </div>
@@ -847,6 +993,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
 
   return (
     <div>
+      <ProposalNotice proposal={proposal} />
       {(position || thesis.meta) && (
         <div className="flex flex-wrap gap-4 text-sm mb-4 pb-4 border-b border-app">
           {position?.direction != null && <div><span className="text-subtle">Direction:</span> <span className="font-medium text-app">{String(position.direction)}</span></div>}
@@ -862,7 +1009,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
           />
           {saveMutation.isError && <p className="text-xs text-red-600 mt-1">{String(saveMutation.error)}</p>}
           <div className="flex gap-2 mt-2">
-            <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Saving...">Save</ActionButton>
+            <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Staging proposal...">Submit Proposed Thesis</ActionButton>
             <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
           </div>
         </div>
@@ -989,6 +1136,7 @@ function ClaimsTab({
   ticker: string
 }) {
   const [draft, setDraft] = useState<ClaimDraft | null>(null)
+  const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const mutation = useMutation({
     mutationFn: (next: ClaimDraft) => {
@@ -996,7 +1144,8 @@ function ClaimsTab({
       if (next.id) return updateThesisClaim(next.id, payload)
       return createThesisClaim({ ...payload, ticker, claim: payload.claim })
     },
-    onSuccess: () => {
+    onSuccess: result => {
+      setProposal(result as StagedMutationResponse)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       qc.invalidateQueries({ queryKey: ["thesis"] })
       setDraft(null)
@@ -1048,13 +1197,14 @@ function ClaimsTab({
 
   return (
     <div className="space-y-4">
+      <ProposalNotice proposal={proposal} />
       <div className="flex justify-end">
         <button
           type="button"
           onClick={() => setDraft(blankClaimDraft())}
           className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors"
         >
-          Add Claim
+          Draft Claim Proposal
         </button>
       </div>
 
@@ -1141,11 +1291,11 @@ function ClaimsTab({
             <ActionButton
               onClick={() => draft.claim.trim() && mutation.mutate(draft)}
               loading={mutation.isPending}
-              loadingText="Saving..."
+              loadingText="Staging proposal..."
               disabled={!draft.claim.trim()}
               className="w-auto px-4"
             >
-              Save Claim
+              Submit Proposed Claim
             </ActionButton>
             <button type="button" onClick={() => setDraft(null)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app">
               Cancel
@@ -1244,10 +1394,12 @@ function LinkCheckboxes({
 
 function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: string }) {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const mutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) => updateCatalystStatus(id, status),
-    onSuccess: () => {
+    onSuccess: result => {
+      setProposal(result as StagedMutationResponse)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       setOpenMenuId(null)
     },
@@ -1257,6 +1409,7 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
   const statusOptions = ["pending", "played_out", "failed", "superseded"]
   return (
     <div className="space-y-3">
+      <ProposalNotice proposal={proposal} />
       {catalysts.map(c => (
         <div key={c.id} className="rounded-lg border border-app px-4 py-3">
           <div className="flex items-center justify-between mb-1">
@@ -1279,7 +1432,7 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
                   disabled={mutation.isPending}
                   className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
                 >
-                  {s.replace(/_/g, " ")}
+                  Propose {s.replace(/_/g, " ")}
                 </button>
               ))}
             </div>
@@ -1297,10 +1450,12 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
 
 function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]; ticker: string }) {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const mutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) => updateKillConditionStatus(id, status),
-    onSuccess: () => {
+    onSuccess: result => {
+      setProposal(result as StagedMutationResponse)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       setOpenMenuId(null)
     },
@@ -1310,6 +1465,7 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
   const statusOptions = ["active", "triggered", "retired"]
   return (
     <div className="space-y-3">
+      <ProposalNotice proposal={proposal} />
       {conditions.map(k => (
         <div key={k.id} className={cn("rounded-lg border px-4 py-3", k.status === "triggered" ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30" : "border-app")}>
           <div className="flex items-center justify-between mb-1">
@@ -1332,7 +1488,7 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
                   disabled={mutation.isPending}
                   className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
                 >
-                  {s}
+                  Propose {s}
                 </button>
               ))}
             </div>
@@ -1356,11 +1512,12 @@ function EvaluationsTab({ evaluations }: { evaluations: Evaluation[] }) {
         <div key={ev.id} className="rounded-lg border border-app px-4 py-3">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
+              <DecisionStateBadge state="analysis" />
               <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium",
                 ev.action === "hold" ? "text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-950" :
                 ev.action === "exit" || ev.action === "reduce" ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950" :
                 "text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950"
-              )}>{ev.action}</span>
+              )}>Evaluation: {ev.action}</span>
               <span className="text-xs text-subtle">{ev.confidence} confidence</span>
               {ev.risk_flag && <span className="text-xs text-red-500 font-medium">{ev.risk_flag}</span>}
             </div>
@@ -1413,6 +1570,14 @@ function formatMetricValue(value: unknown): string {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+function summarizeProposedChange(value: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function riskLevelClass(level: unknown): string {
@@ -1507,8 +1672,13 @@ function RiskTab({ ticker }: { ticker: string }) {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-app">Ontology Risk</h2>
+          <h2 className="text-sm font-semibold text-app">Risk Analysis Snapshot</h2>
           <p className="text-xs text-subtle">Snapshot {formatDateTime(ontology?.as_of ?? latestRun?.as_of)}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <DecisionStateBadge state="analysis" />
+            <EffectScopeBadge scope="read_only" />
+            <QualityStateBadge state={moduleIssueCount > 0 ? "degraded" : "ok"} />
+          </div>
         </div>
         <ActionButton
           onClick={() => refreshMutation.mutate()}

@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.action_execution import execute_api_action
+from api.decision_state import normalize_approval
 from api.exceptions import AppError, ConflictError, NotFoundError, ValidationError
 
 router = APIRouter()
@@ -36,7 +37,7 @@ def list_approvals(
         approvals = get_pending_approvals(status=status, ticker=ticker, application_status=application_status)
     except ValueError as e:
         raise ValidationError(str(e)) from e
-    return {"approvals": approvals, "count": len(approvals)}
+    return {"approvals": [normalize_approval(a) for a in approvals], "count": len(approvals)}
 
 
 @router.get("/approvals/{approval_id}")
@@ -47,7 +48,7 @@ def get_approval(approval_id: int):
     if not approval:
         raise NotFoundError("Approval", str(approval_id))
     approval["provenance_summary"] = provenance_summary(approval_id=approval_id)
-    return approval
+    return normalize_approval(approval)
 
 
 @router.post("/approvals/{approval_id}/approve")
