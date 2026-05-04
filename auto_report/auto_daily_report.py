@@ -367,6 +367,18 @@ def compute_adjustments(sizer_result: dict, portfolio_df) -> pd.DataFrame:
             qty = -abs(qty)
         current[symbol] = qty
 
+    # The report loads regular positions into portfolio_df, while the sizer
+    # attaches current hedge holdings to hedges_df from the portfolio db.
+    if hedges_df is not None and "current_shares" in hedges_df.columns:
+        for _, row in hedges_df.iterrows():
+            symbol = str(row.get("ticker", "")).strip().upper()
+            if not symbol:
+                continue
+            shares = row.get("current_shares")
+            if shares is None or pd.isna(shares):
+                continue
+            current[symbol] = int(shares)
+
     all_tickers = sorted(set(list(target.keys()) + list(current.keys())))
 
     rows = []

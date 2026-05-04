@@ -37,6 +37,36 @@ def test_run_sizer_imports_packaged_module(monkeypatch):
     }
 
 
+def test_compute_adjustments_uses_current_hedge_shares():
+    weights_df = pd.DataFrame(
+        [
+            {"ticker": "CRWD", "shares": 9, "price": 422.8, "direction": "long"},
+        ]
+    )
+    hedges_df = pd.DataFrame(
+        [
+            {"ticker": "SPY", "shares": -34, "price": 718.0, "current_shares": -107},
+            {"ticker": "IWM", "shares": 24, "price": 278.0, "current_shares": 0},
+        ]
+    )
+    portfolio_df = pd.DataFrame(
+        [
+            {"ticker": "CRWD", "direction": "long", "shares": 18},
+        ]
+    )
+
+    result = auto_daily_report.compute_adjustments(
+        {"weights_df": weights_df, "hedges_df": hedges_df},
+        portfolio_df,
+    )
+    by_ticker = result.set_index("ticker")
+
+    assert by_ticker.loc["SPY", "current_shares"] == -107
+    assert by_ticker.loc["SPY", "delta"] == 73
+    assert by_ticker.loc["SPY", "action"] == "BUY"
+    assert by_ticker.loc["IWM", "current_shares"] == 0
+
+
 def test_get_positions_df_falls_back_to_csv(tmp_path):
     csv_path = tmp_path / "portfolio.csv"
     csv_path.write_text("ticker,asset,direction,contrarian,conviction\nMU,equity,long,false,3\n", encoding="utf-8")

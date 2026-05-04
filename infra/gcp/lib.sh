@@ -53,6 +53,10 @@ image_uri() {
 # we ask Cloud Run to pull it. Saves a round-trip-and-fail when someone forgets
 # to push or types the wrong SHA.
 require_image_exists() {
+  if [[ "${SKIP_IMAGE_CHECK:-0}" == "1" ]]; then
+    return 0
+  fi
+
   if ! gcloud artifacts docker images describe "$(image_uri)" \
         --project="${PROJECT_ID}" >/dev/null 2>&1; then
     echo "Image $(image_uri) not found in Artifact Registry." >&2

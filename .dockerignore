@@ -2,6 +2,11 @@
 .DS_Store
 .venv/
 venv/
+.mypy_cache/
+.ruff_cache/
+.pip-cache/
+.pytest_cache/
+.coverage
 
 # Secrets
 .env
@@ -29,8 +34,15 @@ portfolio/*.db-*
 macro/**/*.sqlite3
 macro/**/*.sqlite3-*
 results/
+tmp/
+output/
+backtest/cache/
 
-# Frontend build artifacts
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
+# Node / frontend artifacts are not needed in the backend image.
+node_modules/
+frontend/
+
+# Local app/tooling state
+.firebase/
+.playwright-cli/
+.vscode/

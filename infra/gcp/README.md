@@ -10,7 +10,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 
 ## Deploy automation (this directory)
 
-- `cloudbuild.yaml` — builds the API image and pushes to Artifact Registry.
+- `cloudbuild.yaml` — builds the API image and pushes to Artifact Registry. It pulls the previous `latest` image first so unchanged dependency layers can be reused.
 - `config.example.sh` — copy to `config.sh` (gitignored) and fill in project / SA / bucket values.
 - `lib.sh` — shared helpers sourced by every other script. Defaults `IMAGE_TAG` to the current short git SHA, verifies the image exists in Artifact Registry, and refuses to run if the active gcloud project differs from `PROJECT_ID`.
 - `bootstrap.sh` — idempotent provisioning of APIs, Artifact Registry, service accounts, Cloud SQL (with backups + PITR + deletion protection + require-SSL), and the GCS state bucket.
@@ -21,7 +21,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
-- `deploy-backend.sh` — build via Cloud Build at the current short git SHA, then roll API + Cloud Run Jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`.
+- `deploy-backend.sh` — build via Cloud Build at the current short git SHA, run Alembic migrations, then roll API + Cloud Run Jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`. Routine deploys skip IAM, Scheduler, and monitoring reconciliation by default; use `FULL_SYNC=1` after infrastructure/config changes.
 - `deploy-frontend.sh` — builds `frontend/dist` and deploys Firebase Hosting for the configured `PROJECT_ID`.
 - `deploy-all.sh` — deploys the full production stack by running `deploy-backend.sh` first and `deploy-frontend.sh` second. `SKIP_BUILD=1` skips the backend container build; `SKIP_FRONTEND_BUILD=1` deploys the existing `frontend/dist`.
 - `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23z UTC, market-snapshot-refresh weekday 23:15z UTC) and delete the old high-frequency cache-warm job unless `SCHEDULE_CACHE_WARM=1` is set. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo.
@@ -56,6 +56,13 @@ Routine deploys:
 ./infra/gcp/deploy-api.sh
 ./infra/gcp/deploy-async-job.sh
 ```
+
+Routine backend deploys are optimized for the common code-rollout path:
+
+- `deploy-backend.sh` deploys the migration job first, starts the non-migration Cloud Run Job updates in parallel, runs Alembic migrations, then deploys the API service.
+- IAM, Scheduler, and monitoring syncs are intentionally skipped by default because those resources rarely change and each sync performs multiple GCP control-plane calls.
+- Run `FULL_SYNC=1 ./infra/gcp/deploy-backend.sh` when service accounts, Scheduler definitions, monitoring policy files, or other infra config changed.
+- Set `PARALLEL_JOB_DEPLOYS=0` if you need the older sequential Cloud Run Job deploy behavior for debugging.
 
 ## Cloud SQL
 

@@ -246,6 +246,15 @@ Routine full-stack deploy:
 ./infra/gcp/deploy-all.sh
 ```
 
+Routine backend deploys use the fast path: they build a smaller backend image
+context, deploy non-migration Cloud Run Jobs in parallel, and skip IAM,
+Scheduler, and monitoring reconciliation unless requested. After infra/config
+changes, run:
+
+```bash
+FULL_SYNC=1 ./infra/gcp/deploy-backend.sh
+```
+
 ## Useful Module Docs
 
 - `frontend/README.md`
