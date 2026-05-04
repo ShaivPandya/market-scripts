@@ -16,13 +16,25 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
+
+from api.agent_governance import (
+    AgentGovernanceError,
+    ToolTimeoutError,
+    blocked_tool_payload,
+    evaluate_tool_call,
+    run_with_timeout,
+    should_retry_tool_error,
+    tool_governance_meta,
+    validate_tool_output,
+)
 from api.cache import get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
 from ontology.action_registry import (
@@ -34,6 +46,7 @@ from ontology.action_registry import (
     is_agent_tool_exposed,
     iter_tool_exposures,
     propose_action_from_tool,
+    validate_tool_input,
 )
 from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor
 
@@ -752,6 +765,18 @@ class AgentCapability:
     access_mode: str
     aliases: tuple[str, ...] = ()
     selectable: bool = True
+    required_scopes: tuple[str, ...] = ()
+    account_scope: str | None = "default-account"
+    portfolio_scope: str | None = "default-portfolio"
+    data_sensitivity: str = "public_market"
+    provider_egress: str = "external_allowed"
+    timeout_s: float = 15.0
+    retry_policy: dict[str, Any] | None = None
+    token_budget: int | None = None
+    cost_budget_usd: float | None = None
+    rate_limit: dict[str, Any] | None = None
+    audit_level: str = "standard"
+    failure_mode: str = "partial_allowed"
 
     @property
     def schema_safe(self) -> bool:
@@ -1272,6 +1297,18 @@ def _capability_from_exposure(tool) -> AgentCapability:
         access_mode=tool.access_mode,
         aliases=tool.aliases,
         selectable=tool.selectable,
+        required_scopes=tuple(tool.required_scopes),
+        account_scope=tool.account_scope,
+        portfolio_scope=tool.portfolio_scope,
+        data_sensitivity=tool.data_sensitivity,
+        provider_egress=tool.provider_egress,
+        timeout_s=tool.timeout_s,
+        retry_policy=dict(tool.retry_policy),
+        token_budget=tool.token_budget,
+        cost_budget_usd=tool.cost_budget_usd,
+        rate_limit=dict(tool.rate_limit),
+        audit_level=tool.audit_level,
+        failure_mode=tool.failure_mode,
     )
 
 
@@ -1304,6 +1341,20 @@ def list_agent_capabilities() -> list[dict[str, Any]]:
             "aliases": list(cap.aliases),
             "schema_safe": cap.schema_safe,
             "selectable": cap.selectable,
+            "governance": {
+                "required_scopes": list(cap.required_scopes),
+                "account_scope": cap.account_scope,
+                "portfolio_scope": cap.portfolio_scope,
+                "data_sensitivity": cap.data_sensitivity,
+                "provider_egress": cap.provider_egress,
+                "timeout_s": cap.timeout_s,
+                "retry_policy": cap.retry_policy or {},
+                "token_budget": cap.token_budget,
+                "cost_budget_usd": cap.cost_budget_usd,
+                "rate_limit": cap.rate_limit or {},
+                "audit_level": cap.audit_level,
+                "failure_mode": cap.failure_mode,
+            },
         }
         for cap in AGENT_CAPABILITIES
     ]
@@ -2150,6 +2201,64 @@ def _finish_tool_provenance(
             logger.debug("Failed to finish tool provenance for %s", name, exc_info=True)
 
 
+def _validated_tool_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    internal_args = {str(k): v for k, v in args.items() if str(k).startswith("_")}
+    public_args = {str(k): v for k, v in args.items() if not str(k).startswith("_")}
+    if name == "query_ontology" and isinstance(public_args.get("filters"), str):
+        try:
+            parsed_filters = json.loads(str(public_args["filters"]))
+        except json.JSONDecodeError as exc:
+            raise ActionValidationError("query_ontology.filters must be a valid JSON object") from exc
+        if not isinstance(parsed_filters, dict):
+            raise ActionValidationError("query_ontology.filters must decode to a JSON object")
+        public_args["filters"] = parsed_filters
+    typed = validate_tool_input(name, public_args)
+    if hasattr(typed, "model_dump"):
+        normalized = typed.model_dump(exclude_none=True)
+    else:
+        normalized = typed.dict(exclude_none=True)
+    normalized.update(internal_args)
+    return normalized
+
+
+def _call_dispatch_with_governance(
+    name: str,
+    safe_args: dict[str, Any],
+    *,
+    actor: Actor,
+    provenance_event_id: str | None,
+    timeout_s: float,
+    retry_policy: Mapping[str, Any],
+) -> tuple[object, dict[str, Any], int]:
+    max_attempts = max(1, int(retry_policy.get("max_attempts") or 1))
+    backoff_s = max(0.0, float(retry_policy.get("backoff_s") or 0.0))
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result, dispatch_meta = run_with_timeout(
+                lambda: _call_dispatch(name, safe_args, actor=actor, provenance_event_id=provenance_event_id),
+                timeout_s=timeout_s,
+            )
+            return result, dispatch_meta, attempt
+        except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
+            last_exc = exc
+            if attempt >= max_attempts or not should_retry_tool_error(exc):
+                raise
+            delay = backoff_s * (2 ** (attempt - 1))
+            logger.warning(
+                "Retryable tool error name=%s attempt=%d/%d delay=%.2fs error=%s",
+                name,
+                attempt,
+                max_attempts,
+                delay,
+                exc,
+            )
+            if delay > 0:
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 def execute_tool(
     name: str,
     arguments: dict,
@@ -2163,10 +2272,12 @@ def execute_tool(
     """
     started = time.perf_counter()
     actor = actor or admin_actor(source="agent_tools")
-    safe_args = arguments if isinstance(arguments, dict) else {}
+    safe_args = dict(arguments) if isinstance(arguments, dict) else {}
     critical_tool_call = _is_proposal_tool(name)
     provenance_event_id: str | None = None
     pv_context = provenance_context or {}
+    exposure = None
+    policy_meta: dict[str, Any] = {}
     try:
         from api import provenance
 
@@ -2220,14 +2331,28 @@ def execute_tool(
     try:
         if not is_agent_tool_exposed(name):
             raise ValueError(f"Tool '{name}' is not exposed to the agent")
-        result, dispatch_meta = _call_dispatch(name, safe_args, actor=actor, provenance_event_id=provenance_event_id)
+        exposure = get_tool_exposure(name)
+        safe_args = _validated_tool_args(name, safe_args)
+        decision = evaluate_tool_call(exposure, actor=actor, raw_args=safe_args)
+        policy_meta = tool_governance_meta(exposure, decision)
+        result, dispatch_meta, attempts = _call_dispatch_with_governance(
+            name,
+            safe_args,
+            actor=actor,
+            provenance_event_id=provenance_event_id,
+            timeout_s=exposure.timeout_s,
+            retry_policy=exposure.retry_policy,
+        )
+        validate_tool_output(exposure, result)
         payload, _compact_meta = _compact_tool_output(name, result)
         meta = dict(dispatch_meta)
         meta.update(
             {
                 "tool": name,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "attempts": attempts,
                 "status": "ok",
+                **policy_meta,
             }
         )
         if provenance_event_id:
@@ -2254,6 +2379,35 @@ def execute_tool(
             metadata={k: v for k, v in meta.items() if k != "tool"},
         )
         return _stable_json_dumps(payload)
+    except (ActionValidationError, PydanticValidationError, AgentGovernanceError) as exc:
+        logger.warning("Tool %s blocked by governance: %s", name, exc)
+        status = "timeout" if isinstance(exc, ToolTimeoutError) else "blocked"
+        if exposure is not None and not policy_meta:
+            policy_meta = tool_governance_meta(exposure)
+        payload = blocked_tool_payload(
+            name,
+            exc,
+            status=status,
+            meta={
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                **({"provenance_event_id": provenance_event_id} if provenance_event_id else {}),
+                **policy_meta,
+            },
+        )
+        _finish_tool_provenance(
+            provenance_event_id=provenance_event_id,
+            name=name,
+            safe_args=safe_args,
+            actor=actor,
+            provenance_context=pv_context,
+            critical=critical_tool_call,
+            status="denied" if status == "blocked" else "timed_out",
+            output_value=payload,
+            summary={"tool": name, "status": status},
+            metadata=policy_meta,
+            error=str(exc) or exc.__class__.__name__,
+        )
+        return _stable_json_dumps(payload)
     except PolicyDenied as exc:
         payload = _attach_meta(
             {"error": "Access denied", "type": "PolicyDenied", "detail": exc.reason},
@@ -2262,6 +2416,7 @@ def execute_tool(
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
                 "status": "denied",
                 **({"provenance_event_id": provenance_event_id} if provenance_event_id else {}),
+                **policy_meta,
             },
         )
         _finish_tool_provenance(
@@ -2286,6 +2441,7 @@ def execute_tool(
                 "duration_ms": round((time.perf_counter() - started) * 1000, 1),
                 "status": "error",
                 **({"provenance_event_id": provenance_event_id} if provenance_event_id else {}),
+                **policy_meta,
             },
         )
         _finish_tool_provenance(

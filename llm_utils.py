@@ -207,6 +207,38 @@ def extract_citations(response: Any) -> list[tuple[str, str]]:
     return citations
 
 
+def _prepare_text_egress(
+    *,
+    provider: str,
+    purpose: str,
+    model: str,
+    prompt: str,
+    system: str | None,
+    max_tokens: int,
+) -> tuple[str, str | None]:
+    from api.agent_governance import prepare_model_egress
+    from ontology.policy import admin_actor
+
+    sanitized, _manifest = prepare_model_egress(
+        provider=provider,
+        purpose=purpose,
+        stream_kwargs={
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        actor=admin_actor(source="llm_utils"),
+    )
+    messages = sanitized.get("messages")
+    if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+        content = messages[0].get("content")
+        if isinstance(content, str):
+            prompt = content
+    sanitized_system = sanitized.get("system")
+    return prompt, sanitized_system if isinstance(sanitized_system, str) else None
+
+
 def call_llm_text(
     *,
     prompt: str,
@@ -220,6 +252,14 @@ def call_llm_text(
     reasoning_effort: str | None = None,
 ) -> tuple[str, list[tuple[str, str]], Any]:
     resolved_provider = _normalize_provider(provider)
+    prompt, system = _prepare_text_egress(
+        provider=resolved_provider,
+        purpose="llm_utils.call_llm_text",
+        model=model,
+        prompt=prompt,
+        system=system,
+        max_tokens=max_tokens,
+    )
     if resolved_provider == PROVIDER_ANTHROPIC:
         response = _call_anthropic_messages(
             messages=[{"role": "user", "content": prompt}],

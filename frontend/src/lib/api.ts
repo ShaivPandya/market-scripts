@@ -172,6 +172,40 @@ export const updateAgentResponsePreferences = (preferences: AgentResponsePrefere
     .put("/settings/agent-response-preferences", preferences)
     .then(r => r.data as AgentResponsePreferences)
 
+export interface AgentToolGovernanceMetadata {
+  required_scopes: string[]
+  account_scope: string | null
+  portfolio_scope: string | null
+  data_sensitivity: string
+  provider_egress: string
+  timeout_s: number
+  retry_policy: Record<string, unknown>
+  token_budget: number | null
+  cost_budget_usd: number | null
+  rate_limit: Record<string, unknown>
+  audit_level: string
+  failure_mode: string
+}
+
+export interface AgentCapability {
+  name: string
+  category: string
+  access_mode: "read" | "compute" | "proposal" | string
+  description: string
+  aliases: string[]
+  schema_safe: boolean
+  selectable: boolean
+  governance: AgentToolGovernanceMetadata
+}
+
+export interface AgentCapabilitiesResponse {
+  capabilities: AgentCapability[]
+  count: number
+}
+
+export const fetchAgentCapabilities = () =>
+  client.get("/agent/capabilities").then(r => r.data as AgentCapabilitiesResponse)
+
 // ─── GET endpoints ───────────────────────────────────────────────────────────
 
 export const fetchPortfolio = (timeframe: string) =>

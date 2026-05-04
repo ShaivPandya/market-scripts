@@ -9,7 +9,10 @@ import type { AgentResponsePreferences } from "@/lib/api"
 export interface ToolCall {
   name: string
   id: string
-  status: "pending" | "ok" | "error"
+  status: "pending" | "running" | "ok" | "error" | "blocked" | "timeout" | "retrying" | "partial" | "cancelled"
+  message?: string
+  policyDecisionId?: string
+  elapsedMs?: number
 }
 
 export interface AgentMessage {
@@ -49,7 +52,20 @@ interface ActiveAgentJob {
 
 interface AgentJobEvent {
   seq: number
-  event_type: "status" | "delta" | "tool_call" | "tool_result" | "error" | "done"
+  event_type:
+    | "status"
+    | "delta"
+    | "tool_call"
+    | "tool_result"
+    | "tool_progress"
+    | "policy_failure"
+    | "budget_update"
+    | "egress_recorded"
+    | "blocked"
+    | "timeout"
+    | "cancelled"
+    | "error"
+    | "done"
   payload: Record<string, unknown>
 }
 
@@ -103,7 +119,20 @@ function extractJsonError(data: unknown): string | null {
 }
 
 function normalizeToolStatus(value: unknown): ToolCall["status"] {
-  return value === "pending" || value === "error" ? value : "ok"
+  const allowed: ToolCall["status"][] = [
+    "pending",
+    "running",
+    "ok",
+    "error",
+    "blocked",
+    "timeout",
+    "retrying",
+    "partial",
+    "cancelled",
+  ]
+  return typeof value === "string" && allowed.includes(value as ToolCall["status"])
+    ? (value as ToolCall["status"])
+    : "ok"
 }
 
 function normalizeToolCalls(value: unknown): ToolCall[] {
@@ -117,7 +146,14 @@ function normalizeToolCalls(value: unknown): ToolCall[] {
     const name = typeof rec.name === "string" ? rec.name : typeof rec.tool === "string" ? rec.tool : null
     if (!name) return []
     const id = typeof rec.id === "string" ? rec.id : typeof rec.call_id === "string" ? rec.call_id : `${name}-${index}`
-    return [{ name, id, status: normalizeToolStatus(rec.status) }]
+    return [{
+      name,
+      id,
+      status: normalizeToolStatus(rec.status),
+      message: typeof rec.message === "string" ? rec.message : undefined,
+      policyDecisionId: typeof rec.policy_decision_id === "string" ? rec.policy_decision_id : undefined,
+      elapsedMs: typeof rec.elapsed_ms === "number" ? rec.elapsed_ms : undefined,
+    }]
   })
 }
 
@@ -376,6 +412,28 @@ export function useAgentChat() {
               ),
             }
             break
+          case "tool_progress":
+          case "policy_failure":
+          case "blocked":
+          case "timeout":
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId
+                  ? { ...m, statusText: undefined, toolCalls: mergeToolCalls(m.toolCalls, normalizeToolCalls([data])) }
+                  : m,
+              ),
+            }
+            break
+          case "budget_update":
+          case "egress_recorded":
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId ? { ...m, statusText: undefined } : m,
+              ),
+            }
+            break
           case "tool_result":
             next = {
               ...next,
@@ -394,6 +452,28 @@ export function useAgentChat() {
               activeJob: null,
               messages: next.messages.map(m =>
                 m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+              ),
+            }
+            activeJobRef.current = null
+            break
+          case "cancelled":
+            next = {
+              ...next,
+              isStreaming: false,
+              activeJob: null,
+              messages: next.messages.map(m =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      isStreaming: false,
+                      statusText: undefined,
+                      toolCalls: (m.toolCalls ?? []).map(call =>
+                        call.status === "pending" || call.status === "running"
+                          ? { ...call, status: "cancelled" as const }
+                          : call,
+                      ),
+                    }
+                  : m,
               ),
             }
             activeJobRef.current = null
@@ -628,7 +708,20 @@ export function useAgentChat() {
       ...prev,
       isStreaming: false,
       activeJob: null,
-      messages: prev.messages.map(m => m.isStreaming ? { ...m, isStreaming: false, statusText: undefined } : m),
+      messages: prev.messages.map(m =>
+        m.isStreaming
+          ? {
+              ...m,
+              isStreaming: false,
+              statusText: undefined,
+              toolCalls: (m.toolCalls ?? []).map(call =>
+                call.status === "pending" || call.status === "running"
+                  ? { ...call, status: "cancelled" as const }
+                  : call,
+              ),
+            }
+          : m,
+      ),
     }))
   }, [])
 
