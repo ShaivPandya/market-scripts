@@ -81,6 +81,22 @@ def trade_proposal_id(identifier: object) -> str:
     return f"trade_proposal:{slug(identifier)}"
 
 
+def source_record_object_id(identifier: object) -> str:
+    return f"source_record:{slug(identifier)}"
+
+
+def object_version_ref_id(identifier: object) -> str:
+    return f"object_version_ref:{slug(identifier)}"
+
+
+def executed_action_id(identifier: object) -> str:
+    return f"executed_action:{slug(identifier)}"
+
+
+def audit_event_id(identifier: object) -> str:
+    return f"audit_event:{slug(identifier)}"
+
+
 def sector_id(name: object) -> str:
     return f"sector:{slug(name)}"
 

@@ -15,15 +15,18 @@ from ontology.schemas.identity import (
     action_run_id,
     approval_id,
     asset_id,
+    audit_event_id,
     catalyst_id,
     document_artifact_id,
     evaluation_id,
+    executed_action_id,
     hedge_position_id,
     investment_policy_id,
     investor_id,
     kill_condition_id,
     macro_indicator_id,
     mandate_id,
+    object_version_ref_id,
     policy_gate_result_id,
     portfolio_id,
     position_id,
@@ -35,6 +38,7 @@ from ontology.schemas.identity import (
     scenario_id,
     sector_id,
     signal_id,
+    source_record_object_id,
     thesis_claim_id,
     thesis_id,
     trade_proposal_id,
@@ -50,15 +54,18 @@ from ontology.schemas.objects import (
     ActionRunV1,
     ApprovalV1,
     AssetV1,
+    AuditEventV1,
     CatalystV1,
     DocumentArtifactV1,
     EvaluationV1,
+    ExecutedActionV1,
     HedgePositionV1,
     InvestmentPolicyV1,
     InvestorV1,
     KillConditionV1,
     MacroIndicatorV1,
     MandateV1,
+    ObjectVersionRefV1,
     OntologyObjectV1,
     PolicyGateResultV1,
     PortfolioV1,
@@ -71,6 +78,7 @@ from ontology.schemas.objects import (
     ScenarioV1,
     SectorV1,
     SignalV1,
+    SourceRecordV1,
     ThesisClaimV1,
     ThesisV1,
     TradeProposalV1,
@@ -106,6 +114,10 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Scenario": ScenarioV1,
     "PolicyGateResult": PolicyGateResultV1,
     "TradeProposal": TradeProposalV1,
+    "SourceRecord": SourceRecordV1,
+    "ObjectVersionRef": ObjectVersionRefV1,
+    "ExecutedAction": ExecutedActionV1,
+    "AuditEvent": AuditEventV1,
     "Sector": SectorV1,
     "MacroIndicator": MacroIndicatorV1,
     "Signal": SignalV1,
@@ -153,6 +165,10 @@ OPTIONAL_NODE_TYPES = {
     "Scenario",
     "PolicyGateResult",
     "TradeProposal",
+    "SourceRecord",
+    "ObjectVersionRef",
+    "ExecutedAction",
+    "AuditEvent",
 }
 NodeUpgradeAdapter = Any
 NODE_UPGRADE_ADAPTERS: dict[tuple[str, int, int], NodeUpgradeAdapter] = {}
@@ -441,6 +457,14 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return policy_gate_result_id(model.gate_result_id)
     if isinstance(model, TradeProposalV1):
         return trade_proposal_id(model.proposal_id)
+    if isinstance(model, SourceRecordV1):
+        return source_record_object_id(model.source_record_id)
+    if isinstance(model, ObjectVersionRefV1):
+        return object_version_ref_id(model.ref_id)
+    if isinstance(model, ExecutedActionV1):
+        return executed_action_id(model.executed_action_id)
+    if isinstance(model, AuditEventV1):
+        return audit_event_id(model.event_id)
     if isinstance(model, SectorV1):
         return sector_id(model.name)
     if isinstance(model, MacroIndicatorV1):
@@ -474,7 +498,12 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
     if isinstance(model, WorkflowArtifactV1):
         return workflow_artifact_id(model.artifact_id)
     if isinstance(model, RecommendationV1):
-        return recommendation_id(model.legacy_id or f"{model.report_type}:{model.as_of}:{model.action}:{model.ticker}")
+        return recommendation_id(
+            model.legacy_id
+            or model.recommendation_id
+            or model.idempotency_key
+            or f"{model.report_type}:{model.as_of}:{model.action}:{model.ticker}"
+        )
     if isinstance(model, ReportRunV1):
         return report_run_id(model.report_id)
     if isinstance(model, DocumentArtifactV1):

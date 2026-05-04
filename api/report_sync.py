@@ -263,6 +263,22 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
             "source_quality_summary": summary.get("data_quality", {}),
         },
     )
+    try:
+        from ontology.decision_writeback import record_report_output
+
+        record_report_output(
+            report_type=report_type,
+            payload=payload,
+            report_run=report_run,
+            persisted_recommendations=persisted_recommendations,
+            actor={"actor_type": "workflow", "actor_id": "report_sync"},
+            provenance=f"pv:report_sync:{report_id}",
+        )
+    except Exception:
+        from ontology.domain_write_service import ontology_primary_writes_enabled
+
+        if ontology_primary_writes_enabled():
+            raise
 
     thesis_evaluations = _persist_weekly_thesis_evaluations(as_of, payload) if report_type == "weekly" else 0
     research_notes = _create_report_notes(report_type, as_of, report_id, payload)

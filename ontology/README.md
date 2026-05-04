@@ -1,8 +1,9 @@
 # Ontology Architecture
 
-This package owns Talisman's ontology boundary: typed operational objects,
-relations, source records, materialized risk snapshots, and the action/tool
-metadata that lets workflows and agents interact with those objects safely.
+This package owns Talisman's ontology boundary: typed operational and decision
+objects, relations, source records, materialized risk snapshots, and the
+action/tool metadata that lets workflows and agents interact with those objects
+safely.
 
 The important distinction is that the package is in a migration window. The
 target architecture is a Postgres-backed bitemporal ontology. Several current
@@ -33,6 +34,9 @@ README maps the code that exists in `ontology/`.
 - UI presentation beyond shaping API/tool responses.
 - Arbitrary direct mutation of legacy portfolio/thesis/process state except
   through the domain action compatibility layer in `action_registry.py`.
+- OMS, broker orders, fills, broker execution, or counterparties. Decision
+  records such as `TradeProposal` and `ExecutedAction` stop at governed
+  decision support and do not model execution.
 
 ## Source-Of-Truth Stores
 
@@ -76,6 +80,9 @@ versions.
   bitemporal object, relation, source record, and computed snapshot versions.
 - `object_service.py` is the typed write/read boundary above the temporal
   repository.
+- `decision_writeback.py` records report outputs, workflow artifacts, approval
+  proposals, executed actions, and exact object-version mutation references
+  through `OntologyObjectService`.
 - `service.py` is the policy-aware semantic query service used by API routes and
   agent tools.
 - `action_registry.py` is the canonical domain action and agent tool metadata
@@ -173,6 +180,10 @@ Important conventions:
 - Edge property schema names are `Relation` or `PositionSignalExposure`.
 - Legacy payloads are marked as schema `legacy` version `0` and upgraded at
   read/write boundaries unless `ONTOLOGY_STRICT_SCHEMAS` disables legacy input.
+- Decision schemas include `Recommendation`, `Scenario`, `TradeProposal`,
+  `Approval`, `ActionRun`, `ExecutedAction`, `AuditEvent`, `SourceRecord`,
+  `ObjectVersionRef`, `RiskMetric`, `InvestmentPolicy`, and
+  `PolicyGateResult`.
 
 When adding a node or relation type, update the Pydantic schema, identity
 expectations, relation registry, schema definitions, ingestion/query logic, and
@@ -216,6 +227,42 @@ Proposal flow:
 Workflow artifacts use `propose_workflow_artifact()` to convert persisted
 workflow output into pending approvals with provenance links back to the workflow
 run and artifact.
+
+## Decision Writeback
+
+Report sync, workflow artifacts, and approval application should use
+`decision_writeback.py` or `OntologyObjectService` for ontology-backed decision
+artifacts.
+
+Safe automatic records:
+
+- `ReportRun`, `WorkflowRun`, raw `WorkflowArtifact`, `SourceRecord`,
+  `RiskMetric`, `Scenario`, `PolicyGateResult`, `AuditEvent`, and `ActionEvent`.
+- Generated recommendations in non-applied states such as `generated` or
+  closed audit states.
+
+Approval-backed records:
+
+- Financial recommendation actions: `buy`, `sell`, `reduce`, `exit`,
+  `rebalance`, and `hedge`.
+- Every `TradeProposal` before it is represented by an `ExecutedAction`.
+- Workflow/report artifacts that create or alter user-visible research,
+  process, portfolio, thesis, watch, action item, or note state.
+
+The target decision lineage is:
+
+`ReportRun/WorkflowRun -> SourceRecord/WorkflowArtifact -> Recommendation -> RiskMetric/Scenario/PolicyGateResult/InvestmentPolicy -> TradeProposal -> Approval -> ActionRun -> ExecutedAction -> ObjectVersionRef -> AuditEvent`.
+
+Current migration flags:
+
+- `ONTOLOGY_SHADOW_WRITES=true` mirrors legacy report, workflow, approval, and
+  action paths into ontology objects/relations.
+- `ONTOLOGY_PRIMARY_WRITES=true` makes ontology writeback failures fail the
+  caller.
+- `ONTOLOGY_READ_MODEL=true` is reserved for compatibility reads from ontology
+  read adapters.
+- `LEGACY_WRITE_GUARD=true` blocks unapproved direct legacy domain writes except
+  projection refreshes.
 
 ## Agent Safety Model
 

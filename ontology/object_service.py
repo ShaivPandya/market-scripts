@@ -9,26 +9,40 @@ from typing import Any, cast
 
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.schemas.identity import (
+    account_id,
     action_event_id,
     action_item_id,
     action_run_id,
     approval_id,
     asset_id,
+    audit_event_id,
     canonical_ticker,
     catalyst_id,
     document_artifact_id,
     evaluation_id,
+    executed_action_id,
     hedge_position_id,
+    investment_policy_id,
+    investor_id,
     kill_condition_id,
     macro_indicator_id,
+    mandate_id,
+    object_version_ref_id,
+    policy_gate_result_id,
+    portfolio_id,
     position_id,
     recommendation_id,
     report_run_id,
     research_note_id,
+    risk_limit_id,
+    risk_metric_id,
+    scenario_id,
     sector_id,
     signal_id,
+    source_record_object_id,
     thesis_claim_id,
     thesis_id,
+    trade_proposal_id,
     watch_trigger_id,
     workflow_artifact_id,
     workflow_run_id,
@@ -45,17 +59,27 @@ from ontology.temporal_repository import (
 _GOVERNED_OBJECT_TYPES = {
     "ActionRun",
     "Approval",
+    "AuditEvent",
     "Evaluation",
+    "ExecutedAction",
     "HedgePosition",
+    "ObjectVersionRef",
     "PolicyGateResult",
     "Position",
     "Recommendation",
+    "TradeProposal",
     "WatchTrigger",
 }
 _GOVERNED_RELATION_TYPES = {
     "action_run_mutates_object_version",
     "approval_applies_action_run",
+    "action_run_produces_executed_action",
+    "approval_targets_recommendation",
+    "approval_targets_trade_proposal",
+    "approval_targets_workflow_artifact",
+    "executed_action_mutates_object_version",
     "recommendation_requires_approval",
+    "trade_proposal_requires_approval",
 }
 
 
@@ -344,6 +368,62 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("asset:"):
             return key
         return asset_id(canonical_ticker(props.get("ticker") or key))
+    if object_type == "Investor":
+        if key.startswith("investor:"):
+            return key
+        return investor_id(props.get("investor_id") or key)
+    if object_type == "Account":
+        if key.startswith("account:"):
+            return key
+        return account_id(props.get("account_id") or key)
+    if object_type == "Portfolio":
+        if key.startswith("portfolio:"):
+            return key
+        return portfolio_id(props.get("portfolio_id") or key)
+    if object_type == "Mandate":
+        if key.startswith("mandate:"):
+            return key
+        return mandate_id(props.get("mandate_id") or key)
+    if object_type == "InvestmentPolicy":
+        if key.startswith("investment_policy:"):
+            return key
+        return investment_policy_id(props.get("policy_id") or key)
+    if object_type == "RiskLimit":
+        if key.startswith("risk_limit:"):
+            return key
+        return risk_limit_id(props.get("limit_id") or key)
+    if object_type == "RiskMetric":
+        if key.startswith("risk_metric:"):
+            return key
+        return risk_metric_id(props.get("metric_id") or key)
+    if object_type == "Scenario":
+        if key.startswith("scenario:"):
+            return key
+        return scenario_id(props.get("scenario_id") or key)
+    if object_type == "PolicyGateResult":
+        if key.startswith("policy_gate_result:"):
+            return key
+        return policy_gate_result_id(props.get("gate_result_id") or key)
+    if object_type == "TradeProposal":
+        if key.startswith("trade_proposal:"):
+            return key
+        return trade_proposal_id(props.get("proposal_id") or key)
+    if object_type == "SourceRecord":
+        if key.startswith("source_record:"):
+            return key
+        return source_record_object_id(props.get("source_record_id") or key)
+    if object_type == "ObjectVersionRef":
+        if key.startswith("object_version_ref:"):
+            return key
+        return object_version_ref_id(props.get("ref_id") or key)
+    if object_type == "ExecutedAction":
+        if key.startswith("executed_action:"):
+            return key
+        return executed_action_id(props.get("executed_action_id") or key)
+    if object_type == "AuditEvent":
+        if key.startswith("audit_event:"):
+            return key
+        return audit_event_id(props.get("event_id") or key)
     if object_type == "Sector":
         if key.startswith("sector:"):
             return key
@@ -420,7 +500,9 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
     if object_type == "Recommendation":
         if key.startswith("recommendation:"):
             return key
-        return recommendation_id(props.get("legacy_id") or key)
+        return recommendation_id(
+            props.get("legacy_id") or props.get("recommendation_id") or props.get("idempotency_key") or key
+        )
     if object_type == "ReportRun":
         if key.startswith("report_run:"):
             return key

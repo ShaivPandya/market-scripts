@@ -2,7 +2,7 @@
 
 ## Summary
 
-The ontology is the authoritative operational object model for current Talisman domains. Portfolio, thesis, process, source, and derived snapshot state is represented as temporal ontology object and relation versions in Postgres.
+The ontology is the authoritative operational object model for current Talisman domains. Portfolio, thesis, process, source, decision, and derived snapshot state is represented as temporal ontology object and relation versions in Postgres.
 
 This is a breaking Postgres-only architecture. SQLite-backed state paths are legacy migration inputs, not canonical stores for the temporal ontology.
 
@@ -14,11 +14,11 @@ The supported domain scope is the existing Talisman domain model:
 
 - positions and hedge positions
 - theses, thesis status, evaluations, catalysts, kill conditions, and thesis claims
-- workflow runs, action items, watch triggers, research notes, recommendations, action runs, and action events
-- approvals and approval-linked workflow artifacts
+- workflow runs, report runs, workflow artifacts, action items, watch triggers, research notes, recommendations, scenarios, risk metrics, policy gate results, trade proposals, action runs, executed actions, audit events, and action events
+- approvals and approval-linked workflow/report artifacts
 - source records and computed snapshots that support those objects
 
-Orders, trades, fills, OMS objects, broker execution, mandates, and counterparties are intentionally out of scope.
+Orders, broker orders, fills, OMS objects, broker execution, and counterparties are intentionally out of scope. `TradeProposal` and `ExecutedAction` are decision-support governance records only; they do not represent broker execution or fills.
 
 ## Temporal Model
 
@@ -53,6 +53,30 @@ Refreshes are idempotent when the normalized payload and temporal metadata are u
 
 Raw secret values must never be persisted in payloads or provenance summaries. Existing redaction and audit summary rules still apply.
 
+## Decision Objects
+
+Decision-support artifacts are first-class ontology objects:
+
+- `Recommendation`, `Scenario`, `RiskMetric`, `PolicyGateResult`, `InvestmentPolicy`, and `SourceRecord` capture generated analysis, constraints, and evidence.
+- `TradeProposal` captures a staged or approval-pending financial decision derived from a recommendation. It is not an order.
+- `Approval` records proposal resolution separately from application state.
+- `ActionRun` records attempted application, and `ExecutedAction` records the immutable post-approval summary of applied ontology/domain mutations.
+- `ObjectVersionRef` points to exact temporal object versions produced or mutated by a governed action.
+- `AuditEvent` records redacted, retention-classed observations over decision and action activity.
+
+Recommended lifecycle values are:
+
+- `Recommendation.decision_state`: `generated`, `proposed`, `under_review`, `approved`, `rejected`, `acted`, `closed`, `superseded`.
+- `TradeProposal.decision_state`: `staged`, `policy_checked`, `pending_approval`, `approved`, `rejected`, `executed_action_recorded`, `expired`, `superseded`.
+- `Approval.resolution_state`: `pending`, `approved`, `rejected`, `expired`.
+- `Approval.application_state`: `pending`, `applying`, `applied`, `failed`, `not_applicable`.
+- `ActionRun.execution_state`: `running`, `succeeded`, `failed`, `rolled_back`, `denied`.
+- `WorkflowArtifact.state`: `extracted`, `ignored`, `auto_recorded`, `proposed`, `approved`, `rejected`, `failed`.
+
+The expected lineage path is:
+
+`ReportRun/WorkflowRun -> SourceRecord/WorkflowArtifact -> Recommendation -> RiskMetric/Scenario/PolicyGateResult/InvestmentPolicy -> TradeProposal -> Approval -> ActionRun -> ExecutedAction -> ObjectVersionRef -> AuditEvent`.
+
 ## Object And Relation Writes
 
 Object writes provide:
@@ -76,6 +100,10 @@ Relation writes provide:
 The object service derives stable object and relation UIDs, validates schema metadata, preserves provenance links, and creates new transaction versions when facts change.
 
 Agent proposals cannot directly mutate authoritative objects. They create workflow artifacts or pending approvals. Approval application writes through the object service and links approval/action provenance to the produced version rows.
+
+`ontology/decision_writeback.py` is the migration facade for report, workflow artifact, and approval-application writeback. It records safe automatic artifacts directly (`ReportRun`, `WorkflowRun`, raw `WorkflowArtifact`, `SourceRecord`, `RiskMetric`, `Scenario`, `PolicyGateResult`, `AuditEvent`, `ActionEvent`, and non-applied generated recommendations) and creates approval-linked decision artifacts for governed mutations.
+
+Approval is required for financial recommendation actions (`buy`, `sell`, `reduce`, `exit`, `rebalance`, `hedge`), every `TradeProposal`, and workflow/report artifacts that would create or alter user-visible research, process, portfolio, or thesis state.
 
 ## Reads
 

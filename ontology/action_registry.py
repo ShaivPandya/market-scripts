@@ -1077,6 +1077,22 @@ def _record_ontology_write_boundary_versions(
             context=context,
             input_hash=input_hash,
         )
+        if rows and context.approval_id is not None:
+            try:
+                from ontology.decision_writeback import apply_approved_decision
+
+                apply_approved_decision(
+                    approval_id=context.approval_id,
+                    action_run_id=run_id,
+                    action_id=action.action_id,
+                    output=output,
+                    mutated_versions=rows,
+                    actor={"actor_type": context.actor_type, "actor_id": context.actor_id},
+                    provenance=context.provenance_event_id,
+                )
+            except Exception:
+                if primary:
+                    raise
         if rows:
             core_db.record_action_event(
                 run_id,
@@ -3147,6 +3163,26 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
             )
             artifact_id = str(record.get("artifact_id")) if record and record.get("artifact_id") else artifact_event_id
             core_db.set_pending_approval_provenance(int(approval["id"]), origin_artifact_id=artifact_id)
+            try:
+                from ontology.decision_writeback import record_workflow_artifact_proposal
+
+                record_workflow_artifact_proposal(
+                    run_id=run_id,
+                    artifact_key=artifact_key,
+                    artifact_index=item_index,
+                    artifact_value=item,
+                    approval_id=int(approval["id"]),
+                    action_id=binding.action_id,
+                    ticker=ticker,
+                    artifact_id=artifact_id,
+                    actor={"actor_type": "workflow", "actor_id": run_id},
+                    provenance=artifact_event_id,
+                )
+            except Exception:
+                from ontology.domain_write_service import ontology_primary_writes_enabled
+
+                if ontology_primary_writes_enabled():
+                    raise
             provenance.link_refs(
                 event_id=artifact_event_id,
                 source_ref_type="workflow_artifact",

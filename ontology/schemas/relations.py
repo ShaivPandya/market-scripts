@@ -29,8 +29,12 @@ APPROVAL_PROPOSES_ACTION: RelationType = "approval_proposes_action"
 APPROVAL_APPLIES_ACTION_RUN: RelationType = "approval_applies_action_run"
 ACTION_RUN_MUTATES_OBJECT_VERSION: RelationType = "action_run_mutates_object_version"
 WORKFLOW_RUN_PRODUCES_ARTIFACT: RelationType = "workflow_run_produces_artifact"
+WORKFLOW_ARTIFACT_PROPOSES_APPROVAL: RelationType = "workflow_artifact_proposes_approval"
 REPORT_RUN_PRODUCES_RECOMMENDATION: RelationType = "report_run_produces_recommendation"
 SOURCE_RECORD_MATERIALIZES_OBJECT: RelationType = "source_record_materializes_object"
+RECOMMENDATION_SUPPORTED_BY_SOURCE_RECORD: RelationType = "recommendation_supported_by_source_record"
+RECOMMENDATION_USES_RISK_METRIC: RelationType = "recommendation_uses_risk_metric"
+RECOMMENDATION_USES_SCENARIO: RelationType = "recommendation_uses_scenario"
 INVESTOR_OWNS_ACCOUNT: RelationType = "investor_owns_account"
 ACCOUNT_HAS_PORTFOLIO: RelationType = "account_has_portfolio"
 ACCOUNT_GOVERNED_BY_POLICY: RelationType = "account_governed_by_policy"
@@ -39,6 +43,15 @@ POLICY_HAS_RISK_LIMIT: RelationType = "policy_has_risk_limit"
 RECOMMENDATION_TARGETS_ACCOUNT: RelationType = "recommendation_targets_account"
 RECOMMENDATION_TARGETS_PORTFOLIO: RelationType = "recommendation_targets_portfolio"
 TRADE_PROPOSAL_DERIVES_FROM_RECOMMENDATION: RelationType = "trade_proposal_derives_from_recommendation"
+TRADE_PROPOSAL_TARGETS_ASSET: RelationType = "trade_proposal_targets_asset"
+TRADE_PROPOSAL_REQUIRES_APPROVAL: RelationType = "trade_proposal_requires_approval"
+APPROVAL_TARGETS_RECOMMENDATION: RelationType = "approval_targets_recommendation"
+APPROVAL_TARGETS_TRADE_PROPOSAL: RelationType = "approval_targets_trade_proposal"
+APPROVAL_TARGETS_WORKFLOW_ARTIFACT: RelationType = "approval_targets_workflow_artifact"
+ACTION_RUN_PRODUCES_EXECUTED_ACTION: RelationType = "action_run_produces_executed_action"
+EXECUTED_ACTION_MUTATES_OBJECT_VERSION: RelationType = "executed_action_mutates_object_version"
+SOURCE_RECORD_MATERIALIZES_OBJECT_VERSION: RelationType = "source_record_materializes_object_version"
+AUDIT_EVENT_OBSERVES_ACTION_RUN: RelationType = "audit_event_observes_action_run"
 POLICY_GATE_EVALUATES_RECOMMENDATION: RelationType = "policy_gate_evaluates_recommendation"
 POLICY_GATE_EVALUATES_TRADE_PROPOSAL: RelationType = "policy_gate_evaluates_trade_proposal"
 POLICY_GATE_USES_RISK_METRIC: RelationType = "policy_gate_uses_risk_metric"
@@ -199,7 +212,7 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
     ACTION_RUN_MUTATES_OBJECT_VERSION: RelationDefinition(
         name=ACTION_RUN_MUTATES_OBJECT_VERSION,
         source_type="ActionRun",
-        target_type="DocumentArtifact",
+        target_type="ObjectVersionRef",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id", "object_uid", "version_id"}),
         optional=True,
@@ -208,6 +221,14 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         name=WORKFLOW_RUN_PRODUCES_ARTIFACT,
         source_type="WorkflowRun",
         target_type="WorkflowArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    WORKFLOW_ARTIFACT_PROPOSES_APPROVAL: RelationDefinition(
+        name=WORKFLOW_ARTIFACT_PROPOSES_APPROVAL,
+        source_type="WorkflowArtifact",
+        target_type="Approval",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
@@ -222,10 +243,34 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
     ),
     SOURCE_RECORD_MATERIALIZES_OBJECT: RelationDefinition(
         name=SOURCE_RECORD_MATERIALIZES_OBJECT,
-        source_type="DocumentArtifact",
-        target_type="DocumentArtifact",
+        source_type="SourceRecord",
+        target_type="ObjectVersionRef",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id", "source_record_id", "object_uid"}),
+        optional=True,
+    ),
+    RECOMMENDATION_SUPPORTED_BY_SOURCE_RECORD: RelationDefinition(
+        name=RECOMMENDATION_SUPPORTED_BY_SOURCE_RECORD,
+        source_type="Recommendation",
+        target_type="SourceRecord",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_USES_RISK_METRIC: RelationDefinition(
+        name=RECOMMENDATION_USES_RISK_METRIC,
+        source_type="Recommendation",
+        target_type="RiskMetric",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_USES_SCENARIO: RelationDefinition(
+        name=RECOMMENDATION_USES_SCENARIO,
+        source_type="Recommendation",
+        target_type="Scenario",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
     INVESTOR_OWNS_ACCOUNT: RelationDefinition(
@@ -292,6 +337,78 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
+    TRADE_PROPOSAL_TARGETS_ASSET: RelationDefinition(
+        name=TRADE_PROPOSAL_TARGETS_ASSET,
+        source_type="TradeProposal",
+        target_type="Asset",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    TRADE_PROPOSAL_REQUIRES_APPROVAL: RelationDefinition(
+        name=TRADE_PROPOSAL_REQUIRES_APPROVAL,
+        source_type="TradeProposal",
+        target_type="Approval",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    APPROVAL_TARGETS_RECOMMENDATION: RelationDefinition(
+        name=APPROVAL_TARGETS_RECOMMENDATION,
+        source_type="Approval",
+        target_type="Recommendation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    APPROVAL_TARGETS_TRADE_PROPOSAL: RelationDefinition(
+        name=APPROVAL_TARGETS_TRADE_PROPOSAL,
+        source_type="Approval",
+        target_type="TradeProposal",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    APPROVAL_TARGETS_WORKFLOW_ARTIFACT: RelationDefinition(
+        name=APPROVAL_TARGETS_WORKFLOW_ARTIFACT,
+        source_type="Approval",
+        target_type="WorkflowArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ACTION_RUN_PRODUCES_EXECUTED_ACTION: RelationDefinition(
+        name=ACTION_RUN_PRODUCES_EXECUTED_ACTION,
+        source_type="ActionRun",
+        target_type="ExecutedAction",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EXECUTED_ACTION_MUTATES_OBJECT_VERSION: RelationDefinition(
+        name=EXECUTED_ACTION_MUTATES_OBJECT_VERSION,
+        source_type="ExecutedAction",
+        target_type="ObjectVersionRef",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "object_uid", "version_id"}),
+        optional=True,
+    ),
+    SOURCE_RECORD_MATERIALIZES_OBJECT_VERSION: RelationDefinition(
+        name=SOURCE_RECORD_MATERIALIZES_OBJECT_VERSION,
+        source_type="SourceRecord",
+        target_type="ObjectVersionRef",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "source_record_id", "object_uid", "version_id"}),
+        optional=True,
+    ),
+    AUDIT_EVENT_OBSERVES_ACTION_RUN: RelationDefinition(
+        name=AUDIT_EVENT_OBSERVES_ACTION_RUN,
+        source_type="AuditEvent",
+        target_type="ActionRun",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
     POLICY_GATE_EVALUATES_RECOMMENDATION: RelationDefinition(
         name=POLICY_GATE_EVALUATES_RECOMMENDATION,
         source_type="PolicyGateResult",
@@ -338,9 +455,14 @@ class RelationPropertiesV1(OntologySchemaBase):
     source: str | None = None
     action_id: str | None = None
     object_uid: str | None = None
+    object_type: str | None = None
     version_id: str | None = None
     source_record_id: str | None = None
     target_object_type: str | None = None
+    target_object_uid: str | None = None
+    approval_id: str | None = None
+    artifact_key: str | None = None
+    relation_role: str | None = None
 
     @field_validator("ontology_run_id", mode="before")
     @classmethod
@@ -351,9 +473,14 @@ class RelationPropertiesV1(OntologySchemaBase):
         "source",
         "action_id",
         "object_uid",
+        "object_type",
         "version_id",
         "source_record_id",
         "target_object_type",
+        "target_object_uid",
+        "approval_id",
+        "artifact_key",
+        "relation_role",
         mode="before",
     )
     @classmethod

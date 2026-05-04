@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService, object_uid_for
-from ontology.schemas.identity import action_run_id, thesis_id
+from ontology.schemas.identity import action_run_id, object_version_ref_id, thesis_id
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,9 @@ class DomainOntologyWriteService:
                             "approval_id": approval_id,
                             "parent_action_run_id": _context_int(context, "parent_action_run_id"),
                             "input_hash": input_hash,
+                            "output_hash": _stable_hash(output),
                             "status": "succeeded",
+                            "execution_state": "succeeded",
                             "completed_at": now,
                             "provenance_event_id": provenance_event_id,
                         },
@@ -246,13 +248,36 @@ class DomainOntologyWriteService:
         version_id = str(temporal.get("version_id") or row.get("version_id") or "")
         if not object_uid or not version_id:
             return
+        ref_id = f"{object_uid}:{version_id}"
+        self.write_object(
+            OntologyMutation(
+                "ObjectVersionRef",
+                ref_id,
+                {
+                    "ref_id": ref_id,
+                    "object_uid": object_uid,
+                    "object_type": row.get("object_type"),
+                    "version_id": version_id,
+                    "valid_from": temporal.get("valid_from"),
+                    "tx_from": temporal.get("tx_from"),
+                    "temporal_confidence": temporal.get("temporal_confidence"),
+                },
+                valid_from,
+            ),
+            actor=actor,
+            provenance_event_id=provenance_event_id,
+            action_run_id_value=action_run_id_value,
+            approval_id=approval_id,
+            input_hash=input_hash,
+        )
         self.object_service.write_relation(
             action_run_id(action_run_id_value),
-            object_uid,
+            object_version_ref_id(ref_id),
             "action_run_mutates_object_version",
             {
                 "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 "object_uid": object_uid,
+                "object_type": row.get("object_type"),
                 "version_id": version_id,
             },
             valid_from,
@@ -581,23 +606,36 @@ def _action_item_properties(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _recommendation_properties(row: Mapping[str, Any]) -> dict[str, Any]:
+    action = str(row.get("action") or "watch")
+    is_actionable = action in {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
     return {
+        "recommendation_id": row.get("id") or row.get("legacy_id") or row.get("idempotency_key"),
         "legacy_id": _optional_int(row.get("id")),
+        "idempotency_key": row.get("idempotency_key"),
+        "source_kind": "report",
         "report_type": row.get("report_type"),
         "as_of": row.get("as_of"),
-        "action": str(row.get("action") or "watch"),
+        "action": action,
         "ticker": _optional_ticker(row.get("ticker")),
         "instrument": row.get("instrument"),
+        "decision_state": "proposed" if row.get("approval_id") else "generated",
         "status": row.get("recommendation_status") or row.get("status"),
         "approval_id": _optional_int(row.get("approval_id")),
+        "approval_required": bool(row.get("approval_required") or is_actionable),
         "approval_status": row.get("approval_status"),
         "outcome_status": row.get("outcome_status"),
+        "supersedes_recommendation_id": row.get("supersedes_recommendation_id"),
         "account_id": row.get("account_id"),
         "portfolio_id": row.get("portfolio_id"),
         "policy_id": row.get("policy_id"),
         "policy_gate_result_id": _optional_int(row.get("policy_gate_result_id")),
         "policy_gate_decision": row.get("policy_gate_decision"),
         "policy_gate_review_required": bool(row.get("policy_gate_review_required")),
+        "confidence": _optional_float(row.get("confidence")),
+        "horizon": row.get("horizon"),
+        "rationale_summary": str(row.get("rationale") or "")[:500] if row.get("rationale") else None,
+        "rationale_hash": _hash_text(str(row.get("rationale") or "")) if row.get("rationale") else None,
+        "source_quality": row.get("source_quality"),
         "payload": {key: _jsonable(value) for key, value in row.items() if key not in {"policy_gate_result"}},
     }
 
@@ -654,6 +692,8 @@ def _approval_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "entity_type": str(row.get("entity_type") or "approval"),
         "entity_id": _optional_int(row.get("entity_id")),
         "ticker": _optional_ticker(row.get("ticker")),
+        "target_object_uid": row.get("target_object_uid"),
+        "target_object_type": row.get("target_object_type"),
         "action_id": row.get("action_id"),
         "action_schema_name": row.get("action_schema_name"),
         "action_schema_version": _optional_int(row.get("action_schema_version")),
@@ -663,7 +703,13 @@ def _approval_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "source_type": row.get("source_type"),
         "source_id": row.get("source_id"),
         "status": str(row.get("status") or "pending"),
+        "resolution_state": str(row.get("status") or "pending"),
+        "application_state": str(row.get("application_status") or "pending"),
         "application_status": row.get("application_status"),
+        "risk_class": row.get("risk_class"),
+        "base_state_hash": row.get("base_state_hash"),
+        "requested_by_actor_id": row.get("requested_by_actor_id"),
+        "resolved_by_actor_id": row.get("resolved_by_actor_id"),
         "created_at": row.get("created_at"),
         "resolved_at": row.get("resolved_at"),
         "resolved_note": row.get("resolved_note"),
