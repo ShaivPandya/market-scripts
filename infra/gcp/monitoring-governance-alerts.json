@@ -26,7 +26,17 @@
         "comparison": "COMPARISON_GT",
         "thresholdValue": 900,
         "duration": "300s",
-        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_MAX"}]
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_PERCENTILE_99"}]
+      }
+    },
+    {
+      "displayName": "Governance outbox retries accumulating",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_outbox_failed_count\" resource.type=\"cloud_run_job\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 5,
+        "duration": "300s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}]
       }
     },
     {
@@ -47,6 +57,16 @@
         "thresholdValue": 0,
         "duration": "300s",
         "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}]
+      }
+    },
+    {
+      "displayName": "Governance redaction violation detected",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/governance_redaction_violation_count\" resource.type=\"cloud_run_revision\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "60s",
+        "aggregations": [{"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_SUM"}]
       }
     }
   ],

@@ -2043,6 +2043,113 @@ def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _queue_tool_call_lineage_retry(
+    *,
+    name: str,
+    safe_args: dict[str, Any],
+    actor: Actor,
+    provenance_event_id: str,
+    provenance_context: dict[str, Any],
+    status: str,
+    payload: Any | None = None,
+    error: str | None = None,
+) -> None:
+    from api import governance
+    from portfolio import core_db
+
+    lineage_root_id = governance.lineage_root(governance.REF_TOOL_CALL, provenance_event_id)
+    bundle = governance.event_bundle(
+        lineage_root_id=lineage_root_id,
+        idempotency_key=f"tool_call:{provenance_event_id}:{status}:retry",
+        provenance_events=[
+            governance.provenance_event(
+                event_id=provenance_event_id,
+                event_type="tool_call",
+                event_name=name,
+                status=status,
+                actor_type=getattr(actor, "actor_type", None),
+                actor_id=getattr(actor, "actor_id", None),
+                parent_event_id=provenance_context.get("parent_event_id"),
+                workflow_run_id=provenance_context.get("workflow_run_id"),
+                agent_session_id=provenance_context.get("agent_session_id"),
+                input_value=safe_args,
+                output_value=payload,
+                summary={
+                    "tool": name,
+                    "status": status,
+                    "arg_keys": sorted(str(key) for key in safe_args.keys()),
+                    "call_id": provenance_context.get("call_id"),
+                },
+                metadata={"source": provenance_context.get("source") or "agent_tools.execute_tool"},
+                error=error,
+                lineage_root_id=lineage_root_id,
+            )
+        ],
+        audit_events=[
+            governance.audit_event(
+                action_name=governance.EVENT_TOOL_CALL_COMPLETED,
+                status=status,
+                lineage_root_id=lineage_root_id,
+                actor_type=getattr(actor, "actor_type", None) or "agent",
+                actor_id=getattr(actor, "actor_id", None),
+                object_refs=[{"type": governance.REF_TOOL_CALL, "id": provenance_event_id}],
+                after_summary={"tool": name, "status": status},
+                metadata={"arg_keys": sorted(str(key) for key in safe_args.keys())},
+                error=error,
+            )
+        ],
+    )
+    core_db.enqueue_governance_outbox(
+        bundle,
+        idempotency_key=f"tool_call:{provenance_event_id}:{status}:retry",
+        lineage_root_id=lineage_root_id,
+    )
+
+
+def _finish_tool_provenance(
+    *,
+    provenance_event_id: str | None,
+    name: str,
+    safe_args: dict[str, Any],
+    actor: Actor,
+    provenance_context: dict[str, Any],
+    critical: bool,
+    status: str,
+    output_value: Any | None = None,
+    summary: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+) -> None:
+    if not provenance_event_id:
+        return
+    try:
+        from api import provenance
+
+        provenance.finish_event(
+            provenance_event_id,
+            status=status,
+            output_value=output_value,
+            summary=summary,
+            metadata=metadata,
+            error=error,
+            fail_closed=critical,
+        )
+    except Exception as exc:
+        if critical:
+            _queue_tool_call_lineage_retry(
+                name=name,
+                safe_args=safe_args,
+                actor=actor,
+                provenance_event_id=provenance_event_id,
+                provenance_context=provenance_context,
+                status=status,
+                payload=output_value,
+                error=error or str(exc) or exc.__class__.__name__,
+            )
+        else:
+            logger.debug("Failed to finish tool provenance for %s", name, exc_info=True)
+
+
 def execute_tool(
     name: str,
     arguments: dict,
@@ -2057,11 +2164,12 @@ def execute_tool(
     started = time.perf_counter()
     actor = actor or admin_actor(source="agent_tools")
     safe_args = arguments if isinstance(arguments, dict) else {}
+    critical_tool_call = _is_proposal_tool(name)
     provenance_event_id: str | None = None
+    pv_context = provenance_context or {}
     try:
         from api import provenance
 
-        pv_context = provenance_context or {}
         provenance_event_id = str(
             pv_context.get("event_id")
             or provenance.deterministic_id(
@@ -2091,9 +2199,24 @@ def execute_tool(
                 "args_hash": provenance.stable_hash(safe_args),
                 "source": pv_context.get("source") or "agent_tools.execute_tool",
             },
+            criticality="financial_critical" if critical_tool_call else "operational",
+            lineage_root_id=f"tool_call:{provenance_event_id}" if critical_tool_call else None,
+            idempotency_key=f"tool_call:{provenance_event_id}:started" if critical_tool_call else None,
+            retention_class="financial_lineage_7y" if critical_tool_call else provenance.DEFAULT_RETENTION_CLASS,
+            fail_closed=critical_tool_call,
         )
-    except Exception:
+    except Exception as exc:
         provenance_event_id = None
+        if critical_tool_call:
+            payload = _attach_meta(
+                {"error": f"Failed to record mandatory tool lineage for {name}: {exc}", "type": "GovernanceWriteError"},
+                {
+                    "tool": name,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                    "status": "failed_closed",
+                },
+            )
+            return _stable_json_dumps(payload)
     try:
         if not is_agent_tool_exposed(name):
             raise ValueError(f"Tool '{name}' is not exposed to the agent")
@@ -2113,23 +2236,23 @@ def execute_tool(
         if isinstance(quality, dict):
             meta["quality_ok"] = bool(quality.get("ok"))
         payload = _attach_meta(payload, meta)
-        try:
-            from api import provenance
-
-            provenance.finish_event(
-                provenance_event_id,
-                status="succeeded",
-                output_value=payload,
-                summary={
-                    "tool": name,
-                    "duration_ms": meta["duration_ms"],
-                    "status": "ok",
-                    "quality_ok": meta.get("quality_ok"),
-                },
-                metadata={k: v for k, v in meta.items() if k != "tool"},
-            )
-        except Exception:
-            pass
+        _finish_tool_provenance(
+            provenance_event_id=provenance_event_id,
+            name=name,
+            safe_args=safe_args,
+            actor=actor,
+            provenance_context=pv_context,
+            critical=critical_tool_call,
+            status="succeeded",
+            output_value=payload,
+            summary={
+                "tool": name,
+                "duration_ms": meta["duration_ms"],
+                "status": "ok",
+                "quality_ok": meta.get("quality_ok"),
+            },
+            metadata={k: v for k, v in meta.items() if k != "tool"},
+        )
         return _stable_json_dumps(payload)
     except PolicyDenied as exc:
         payload = _attach_meta(
@@ -2141,18 +2264,18 @@ def execute_tool(
                 **({"provenance_event_id": provenance_event_id} if provenance_event_id else {}),
             },
         )
-        try:
-            from api import provenance
-
-            provenance.finish_event(
-                provenance_event_id,
-                status="denied",
-                output_value=payload,
-                summary={"tool": name, "status": "denied"},
-                error=exc.reason,
-            )
-        except Exception:
-            pass
+        _finish_tool_provenance(
+            provenance_event_id=provenance_event_id,
+            name=name,
+            safe_args=safe_args,
+            actor=actor,
+            provenance_context=pv_context,
+            critical=critical_tool_call,
+            status="denied",
+            output_value=payload,
+            summary={"tool": name, "status": "denied"},
+            error=exc.reason,
+        )
         return _stable_json_dumps(payload)
     except Exception as exc:
         logger.exception("Tool %s failed", name)
@@ -2165,18 +2288,18 @@ def execute_tool(
                 **({"provenance_event_id": provenance_event_id} if provenance_event_id else {}),
             },
         )
-        try:
-            from api import provenance
-
-            provenance.finish_event(
-                provenance_event_id,
-                status="failed",
-                output_value=payload,
-                summary={"tool": name, "status": "error"},
-                error=str(exc) or exc.__class__.__name__,
-            )
-        except Exception:
-            pass
+        _finish_tool_provenance(
+            provenance_event_id=provenance_event_id,
+            name=name,
+            safe_args=safe_args,
+            actor=actor,
+            provenance_context=pv_context,
+            critical=critical_tool_call,
+            status="failed",
+            output_value=payload,
+            summary={"tool": name, "status": "error"},
+            error=str(exc) or exc.__class__.__name__,
+        )
         return _stable_json_dumps(payload)
 
 

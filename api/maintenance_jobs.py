@@ -68,15 +68,19 @@ def drain_governance_outbox(_payload: dict[str, Any] | None = None) -> dict[str,
         max_attempts=_env_int("GOVERNANCE_OUTBOX_MAX_ATTEMPTS", 8),
         retry_base_seconds=_env_int("GOVERNANCE_OUTBOX_RETRY_BASE_SECONDS", 30),
         retry_max_seconds=_env_int("GOVERNANCE_OUTBOX_RETRY_MAX_SECONDS", 3600),
+        retry_jitter_seconds=_env_int("GOVERNANCE_OUTBOX_RETRY_JITTER_SECONDS", 30),
     )
     metrics = get_governance_outbox_metrics()
     logger.info(
-        "governance_outbox_drain claimed=%s completed=%s failed=%s dead_lettered=%s pending=%s dead_letter=%s",
+        "governance_outbox_drain claimed=%s completed=%s failed=%s dead_lettered=%s "
+        "pending=%s failed_count=%s dead_letter=%s oldest_pending_age_seconds=%s",
         result.get("claimed"),
         result.get("completed"),
         result.get("failed"),
         result.get("dead_lettered"),
         metrics.get("pending"),
+        metrics.get("failed"),
         metrics.get("dead_letter"),
+        metrics.get("oldest_pending_age_seconds"),
     )
     return {"result": result, "metrics": metrics}

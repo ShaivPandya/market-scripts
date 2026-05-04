@@ -4,11 +4,17 @@ import hmac
 import os
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, status
+from pydantic import BaseModel
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.routers.auth import require_auth
 
 router = APIRouter()
+
+
+class GovernanceOutboxRequeueRequest(BaseModel):
+    idempotency_key: str | None = None
+    next_attempt_at: str | None = None
 
 
 def require_scheduler_or_job_admin(
@@ -64,6 +70,38 @@ def enqueue_governance_outbox_drain(_sub: str = Depends(require_scheduler_or_job
         reuse_completed=False,
     )
     return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+
+
+@router.get("/admin/governance-outbox")
+def list_governance_outbox(
+    status_filter: str | None = None,
+    lineage_root_id: str | None = None,
+    limit: int = 100,
+    _sub: str = Depends(require_job_admin),
+):
+    from portfolio.core_db import get_governance_outbox_items, get_governance_outbox_metrics
+
+    items = get_governance_outbox_items(status=status_filter, lineage_root_id=lineage_root_id, limit=limit)
+    return {"items": items, "count": len(items), "metrics": get_governance_outbox_metrics()}
+
+
+@router.post("/admin/governance-outbox/{outbox_id}/requeue")
+def requeue_governance_outbox(
+    outbox_id: int,
+    body: GovernanceOutboxRequeueRequest | None = None,
+    _sub: str = Depends(require_job_admin),
+):
+    from portfolio.core_db import requeue_governance_outbox_item
+
+    body = body or GovernanceOutboxRequeueRequest()
+    try:
+        return requeue_governance_outbox_item(
+            outbox_id=outbox_id,
+            idempotency_key=body.idempotency_key,
+            next_attempt_at=body.next_attempt_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/admin/jobs/enqueue-market-snapshot-refresh")

@@ -90,6 +90,13 @@ GOVERNANCE_OPERATIONAL = "operational"
 GOVERNANCE_REDACTION_POLICY = "audit_summary_v1"
 GOVERNANCE_FINANCIAL_RETENTION_CLASS = "financial_lineage_7y"
 GOVERNANCE_OUTBOX_STATUSES = ("pending", "processing", "completed", "failed", "dead_letter")
+GOVERNANCE_LINEAGE_COMPLETENESS_STATES = (
+    "complete",
+    "retry_pending",
+    "dead_letter",
+    "legacy_partial",
+    "failed_closed",
+)
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -154,6 +161,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     synthesis     TEXT,
     artifacts     TEXT,
     provenance_event_id TEXT,
+    lineage_completeness TEXT NOT NULL DEFAULT 'retry_pending',
     error         TEXT
 )
 """
@@ -291,6 +299,7 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     provenance_event_id       TEXT,
     origin_provenance_event_id TEXT,
     origin_artifact_id        TEXT,
+    lineage_completeness      TEXT NOT NULL DEFAULT 'retry_pending',
     risk_class                TEXT,
     approval_mode             TEXT,
     base_state_hash           TEXT,
@@ -324,7 +333,8 @@ CREATE TABLE IF NOT EXISTS action_runs (
     error                TEXT,
     started_at           TEXT NOT NULL,
     completed_at         TEXT,
-    provenance_event_id  TEXT
+    provenance_event_id  TEXT,
+    lineage_completeness TEXT NOT NULL DEFAULT 'retry_pending'
 )
 """
 
@@ -584,10 +594,13 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_ticker ON pending_approvals(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_application_status ON pending_approvals(application_status)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_action_id ON pending_approvals(action_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pending_approvals_lineage_completeness ON pending_approvals(lineage_completeness)",
     "CREATE INDEX IF NOT EXISTS idx_action_runs_action_id ON action_runs(action_id)",
     "CREATE INDEX IF NOT EXISTS idx_action_runs_status ON action_runs(status)",
     "CREATE INDEX IF NOT EXISTS idx_action_runs_approval ON action_runs(approval_id)",
+    "CREATE INDEX IF NOT EXISTS idx_action_runs_lineage_completeness ON action_runs(lineage_completeness)",
     "CREATE INDEX IF NOT EXISTS idx_action_events_run ON action_events(action_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_workflow_runs_lineage_completeness ON workflow_runs(lineage_completeness)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report ON recommendations(report_type, as_of DESC)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report_id ON recommendations(report_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_lineage_root ON recommendations(lineage_root_id)",
@@ -812,6 +825,7 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "provenance_event_id": "TEXT",
             "origin_provenance_event_id": "TEXT",
             "origin_artifact_id": "TEXT",
+            "lineage_completeness": "TEXT NOT NULL DEFAULT 'legacy_partial'",
             "risk_class": "TEXT",
             "approval_mode": "TEXT",
             "base_state_hash": "TEXT",
@@ -829,12 +843,14 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "request_schema_name": "TEXT",
             "request_schema_version": "INTEGER",
             "provenance_event_id": "TEXT",
+            "lineage_completeness": "TEXT NOT NULL DEFAULT 'legacy_partial'",
         },
     )
     _add_missing(
         "workflow_runs",
         {
             "provenance_event_id": "TEXT",
+            "lineage_completeness": "TEXT NOT NULL DEFAULT 'legacy_partial'",
         },
     )
     _add_missing(
@@ -1034,6 +1050,8 @@ def create_action_run(
         "started_at": now,
         "completed_at": None,
         "error": None,
+        "provenance_event_id": None,
+        "lineage_completeness": "retry_pending",
     }
 
 
@@ -1883,6 +1901,14 @@ def _governance_idempotency_key(event_bundle: dict[str, Any], prefix: str = "gov
     return f"{prefix}:{_json_hash(event_bundle)}"
 
 
+def _governance_retry_jitter_seconds(seed: Any, attempt_count: int, jitter_max_seconds: int) -> int:
+    safe_jitter = max(0, int(jitter_max_seconds or 0))
+    if safe_jitter <= 0:
+        return 0
+    raw = f"{seed}:{attempt_count}"
+    return int(_json_hash(raw), 16) % (safe_jitter + 1)
+
+
 def _lineage_root_from_bundle(event_bundle: dict[str, Any]) -> str | None:
     root = event_bundle.get("lineage_root_id")
     if root is not None and str(root).strip():
@@ -2115,6 +2141,43 @@ def _materialize_governance_bundle_tx(
                     int(update["policy_gate_result_id"]),
                 ),
             )
+    for update in event_bundle.get("action_run_updates") or []:
+        if isinstance(update, dict) and update.get("action_run_id"):
+            conn.execute(
+                "UPDATE action_runs SET provenance_event_id = COALESCE(?, provenance_event_id), "
+                "lineage_completeness = COALESCE(?, lineage_completeness) WHERE id = ?",
+                (
+                    update.get("provenance_event_id"),
+                    update.get("lineage_completeness"),
+                    int(update["action_run_id"]),
+                ),
+            )
+    for update in event_bundle.get("approval_updates") or []:
+        if isinstance(update, dict) and update.get("approval_id"):
+            conn.execute(
+                "UPDATE pending_approvals SET provenance_event_id = COALESCE(?, provenance_event_id), "
+                "origin_provenance_event_id = COALESCE(?, origin_provenance_event_id), "
+                "origin_artifact_id = COALESCE(?, origin_artifact_id), "
+                "lineage_completeness = COALESCE(?, lineage_completeness) WHERE id = ?",
+                (
+                    update.get("provenance_event_id"),
+                    update.get("origin_provenance_event_id"),
+                    update.get("origin_artifact_id"),
+                    update.get("lineage_completeness"),
+                    int(update["approval_id"]),
+                ),
+            )
+    for update in event_bundle.get("workflow_run_updates") or []:
+        if isinstance(update, dict) and update.get("workflow_run_id"):
+            conn.execute(
+                "UPDATE workflow_runs SET provenance_event_id = COALESCE(?, provenance_event_id), "
+                "lineage_completeness = COALESCE(?, lineage_completeness) WHERE run_id = ?",
+                (
+                    update.get("provenance_event_id"),
+                    update.get("lineage_completeness"),
+                    str(update["workflow_run_id"]),
+                ),
+            )
     return counts
 
 
@@ -2149,6 +2212,57 @@ def get_governance_outbox_items(
             (*params, safe_limit),
         ).fetchall()
     return [_parse_governance_outbox_row(row) for row in rows]
+
+
+def requeue_governance_outbox_item(
+    *,
+    outbox_id: int | None = None,
+    idempotency_key: str | None = None,
+    next_attempt_at: str | None = None,
+) -> dict:
+    if outbox_id is None and not idempotency_key:
+        raise ValueError("Provide outbox_id or idempotency_key")
+    conn = _get_conn()
+    now = _now()
+    with _lock:
+        if outbox_id is not None:
+            conn.execute(
+                """
+                UPDATE governance_outbox
+                SET status = 'pending',
+                    locked_at = NULL,
+                    last_error = NULL,
+                    dead_lettered_at = NULL,
+                    next_attempt_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (next_attempt_at or now, now, int(outbox_id)),
+            )
+            row = conn.execute("SELECT * FROM governance_outbox WHERE id = ?", (int(outbox_id),)).fetchone()
+        else:
+            conn.execute(
+                """
+                UPDATE governance_outbox
+                SET status = 'pending',
+                    locked_at = NULL,
+                    last_error = NULL,
+                    dead_lettered_at = NULL,
+                    next_attempt_at = ?,
+                    updated_at = ?
+                WHERE idempotency_key = ?
+                """,
+                (next_attempt_at or now, now, idempotency_key),
+            )
+            row = conn.execute(
+                "SELECT * FROM governance_outbox WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        if row is None:
+            conn.rollback()
+            raise ValueError("Governance outbox item not found")
+        conn.commit()
+    return _parse_governance_outbox_row(row)
 
 
 def claim_governance_outbox_batch(*, limit: int = 50, lease_seconds: int = 300) -> list[dict]:
@@ -2196,6 +2310,7 @@ def drain_governance_outbox(
     max_attempts: int = 8,
     retry_base_seconds: int = 30,
     retry_max_seconds: int = 3600,
+    retry_jitter_seconds: int = 30,
 ) -> dict[str, Any]:
     items = claim_governance_outbox_batch(limit=limit, lease_seconds=lease_seconds)
     conn = _get_conn()
@@ -2236,7 +2351,10 @@ def drain_governance_outbox(
                 delay = min(
                     max(1, int(retry_max_seconds)), max(1, int(retry_base_seconds)) * (2 ** (attempt_count - 1))
                 )
-                next_attempt = (now_dt + timedelta(seconds=delay)).isoformat()
+                jitter = _governance_retry_jitter_seconds(
+                    item.get("idempotency_key") or oid, attempt_count, retry_jitter_seconds
+                )
+                next_attempt = (now_dt + timedelta(seconds=delay + jitter)).isoformat()
             with _lock:
                 conn.execute(
                     "UPDATE governance_outbox SET status = ?, locked_at = NULL, last_error = ?, "
@@ -2286,7 +2404,11 @@ def get_governance_outbox_metrics() -> dict[str, Any]:
 def set_workflow_run_provenance_event(run_id: str, provenance_event_id: str | None) -> None:
     conn = _get_conn()
     with _lock:
-        conn.execute("UPDATE workflow_runs SET provenance_event_id = ? WHERE run_id = ?", (provenance_event_id, run_id))
+        conn.execute(
+            "UPDATE workflow_runs SET provenance_event_id = ?, lineage_completeness = CASE "
+            "WHEN ? IS NOT NULL THEN 'complete' ELSE lineage_completeness END WHERE run_id = ?",
+            (provenance_event_id, provenance_event_id, run_id),
+        )
         conn.commit()
 
 
@@ -2294,7 +2416,44 @@ def set_action_run_provenance_event(action_run_id: int, provenance_event_id: str
     conn = _get_conn()
     with _lock:
         conn.execute(
-            "UPDATE action_runs SET provenance_event_id = ? WHERE id = ?", (provenance_event_id, action_run_id)
+            "UPDATE action_runs SET provenance_event_id = ?, lineage_completeness = CASE "
+            "WHEN ? IS NOT NULL THEN 'complete' ELSE lineage_completeness END WHERE id = ?",
+            (provenance_event_id, provenance_event_id, action_run_id),
+        )
+        conn.commit()
+
+
+def set_action_run_lineage_completeness(action_run_id: int, lineage_completeness: str) -> None:
+    if lineage_completeness not in GOVERNANCE_LINEAGE_COMPLETENESS_STATES:
+        raise ValueError(f"Invalid lineage completeness: {lineage_completeness}")
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE action_runs SET lineage_completeness = ? WHERE id = ?", (lineage_completeness, action_run_id)
+        )
+        conn.commit()
+
+
+def set_workflow_run_lineage_completeness(run_id: str, lineage_completeness: str) -> None:
+    if lineage_completeness not in GOVERNANCE_LINEAGE_COMPLETENESS_STATES:
+        raise ValueError(f"Invalid lineage completeness: {lineage_completeness}")
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE workflow_runs SET lineage_completeness = ? WHERE run_id = ?",
+            (lineage_completeness, run_id),
+        )
+        conn.commit()
+
+
+def set_pending_approval_lineage_completeness(approval_id: int, lineage_completeness: str) -> None:
+    if lineage_completeness not in GOVERNANCE_LINEAGE_COMPLETENESS_STATES:
+        raise ValueError(f"Invalid lineage completeness: {lineage_completeness}")
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE pending_approvals SET lineage_completeness = ? WHERE id = ?",
+            (lineage_completeness, approval_id),
         )
         conn.commit()
 
@@ -2313,10 +2472,14 @@ def set_pending_approval_provenance(
             UPDATE pending_approvals
             SET provenance_event_id = COALESCE(?, provenance_event_id),
                 origin_provenance_event_id = COALESCE(?, origin_provenance_event_id),
-                origin_artifact_id = COALESCE(?, origin_artifact_id)
+                origin_artifact_id = COALESCE(?, origin_artifact_id),
+                lineage_completeness = CASE
+                    WHEN ? IS NOT NULL THEN 'complete'
+                    ELSE lineage_completeness
+                END
             WHERE id = ?
             """,
-            (provenance_event_id, origin_provenance_event_id, origin_artifact_id, approval_id),
+            (provenance_event_id, origin_provenance_event_id, origin_artifact_id, provenance_event_id, approval_id),
         )
         conn.commit()
 
@@ -2575,7 +2738,9 @@ def get_decision_lineage_report(
             raise ValueError(f"No approval with id {approval_id}")
         ref_type, ref_id = "approval", str(approval_id)
         lineage_root_id = f"{ref_type}:{ref_id}"
-        completeness = "complete" if approval.get("provenance_event_id") else "retry_pending"
+        completeness = approval.get("lineage_completeness") or (
+            "complete" if approval.get("provenance_event_id") else "retry_pending"
+        )
         object_snapshot = {
             "approval_id": approval_id,
             "entity_type": approval.get("entity_type"),
@@ -2592,7 +2757,9 @@ def get_decision_lineage_report(
             raise ValueError(f"No action run with id {action_run_id}")
         ref_type, ref_id = "action_run", str(action_run_id)
         lineage_root_id = f"{ref_type}:{ref_id}"
-        completeness = "complete" if action_run.get("provenance_event_id") else "retry_pending"
+        completeness = action_run.get("lineage_completeness") or (
+            "complete" if action_run.get("provenance_event_id") else "retry_pending"
+        )
         object_snapshot = {
             "action_run_id": action_run_id,
             "action_id": action_run.get("action_id"),
@@ -2607,7 +2774,9 @@ def get_decision_lineage_report(
             raise ValueError(f"No workflow run with id {workflow_run_id}")
         ref_type, ref_id = "workflow_run", workflow_run_id
         lineage_root_id = f"{ref_type}:{ref_id}"
-        completeness = "complete" if workflow.get("provenance_event_id") else "retry_pending"
+        completeness = workflow.get("lineage_completeness") or (
+            "complete" if workflow.get("provenance_event_id") else "retry_pending"
+        )
         object_snapshot = {
             "workflow_run_id": workflow_run_id,
             "workflow_name": workflow.get("workflow_name"),
@@ -2955,57 +3124,22 @@ def create_workflow_run(
                 },
             )
             conn.execute(
-                "UPDATE workflow_runs SET provenance_event_id = ? WHERE run_id = ?", (provenance_event_id, rid)
+                "UPDATE workflow_runs SET provenance_event_id = ?, lineage_completeness = 'complete' WHERE run_id = ?",
+                (provenance_event_id, rid),
             )
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-    _emit_core_audit(
-        "workflow.run.started",
-        status="started",
-        object_refs=[{"type": "workflow_run", "id": rid}, {"type": "workflow", "id": workflow_name}],
-        after_summary={
-            "workflow_name": workflow_name,
-            "ticker": ticker.upper() if ticker else None,
-            "status": "running",
-        },
-        source_lineage={"run_id": rid},
-    )
-    try:
-        from api import provenance
-
-        event_id = provenance.deterministic_id("pv:workflow_run", rid)
-        provenance.start_event(
-            event_id=event_id,
-            event_type="workflow_run",
-            event_name=workflow_name,
-            workflow_run_id=rid,
-            summary={
-                "workflow_name": workflow_name,
-                "ticker": ticker.upper() if ticker else None,
-                "status": "running",
-            },
-            criticality=GOVERNANCE_CRITICAL_FINANCIAL,
-            lineage_root_id=f"workflow_run:{rid}",
-            idempotency_key=f"workflow_run:{rid}:started",
-            retention_class=GOVERNANCE_FINANCIAL_RETENTION_CLASS,
-            fail_closed=True,
-        )
-        set_workflow_run_provenance_event(rid, event_id)
-        provenance.link_refs(
-            event_id=event_id,
-            source_ref_type="workflow",
-            source_ref_id=workflow_name,
-            target_ref_type="workflow_run",
-            target_ref_id=rid,
-            link_type="executed_as",
-            lineage_root_id=f"workflow_run:{rid}",
-            fail_closed=True,
-        )
-    except Exception:
-        raise
-    return {"run_id": rid, "workflow_name": workflow_name, "ticker": ticker, "status": "running", "started_at": now}
+    return {
+        "run_id": rid,
+        "workflow_name": workflow_name,
+        "ticker": ticker,
+        "status": "running",
+        "started_at": now,
+        "provenance_event_id": provenance_event_id,
+        "lineage_completeness": "complete",
+    }
 
 
 def complete_workflow_run(
@@ -4896,7 +5030,7 @@ def create_pending_approval(
                 ]
             _materialize_governance_bundle_tx(conn, bundle)
             conn.execute(
-                "UPDATE pending_approvals SET provenance_event_id = ? WHERE id = ?",
+                "UPDATE pending_approvals SET provenance_event_id = ?, lineage_completeness = 'complete' WHERE id = ?",
                 (provenance_event_id, approval_id),
             )
             row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()

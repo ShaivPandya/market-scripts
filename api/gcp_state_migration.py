@@ -467,6 +467,7 @@ class StateMigrator:
                 "synthesis",
                 "artifacts",
                 "provenance_event_id",
+                "lineage_completeness",
                 "error",
             ],
             "report_runs": [
@@ -570,6 +571,7 @@ class StateMigrator:
                 "provenance_event_id",
                 "origin_provenance_event_id",
                 "origin_artifact_id",
+                "lineage_completeness",
             ],
             "action_runs": [
                 "id",
@@ -592,6 +594,7 @@ class StateMigrator:
                 "started_at",
                 "completed_at",
                 "provenance_event_id",
+                "lineage_completeness",
             ],
             "action_events": [
                 "id",

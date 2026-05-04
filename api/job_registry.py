@@ -19,6 +19,7 @@ class JobSpec:
     timeout_s: int = 180
     completed_ttl_s: int = 24 * 60 * 60
     failed_ttl_s: int = 7 * 24 * 60 * 60
+    stale_grace_s: int | None = None
     error_message: str = "Job failed"
     supports_progress: bool = False
     initial_progress: dict[str, Any] | None = None
@@ -94,9 +95,10 @@ JOB_SPECS: dict[str, JobSpec] = {
         compute_func="api.routers.sizer._compute_sizer_result",
         cache_key_func="api.routers.sizer._cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_SIZER", "default"),
-        timeout_s=_env_int("ASYNC_TIMEOUT_SIZER_SECONDS", 180),
+        timeout_s=_env_int("ASYNC_TIMEOUT_SIZER_SECONDS", 30),
         completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        stale_grace_s=_env_int("ASYNC_STALE_GRACE_SIZER_SECONDS", 15),
         error_message="Portfolio sizer failed",
     ),
     "ontology": JobSpec(

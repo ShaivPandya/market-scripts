@@ -114,8 +114,9 @@ def test_workflow_artifact_records_link_to_pending_approvals():
     assert count == 1
     assert len(approvals) == 1
     assert approvals[0]["origin_artifact_id"]
+    assert approvals[0]["lineage_completeness"] == "complete"
     assert trace["workflow_artifacts"][0]["approval_id"] == approvals[0]["id"]
-    assert trace["workflow_artifacts"][0]["retention_class"] == "workflow_artifact_365d"
+    assert trace["workflow_artifacts"][0]["retention_class"] == "financial_lineage_7y"
     assert trace["workflow_artifacts"][0]["redaction_policy"] == "audit_summary_v1"
     assert any(event["event_type"] == "workflow_artifact" for event in trace["events"])
     assert any(link["link_type"] == "proposed" for link in trace["links"])
@@ -157,6 +158,32 @@ def test_agent_tool_proposal_links_tool_call_to_approval():
         and link["link_type"] == "proposed"
         for link in trace["links"]
     )
+
+
+def test_agent_tool_proposal_fails_closed_without_start_provenance(monkeypatch):
+    actor = agent_actor(admin_actor("alice"))
+
+    def _fail_start_event(**_kwargs):
+        raise RuntimeError("provenance store unavailable")
+
+    monkeypatch.setattr(provenance, "start_event", _fail_start_event)
+
+    payload = json.loads(
+        agent_tools.execute_tool(
+            "propose_action_item",
+            {
+                "ticker": "mu",
+                "description": "Review sizing",
+                "action_type": "review",
+                "reason": "Risk changed",
+            },
+            actor=actor,
+            provenance_context={"agent_session_id": "session-closed"},
+        )
+    )
+
+    assert payload["_meta"]["status"] == "failed_closed"
+    assert core_db.get_pending_approvals() == []
 
 
 def test_workflow_tools_receive_real_provenance_context(monkeypatch):

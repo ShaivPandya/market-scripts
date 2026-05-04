@@ -133,7 +133,8 @@ def _sync_stale_active_job(row: dict[str, Any], *, now: datetime | None = None) 
     checked_at = now or datetime.now(UTC)
     if checked_at.tzinfo is None:
         checked_at = checked_at.replace(tzinfo=UTC)
-    expires_at = reference_time + timedelta(seconds=spec.timeout_s + _stale_grace_seconds())
+    stale_grace_s = spec.stale_grace_s if spec.stale_grace_s is not None else _stale_grace_seconds()
+    expires_at = reference_time + timedelta(seconds=spec.timeout_s + stale_grace_s)
     if checked_at <= expires_at:
         return row
 
@@ -141,9 +142,7 @@ def _sync_stale_active_job(row: dict[str, Any], *, now: datetime | None = None) 
     if not job_id:
         return row
 
-    error = (
-        f"Async job exceeded timeout before completion (timeout={spec.timeout_s}s, grace={_stale_grace_seconds()}s)."
-    )
+    error = f"Async job exceeded timeout before completion (timeout={spec.timeout_s}s, grace={stale_grace_s}s)."
     fail_job(job_id, error, result_ttl_seconds=spec.failed_ttl_s)
     refreshed = get_job(job_id)
     _emit_job_audit(

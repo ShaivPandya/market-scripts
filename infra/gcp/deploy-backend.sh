@@ -14,6 +14,7 @@
 #   RUN_DB_MIGRATIONS=0  skip Alembic upgrade head
 #   SYNC_IAM=0           skip iam.sh
 #   SYNC_SCHEDULER=0     skip setup-scheduler.sh
+#   SYNC_MONITORING=0    skip setup-governance-monitoring.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -97,6 +98,13 @@ if [[ "${SYNC_SCHEDULER:-1}" == "1" ]]; then
   "${_repo_root}/infra/gcp/setup-scheduler.sh"
 else
   log "SYNC_SCHEDULER=0; skipping Scheduler sync"
+fi
+
+if [[ "${SYNC_MONITORING:-1}" == "1" ]]; then
+  log "Syncing governance monitoring"
+  "${_repo_root}/infra/gcp/setup-governance-monitoring.sh"
+else
+  log "SYNC_MONITORING=0; skipping governance monitoring sync"
 fi
 
 log "Backend deploy complete at ${IMAGE_TAG}."

@@ -778,6 +778,60 @@ def _source_lineage(context: ActionContext) -> dict[str, Any]:
     }
 
 
+def _queue_action_lineage_retry(
+    *,
+    run_id: int,
+    action: DomainAction,
+    context: ActionContext,
+    event_name: str,
+    status: str,
+    summary: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+    provenance_links: list[dict[str, Any]] | None = None,
+) -> None:
+    from api import governance
+    from portfolio import core_db
+
+    lineage_root_id = governance.lineage_root(governance.REF_ACTION_RUN, run_id)
+    bundle = governance.lifecycle_event_bundle(
+        event_name=event_name,
+        event_type="action_run",
+        ref_type=governance.REF_ACTION_RUN,
+        ref_id=run_id,
+        status=status,
+        actor_type=context.actor_type,
+        actor_id=context.actor_id,
+        parent_event_id=context.provenance_event_id,
+        action_run_id=run_id,
+        approval_id=context.approval_id,
+        summary=summary,
+        metadata={
+            "action_id": action.action_id,
+            "action_schema_version": action.schema_version,
+            **(metadata if isinstance(metadata, dict) else {"metadata": metadata} if metadata is not None else {}),
+        },
+        source_lineage=_source_lineage(context),
+        error=error,
+        idempotency_key=f"domain_action:{run_id}:{event_name}:{status}:retry",
+    )
+    if provenance_links:
+        bundle.setdefault("provenance_links", []).extend(provenance_links)
+    bundle["action_run_updates"] = [
+        {
+            "action_run_id": run_id,
+            "provenance_event_id": _action_run_provenance_id(run_id),
+            "lineage_completeness": "complete",
+        }
+    ]
+    core_db.enqueue_governance_outbox(
+        bundle,
+        idempotency_key=f"domain_action:{run_id}:{event_name}:{status}:retry",
+        lineage_root_id=lineage_root_id,
+    )
+    core_db.set_action_run_lineage_completeness(run_id, "retry_pending")
+
+
 def _emit_domain_audit(
     action: DomainAction,
     context: ActionContext,
@@ -790,29 +844,56 @@ def _emit_domain_audit(
     metadata: Any | None = None,
     error: str | None = None,
 ) -> None:
-    audit_event = emit_audit_event(
-        action_name,
-        "domain_action",
-        status,
-        actor=context,
-        object_refs=_action_refs(action, context, action_run_id),
-        before_summary=before_summary,
-        after_summary=after_summary,
-        source_lineage=_source_lineage(context),
-        metadata=metadata,
-        error=error,
-        fail_closed=action.risk_class == "financial"
-        and action_name in {action.audit_spec.started_event, "domain.action.started"},
-        criticality="financial_critical" if action.risk_class == "financial" else "operational",
-        lineage_root_id=f"action_run:{action_run_id}" if action.risk_class == "financial" and action_run_id else None,
-        idempotency_key=f"domain_action:{action_run_id}:{action_name}:{status}" if action_run_id else None,
-        retention_class="financial_lineage_7y" if action.risk_class == "financial" else "audit_365d",
-    )
+    try:
+        audit_event = emit_audit_event(
+            action_name,
+            "domain_action",
+            status,
+            actor=context,
+            object_refs=_action_refs(action, context, action_run_id),
+            before_summary=before_summary,
+            after_summary=after_summary,
+            source_lineage=_source_lineage(context),
+            metadata=metadata,
+            error=error,
+            fail_closed=action.risk_class == "financial"
+            and action_name in {action.audit_spec.started_event, "domain.action.started"},
+            criticality="financial_critical" if action.risk_class == "financial" else "operational",
+            lineage_root_id=f"action_run:{action_run_id}"
+            if action.risk_class == "financial" and action_run_id
+            else None,
+            idempotency_key=f"domain_action:{action_run_id}:{action_name}:{status}" if action_run_id else None,
+            retention_class="financial_lineage_7y" if action.risk_class == "financial" else "audit_365d",
+        )
+    except Exception:
+        if action.risk_class == "financial" and action_run_id is not None:
+            _queue_action_lineage_retry(
+                run_id=action_run_id,
+                action=action,
+                context=context,
+                event_name=action_name,
+                status=status,
+                summary=after_summary,
+                metadata=metadata,
+                error=error,
+            )
+        raise
+    if audit_event is None and action.risk_class == "financial" and action_run_id is not None:
+        _queue_action_lineage_retry(
+            run_id=action_run_id,
+            action=action,
+            context=context,
+            event_name=action_name,
+            status=status,
+            summary=after_summary,
+            metadata=metadata,
+            error=error,
+        )
     if action_run_id is not None and audit_event:
         try:
             from api import provenance
 
-            governed_link = action.risk_class == "financial" and action_name in {
+            fail_closed_link = action.risk_class == "financial" and action_name in {
                 action.audit_spec.started_event,
                 "domain.action.started",
             }
@@ -825,14 +906,41 @@ def _emit_domain_audit(
                 link_type="audited_by",
                 metadata={"action_name": action_name, "status": status},
                 lineage_root_id=f"action_run:{action_run_id}" if action.risk_class == "financial" else None,
-                fail_closed=governed_link,
+                fail_closed=fail_closed_link,
             )
-        except Exception:
+        except Exception as exc:
             if action.risk_class == "financial" and action_name in {
                 action.audit_spec.started_event,
                 "domain.action.started",
             }:
                 raise
+            if action.risk_class == "financial":
+                from api import governance
+
+                _queue_action_lineage_retry(
+                    run_id=action_run_id,
+                    action=action,
+                    context=context,
+                    event_name=action_name,
+                    status=status,
+                    summary=after_summary,
+                    metadata=metadata,
+                    error=str(exc) or exc.__class__.__name__,
+                    provenance_links=[
+                        governance.provenance_link(
+                            event_id=_action_run_provenance_id(action_run_id),
+                            source_ref_type=governance.REF_ACTION_RUN,
+                            source_ref_id=action_run_id,
+                            target_ref_type=governance.REF_AUDIT_EVENT,
+                            target_ref_id=str(audit_event.get("event_id") or audit_event.get("id")),
+                            link_type=governance.LINK_AUDITED_BY,
+                            lineage_root_id=f"action_run:{action_run_id}",
+                            metadata={"action_name": action_name, "status": status},
+                        )
+                    ],
+                )
+            else:
+                logger.debug("Failed to link action audit event", exc_info=True)
 
 
 def _action_run_provenance_id(run_id: int) -> str:
@@ -847,6 +955,9 @@ def _action_run_provenance_id(run_id: int) -> str:
 def _finish_action_provenance(
     run_id: int,
     *,
+    action: DomainAction | None = None,
+    context: ActionContext | None = None,
+    critical: bool = False,
     status: str,
     output_value: Any | None = None,
     summary: Any | None = None,
@@ -863,9 +974,23 @@ def _finish_action_provenance(
             summary=summary,
             metadata=metadata,
             error=error,
+            fail_closed=critical,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        if critical and action is not None and context is not None:
+            _queue_action_lineage_retry(
+                run_id=run_id,
+                action=action,
+                context=context,
+                event_name=f"domain.action.{status}",
+                status=status,
+                summary=summary,
+                metadata=metadata,
+                error=error or str(exc) or exc.__class__.__name__,
+            )
+            return
+        if critical:
+            raise
 
 
 def _link_action_result_entities(
@@ -874,11 +999,14 @@ def _link_action_result_entities(
     run_id: int,
     output: dict[str, Any],
     input_payload: dict[str, Any],
+    *,
+    critical: bool = False,
 ) -> None:
     try:
-        from api import provenance
+        from api import governance, provenance
 
         event_id = _action_run_provenance_id(run_id)
+        lineage_root_id = f"action_run:{run_id}" if critical else None
         for ref_type, ref_id, link_type in _action_result_refs(action.action_id, output, input_payload):
             provenance.link_refs(
                 event_id=event_id,
@@ -893,8 +1021,35 @@ def _link_action_result_entities(
                     "source_type": context.source_type,
                     "source_id": context.source_id,
                 },
+                lineage_root_id=lineage_root_id,
+                fail_closed=critical,
             )
-    except Exception:
+    except Exception as exc:
+        if critical:
+            links = [
+                governance.provenance_link(
+                    event_id=_action_run_provenance_id(run_id),
+                    source_ref_type=governance.REF_ACTION_RUN,
+                    source_ref_id=str(run_id),
+                    target_ref_type=ref_type,
+                    target_ref_id=ref_id,
+                    link_type=link_type,
+                    lineage_root_id=f"action_run:{run_id}",
+                    metadata={"action_id": action.action_id, "approval_id": context.approval_id},
+                )
+                for ref_type, ref_id, link_type in _action_result_refs(action.action_id, output, input_payload)
+            ]
+            _queue_action_lineage_retry(
+                run_id=run_id,
+                action=action,
+                context=context,
+                event_name="domain.action.result_linked",
+                status="succeeded",
+                summary={"status": "retry_pending", "link_count": len(links)},
+                error=str(exc) or exc.__class__.__name__,
+                provenance_links=links,
+            )
+            return
         logger.debug(
             "Failed to link action result entities run_id=%s action=%s", run_id, action.action_id, exc_info=True
         )
@@ -1092,8 +1247,12 @@ def _audit_fail(
 
     core_db.record_action_event(run_id, "error", message=message)
     core_db.complete_action_run(run_id, status="rolled_back" if rolled_back else "failed", error=message)
+    critical = bool(action and action.risk_class == "financial")
     _finish_action_provenance(
         run_id,
+        action=action,
+        context=context,
+        critical=critical,
         status="rolled_back" if rolled_back else "failed",
         summary={"status": "rolled_back" if rolled_back else "failed"},
         metadata={"audit_action_name": audit_action_name},
@@ -1198,9 +1357,13 @@ def execute_action(
 
         core_db.record_action_event(run_id, "complete", payload=result.output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=result.output)
-        _link_action_result_entities(action, context, run_id, result.output, normalized)
+        critical = action.risk_class == "financial"
+        _link_action_result_entities(action, context, run_id, result.output, normalized, critical=critical)
         _finish_action_provenance(
             run_id,
+            action=action,
+            context=context,
+            critical=critical,
             status="succeeded",
             output_value=result.output,
             summary={"status": "succeeded", **result.output},
@@ -1337,9 +1500,37 @@ def propose_action(
                 target_ref_id=str(approval["id"]),
                 link_type="proposed",
                 metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
+                lineage_root_id=f"action_run:{run_id}" if action.risk_class == "financial" else None,
+                fail_closed=action.risk_class == "financial",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            if action.risk_class == "financial":
+                from api import governance
+
+                _queue_action_lineage_retry(
+                    run_id=run_id,
+                    action=proposal_action,
+                    context=context,
+                    event_name="approval.created",
+                    status="pending",
+                    summary={"approval_id": approval["id"], "status": "retry_pending"},
+                    metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
+                    error=str(exc) or exc.__class__.__name__,
+                    provenance_links=[
+                        governance.provenance_link(
+                            event_id=proposal_event_id,
+                            source_ref_type=governance.REF_ACTION_RUN,
+                            source_ref_id=run_id,
+                            target_ref_type=governance.REF_APPROVAL,
+                            target_ref_id=approval["id"],
+                            link_type=governance.LINK_PROPOSED,
+                            lineage_root_id=f"action_run:{run_id}",
+                            metadata={"action_id": action.action_id, "entity_type": approval.get("entity_type")},
+                        )
+                    ],
+                )
+            else:
+                logger.debug("Failed to link approval proposal provenance", exc_info=True)
         output = {
             "status": "pending_approval_created",
             "approval_id": approval["id"],
@@ -1354,8 +1545,12 @@ def propose_action(
         )
         core_db.record_action_event(run_id, "approval_created", payload=output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=output)
+        critical = action.risk_class == "financial"
         _finish_action_provenance(
             run_id,
+            action=proposal_action,
+            context=context,
+            critical=critical,
             status="succeeded",
             output_value=output,
             summary=output,
@@ -2890,6 +3085,11 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
                     "item_keys": sorted(str(key) for key in item.keys()),
                     "multiple": binding.multiple,
                 },
+                criticality="financial_critical",
+                lineage_root_id=f"workflow_run:{run_id}",
+                idempotency_key=f"workflow_artifact:{run_id}:{artifact_key}:{item_index}:started",
+                retention_class="financial_lineage_7y",
+                fail_closed=True,
             )
             provenance.link_refs(
                 event_id=artifact_event_id,
@@ -2899,9 +3099,12 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
                 target_ref_id=artifact_event_id,
                 link_type="produced",
                 metadata={"artifact_key": artifact_key, "artifact_index": item_index},
+                lineage_root_id=f"workflow_run:{run_id}",
+                fail_closed=True,
             )
         except Exception:
             artifact_event_id = None
+            raise
         try:
             approval = propose_action(
                 binding.action_id,
@@ -2923,6 +3126,7 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
                         "action_id": binding.action_id,
                     },
                     error=str(exc) or exc.__class__.__name__,
+                    fail_closed=True,
                 )
             except Exception:
                 pass
@@ -2938,6 +3142,8 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
                 artifact_value=item,
                 approval_id=int(approval["id"]),
                 provenance_event_id=artifact_event_id,
+                retention_class="financial_lineage_7y",
+                fail_closed=True,
             )
             artifact_id = str(record.get("artifact_id")) if record and record.get("artifact_id") else artifact_event_id
             core_db.set_pending_approval_provenance(int(approval["id"]), origin_artifact_id=artifact_id)
@@ -2949,6 +3155,8 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
                 target_ref_id=str(approval["id"]),
                 link_type="proposed",
                 metadata={"action_id": binding.action_id, "artifact_key": artifact_key},
+                lineage_root_id=f"approval:{approval['id']}",
+                fail_closed=True,
             )
             provenance.finish_event(
                 artifact_event_id,
@@ -2961,8 +3169,80 @@ def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id:
                     "action_id": binding.action_id,
                     "status": "pending_approval_created",
                 },
+                fail_closed=True,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            from api import governance
+
+            artifact_id = artifact_event_id or governance.deterministic_id(
+                "workflow_artifact", run_id, artifact_key, item_index
+            )
+            lineage_root_id = governance.lineage_root(governance.REF_APPROVAL, approval["id"])
+            bundle = governance.event_bundle(
+                lineage_root_id=lineage_root_id,
+                idempotency_key=f"workflow_artifact:{run_id}:{artifact_key}:{item_index}:approval:{approval['id']}:retry",
+                provenance_events=[
+                    governance.provenance_event(
+                        event_id=artifact_event_id,
+                        event_type="workflow_artifact",
+                        event_name=artifact_key,
+                        status="succeeded",
+                        lineage_root_id=lineage_root_id,
+                        workflow_run_id=run_id,
+                        approval_id=int(approval["id"]),
+                        summary={
+                            "artifact_key": artifact_key,
+                            "artifact_index": item_index,
+                            "approval_id": approval["id"],
+                            "action_id": binding.action_id,
+                        },
+                        metadata={"item_keys": sorted(str(key) for key in item.keys())},
+                        error=str(exc) or exc.__class__.__name__,
+                    )
+                ],
+                audit_events=[
+                    governance.audit_event(
+                        action_name=governance.EVENT_APPROVAL_CREATED,
+                        status="pending",
+                        lineage_root_id=lineage_root_id,
+                        object_refs=[
+                            {"type": governance.REF_WORKFLOW_ARTIFACT, "id": artifact_id},
+                            {"type": governance.REF_APPROVAL, "id": approval["id"]},
+                        ],
+                        after_summary={
+                            "artifact_key": artifact_key,
+                            "artifact_index": item_index,
+                            "approval_id": approval["id"],
+                            "action_id": binding.action_id,
+                        },
+                        error=str(exc) or exc.__class__.__name__,
+                    )
+                ],
+                provenance_links=[
+                    governance.provenance_link(
+                        event_id=artifact_event_id,
+                        source_ref_type=governance.REF_WORKFLOW_ARTIFACT,
+                        source_ref_id=artifact_id,
+                        target_ref_type=governance.REF_APPROVAL,
+                        target_ref_id=approval["id"],
+                        link_type=governance.LINK_PROPOSED,
+                        lineage_root_id=lineage_root_id,
+                        metadata={"action_id": binding.action_id, "artifact_key": artifact_key},
+                    )
+                ],
+                approval_updates=[
+                    {
+                        "approval_id": int(approval["id"]),
+                        "origin_artifact_id": artifact_id,
+                        "lineage_completeness": "complete",
+                    }
+                ],
+            )
+            core_db.enqueue_governance_outbox(
+                bundle,
+                idempotency_key=f"workflow_artifact:{run_id}:{artifact_key}:{item_index}:approval:{approval['id']}:retry",
+                lineage_root_id=lineage_root_id,
+            )
+            core_db.set_pending_approval_lineage_completeness(int(approval["id"]), "retry_pending")
         count += 1
     return count
