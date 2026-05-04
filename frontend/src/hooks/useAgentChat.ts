@@ -282,20 +282,6 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   }
 }
 
-function wait(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException("Polling cancelled", "AbortError"))
-      return
-    }
-    const timer = window.setTimeout(resolve, ms)
-    signal?.addEventListener("abort", () => {
-      window.clearTimeout(timer)
-      reject(new DOMException("Polling cancelled", "AbortError"))
-    }, { once: true })
-  })
-}
-
 async function readJsonResponse<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "Request failed")

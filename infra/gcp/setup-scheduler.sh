@@ -8,6 +8,7 @@
 #   top50-refresh-daily       0 23 * * 1-5  POST  Cloud Run Jobs run -> ${TOP50_REFRESH_JOB}
 #   market-snapshot-refresh   15 23 * * 1-5 POST  /api/v1/admin/jobs/enqueue-market-snapshot-refresh
 #   watch-trigger-monitor     30 14-22 * * 1-5 POST /api/v1/admin/jobs/enqueue-watch-trigger-monitor
+#   continuous-optimizer      15 10 * * 1-5 POST /api/v1/admin/jobs/enqueue-continuous-optimizer
 #
 # Optional:
 #   enqueue-cache-warm        0 * * * *     POST  /api/v1/admin/jobs/enqueue-cache-warm
@@ -76,6 +77,7 @@ fi
 # scheduler and proxy-secret headers plus OIDC auth as api-sa.
 upsert_api_job() {
   local name="$1" schedule="$2" path="$3"
+  local timezone="${4:-UTC}"
   local uri="${API_URL}${path}"
   local action=create
   local headers_flag=--headers
@@ -84,12 +86,12 @@ upsert_api_job() {
     action=update
     headers_flag=--update-headers
   fi
-  log "${action} ${name} (${schedule})"
+  log "${action} ${name} (${schedule}, ${timezone})"
   gcloud scheduler jobs "${action}" http "${name}" \
     --project="${PROJECT_ID}" \
     --location="${REGION}" \
     --schedule="${schedule}" \
-    --time-zone=UTC \
+    --time-zone="${timezone}" \
     --uri="${uri}" \
     --http-method=POST \
     "${headers_flag}=X-Scheduler-Secret=${SCHEDULER_SECRET_VALUE},X-Api-Proxy-Secret=${API_PROXY_SECRET_VALUE}" \
@@ -140,6 +142,7 @@ upsert_api_job governance-outbox-drain "${GOVERNANCE_OUTBOX_DRAIN_SCHEDULE:-*/5 
 upsert_run_job_trigger top50-refresh-daily "0 23 * * 1-5" "${TOP50_REFRESH_JOB}"
 upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-15 23 * * 1-5}" /api/v1/admin/jobs/enqueue-market-snapshot-refresh
 upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}" /api/v1/admin/jobs/enqueue-watch-trigger-monitor
+upsert_api_job continuous-optimizer "${CONTINUOUS_OPTIMIZER_SCHEDULE:-15 10 * * 1-5}" /api/v1/admin/jobs/enqueue-continuous-optimizer "${CONTINUOUS_OPTIMIZER_TIME_ZONE:-America/New_York}"
 
 if is_truthy "${SCHEDULE_CACHE_WARM:-0}"; then
   upsert_api_job enqueue-cache-warm "${CACHE_WARM_SCHEDULE:-0 * * * *}" /api/v1/admin/jobs/enqueue-cache-warm

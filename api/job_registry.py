@@ -229,6 +229,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Watch trigger monitor failed",
     ),
+    "continuous_optimizer": JobSpec(
+        job_type="continuous_optimizer",
+        request_model=None,
+        compute_func="api.continuous_optimizer.run_continuous_optimizer",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_CONTINUOUS_OPTIMIZER_SECONDS", 20 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Continuous optimizer failed",
+    ),
 }
 
 

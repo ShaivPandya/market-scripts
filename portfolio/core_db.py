@@ -189,6 +189,83 @@ CREATE TABLE IF NOT EXISTS report_runs (
 )
 """
 
+_CREATE_OPTIMIZATION_MISSIONS = """
+CREATE TABLE IF NOT EXISTS optimization_missions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    name               TEXT NOT NULL UNIQUE,
+    status             TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active', 'paused', 'retired')),
+    schedule_label     TEXT,
+    scenario_json      TEXT,
+    source_config_json TEXT,
+    thresholds_json    TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+)
+"""
+
+_CREATE_OPTIMIZATION_RUNS = """
+CREATE TABLE IF NOT EXISTS optimization_runs (
+    run_id                TEXT PRIMARY KEY,
+    mission_id            INTEGER NOT NULL,
+    mission_name          TEXT NOT NULL,
+    status                TEXT NOT NULL DEFAULT 'running'
+                          CHECK (status IN ('running', 'completed', 'failed')),
+    started_at            TEXT NOT NULL,
+    completed_at          TEXT,
+    input_hash            TEXT,
+    output_hash           TEXT,
+    summary_json          TEXT,
+    source_freshness_json TEXT,
+    error                 TEXT
+)
+"""
+
+_CREATE_OPTIMIZATION_ACTION_SNAPSHOTS = """
+CREATE TABLE IF NOT EXISTS optimization_action_snapshots (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id            TEXT NOT NULL,
+    mission_id        INTEGER NOT NULL,
+    ticker            TEXT,
+    asset             TEXT,
+    direction         TEXT,
+    action            TEXT NOT NULL,
+    conviction_band   TEXT,
+    priority_score    REAL,
+    confidence        REAL,
+    gate_status       TEXT,
+    severity          TEXT,
+    state_hash        TEXT NOT NULL,
+    evidence_json     TEXT,
+    source_links_json TEXT,
+    created_at        TEXT NOT NULL
+)
+"""
+
+_CREATE_OPTIMIZATION_ALERTS = """
+CREATE TABLE IF NOT EXISTS optimization_alerts (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    mission_id               INTEGER NOT NULL,
+    run_id                   TEXT NOT NULL,
+    ticker                   TEXT,
+    alert_type               TEXT NOT NULL,
+    severity                 TEXT NOT NULL
+                             CHECK (severity IN ('low', 'normal', 'high', 'urgent')),
+    status                   TEXT NOT NULL DEFAULT 'open'
+                             CHECK (status IN ('open', 'dismissed', 'superseded')),
+    previous_snapshot_id     INTEGER,
+    current_snapshot_id      INTEGER,
+    change_summary           TEXT NOT NULL,
+    evidence_json            TEXT,
+    approval_id              INTEGER,
+    recommendation_id        INTEGER,
+    action_item_approval_id  INTEGER,
+    created_at               TEXT NOT NULL,
+    dismissed_at             TEXT,
+    dismissed_note           TEXT
+)
+"""
+
 _CREATE_ACTION_ITEMS = """
 CREATE TABLE IF NOT EXISTS action_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -608,6 +685,15 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_workflow_runs_started ON workflow_runs(started_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_report_runs_type_asof ON report_runs(report_type, as_of DESC)",
     "CREATE INDEX IF NOT EXISTS idx_report_runs_source ON report_runs(source_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_missions_status ON optimization_missions(status)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_runs_mission_started ON optimization_runs(mission_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_runs_status ON optimization_runs(status)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_snapshots_run ON optimization_action_snapshots(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_snapshots_mission_ticker ON optimization_action_snapshots(mission_id, ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_snapshots_hash ON optimization_action_snapshots(state_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_alerts_status ON optimization_alerts(status, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_alerts_mission ON optimization_alerts(mission_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_optimization_alerts_ticker ON optimization_alerts(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_status ON action_items(status)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_ticker ON action_items(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_watch_triggers_status ON watch_triggers(status)",
@@ -715,6 +801,9 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "policy_gate_results",
                             "audit_events",
                             "governance_outbox",
+                            "optimization_missions",
+                            "optimization_action_snapshots",
+                            "optimization_alerts",
                         }
                     )
                 else:
@@ -732,6 +821,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_KILL_CONDITIONS,
         _CREATE_WORKFLOW_RUNS,
         _CREATE_REPORT_RUNS,
+        _CREATE_OPTIMIZATION_MISSIONS,
+        _CREATE_OPTIMIZATION_RUNS,
+        _CREATE_OPTIMIZATION_ACTION_SNAPSHOTS,
+        _CREATE_OPTIMIZATION_ALERTS,
         _CREATE_ACTION_ITEMS,
         _CREATE_WATCH_TRIGGERS,
         _CREATE_THESIS_CLAIMS,
@@ -3449,6 +3542,451 @@ def get_report_runs(report_type: str | None = None, limit: int = 20) -> list[dic
                 (safe_limit,),
             ).fetchall()
     return [_parse_report_run_json_fields(d) for d in _rows_to_list(rows)]
+
+
+# ---------------------------------------------------------------------------
+# Continuous Optimization
+# ---------------------------------------------------------------------------
+
+DEFAULT_OPTIMIZATION_MISSION_NAME = "Daily Command Center"
+DEFAULT_OPTIMIZATION_SCHEDULE = "Weekdays at 10:15 ET"
+_OPTIMIZATION_MISSION_JSON_FIELDS = ("scenario_json", "source_config_json", "thresholds_json")
+_OPTIMIZATION_RUN_JSON_FIELDS = ("summary_json", "source_freshness_json")
+_OPTIMIZATION_SNAPSHOT_JSON_FIELDS = ("evidence_json", "source_links_json")
+_OPTIMIZATION_ALERT_JSON_FIELDS = ("evidence_json",)
+
+
+def _default_optimization_scenario() -> dict[str, Any]:
+    return {
+        "preset": "balanced",
+        "factor_weights": {
+            "quality": 0.30,
+            "price_momentum": 0.40,
+            "fundamental_momentum": 0.30,
+            "valuation": 0.0,
+        },
+        "fundamental_momentum_weights": {"revenue": 0.67, "eps": 0.33},
+        "valuation_weights": {
+            "price_sales": 0.25,
+            "price_operating_income": 0.25,
+            "price_fcf": 0.25,
+            "price_earnings": 0.25,
+        },
+        "brakes": {
+            "drawdown_sensitivity": 0.0,
+            "contrarian_penalty": 0.0,
+            "short_squeeze_brake": 0.0,
+        },
+    }
+
+
+def _default_optimization_sources() -> dict[str, Any]:
+    return {
+        "modules": [
+            "portfolio_analyzer",
+            "portfolio_risk",
+            "position_risk",
+            "portfolio_sizer",
+            "hedging",
+            "thesis_pressure",
+            "watch_triggers",
+            "report_recommendations",
+            "workflow_runs",
+            "macro_signal_regime",
+        ],
+        "mode": "recommend_and_stage",
+    }
+
+
+def _default_optimization_thresholds() -> dict[str, Any]:
+    return {
+        "confidence_bucket_edges": [0.35, 0.65, 0.8],
+        "priority_bucket_edges": [0.75, 1.5, 2.5],
+        "stage_actions": True,
+        "suppress_low_severity_holds": True,
+    }
+
+
+def _parse_optimization_mission_json_fields(d: dict) -> dict:
+    for field in _OPTIMIZATION_MISSION_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["scenario"] = d.get("scenario_json") if isinstance(d.get("scenario_json"), dict) else {}
+    d["source_config"] = d.get("source_config_json") if isinstance(d.get("source_config_json"), dict) else {}
+    d["thresholds"] = d.get("thresholds_json") if isinstance(d.get("thresholds_json"), dict) else {}
+    return d
+
+
+def _parse_optimization_run_json_fields(d: dict) -> dict:
+    for field in _OPTIMIZATION_RUN_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["summary"] = d.get("summary_json") if isinstance(d.get("summary_json"), dict) else {}
+    d["source_freshness"] = d.get("source_freshness_json") if isinstance(d.get("source_freshness_json"), dict) else {}
+    return d
+
+
+def _parse_optimization_snapshot_json_fields(d: dict) -> dict:
+    for field in _OPTIMIZATION_SNAPSHOT_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["evidence"] = d.get("evidence_json") if isinstance(d.get("evidence_json"), dict) else {}
+    d["source_links"] = d.get("source_links_json") if isinstance(d.get("source_links_json"), dict) else {}
+    return d
+
+
+def _parse_optimization_alert_json_fields(d: dict) -> dict:
+    for field in _OPTIMIZATION_ALERT_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["evidence"] = d.get("evidence_json") if isinstance(d.get("evidence_json"), dict) else {}
+    return d
+
+
+def ensure_default_optimization_mission() -> dict:
+    """Create the default command-center mission if it does not already exist."""
+
+    conn = _get_conn()
+    now = _now()
+    with _lock:
+        row = conn.execute(
+            "SELECT * FROM optimization_missions WHERE name = ? ORDER BY id LIMIT 1",
+            (DEFAULT_OPTIMIZATION_MISSION_NAME,),
+        ).fetchone()
+        if not row:
+            cur = conn.execute(
+                "INSERT INTO optimization_missions "
+                "(name, status, schedule_label, scenario_json, source_config_json, thresholds_json, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    DEFAULT_OPTIMIZATION_MISSION_NAME,
+                    "active",
+                    DEFAULT_OPTIMIZATION_SCHEDULE,
+                    json.dumps(_default_optimization_scenario(), sort_keys=True),
+                    json.dumps(_default_optimization_sources(), sort_keys=True),
+                    json.dumps(_default_optimization_thresholds(), sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM optimization_missions WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_optimization_mission_json_fields(_require_row_dict(row))
+
+
+def get_optimization_missions(status: str | None = None) -> list[dict]:
+    ensure_default_optimization_mission()
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM optimization_missions{where} ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, id",
+            params,
+        ).fetchall()
+    return [_parse_optimization_mission_json_fields(row) for row in _rows_to_list(rows)]
+
+
+def get_optimization_mission(mission_id: int | None = None) -> dict | None:
+    if mission_id is None:
+        return ensure_default_optimization_mission()
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM optimization_missions WHERE id = ?", (mission_id,)).fetchone()
+    return _parse_optimization_mission_json_fields(_require_row_dict(row)) if row else None
+
+
+def create_optimization_run(mission: dict, *, run_id: str | None = None, input_hash: str | None = None) -> dict:
+    conn = _get_conn()
+    now = _now()
+    rid = run_id or f"opt-{uuid.uuid4().hex}"
+    mission_id = int(mission["id"])
+    mission_name = str(mission.get("name") or DEFAULT_OPTIMIZATION_MISSION_NAME)
+    with _lock:
+        conn.execute(
+            "INSERT INTO optimization_runs "
+            "(run_id, mission_id, mission_name, status, started_at, input_hash, summary_json, source_freshness_json) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (rid, mission_id, mission_name, "running", now, input_hash, json.dumps({}), json.dumps({})),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM optimization_runs WHERE run_id = ?", (rid,)).fetchone()
+    return _parse_optimization_run_json_fields(_require_row_dict(row))
+
+
+def complete_optimization_run(
+    run_id: str,
+    *,
+    summary: dict | None = None,
+    source_freshness: dict | None = None,
+    input_hash: str | None = None,
+    output_hash: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    now = _now()
+    with _lock:
+        conn.execute(
+            "UPDATE optimization_runs SET status = 'completed', completed_at = ?, summary_json = ?, "
+            "source_freshness_json = ?, input_hash = COALESCE(?, input_hash), output_hash = ? WHERE run_id = ?",
+            (
+                now,
+                json.dumps(summary or {}, default=str, sort_keys=True),
+                json.dumps(source_freshness or {}, default=str, sort_keys=True),
+                input_hash,
+                output_hash,
+                run_id,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM optimization_runs WHERE run_id = ?", (run_id,)).fetchone()
+    if not row:
+        raise ValueError(f"No optimization run with id {run_id}")
+    return _parse_optimization_run_json_fields(_require_row_dict(row))
+
+
+def fail_optimization_run(
+    run_id: str,
+    error: str,
+    *,
+    summary: dict | None = None,
+    source_freshness: dict | None = None,
+) -> dict:
+    conn = _get_conn()
+    now = _now()
+    with _lock:
+        conn.execute(
+            "UPDATE optimization_runs SET status = 'failed', completed_at = ?, error = ?, summary_json = ?, "
+            "source_freshness_json = ? WHERE run_id = ?",
+            (
+                now,
+                error,
+                json.dumps(summary or {}, default=str, sort_keys=True),
+                json.dumps(source_freshness or {}, default=str, sort_keys=True),
+                run_id,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM optimization_runs WHERE run_id = ?", (run_id,)).fetchone()
+    if not row:
+        raise ValueError(f"No optimization run with id {run_id}")
+    return _parse_optimization_run_json_fields(_require_row_dict(row))
+
+
+def get_optimization_runs(mission_id: int | None = None, limit: int = 20) -> list[dict]:
+    conn = _get_conn()
+    safe_limit = max(1, min(int(limit), 100))
+    clauses: list[str] = []
+    params: list[Any] = []
+    if mission_id is not None:
+        clauses.append("mission_id = ?")
+        params.append(int(mission_id))
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM optimization_runs{where} ORDER BY started_at DESC LIMIT ?",
+            (*params, safe_limit),
+        ).fetchall()
+    return [_parse_optimization_run_json_fields(row) for row in _rows_to_list(rows)]
+
+
+def get_optimization_run(run_id: str) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM optimization_runs WHERE run_id = ?", (run_id,)).fetchone()
+    if not row:
+        return None
+    result = _parse_optimization_run_json_fields(_require_row_dict(row))
+    result["snapshots"] = get_optimization_snapshots(run_id=run_id)
+    return result
+
+
+def get_latest_successful_optimization_run(mission_id: int, *, before_run_id: str | None = None) -> dict | None:
+    conn = _get_conn()
+    params: list[Any] = [int(mission_id)]
+    before_clause = ""
+    if before_run_id:
+        before_clause = (
+            " AND started_at < COALESCE((SELECT started_at FROM optimization_runs WHERE run_id = ?), datetime('now'))"
+        )
+        params.append(before_run_id)
+    with _lock:
+        row = conn.execute(
+            "SELECT * FROM optimization_runs WHERE mission_id = ? AND status = 'completed'"
+            f"{before_clause} ORDER BY started_at DESC LIMIT 1",
+            params,
+        ).fetchone()
+    return _parse_optimization_run_json_fields(_require_row_dict(row)) if row else None
+
+
+def create_optimization_action_snapshot(record: dict) -> dict:
+    conn = _get_conn()
+    now = _now()
+    ticker = str(record.get("ticker") or "").upper() or None
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO optimization_action_snapshots "
+            "(run_id, mission_id, ticker, asset, direction, action, conviction_band, priority_score, confidence, "
+            "gate_status, severity, state_hash, evidence_json, source_links_json, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record["run_id"],
+                int(record["mission_id"]),
+                ticker,
+                record.get("asset"),
+                record.get("direction"),
+                record["action"],
+                record.get("conviction_band"),
+                record.get("priority_score"),
+                record.get("confidence"),
+                record.get("gate_status"),
+                record.get("severity"),
+                record["state_hash"],
+                json.dumps(record.get("evidence") or {}, default=str, sort_keys=True),
+                json.dumps(record.get("source_links") or {}, default=str, sort_keys=True),
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM optimization_action_snapshots WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_optimization_snapshot_json_fields(_require_row_dict(row))
+
+
+def get_optimization_snapshots(
+    *,
+    run_id: str | None = None,
+    mission_id: int | None = None,
+    ticker: str | None = None,
+) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if run_id:
+        clauses.append("run_id = ?")
+        params.append(run_id)
+    if mission_id is not None:
+        clauses.append("mission_id = ?")
+        params.append(int(mission_id))
+    if ticker:
+        clauses.append("ticker = ?")
+        params.append(ticker.upper())
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM optimization_action_snapshots{where} ORDER BY priority_score DESC, ticker",
+            params,
+        ).fetchall()
+    return [_parse_optimization_snapshot_json_fields(row) for row in _rows_to_list(rows)]
+
+
+def get_optimization_snapshot(snapshot_id: int | None) -> dict | None:
+    if snapshot_id is None:
+        return None
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM optimization_action_snapshots WHERE id = ?", (int(snapshot_id),)).fetchone()
+    return _parse_optimization_snapshot_json_fields(_require_row_dict(row)) if row else None
+
+
+def create_optimization_alert(record: dict) -> dict:
+    conn = _get_conn()
+    now = _now()
+    ticker = str(record.get("ticker") or "").upper() or None
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO optimization_alerts "
+            "(mission_id, run_id, ticker, alert_type, severity, status, previous_snapshot_id, current_snapshot_id, "
+            "change_summary, evidence_json, approval_id, recommendation_id, action_item_approval_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                int(record["mission_id"]),
+                record["run_id"],
+                ticker,
+                record.get("alert_type") or "action_state_changed",
+                record.get("severity") or "normal",
+                record.get("status") or "open",
+                record.get("previous_snapshot_id"),
+                record.get("current_snapshot_id"),
+                record["change_summary"],
+                json.dumps(record.get("evidence") or {}, default=str, sort_keys=True),
+                record.get("approval_id"),
+                record.get("recommendation_id"),
+                record.get("action_item_approval_id"),
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM optimization_alerts WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _hydrate_optimization_alert(_parse_optimization_alert_json_fields(_require_row_dict(row)))
+
+
+def update_optimization_alert_links(
+    alert_id: int,
+    *,
+    approval_id: int | None = None,
+    recommendation_id: int | None = None,
+    action_item_approval_id: int | None = None,
+) -> dict:
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE optimization_alerts SET approval_id = COALESCE(?, approval_id), "
+            "recommendation_id = COALESCE(?, recommendation_id), "
+            "action_item_approval_id = COALESCE(?, action_item_approval_id) WHERE id = ?",
+            (approval_id, recommendation_id, action_item_approval_id, int(alert_id)),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM optimization_alerts WHERE id = ?", (int(alert_id),)).fetchone()
+    if not row:
+        raise ValueError(f"No optimization alert with id {alert_id}")
+    return _hydrate_optimization_alert(_parse_optimization_alert_json_fields(_require_row_dict(row)))
+
+
+def _hydrate_optimization_alert(alert: dict) -> dict:
+    alert["previous_snapshot"] = get_optimization_snapshot(alert.get("previous_snapshot_id"))
+    alert["current_snapshot"] = get_optimization_snapshot(alert.get("current_snapshot_id"))
+    return alert
+
+
+def get_optimization_alerts(
+    *,
+    status: str | None = None,
+    mission_id: int | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    conn = _get_conn()
+    safe_limit = max(1, min(int(limit), 200))
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if mission_id is not None:
+        clauses.append("mission_id = ?")
+        params.append(int(mission_id))
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM optimization_alerts{where} ORDER BY "
+            "CASE severity WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, "
+            "created_at DESC LIMIT ?",
+            (*params, safe_limit),
+        ).fetchall()
+    return [_hydrate_optimization_alert(_parse_optimization_alert_json_fields(row)) for row in _rows_to_list(rows)]
+
+
+def dismiss_optimization_alert(alert_id: int, note: str | None = None) -> dict:
+    conn = _get_conn()
+    now = _now()
+    with _lock:
+        conn.execute(
+            "UPDATE optimization_alerts SET status = 'dismissed', dismissed_at = ?, dismissed_note = ? WHERE id = ?",
+            (now, note, int(alert_id)),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM optimization_alerts WHERE id = ?", (int(alert_id),)).fetchone()
+    if not row:
+        raise ValueError(f"No optimization alert with id {alert_id}")
+    return _hydrate_optimization_alert(_parse_optimization_alert_json_fields(_require_row_dict(row)))
 
 
 # ---------------------------------------------------------------------------

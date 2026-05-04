@@ -126,6 +126,17 @@ def enqueue_watch_trigger_monitor(_sub: str = Depends(require_scheduler_or_job_a
     return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
 
 
+@router.post("/admin/jobs/enqueue-continuous-optimizer")
+def enqueue_continuous_optimizer(_sub: str = Depends(require_scheduler_or_job_admin)):
+    row, _disposition = enqueue_registered_job(
+        "continuous_optimizer",
+        {"source": "scheduler"},
+        cache_key="maintenance:continuous_optimizer:v1",
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+
+
 @router.get("/admin/jobs/{job_id}")
 def get_admin_job(job_id: str, _sub: str = Depends(require_job_admin)):
     try:

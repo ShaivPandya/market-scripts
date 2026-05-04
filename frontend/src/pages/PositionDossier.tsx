@@ -495,7 +495,7 @@ export function PositionDossier() {
         title={approvalReview?.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
         description={
           approvalReview?.action === "approve"
-            ? "Approval applies the staged internal state change. This is not an external execution."
+            ? "Approval applies the staged internal state change."
             : "Rejecting leaves the proposal in audit history and does not apply the staged change."
         }
         maxWidth="max-w-3xl"
@@ -531,7 +531,7 @@ export function PositionDossier() {
                 placeholder={approvalReview.action === "approve" ? "State why this internal change is approved." : "Optional reason for rejecting this proposal."}
               />
               {approvalReview.action === "approve" && (
-                <p className="theme-field-caption mt-1">Required. Approval applies app state only; it does not execute an order.</p>
+                <p className="theme-field-caption mt-1">Required. Approval applies app state only.</p>
               )}
             </div>
             {approvalError && (

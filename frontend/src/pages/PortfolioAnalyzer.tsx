@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { ChevronDown, ChevronRight, Sparkles } from "lucide-react"
+import { Bell, ChevronDown, ChevronRight, Play, Sparkles } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SliderInput } from "@/components/shared/FormControls"
@@ -9,13 +9,21 @@ import { useApiQuery } from "@/hooks/useApiQuery"
 import { colorPositiveNegative } from "@/lib/colors"
 import {
   fetchLLMSettings,
+  fetchOptimizationAlerts,
+  fetchOptimizationMissions,
+  fetchOptimizationRuns,
   generatePortfolioAnalyzerBrief,
+  dismissOptimizationAlert,
+  runOptimizationMissionAsync,
   runPortfolioAnalyzerAsync,
   type AnalyzerCourseAction,
   type AnalyzerCourseOfAction,
   type AnalyzerFactorBreakdown,
   type AnalyzerScenarioRequest,
   type LLMSettings,
+  type OptimizationAlert,
+  type OptimizationMission,
+  type OptimizationRun,
 } from "@/lib/api"
 
 interface AnalyzerResponse {
@@ -59,6 +67,9 @@ interface AnalyzerScenarioState {
 
 const ANALYZER_STATE_KEY = ["portfolio-analyzer", "state"] as const
 const LLM_SETTINGS_QUERY_KEY = ["llm-settings"] as const
+const OPTIMIZATION_MISSIONS_QUERY_KEY = ["optimization", "missions"] as const
+const OPTIMIZATION_ALERTS_QUERY_KEY = ["optimization", "alerts", "open"] as const
+const OPTIMIZATION_RUNS_QUERY_KEY = ["optimization", "runs"] as const
 
 const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenarioState> = {
   balanced: {
@@ -356,6 +367,12 @@ function toneForGate(gate: string) {
   return "neutral"
 }
 
+function toneForSeverity(severity: string | undefined | null) {
+  if (severity === "urgent" || severity === "high") return "error"
+  if (severity === "normal") return "warning"
+  return "neutral"
+}
+
 function badgeClass(tone: string) {
   if (tone === "success") return "theme-badge-success"
   if (tone === "warning") return "theme-badge-warning"
@@ -370,6 +387,13 @@ function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: str
 
 function actionIsHold(action: string) {
   return action === "Hold Long" || action === "Hold Short" || action === "Watch"
+}
+
+function formatDateTime(value: string | undefined | null) {
+  if (!value) return "Not run"
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString()
 }
 
 function SummaryCard({ title, value, detail }: { title: string; value: string; detail?: string }) {
@@ -571,6 +595,116 @@ function ActionDetail({
   )
 }
 
+function ContinuousOptimizationPanel({
+  mission,
+  latestRun,
+  alerts,
+  running,
+  dismissingId,
+  onRun,
+  onDismiss,
+}: {
+  mission: OptimizationMission | null
+  latestRun: OptimizationRun | null
+  alerts: OptimizationAlert[]
+  running: boolean
+  dismissingId: number | null
+  onRun: () => void
+  onDismiss: (alert: OptimizationAlert) => void
+}) {
+  const statusTone = mission?.status === "active" ? "success" : mission?.status === "paused" ? "warning" : "neutral"
+
+  return (
+    <section className="theme-surface mb-6 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="section-title">Continuous Optimization</h2>
+            {mission && <Badge tone={statusTone}>{mission.status}</Badge>}
+          </div>
+          <p className="mt-1 text-sm text-subtle">
+            Mission alerts stage only material decision-state changes for human review.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRun}
+          disabled={!mission || running}
+          className="theme-button-base theme-button-primary min-h-10 px-4 text-sm"
+        >
+          <Play className="h-4 w-4" />
+          {running ? "Starting..." : "Run Now"}
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-4">
+        <SummaryCard title="Mission" value={mission?.name ?? "Loading"} detail={mission?.schedule_label ?? "Weekdays at 10:15 ET"} />
+        <SummaryCard title="Last Run" value={latestRun?.status ?? "None"} detail={formatDateTime(latestRun?.completed_at ?? latestRun?.started_at)} />
+        <SummaryCard title="Open Alerts" value={String(alerts.length)} detail="Material action, gate, band, confidence, or risk changes" />
+        <SummaryCard title="Mode" value="Stage" detail="No orders or position mutations" />
+      </div>
+
+      <div className="mt-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Bell className="h-4 w-4 text-muted" />
+          <h3 className="card-title">Changed Actions Queue</h3>
+        </div>
+        {alerts.length === 0 ? (
+          <p className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-subtle">
+            No open optimizer alerts. Repeated runs with unchanged action state are suppressed.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {alerts.map(alert => {
+              const previous = alert.previous_snapshot
+              const current = alert.current_snapshot
+              return (
+                <article key={alert.id} className="rounded-lg border border-app bg-card-muted p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="mono-text text-sm font-semibold text-app">{alert.ticker ?? "PORTFOLIO"}</span>
+                        <Badge tone={toneForSeverity(alert.severity)}>{alert.severity}</Badge>
+                        <Badge tone="neutral">{alert.alert_type.replace(/_/g, " ")}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted">{alert.change_summary}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onDismiss(alert)}
+                      disabled={dismissingId === alert.id}
+                      className="theme-button-base theme-button-secondary min-h-9 px-3 text-xs"
+                    >
+                      {dismissingId === alert.id ? "Dismissing..." : "Dismiss"}
+                    </button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border border-app bg-card px-3 py-2">
+                      <p className="label-text">Prior</p>
+                      <p className="mt-1 text-sm text-muted">
+                        {previous ? `${previous.action} · ${previous.conviction_band ?? "none"} · ${previous.gate_status ?? "gate n/a"}` : "No prior state"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-app bg-card px-3 py-2">
+                      <p className="label-text">Current</p>
+                      <p className="mt-1 text-sm text-app">
+                        {current ? `${current.action} · ${current.conviction_band ?? "none"} · ${current.gate_status ?? "gate n/a"}` : "Missing current state"}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs text-subtle">
+                    Approval: {alert.action_item_approval_id ? `#${alert.action_item_approval_id}` : "not staged"}
+                  </p>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function PortfolioAnalyzer() {
   const queryClient = useQueryClient()
   const cachedState = queryClient.getQueryData<{
@@ -590,6 +724,21 @@ export function PortfolioAnalyzer() {
   const llmReady = Boolean(
     llmSettings.data?.available_providers.find(provider => provider.provider === llmSettings.data?.provider)?.configured,
   )
+  const optimizerMissions = useApiQuery<{ missions: OptimizationMission[]; count: number }>(
+    OPTIMIZATION_MISSIONS_QUERY_KEY,
+    fetchOptimizationMissions,
+    60_000,
+  )
+  const optimizerAlerts = useApiQuery<{ alerts: OptimizationAlert[]; count: number }>(
+    OPTIMIZATION_ALERTS_QUERY_KEY,
+    () => fetchOptimizationAlerts({ status: "open", limit: 10 }),
+    30_000,
+  )
+  const optimizerRuns = useApiQuery<{ runs: OptimizationRun[]; count: number }>(
+    OPTIMIZATION_RUNS_QUERY_KEY,
+    () => fetchOptimizationRuns({ limit: 5 }),
+    30_000,
+  )
 
   const mutation = useMutation({
     mutationFn: (nextScenario: AnalyzerScenarioState) => runPortfolioAnalyzerAsync({ scenario: toScenarioRequest(nextScenario) }),
@@ -599,6 +748,22 @@ export function PortfolioAnalyzer() {
   const briefMutation = useMutation({
     mutationFn: generatePortfolioAnalyzerBrief,
     onSuccess: () => undefined,
+  })
+
+  const runOptimizerMutation = useMutation({
+    mutationFn: (missionId: number) => runOptimizationMissionAsync(missionId, { source: "manual" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_ALERTS_QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_RUNS_QUERY_KEY })
+    },
+  })
+
+  const dismissAlertMutation = useMutation({
+    mutationFn: (alert: OptimizationAlert) => dismissOptimizationAlert(alert.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_ALERTS_QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_RUNS_QUERY_KEY })
+    },
   })
 
   useEffect(() => {
@@ -614,13 +779,9 @@ export function PortfolioAnalyzer() {
     [actionQueue, selectedTicker],
   )
   const summary = course?.summary
-
-  useEffect(() => {
-    if (!selectedTicker && actionQueue.length > 0) setSelectedTicker(actionQueue[0].ticker)
-    if (selectedTicker && actionQueue.length > 0 && !actionQueue.some(action => action.ticker === selectedTicker)) {
-      setSelectedTicker(actionQueue[0].ticker)
-    }
-  }, [actionQueue, selectedTicker])
+  const optimizationMission = optimizerMissions.data?.missions?.[0] ?? null
+  const latestOptimizationRun = optimizerRuns.data?.runs?.[0] ?? null
+  const openOptimizerAlerts = optimizerAlerts.data?.alerts ?? []
 
   const actionableCount = actionQueue.filter(action => !actionIsHold(action.action) && action.gate_status !== "review").length
   const reviewCount = actionQueue.filter(action => action.gate_status === "review" || action.action.includes("Review")).length
@@ -667,6 +828,20 @@ export function PortfolioAnalyzer() {
           Course-of-action recommender for current portfolio directions. Analysis only; sizing remains in Portfolio Sizer.
         </p>
       </div>
+
+      <ContinuousOptimizationPanel
+        mission={optimizationMission}
+        latestRun={latestOptimizationRun}
+        alerts={openOptimizerAlerts}
+        running={runOptimizerMutation.isPending}
+        dismissingId={dismissAlertMutation.variables?.id ?? null}
+        onRun={() => {
+          if (optimizationMission) runOptimizerMutation.mutate(optimizationMission.id)
+        }}
+        onDismiss={alert => dismissAlertMutation.mutate(alert)}
+      />
+      {runOptimizerMutation.isError && <ErrorMessage message={String(runOptimizerMutation.error)} />}
+      {dismissAlertMutation.isError && <ErrorMessage message={String(dismissAlertMutation.error)} />}
 
       <div className="theme-surface mb-6 p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">

@@ -1600,6 +1600,102 @@ export async function refreshMarketSnapshots(): Promise<unknown> {
 // Workspace
 export const fetchWorkspace = () => client.get("/workspace").then(r => r.data)
 
+// Continuous Optimization
+export interface OptimizationMission {
+  id: number
+  name: string
+  status: string
+  schedule_label?: string | null
+  scenario?: Record<string, unknown>
+  source_config?: Record<string, unknown>
+  thresholds?: Record<string, unknown>
+  created_at?: string
+  updated_at?: string
+}
+
+export interface OptimizationRun {
+  run_id: string
+  mission_id: number
+  mission_name: string
+  status: string
+  started_at: string
+  completed_at?: string | null
+  summary?: Record<string, unknown>
+  source_freshness?: Record<string, unknown>
+  error?: string | null
+  snapshots?: OptimizationSnapshot[]
+}
+
+export interface OptimizationSnapshot {
+  id: number
+  run_id: string
+  mission_id: number
+  ticker?: string | null
+  asset?: string | null
+  direction?: string | null
+  action: string
+  conviction_band?: string | null
+  priority_score?: number | null
+  confidence?: number | null
+  gate_status?: string | null
+  severity?: string | null
+  state_hash?: string
+  evidence?: Record<string, unknown>
+  source_links?: Record<string, unknown>
+  created_at?: string
+}
+
+export interface OptimizationAlert {
+  id: number
+  mission_id: number
+  run_id: string
+  ticker?: string | null
+  alert_type: string
+  severity: "low" | "normal" | "high" | "urgent" | string
+  status: string
+  change_summary: string
+  approval_id?: number | null
+  recommendation_id?: number | null
+  action_item_approval_id?: number | null
+  evidence?: Record<string, unknown>
+  previous_snapshot?: OptimizationSnapshot | null
+  current_snapshot?: OptimizationSnapshot | null
+  created_at: string
+}
+
+export const fetchOptimizationMissions = () =>
+  client.get("/optimization/missions").then(r => r.data as { missions: OptimizationMission[]; count: number })
+
+export const runOptimizationMission = (missionId: number, body?: { source?: string; force?: boolean }) =>
+  client.post(`/optimization/missions/${missionId}/run`, body ?? { source: "manual" }).then(r => r.data as AdminJobResponse)
+
+export async function runOptimizationMissionAsync(missionId: number, body?: { source?: string; force?: boolean }) {
+  const started = await runOptimizationMission(missionId, body)
+  if (started.status === "done" && "result" in started) return started.result
+  if (started.status === "error") throw new Error(started.error || "Continuous optimizer failed")
+
+  const deadline = Date.now() + 20 * 60_000
+  for (; ;) {
+    if (Date.now() > deadline) throw new Error("Timeout: continuous optimizer is still running. Try again in a few minutes.")
+    await sleep(2000)
+    const job = await fetchAdminJob(started.job_id)
+    if (job.status === "done") return "result" in job ? job.result : undefined
+    if (job.status === "error") throw new Error(job.error || "Continuous optimizer failed")
+  }
+}
+
+export const fetchOptimizationRuns = (params?: { mission_id?: number; limit?: number }) =>
+  client.get("/optimization/runs", { params }).then(r => r.data as { runs: OptimizationRun[]; count: number })
+
+export const fetchOptimizationRun = (runId: string) =>
+  client.get(`/optimization/runs/${encodeURIComponent(runId)}`).then(r => r.data as OptimizationRun)
+
+export const fetchOptimizationAlerts = (params?: { status?: string; mission_id?: number; limit?: number }) =>
+  client.get("/optimization/alerts", { params }).then(r => r.data as { alerts: OptimizationAlert[]; count: number })
+
+export const dismissOptimizationAlert = (id: number, note?: string) =>
+  client.put(`/optimization/alerts/${id}/dismiss`, note ? { note } : {}).then(r => r.data as OptimizationAlert)
+
 // Recommendations
 export const fetchRecommendations = (params?: {
   report_type?: string

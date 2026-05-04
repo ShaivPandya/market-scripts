@@ -7,13 +7,25 @@ import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SegmentedControl } from "@/components/shared/FormControls"
 import { PageHeader } from "@/components/shared/PageHeader"
 import { ChartTile } from "@/components/shared/ChartTile"
+import { Notice } from "@/components/shared/Notice"
+import { UnifiedPerformanceView } from "@/components/shared/UnifiedPerformanceView"
+import { UNIFIED_VIEW_MODES, type UnifiedViewMode } from "@/lib/unifiedViewMode"
 
 const TIMEFRAMES = ["This Week", "Daily", "Weekly", "Monthly"] as const
+const TIMEFRAME_OPTIONS = TIMEFRAMES.map(tf => ({
+  value: tf,
+  label: tf === "This Week" ? "Past Week" : tf,
+}))
 type Timeframe = typeof TIMEFRAMES[number]
 const DEFAULT_INDEX_ORDER = ["S&P 500", "NASDAQ", "Russell 2000", "STOXX 600", "DAX", "Nikkei 225"]
 
+function timeframeLabel(timeframe: Timeframe): string {
+  return timeframe === "This Week" ? "Past Week" : timeframe
+}
+
 export function IndexDashboard() {
   const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
+  const [viewMode, setViewMode] = useState<UnifiedViewMode>("Grid")
   const { data, isLoading, error } = useApiQuery(
     ["index-dashboard", timeframe],
     () => fetchIndexDashboard(timeframe),
@@ -24,24 +36,36 @@ export function IndexDashboard() {
     ...DEFAULT_INDEX_ORDER.filter(name => indices[name]?.length),
     ...Object.keys(indices).filter(name => !DEFAULT_INDEX_ORDER.includes(name)),
   ]
+  const hasSeries = order.some(name => {
+    const series = indices[name]
+    return Array.isArray(series) && series.length > 0
+  })
 
   return (
     <div>
       <PageHeader
         title="Index Dashboard"
-        subtitle="Primary equity benchmarks in a compact chart grid with consistent spacing and touch targets."
+        subtitle="Primary equity benchmarks in a compact chart grid and comparable performance view."
         actions={<RefreshButton queryKeys={[["index-dashboard", timeframe]]} />}
       />
-      <div className="mb-6">
+      <div className="mb-6 flex flex-wrap items-center gap-3">
         <SegmentedControl
-          options={TIMEFRAMES.map(tf => ({ value: tf, label: tf }))}
+          options={TIMEFRAME_OPTIONS}
           value={timeframe}
           onChange={setTimeframe}
+        />
+        <SegmentedControl
+          options={UNIFIED_VIEW_MODES.map(mode => ({ value: mode, label: mode }))}
+          value={viewMode}
+          onChange={setViewMode}
         />
       </div>
       {isLoading && <LoadingSpinner />}
       {!isLoading && error && <ErrorMessage message={String(error)} />}
-      {data && !isLoading && (
+      {data && !isLoading && !error && !hasSeries && (
+        <Notice tone="info">No price series available.</Notice>
+      )}
+      {data && !isLoading && hasSeries && viewMode === "Grid" && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {order.map(name => {
             const series = indices[name]
@@ -62,6 +86,15 @@ export function IndexDashboard() {
             )
           })}
         </div>
+      )}
+      {data && !isLoading && hasSeries && viewMode === "Unified" && (
+        <UnifiedPerformanceView
+          order={order}
+          seriesByName={indices}
+          timeframe={timeframe}
+          timeframeLabel={timeframeLabel(timeframe)}
+          itemLabel="indices"
+        />
       )}
     </div>
   )

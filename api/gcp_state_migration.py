@@ -488,6 +488,67 @@ class StateMigrator:
                 "synced_at",
                 "error",
             ],
+            "optimization_missions": [
+                "id",
+                "name",
+                "status",
+                "schedule_label",
+                "scenario_json",
+                "source_config_json",
+                "thresholds_json",
+                "created_at",
+                "updated_at",
+            ],
+            "optimization_runs": [
+                "run_id",
+                "mission_id",
+                "mission_name",
+                "status",
+                "started_at",
+                "completed_at",
+                "input_hash",
+                "output_hash",
+                "summary_json",
+                "source_freshness_json",
+                "error",
+            ],
+            "optimization_action_snapshots": [
+                "id",
+                "run_id",
+                "mission_id",
+                "ticker",
+                "asset",
+                "direction",
+                "action",
+                "conviction_band",
+                "priority_score",
+                "confidence",
+                "gate_status",
+                "severity",
+                "state_hash",
+                "evidence_json",
+                "source_links_json",
+                "created_at",
+            ],
+            "optimization_alerts": [
+                "id",
+                "mission_id",
+                "run_id",
+                "ticker",
+                "alert_type",
+                "severity",
+                "status",
+                "previous_snapshot_id",
+                "current_snapshot_id",
+                "change_summary",
+                "evidence_json",
+                "approval_id",
+                "recommendation_id",
+                "action_item_approval_id",
+                "created_at",
+                "dismissed_at",
+                "dismissed_note",
+            ],
             "action_items": [
                 "id",
                 "ticker",
@@ -829,6 +890,8 @@ class StateMigrator:
                 if table == "workflow_runs"
                 else ["report_id"]
                 if table == "report_runs"
+                else ["run_id"]
+                if table == "optimization_runs"
                 else ["event_id"]
                 if table == "audit_events"
                 else ["idempotency_key"]
@@ -850,6 +913,7 @@ class StateMigrator:
             not in {
                 "workflow_runs",
                 "report_runs",
+                "optimization_runs",
                 "provenance_events",
                 "provenance_links",
                 "source_record_refs",

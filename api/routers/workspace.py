@@ -28,6 +28,7 @@ def get_workspace():
     from portfolio.core_db import (
         get_action_items,
         get_latest_recommendation,
+        get_optimization_alerts,
         get_pending_approvals,
         get_recommendations,
         get_report_runs,
@@ -200,6 +201,9 @@ def get_workspace():
     # Open action items
     open_actions = [normalize_action_item(a) for a in get_action_items(status="open")]
 
+    # Continuous optimization alerts
+    optimizer_alerts = _safe_call(get_optimization_alerts, status="open", limit=5) or []
+
     # Active watch triggers
     active_triggers = get_watch_triggers(status="active")
 
@@ -232,6 +236,10 @@ def get_workspace():
         "open_actions": {
             "count": len(open_actions),
             "items": open_actions[:5],
+        },
+        "continuous_optimization": {
+            "open_alert_count": len(optimizer_alerts),
+            "open_alerts": optimizer_alerts[:5],
         },
         "active_triggers": {
             "count": len(active_triggers),

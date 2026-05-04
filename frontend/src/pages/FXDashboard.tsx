@@ -7,12 +7,24 @@ import { RefreshButton } from "@/components/shared/RefreshButton"
 import { SegmentedControl } from "@/components/shared/FormControls"
 import { PageHeader } from "@/components/shared/PageHeader"
 import { ChartTile } from "@/components/shared/ChartTile"
+import { Notice } from "@/components/shared/Notice"
+import { UnifiedPerformanceView } from "@/components/shared/UnifiedPerformanceView"
+import { UNIFIED_VIEW_MODES, type UnifiedViewMode } from "@/lib/unifiedViewMode"
 
 const TIMEFRAMES = ["This Week", "Daily", "Weekly", "Monthly"] as const
+const TIMEFRAME_OPTIONS = TIMEFRAMES.map(tf => ({
+  value: tf,
+  label: tf === "This Week" ? "Past Week" : tf,
+}))
 type Timeframe = typeof TIMEFRAMES[number]
+
+function timeframeLabel(timeframe: Timeframe): string {
+  return timeframe === "This Week" ? "Past Week" : timeframe
+}
 
 export function FXDashboard() {
   const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
+  const [viewMode, setViewMode] = useState<UnifiedViewMode>("Grid")
   const { data, isLoading, error } = useApiQuery(
     ["fx-dashboard", timeframe],
     () => fetchFxDashboard(timeframe),
@@ -20,24 +32,36 @@ export function FXDashboard() {
 
   const pairs: Record<string, DataPoint[]> = data?.pairs ?? {}
   const order: string[] = data?.pair_order ?? Object.keys(pairs)
+  const hasSeries = order.some(name => {
+    const series = pairs[name]
+    return Array.isArray(series) && series.length > 0
+  })
 
   return (
     <div>
       <PageHeader
         title="FX Dashboard"
-        subtitle="Major crosses and regional FX moves across the selected horizon."
+        subtitle="Major crosses and regional FX moves in a compact chart grid and comparable performance view."
         actions={<RefreshButton queryKeys={[["fx-dashboard", timeframe]]} />}
       />
-      <div className="mb-6">
+      <div className="mb-6 flex flex-wrap items-center gap-3">
         <SegmentedControl
-          options={TIMEFRAMES.map(tf => ({ value: tf, label: tf }))}
+          options={TIMEFRAME_OPTIONS}
           value={timeframe}
           onChange={setTimeframe}
+        />
+        <SegmentedControl
+          options={UNIFIED_VIEW_MODES.map(mode => ({ value: mode, label: mode }))}
+          value={viewMode}
+          onChange={setViewMode}
         />
       </div>
       {isLoading && <LoadingSpinner />}
       {!isLoading && error && <ErrorMessage message={String(error)} />}
-      {data && !isLoading && (
+      {data && !isLoading && !error && !hasSeries && (
+        <Notice tone="info">No price series available.</Notice>
+      )}
+      {data && !isLoading && hasSeries && viewMode === "Grid" && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {order.map(name => {
             const series = pairs[name]
@@ -58,6 +82,15 @@ export function FXDashboard() {
             )
           })}
         </div>
+      )}
+      {data && !isLoading && hasSeries && viewMode === "Unified" && (
+        <UnifiedPerformanceView
+          order={order}
+          seriesByName={pairs}
+          timeframe={timeframe}
+          timeframeLabel={timeframeLabel(timeframe)}
+          itemLabel="pairs"
+        />
       )}
     </div>
   )

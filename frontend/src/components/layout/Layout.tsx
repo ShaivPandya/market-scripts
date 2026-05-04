@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Menu, MessageCircle, PanelRightOpen } from "lucide-react"
 import { Sidebar, getRouteLabel } from "./Sidebar"
@@ -29,7 +29,7 @@ interface LayoutInnerProps {
   sidebarOpen: boolean
   setSidebarOpen: (v: boolean) => void
   agentOpen: boolean
-  setAgentOpen: (v: boolean) => void
+  setAgentOpen: Dispatch<SetStateAction<boolean>>
   pageSearchOpen: boolean
   setPageSearchOpen: (v: boolean) => void
 }
@@ -63,7 +63,7 @@ function LayoutInner({
 
       if (key === "k") {
         event.preventDefault()
-        setAgentOpen(true)
+        setAgentOpen(open => !open)
         setPageSearchOpen(false)
       }
     }
