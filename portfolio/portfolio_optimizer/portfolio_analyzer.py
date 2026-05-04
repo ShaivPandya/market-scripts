@@ -583,6 +583,342 @@ def _scenario_drivers(
     return out
 
 
+COURSE_FACTOR_LABELS = {
+    "quality": "Quality",
+    "price_momentum": "Price momentum",
+    "fundamental_momentum": "Fundamental momentum",
+    "valuation": "Valuation",
+}
+
+
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    out = _safe_float(value)
+    return float(out) if np.isfinite(out) else default
+
+
+def _factor_value(row: pd.Series, key: str) -> float:
+    column = f"{key}_signal"
+    if key == "price_momentum":
+        column = "price_mom_signal"
+    if key == "fundamental_momentum":
+        column = "fundamental_momentum_signal"
+    value = _safe_float(row.get(column))
+    return float(value) if np.isfinite(value) else np.nan
+
+
+def _factor_status(row: pd.Series, key: str, weight: float, asset: str) -> tuple[str, str | None]:
+    if weight <= 0:
+        return "disabled", None
+
+    asset_l = asset.strip().lower()
+    if asset_l != "equity" and key in {"quality", "fundamental_momentum", "valuation"}:
+        return "not_applicable", None
+
+    if key == "fundamental_momentum":
+        rev = _safe_float(row.get("rev_mom_signal"))
+        eps = _safe_float(row.get("eps_mom_signal"))
+        if not np.isfinite(rev) and not np.isfinite(eps):
+            return "missing", "Missing revenue and EPS momentum data"
+
+    value = _factor_value(row, key)
+    if not np.isfinite(value):
+        return "missing", f"Missing {COURSE_FACTOR_LABELS.get(key, key).lower()} data"
+    return "available", None
+
+
+def _build_factor_breakdown(row: pd.Series, factor_weights: Mapping[str, float]) -> list[dict[str, Any]]:
+    asset = str(row.get("asset") or "")
+    breakdown: list[dict[str, Any]] = []
+    for key, label in COURSE_FACTOR_LABELS.items():
+        weight = float(factor_weights.get(key, 0.0) or 0.0)
+        value = _factor_value(row, key)
+        status, reason = _factor_status(row, key, weight, asset)
+        contribution = weight * value if status == "available" and np.isfinite(value) else np.nan
+        breakdown.append(
+            {
+                "factor": key,
+                "label": label,
+                "weight": weight,
+                "value": value,
+                "contribution": contribution,
+                "status": status,
+                "reason": reason,
+            }
+        )
+    return breakdown
+
+
+def _coverage_from_breakdown(breakdown: list[dict[str, Any]]) -> tuple[float, int, int]:
+    applicable = [b for b in breakdown if b["weight"] > 0 and b["status"] in {"available", "missing"}]
+    if not applicable:
+        return 1.0, 0, 0
+    available = [b for b in applicable if b["status"] == "available"]
+    return len(available) / len(applicable), len(available), len(applicable)
+
+
+def _has_factor_conflict(breakdown: list[dict[str, Any]]) -> bool:
+    values = [
+        _safe_float(b.get("value"))
+        for b in breakdown
+        if b.get("status") == "available" and float(b.get("weight") or 0.0) > 0
+    ]
+    strong_positive = any(np.isfinite(v) and v >= 0.75 for v in values)
+    strong_negative = any(np.isfinite(v) and v <= -0.75 for v in values)
+    if not (strong_positive and strong_negative):
+        return False
+    finite_values = [float(v) for v in values if np.isfinite(v)]
+    return max(finite_values) - min(finite_values) >= 1.75 if finite_values else False
+
+
+def _conviction_band(score: float, confidence: float) -> str:
+    strength = abs(score)
+    if confidence < 0.45 or strength < 0.35:
+        return "none"
+    if confidence >= 0.75 and strength >= 1.5:
+        return "large"
+    if confidence >= 0.65 and strength >= 0.9:
+        return "medium"
+    return "small"
+
+
+def _sizing_implication(action: str) -> str:
+    if action in {"Increase Long", "Research Long"}:
+        return "increase exposure"
+    if action in {"Trim Long", "Exit Review"}:
+        return "trim exposure"
+    if action in {"Press Short", "Research Short"}:
+        return "press short"
+    if action in {"Cover Short", "Squeeze Review"}:
+        return "cover short"
+    if action.startswith("Hold"):
+        return "maintain exposure"
+    return "review before sizing"
+
+
+def _top_available_factors(breakdown: list[dict[str, Any]], limit: int = 2) -> list[dict[str, Any]]:
+    available = [
+        b
+        for b in breakdown
+        if b.get("status") == "available"
+        and np.isfinite(_safe_float(b.get("value")))
+        and float(b.get("weight") or 0.0) > 0
+    ]
+    return sorted(available, key=lambda b: abs(float(b.get("contribution") or 0.0)), reverse=True)[:limit]
+
+
+def _deterministic_rationale(
+    *,
+    ticker: str,
+    action: str,
+    score: float,
+    delta: float,
+    confidence: float,
+    breakdown: list[dict[str, Any]],
+    gate_reasons: list[str],
+) -> str:
+    top_factors = _top_available_factors(breakdown)
+    factor_text = ", ".join(
+        f"{item['label']} {float(item['value']):+.2f}"
+        for item in top_factors
+        if np.isfinite(_safe_float(item["value"]))
+    )
+    if not factor_text:
+        factor_text = "limited applicable factor evidence"
+    gate_text = f" Gate: {'; '.join(gate_reasons)}." if gate_reasons else ""
+    return (
+        f"{ticker}: {action} because scenario score is {score:+.2f} versus baseline delta {delta:+.2f}; "
+        f"main evidence is {factor_text}. Confidence {confidence:.0%}.{gate_text}"
+    )
+
+
+def _action_for_position(
+    *,
+    direction: str,
+    score: float,
+    gate_reasons: list[str],
+    warnings: list[str],
+) -> str:
+    direction_l = direction.strip().lower()
+    gated = bool(gate_reasons)
+    squeeze_warning = any("squeeze" in warning.lower() for warning in warnings)
+
+    if direction_l == "long":
+        if score >= 0.75:
+            return "Review" if gated else "Increase Long"
+        if score <= -2.0:
+            return "Review" if gated else "Exit Review"
+        if score <= -0.75:
+            return "Review" if gated else "Trim Long"
+        return "Hold Long"
+
+    if direction_l == "short":
+        if score <= -0.75:
+            return "Review" if gated else "Press Short"
+        if score >= 0.75:
+            return "Squeeze Review" if gated or squeeze_warning else "Cover Short"
+        return "Hold Short"
+
+    if score >= 0.75:
+        return "Watch" if gated else "Research Long"
+    if score <= -0.75:
+        return "Watch" if gated else "Research Short"
+    return "Watch"
+
+
+def _course_priority(action: str, score: float, delta: float, confidence: float) -> float:
+    action_boost = {
+        "Increase Long": 2.0,
+        "Trim Long": 2.0,
+        "Press Short": 2.0,
+        "Cover Short": 2.0,
+        "Exit Review": 1.8,
+        "Squeeze Review": 1.6,
+        "Research Long": 1.4,
+        "Research Short": 1.4,
+        "Review": 1.2,
+        "Watch": 0.3,
+        "Hold Long": 0.0,
+        "Hold Short": 0.0,
+    }.get(action, 0.0)
+    return round(action_boost + abs(score) * confidence + min(abs(delta), 2.0) * 0.15, 4)
+
+
+def build_course_of_action(
+    weights_df: pd.DataFrame,
+    scenario_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    factor_weights = scenario_config.get("factor_weights", SCENARIO_FACTOR_DEFAULTS)
+    mission = str(scenario_config.get("preset") or "balanced")
+    action_queue: list[dict[str, Any]] = []
+    factor_breakdown_by_ticker: dict[str, list[dict[str, Any]]] = {}
+
+    for _, row in weights_df.iterrows():
+        ticker = str(row.get("ticker") or "")
+        asset = str(row.get("asset") or "")
+        direction = str(row.get("direction") or "").strip().lower()
+        score = _finite_float(row.get("scenario_score"))
+        delta = _finite_float(row.get("score_delta"))
+        penalty = max(0.0, _finite_float(row.get("scenario_penalty")))
+        breakdown = _build_factor_breakdown(row, factor_weights)
+        factor_breakdown_by_ticker[ticker] = breakdown
+        coverage, available_count, applicable_count = _coverage_from_breakdown(breakdown)
+        conflict = _has_factor_conflict(breakdown)
+
+        missing_reasons = [str(b["reason"]) for b in breakdown if b.get("status") == "missing" and b.get("reason")]
+        warnings: list[str] = []
+        warnings.extend(missing_reasons)
+        if conflict:
+            warnings.append("Major factor conflict: strong positive and negative signals are both present")
+        if penalty >= 0.1:
+            warnings.append(f"Risk brakes reduce the scenario score by {penalty:.2f}")
+
+        score_strength = min(abs(score) / 1.75, 1.0)
+        confidence = 0.20 + 0.55 * score_strength + 0.25 * coverage + min(abs(delta) / 1.5, 1.0) * 0.05
+        if conflict:
+            confidence -= 0.25
+        if coverage < 0.67:
+            confidence -= 0.20
+        if penalty >= 0.5:
+            confidence -= 0.05
+        confidence = round(float(min(1.0, max(0.0, confidence))), 4)
+
+        strong_candidate = abs(score) >= 0.75
+        gate_reasons: list[str] = []
+        if strong_candidate and confidence < 0.65:
+            gate_reasons.append("Confidence below 65% strong-action threshold")
+        if strong_candidate and coverage < 0.67:
+            gate_reasons.append("Insufficient applicable data coverage")
+        if strong_candidate and conflict:
+            gate_reasons.append("Conflicting factor evidence")
+
+        action = _action_for_position(
+            direction=direction,
+            score=score,
+            gate_reasons=gate_reasons,
+            warnings=warnings,
+        )
+        gate_status = "review" if gate_reasons else "pass" if strong_candidate else "watch"
+        conviction_band = _conviction_band(score, confidence if not gate_reasons else min(confidence, 0.6))
+        sizing = {
+            "implication": _sizing_implication(action),
+            "conviction_band": conviction_band,
+            "note": "Analysis only. Use Portfolio Sizer for target weights or notional changes.",
+        }
+
+        action_queue.append(
+            {
+                "ticker": ticker,
+                "asset": asset,
+                "direction": direction,
+                "action": action,
+                "conviction_band": conviction_band,
+                "priority_score": _course_priority(action, score, delta, confidence),
+                "scenario_score": score,
+                "score_delta": delta,
+                "baseline_score": _finite_float(row.get("baseline_score")),
+                "confidence": confidence,
+                "gate_status": gate_status,
+                "gate_reasons": gate_reasons,
+                "deterministic_rationale": _deterministic_rationale(
+                    ticker=ticker,
+                    action=action,
+                    score=score,
+                    delta=delta,
+                    confidence=confidence,
+                    breakdown=breakdown,
+                    gate_reasons=gate_reasons,
+                ),
+                "warnings": warnings,
+                "data_coverage": {
+                    "ratio": round(float(coverage), 4),
+                    "available": available_count,
+                    "applicable": applicable_count,
+                },
+                "factor_conflict": conflict,
+                "factor_breakdown": breakdown,
+                "sizing_implication": sizing,
+            }
+        )
+
+    action_queue = sorted(action_queue, key=lambda item: (-float(item["priority_score"]), str(item["ticker"])))
+    action_counts: dict[str, int] = {}
+    for item in action_queue:
+        action_counts[str(item["action"])] = action_counts.get(str(item["action"]), 0) + 1
+
+    strongest_actions = {"Increase Long", "Press Short", "Research Long", "Research Short"}
+    risk_actions = {"Trim Long", "Exit Review", "Cover Short", "Squeeze Review", "Review"}
+    strongest_opportunities = [
+        {"ticker": item["ticker"], "action": item["action"], "priority_score": item["priority_score"]}
+        for item in action_queue
+        if item["action"] in strongest_actions
+    ][:3]
+    largest_risks = [
+        {"ticker": item["ticker"], "action": item["action"], "priority_score": item["priority_score"]}
+        for item in action_queue
+        if item["action"] in risk_actions
+    ][:3]
+    low_coverage_count = sum(1 for item in action_queue if float(item["data_coverage"]["ratio"]) < 0.67)
+    conflict_count = sum(1 for item in action_queue if item["factor_conflict"])
+    missing_data_count = sum(1 for item in action_queue if any("Missing" in w for w in item["warnings"]))
+
+    return {
+        "summary": {
+            "mission": mission,
+            "action_counts": action_counts,
+            "data_quality_counts": {
+                "low_coverage": low_coverage_count,
+                "factor_conflict": conflict_count,
+                "missing_data": missing_data_count,
+            },
+            "strongest_opportunities": strongest_opportunities,
+            "largest_risks": largest_risks,
+            "analysis_only": True,
+        },
+        "action_queue": action_queue,
+        "factor_breakdown": factor_breakdown_by_ticker,
+    }
+
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -1789,16 +2125,20 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
         weights_df = weights_df.sort_values(["scenario_score", "ticker"], ascending=[False, True]).reset_index(
             drop=True
         )
+        course_of_action = build_course_of_action(weights_df, scenario_config)
+        generated_at = datetime.now()
+        course_of_action["summary"]["as_of"] = generated_at.isoformat()
 
         return {
             "status": "ok",
             "error": None,
-            "timestamp": datetime.now(),
+            "timestamp": generated_at,
             "scenario": scenario_config,
             "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
             "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
             "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
             "weights_df": weights_df,
+            "course_of_action": course_of_action,
         }
 
     except Exception as e:

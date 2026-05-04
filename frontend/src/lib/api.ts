@@ -1059,6 +1059,59 @@ export type AnalyzerScenarioRequest = {
   }
 }
 
+export interface AnalyzerFactorBreakdown {
+  factor: string
+  label: string
+  weight: number | null
+  value: number | null
+  contribution: number | null
+  status: "available" | "missing" | "not_applicable" | "disabled" | string
+  reason?: string | null
+}
+
+export interface AnalyzerCourseAction {
+  ticker: string
+  asset: string
+  direction: string
+  action: string
+  conviction_band: "none" | "small" | "medium" | "large" | string
+  priority_score: number
+  scenario_score: number
+  score_delta: number
+  baseline_score?: number | null
+  confidence: number
+  gate_status: "pass" | "review" | "watch" | string
+  gate_reasons?: string[]
+  deterministic_rationale: string
+  warnings?: string[]
+  data_coverage?: {
+    ratio: number
+    available: number
+    applicable: number
+  }
+  factor_conflict?: boolean
+  factor_breakdown?: AnalyzerFactorBreakdown[]
+  sizing_implication?: {
+    implication: string
+    conviction_band: string
+    note?: string
+  }
+}
+
+export interface AnalyzerCourseOfAction {
+  summary?: {
+    mission?: string
+    as_of?: string
+    action_counts?: Record<string, number>
+    data_quality_counts?: Record<string, number>
+    strongest_opportunities?: { ticker: string; action: string; priority_score: number }[]
+    largest_risks?: { ticker: string; action: string; priority_score: number }[]
+    analysis_only?: boolean
+  }
+  action_queue?: AnalyzerCourseAction[]
+  factor_breakdown?: Record<string, AnalyzerFactorBreakdown[]>
+}
+
 type AnalyzerRequest = {
   book?: number
   target_leverage?: number
@@ -1148,6 +1201,11 @@ export const fetchPortfolioOptimizerJob = fetchPortfolioAnalyzerJob
 export async function runPortfolioOptimizerAsync(body: AnalyzerRequest = {}) {
   return runPortfolioAnalyzerAsync(body)
 }
+
+export const generatePortfolioAnalyzerBrief = (action: AnalyzerCourseAction) =>
+  client
+    .post("/portfolio-analyzer/course-of-action/brief", { action }, { timeout: 120_000 })
+    .then(r => r.data as { brief: string })
 
 export const runHedgingTool = (body: { book: number; positions: { ticker: string; weight: number }[] }) =>
   runHedgingToolAsync(body)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -297,9 +298,7 @@ def _read_latest_postgres(ticker: str) -> dict[str, Any] | None:
     if not row:
         return None
     payload = row.get("payload_json") if isinstance(row, dict) else row[0]
-    if isinstance(payload, str):
-        return json.loads(payload)
-    return dict(payload) if isinstance(payload, dict) else payload
+    return _payload_dict(payload)
 
 
 def _read_position_snapshot_postgres(snapshot_id: str) -> dict[str, Any] | None:
@@ -312,9 +311,7 @@ def _read_position_snapshot_postgres(snapshot_id: str) -> dict[str, Any] | None:
     if not row:
         return None
     payload = row.get("payload_json") if isinstance(row, dict) else row[0]
-    if isinstance(payload, str):
-        return json.loads(payload)
-    return dict(payload) if isinstance(payload, dict) else payload
+    return _payload_dict(payload)
 
 
 def _write_portfolio_postgres(result_id: str, snapshot: dict[str, Any]) -> None:
@@ -388,9 +385,15 @@ def _read_latest_portfolio_postgres() -> dict[str, Any] | None:
     if not row:
         return None
     payload = row.get("payload_json") if isinstance(row, dict) else row[0]
+    return _payload_dict(payload)
+
+
+def _payload_dict(payload: Any) -> dict[str, Any] | None:
     if isinstance(payload, str):
-        return json.loads(payload)
-    return dict(payload) if isinstance(payload, dict) else payload
+        payload = json.loads(payload)
+    if isinstance(payload, Mapping):
+        return {str(key): value for key, value in payload.items()}
+    return None
 
 
 def _sqlite_connect() -> sqlite3.Connection:

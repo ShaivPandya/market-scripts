@@ -74,6 +74,10 @@ class AnalyzerRequest(BaseModel):
     scenario: AnalyzerScenario | None = None
 
 
+class AnalyzerBriefRequest(BaseModel):
+    action: dict[str, Any]
+
+
 def _normalize_group(values: dict[str, Any]) -> dict[str, float]:
     numeric = {k: max(0.0, float(v or 0.0)) for k, v in values.items()}
     total = sum(numeric.values())
@@ -95,7 +99,7 @@ def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
 
 
 def _cache_key(req: AnalyzerRequest) -> str:
-    strategy_version = "v2_signal_valuation_scenario"
+    strategy_version = "v3_course_of_action"
     scenario = json.dumps(_canonical_scenario(req), sort_keys=True, separators=(",", ":"))
     return f"portfolio_analyzer:{strategy_version}:scenario={scenario}"
 
@@ -151,3 +155,32 @@ def get_analyzer_job(job_id: str):
         return poll_registered_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Unknown job_id")  # noqa: B904
+
+
+@router.post("/portfolio-analyzer/course-of-action/brief")
+def generate_course_of_action_brief(req: AnalyzerBriefRequest):
+    try:
+        from llm_utils import MODEL_LOW, call_llm_text, has_llm_api_key
+
+        if not has_llm_api_key():
+            raise HTTPException(status_code=424, detail="No configured LLM API key for analyzer briefs.")
+
+        evidence_json = json.dumps(req.action, sort_keys=True, default=str)
+        prompt = (
+            "Write a concise portfolio analyzer brief from the structured evidence below. "
+            "Do not rescore the recommendation, do not invent missing evidence, and do not give executable order instructions. "
+            "Use 3 short bullets: action, evidence, watch-outs.\n\n"
+            f"Evidence:\n{evidence_json}"
+        )
+        text, _citations, _response = call_llm_text(
+            prompt=prompt,
+            model=MODEL_LOW,
+            max_tokens=600,
+            system="You summarize deterministic portfolio-analysis evidence. You never add facts not present in the input.",
+            max_web_search_uses=0,
+        )
+        return {"brief": text.strip()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate analyzer brief: {e}") from e

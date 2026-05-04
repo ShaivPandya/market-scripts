@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from api.position_risk_store import (
@@ -485,7 +485,7 @@ def _evaluate_record(
     result = adapter.normalize(record.payload)
     valid, invalid_detail = _valid_for_scoring(config.name, record.payload, result.data)
     freshness = _freshness_state(record.as_of_date or result.as_of or record.fetched_at, now=now)
-    status = result.status
+    status = cast(str, result.status)
     quality = result.quality
     detail = result.detail
     if record.status != "ok":
@@ -544,8 +544,8 @@ def _refresh_module(config: ModuleConfig, *, now: datetime) -> tuple[dict[str, A
             return _evaluate_record(config, record, now=now)
 
         detail = result.detail or invalid_detail or f"{config.name} refresh returned {result.status}"
-        record = write_snapshot_failure(config.snapshot_key, detail, version=SNAPSHOT_SCHEMA_VERSION)
-        state, _ = _evaluate_record(config, record, now=now)
+        failure_record = write_snapshot_failure(config.snapshot_key, detail, version=SNAPSHOT_SCHEMA_VERSION)
+        state, _ = _evaluate_record(config, failure_record, now=now)
         state["refreshed"] = True
         state["detail"] = detail
         state["status"] = "error" if result.status == "error" else "partial"
@@ -555,8 +555,8 @@ def _refresh_module(config: ModuleConfig, *, now: datetime) -> tuple[dict[str, A
     except Exception as exc:
         detail = str(exc) or exc.__class__.__name__
         log.warning("position risk targeted refresh failed for %s: %s", config.name, detail, exc_info=True)
-        record = write_snapshot_failure(config.snapshot_key, detail, version=SNAPSHOT_SCHEMA_VERSION)
-        state, _ = _evaluate_record(config, record, now=now)
+        failure_record = write_snapshot_failure(config.snapshot_key, detail, version=SNAPSHOT_SCHEMA_VERSION)
+        state, _ = _evaluate_record(config, failure_record, now=now)
         state["refreshed"] = True
         state["detail"] = detail
         state["status"] = "error"
@@ -635,7 +635,7 @@ def _risk_evidence(
             "contribution": round(W_MACRO * macro_regime, 4),
         },
     ]
-    rows.sort(key=lambda row: float(row.get("contribution") or 0), reverse=True)
+    rows.sort(key=lambda row: _float_or_none(row.get("contribution")) or 0.0, reverse=True)
     return rows
 
 
@@ -755,11 +755,11 @@ def _valid_for_scoring(module_name: str, payload: Any, data: Any) -> tuple[bool,
     if data is None:
         return False, "normalized module data is missing"
     if module_name == "market_breadth":
-        fields = ("pct_above_200dma", "pct_above_20dma", "pct_at_20day_low", "pct_at_52wk_low")
-        return _has_attr_values(data, fields), "market breadth scoring fields are missing"
+        market_fields = ("pct_above_200dma", "pct_above_20dma", "pct_at_20day_low", "pct_at_52wk_low")
+        return _has_attr_values(data, market_fields), "market breadth scoring fields are missing"
     if module_name == "top50_breadth":
-        fields = ("pct_below_50dma", "pct_3plus_dist", "pct_broke_20low")
-        return _has_attr_values(data, fields), "top50 breadth scoring fields are missing"
+        top50_fields = ("pct_below_50dma", "pct_3plus_dist", "pct_broke_20low")
+        return _has_attr_values(data, top50_fields), "top50 breadth scoring fields are missing"
     if module_name == "vix_term_structure":
         return (
             _get_attr(data, "ratio") is not None or _get_attr(data, "vix") is not None,
@@ -858,7 +858,8 @@ def _degraded_modules(source_status: dict[str, dict[str, Any]]) -> list[dict[str
     rows = []
     for module, state in source_status.items():
         status = str(state.get("status") or "missing").lower()
-        freshness = state.get("freshness") if isinstance(state.get("freshness"), dict) else {}
+        raw_freshness = state.get("freshness")
+        freshness: dict[str, Any] = raw_freshness if isinstance(raw_freshness, dict) else {}
         if status == "ok" and state.get("accepted", True) and freshness.get("fresh", True):
             continue
         rows.append(

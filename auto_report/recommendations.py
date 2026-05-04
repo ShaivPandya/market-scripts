@@ -135,6 +135,10 @@ def _risk_score(value: dict[str, Any] | None, *, portfolio: bool = False) -> flo
 def _compact_risk_snapshot(snapshot: dict[str, Any] | None, *, portfolio: bool = False) -> dict[str, Any] | None:
     if not isinstance(snapshot, dict):
         return None
+    top_contributors_raw = snapshot.get("top_contributors")
+    top_contributors = top_contributors_raw[:5] if isinstance(top_contributors_raw, list) else []
+    results_raw = snapshot.get("results")
+    results = results_raw[:50] if isinstance(results_raw, list) else []
     out = {
         "result_id": snapshot.get("result_id"),
         "as_of": snapshot.get("as_of"),
@@ -151,9 +155,7 @@ def _compact_risk_snapshot(snapshot: dict[str, Any] | None, *, portfolio: bool =
                 "average_risk_score": snapshot.get("average_risk_score"),
                 "max_risk_score": snapshot.get("max_risk_score"),
                 "risk_buckets": snapshot.get("risk_buckets"),
-                "top_contributors": snapshot.get("top_contributors", [])[:5]
-                if isinstance(snapshot.get("top_contributors"), list)
-                else [],
+                "top_contributors": top_contributors,
                 "positions": [
                     {
                         "ticker": row.get("ticker"),
@@ -163,7 +165,7 @@ def _compact_risk_snapshot(snapshot: dict[str, Any] | None, *, portfolio: bool =
                         "confidence": row.get("confidence"),
                         "risk_snapshot_id": row.get("risk_snapshot_id"),
                     }
-                    for row in (snapshot.get("results") if isinstance(snapshot.get("results"), list) else [])[:50]
+                    for row in results
                     if isinstance(row, dict)
                 ],
             }
