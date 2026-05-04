@@ -10,8 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from api.postgres import connect, use_postgres_state
+from api.postgres import use_postgres_state
 from api.snapshot_keys import DEFAULT_SNAPSHOT_MAX_AGE_SECONDS
+from ontology.temporal_repository import SnapshotVersionWrite, TemporalOntologyRepository, payload_hash
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SQLITE_PATH = _REPO_ROOT / "data_cache" / "computed_snapshots.sqlite3"
@@ -68,22 +69,24 @@ def _sqlite_connect() -> sqlite3.Connection:
 def _row_to_record(row: Any) -> SnapshotRecord | None:
     if row is None:
         return None
-    payload_raw = row["payload_json"]
+    payload_raw = _row_get(row, "payload_json")
     if isinstance(payload_raw, str):
         payload = json.loads(payload_raw) if payload_raw else None
     elif isinstance(payload_raw, dict) or payload_raw is None:
         payload = payload_raw
     else:
         payload = dict(payload_raw)
+    as_of_raw = _row_get(row, "as_of_date", _row_get(row, "as_of"))
+    fetched_raw = _row_get(row, "fetched_at", _row_get(row, "load_time"))
     return SnapshotRecord(
-        snapshot_key=str(row["snapshot_key"]),
+        snapshot_key=str(_row_get(row, "snapshot_key")),
         payload=payload,
-        as_of_date=row["as_of_date"],
-        fetched_at=str(row["fetched_at"]),
-        status=str(row["status"]),
-        error=row["error"],
-        version=int(row["version"] or 1),
-        artifact_uri=row["artifact_uri"],
+        as_of_date=_iso_or_none(as_of_raw),
+        fetched_at=_iso_or_none(fetched_raw) or _now_iso(),
+        status=str(_row_get(row, "status")),
+        error=_row_get(row, "error"),
+        version=int(_row_get(row, "version", 1) or 1),
+        artifact_uri=_row_get(row, "artifact_uri"),
     )
 
 
@@ -98,31 +101,22 @@ def write_snapshot_success(
 ) -> SnapshotRecord:
     fetched = fetched_at or _now_iso()
     if use_postgres_state():
-        from psycopg.types.json import Jsonb
-
-        with connect() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO computed_snapshots
-                    (snapshot_key, payload_json, as_of_date, fetched_at, status, error, version, artifact_uri)
-                VALUES (%s, %s, %s, %s, 'ok', NULL, %s, %s)
-                ON CONFLICT (snapshot_key)
-                DO UPDATE SET
-                    payload_json = EXCLUDED.payload_json,
-                    as_of_date = EXCLUDED.as_of_date,
-                    fetched_at = EXCLUDED.fetched_at,
-                    status = 'ok',
-                    error = NULL,
-                    version = EXCLUDED.version,
-                    artifact_uri = EXCLUDED.artifact_uri
-                RETURNING *
-                """,
-                (snapshot_key, Jsonb(payload), as_of_date, fetched, int(version), artifact_uri),
-            ).fetchone()
-            conn.commit()
-            record = _row_to_record(row)
-            assert record is not None
-            return record
+        row = TemporalOntologyRepository().write_computed_snapshot_version(
+            SnapshotVersionWrite(
+                snapshot_key=snapshot_key,
+                payload_hash=payload_hash(payload),
+                payload=payload,
+                artifact_uri=artifact_uri,
+                as_of=as_of_date,
+                load_time=fetched,
+                valid_from=as_of_date or fetched,
+                status="ok",
+                quality="ok",
+            )
+        )
+        record = _row_to_record(row)
+        assert record is not None
+        return record
 
     with _sqlite_connect() as conn:
         conn.execute(
@@ -151,28 +145,24 @@ def write_snapshot_success(
 def write_snapshot_failure(snapshot_key: str, error: str, *, version: int = 1) -> SnapshotRecord | None:
     """Record a failed refresh without discarding the last successful payload."""
     if use_postgres_state():
-        with connect() as conn:
-            row = conn.execute(
-                """
-                UPDATE computed_snapshots
-                SET status = 'error', error = %s, version = %s
-                WHERE snapshot_key = %s
-                RETURNING *
-                """,
-                (error, int(version), snapshot_key),
-            ).fetchone()
-            if row is None:
-                row = conn.execute(
-                    """
-                    INSERT INTO computed_snapshots
-                        (snapshot_key, payload_json, as_of_date, fetched_at, status, error, version, artifact_uri)
-                    VALUES (%s, NULL, NULL, %s, 'error', %s, %s, NULL)
-                    RETURNING *
-                    """,
-                    (snapshot_key, _now_iso(), error, int(version)),
-                ).fetchone()
-            conn.commit()
-            return _row_to_record(row)
+        prior = read_snapshot(snapshot_key)
+        payload = prior.payload if prior else None
+        fetched = _now_iso()
+        row = TemporalOntologyRepository().write_computed_snapshot_version(
+            SnapshotVersionWrite(
+                snapshot_key=snapshot_key,
+                payload_hash=payload_hash({"error": error, "prior_payload": payload}),
+                payload=payload,
+                artifact_uri=prior.artifact_uri if prior else None,
+                as_of=prior.as_of_date if prior else None,
+                load_time=fetched,
+                valid_from=fetched,
+                status="error",
+                quality="degraded",
+                error=error,
+            )
+        )
+        return _row_to_record(row)
 
     with _sqlite_connect() as conn:
         cur = conn.execute(
@@ -194,13 +184,28 @@ def write_snapshot_failure(snapshot_key: str, error: str, *, version: int = 1) -
 
 def read_snapshot(snapshot_key: str) -> SnapshotRecord | None:
     if use_postgres_state():
-        with connect() as conn:
-            row = conn.execute("SELECT * FROM computed_snapshots WHERE snapshot_key = %s", (snapshot_key,)).fetchone()
-            return _row_to_record(row)
+        row = TemporalOntologyRepository().read_computed_snapshot_version(snapshot_key)
+        return _row_to_record(row)
 
     with _sqlite_connect() as conn:
         row = conn.execute("SELECT * FROM computed_snapshots WHERE snapshot_key = ?", (snapshot_key,)).fetchone()
         return _row_to_record(row)
+
+
+def read_snapshot_at(
+    snapshot_key: str,
+    *,
+    as_of: str | datetime,
+    tx_as_of: str | datetime | None = None,
+) -> SnapshotRecord | None:
+    if use_postgres_state():
+        row = TemporalOntologyRepository().read_computed_snapshot_version(
+            snapshot_key,
+            as_of=as_of,
+            tx_as_of=tx_as_of,
+        )
+        return _row_to_record(row)
+    return read_snapshot(snapshot_key)
 
 
 def attach_snapshot_meta(
@@ -242,3 +247,22 @@ def get_snapshot_response(
     if record is None or record.payload is None:
         return None
     return attach_snapshot_meta(record.payload, record, max_age_seconds=max_age_seconds)
+
+
+def _row_get(row: Any, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except Exception:
+        return default
+
+
+def _iso_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    return str(value)

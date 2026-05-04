@@ -1,8 +1,7 @@
-"""Materialize ontology graph snapshots from canonical backing sources.
+"""Ingest source data into authoritative temporal ontology versions.
 
-This module reads portfolio, thesis, process, and market data through source
-adapters and backing-store APIs, then writes a typed semantic/risk graph
-snapshot. It does not make the ontology graph the operational source of truth.
+During the migration window this module also persists legacy snapshot runs as a
+compatibility artifact for existing query paths.
 """
 
 from __future__ import annotations
@@ -12,7 +11,9 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from api.postgres import use_postgres_state
 from ontology.models import OntologyEdge, OntologyNode
+from ontology.object_service import OntologyObjectService
 from ontology.repository import OntologyRepository
 from ontology.risk import (
     compute_breadth_stress,
@@ -34,6 +35,7 @@ from ontology.schemas.relations import (
     REFERENCES_ASSET,
 )
 from ontology.sector_mapper import SectorMapper
+from ontology.source_records import write_source_result_records
 from ontology.sources.dtos import (
     EconomicGrowthSnapshot,
     LaborMarketSnapshot,
@@ -47,6 +49,7 @@ from ontology.sources.dtos import (
     VixTermStructureSnapshot,
 )
 from ontology.sources.registry import build_adapter_registry, run_adapters, source_status_from_results
+from ontology.temporal_repository import TemporalOntologyRepository
 
 SNAPSHOT_RETENTION_DAYS = 90
 
@@ -108,6 +111,10 @@ def ingest_into_repository(
         source_status.update(source_status_from_results(deep_results))
     _link_source_adapter_events(source_results, provenance_event_id, run_id)
     _record_source_record_refs(source_results)
+    temporal_repo: TemporalOntologyRepository | None = None
+    if use_postgres_state():
+        temporal_repo = TemporalOntologyRepository()
+        _record_temporal_source_versions(source_results, repository=temporal_repo)
 
     nodes: dict[str, OntologyNode] = {}
     edges: dict[tuple[str, str, str], OntologyEdge] = {}
@@ -453,6 +460,15 @@ def ingest_into_repository(
         "macro_regime": round(macro_regime, 4),
     }
 
+    if temporal_repo is not None:
+        _write_temporal_graph_versions(
+            nodes=snapshot_nodes,
+            edges=snapshot_edges,
+            as_of=as_of,
+            provenance_event_id=provenance_event_id,
+            repository=temporal_repo,
+        )
+
     repo.save_snapshot(
         run_id=run_id,
         as_of=as_of,
@@ -627,6 +643,53 @@ def _record_source_record_refs(source_results: dict[str, Any]) -> None:
                 "status": getattr(result, "status", None),
                 "quality": getattr(result, "quality", None),
             },
+        )
+
+
+def _record_temporal_source_versions(
+    source_results: dict[str, Any],
+    *,
+    repository: TemporalOntologyRepository,
+) -> None:
+    for source_name, result in source_results.items():
+        write_source_result_records(
+            source_name,
+            result,
+            repository=repository,
+        )
+
+
+def _write_temporal_graph_versions(
+    *,
+    nodes: list[OntologyNode],
+    edges: list[OntologyEdge],
+    as_of: str,
+    provenance_event_id: str | None,
+    repository: TemporalOntologyRepository,
+) -> None:
+    service = OntologyObjectService(repository=repository)
+    actor = {"actor_type": "system", "actor_id": "ontology.ingestion"}
+    provenance = {"provenance_event_id": provenance_event_id} if provenance_event_id else None
+
+    for node in nodes:
+        service.write_object(
+            object_type=str(node.type),
+            business_key=node.id,
+            properties=node.properties,
+            valid_from=as_of,
+            actor=actor,
+            provenance=provenance,
+        )
+
+    for edge in edges:
+        service.write_relation(
+            source_uid=edge.source_id,
+            target_uid=edge.target_id,
+            relation_type=str(edge.relation_type),
+            properties=edge.properties,
+            valid_from=as_of,
+            actor=actor,
+            provenance=provenance,
         )
 
 

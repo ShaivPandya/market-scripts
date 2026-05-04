@@ -314,6 +314,9 @@ export type OntologyQueryBody = {
   timeframe?: "This Week" | "Daily" | "Weekly" | "Monthly"
   include_graph?: boolean
   run_id?: string
+  as_of?: string
+  tx_as_of?: string
+  include_history?: boolean
   refresh_snapshot?: boolean
   page?: number
   page_size?: number
@@ -338,6 +341,17 @@ export interface OntologyRow {
   risk_score?: number | null
   risk_level?: string
   evidence?: OntologyEvidence[]
+  _meta?: {
+    temporal?: {
+      object_uid?: string
+      version_id?: string
+      valid_from?: string
+      valid_to?: string | null
+      tx_from?: string
+      tx_to?: string | null
+      temporal_confidence?: string
+    }
+  }
 }
 
 export interface OntologySourceStatus {
@@ -383,6 +397,12 @@ export interface OntologyResponse {
       max_nodes?: number
       max_edges?: number
     }
+    temporal?: {
+      as_of?: string | null
+      tx_as_of?: string | null
+      include_history?: boolean
+      mode?: string
+    }
     [key: string]: unknown
   }
   [key: string]: unknown
@@ -400,13 +420,60 @@ export const fetchOntologyRuns = (limit = 100) =>
     .get("/ontology/runs", { params: { limit } })
     .then(r => r.data as { runs: OntologyRunSummary[] })
 
+export type OntologyTemporalParams = {
+  as_of?: string
+  tx_as_of?: string
+  include_history?: boolean
+  limit?: number
+  offset?: number
+}
+
+export const fetchOntologyObjects = (params: OntologyTemporalParams & {
+  object_type?: string
+  business_key?: string
+  object_uid?: string
+} = {}) =>
+  client.get("/ontology/objects", { params }).then(r => r.data as { objects: Array<Record<string, unknown>> })
+
+export const fetchOntologyObject = (object_uid: string, params: Pick<OntologyTemporalParams, "as_of" | "tx_as_of"> = {}) =>
+  client
+    .get(`/ontology/objects/${encodeURIComponent(object_uid)}`, { params })
+    .then(r => r.data as Record<string, unknown>)
+
+export const fetchOntologyRelations = (params: OntologyTemporalParams & {
+  relation_type?: string
+  source_object_uid?: string
+  target_object_uid?: string
+} = {}) =>
+  client.get("/ontology/relations", { params }).then(r => r.data as { relations: Array<Record<string, unknown>> })
+
+export const fetchOntologySourceRecords = (params: OntologyTemporalParams & {
+  vendor?: string
+  source_name?: string
+  record_kind?: string
+} = {}) =>
+  client
+    .get("/ontology/source-records", { params })
+    .then(r => r.data as { source_records: Array<Record<string, unknown>> })
+
 export const queryOntology = (body: OntologyQueryBody) =>
   runOntologyQueryAsync(body)
 
 type OntologyJobResponse =
-  | { job_id: string; status: "queued" | "running" }
-  | { job_id: string; status: "error"; error?: string }
-  | { job_id: string; status: "done"; result?: OntologyResponse }
+  | { job_id: string; status: "queued" | "running"; timeout_s?: number }
+  | { job_id: string; status: "error"; error?: string; timeout_s?: number }
+  | { job_id: string; status: "done"; result?: OntologyResponse; timeout_s?: number }
+
+const DEFAULT_ONTOLOGY_JOB_TIMEOUT_MS = 300_000
+const ONTOLOGY_JOB_TIMEOUT_BUFFER_MS = 45_000
+const ONTOLOGY_JOB_POLL_INTERVAL_MS = 2_000
+
+function ontologyJobDeadline(started: OntologyJobResponse): number {
+  const timeoutMs = typeof started.timeout_s === "number" && Number.isFinite(started.timeout_s)
+    ? Math.max(0, started.timeout_s * 1000)
+    : DEFAULT_ONTOLOGY_JOB_TIMEOUT_MS
+  return Date.now() + timeoutMs + ONTOLOGY_JOB_TIMEOUT_BUFFER_MS
+}
 
 export const startOntologyQueryJob = (body: OntologyQueryBody) =>
   client
@@ -422,13 +489,13 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: Ab
   if (started.status === "error") throw new Error(started.error || "Ontology query failed")
 
   const job_id = started.job_id
-  const deadline = Date.now() + 180_000
+  const deadline = ontologyJobDeadline(started)
 
   for (; ;) {
     if (signal?.aborted) throw new DOMException("Query cancelled", "AbortError")
-    if (Date.now() > deadline) throw new Error("Timeout: Ontology query is taking too long. Try again.")
+    if (Date.now() > deadline) throw new Error("Timeout: Ontology query is still running. Try again shortly.")
 
-    await new Promise(r => setTimeout(r, 2000))
+    await new Promise(r => setTimeout(r, ONTOLOGY_JOB_POLL_INTERVAL_MS))
     const job = await fetchOntologyQueryJob(job_id)
 
     if (job.status === "done") {

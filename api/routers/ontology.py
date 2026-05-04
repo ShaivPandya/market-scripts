@@ -13,6 +13,7 @@ from api.exceptions import DataFetchError, NotFoundError
 from api.job_queue import get_job
 from api.routers.auth import require_actor
 from ontology.action_registry import get_tool_exposure
+from ontology.object_service import OntologyObjectService
 from ontology.policy import (
     Actor,
     OntologyAction,
@@ -22,6 +23,7 @@ from ontology.policy import (
     require_allowed,
 )
 from ontology.service import OntologyQueryService, OntologyRunNotFoundError
+from ontology.temporal_repository import TemporalOntologyRepository
 
 router = APIRouter()
 _service = OntologyQueryService()
@@ -64,6 +66,9 @@ class OntologyQueryRequest(BaseModel):
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=25, ge=1, le=100)
     schema_mode: Literal["stored", "upgraded"]
+    as_of: str | None = None
+    tx_as_of: str | None = None
+    include_history: bool = False
 
 
 class OntologyQueryJobRequest(OntologyQueryRequest):
@@ -75,11 +80,16 @@ def _extract_filters(req: OntologyQueryRequest) -> dict[str, Any]:
 
 
 def _call_with_optional_actor(func, *, actor: Actor, **kwargs):
-    params = signature(func).parameters.values()
-    supports_actor = any(p.kind == Parameter.VAR_KEYWORD or p.name == "actor" for p in params)
+    params = signature(func).parameters
+    values = params.values()
+    supports_var_kwargs = any(p.kind == Parameter.VAR_KEYWORD for p in values)
+    supports_actor = supports_var_kwargs or "actor" in params
+    call_kwargs = (
+        dict(kwargs) if supports_var_kwargs else {key: value for key, value in kwargs.items() if key in params}
+    )
     if supports_actor:
-        return func(**kwargs, actor=actor)
-    return func(**kwargs)
+        call_kwargs["actor"] = actor
+    return func(**call_kwargs)
 
 
 def _execute_query(req: OntologyQueryJobRequest | OntologyQueryRequest) -> dict[str, Any]:
@@ -101,6 +111,9 @@ def _execute_query(req: OntologyQueryJobRequest | OntologyQueryRequest) -> dict[
                 page=req.page,
                 page_size=req.page_size,
                 schema_mode=req.schema_mode,
+                as_of=req.as_of,
+                tx_as_of=req.tx_as_of,
+                include_history=req.include_history,
             ),
         )
     except OntologyRunNotFoundError as exc:
@@ -134,6 +147,114 @@ def get_ontology_run(run_id: str, actor: ActorDep):
     except Exception:
         run["provenance_summary"] = {"event_count": 0, "link_count": 0}
     return run
+
+
+@router.get("/ontology/objects")
+def list_ontology_objects(
+    actor: ActorDep,
+    object_type: str | None = None,
+    business_key: str | None = None,
+    object_uid: str | None = None,
+    as_of: str | None = None,
+    tx_as_of: str | None = None,
+    include_history: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+):
+    _require_temporal_read(actor)
+    filters: dict[str, Any] = {}
+    if business_key:
+        filters["business_key"] = business_key
+    if object_uid:
+        filters["object_uid"] = object_uid
+    try:
+        objects = OntologyObjectService().query_objects(
+            object_type=object_type,
+            filters=filters,
+            as_of=as_of,
+            tx_as_of=tx_as_of,
+            include_history=include_history,
+            limit=limit,
+            offset=offset,
+        )
+        return {"objects": objects}
+    except Exception as exc:
+        raise DataFetchError(source="ontology_objects", detail=str(exc)) from exc
+
+
+@router.get("/ontology/objects/{object_uid}")
+def get_ontology_object(
+    object_uid: str,
+    actor: ActorDep,
+    as_of: str | None = None,
+    tx_as_of: str | None = None,
+):
+    _require_temporal_read(actor)
+    try:
+        obj = OntologyObjectService().get_object(object_uid, as_of=as_of, tx_as_of=tx_as_of)
+    except Exception as exc:
+        raise DataFetchError(source="ontology_objects", detail=str(exc)) from exc
+    if obj is None:
+        raise NotFoundError("Ontology object", object_uid)
+    return obj
+
+
+@router.get("/ontology/relations")
+def list_ontology_relations(
+    actor: ActorDep,
+    relation_type: str | None = None,
+    source_object_uid: str | None = None,
+    target_object_uid: str | None = None,
+    as_of: str | None = None,
+    tx_as_of: str | None = None,
+    include_history: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+):
+    _require_temporal_read(actor)
+    try:
+        relations = OntologyObjectService().query_relations(
+            relation_type=relation_type,
+            source_object_uid=source_object_uid,
+            target_object_uid=target_object_uid,
+            as_of=as_of,
+            tx_as_of=tx_as_of,
+            include_history=include_history,
+            limit=limit,
+            offset=offset,
+        )
+        return {"relations": relations}
+    except Exception as exc:
+        raise DataFetchError(source="ontology_relations", detail=str(exc)) from exc
+
+
+@router.get("/ontology/source-records")
+def list_ontology_source_records(
+    actor: ActorDep,
+    vendor: str | None = None,
+    source_name: str | None = None,
+    record_kind: str | None = None,
+    as_of: str | None = None,
+    tx_as_of: str | None = None,
+    include_history: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+):
+    _require_temporal_read(actor)
+    try:
+        rows = TemporalOntologyRepository().query_source_records(
+            vendor=vendor,
+            source_name=source_name,
+            record_kind=record_kind,
+            as_of=as_of,
+            tx_as_of=tx_as_of,
+            include_history=include_history,
+            limit=limit,
+            offset=offset,
+        )
+        return {"source_records": rows}
+    except Exception as exc:
+        raise DataFetchError(source="ontology_source_records", detail=str(exc)) from exc
 
 
 @router.post("/ontology/query")
@@ -215,6 +336,13 @@ def _preflight_query_policy(req: OntologyQueryRequest, actor: Actor) -> None:
             error=exc.reason,
         )
         raise
+
+
+def _require_temporal_read(actor: Actor) -> None:
+    policy = getattr(_service, "policy", None)
+    if policy is None:
+        return
+    require_allowed(policy.check_action(actor, OntologyAction.QUERY, {"surface": "temporal_ontology"}))
 
 
 def _preflight_job_read(job_id: str, actor: Actor) -> None:

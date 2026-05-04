@@ -102,6 +102,9 @@ class OntologyQueryService:
         page: int = 1,
         page_size: int = 25,
         schema_mode: str = "upgraded",
+        as_of: str | None = None,
+        tx_as_of: str | None = None,
+        include_history: bool = False,
         actor: Actor | None = None,
     ) -> dict[str, Any]:
         if schema_mode != "upgraded":
@@ -245,6 +248,13 @@ class OntologyQueryService:
                     "risk_score": round(risk_score, 4) if "risk_score" in pos else None,
                     "risk_level": risk_level,
                     "evidence": evidence,
+                    "_meta": {
+                        "temporal": {
+                            "object_uid": position_id,
+                            "valid_from": as_of,
+                            "temporal_confidence": "snapshot_compatibility",
+                        }
+                    },
                 }
             )
             result_position_ids.append(position_id)
@@ -314,6 +324,12 @@ class OntologyQueryService:
         response["_meta"] = {
             "authorization": dict(auth_stats),
             "pagination": pagination_meta,
+            "temporal": {
+                "as_of": as_of,
+                "tx_as_of": tx_as_of,
+                "include_history": include_history,
+                "mode": "snapshot_compatibility",
+            },
         }
         if graph_meta is not None:
             response["_meta"]["graph"] = graph_meta

@@ -384,41 +384,47 @@ def test_sweep_expired_local_jobs():
 
 def test_core_async_endpoints_use_persisted_job_contract(auth_client, monkeypatch):
     from api import cache
+    from api.job_registry import get_job_spec
     from api.routers import analyzer, fundamental_momentum, hedging, sizer
 
     cache.invalidate_all()
     cases = [
-        (analyzer, "_compute_analyzer_result", "/api/v1/portfolio-analyzer/async", {}),
+        (analyzer, "analyzer", "_compute_analyzer_result", "/api/v1/portfolio-analyzer/async", {}),
         (
             hedging,
+            "hedging",
             "_compute_hedging_result",
             "/api/v1/hedging-tool/async",
             {"book": 100000, "positions": [{"ticker": "AAA", "weight": 0.1}]},
         ),
         (
             sizer,
+            "sizer",
             "_compute_sizer_result",
             "/api/v1/portfolio-sizer/async",
             {"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
         ),
         (
             fundamental_momentum,
+            "fundamental_momentum",
             "_compute_fundamental_momentum",
             "/api/v1/fundamental-momentum/async",
             {"input_mode": "Custom Tickers", "tickers": "AAA", "screen_type": "EPS"},
         ),
     ]
 
-    for module, attr, path, body in cases:
+    for module, job_type, attr, path, body in cases:
         monkeypatch.setattr(module, attr, lambda _req, label=attr: {"ok": label})
         started = auth_client.post(path, json=body)
         assert started.status_code in (200, 202)
         payload = started.json()
         job_id = payload["job_id"]
+        assert payload["timeout_s"] == get_job_spec(job_type).timeout_s
 
         deadline = time.time() + 2
         while time.time() < deadline:
             done = auth_client.get(f"{path}/{job_id}").json()
+            assert done["timeout_s"] == get_job_spec(job_type).timeout_s
             if done["status"] == "done":
                 assert done["result"]["ok"] == attr
                 break
