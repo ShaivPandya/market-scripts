@@ -265,6 +265,7 @@ def query_ontology(req: OntologyQueryRequest, actor: ActorDep):
         "ontology",
         job_req.model_dump(exclude_none=True),
         cache_key=_job_cache_key(job_req),
+        reuse_completed=_reuse_completed_job(req),
     )
     return enqueue_response(row, "/api/v1/ontology/query/async/{job_id}")
 
@@ -274,12 +275,21 @@ def _job_cache_key(req: OntologyQueryRequest | OntologyQueryJobRequest) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _reuse_completed_job(req: OntologyQueryRequest | OntologyQueryJobRequest) -> bool:
+    return not bool(req.refresh_snapshot)
+
+
 @router.post("/ontology/query/async")
 def start_query_ontology_async(req: OntologyQueryRequest, actor: ActorDep):
     _preflight_query_policy(req, actor)
     job_req = _job_request(req, actor)
     key = _job_cache_key(job_req)
-    row, _disposition = enqueue_registered_job("ontology", job_req.model_dump(exclude_none=True), cache_key=key)
+    row, _disposition = enqueue_registered_job(
+        "ontology",
+        job_req.model_dump(exclude_none=True),
+        cache_key=key,
+        reuse_completed=_reuse_completed_job(req),
+    )
     return enqueue_response(row, "/api/v1/ontology/query/async/{job_id}")
 
 
