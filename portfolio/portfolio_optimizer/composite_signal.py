@@ -401,7 +401,7 @@ def generate_anchor_normalized_long_equity_signals(
       - Metadata describing anchor/fallback state
     """
     tickers = list(dict.fromkeys([str(t).strip().upper() for t in long_equity_tickers if str(t).strip()]))
-    mode = "spdr_sector_top10_anchor"
+    mode = f"spdr_sector_top{int(anchor_top_n)}_anchor"
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
 
