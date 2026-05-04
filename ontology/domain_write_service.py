@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.schemas.identity import action_run_id, thesis_id
@@ -418,7 +418,8 @@ def action_mutations(
             )
         ]
     if action_id == "create_recommendation":
-        record = input_payload.get("record") if isinstance(input_payload.get("record"), Mapping) else input_payload
+        record_value = input_payload.get("record")
+        record = cast(Mapping[str, Any], record_value) if isinstance(record_value, Mapping) else input_payload
         row = {**dict(record), **dict(output)}
         mutations = [
             OntologyMutation(

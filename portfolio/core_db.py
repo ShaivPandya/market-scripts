@@ -4155,7 +4155,7 @@ def create_policy_gate_result(
                 f"INSERT INTO policy_gate_results ({columns}) VALUES ({placeholders})",
                 tuple(params.values()),
             )
-            result_id = int(cur.lastrowid)
+            result_id = cast(int, cur.lastrowid)
             lineage_root_id = governance.lineage_root(governance.REF_POLICY_GATE_RESULT, result_id)
             provenance_event_id = governance.deterministic_id("pv:policy_gate_result", result_id)
             bundle = {
@@ -4953,10 +4953,13 @@ def create_pending_approval(
                     supersedes_approval_id,
                 ),
             )
-            approval_id = int(cur.lastrowid)
+            approval_id = cast(int, cur.lastrowid)
             lineage_root_id = governance.lineage_root(governance.REF_APPROVAL, approval_id)
             provenance_event_id = governance.deterministic_id("pv:approval", approval_id, "created")
-            object_refs = [{"type": governance.REF_APPROVAL, "id": approval_id}, {"type": entity_type, "id": entity_id}]
+            object_refs: list[dict[str, Any]] = [
+                {"type": governance.REF_APPROVAL, "id": approval_id},
+                {"type": entity_type, "id": entity_id},
+            ]
             bundle: dict[str, Any] = {
                 "lineage_root_id": lineage_root_id,
                 "provenance_events": [
