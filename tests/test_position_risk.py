@@ -50,6 +50,34 @@ def test_position_risk_accepts_fresh_cached_modules(monkeypatch):
     assert read_latest_position_risk("MU")["result_id"] == snapshot["result_id"]
 
 
+def test_position_risk_accepts_legacy_sector_metrics_without_sector(monkeypatch):
+    from api import position_risk as pr
+    from api.snapshot_keys import SNAPSHOT_SECTOR_METRICS
+    from api.snapshot_store import write_snapshot_success
+
+    _seed_required_snapshots(as_of="2099-01-01")
+    write_snapshot_success(
+        SNAPSHOT_SECTOR_METRICS,
+        {
+            "timestamp": "2099-01-01T21:00:00",
+            "weights_df": [{"Weight_Now": 17.8, "RelPerf_3M_pp": -6.9, "Pct_Above_200DMA": 2.4}],
+        },
+        as_of_date="2099-01-01",
+    )
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Communication Services")
+    )
+    monkeypatch.setattr(
+        "ontology.sources.sector_metrics.SectorMetricsAdapter.fetch",
+        lambda self: (_ for _ in ()).throw(AssertionError("sector metrics live fetch should not run")),
+    )
+
+    snapshot = pr.refresh_position_risk("MU")
+
+    assert snapshot["source_status"]["sector_metrics"]["accepted"] is True
+    assert snapshot["source_status"]["sector_metrics"].get("refreshed") is not True
+
+
 def test_stale_required_liquidity_triggers_targeted_refresh(monkeypatch):
     from api import position_risk as pr
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from equities.sector_metrics.payload import sector_metric_rows
 from ontology.sources.base import (
-    as_rows,
     build_source_result,
     clean_str,
     iso_string,
@@ -36,7 +36,7 @@ class SectorMetricsAdapter:
 
         expected = {"weights_df", "d_1m", "d_3m", "d_6m", "timestamp"}
         drift = unknown_fields(raw, expected)
-        raw_rows = as_rows(raw.get("weights_df"))
+        raw_rows = sector_metric_rows(raw.get("weights_df"))
         expected_row_fields = {
             "Sector",
             "index",

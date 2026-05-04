@@ -5,9 +5,10 @@ from pydantic import BaseModel
 
 from api.cache import get_cached, long_cache, set_cached
 from api.exceptions import ConfigurationError, DataFetchError, SnapshotUnavailableError
-from api.serializers import serialize_dataframe, serialize_value
+from api.serializers import serialize_value
 from api.snapshot_keys import SNAPSHOT_SECTOR_METRICS
 from api.snapshot_store import get_snapshot_response, snapshots_required
+from equities.sector_metrics.payload import normalize_sector_metrics_payload
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
@@ -18,9 +19,10 @@ def get_sector_metrics():
     key = "sector_metrics"
     cached = get_cached(long_cache, key)
     if cached is not None:
-        return cached
+        return normalize_sector_metrics_payload(cached)
     snapshot = get_snapshot_response(SNAPSHOT_SECTOR_METRICS)
     if snapshot is not None:
+        snapshot = normalize_sector_metrics_payload(snapshot)
         set_cached(long_cache, key, snapshot)
         return snapshot
     if snapshots_required():
@@ -32,11 +34,10 @@ def get_sector_metrics():
     except Exception as e:
         raise DataFetchError(source="sector_metrics", detail=str(e)) from e
 
-    import pandas as pd
-
-    weights_df = data.get("weights_df")
+    normalized = normalize_sector_metrics_payload(data)
+    weights_df = normalized.get("weights_df")
     result = {
-        "weights_df": serialize_dataframe(weights_df.reset_index()) if isinstance(weights_df, pd.DataFrame) else [],
+        "weights_df": weights_df if isinstance(weights_df, list) else [],
         "d_1m": data.get("d_1m"),
         "d_3m": data.get("d_3m"),
         "d_6m": data.get("d_6m"),

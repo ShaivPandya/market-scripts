@@ -38,6 +38,24 @@ def test_sector_metrics_route_uses_snapshot(auth_client, monkeypatch):
     assert body["_meta"]["snapshot"]["key"] == router.SNAPSHOT_SECTOR_METRICS
 
 
+def test_sector_metrics_route_repairs_legacy_snapshot_without_sector(auth_client, monkeypatch):
+    import api.routers.sector_metrics as router
+
+    monkeypatch.setattr(router, "get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        router,
+        "get_snapshot_response",
+        lambda key: {"weights_df": [{"Weight_Now": 17.8}], "_meta": {"snapshot": {"key": key}}},
+    )
+
+    resp = auth_client.get("/api/v1/sector-metrics")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["weights_df"][0]["Sector"] == "Communication Services"
+
+
 def test_sector_metrics_route_fails_fast_when_snapshot_required(auth_client, monkeypatch):
     import api.routers.sector_metrics as router
 

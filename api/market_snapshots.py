@@ -17,6 +17,7 @@ from api.snapshot_keys import (
     SNAPSHOT_VIX_TERM_STRUCTURE,
 )
 from api.snapshot_store import write_snapshot_failure, write_snapshot_success
+from equities.sector_metrics.payload import normalize_sector_metrics_payload
 
 logger = logging.getLogger("api.market_snapshots")
 
@@ -87,6 +88,8 @@ def refresh_market_snapshots(_payload: dict[str, Any] | None = None) -> dict[str
     for module_name, snapshot_key in _MODULE_SNAPSHOT_KEYS.items():
         status, error = _module_status(signal_payload, module_name)
         payload = raw_modules.get(module_name)
+        if module_name == "sector_metrics":
+            payload = normalize_sector_metrics_payload(payload)
         if status == "ok" and isinstance(payload, dict):
             record = write_snapshot_success(
                 snapshot_key,

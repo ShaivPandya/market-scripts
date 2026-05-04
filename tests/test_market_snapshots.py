@@ -28,7 +28,7 @@ def test_refresh_market_snapshots_writes_module_and_signal_payloads(monkeypatch)
             "raw_modules": {
                 "market_breadth": {"as_of_date": "2026-05-01", "total_analyzed": 503},
                 "top50_breadth": {"universe_size": 50},
-                "sector_metrics": {"timestamp": "2026-05-01T23:00:00"},
+                "sector_metrics": {"timestamp": "2026-05-01T23:00:00", "weights_df": [{"Weight_Now": 17.8}]},
                 "liquidity": {"latest_date": "2026-05-01"},
                 "vix_term_structure": {"latest_df": [{"Date": "2026-05-01"}]},
                 "momentum": {"date": "2026-05-01"},
@@ -59,6 +59,8 @@ def test_refresh_market_snapshots_writes_module_and_signal_payloads(monkeypatch)
     assert ms.SNAPSHOT_MARKET_BREADTH in written_keys
     assert ms.SNAPSHOT_TOP50_BREADTH in written_keys
     assert ms.SNAPSHOT_SIGNAL_AGGREGATOR in written_keys
+    sector_payload = next(payload for key, payload, _as_of in writes if key == ms.SNAPSHOT_SECTOR_METRICS)
+    assert sector_payload["weights_df"][0]["Sector"] == "Communication Services"
     assert result["snapshots"][-1]["snapshot_key"] == ms.SNAPSHOT_SIGNAL_AGGREGATOR
 
 

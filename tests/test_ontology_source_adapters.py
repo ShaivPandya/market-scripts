@@ -84,6 +84,26 @@ def test_sector_metrics_adapter_normalizes_rows_and_empty_payloads():
     assert empty.quality == "missing"
 
 
+def test_sector_metrics_adapter_repairs_legacy_rows_without_sector():
+    result = SectorMetricsAdapter().normalize(
+        {
+            "weights_df": [
+                {
+                    "Weight_Now": 17.8,
+                    "Chg_3M_pp": 0.4,
+                    "RelPerf_3M_pp": -6.9,
+                    "Pct_Above_200DMA": 2.4,
+                }
+            ],
+            "timestamp": "2026-05-01T20:00:00",
+        }
+    )
+
+    assert result.status == "ok"
+    assert result.data is not None
+    assert result.data.rows[0].sector == "Communication Services"
+
+
 def test_liquidity_adapter_normalizes_regime():
     result = LiquidityAdapter().normalize(
         {
