@@ -1,13 +1,15 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Menu, MessageCircle, PanelRightOpen } from "lucide-react"
 import { Sidebar, getRouteLabel } from "./Sidebar"
+import { SidebarSearchDialog } from "./SidebarSearchDialog"
 import { AgentChat } from "../agent/AgentChat"
 import { ScreenContextProvider, useScreenContext, useAutoScreenContext } from "@/contexts/ScreenContext"
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
+  const [pageSearchOpen, setPageSearchOpen] = useState(false)
 
   return (
     <ScreenContextProvider>
@@ -16,6 +18,8 @@ export function Layout() {
         setSidebarOpen={setSidebarOpen}
         agentOpen={agentOpen}
         setAgentOpen={setAgentOpen}
+        pageSearchOpen={pageSearchOpen}
+        setPageSearchOpen={setPageSearchOpen}
       />
     </ScreenContextProvider>
   )
@@ -26,14 +30,47 @@ interface LayoutInnerProps {
   setSidebarOpen: (v: boolean) => void
   agentOpen: boolean
   setAgentOpen: (v: boolean) => void
+  pageSearchOpen: boolean
+  setPageSearchOpen: (v: boolean) => void
 }
 
-function LayoutInner({ sidebarOpen, setSidebarOpen, agentOpen, setAgentOpen }: LayoutInnerProps) {
+function LayoutInner({
+  sidebarOpen,
+  setSidebarOpen,
+  agentOpen,
+  setAgentOpen,
+  pageSearchOpen,
+  setPageSearchOpen,
+}: LayoutInnerProps) {
   const { screenContext } = useScreenContext()
   const autoContext = useAutoScreenContext()
   const effectiveContext = screenContext ?? autoContext
   const location = useLocation()
   const routeLabel = getRouteLabel(location.pathname)
+
+  useEffect(() => {
+    function handleGlobalKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || event.repeat) return
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+
+      const key = event.key.toLowerCase()
+      if (key === "j") {
+        event.preventDefault()
+        setPageSearchOpen(true)
+        setSidebarOpen(false)
+        return
+      }
+
+      if (key === "k") {
+        event.preventDefault()
+        setAgentOpen(true)
+        setPageSearchOpen(false)
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown, true)
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown, true)
+  }, [setAgentOpen, setPageSearchOpen, setSidebarOpen])
 
   return (
     <div className="flex min-h-screen bg-app text-app">
@@ -85,6 +122,11 @@ function LayoutInner({ sidebarOpen, setSidebarOpen, agentOpen, setAgentOpen }: L
       </button>
 
       <AgentChat open={agentOpen} onClose={() => setAgentOpen(false)} screenContext={effectiveContext} />
+      <SidebarSearchDialog
+        open={pageSearchOpen}
+        onOpenChange={setPageSearchOpen}
+        onNavigate={() => setSidebarOpen(false)}
+      />
     </div>
   )
 }

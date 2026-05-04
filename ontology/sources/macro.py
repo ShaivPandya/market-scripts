@@ -126,7 +126,7 @@ class PositioningAdapter:
         )
 
     def normalize(self, raw: Any):
-        raw_rows = as_rows(raw)
+        raw_rows = as_rows(raw.get("rows")) if isinstance(raw, dict) and "rows" in raw else as_rows(raw)
         rows: list[PositioningRow] = []
         for row in raw_rows:
             instrument = clean_str(row.get("instrument"))

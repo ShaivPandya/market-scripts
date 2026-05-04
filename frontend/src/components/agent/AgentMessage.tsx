@@ -185,7 +185,12 @@ export function AgentMessage({ message }: { message: AgentMessageType }) {
         )}
 
         {/* Markdown content */}
-        {displayContent && (
+        {displayContent && message.isStreaming && (
+          <div className="whitespace-pre-wrap">
+            {displayContent}
+          </div>
+        )}
+        {displayContent && !message.isStreaming && (
           <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-headings:mt-3 prose-headings:mb-1.5 prose-ul:my-1.5 prose-li:my-0.5 prose-table:my-2 prose-pre:my-2 prose-pre:bg-muted-surface prose-pre:border prose-pre:border-app">
             <Markdown remarkPlugins={[remarkGfm]}>{displayContent}</Markdown>
           </div>

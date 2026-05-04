@@ -354,16 +354,20 @@ export function useAgentChat() {
   const activeJobRef = useRef<ActiveAgentJob | null>(state.activeJob)
   const initialActiveJobRef = useRef<ActiveAgentJob | null>(state.activeJob)
 
-  // Persist messages to localStorage
+  // Persist messages to localStorage. During streaming, debounce this work so
+  // token updates do not synchronously serialize the whole transcript.
   useEffect(() => {
-    const toSave = state.messages.filter(
-      m => !m.isStreaming || m.content.length > 0 || state.activeJob?.assistantId === m.id,
-    )
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ messages: toSave, sessionId: state.sessionId, activeJob: state.activeJob }),
-    )
-  }, [state.messages, state.sessionId, state.activeJob])
+    const timer = window.setTimeout(() => {
+      const toSave = state.messages.filter(
+        m => !m.isStreaming || m.content.length > 0 || state.activeJob?.assistantId === m.id,
+      )
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ messages: toSave, sessionId: state.sessionId, activeJob: state.activeJob }),
+      )
+    }, state.isStreaming ? 1000 : 0)
+    return () => window.clearTimeout(timer)
+  }, [state.messages, state.sessionId, state.activeJob, state.isStreaming])
 
   const applyJobEvents = useCallback((assistantId: string, events: AgentJobEvent[], fallbackSessionId?: string | null) => {
     if (!events.length && !fallbackSessionId) return
@@ -549,7 +553,6 @@ export function useAgentChat() {
         const nextJob = { ...job, afterSeq }
         activeJobRef.current = nextJob
         setState(prev => ({ ...prev, activeJob: nextJob, isStreaming: true }))
-        await wait(500, controller.signal)
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") return

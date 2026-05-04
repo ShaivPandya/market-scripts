@@ -139,8 +139,8 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? "auto" : "smooth" })
+  }, [messages, isStreaming])
 
   // Focus textarea when drawer opens
   useEffect(() => {

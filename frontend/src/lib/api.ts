@@ -506,6 +506,96 @@ export interface OntologySourceStatus {
   detail?: string
 }
 
+export interface PositionRiskSourceStatus {
+  status?: string
+  quality?: string
+  detail?: string
+  error?: string
+  required?: boolean
+  accepted?: boolean
+  used?: boolean
+  fallback_used?: boolean
+  refreshed?: boolean
+  snapshot_key?: string
+  snapshot_status?: string
+  payload_hash?: string
+  as_of?: string | null
+  fetched_at?: string | null
+  freshness?: {
+    policy?: string
+    fresh?: boolean
+    basis?: string
+    expected_market_date?: string
+    observed_as_of_date?: string | null
+    reason?: string | null
+  }
+  [key: string]: unknown
+}
+
+export interface PositionRiskEvidence {
+  component?: string
+  source?: string
+  name?: string
+  value?: number | string | null
+  threshold?: string
+  direction?: string
+  contribution?: number | null
+}
+
+export interface PositionRiskDegradedModule {
+  module: string
+  required?: boolean
+  status?: string
+  quality?: string
+  reason?: string
+  as_of?: string | null
+  fetched_at?: string | null
+}
+
+export interface PositionRiskSnapshot {
+  result_id: string
+  run_id?: string
+  ticker: string
+  as_of?: string | null
+  computed_at: string
+  market_snapshot_as_of?: string | null
+  freshness_policy?: string
+  risk_score?: number | null
+  risk_level?: string
+  confidence?: number | null
+  quality?: string
+  asset?: string
+  direction?: string
+  sector?: string
+  component_scores?: {
+    volatility_cluster?: number
+    breadth_stress?: number
+    sector_stress?: number
+    macro_regime?: number
+  }
+  evidence?: PositionRiskEvidence[]
+  drivers?: PositionRiskEvidence[]
+  degraded_modules?: PositionRiskDegradedModule[]
+  missing_modules?: string[]
+  stale_modules?: string[]
+  source_status?: Record<string, PositionRiskSourceStatus>
+  input_snapshots?: Record<string, unknown>
+  position?: Record<string, unknown>
+  aggregate?: {
+    confidence?: number
+    position_count?: number
+    average_risk_score?: number
+    exact?: boolean
+    risk_buckets?: {
+      high?: number
+      medium?: number
+      low?: number
+    }
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
 export interface OntologyResponse {
   run_id?: string
   intent?: string
@@ -605,6 +695,21 @@ export const fetchOntologySourceRecords = (params: OntologyTemporalParams & {
 
 export const queryOntology = (body: OntologyQueryBody) =>
   runOntologyQueryAsync(body)
+
+export const fetchPositionRiskLatest = async (ticker: string) => {
+  try {
+    const r = await client.get(`/risk/positions/${encodeURIComponent(ticker)}/latest`)
+    return r.data as PositionRiskSnapshot
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) return null
+    throw err
+  }
+}
+
+export const refreshPositionRisk = (ticker: string) =>
+  client
+    .post(`/risk/positions/${encodeURIComponent(ticker)}/refresh`, undefined, { timeout: 120_000 })
+    .then(r => r.data as PositionRiskSnapshot)
 
 type OntologyJobResponse =
   | { job_id: string; status: "queued" | "running"; timeout_s?: number }

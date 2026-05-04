@@ -17,12 +17,11 @@ import {
   updateKillConditionStatus,
   createThesisClaim,
   updateThesisClaim,
-  fetchOntologyRuns,
-  queryOntology,
-  runOntologyQueryAsync,
-  type OntologyEvidence,
-  type OntologyResponse,
+  fetchPositionRiskLatest,
+  refreshPositionRisk,
   type ApprovalRecord,
+  type PositionRiskEvidence,
+  type PositionRiskSnapshot,
   type SourceRequirement,
   type StagedMutationResponse,
   type ThesisClaim,
@@ -1591,11 +1590,11 @@ function riskLevelClass(level: unknown): string {
 function moduleStatusClass(status: unknown): string {
   const s = String(status ?? "error").toLowerCase()
   if (s === "ok") return "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950"
-  if (s === "partial") return "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
+  if (s === "partial" || s === "stale") return "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
   return "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950"
 }
 
-function evidenceTitle(ev: OntologyEvidence): string {
+function evidenceTitle(ev: PositionRiskEvidence): string {
   return ev.name || ev.component || ev.source || "Risk driver"
 }
 
@@ -1603,40 +1602,17 @@ function RiskTab({ ticker }: { ticker: string }) {
   const qc = useQueryClient()
   const [elapsed, setElapsed] = useState(0)
 
-  const runsQuery = useQuery({
-    queryKey: ["ontology-runs", "latest"],
-    queryFn: () => fetchOntologyRuns(1),
-    staleTime: 60 * 1000,
-    retry: 1,
-  })
-  const latestRun = runsQuery.data?.runs?.[0]
-
-  const cachedRiskQuery = useQuery({
-    queryKey: ["ontology-risk", ticker, latestRun?.run_id],
-    queryFn: () => queryOntology({
-      filters: { tickers: [ticker] },
-      run_id: latestRun!.run_id,
-      include_graph: false,
-      refresh_snapshot: false,
-      page: 1,
-      page_size: 1,
-    }),
-    enabled: Boolean(latestRun?.run_id),
+  const latestRiskQuery = useQuery({
+    queryKey: ["position-risk", ticker],
+    queryFn: () => fetchPositionRiskLatest(ticker),
     staleTime: 60 * 1000,
     retry: 1,
   })
 
   const refreshMutation = useMutation({
-    mutationFn: () => runOntologyQueryAsync({
-      filters: { tickers: [ticker] },
-      timeframe: "Daily",
-      include_graph: false,
-      refresh_snapshot: true,
-      page: 1,
-      page_size: 1,
-    }),
+    mutationFn: () => refreshPositionRisk(ticker),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["ontology-runs"] })
+      qc.invalidateQueries({ queryKey: ["position-risk", ticker] })
     },
   })
 
@@ -1652,32 +1628,37 @@ function RiskTab({ ticker }: { ticker: string }) {
   }, [refreshMutation.isPending])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const ontology: OntologyResponse | undefined = refreshMutation.data ?? cachedRiskQuery.data
-  const rows = Array.isArray(ontology?.results) ? ontology.results : []
   const tickerUpper = ticker.toUpperCase()
-  const row = rows.find(r => String(r.ticker ?? "").toUpperCase() === tickerUpper) ?? null
-  const evidence = Array.isArray(row?.evidence) ? row.evidence : []
-  const sourceStatus = ontology?.source_status ?? {}
+  const snapshot: PositionRiskSnapshot | null | undefined = refreshMutation.data ?? latestRiskQuery.data
+  const evidence = Array.isArray(snapshot?.evidence) ? snapshot.evidence : []
+  const sourceStatus = snapshot?.source_status ?? {}
   const moduleRows = Object.entries(sourceStatus).sort(([a], [b]) => a.localeCompare(b))
-  const moduleIssueCount = moduleRows.filter(([, state]) => String(state?.status ?? "error").toLowerCase() !== "ok").length
-  const requiredHealth = latestRun?.required_modules_ok == null
-    ? moduleRows.length
-      ? moduleIssueCount === 0 ? "OK" : `${moduleIssueCount} issue${moduleIssueCount === 1 ? "" : "s"}`
-      : "-"
-    : latestRun.required_modules_ok ? "OK" : "Degraded"
-  const primaryError = refreshMutation.error ?? (!ontology ? cachedRiskQuery.error ?? runsQuery.error : null)
-  const noCachedRun = !runsQuery.isLoading && !latestRun && !refreshMutation.data
+  const requiredIssues = moduleRows.filter(([, state]) =>
+    state?.required && (String(state?.status ?? "error").toLowerCase() !== "ok" || state.accepted === false)
+  )
+  const optionalIssues = moduleRows.filter(([, state]) =>
+    !state?.required && (String(state?.status ?? "error").toLowerCase() !== "ok" || state.accepted === false)
+  )
+  const requiredHealth = requiredIssues.length === 0
+    ? "OK"
+    : `${requiredIssues.length} issue${requiredIssues.length === 1 ? "" : "s"}`
+  const primaryError = refreshMutation.error ?? (!snapshot ? latestRiskQuery.error : null)
+  const noSnapshot = !latestRiskQuery.isLoading && !snapshot && !refreshMutation.data
+  const qualityState = snapshot?.quality === "ok" ? "ok" : snapshot ? "degraded" : "missing"
+  const marketAsOf = snapshot?.market_snapshot_as_of ?? snapshot?.as_of
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-sm font-semibold text-app">Risk Analysis Snapshot</h2>
-          <p className="text-xs text-subtle">Snapshot {formatDateTime(ontology?.as_of ?? latestRun?.as_of)}</p>
+          <p className="text-xs text-subtle">
+            {snapshot ? `Computed ${formatDateTime(snapshot.computed_at)}` : "No persisted snapshot"}
+          </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <DecisionStateBadge state="analysis" />
             <EffectScopeBadge scope="read_only" />
-            <QualityStateBadge state={moduleIssueCount > 0 ? "degraded" : "ok"} />
+            <QualityStateBadge state={qualityState} />
           </div>
         </div>
         <ActionButton
@@ -1690,43 +1671,44 @@ function RiskTab({ ticker }: { ticker: string }) {
         </ActionButton>
       </div>
 
-      {refreshMutation.isPending && <LoadingSpinner message={`Refreshing ontology risk... (${elapsed}s elapsed)`} />}
-      {!ontology && runsQuery.isLoading && <LoadingSpinner message="Loading cached ontology risk..." />}
-      {!ontology && latestRun && cachedRiskQuery.isLoading && <LoadingSpinner message="Loading cached ontology risk..." />}
+      {refreshMutation.isPending && <LoadingSpinner message={`Refreshing risk... (${elapsed}s elapsed)`} />}
+      {!snapshot && latestRiskQuery.isLoading && <LoadingSpinner message="Loading latest risk snapshot..." />}
 
       {primaryError && <ErrorMessage message={errorMessage(primaryError)} />}
       {refreshMutation.isSuccess && (
         <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-400">
-          Risk snapshot refreshed.
+          Risk refreshed using market snapshot from {formatDateTime(marketAsOf)}.
         </div>
       )}
 
-      {noCachedRun && (
+      {snapshot && (requiredIssues.length > 0 || optionalIssues.length > 0) && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+          {requiredIssues.length > 0
+            ? `${requiredIssues.length} required module${requiredIssues.length === 1 ? "" : "s"} degraded.`
+            : `${optionalIssues.length} optional module${optionalIssues.length === 1 ? "" : "s"} unavailable.`}
+          {" "}Score is shown with reduced confidence.
+        </div>
+      )}
+
+      {noSnapshot && (
         <div className="rounded-lg border border-app px-4 py-3">
-          <p className="text-sm font-medium text-app">No cached ontology snapshot available.</p>
-          <p className="mt-1 text-xs text-muted">Use Refresh Risk to build a fresh snapshot.</p>
+          <p className="text-sm font-medium text-app">No risk snapshot yet for {tickerUpper}.</p>
+          <p className="mt-1 text-xs text-muted">Use Refresh Risk to compute a position risk snapshot.</p>
         </div>
       )}
 
-      {ontology && !row && !cachedRiskQuery.isLoading && (
-        <div className="rounded-lg border border-app px-4 py-3">
-          <p className="text-sm font-medium text-app">No cached ontology risk for {tickerUpper}.</p>
-          <p className="mt-1 text-xs text-muted">Use Refresh Risk to rebuild the risk snapshot.</p>
-        </div>
-      )}
-
-      {row && (
+      {snapshot && (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="rounded-lg border border-app px-4 py-3">
               <p className="text-xs text-subtle">Risk Level</p>
-              <span className={cn("mt-2 inline-flex rounded px-2 py-0.5 text-xs font-medium", riskLevelClass(row.risk_level))}>
-                {String(row.risk_level ?? "unknown")}
+              <span className={cn("mt-2 inline-flex rounded px-2 py-0.5 text-xs font-medium", riskLevelClass(snapshot.risk_level))}>
+                {String(snapshot.risk_level ?? "unknown")}
               </span>
             </div>
             <div className="rounded-lg border border-app px-4 py-3">
               <p className="text-xs text-subtle">Risk Score</p>
-              <p className="mt-1 text-xl font-semibold text-app">{formatNumber(row.risk_score)}</p>
+              <p className="mt-1 text-xl font-semibold text-app">{formatNumber(snapshot.risk_score)}</p>
             </div>
             <div className="rounded-lg border border-app px-4 py-3">
               <p className="text-xs text-subtle">Required Modules</p>
@@ -1734,15 +1716,16 @@ function RiskTab({ ticker }: { ticker: string }) {
             </div>
             <div className="rounded-lg border border-app px-4 py-3">
               <p className="text-xs text-subtle">Confidence</p>
-              <p className="mt-1 text-xl font-semibold text-app">{formatConfidence(ontology?.aggregate?.confidence)}</p>
+              <p className="mt-1 text-xl font-semibold text-app">{formatConfidence(snapshot.confidence)}</p>
             </div>
           </div>
 
           <div className="rounded-lg border border-app px-4 py-3">
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-subtle">
-              <span>{row.asset ?? "unknown"} asset</span>
-              <span>{row.direction ?? "unknown"}</span>
-              <span>{row.sector ?? "Unknown sector"}</span>
+              <span>{snapshot.asset ?? "unknown"} asset</span>
+              <span>{snapshot.direction ?? "unknown"}</span>
+              <span>{snapshot.sector ?? "Unknown sector"}</span>
+              <span>Market snapshot {formatDateTime(marketAsOf)}</span>
             </div>
             <h3 className="mb-2 text-sm font-semibold text-app">Top Drivers</h3>
             {evidence.length ? (
@@ -1772,11 +1755,19 @@ function RiskTab({ ticker }: { ticker: string }) {
             {moduleRows.length ? (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {moduleRows.map(([module, state]) => (
-                  <div key={module} className="flex items-center justify-between gap-3 rounded border border-app px-3 py-2 text-sm">
-                    <span className="min-w-0 truncate text-muted">{module}</span>
-                    <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-xs font-medium", moduleStatusClass(state?.status))}>
-                      {state?.status ?? "error"}
-                    </span>
+                  <div key={module} className="rounded border border-app px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="min-w-0 truncate text-muted">{module}</span>
+                      <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-xs font-medium", moduleStatusClass(state?.status))}>
+                        {state?.status ?? "error"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-subtle">
+                      <span>{state?.required ? "required" : "optional"}</span>
+                      {state?.freshness?.observed_as_of_date && <span>as of {state.freshness.observed_as_of_date}</span>}
+                      {state?.freshness?.fresh === false && <span>stale</span>}
+                      {state?.fallback_used && <span>fallback used</span>}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1787,11 +1778,11 @@ function RiskTab({ ticker }: { ticker: string }) {
         </>
       )}
 
-      {ontology && (
+      {snapshot && (
         <details className="rounded-lg border border-app px-4 py-3">
-          <summary className="cursor-pointer text-sm font-medium text-app">Raw ontology JSON</summary>
+          <summary className="cursor-pointer text-sm font-medium text-app">Raw risk JSON</summary>
           <pre className="mt-3 max-h-[500px] overflow-auto whitespace-pre-wrap text-xs text-muted">
-            {JSON.stringify(ontology, null, 2)}
+            {JSON.stringify(snapshot, null, 2)}
           </pre>
         </details>
       )}
