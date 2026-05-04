@@ -145,10 +145,9 @@ def normalize_recommendation(record: dict[str, Any] | None) -> dict[str, Any] | 
 
 def normalize_action_item(record: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(record)
+    status = str(out.get("status") or "open").strip().lower()
     out["decision_kind"] = "internal_state_change"
-    out["decision_state"] = (
-        "applied" if str(out.get("status") or "").lower() in {"completed", "dismissed"} else "applied"
-    )
+    out["decision_state"] = "applied" if status in {"completed", "dismissed"} else status
     out["effect_scope"] = "internal_state"
     out["execution_capability"] = "none"
     return out
@@ -169,7 +168,12 @@ def normalize_staged_response(response: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(response)
     status = str(out.get("status") or "").strip().lower()
     application_status = str(out.get("application_status") or "pending").strip().lower()
-    out["decision_state"] = "applied" if status == "applied" or application_status == "applied" else "pending_approval"
+    if status == "failed" or application_status == "failed":
+        out["decision_state"] = "failed"
+    elif status == "applied" or application_status == "applied":
+        out["decision_state"] = "applied"
+    else:
+        out["decision_state"] = "pending_approval"
     out["decision_kind"] = "internal_state_change" if out["decision_state"] == "applied" else "proposal"
     out["effect_scope"] = "internal_state"
     out["execution_capability"] = "none"

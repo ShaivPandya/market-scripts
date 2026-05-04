@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from api.decision_state import normalize_approval, normalize_recommendation, normalize_staged_response
+from api.decision_state import (
+    normalize_action_item,
+    normalize_approval,
+    normalize_recommendation,
+    normalize_staged_response,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,6 +82,33 @@ def test_normalize_recommendation_keeps_execution_capability_none():
     assert rec["quality_state"] == "degraded"
 
 
+def test_normalize_action_item_preserves_open_state():
+    open_item = normalize_action_item(
+        {
+            "id": 1,
+            "status": "open",
+            "description": "Review MU thesis",
+            "action_type": "review",
+            "urgency": "high",
+        }
+    )
+    assert open_item["decision_state"] == "open"
+    assert open_item["decision_kind"] == "internal_state_change"
+    assert open_item["effect_scope"] == "internal_state"
+    assert open_item["execution_capability"] == "none"
+
+    completed_item = normalize_action_item(
+        {
+            "id": 2,
+            "status": "completed",
+            "description": "Review MU thesis",
+            "action_type": "review",
+            "urgency": "high",
+        }
+    )
+    assert completed_item["decision_state"] == "applied"
+
+
 def test_normalize_staged_response_adds_review_metadata():
     response = normalize_staged_response(
         {
@@ -94,6 +126,26 @@ def test_normalize_staged_response_adds_review_metadata():
     assert response["effect_scope"] == "internal_state"
     assert response["execution_capability"] == "none"
     assert response["review_route"] == "/workspace?approval_id=42"
+
+
+def test_normalize_staged_response_preserves_apply_failure_state():
+    response = normalize_staged_response(
+        {
+            "status": "failed",
+            "approval_id": 43,
+            "application_status": "failed",
+            "application_error": "state conflict",
+            "action_id": "update_portfolio_positions",
+            "entity_type": "portfolio",
+            "ticker": None,
+            "proposed_change": {},
+        }
+    )
+    assert response["decision_state"] == "failed"
+    assert response["decision_kind"] == "proposal"
+    assert response["effect_scope"] == "internal_state"
+    assert response["execution_capability"] == "none"
+    assert response["review_route"] == "/workspace?approval_id=43"
 
 
 def test_sizing_and_hedging_copy_does_not_imply_broker_orders():
