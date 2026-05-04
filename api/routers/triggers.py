@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from api.action_execution import execute_api_action
+from api.action_execution import stage_api_action
 
 router = APIRouter()
 
@@ -16,6 +16,15 @@ class CreateTriggerRequest(BaseModel):
     ticker: str | None = None
     expires_at: str | None = None
     definition: dict | None = None
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
+
+
+class TriggerMutationRequest(BaseModel):
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.get("/triggers")
@@ -31,26 +40,37 @@ def list_triggers(
 
 @router.post("/triggers")
 def create_trigger(body: CreateTriggerRequest):
-    return execute_api_action(
+    return stage_api_action(
         "create_watch_trigger",
-        body.model_dump(),
+        body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="triggers.create_trigger",
+        reason=body.reason or "Create watch trigger",
+        apply=body.apply,
+        approval_note=body.approval_note,
     )
 
 
 @router.put("/triggers/{trigger_id}/fire")
-def fire_trigger(trigger_id: int):
-    return execute_api_action(
+def fire_trigger(trigger_id: int, body: TriggerMutationRequest | None = None):
+    return stage_api_action(
         "fire_watch_trigger",
         {"trigger_id": trigger_id},
         source_id="triggers.fire_trigger",
+        reason=(body.reason if body else None) or f"Fire watch trigger {trigger_id}",
+        apply=body.apply if body else False,
+        approval_note=body.approval_note if body else None,
+        entity_id=trigger_id,
     )
 
 
 @router.put("/triggers/{trigger_id}/cancel")
-def cancel_trigger(trigger_id: int):
-    return execute_api_action(
+def cancel_trigger(trigger_id: int, body: TriggerMutationRequest | None = None):
+    return stage_api_action(
         "cancel_watch_trigger",
         {"trigger_id": trigger_id},
         source_id="triggers.cancel_trigger",
+        reason=(body.reason if body else None) or f"Cancel watch trigger {trigger_id}",
+        apply=body.apply if body else False,
+        approval_note=body.approval_note if body else None,
+        entity_id=trigger_id,
     )

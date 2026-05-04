@@ -649,18 +649,16 @@ def persist_recommendations(
     source_json_path: str,
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
-    from portfolio.core_db import (
-        create_pending_approval,
-        create_recommendation,
-        supersede_report_recommendations,
-        update_recommendation_approval,
-        upsert_recommendation,
-    )
+    from portfolio.action_registry import ActionContext, propose_action
 
     prompt_metadata = prompt_metadata or {}
     report_id = prompt_metadata.get("report_id")
-    active_idempotency_keys: list[str] = []
     persisted: list[dict] = []
+    context = ActionContext(
+        actor_type="workflow",
+        source_type="workflow",
+        source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
+    )
     for action in payload.get("recommended_actions", []):
         action_hash = stable_hash(
             {
@@ -675,8 +673,6 @@ def persist_recommendations(
             }
         )
         idempotency_key = f"{payload['report_type']}:{payload['as_of']}:{action_hash}" if report_id else None
-        if idempotency_key:
-            active_idempotency_keys.append(idempotency_key)
         record = {
             **action,
             "report_type": payload["report_type"],
@@ -702,31 +698,14 @@ def persist_recommendations(
             "idempotency_key": idempotency_key,
             **prompt_metadata,
         }
-        rec = upsert_recommendation(record) if idempotency_key else create_recommendation(record)
-        if payload["recommendation_status"] == "clear" and action["action"] in ACTIONABLE_ACTIONS:
-            if rec.get("approval_id") is None and rec.get("approval_status") in {None, "none"}:
-                description = f"{action['action'].replace('_', ' ').title()} {action.get('instrument') or action.get('ticker') or 'portfolio'}"
-                if action.get("target_change"):
-                    description += f" ({action['target_change']})"
-                approval = create_pending_approval(
-                    entity_type="action_item",
-                    proposed_change={
-                        "recommendation_id": rec["id"],
-                        "ticker": action.get("ticker"),
-                        "description": description,
-                        "action_type": _approval_action_type(action["action"]),
-                        "urgency": "high" if action["action"] in {"exit", "reduce"} else "normal",
-                        "reason": action.get("rationale", ""),
-                    },
-                    ticker=action.get("ticker"),
-                    reason=action.get("rationale", ""),
-                    source_type="workflow",
-                    source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
-                )
-                rec = update_recommendation_approval(rec["id"], approval["id"], "pending")
-        persisted.append(rec)
-    if report_id:
-        supersede_report_recommendations(str(report_id), active_idempotency_keys)
+        approval = propose_action(
+            "create_recommendation",
+            {"record": record},
+            context,
+            reason=f"{payload['report_type'].title()} recommendation for {action.get('instrument') or action.get('ticker') or 'portfolio'}",
+            once=True,
+        )
+        persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
     return persisted
 
 

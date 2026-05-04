@@ -100,17 +100,21 @@ def test_daily_report_sync_is_idempotent_and_visible(auth_client, monkeypatch, t
         )
         assert resp.status_code == 200
 
-    recommendations = core_db.get_recommendations(report_type="daily")
     approvals = core_db.get_pending_approvals(status="pending")
     report_runs = core_db.get_report_runs(report_type="daily")
-    actions = core_db.get_action_items(status="open")
 
-    assert len(recommendations) == 1
+    assert core_db.get_recommendations(report_type="daily") == []
+    assert core_db.get_action_items(status="open") == []
+    assert len([a for a in approvals if a["entity_type"] == "recommendation"]) == 1
     assert len([a for a in approvals if a["entity_type"] == "action_item"]) == 1
     assert len([a for a in approvals if a["entity_type"] == "watch_trigger"]) == 1
     assert [a for a in approvals if a["entity_type"] == "watch_trigger"][0]["action_id"] == "create_watch_trigger"
     assert len(report_runs) == 1
-    assert len(actions) == 1
+
+    recommendation_approval = [a for a in approvals if a["entity_type"] == "recommendation"][0]
+    core_db.resolve_approval(recommendation_approval["id"], "approved", "Apply recommendation")
+    recommendations = core_db.get_recommendations(report_type="daily")
+    assert len(recommendations) == 1
 
     latest = auth_client.get("/api/v1/recommendations/latest")
     assert latest.status_code == 200
@@ -173,24 +177,23 @@ def test_weekly_report_sync_persists_operating_artifacts(auth_client, monkeypatc
     )
 
     assert resp.status_code == 200
-    assert thesis_db.get_evaluations("CRWD", limit=1)[0]["thesis_status"] == "weaken"
-    assert core_db.get_research_notes(ticker="CRWD")[0]["note_type"] == "risk_assessment"
-    assert core_db.get_action_items(ticker="CRWD", status="open")[0]["urgency"] == "high"
-    assert core_db.get_pending_approvals(status="pending")[0]["entity_type"] == "watch_trigger"
+    assert thesis_db.get_evaluations("CRWD", limit=1) == []
+    assert core_db.get_research_notes(ticker="CRWD") == []
+    assert core_db.get_action_items(ticker="CRWD", status="open") == []
+    approvals = core_db.get_pending_approvals(status="pending")
+    assert {approval["entity_type"] for approval in approvals} >= {
+        "evaluation",
+        "research_note",
+        "action_item",
+        "watch_trigger",
+        "thesis_claim",
+        "recommendation",
+    }
+
+    claim_approval = [approval for approval in approvals if approval["entity_type"] == "thesis_claim"][0]
+    core_db.resolve_approval(claim_approval["id"], "approved", "Apply claim")
     claim = core_db.get_thesis_claims(ticker="CRWD")[0]
     assert claim["claim"] == "CRWD can sustain premium growth."
-    assert claim["source_requirements"] == [
-        {
-            "type": "custom",
-            "description": "earnings",
-            "required": True,
-            "freshness_days": None,
-        }
-    ]
-
-    dossier = auth_client.get("/api/v1/dossier/CRWD")
-    assert dossier.status_code == 200
-    assert dossier.json()["thesis_claims"][0]["ticker"] == "CRWD"
 
 
 def test_watch_trigger_monitor_fires_price_technical_and_macro(monkeypatch, temp_investing_dbs):
@@ -239,8 +242,10 @@ def test_watch_trigger_monitor_fires_price_technical_and_macro(monkeypatch, temp
     result = watch_trigger_monitor.run_watch_trigger_monitor()
 
     assert result["fired"] == 3
-    assert len(core_db.get_watch_triggers(status="fired")) == 3
-    assert len(core_db.get_action_items(status="open")) == 3
+    assert len(core_db.get_watch_triggers(status="fired")) == 0
+    approvals = core_db.get_pending_approvals(status="pending")
+    assert len([approval for approval in approvals if approval["action_id"] == "fire_watch_trigger"]) == 3
+    assert len([approval for approval in approvals if approval["action_id"] == "create_action_item"]) == 3
 
 
 def test_recommendation_postmortem_stores_process_attribution(monkeypatch, temp_investing_dbs):

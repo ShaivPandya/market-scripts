@@ -227,49 +227,61 @@ def test_persist_actionable_recommendation_creates_pending_approval(temp_core_db
     )
 
     assert len(rows) == 1
-    assert rows[0]["approval_status"] == "pending"
+    assert rows[0]["status"] == "pending_approval_created"
     approvals = core_db.get_pending_approvals(status="pending")
     assert len(approvals) == 1
-    assert approvals[0]["proposed_change"]["recommendation_id"] == rows[0]["id"]
+    assert approvals[0]["action_id"] == "create_recommendation"
 
-    core_db.resolve_approval(approvals[0]["id"], "approved")
-    updated = core_db.get_recommendation(rows[0]["id"])
-    assert updated["approval_status"] == "approved"
+    core_db.resolve_approval(approvals[0]["id"], "approved", "Apply recommendation")
+    updated = core_db.get_recommendations(report_type="daily")[0]
+    assert updated["approval_status"] == "pending"
     resolved = core_db.get_pending_approval(approvals[0]["id"])
     assert resolved["status"] == "approved"
     assert resolved["application_status"] == "applied"
+    action_approval = [
+        approval
+        for approval in core_db.get_pending_approvals(status="pending")
+        if approval["entity_type"] == "action_item"
+    ][0]
+    assert action_approval["proposed_change"]["recommendation_id"] == updated["id"]
+    core_db.resolve_approval(action_approval["id"], "approved", "Apply action item")
     assert core_db.get_action_items(status="open")[0]["source_id"] == "daily:2026-05-02"
 
 
 def test_recommendation_approval_failure_keeps_state_pending_and_retryable(temp_core_db, monkeypatch):
-    rows = persist_recommendations(
+    persist_recommendations(
         _valid_payload("buy"),
         source_report_path="/tmp/recommendations.md",
         source_json_path="/tmp/recommendations.json",
         prompt_metadata={"model": "test", "prompt_hash": "p", "input_hash": "i", "validation_status": "ok"},
     )
-    approval = core_db.get_pending_approvals(status="pending")[0]
-    original = core_db._APPROVAL_SIDE_EFFECT_HANDLERS["action_item"]
+    recommendation_approval = core_db.get_pending_approvals(status="pending")[0]
+    core_db.resolve_approval(recommendation_approval["id"], "approved", "Apply recommendation")
+    approval = [
+        approval
+        for approval in core_db.get_pending_approvals(status="pending")
+        if approval["entity_type"] == "action_item"
+    ][0]
+    original_create_action_item = core_db.create_action_item
 
-    def fail_after_insert(conn, current, change, callbacks):
-        original(conn, current, change, callbacks)
+    def fail_create_action_item(*args, **kwargs):
         raise RuntimeError("recommendation apply failed")
 
-    monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", fail_after_insert)
+    monkeypatch.setattr(core_db, "create_action_item", fail_create_action_item)
     with pytest.raises(core_db.ApprovalApplicationError, match="recommendation apply failed"):
-        core_db.resolve_approval(approval["id"], "approved")
+        core_db.resolve_approval(approval["id"], "approved", "Apply action item")
 
     failed_approval = core_db.get_pending_approval(approval["id"])
-    failed_recommendation = core_db.get_recommendation(rows[0]["id"])
+    failed_recommendation = core_db.get_recommendations(report_type="daily")[0]
     assert failed_approval["status"] == "pending"
     assert failed_approval["application_status"] == "failed"
     assert failed_recommendation["approval_status"] == "pending"
     assert core_db.get_action_items(status="open") == []
 
-    monkeypatch.setitem(core_db._APPROVAL_SIDE_EFFECT_HANDLERS, "action_item", original)
-    core_db.resolve_approval(approval["id"], "approved")
+    monkeypatch.setattr(core_db, "create_action_item", original_create_action_item)
+    core_db.resolve_approval(approval["id"], "approved", "Apply action item")
 
-    updated_recommendation = core_db.get_recommendation(rows[0]["id"])
+    updated_recommendation = core_db.get_recommendations(report_type="daily")[0]
     assert updated_recommendation["approval_status"] == "approved"
     assert len(core_db.get_action_items(status="open")) == 1
 
@@ -282,5 +294,9 @@ def test_persist_do_nothing_recommendation_does_not_create_approval(temp_core_db
     )
 
     assert len(rows) == 1
-    assert rows[0]["approval_status"] == "none"
+    assert rows[0]["status"] == "pending_approval_created"
+    approvals = core_db.get_pending_approvals(status="pending")
+    assert len(approvals) == 1
+    core_db.resolve_approval(approvals[0]["id"], "approved", "Apply recommendation")
+    assert core_db.get_recommendations(report_type="daily")[0]["approval_status"] == "none"
     assert core_db.get_pending_approvals(status="pending") == []

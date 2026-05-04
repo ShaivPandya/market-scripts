@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from api.action_execution import execute_api_action
+from api.action_execution import stage_api_action
 
 router = APIRouter()
 
@@ -15,6 +15,9 @@ class CreateResearchNoteRequest(BaseModel):
     content: str
     ticker: str | None = None
     note_type: str = "general"
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.get("/research-notes")
@@ -31,8 +34,11 @@ def list_research_notes(
 
 @router.post("/research-notes")
 def create_research_note(body: CreateResearchNoteRequest):
-    return execute_api_action(
+    return stage_api_action(
         "create_research_note",
-        body.model_dump(),
+        body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="research_notes.create_research_note",
+        reason=body.reason or "Create research note",
+        apply=body.apply,
+        approval_note=body.approval_note,
     )

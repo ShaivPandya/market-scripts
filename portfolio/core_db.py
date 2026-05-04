@@ -284,7 +284,15 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     application_error        TEXT,
     provenance_event_id       TEXT,
     origin_provenance_event_id TEXT,
-    origin_artifact_id        TEXT
+    origin_artifact_id        TEXT,
+    risk_class                TEXT,
+    approval_mode             TEXT,
+    base_state_hash           TEXT,
+    requested_by_actor_id     TEXT,
+    resolved_by_actor_id      TEXT,
+    approval_note_required    INTEGER NOT NULL DEFAULT 0,
+    reason_code               TEXT,
+    supersedes_approval_id    INTEGER
 )
 """
 
@@ -653,6 +661,14 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "provenance_event_id": "TEXT",
             "origin_provenance_event_id": "TEXT",
             "origin_artifact_id": "TEXT",
+            "risk_class": "TEXT",
+            "approval_mode": "TEXT",
+            "base_state_hash": "TEXT",
+            "requested_by_actor_id": "TEXT",
+            "resolved_by_actor_id": "TEXT",
+            "approval_note_required": "INTEGER NOT NULL DEFAULT 0",
+            "reason_code": "TEXT",
+            "supersedes_approval_id": "INTEGER",
         },
     )
     _add_missing(
@@ -3249,6 +3265,7 @@ def _parse_pending_approval_row(row: Any) -> dict:
         d["application_attempts"] = 0
     if not d.get("application_status"):
         d["application_status"] = "pending"
+    d["approval_note_required"] = bool(d.get("approval_note_required"))
     return d
 
 
@@ -3267,6 +3284,13 @@ def create_pending_approval(
     action_input_hash: str | None = None,
     request_schema_name: str | None = None,
     request_schema_version: int | None = None,
+    risk_class: str | None = None,
+    approval_mode: str | None = None,
+    base_state_hash: str | None = None,
+    requested_by_actor_id: str | None = None,
+    approval_note_required: bool = False,
+    reason_code: str | None = None,
+    supersedes_approval_id: int | None = None,
 ) -> dict:
     conn = _get_conn()
     now = _now()
@@ -3275,8 +3299,9 @@ def create_pending_approval(
         cur = conn.execute(
             "INSERT INTO pending_approvals (entity_type, entity_id, ticker, action_id, action_schema_name, "
             "action_schema_version, action_input_hash, request_schema_name, request_schema_version, proposed_change, "
-            "reason, source_type, source_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "reason, source_type, source_id, created_at, risk_class, approval_mode, base_state_hash, "
+            "requested_by_actor_id, approval_note_required, reason_code, supersedes_approval_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 entity_type,
                 entity_id,
@@ -3292,6 +3317,13 @@ def create_pending_approval(
                 source_type,
                 source_id,
                 now,
+                risk_class,
+                approval_mode,
+                base_state_hash,
+                requested_by_actor_id,
+                1 if approval_note_required else 0,
+                reason_code,
+                supersedes_approval_id,
             ),
         )
         conn.commit()
@@ -3319,6 +3351,14 @@ def create_pending_approval(
         "application_started_at": None,
         "application_completed_at": None,
         "application_error": None,
+        "risk_class": risk_class,
+        "approval_mode": approval_mode,
+        "base_state_hash": base_state_hash,
+        "requested_by_actor_id": requested_by_actor_id,
+        "resolved_by_actor_id": None,
+        "approval_note_required": bool(approval_note_required),
+        "reason_code": reason_code,
+        "supersedes_approval_id": supersedes_approval_id,
     }
     _emit_core_audit(
         "approval.created",
@@ -3332,8 +3372,16 @@ def create_pending_approval(
             "action_id": action_id,
             "status": "pending",
             "change_hash": _json_hash(proposed_change),
+            "risk_class": risk_class,
+            "approval_mode": approval_mode,
+            "base_state_hash": base_state_hash,
         },
-        source_lineage={"source_type": source_type, "source_id": source_id, "action_input_hash": action_input_hash},
+        source_lineage={
+            "source_type": source_type,
+            "source_id": source_id,
+            "action_input_hash": action_input_hash,
+            "requested_by_actor_id": requested_by_actor_id,
+        },
     )
     try:
         from api import provenance
@@ -3392,6 +3440,13 @@ def create_pending_approval_once(
     action_input_hash: str | None = None,
     request_schema_name: str | None = None,
     request_schema_version: int | None = None,
+    risk_class: str | None = None,
+    approval_mode: str | None = None,
+    base_state_hash: str | None = None,
+    requested_by_actor_id: str | None = None,
+    approval_note_required: bool = False,
+    reason_code: str | None = None,
+    supersedes_approval_id: int | None = None,
 ) -> dict:
     proposed_hash = _json_hash(proposed_change)
     normalized_ticker = ticker.upper() if ticker else None
@@ -3419,6 +3474,13 @@ def create_pending_approval_once(
         action_input_hash=action_input_hash,
         request_schema_name=request_schema_name,
         request_schema_version=request_schema_version,
+        risk_class=risk_class,
+        approval_mode=approval_mode,
+        base_state_hash=base_state_hash,
+        requested_by_actor_id=requested_by_actor_id,
+        approval_note_required=approval_note_required,
+        reason_code=reason_code,
+        supersedes_approval_id=supersedes_approval_id,
     )
 
 
@@ -3535,7 +3597,13 @@ def resolve_approval(
         provenance_event_id = None
     record_action_event(run_id, "start", payload={"approval_id": approval_id, "status": status})
     try:
-        result = _resolve_approval_impl(approval_id, status, resolved_note, parent_action_run_id=run_id)
+        result = _resolve_approval_impl(
+            approval_id,
+            status,
+            resolved_note,
+            parent_action_run_id=run_id,
+            resolved_by_actor_id=actor_id,
+        )
     except Exception as exc:
         error = _approval_error_message(exc)
         record_action_event(run_id, "error", message=error)
@@ -3597,6 +3665,7 @@ def apply_approval_resolution(
     resolved_note: str | None = None,
     *,
     parent_action_run_id: int | None = None,
+    resolved_by_actor_id: str | None = None,
 ) -> dict:
     """Resolve an approval without creating a top-level audit run."""
     return _resolve_approval_impl(
@@ -3604,6 +3673,7 @@ def apply_approval_resolution(
         status,
         resolved_note,
         parent_action_run_id=parent_action_run_id,
+        resolved_by_actor_id=resolved_by_actor_id,
     )
 
 
@@ -3613,17 +3683,21 @@ def _resolve_approval_impl(
     resolved_note: str | None = None,
     *,
     parent_action_run_id: int | None = None,
+    resolved_by_actor_id: str | None = None,
 ) -> dict:
     if status not in ("approved", "rejected"):
         raise ValueError(f"Resolution status must be 'approved' or 'rejected', got '{status}'")
 
     if status == "rejected":
-        return _reject_approval(approval_id, resolved_note)
+        return _reject_approval(approval_id, resolved_note, resolved_by_actor_id=resolved_by_actor_id)
 
     conn = _get_conn()
     approval, should_apply = _claim_approval_for_application(conn, approval_id)
     if not should_apply:
         return approval
+    if approval.get("approval_note_required") and not str(resolved_note or "").strip():
+        _mark_approval_application_failed(approval_id, ValueError("Approval note is required for this action"))
+        raise ValueError("Approval note is required for this action")
 
     callbacks: list[ApprovalPostCommitCallback] = []
     try:
@@ -3634,10 +3708,10 @@ def _resolve_approval_impl(
                 now = _now()
                 conn.execute(
                     "UPDATE pending_approvals "
-                    "SET status = 'approved', resolved_at = ?, resolved_note = ?, "
+                    "SET status = 'approved', resolved_at = ?, resolved_note = ?, resolved_by_actor_id = ?, "
                     "application_status = 'applied', application_completed_at = ?, application_error = NULL "
                     "WHERE id = ?",
-                    (now, resolved_note, now, approval_id),
+                    (now, resolved_note, resolved_by_actor_id, now, approval_id),
                 )
                 updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
                 conn.commit()
@@ -3672,7 +3746,12 @@ def _resolve_approval_impl(
     return result
 
 
-def _reject_approval(approval_id: int, resolved_note: str | None) -> dict:
+def _reject_approval(
+    approval_id: int,
+    resolved_note: str | None,
+    *,
+    resolved_by_actor_id: str | None = None,
+) -> dict:
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -3690,10 +3769,10 @@ def _reject_approval(approval_id: int, resolved_note: str | None) -> dict:
             _update_linked_recommendation_approval_tx(conn, current, approval_id, "rejected")
             conn.execute(
                 "UPDATE pending_approvals "
-                "SET status = 'rejected', resolved_at = ?, resolved_note = ?, "
+                "SET status = 'rejected', resolved_at = ?, resolved_note = ?, resolved_by_actor_id = ?, "
                 "application_status = 'not_applicable', application_completed_at = ?, application_error = NULL "
                 "WHERE id = ?",
-                (now, resolved_note, now, approval_id),
+                (now, resolved_note, resolved_by_actor_id, now, approval_id),
             )
             updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
             conn.commit()
@@ -3841,11 +3920,18 @@ def _apply_approval_side_effect_tx(
 ) -> None:
     action_id = str(approval.get("action_id") or "").strip()
     if action_id:
-        from portfolio.action_registry import ActionContext, execute_action
+        from portfolio.action_registry import ActionContext, compute_action_base_state_hash, execute_action
+
+        change = _approval_change(approval)
+        stored_base_state_hash = str(approval.get("base_state_hash") or "").strip()
+        if stored_base_state_hash:
+            current_base_state_hash = compute_action_base_state_hash(action_id, change)
+            if current_base_state_hash and current_base_state_hash != stored_base_state_hash:
+                raise ValueError("Approval base state changed before application; refresh and create a new proposal")
 
         execute_action(
             action_id,
-            _approval_change(approval),
+            change,
             ActionContext(
                 actor_type="approval_apply",
                 source_type=approval.get("source_type"),
@@ -3919,7 +4005,7 @@ def _handle_evaluation_approval(
     change: dict,
     callbacks: list[ApprovalPostCommitCallback],
 ) -> None:
-    del conn, approval, callbacks
+    del conn, callbacks
     from portfolio.thesis_db import save_evaluations
 
     evaluated_at = str(change.get("evaluated_at") or _now())
@@ -4031,10 +4117,19 @@ def _handle_portfolio_positions_approval(
     change: dict,
     callbacks: list[ApprovalPostCommitCallback],
 ) -> None:
-    del conn, approval, callbacks
-    from api.routers.portfolio_edit import PortfolioUpdateRequest, update_portfolio_positions
+    del conn, callbacks
+    from portfolio.action_registry import ActionContext, execute_action
 
-    update_portfolio_positions(PortfolioUpdateRequest(positions=change.get("positions") or []))
+    execute_action(
+        "update_portfolio_positions",
+        {"positions": change.get("positions") or []},
+        ActionContext(
+            actor_type="approval_apply",
+            source_type=approval.get("source_type"),
+            source_id=approval.get("source_id"),
+            approval_id=int(approval["id"]),
+        ),
+    )
 
 
 def _handle_hedge_positions_approval(
@@ -4043,10 +4138,19 @@ def _handle_hedge_positions_approval(
     change: dict,
     callbacks: list[ApprovalPostCommitCallback],
 ) -> None:
-    del conn, approval, callbacks
-    from api.routers.portfolio_edit import HedgeUpdateRequest, update_hedge_positions
+    del conn, callbacks
+    from portfolio.action_registry import ActionContext, execute_action
 
-    update_hedge_positions(HedgeUpdateRequest(positions=change.get("positions") or []))
+    execute_action(
+        "update_hedge_positions",
+        {"positions": change.get("positions") or []},
+        ActionContext(
+            actor_type="approval_apply",
+            source_type=approval.get("source_type"),
+            source_id=approval.get("source_id"),
+            approval_id=int(approval["id"]),
+        ),
+    )
 
 
 def _handle_thesis_content_approval(
@@ -4056,11 +4160,21 @@ def _handle_thesis_content_approval(
     callbacks: list[ApprovalPostCommitCallback],
 ) -> None:
     del conn, callbacks
-    from api.routers.thesis import SaveThesisRequest, save_thesis
+    from portfolio.action_registry import ActionContext, execute_action
 
-    save_thesis(
-        _required_ticker(change.get("ticker") or approval.get("ticker"), "thesis_content"),
-        SaveThesisRequest(content=change.get("content", "")),
+    execute_action(
+        "save_thesis_content",
+        {
+            "ticker": _required_ticker(change.get("ticker") or approval.get("ticker"), "thesis_content"),
+            "content": change.get("content", ""),
+            "preserve_exact_content": bool(change.get("preserve_exact_content") or False),
+        },
+        ActionContext(
+            actor_type="approval_apply",
+            source_type=approval.get("source_type"),
+            source_id=approval.get("source_id"),
+            approval_id=int(approval["id"]),
+        ),
     )
 
 

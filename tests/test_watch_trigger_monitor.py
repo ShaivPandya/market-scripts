@@ -80,7 +80,7 @@ def test_approved_watch_trigger_preserves_definition(temp_monitor_state):
         },
     )
 
-    core_db.resolve_approval(approval["id"], "approved")
+    core_db.resolve_approval(approval["id"], "approved", "Apply trigger")
 
     trigger = core_db.get_watch_triggers(status="active", ticker="MU")[0]
     assert trigger["definition_json"] == definition
@@ -100,11 +100,23 @@ def test_infers_safe_price_definition_and_fires(monkeypatch, temp_monitor_state)
 
     result = watch_trigger_monitor.run_watch_trigger_monitor()
 
-    trigger = core_db.get_watch_triggers(status="fired", ticker="MU")[0]
     assert result["fired"] == 1
-    assert trigger["definition"]["type"] == "price_level"
-    assert trigger["last_result"]["inferred_definition"]["threshold"] == 150.0
-    assert len(core_db.get_action_items(status="open", ticker="MU")) == 1
+    assert core_db.get_watch_triggers(status="fired", ticker="MU") == []
+    approvals = core_db.get_pending_approvals(status="pending")
+    assert {approval["action_id"] for approval in approvals} >= {
+        "update_watch_trigger_definition",
+        "fire_watch_trigger",
+        "create_action_item",
+    }
+    definition_approval = [
+        approval for approval in approvals if approval["action_id"] == "update_watch_trigger_definition"
+    ][0]
+    fire_approval = [approval for approval in approvals if approval["action_id"] == "fire_watch_trigger"][0]
+    assert definition_approval["proposed_change"]["definition"]["type"] == "price_level"
+    assert fire_approval["proposed_change"]["result"]["inferred_definition"]["threshold"] == 150.0
+    assert (
+        len([a for a in core_db.get_pending_approvals(status="pending") if a["action_id"] == "create_action_item"]) == 1
+    )
 
 
 def test_deterministic_fire_adds_news_enrichment_and_dedupes(monkeypatch, temp_monitor_state):
@@ -138,13 +150,22 @@ def test_deterministic_fire_adds_news_enrichment_and_dedupes(monkeypatch, temp_m
     first = watch_trigger_monitor.run_watch_trigger_monitor()
     second = watch_trigger_monitor.run_watch_trigger_monitor()
 
-    trigger = core_db.get_watch_triggers(status="fired", ticker="MU")[0]
     assert first["fired"] == 1
-    assert second["checked"] == 0
-    assert trigger["last_result"]["news_enrichment"]["matches"][0]["sources"] == ["Reuters"]
-    assert trigger["last_result"]["news_enrichment"]["verifications"][0]["citations"][0]["url"]
-    assert len(core_db.get_action_items(status="open", ticker="MU")) == 1
-    assert len(core_db.get_research_notes(ticker="MU")) == 1
+    assert second["checked"] == 1
+    fire_approvals = [
+        a for a in core_db.get_pending_approvals(status="pending") if a["action_id"] == "fire_watch_trigger"
+    ]
+    assert len(fire_approvals) == 1
+    fire_result = fire_approvals[0]["proposed_change"]["result"]
+    assert fire_result["news_enrichment"]["matches"][0]["sources"] == ["Reuters"]
+    assert fire_result["news_enrichment"]["verifications"][0]["citations"][0]["url"]
+    assert (
+        len([a for a in core_db.get_pending_approvals(status="pending") if a["action_id"] == "create_action_item"]) == 1
+    )
+    assert (
+        len([a for a in core_db.get_pending_approvals(status="pending") if a["action_id"] == "create_research_note"])
+        == 1
+    )
 
 
 def test_gated_news_trigger_creates_review_only(monkeypatch, temp_monitor_state):
@@ -192,9 +213,12 @@ def test_gated_news_trigger_creates_review_only(monkeypatch, temp_monitor_state)
     result = watch_trigger_monitor.run_watch_trigger_monitor()
 
     assert result["fired"] == 1
-    action = core_db.get_action_items(status="open", ticker="MU")[0]
-    assert action["description"].startswith("Needs review:")
-    assert core_db.get_pending_approvals(status="pending") == []
+    action_approval = [
+        approval
+        for approval in core_db.get_pending_approvals(status="pending")
+        if approval["action_id"] == "create_action_item"
+    ][0]
+    assert action_approval["proposed_change"]["description"].startswith("Needs review:")
     assert core_db.get_recommendations() == []
     assert core_db.get_thesis_claim(claim["id"])["status"] == "active"
     assert core_db.get_catalysts("MU")[0]["status"] == "pending"
@@ -225,10 +249,16 @@ def test_news_trigger_uses_web_fallback_when_digest_missing(monkeypatch, temp_mo
 
     result = watch_trigger_monitor.run_watch_trigger_monitor()
 
-    trigger = core_db.get_watch_triggers(status="fired", ticker="MU")[0]
     assert result["fired"] == 1
-    assert trigger["last_result"]["news"]["web_fallback_used"] is True
-    assert len(core_db.get_action_items(status="open", ticker="MU")) == 1
+    fire_approval = [
+        approval
+        for approval in core_db.get_pending_approvals(status="pending")
+        if approval["action_id"] == "fire_watch_trigger"
+    ][0]
+    assert fire_approval["proposed_change"]["result"]["news"]["web_fallback_used"] is True
+    assert (
+        len([a for a in core_db.get_pending_approvals(status="pending") if a["action_id"] == "create_action_item"]) == 1
+    )
 
 
 def test_news_trigger_does_not_fire_without_source_provenance(monkeypatch, temp_monitor_state):
@@ -264,5 +294,12 @@ def test_news_trigger_does_not_fire_without_source_provenance(monkeypatch, temp_
 
     trigger = core_db.get_watch_triggers(status="active", ticker="MU")[0]
     assert result["fired"] == 0
+    check_approval = [
+        approval
+        for approval in core_db.get_pending_approvals(status="pending")
+        if approval["action_id"] == "update_watch_trigger_check"
+    ][0]
+    core_db.resolve_approval(check_approval["id"], "approved", "Apply check result")
+    trigger = core_db.get_watch_triggers(status="active", ticker="MU")[0]
     assert "source requirements" in trigger["last_evidence"]
     assert core_db.get_action_items(status="open", ticker="MU") == []

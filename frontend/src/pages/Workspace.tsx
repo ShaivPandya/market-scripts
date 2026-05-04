@@ -56,9 +56,14 @@ interface WorkspaceData {
 interface Approval {
   id: number
   entity_type: string
+  action_id?: string | null
   ticker: string | null
   reason: string | null
   created_at: string
+  application_status?: string | null
+  application_attempts?: number | null
+  source_type?: string | null
+  source_id?: string | null
   proposed_change: Record<string, unknown>
 }
 
@@ -169,6 +174,7 @@ export function Workspace() {
         await rejectItem(id)
       }
       qc.invalidateQueries({ queryKey: ["workspace"] })
+      qc.invalidateQueries({ queryKey: ["portfolio", "all_timeframes"] })
     } finally {
       setProcessingIds(prev => {
         const next = new Set(prev)
@@ -372,10 +378,22 @@ export function Workspace() {
                             </Link>
                           )}
                           <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+                          {a.application_status && (
+                            <span className="rounded border border-app px-1.5 py-0.5 text-[11px] text-subtle">
+                              {a.application_status.replace(/_/g, " ")}
+                            </span>
+                          )}
                         </div>
+                        {a.action_id && <p className="text-[11px] text-subtle mt-0.5">{a.action_id}</p>}
                         {a.reason && (
                           <p onClick={() => toggleExpanded(key)} className={cn("text-xs text-muted mt-0.5 cursor-pointer", !expanded && "line-clamp-1")}>
                             {a.reason}
+                          </p>
+                        )}
+                        {(a.source_type || a.source_id) && (
+                          <p className="text-[11px] text-subtle mt-1">
+                            {[a.source_type, a.source_id].filter(Boolean).join(" · ")}
+                            {a.application_attempts ? ` · attempts ${a.application_attempts}` : ""}
                           </p>
                         )}
                       </div>

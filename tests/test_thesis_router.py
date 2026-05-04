@@ -151,9 +151,11 @@ def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
     )
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["status"] == "ok"
+    assert payload["status"] == "pending_approval_created"
     assert payload["ticker"] == "MU"
-    assert "## Thesis" in payload["content"]
+    assert "## Thesis" in payload["proposed_change"]["content"]
+    approved = auth_client.post(f"/api/v1/approvals/{payload['approval_id']}/approve", json={"note": "Apply thesis"})
+    assert approved.status_code == 200
     assert (thesis_dir / "MU.md").exists()
 
 
@@ -180,11 +182,13 @@ def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path):
     )
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["status"] == "ok"
+    assert payload["status"] == "pending_approval_created"
     assert payload["ticker"] == "MU"
-    assert payload["content"].startswith("# MU")
-    assert "## Key Catalysts" in payload["content"]
-    assert (thesis_dir / "MU.md").read_text(encoding="utf-8") == payload["content"]
+    assert payload["proposed_change"]["content"].startswith("# MU")
+    assert "## Key Catalysts" in payload["proposed_change"]["content"]
+    approved = auth_client.post(f"/api/v1/approvals/{payload['approval_id']}/approve", json={"note": "Apply thesis"})
+    assert approved.status_code == 200
+    assert (thesis_dir / "MU.md").read_text(encoding="utf-8") == payload["proposed_change"]["content"]
 
 
 def test_save_thesis_syncs_catalysts_kill_conditions_and_claims(auth_client, monkeypatch, tmp_path, temp_core_db):
@@ -208,7 +212,9 @@ def test_save_thesis_syncs_catalysts_kill_conditions_and_claims(auth_client, mon
                 "## Thesis\n- Memory demand improves\n\n"
                 "## Key Catalysts\n- **HBM ramp:** HBM3 fully sold out\n\n"
                 "## Risk Factors\n- **AI spending deceleration:** Capex slows\n"
-            )
+            ),
+            "apply": True,
+            "approval_note": "Apply thesis",
         },
     )
 
@@ -353,12 +359,16 @@ def test_thesis_claim_api_accepts_typed_sources_and_writes_markdown(auth_client,
             "confidence": 0.72,
             "linked_catalyst_ids": [catalyst["id"]],
             "linked_kill_condition_ids": [kill_condition["id"]],
+            "apply": True,
+            "approval_note": "Apply claim",
         },
     )
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["source_requirements"][0]["type"] == "earnings_transcript"
+    assert payload["status"] == "applied"
+    claim_row = core_db.get_thesis_claims(ticker="MU")[0]
+    assert claim_row["source_requirements"][0]["type"] == "earnings_transcript"
     content = thesis_file.read_text(encoding="utf-8")
     assert "## Thesis Claims" in content
     assert "type=earnings_transcript" in content
@@ -366,16 +376,19 @@ def test_thesis_claim_api_accepts_typed_sources_and_writes_markdown(auth_client,
     assert "Kill conditions: AI spending deceleration" in content
 
     update = auth_client.put(
-        f"/api/v1/thesis-claims/{payload['id']}",
+        f"/api/v1/thesis-claims/{claim_row['id']}",
         json={
             "status": "supported",
             "source_requirements": ["earnings"],
             "confidence": 0.8,
+            "apply": True,
+            "approval_note": "Apply claim update",
         },
     )
 
     assert update.status_code == 200
-    updated = update.json()
+    assert update.json()["status"] == "applied"
+    updated = core_db.get_thesis_claims(ticker="MU")[0]
     assert updated["status"] == "supported"
     assert updated["source_requirements"][0] == {
         "type": "custom",

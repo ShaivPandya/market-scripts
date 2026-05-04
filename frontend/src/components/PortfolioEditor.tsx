@@ -119,7 +119,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   function handleSaved() {
-    queryClient.invalidateQueries({ queryKey: ["portfolio", "all_timeframes"] })
+    queryClient.invalidateQueries({ queryKey: ["workspace"] })
+    queryClient.invalidateQueries({ queryKey: ["approvals"] })
     onOpenChange(false)
   }
 
@@ -217,8 +218,8 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     ? (positionMutation.isError ? String(positionMutation.error) : null)
     : (hedgeMutation.isError ? String(hedgeMutation.error) : null)
   const currentLoading = tab === "Positions" ? positionMutation.isPending : hedgeMutation.isPending
-  const currentLoadingText = tab === "Positions" ? "Saving portfolio..." : "Saving hedges..."
-  const currentSaveLabel = tab === "Positions" ? "Save Portfolio" : "Save Hedges"
+  const currentLoadingText = tab === "Positions" ? "Proposing portfolio..." : "Proposing hedges..."
+  const currentSaveLabel = tab === "Positions" ? "Propose Portfolio" : "Propose Hedges"
 
   return (
     <Dialog

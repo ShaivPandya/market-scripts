@@ -18,98 +18,161 @@ def _temp_core_db(tmp_path, monkeypatch):
     monkeypatch.setattr(core_db, "_conn", None)
 
 
-def test_process_entity_routes_preserve_response_shapes(auth_client):
-    catalyst_resp = auth_client.post(
+def test_process_entity_routes_stage_by_default_and_self_apply_through_approval(auth_client):
+    staged_catalyst_resp = auth_client.post(
         "/api/v1/catalysts",
         json={"ticker": "mu", "description": "HBM ramp", "category": "fundamental"},
     )
+    assert staged_catalyst_resp.status_code == 200
+    staged = staged_catalyst_resp.json()
+    assert staged["status"] == "pending_approval_created"
+    assert staged["action_id"] == "create_catalyst"
+    assert core_db.get_catalysts("MU") == []
+
+    catalyst_resp = auth_client.post(
+        "/api/v1/catalysts",
+        json={
+            "ticker": "mu",
+            "description": "HBM ramp",
+            "category": "fundamental",
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
     assert catalyst_resp.status_code == 200
-    catalyst = catalyst_resp.json()
-    assert catalyst["ticker"] == "MU"
-    assert catalyst["status"] == "pending"
+    catalyst_payload = catalyst_resp.json()
+    assert catalyst_payload["status"] == "applied"
+    catalyst = core_db.get_catalysts("MU")[0]
 
     catalyst_update = auth_client.put(
         f"/api/v1/catalysts/{catalyst['id']}/status",
-        json={"status": "played_out", "evidence": "Confirmed"},
+        json={"status": "played_out", "evidence": "Confirmed", "apply": True, "approval_note": "Apply in test"},
     )
     assert catalyst_update.status_code == 200
-    assert catalyst_update.json()["status"] == "played_out"
+    assert catalyst_update.json()["status"] == "applied"
+    assert core_db.get_catalysts("MU")[0]["status"] == "played_out"
 
     kill_resp = auth_client.post(
         "/api/v1/kill-conditions",
-        json={"ticker": "mu", "condition": "Demand rolls", "metric": "orders"},
+        json={
+            "ticker": "mu",
+            "condition": "Demand rolls",
+            "metric": "orders",
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
     )
     assert kill_resp.status_code == 200
-    kill_condition = kill_resp.json()
+    kill_condition = core_db.get_kill_conditions("MU")[0]
     assert kill_condition["ticker"] == "MU"
     assert kill_condition["status"] == "active"
 
     kill_update = auth_client.put(
         f"/api/v1/kill-conditions/{kill_condition['id']}/status",
-        json={"status": "triggered"},
+        json={"status": "triggered", "apply": True, "approval_note": "Apply in test"},
     )
     assert kill_update.status_code == 200
-    assert kill_update.json()["status"] == "triggered"
+    assert core_db.get_kill_conditions("MU")[0]["status"] == "triggered"
 
     claim_resp = auth_client.post(
         "/api/v1/thesis-claims",
-        json={"ticker": "mu", "claim": "HBM remains supply constrained", "source_requirements": ["earnings"]},
+        json={
+            "ticker": "mu",
+            "claim": "HBM remains supply constrained",
+            "source_requirements": ["earnings"],
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
     )
     assert claim_resp.status_code == 200
-    claim = claim_resp.json()
+    claim = core_db.get_thesis_claims(ticker="MU")[0]
     assert claim["ticker"] == "MU"
     assert claim["source_requirements"][0]["description"] == "earnings"
 
     claim_update = auth_client.put(
         f"/api/v1/thesis-claims/{claim['id']}",
-        json={"status": "supported", "confidence": 0.8},
+        json={"status": "supported", "confidence": 0.8, "apply": True, "approval_note": "Apply in test"},
     )
     assert claim_update.status_code == 200
-    assert claim_update.json()["status"] == "supported"
+    assert core_db.get_thesis_claims(ticker="MU")[0]["status"] == "supported"
 
     assert core_db.get_action_runs("create_catalyst")[0]["status"] == "succeeded"
     assert core_db.get_action_runs("update_thesis_claim")[0]["status"] == "succeeded"
 
 
-def test_action_item_and_trigger_routes_preserve_response_shapes(auth_client):
-    action_resp = auth_client.post(
+def test_action_item_and_trigger_routes_stage_and_self_apply(auth_client):
+    staged_action_resp = auth_client.post(
         "/api/v1/actions",
         json={"description": "Review MU", "action_type": "review", "ticker": "mu", "urgency": "high"},
     )
+    assert staged_action_resp.status_code == 200
+    assert staged_action_resp.json()["status"] == "pending_approval_created"
+    assert core_db.get_action_items(ticker="MU") == []
+
+    action_resp = auth_client.post(
+        "/api/v1/actions",
+        json={
+            "description": "Review MU",
+            "action_type": "review",
+            "ticker": "mu",
+            "urgency": "high",
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
+    )
     assert action_resp.status_code == 200
-    action = action_resp.json()
+    action = core_db.get_action_items(ticker="MU")[0]
     assert action["ticker"] == "MU"
     assert action["status"] == "open"
 
     complete_resp = auth_client.put(
         f"/api/v1/actions/{action['id']}/complete",
-        json={"resolution_note": "Done"},
+        json={"resolution_note": "Done", "apply": True, "approval_note": "Apply in test"},
     )
     assert complete_resp.status_code == 200
-    assert complete_resp.json()["status"] == "completed"
+    assert core_db.get_action_items(status="completed", ticker="MU")[0]["status"] == "completed"
 
-    dismiss_action = auth_client.post("/api/v1/actions", json={"description": "Dismiss me"}).json()
-    dismiss_resp = auth_client.put(f"/api/v1/actions/{dismiss_action['id']}/dismiss")
+    auth_client.post(
+        "/api/v1/actions", json={"description": "Dismiss me", "apply": True, "approval_note": "Apply in test"}
+    )
+    dismiss_action = core_db.get_action_items(status="open")[0]
+    dismiss_resp = auth_client.put(
+        f"/api/v1/actions/{dismiss_action['id']}/dismiss",
+        json={"apply": True, "approval_note": "Apply in test"},
+    )
     assert dismiss_resp.status_code == 200
-    assert dismiss_resp.json()["status"] == "dismissed"
+    assert core_db.get_action_items(status="dismissed")[0]["status"] == "dismissed"
 
     trigger_resp = auth_client.post(
         "/api/v1/triggers",
-        json={"condition": "MU > 150", "trigger_type": "price_level", "ticker": "mu"},
+        json={
+            "condition": "MU > 150",
+            "trigger_type": "price_level",
+            "ticker": "mu",
+            "apply": True,
+            "approval_note": "Apply in test",
+        },
     )
     assert trigger_resp.status_code == 200
-    trigger = trigger_resp.json()
+    trigger = core_db.get_watch_triggers(status="active", ticker="MU")[0]
     assert trigger["ticker"] == "MU"
     assert trigger["status"] == "active"
 
-    fire_resp = auth_client.put(f"/api/v1/triggers/{trigger['id']}/fire")
+    fire_resp = auth_client.put(
+        f"/api/v1/triggers/{trigger['id']}/fire", json={"apply": True, "approval_note": "Apply in test"}
+    )
     assert fire_resp.status_code == 200
-    assert fire_resp.json()["status"] == "fired"
+    assert core_db.get_watch_triggers(status="fired", ticker="MU")[0]["status"] == "fired"
 
-    cancel_trigger = auth_client.post("/api/v1/triggers", json={"condition": "Cancel me"}).json()
-    cancel_resp = auth_client.put(f"/api/v1/triggers/{cancel_trigger['id']}/cancel")
+    auth_client.post(
+        "/api/v1/triggers", json={"condition": "Cancel me", "apply": True, "approval_note": "Apply in test"}
+    )
+    cancel_trigger = core_db.get_watch_triggers(status="active")[0]
+    cancel_resp = auth_client.put(
+        f"/api/v1/triggers/{cancel_trigger['id']}/cancel", json={"apply": True, "approval_note": "Apply in test"}
+    )
     assert cancel_resp.status_code == 200
-    assert cancel_resp.json()["status"] == "cancelled"
+    assert core_db.get_watch_triggers(status="cancelled")[0]["status"] == "cancelled"
 
     assert core_db.get_action_runs("create_action_item")[0]["status"] == "succeeded"
     assert core_db.get_action_runs("create_watch_trigger")[0]["status"] == "succeeded"

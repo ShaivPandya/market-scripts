@@ -12,6 +12,8 @@ import json
 import logging
 import os
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +24,10 @@ from ontology.schemas.identity import action_run_id, thesis_id
 logger = logging.getLogger(__name__)
 
 OPERATIONAL_ONTOLOGY_RUN_ID = "operational"
+_APPROVED_DOMAIN_WRITE_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "approved_domain_write_scope",
+    default=None,
+)
 
 
 def ontology_shadow_writes_enabled() -> bool:
@@ -40,11 +46,48 @@ def legacy_write_guard_enabled() -> bool:
     return _env_flag("LEGACY_WRITE_GUARD")
 
 
+def approved_domain_write_scope() -> dict[str, Any] | None:
+    """Return metadata for the current approved domain write, if any."""
+
+    return _APPROVED_DOMAIN_WRITE_SCOPE.get()
+
+
+@contextmanager
+def domain_write_scope(
+    *,
+    action_id: str,
+    actor_type: str,
+    approval_id: int | None = None,
+    action_run_id: int | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+):
+    """Mark a call stack as executing an approved financial mutation."""
+
+    token = _APPROVED_DOMAIN_WRITE_SCOPE.set(
+        {
+            "action_id": action_id,
+            "actor_type": actor_type,
+            "approval_id": approval_id,
+            "action_run_id": action_run_id,
+            "source_type": source_type,
+            "source_id": source_id,
+        }
+    )
+    try:
+        yield
+    finally:
+        _APPROVED_DOMAIN_WRITE_SCOPE.reset(token)
+
+
 def assert_legacy_domain_write_allowed(surface: str) -> None:
+    if approved_domain_write_scope() is not None:
+        return
     if legacy_write_guard_enabled() and not _env_flag("LEGACY_WRITE_GUARD_ALLOW_PROJECTION"):
         raise RuntimeError(
             f"Legacy domain write blocked by LEGACY_WRITE_GUARD: {surface}. "
-            "Use OntologyObjectService/domain write service or an approved projection refresh path."
+            "Use the approval application path, OntologyObjectService/domain write service, "
+            "or an approved projection refresh path."
         )
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from api.action_execution import execute_api_action
+from api.action_execution import stage_api_action
 from api.exceptions import NotFoundError
 
 router = APIRouter()
@@ -16,10 +16,22 @@ class CreateActionRequest(BaseModel):
     action_type: str = "review"
     ticker: str | None = None
     urgency: str = "normal"
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 class CompleteActionRequest(BaseModel):
     resolution_note: str = ""
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
+
+
+class DismissActionRequest(BaseModel):
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.get("/actions")
@@ -46,26 +58,37 @@ def get_action(item_id: int):
 
 @router.post("/actions")
 def create_action(body: CreateActionRequest):
-    return execute_api_action(
+    return stage_api_action(
         "create_action_item",
-        body.model_dump(),
+        body.model_dump(exclude={"reason", "apply", "approval_note"}),
         source_id="action_items.create_action",
+        reason=body.reason or "Create action item",
+        apply=body.apply,
+        approval_note=body.approval_note,
     )
 
 
 @router.put("/actions/{item_id}/complete")
 def complete_action(item_id: int, body: CompleteActionRequest | None = None):
-    return execute_api_action(
+    return stage_api_action(
         "complete_action_item",
         {"item_id": item_id, "resolution_note": body.resolution_note if body else ""},
         source_id="action_items.complete_action",
+        reason=(body.reason if body else None) or f"Complete action item {item_id}",
+        apply=body.apply if body else False,
+        approval_note=body.approval_note if body else None,
+        entity_id=item_id,
     )
 
 
 @router.put("/actions/{item_id}/dismiss")
-def dismiss_action(item_id: int):
-    return execute_api_action(
+def dismiss_action(item_id: int, body: DismissActionRequest | None = None):
+    return stage_api_action(
         "dismiss_action_item",
         {"item_id": item_id},
         source_id="action_items.dismiss_action",
+        reason=(body.reason if body else None) or f"Dismiss action item {item_id}",
+        apply=body.apply if body else False,
+        approval_note=body.approval_note if body else None,
+        entity_id=item_id,
     )

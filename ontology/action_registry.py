@@ -44,6 +44,7 @@ ActionActor = Literal["user", "admin", "agent", "workflow", "approval_apply", "s
 _TICKER_RE = re.compile(r"^[A-Z0-9.]{1,20}$")
 _EXECUTE_ACTORS = {"user", "admin", "approval_apply", "system"}
 _PROPOSE_ACTORS = {"user", "admin", "agent", "workflow", "system"}
+_APPROVAL_APPLY_ACTORS = frozenset({"approval_apply"})
 
 
 class ActionError(RuntimeError):
@@ -104,11 +105,14 @@ class ActionResult:
 ActionHandler = Callable[[BaseModel, ActionContext], ActionResult]
 ApprovalPayloadBuilder = Callable[[BaseModel], dict[str, Any]]
 TickerExtractor = Callable[[BaseModel], str | None]
+PreconditionBuilder = Callable[[BaseModel], dict[str, Any]]
 ToolActionInputAdapter = Callable[[BaseModel], dict[str, Any]]
 ToolReasonBuilder = Callable[[BaseModel], str | None]
 ToolEntityIdBuilder = Callable[[BaseModel], int | None]
 ToolAccessMode = Literal["read", "compute", "proposal", "execute"]
 ActionEffectKind = Literal["read_only", "approval_gated", "direct_mutation"]
+ActionRiskClass = Literal["none", "low", "financial"]
+ActionExecutionMode = Literal["direct", "approval_required", "break_glass"]
 
 
 @dataclass(frozen=True)
@@ -160,6 +164,15 @@ class DomainAction:
     approval_spec: ApprovalSpec | None = None
     audit_spec: AuditSpec = field(default_factory=AuditSpec)
     policy_spec: PolicySpec | None = None
+    risk_class: ActionRiskClass = "financial"
+    financial_effect: str | None = None
+    default_execution_mode: ActionExecutionMode | None = None
+    allow_self_apply: bool = True
+    break_glass_allowed: bool = False
+    reason_required: bool = True
+    precondition_builder: PreconditionBuilder | None = None
+    approval_summary_builder: ApprovalPayloadBuilder | None = None
+    base_state_hash_fields: tuple[str, ...] = ()
 
 
 ActionDefinition = DomainAction
@@ -193,6 +206,16 @@ class PortfolioPositionInput(BaseModel):
 class UpdatePortfolioPositionsInput(BaseModel):
     positions: list[PortfolioPositionInput]
 
+    @model_validator(mode="after")
+    def _validate_positions(self) -> UpdatePortfolioPositionsInput:
+        if not self.positions:
+            raise ValueError("At least one position is required.")
+        tickers = [position.ticker for position in self.positions]
+        if len(set(tickers)) != len(tickers):
+            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
+            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        return self
+
 
 class HedgePositionInput(BaseModel):
     ticker: str
@@ -213,6 +236,14 @@ class HedgePositionInput(BaseModel):
 
 class UpdateHedgePositionsInput(BaseModel):
     positions: list[HedgePositionInput]
+
+    @model_validator(mode="after")
+    def _validate_positions(self) -> UpdateHedgePositionsInput:
+        tickers = [position.ticker for position in self.positions]
+        if len(set(tickers)) != len(tickers):
+            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
+            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        return self
 
 
 class ChangeThesisStatusInput(BaseModel):
@@ -387,6 +418,7 @@ class CreateActionItemInput(OptionalTickerMixin):
     description: str
     action_type: Literal["review", "resize", "research", "exit", "enter", "hedge", "other"] = "review"
     urgency: Literal["low", "normal", "high", "urgent"] = "normal"
+    recommendation_id: int | None = None
 
     @field_validator("description")
     @classmethod
@@ -443,6 +475,17 @@ class FireWatchTriggerInput(BaseModel):
 
 class CancelWatchTriggerInput(BaseModel):
     trigger_id: int
+
+
+class UpdateWatchTriggerCheckInput(BaseModel):
+    trigger_id: int
+    result: dict[str, Any] | None = None
+    evidence: str | None = None
+
+
+class UpdateWatchTriggerDefinitionInput(BaseModel):
+    trigger_id: int
+    definition: dict[str, Any]
 
 
 class SaveThesisContentInput(TickerMixin):
@@ -503,6 +546,30 @@ class DeletePortfolioNewsDigestInput(BaseModel):
         return validate_digest_id(str(value or "").strip())
 
 
+class CreatePortfolioNewsDigestInput(BaseModel):
+    content: str
+    filename: str | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _validate_content(cls, value: str) -> str:
+        text = str(value or "")
+        if not text.strip():
+            raise ValueError("News digest content cannot be empty.")
+        return text
+
+
+class CreateRecommendationInput(BaseModel):
+    record: dict[str, Any]
+
+    @field_validator("record")
+    @classmethod
+    def _validate_record(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("Recommendation record cannot be empty.")
+        return value
+
+
 class ResolveApprovalInput(BaseModel):
     approval_id: int
     status: Literal["approved", "rejected"]
@@ -516,6 +583,58 @@ def _stable_hash(value: Any) -> str:
 
 def _model_payload(model: BaseModel) -> dict[str, Any]:
     return model.model_dump()
+
+
+def _model_payload_exclude_unset(model: BaseModel) -> dict[str, Any]:
+    return model.model_dump(exclude_unset=True)
+
+
+def _hash_current_portfolio_book(_model: BaseModel) -> dict[str, Any]:
+    from portfolio.portfolio_db import get_positions
+
+    return {"positions": get_positions(include_hedges=False)}
+
+
+def _hash_current_hedge_book(_model: BaseModel) -> dict[str, Any]:
+    from portfolio.portfolio_db import get_hedge_positions
+
+    return {"positions": get_hedge_positions()}
+
+
+def _hash_current_thesis(model: BaseModel) -> dict[str, Any]:
+    ticker = str(getattr(model, "ticker", "") or "").strip().upper()
+    result: dict[str, Any] = {"ticker": ticker}
+    if not ticker:
+        return result
+    try:
+        from portfolio import thesis_content
+
+        result["content_hash"] = _stable_hash({"content": thesis_content.read_thesis(ticker)})
+    except Exception:
+        result["content_hash"] = None
+    try:
+        from portfolio.thesis_db import get_thesis_meta
+
+        result["meta"] = get_thesis_meta(ticker)
+    except Exception:
+        result["meta"] = None
+    return result
+
+
+def _hash_action_item_status(model: BaseModel) -> dict[str, Any]:
+    item_id = int(getattr(model, "item_id", 0) or 0)
+    from portfolio.core_db import get_action_items
+
+    item = next((row for row in get_action_items(status=None) if int(row.get("id") or 0) == item_id), None)
+    return {"item_id": item_id, "status": item.get("status") if item else None}
+
+
+def _hash_watch_trigger_status(model: BaseModel) -> dict[str, Any]:
+    trigger_id = int(getattr(model, "trigger_id", 0) or 0)
+    from portfolio.core_db import get_watch_triggers
+
+    trigger = next((row for row in get_watch_triggers(status=None) if int(row.get("id") or 0) == trigger_id), None)
+    return {"trigger_id": trigger_id, "status": trigger.get("status") if trigger else None}
 
 
 def _validation_message(exc: PydanticValidationError) -> str:
@@ -898,15 +1017,27 @@ def _action_result_refs(
     elif action_id in {"create_action_item", "complete_action_item", "dismiss_action_item"}:
         if ref_id := _id("id", "item_id"):
             refs.append(("action_item", ref_id, produced if action_id == "create_action_item" else updated))
-    elif action_id in {"create_watch_trigger", "fire_watch_trigger", "cancel_watch_trigger"}:
+    elif action_id in {
+        "create_watch_trigger",
+        "fire_watch_trigger",
+        "cancel_watch_trigger",
+        "update_watch_trigger_check",
+        "update_watch_trigger_definition",
+    }:
         if ref_id := _id("id", "trigger_id"):
             refs.append(("watch_trigger", ref_id, produced if action_id == "create_watch_trigger" else updated))
     elif action_id == "create_research_note":
         if ref_id := _id("id"):
             refs.append(("research_note", ref_id, produced))
+    elif action_id == "create_portfolio_news_digest":
+        if ref_id := _id("id"):
+            refs.append(("news_digest", ref_id, produced))
     elif action_id == "delete_portfolio_news_digest":
         if ref_id := _id("digest_id"):
             refs.append(("news_digest", ref_id, updated))
+    elif action_id == "create_recommendation":
+        if ref_id := _id("id"):
+            refs.append(("recommendation", ref_id, produced))
     elif action_id == "resolve_approval":
         if ref_id := _id("approval_id"):
             refs.append(("approval", ref_id, resolved))
@@ -983,10 +1114,31 @@ def execute_action(
             message = f"Actor '{context.actor_type}' is not authorized to execute {action.action_id}"
             core_db.record_action_event(run_id, "authorization_denied", message=message)
             raise ActionAuthorizationError(message)
+        if (
+            action.effect_kind == "approval_gated"
+            and context.actor_type == "approval_apply"
+            and context.approval_id is None
+        ):
+            message = f"Approval-gated action {action.action_id} requires approval_id for execution"
+            core_db.record_action_event(run_id, "authorization_denied", message=message)
+            raise ActionAuthorizationError(message)
         core_db.record_action_event(run_id, "authorized", payload={"actor_type": context.actor_type})
 
         core_db.record_action_event(run_id, "mutation_started")
-        result = action.handler(typed_input, context)
+        if context.actor_type == "approval_apply":
+            from ontology.domain_write_service import domain_write_scope
+
+            with domain_write_scope(
+                action_id=action.action_id,
+                actor_type=context.actor_type,
+                approval_id=context.approval_id,
+                action_run_id=run_id,
+                source_type=context.source_type,
+                source_id=context.source_id,
+            ):
+                result = action.handler(typed_input, context)
+        else:
+            result = action.handler(typed_input, context)
         core_db.record_action_event(run_id, "mutation_completed", payload=result.output)
         _record_ontology_write_boundary_versions(
             action=action,
@@ -1088,11 +1240,14 @@ def propose_action(
             raise ActionAuthorizationError(message)
         if approval_spec is None:
             raise ActionValidationError(f"Action {action.action_id} cannot be proposed for approval")
+        if approval_spec.reason_required and not str(reason or "").strip():
+            raise ActionValidationError(f"Action {action.action_id} requires a proposal reason")
 
         approval_payload = (
             approval_spec.payload_builder(typed_input) if approval_spec.payload_builder else _model_payload(typed_input)
         )
         ticker = approval_spec.ticker_extractor(typed_input) if approval_spec.ticker_extractor else None
+        base_state_hash = compute_action_base_state_hash(action.action_id, approval_payload)
         use_once = once or approval_spec.once
         create = core_db.create_pending_approval_once if use_once else core_db.create_pending_approval
         approval = create(
@@ -1107,6 +1262,11 @@ def propose_action(
             action_schema_version=action.schema_version,
             action_schema_name=action.action_id,
             action_input_hash=input_hash,
+            risk_class=action.risk_class,
+            approval_mode=action.default_execution_mode or "approval_required",
+            base_state_hash=base_state_hash,
+            requested_by_actor_id=context.actor_id,
+            approval_note_required=action.reason_required,
         )
         try:
             from api import provenance
@@ -1182,6 +1342,16 @@ def propose_action(
         message = str(exc).strip() or exc.__class__.__name__
         _audit_fail(run_id, message, action=proposal_action, context=context)
         raise
+
+
+def compute_action_base_state_hash(action_id: ActionId, raw_input: dict[str, Any]) -> str | None:
+    """Return the approval precondition hash for an action input."""
+
+    action = get_action(action_id)
+    if action.precondition_builder is None:
+        return None
+    typed_input = _validate_and_upgrade_action_input(action, raw_input)
+    return _stable_hash(action.precondition_builder(typed_input))
 
 
 def _ensure_unique_tickers(rows: Sequence[BaseModel]) -> None:
@@ -1604,6 +1774,28 @@ def _cancel_watch_trigger(input_model: BaseModel, _context: ActionContext) -> Ac
     return ActionResult(result)
 
 
+def _update_watch_trigger_check(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(UpdateWatchTriggerCheckInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.update_watch_trigger_check(typed.trigger_id, result=typed.result, evidence=typed.evidence)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
+    return ActionResult(result)
+
+
+def _update_watch_trigger_definition(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(UpdateWatchTriggerDefinitionInput, input_model)
+    from portfolio import core_db
+
+    try:
+        result = core_db.update_watch_trigger_definition(typed.trigger_id, typed.definition)
+    except ValueError as exc:
+        _raise_not_found_or_validation(exc, "Watch trigger", typed.trigger_id)
+    return ActionResult(result)
+
+
 def _save_thesis_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
     typed = cast(SaveThesisContentInput, input_model)
     from portfolio.thesis_content import save_thesis_content
@@ -1668,6 +1860,72 @@ def _delete_portfolio_news_digest(input_model: BaseModel, _context: ActionContex
     )
 
 
+def _create_portfolio_news_digest(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(CreatePortfolioNewsDigestInput, input_model)
+    from api.routers.portfolio_news import _index_digest_best_effort
+    from portfolio.news_digests import save_digest
+
+    detail = save_digest(typed.content, filename=typed.filename)
+    return ActionResult(
+        {"status": "ok", "digest": detail, "id": detail.get("id")},
+        (ActionCallback("index_digest", lambda: _index_digest_best_effort(detail)),),
+    )
+
+
+def _create_recommendation(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(CreateRecommendationInput, input_model)
+    from portfolio import core_db
+
+    record = typed.record
+    result = (
+        core_db.upsert_recommendation(record)
+        if record.get("idempotency_key")
+        else core_db.create_recommendation(record)
+    )
+    if result.get("recommendation_status") == "clear" and result.get("action") in {
+        "buy",
+        "sell",
+        "reduce",
+        "exit",
+        "rebalance",
+        "hedge",
+    }:
+        description = f"{str(result.get('action') or '').replace('_', ' ').title()} {result.get('instrument') or result.get('ticker') or 'portfolio'}"
+        if result.get("target_change"):
+            description += f" ({result['target_change']})"
+        approval = propose_action(
+            "create_action_item",
+            {
+                "recommendation_id": result["id"],
+                "ticker": result.get("ticker"),
+                "description": description,
+                "action_type": _recommendation_action_type(str(result.get("action") or "")),
+                "urgency": "high" if result.get("action") in {"exit", "reduce"} else "normal",
+            },
+            ActionContext(
+                actor_type="workflow",
+                source_type="workflow",
+                source_id=result.get("report_id") or f"{result.get('report_type')}:{result.get('as_of')}",
+            ),
+            reason=result.get("rationale", ""),
+            once=True,
+        )
+        result = core_db.update_recommendation_approval(result["id"], approval["id"], "pending")
+    return ActionResult(result)
+
+
+def _recommendation_action_type(action: str) -> str:
+    if action in {"buy", "enter"}:
+        return "enter"
+    if action in {"sell", "exit"}:
+        return "exit"
+    if action in {"reduce", "rebalance"}:
+        return "resize"
+    if action == "hedge":
+        return "hedge"
+    return "review"
+
+
 def _resolve_approval(input_model: BaseModel, context: ActionContext) -> ActionResult:
     typed = cast(ResolveApprovalInput, input_model)
     from portfolio import core_db
@@ -1678,6 +1936,7 @@ def _resolve_approval(input_model: BaseModel, context: ActionContext) -> ActionR
             typed.status,
             typed.note,
             parent_action_run_id=context.action_run_id,
+            resolved_by_actor_id=context.actor_id,
         )
     except core_db.ApprovalApplicationError as exc:
         raise ActionConflictError(str(exc)) from exc
@@ -1705,6 +1964,8 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         handler=_update_portfolio_positions,
         approval_entity_type="portfolio_positions",
         approval_payload=_model_payload,
+        precondition_builder=_hash_current_portfolio_book,
+        base_state_hash_fields=("positions",),
     ),
     "update_hedge_positions": DomainAction(
         action_id="update_hedge_positions",
@@ -1712,6 +1973,8 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         handler=_update_hedge_positions,
         approval_entity_type="hedge_positions",
         approval_payload=_model_payload,
+        precondition_builder=_hash_current_hedge_book,
+        base_state_hash_fields=("positions",),
     ),
     "change_thesis_status": DomainAction(
         action_id="change_thesis_status",
@@ -1720,6 +1983,8 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_entity_type="thesis_status",
         approval_payload=_thesis_status_approval_payload,
         approval_ticker=_ticker_from_model,
+        precondition_builder=_hash_current_thesis,
+        base_state_hash_fields=("ticker", "content_hash", "meta"),
     ),
     "create_catalyst": DomainAction(
         action_id="create_catalyst",
@@ -1766,7 +2031,7 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         input_model=UpdateThesisClaimInput,
         handler=_update_thesis_claim,
         approval_entity_type="thesis_claim_update",
-        approval_payload=_model_payload,
+        approval_payload=_model_payload_exclude_unset,
     ),
     "create_action_item": DomainAction(
         action_id="create_action_item",
@@ -1780,11 +2045,19 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         action_id="complete_action_item",
         input_model=CompleteActionItemInput,
         handler=_complete_action_item,
+        approval_entity_type="action_item_status",
+        approval_payload=_model_payload,
+        precondition_builder=_hash_action_item_status,
+        base_state_hash_fields=("item_id", "status"),
     ),
     "dismiss_action_item": DomainAction(
         action_id="dismiss_action_item",
         input_model=DismissActionItemInput,
         handler=_dismiss_action_item,
+        approval_entity_type="action_item_status",
+        approval_payload=_model_payload,
+        precondition_builder=_hash_action_item_status,
+        base_state_hash_fields=("item_id", "status"),
     ),
     "create_watch_trigger": DomainAction(
         action_id="create_watch_trigger",
@@ -1798,11 +2071,37 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         action_id="fire_watch_trigger",
         input_model=FireWatchTriggerInput,
         handler=_fire_watch_trigger,
+        approval_entity_type="watch_trigger_status",
+        approval_payload=_model_payload,
+        precondition_builder=_hash_watch_trigger_status,
+        base_state_hash_fields=("trigger_id", "status"),
     ),
     "cancel_watch_trigger": DomainAction(
         action_id="cancel_watch_trigger",
         input_model=CancelWatchTriggerInput,
         handler=_cancel_watch_trigger,
+        approval_entity_type="watch_trigger_status",
+        approval_payload=_model_payload,
+        precondition_builder=_hash_watch_trigger_status,
+        base_state_hash_fields=("trigger_id", "status"),
+    ),
+    "update_watch_trigger_check": DomainAction(
+        action_id="update_watch_trigger_check",
+        input_model=UpdateWatchTriggerCheckInput,
+        handler=_update_watch_trigger_check,
+        approval_entity_type="watch_trigger_check",
+        approval_payload=_model_payload,
+        precondition_builder=_hash_watch_trigger_status,
+        base_state_hash_fields=("trigger_id", "status"),
+    ),
+    "update_watch_trigger_definition": DomainAction(
+        action_id="update_watch_trigger_definition",
+        input_model=UpdateWatchTriggerDefinitionInput,
+        handler=_update_watch_trigger_definition,
+        approval_entity_type="watch_trigger_definition",
+        approval_payload=_model_payload,
+        precondition_builder=_hash_watch_trigger_status,
+        base_state_hash_fields=("trigger_id", "status"),
     ),
     "save_thesis_content": DomainAction(
         action_id="save_thesis_content",
@@ -1812,6 +2111,8 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_payload=_model_payload,
         approval_ticker=_ticker_from_model,
         effect_kind="approval_gated",
+        precondition_builder=_hash_current_thesis,
+        base_state_hash_fields=("ticker", "content_hash", "meta"),
     ),
     "save_evaluation": DomainAction(
         action_id="save_evaluation",
@@ -1831,11 +2132,27 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_ticker=_ticker_from_model,
         effect_kind="approval_gated",
     ),
+    "create_portfolio_news_digest": DomainAction(
+        action_id="create_portfolio_news_digest",
+        input_model=CreatePortfolioNewsDigestInput,
+        handler=_create_portfolio_news_digest,
+        approval_entity_type="news_digest_create",
+        approval_payload=_model_payload,
+        effect_kind="approval_gated",
+    ),
     "delete_portfolio_news_digest": DomainAction(
         action_id="delete_portfolio_news_digest",
         input_model=DeletePortfolioNewsDigestInput,
         handler=_delete_portfolio_news_digest,
         approval_entity_type="news_digest_delete",
+        approval_payload=_model_payload,
+        effect_kind="approval_gated",
+    ),
+    "create_recommendation": DomainAction(
+        action_id="create_recommendation",
+        input_model=CreateRecommendationInput,
+        handler=_create_recommendation,
+        approval_entity_type="recommendation",
         approval_payload=_model_payload,
         effect_kind="approval_gated",
     ),
@@ -1853,12 +2170,27 @@ def _normalize_action_definition(action: DomainAction) -> DomainAction:
     if approval_spec is None and action.approval_entity_type:
         approval_spec = ApprovalSpec(
             entity_type=action.approval_entity_type,
+            reason_required=action.reason_required,
             payload_builder=action.approval_payload,
             ticker_extractor=action.approval_ticker,
         )
     effect_kind = action.effect_kind or ("approval_gated" if approval_spec is not None else "direct_mutation")
     description = action.description or action.action_id.replace("_", " ")
-    return replace(action, approval_spec=approval_spec, effect_kind=effect_kind, description=description)
+    execute_actor_types = action.execute_actor_types
+    default_execution_mode = action.default_execution_mode
+    if effect_kind == "approval_gated":
+        execute_actor_types = _APPROVAL_APPLY_ACTORS
+        default_execution_mode = default_execution_mode or "approval_required"
+    else:
+        default_execution_mode = default_execution_mode or "direct"
+    return replace(
+        action,
+        approval_spec=approval_spec,
+        effect_kind=effect_kind,
+        description=description,
+        execute_actor_types=execute_actor_types,
+        default_execution_mode=default_execution_mode,
+    )
 
 
 _ACTIONS = {action_id: _normalize_action_definition(action) for action_id, action in _ACTIONS.items()}
