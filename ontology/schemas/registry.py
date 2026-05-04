@@ -9,26 +9,54 @@ from pydantic import ValidationError
 from ontology.models import EntityType, OntologyEdge, OntologyNode
 from ontology.schemas.base import OntologySchemaBase
 from ontology.schemas.identity import (
+    action_event_id,
+    action_item_id,
+    action_run_id,
+    approval_id,
     asset_id,
     catalyst_id,
+    document_artifact_id,
     evaluation_id,
+    hedge_position_id,
+    kill_condition_id,
     macro_indicator_id,
     position_id,
+    recommendation_id,
+    report_run_id,
+    research_note_id,
     sector_id,
     signal_id,
+    thesis_claim_id,
     thesis_id,
+    watch_trigger_id,
+    workflow_artifact_id,
+    workflow_run_id,
 )
 from ontology.schemas.legacy import adapt_edge_payload, adapt_node_payload
 from ontology.schemas.objects import (
+    ActionEventV1,
+    ActionItemV1,
+    ActionRunV1,
+    ApprovalV1,
     AssetV1,
     CatalystV1,
+    DocumentArtifactV1,
     EvaluationV1,
+    HedgePositionV1,
+    KillConditionV1,
     MacroIndicatorV1,
     OntologyObjectV1,
     PositionV1,
+    RecommendationV1,
+    ReportRunV1,
+    ResearchNoteV1,
     SectorV1,
     SignalV1,
+    ThesisClaimV1,
     ThesisV1,
+    WatchTriggerV1,
+    WorkflowArtifactV1,
+    WorkflowRunV1,
 )
 from ontology.schemas.relations import (
     BELONGS_TO_SECTOR,
@@ -46,6 +74,7 @@ from ontology.schemas.relations import (
 
 NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Position": PositionV1,
+    "HedgePosition": HedgePositionV1,
     "Asset": AssetV1,
     "Sector": SectorV1,
     "MacroIndicator": MacroIndicatorV1,
@@ -53,8 +82,38 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Thesis": ThesisV1,
     "Evaluation": EvaluationV1,
     "Catalyst": CatalystV1,
+    "KillCondition": KillConditionV1,
+    "ThesisClaim": ThesisClaimV1,
+    "ActionItem": ActionItemV1,
+    "WatchTrigger": WatchTriggerV1,
+    "ResearchNote": ResearchNoteV1,
+    "Approval": ApprovalV1,
+    "ActionRun": ActionRunV1,
+    "ActionEvent": ActionEventV1,
+    "WorkflowRun": WorkflowRunV1,
+    "WorkflowArtifact": WorkflowArtifactV1,
+    "Recommendation": RecommendationV1,
+    "ReportRun": ReportRunV1,
+    "DocumentArtifact": DocumentArtifactV1,
 }
-OPTIONAL_NODE_TYPES = {"Thesis", "Evaluation", "Catalyst"}
+OPTIONAL_NODE_TYPES = {
+    "Thesis",
+    "Evaluation",
+    "Catalyst",
+    "KillCondition",
+    "ThesisClaim",
+    "ActionItem",
+    "WatchTrigger",
+    "ResearchNote",
+    "Approval",
+    "ActionRun",
+    "ActionEvent",
+    "WorkflowRun",
+    "WorkflowArtifact",
+    "Recommendation",
+    "ReportRun",
+    "DocumentArtifact",
+}
 NodeUpgradeAdapter = Any
 NODE_UPGRADE_ADAPTERS: dict[tuple[str, int, int], NodeUpgradeAdapter] = {}
 
@@ -318,6 +377,8 @@ def normalize_graph(
 def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
     if isinstance(model, PositionV1):
         return position_id(model.ticker)
+    if isinstance(model, HedgePositionV1):
+        return hedge_position_id(model.ticker)
     if isinstance(model, AssetV1):
         return asset_id(model.ticker)
     if isinstance(model, SectorV1):
@@ -332,6 +393,32 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return evaluation_id(model.ticker, model.evaluated_at)
     if isinstance(model, CatalystV1):
         return catalyst_id(model.ticker, model.name, model.description)
+    if isinstance(model, KillConditionV1):
+        return kill_condition_id(model.ticker, model.legacy_id or model.condition)
+    if isinstance(model, ThesisClaimV1):
+        return thesis_claim_id(model.ticker, model.legacy_id or model.claim)
+    if isinstance(model, ActionItemV1):
+        return action_item_id(model.legacy_id or model.description)
+    if isinstance(model, WatchTriggerV1):
+        return watch_trigger_id(model.legacy_id or model.condition)
+    if isinstance(model, ResearchNoteV1):
+        return research_note_id(model.legacy_id or model.title)
+    if isinstance(model, ApprovalV1):
+        return approval_id(model.legacy_id or f"{model.entity_type}:{model.action_input_hash or model.created_at}")
+    if isinstance(model, ActionRunV1):
+        return action_run_id(model.legacy_id or f"{model.action_id}:{model.started_at}")
+    if isinstance(model, ActionEventV1):
+        return action_event_id(model.legacy_id or f"{model.action_run_id}:{model.event_type}:{model.created_at}")
+    if isinstance(model, WorkflowRunV1):
+        return workflow_run_id(model.run_id)
+    if isinstance(model, WorkflowArtifactV1):
+        return workflow_artifact_id(model.artifact_id)
+    if isinstance(model, RecommendationV1):
+        return recommendation_id(model.legacy_id or f"{model.report_type}:{model.as_of}:{model.action}:{model.ticker}")
+    if isinstance(model, ReportRunV1):
+        return report_run_id(model.report_id)
+    if isinstance(model, DocumentArtifactV1):
+        return document_artifact_id(model.document_type, model.document_id)
     raise OntologySchemaValidationError(f"Unsupported node schema for type {node_type}")
 
 

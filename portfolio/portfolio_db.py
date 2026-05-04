@@ -190,6 +190,9 @@ def save_positions(positions: list[dict], role: str = "position") -> None:
     When ``role='position'`` (default) only regular position rows are deleted
     and re-inserted — hedge rows are left untouched, and vice-versa.
     """
+    from ontology.domain_write_service import assert_legacy_domain_write_allowed
+
+    assert_legacy_domain_write_allowed(f"portfolio_db.save_positions:{role}")
     if role not in ("position", "hedge"):
         raise ValueError(f"Invalid role: {role!r}")
     rows = _normalize_position_rows(positions, role)

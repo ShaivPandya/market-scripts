@@ -1735,6 +1735,12 @@ def _emit_core_audit(
         logger.debug("Failed to emit core audit event action=%s", action_name, exc_info=True)
 
 
+def _guard_legacy_domain_write(surface: str) -> None:
+    from ontology.domain_write_service import assert_legacy_domain_write_allowed
+
+    assert_legacy_domain_write_allowed(surface)
+
+
 # ---------------------------------------------------------------------------
 # Catalysts
 # ---------------------------------------------------------------------------
@@ -1749,6 +1755,7 @@ def create_catalyst(
     evidence: str | None = None,
     created_by: str = "user",
 ) -> dict:
+    _guard_legacy_domain_write("core_db.create_catalyst")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -1783,6 +1790,7 @@ def get_catalysts(ticker: str) -> list[dict]:
 
 
 def update_catalyst_status(catalyst_id: int, status: str, evidence: str | None = None) -> dict:
+    _guard_legacy_domain_write("core_db.update_catalyst_status")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -1815,6 +1823,7 @@ def create_kill_condition(
     threshold: str | None = None,
     created_by: str = "user",
 ) -> dict:
+    _guard_legacy_domain_write("core_db.create_kill_condition")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -1849,6 +1858,7 @@ def get_kill_conditions(ticker: str) -> list[dict]:
 
 
 def update_kill_condition_status(kc_id: int, status: str) -> dict:
+    _guard_legacy_domain_write("core_db.update_kill_condition_status")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -2127,6 +2137,7 @@ def _parse_report_run_json_fields(d: dict) -> dict:
 
 
 def upsert_report_run(record: dict) -> dict:
+    _guard_legacy_domain_write("core_db.upsert_report_run")
     conn = _get_conn()
     now = _now()
     report_type = str(record["report_type"])
@@ -2218,6 +2229,7 @@ def create_action_item(
     source_type: str = "user",
     source_id: str | None = None,
 ) -> dict:
+    _guard_legacy_domain_write("core_db.create_action_item")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -2294,6 +2306,7 @@ def get_action_items(
 
 
 def complete_action_item(item_id: int, resolution_note: str = "") -> dict:
+    _guard_legacy_domain_write("core_db.complete_action_item")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -2310,6 +2323,7 @@ def complete_action_item(item_id: int, resolution_note: str = "") -> dict:
 
 
 def dismiss_action_item(item_id: int) -> dict:
+    _guard_legacy_domain_write("core_db.dismiss_action_item")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -2340,6 +2354,7 @@ def create_watch_trigger(
     expires_at: str | None = None,
     definition: dict | None = None,
 ) -> dict:
+    _guard_legacy_domain_write("core_db.create_watch_trigger")
     conn = _get_conn()
     now = _now()
     trigger_type = str(trigger_type or "custom").strip().lower()
@@ -2449,6 +2464,7 @@ def update_watch_trigger_check(
     result: dict | None = None,
     evidence: str | None = None,
 ) -> dict:
+    _guard_legacy_domain_write("core_db.update_watch_trigger_check")
     conn = _get_conn()
     now = _now()
     result_json = json.dumps(result or {}, default=str)
@@ -2466,6 +2482,7 @@ def update_watch_trigger_check(
 
 
 def update_watch_trigger_definition(trigger_id: int, definition: dict) -> dict:
+    _guard_legacy_domain_write("core_db.update_watch_trigger_definition")
     conn = _get_conn()
     definition_json = json.dumps(definition, default=str)
     with _lock:
@@ -2487,6 +2504,7 @@ def fire_watch_trigger(
     result: dict | None = None,
     evidence: str | None = None,
 ) -> dict:
+    _guard_legacy_domain_write("core_db.fire_watch_trigger")
     conn = _get_conn()
     now = _now()
     result_json = json.dumps(result or {}, default=str)
@@ -2504,6 +2522,7 @@ def fire_watch_trigger(
 
 
 def cancel_watch_trigger(trigger_id: int) -> dict:
+    _guard_legacy_domain_write("core_db.cancel_watch_trigger")
     conn = _get_conn()
     with _lock:
         row = conn.execute("SELECT * FROM watch_triggers WHERE id = ?", (trigger_id,)).fetchone()
@@ -2626,6 +2645,7 @@ def _parse_thesis_claim_json_fields(d: dict) -> dict:
 
 
 def create_thesis_claim(record: dict) -> dict:
+    _guard_legacy_domain_write("core_db.create_thesis_claim")
     conn = _get_conn()
     now = _now()
     ticker = str(record["ticker"]).upper()
@@ -2726,6 +2746,7 @@ def delete_thesis_claims_by_ticker(
     exclude_ids: list[int] | None = None,
 ) -> int:
     """Delete thesis claims for a ticker, optionally scoped to a source."""
+    _guard_legacy_domain_write("core_db.delete_thesis_claims_by_ticker")
     conn = _get_conn()
     clauses = ["ticker = ?"]
     params: list[Any] = [ticker.upper()]
@@ -2747,6 +2768,7 @@ def delete_thesis_claims_by_ticker(
 
 
 def update_thesis_claim(claim_id: int, updates: dict) -> dict:
+    _guard_legacy_domain_write("core_db.update_thesis_claim")
     allowed = {
         "claim",
         "expected_evidence",
@@ -2806,6 +2828,7 @@ def create_research_note(
     source_type: str = "user",
     source_id: str | None = None,
 ) -> dict:
+    _guard_legacy_domain_write("core_db.create_research_note")
     conn = _get_conn()
     now = _now()
     with _lock:
@@ -2903,6 +2926,7 @@ def _parse_recommendation_json_fields(d: dict) -> dict:
 
 
 def create_recommendation(record: dict) -> dict:
+    _guard_legacy_domain_write("core_db.create_recommendation")
     conn = _get_conn()
     now = record.get("created_at") or _now()
     ticker = record.get("ticker")
@@ -2966,6 +2990,7 @@ def create_recommendation(record: dict) -> dict:
 
 
 def upsert_recommendation(record: dict) -> dict:
+    _guard_legacy_domain_write("core_db.upsert_recommendation")
     if not record.get("idempotency_key"):
         return create_recommendation(record)
 

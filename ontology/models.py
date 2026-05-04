@@ -3,7 +3,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-EntityType = Literal["Asset", "Sector", "MacroIndicator", "Signal", "Position", "Thesis", "Evaluation", "Catalyst"]
+EntityType = Literal[
+    "Asset",
+    "Sector",
+    "MacroIndicator",
+    "Signal",
+    "Position",
+    "HedgePosition",
+    "Thesis",
+    "Evaluation",
+    "Catalyst",
+    "KillCondition",
+    "ThesisClaim",
+    "ActionItem",
+    "WatchTrigger",
+    "ResearchNote",
+    "Approval",
+    "ActionRun",
+    "ActionEvent",
+    "WorkflowRun",
+    "WorkflowArtifact",
+    "Recommendation",
+    "ReportRun",
+    "DocumentArtifact",
+]
 RelationType = Literal[
     "references_asset",
     "belongs_to_sector",
@@ -13,6 +36,19 @@ RelationType = Literal[
     "emits_signal",
     "affected_by",
     "exposed_to_signal",
+    "position_has_hedge",
+    "thesis_has_kill_condition",
+    "thesis_has_claim",
+    "claim_links_catalyst",
+    "claim_links_kill_condition",
+    "action_item_targets_object",
+    "watch_trigger_targets_object",
+    "approval_proposes_action",
+    "approval_applies_action_run",
+    "action_run_mutates_object_version",
+    "workflow_run_produces_artifact",
+    "report_run_produces_recommendation",
+    "source_record_materializes_object",
 ]
 ParserSource = Literal["structured", "llm", "deterministic_fallback"]
 

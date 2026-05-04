@@ -150,6 +150,9 @@ def _backfill_from_markdown(conn: sqlite3.Connection) -> None:
 
 def upsert_thesis_meta(ticker: str, status: str = "active") -> dict:
     """Create thesis_meta row if missing, or update updated_at if it exists."""
+    from ontology.domain_write_service import assert_legacy_domain_write_allowed
+
+    assert_legacy_domain_write_allowed("thesis_db.upsert_thesis_meta")
     if use_postgres_state():
         return _pg_upsert_thesis_meta(ticker, status=status)
 
@@ -223,6 +226,9 @@ def get_all_thesis_meta() -> list[dict]:
 
 def update_thesis_status(ticker: str, new_status: str, reason: str = "") -> dict:
     """Change thesis status and append a history row. Returns updated meta."""
+    from ontology.domain_write_service import assert_legacy_domain_write_allowed
+
+    assert_legacy_domain_write_allowed("thesis_db.update_thesis_status")
     if use_postgres_state():
         return _pg_update_thesis_status(ticker, new_status, reason=reason)
 
@@ -272,6 +278,9 @@ def get_status_history(ticker: str) -> list[dict]:
 
 def save_evaluations(evaluated_at: str, evaluations: list[dict]) -> int:
     """Bulk insert weekly monitoring evaluations. Returns count of rows saved."""
+    from ontology.domain_write_service import assert_legacy_domain_write_allowed
+
+    assert_legacy_domain_write_allowed("thesis_db.save_evaluations")
     if use_postgres_state():
         return _pg_save_evaluations(evaluated_at, evaluations)
 

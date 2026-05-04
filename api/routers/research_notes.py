@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from api.action_execution import execute_api_action
+
 router = APIRouter()
 
 
@@ -29,12 +31,8 @@ def list_research_notes(
 
 @router.post("/research-notes")
 def create_research_note(body: CreateResearchNoteRequest):
-    from portfolio.core_db import create_research_note
-
-    return create_research_note(
-        title=body.title,
-        content=body.content,
-        ticker=body.ticker,
-        note_type=body.note_type,
-        source_type="user",
+    return execute_api_action(
+        "create_research_note",
+        body.model_dump(),
+        source_id="research_notes.create_research_note",
     )

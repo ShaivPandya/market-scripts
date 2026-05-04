@@ -9,15 +9,29 @@ from typing import Any, cast
 
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.schemas.identity import (
+    action_event_id,
+    action_item_id,
+    action_run_id,
+    approval_id,
     asset_id,
     canonical_ticker,
     catalyst_id,
+    document_artifact_id,
     evaluation_id,
+    hedge_position_id,
+    kill_condition_id,
     macro_indicator_id,
     position_id,
+    recommendation_id,
+    report_run_id,
+    research_note_id,
     sector_id,
     signal_id,
+    thesis_claim_id,
     thesis_id,
+    watch_trigger_id,
+    workflow_artifact_id,
+    workflow_run_id,
 )
 from ontology.schemas.registry import NODE_SCHEMAS, normalize_edge, normalize_node
 from ontology.schemas.relations import RELATION_REGISTRY
@@ -194,6 +208,26 @@ class OntologyObjectService:
         )
         return with_temporal_meta(row)
 
+    def expire_object(
+        self,
+        object_uid: str,
+        *,
+        valid_from: datetime | str | None = None,
+        valid_to: datetime | str | None = None,
+        tx_to: datetime | str | None = None,
+    ) -> int:
+        return self.repo.expire_object_versions(object_uid, valid_from=valid_from, valid_to=valid_to, tx_to=tx_to)
+
+    def expire_relation(
+        self,
+        relation_uid: str,
+        *,
+        valid_from: datetime | str | None = None,
+        valid_to: datetime | str | None = None,
+        tx_to: datetime | str | None = None,
+    ) -> int:
+        return self.repo.expire_relation_versions(relation_uid, valid_from=valid_from, valid_to=valid_to, tx_to=tx_to)
+
 
 def normalize_object_payload(
     object_uid: str,
@@ -266,31 +300,105 @@ def normalize_relation_payload(
 def object_uid_for(object_type: str, business_key: str, properties: Mapping[str, Any] | None = None) -> str:
     props = dict(properties or {})
     key = str(business_key or "").strip()
-    if ":" in key and key.split(":", 1)[0]:
-        return key
     if object_type == "Position":
+        if key.startswith("position:"):
+            return key
         return position_id(canonical_ticker(props.get("ticker") or key))
+    if object_type == "HedgePosition":
+        if key.startswith("hedge_position:"):
+            return key
+        return hedge_position_id(canonical_ticker(props.get("ticker") or key))
     if object_type == "Asset":
+        if key.startswith("asset:"):
+            return key
         return asset_id(canonical_ticker(props.get("ticker") or key))
     if object_type == "Sector":
+        if key.startswith("sector:"):
+            return key
         return sector_id(str(props.get("name") or key))
     if object_type == "MacroIndicator":
+        if key.startswith("macro_indicator:"):
+            return key
         return macro_indicator_id(str(props.get("indicator_key") or key))
     if object_type == "Signal":
+        if key.startswith("signal:"):
+            return key
         source = props.get("source") or props.get("module") or props.get("adapter") or "unknown"
         name = props.get("name") or props.get("signal_key") or key
         return signal_id(source, name)
     if object_type == "Thesis":
+        if key.startswith("thesis:"):
+            return key
         return thesis_id(canonical_ticker(props.get("ticker") or key))
     if object_type == "Evaluation":
+        if key.startswith("evaluation:"):
+            return key
         ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
         evaluated_at = str(props.get("evaluated_at") or key)
         return evaluation_id(ticker, evaluated_at)
     if object_type == "Catalyst":
+        if key.startswith("catalyst:"):
+            return key
         ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
         name = str(props.get("name") or props.get("description") or key)
         description = str(props.get("description") or name)
         return catalyst_id(ticker, name, description)
+    if object_type == "KillCondition":
+        if key.startswith("kill_condition:"):
+            return key
+        ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
+        return kill_condition_id(ticker, props.get("legacy_id") or props.get("condition") or key)
+    if object_type == "ThesisClaim":
+        if key.startswith("thesis_claim:"):
+            return key
+        ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
+        return thesis_claim_id(ticker, props.get("legacy_id") or props.get("claim") or key)
+    if object_type == "ActionItem":
+        if key.startswith("action_item:"):
+            return key
+        return action_item_id(props.get("legacy_id") or key)
+    if object_type == "WatchTrigger":
+        if key.startswith("watch_trigger:"):
+            return key
+        return watch_trigger_id(props.get("legacy_id") or key)
+    if object_type == "ResearchNote":
+        if key.startswith("research_note:"):
+            return key
+        return research_note_id(props.get("legacy_id") or key)
+    if object_type == "Approval":
+        if key.startswith("approval:"):
+            return key
+        return approval_id(props.get("legacy_id") or key)
+    if object_type == "ActionRun":
+        if key.startswith("action_run:"):
+            return key
+        return action_run_id(props.get("legacy_id") or key)
+    if object_type == "ActionEvent":
+        if key.startswith("action_event:"):
+            return key
+        return action_event_id(props.get("legacy_id") or key)
+    if object_type == "WorkflowRun":
+        if key.startswith("workflow_run:"):
+            return key
+        return workflow_run_id(props.get("run_id") or key)
+    if object_type == "WorkflowArtifact":
+        if key.startswith("workflow_artifact:"):
+            return key
+        return workflow_artifact_id(props.get("artifact_id") or key)
+    if object_type == "Recommendation":
+        if key.startswith("recommendation:"):
+            return key
+        return recommendation_id(props.get("legacy_id") or key)
+    if object_type == "ReportRun":
+        if key.startswith("report_run:"):
+            return key
+        return report_run_id(props.get("report_id") or key)
+    if object_type == "DocumentArtifact":
+        if key.startswith("document_artifact:"):
+            return key
+        return document_artifact_id(props.get("document_type") or "document", props.get("document_id") or key)
+    if ":" in key and key.split(":", 1)[0]:
+        return key
     return f"{_slug(object_type)}:{_slug(key)}"
 
 

@@ -19,7 +19,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -747,6 +747,97 @@ def _link_action_result_entities(
         )
 
 
+def _record_ontology_write_boundary_versions(
+    *,
+    action: DomainAction,
+    context: ActionContext,
+    run_id: int,
+    input_hash: str | None,
+    normalized_input: dict[str, Any],
+    output: dict[str, Any],
+) -> None:
+    primary = False
+    try:
+        from ontology.domain_write_service import ontology_primary_writes_enabled, record_action_ontology_versions
+        from portfolio import core_db
+
+        primary = ontology_primary_writes_enabled()
+        rows = record_action_ontology_versions(
+            action_id=action.action_id,
+            input_payload=normalized_input,
+            output=output,
+            context=context,
+            input_hash=input_hash,
+        )
+        if rows:
+            core_db.record_action_event(
+                run_id,
+                "ontology_versions_written",
+                payload={
+                    "action_id": action.action_id,
+                    "count": len(rows),
+                    "version_ids": [_ontology_version_id(row) for row in rows if _ontology_version_id(row)],
+                },
+            )
+    except Exception as exc:
+        message = str(exc).strip() or exc.__class__.__name__
+        try:
+            from portfolio import core_db
+
+            core_db.record_action_event(run_id, "ontology_write_failed", message=message)
+        except Exception:
+            pass
+        if primary:
+            raise
+        logger.warning("Ontology write-boundary mirror failed for %s", action.action_id, exc_info=True)
+
+
+def _ontology_version_id(row: Mapping[str, Any]) -> str | None:
+    meta = row.get("_meta")
+    if isinstance(meta, Mapping):
+        temporal = meta.get("temporal")
+        if isinstance(temporal, Mapping) and temporal.get("version_id"):
+            return str(temporal["version_id"])
+    value = row.get("version_id")
+    return str(value) if value else None
+
+
+def _record_pending_approval_ontology_version(
+    *,
+    approval: Mapping[str, Any],
+    context: ActionContext,
+    run_id: int,
+    input_hash: str | None,
+) -> None:
+    primary = False
+    try:
+        from ontology.domain_write_service import (
+            ontology_primary_writes_enabled,
+            record_pending_approval_ontology_version,
+        )
+        from portfolio import core_db
+
+        primary = ontology_primary_writes_enabled()
+        row = record_pending_approval_ontology_version(approval, context=context, input_hash=input_hash)
+        if row:
+            core_db.record_action_event(
+                run_id,
+                "ontology_approval_version_written",
+                payload={"version_id": _ontology_version_id(row), "approval_id": approval.get("id")},
+            )
+    except Exception as exc:
+        message = str(exc).strip() or exc.__class__.__name__
+        try:
+            from portfolio import core_db
+
+            core_db.record_action_event(run_id, "ontology_write_failed", message=message)
+        except Exception:
+            pass
+        if primary:
+            raise
+        logger.warning("Ontology approval mirror failed for approval=%s", approval.get("id"), exc_info=True)
+
+
 def _action_result_refs(
     action_id: str,
     output: dict[str, Any],
@@ -868,7 +959,7 @@ def execute_action(
     audit_action = action
     if input_schema_version is not None and input_schema_version != action.schema_version:
         audit_action = replace(action, schema_version=int(input_schema_version))
-    run_id, _input_hash = _audit_start(audit_action, raw_input, context)
+    run_id, input_hash = _audit_start(audit_action, raw_input, context)
     context = replace(context, action_run_id=run_id, provenance_event_id=_action_run_provenance_id(run_id))
 
     from portfolio import core_db
@@ -897,6 +988,14 @@ def execute_action(
         core_db.record_action_event(run_id, "mutation_started")
         result = action.handler(typed_input, context)
         core_db.record_action_event(run_id, "mutation_completed", payload=result.output)
+        _record_ontology_write_boundary_versions(
+            action=action,
+            context=context,
+            run_id=run_id,
+            input_hash=input_hash,
+            normalized_input=normalized,
+            output=result.output,
+        )
 
         for callback in result.post_commit_callbacks:
             try:
@@ -1033,6 +1132,12 @@ def propose_action(
             "entity_type": approval["entity_type"],
             "ticker": approval.get("ticker"),
         }
+        _record_pending_approval_ontology_version(
+            approval=approval,
+            context=replace(context, action_run_id=run_id, provenance_event_id=proposal_event_id),
+            run_id=run_id,
+            input_hash=input_hash,
+        )
         core_db.record_action_event(run_id, "approval_created", payload=output)
         core_db.complete_action_run(run_id, status="succeeded", output_payload=output)
         _finish_action_provenance(

@@ -101,6 +101,99 @@ def test_execute_portfolio_action_writes_positions_and_audit_events():
     assert succeeded["after_summary"]["status"] == "ok"
 
 
+def test_execute_action_shadow_writes_ontology_versions(monkeypatch):
+    captured: dict[str, list[dict]] = {"objects": [], "relations": []}
+
+    class FakeObjectService:
+        def write_object(self, object_type, business_key, properties, valid_from, **kwargs):
+            version_id = f"version-{len(captured['objects']) + 1}"
+            object_uid = f"{object_type}:{business_key}"
+            row = {
+                "version_id": version_id,
+                "object_uid": object_uid,
+                "object_type": object_type,
+                "business_key": business_key,
+                "properties": dict(properties),
+                "_meta": {"temporal": {"object_uid": object_uid, "version_id": version_id}},
+            }
+            captured["objects"].append({**row, "kwargs": kwargs, "valid_from": valid_from})
+            return row
+
+        def write_relation(self, source_uid, target_uid, relation_type, properties, valid_from, **kwargs):
+            captured["relations"].append(
+                {
+                    "source_uid": source_uid,
+                    "target_uid": target_uid,
+                    "relation_type": relation_type,
+                    "properties": dict(properties),
+                    "valid_from": valid_from,
+                    "kwargs": kwargs,
+                }
+            )
+            return {
+                "relation_uid": f"{relation_type}:{source_uid}->{target_uid}",
+                "_meta": {"temporal": {"version_id": f"relation-{len(captured['relations'])}"}},
+            }
+
+    import ontology.domain_write_service as domain_write_service
+
+    monkeypatch.setenv("ONTOLOGY_SHADOW_WRITES", "true")
+    monkeypatch.setattr(domain_write_service, "OntologyObjectService", FakeObjectService)
+
+    result = execute_action(
+        "create_action_item",
+        {"description": "Review MU", "action_type": "review", "ticker": "MU", "urgency": "high"},
+        ActionContext(actor_type="user", source_type="api", source_id="shadow-test"),
+    )
+
+    assert result.output["description"] == "Review MU"
+    assert [row["object_type"] for row in captured["objects"]] == ["ActionRun", "ActionItem"]
+    action_item = captured["objects"][1]
+    assert action_item["properties"]["ticker"] == "MU"
+    assert action_item["kwargs"]["action_run_id"] == 1
+    assert action_item["kwargs"]["input_hash"]
+    assert captured["relations"][0]["relation_type"] == "action_run_mutates_object_version"
+    events = [event["event_type"] for event in core_db.get_action_events(1)]
+    assert "ontology_versions_written" in events
+
+
+def test_propose_action_shadow_writes_pending_approval(monkeypatch):
+    captured: list[dict] = []
+
+    class FakeObjectService:
+        def write_object(self, object_type, business_key, properties, valid_from, **kwargs):
+            captured.append(
+                {
+                    "object_type": object_type,
+                    "business_key": business_key,
+                    "properties": dict(properties),
+                    "valid_from": valid_from,
+                    "kwargs": kwargs,
+                    "_meta": {"temporal": {"version_id": "approval-version"}},
+                }
+            )
+            return captured[-1]
+
+    import ontology.domain_write_service as domain_write_service
+
+    monkeypatch.setenv("ONTOLOGY_SHADOW_WRITES", "true")
+    monkeypatch.setattr(domain_write_service, "OntologyObjectService", FakeObjectService)
+
+    approval = propose_action(
+        "create_action_item",
+        {"description": "Review CRWD", "action_type": "review", "ticker": "CRWD"},
+        ActionContext(actor_type="agent", source_type="agent", source_id="agent-1"),
+        reason="needs review",
+    )
+
+    assert approval["entity_type"] == "action_item"
+    assert captured[0]["object_type"] == "Approval"
+    assert captured[0]["properties"]["action_id"] == "create_action_item"
+    assert captured[0]["properties"]["ticker"] == "CRWD"
+    events = [event["event_type"] for event in core_db.get_action_events(1)]
+    assert "ontology_approval_version_written" in events
+
+
 def test_execute_action_denies_agent_direct_mutation_and_audits_failure():
     with pytest.raises(ActionAuthorizationError):
         execute_action(

@@ -129,19 +129,34 @@ def seed_schema_definitions(conn: Any, definitions: Iterable[SchemaDefinition]) 
 
 def ontology_schema_definitions() -> list[SchemaDefinition]:
     from ontology.schemas.objects import (
+        ActionEventV1,
+        ActionItemV1,
+        ActionRunV1,
+        ApprovalV1,
         AssetV1,
         CatalystV1,
+        DocumentArtifactV1,
         EvaluationV1,
+        HedgePositionV1,
+        KillConditionV1,
         MacroIndicatorV1,
         PositionV1,
+        RecommendationV1,
+        ReportRunV1,
+        ResearchNoteV1,
         SectorV1,
         SignalV1,
+        ThesisClaimV1,
         ThesisV1,
+        WatchTriggerV1,
+        WorkflowArtifactV1,
+        WorkflowRunV1,
     )
     from ontology.schemas.relations import RELATION_REGISTRY, PositionSignalExposureV1, RelationPropertiesV1
 
     object_models: Sequence[tuple[str, type[BaseModel]]] = (
         ("Position", PositionV1),
+        ("HedgePosition", HedgePositionV1),
         ("Asset", AssetV1),
         ("Sector", SectorV1),
         ("MacroIndicator", MacroIndicatorV1),
@@ -149,6 +164,19 @@ def ontology_schema_definitions() -> list[SchemaDefinition]:
         ("Thesis", ThesisV1),
         ("Evaluation", EvaluationV1),
         ("Catalyst", CatalystV1),
+        ("KillCondition", KillConditionV1),
+        ("ThesisClaim", ThesisClaimV1),
+        ("ActionItem", ActionItemV1),
+        ("WatchTrigger", WatchTriggerV1),
+        ("ResearchNote", ResearchNoteV1),
+        ("Approval", ApprovalV1),
+        ("ActionRun", ActionRunV1),
+        ("ActionEvent", ActionEventV1),
+        ("WorkflowRun", WorkflowRunV1),
+        ("WorkflowArtifact", WorkflowArtifactV1),
+        ("Recommendation", RecommendationV1),
+        ("ReportRun", ReportRunV1),
+        ("DocumentArtifact", DocumentArtifactV1),
     )
     definitions = [
         SchemaDefinition(

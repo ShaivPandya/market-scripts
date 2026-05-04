@@ -18,6 +18,19 @@ HAS_CATALYST: RelationType = "has_catalyst"
 EMITS_SIGNAL: RelationType = "emits_signal"
 AFFECTED_BY: RelationType = "affected_by"
 EXPOSED_TO_SIGNAL: RelationType = "exposed_to_signal"
+POSITION_HAS_HEDGE: RelationType = "position_has_hedge"
+THESIS_HAS_KILL_CONDITION: RelationType = "thesis_has_kill_condition"
+THESIS_HAS_CLAIM: RelationType = "thesis_has_claim"
+CLAIM_LINKS_CATALYST: RelationType = "claim_links_catalyst"
+CLAIM_LINKS_KILL_CONDITION: RelationType = "claim_links_kill_condition"
+ACTION_ITEM_TARGETS_OBJECT: RelationType = "action_item_targets_object"
+WATCH_TRIGGER_TARGETS_OBJECT: RelationType = "watch_trigger_targets_object"
+APPROVAL_PROPOSES_ACTION: RelationType = "approval_proposes_action"
+APPROVAL_APPLIES_ACTION_RUN: RelationType = "approval_applies_action_run"
+ACTION_RUN_MUTATES_OBJECT_VERSION: RelationType = "action_run_mutates_object_version"
+WORKFLOW_RUN_PRODUCES_ARTIFACT: RelationType = "workflow_run_produces_artifact"
+REPORT_RUN_PRODUCES_RECOMMENDATION: RelationType = "report_run_produces_recommendation"
+SOURCE_RECORD_MATERIALIZES_OBJECT: RelationType = "source_record_materializes_object"
 
 
 class RelationCardinality(StrEnum):
@@ -99,6 +112,110 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
             {"component", "source", "name", "threshold", "direction", "contribution", "ontology_run_id"}
         ),
     ),
+    POSITION_HAS_HEDGE: RelationDefinition(
+        name=POSITION_HAS_HEDGE,
+        source_type="Position",
+        target_type="HedgePosition",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    THESIS_HAS_KILL_CONDITION: RelationDefinition(
+        name=THESIS_HAS_KILL_CONDITION,
+        source_type="Thesis",
+        target_type="KillCondition",
+        cardinality=RelationCardinality.TARGET_UNIQUE,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    THESIS_HAS_CLAIM: RelationDefinition(
+        name=THESIS_HAS_CLAIM,
+        source_type="Thesis",
+        target_type="ThesisClaim",
+        cardinality=RelationCardinality.TARGET_UNIQUE,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    CLAIM_LINKS_CATALYST: RelationDefinition(
+        name=CLAIM_LINKS_CATALYST,
+        source_type="ThesisClaim",
+        target_type="Catalyst",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    CLAIM_LINKS_KILL_CONDITION: RelationDefinition(
+        name=CLAIM_LINKS_KILL_CONDITION,
+        source_type="ThesisClaim",
+        target_type="KillCondition",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ACTION_ITEM_TARGETS_OBJECT: RelationDefinition(
+        name=ACTION_ITEM_TARGETS_OBJECT,
+        source_type="ActionItem",
+        target_type="Thesis",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "target_object_type"}),
+        optional=True,
+    ),
+    WATCH_TRIGGER_TARGETS_OBJECT: RelationDefinition(
+        name=WATCH_TRIGGER_TARGETS_OBJECT,
+        source_type="WatchTrigger",
+        target_type="Thesis",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "target_object_type"}),
+        optional=True,
+    ),
+    APPROVAL_PROPOSES_ACTION: RelationDefinition(
+        name=APPROVAL_PROPOSES_ACTION,
+        source_type="Approval",
+        target_type="ActionRun",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "action_id"}),
+        optional=True,
+    ),
+    APPROVAL_APPLIES_ACTION_RUN: RelationDefinition(
+        name=APPROVAL_APPLIES_ACTION_RUN,
+        source_type="Approval",
+        target_type="ActionRun",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    ACTION_RUN_MUTATES_OBJECT_VERSION: RelationDefinition(
+        name=ACTION_RUN_MUTATES_OBJECT_VERSION,
+        source_type="ActionRun",
+        target_type="DocumentArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "object_uid", "version_id"}),
+        optional=True,
+    ),
+    WORKFLOW_RUN_PRODUCES_ARTIFACT: RelationDefinition(
+        name=WORKFLOW_RUN_PRODUCES_ARTIFACT,
+        source_type="WorkflowRun",
+        target_type="WorkflowArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    REPORT_RUN_PRODUCES_RECOMMENDATION: RelationDefinition(
+        name=REPORT_RUN_PRODUCES_RECOMMENDATION,
+        source_type="ReportRun",
+        target_type="Recommendation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    SOURCE_RECORD_MATERIALIZES_OBJECT: RelationDefinition(
+        name=SOURCE_RECORD_MATERIALIZES_OBJECT,
+        source_type="DocumentArtifact",
+        target_type="DocumentArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "source_record_id", "object_uid"}),
+        optional=True,
+    ),
 }
 
 ALLOWED_RELATIONS: dict[str, tuple[EntityType, EntityType]] = {
@@ -111,13 +228,26 @@ RELATION_TYPE_SQL_VALUES = ", ".join(f"'{relation_type}'" for relation_type in R
 class RelationPropertiesV1(OntologySchemaBase):
     ontology_run_id: NonBlankStr
     source: str | None = None
+    action_id: str | None = None
+    object_uid: str | None = None
+    version_id: str | None = None
+    source_record_id: str | None = None
+    target_object_type: str | None = None
 
     @field_validator("ontology_run_id", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("source", mode="before")
+    @field_validator(
+        "source",
+        "action_id",
+        "object_uid",
+        "version_id",
+        "source_record_id",
+        "target_object_type",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)

@@ -303,6 +303,33 @@ class TemporalOntologyRepository:
         _link_version_provenance("ontology_object_version", out.get("version_id"), replacement.provenance_event_id)
         return out
 
+    def expire_object_versions(
+        self,
+        object_uid: str,
+        *,
+        valid_from: datetime | str | None = None,
+        valid_to: datetime | str | None = None,
+        tx_to: datetime | str | None = None,
+    ) -> int:
+        """Close current transaction-time object versions for an object UID."""
+        tx_to_ts = _parse_optional_ts(tx_to) or _now()
+        valid_from_ts = _parse_optional_ts(valid_from) or datetime.min.replace(tzinfo=UTC)
+        valid_to_ts = _parse_optional_ts(valid_to)
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE ontology_object_versions
+                SET tx_to = %s
+                WHERE object_uid = %s
+                  AND tx_to IS NULL
+                  AND valid_from < COALESCE(%s, 'infinity'::timestamptz)
+                  AND COALESCE(valid_to, 'infinity'::timestamptz) > %s
+                """,
+                (tx_to_ts, object_uid, valid_to_ts, valid_from_ts),
+            )
+            conn.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
+
     def write_relation_version(self, write: RelationVersionWrite) -> dict[str, Any]:
         version_id = uuid.uuid4()
         valid_from = _parse_ts(write.valid_from)
@@ -384,6 +411,33 @@ class TemporalOntologyRepository:
         out = _normalize_required_row(row)
         _link_version_provenance("relation_version", out.get("version_id"), write.provenance_event_id)
         return out
+
+    def expire_relation_versions(
+        self,
+        relation_uid: str,
+        *,
+        valid_from: datetime | str | None = None,
+        valid_to: datetime | str | None = None,
+        tx_to: datetime | str | None = None,
+    ) -> int:
+        """Close current transaction-time relation versions for a relation UID."""
+        tx_to_ts = _parse_optional_ts(tx_to) or _now()
+        valid_from_ts = _parse_optional_ts(valid_from) or datetime.min.replace(tzinfo=UTC)
+        valid_to_ts = _parse_optional_ts(valid_to)
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE ontology_relation_versions
+                SET tx_to = %s
+                WHERE relation_uid = %s
+                  AND tx_to IS NULL
+                  AND valid_from < COALESCE(%s, 'infinity'::timestamptz)
+                  AND COALESCE(valid_to, 'infinity'::timestamptz) > %s
+                """,
+                (tx_to_ts, relation_uid, valid_to_ts, valid_from_ts),
+            )
+            conn.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     def query_relations(
         self,
