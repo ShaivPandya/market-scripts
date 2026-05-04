@@ -119,7 +119,7 @@ upsert_counter_metric \
 
 policy_file="${_repo_root}/infra/gcp/monitoring-governance-alerts.json"
 policy_name="$(
-  gcloud alpha monitoring policies list \
+  gcloud monitoring policies list \
     --project="${PROJECT_ID}" \
     --filter='displayName="Governance audit and provenance health"' \
     --format='value(name)' \
@@ -127,12 +127,12 @@ policy_name="$(
 )"
 if [[ -n "${policy_name}" ]]; then
   log "Updating alert policy ${policy_name}"
-  gcloud alpha monitoring policies update "${policy_name}" \
+  gcloud monitoring policies update "${policy_name}" \
     --project="${PROJECT_ID}" \
     --policy-from-file="${policy_file}"
 else
   log "Creating alert policy"
-  gcloud alpha monitoring policies create \
+  gcloud monitoring policies create \
     --project="${PROJECT_ID}" \
     --policy-from-file="${policy_file}"
 fi
