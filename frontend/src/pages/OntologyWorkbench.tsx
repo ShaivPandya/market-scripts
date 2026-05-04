@@ -5,6 +5,7 @@ import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchOntologyRuns,
   runOntologyQueryAsync,
+  type OntologyEvidence,
   type OntologyResponse,
   type OntologyRunSummary,
   type ProvenanceSelector,
