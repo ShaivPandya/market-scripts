@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { X, Trash2, Send, Square, MessageCircle, Maximize2, Minimize2, History, ArrowLeft, Zap, ChevronDown, SquarePen, SlidersHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { fetchAgentWorkflows, type AgentWorkflow } from "@/lib/api"
 import { useAgentChat, fetchSessionHistory, deleteSession, type AgentPreferenceLevel, type AgentResponsePreferences, type SessionSummary } from "@/hooks/useAgentChat"
 import { AgentMessage } from "./AgentMessage"
 import type { ScreenContext } from "@/contexts/ScreenContext"
@@ -67,23 +69,6 @@ function normalizePreferences(prefs: AgentResponsePreferences): AgentResponsePre
 }
 
 // ---------------------------------------------------------------------------
-// Workflow definitions (mirrors backend AVAILABLE_WORKFLOWS)
-// ---------------------------------------------------------------------------
-
-interface WorkflowDef {
-  name: string
-  label: string
-  description: string
-  requiresTicker: boolean
-}
-
-const WORKFLOWS: WorkflowDef[] = [
-  { name: "morning_brief", label: "Morning Brief", description: "Macro + portfolio + signals overview", requiresTicker: false },
-  { name: "thesis_review", label: "Thesis Review", description: "Deep review of a position's thesis", requiresTicker: true },
-  { name: "pre_earnings", label: "Pre-Earnings Prep", description: "Earnings briefing with risk scenarios", requiresTicker: true },
-]
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -107,6 +92,16 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
   const [draftPreferences, setDraftPreferences] = useState<AgentResponsePreferences>(preferences)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const workflowsQuery = useQuery({
+    queryKey: ["agent-workflows"],
+    queryFn: fetchAgentWorkflows,
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  })
+  const workflows = workflowsQuery.data ?? []
+  const portfolioWorkflows = workflows.filter(wf => !wf.requiresTicker)
+  const positionWorkflows = workflows.filter(wf => wf.requiresTicker)
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -142,7 +137,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     sendMessage(prompt, screenContext, preferences)
   }
 
-  function handleWorkflow(wf: WorkflowDef) {
+  function handleWorkflow(wf: AgentWorkflow) {
     const ticker = workflowTicker.trim().toUpperCase()
     if (wf.requiresTicker && !ticker) return
     const cmd = wf.requiresTicker
@@ -151,6 +146,22 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     sendMessage(cmd, screenContext, preferences)
     setWorkflowTicker("")
     setShowWorkflows(false)
+  }
+
+  function renderWorkflowButton(wf: AgentWorkflow) {
+    const disabled = wf.requiresTicker && !workflowTicker.trim()
+    return (
+      <button
+        key={wf.name}
+        type="button"
+        onClick={() => handleWorkflow(wf)}
+        disabled={disabled}
+        className="theme-button-secondary min-h-8 rounded-md px-2 py-1 text-[11px] text-muted transition-colors hover:text-app disabled:cursor-not-allowed disabled:opacity-40"
+        title={wf.description}
+      >
+        {wf.label}
+      </button>
+    )
   }
 
   async function handleShowHistory() {
@@ -516,35 +527,41 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
                     <ChevronDown size={10} className={cn("transition-transform", showWorkflows && "rotate-180")} />
                   </button>
                   {showWorkflows && (
-                    <div className="flex flex-wrap gap-1.5 mb-2">
-                      {WORKFLOWS.map(wf => (
-                        <div key={wf.name} className="flex items-center gap-1">
-                          {wf.requiresTicker && (
+                    <div className="mb-2 space-y-2">
+                      {workflowsQuery.isLoading && (
+                        <p className="text-[11px] text-muted">Loading workflows...</p>
+                      )}
+                      {workflowsQuery.isError && (
+                        <p className="text-[11px] text-muted">Workflows unavailable</p>
+                      )}
+                      {!workflowsQuery.isLoading && !workflowsQuery.isError && !workflows.length && (
+                        <p className="text-[11px] text-muted">No workflows configured</p>
+                      )}
+                      {!workflowsQuery.isLoading && !workflowsQuery.isError && portfolioWorkflows.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-[11px] font-medium text-subtle">Portfolio</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {portfolioWorkflows.map(renderWorkflowButton)}
+                          </div>
+                        </div>
+                      )}
+                      {!workflowsQuery.isLoading && !workflowsQuery.isError && positionWorkflows.length > 0 && (
+                        <div>
+                          <div className="mb-1 flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-medium text-subtle">Position</span>
                             <input
                               type="text"
                               value={workflowTicker}
                               onChange={e => setWorkflowTicker(e.target.value.toUpperCase())}
                               placeholder="TICKER"
-                              className="theme-input mono-text w-[72px] px-2 py-1 text-[11px]"
-                              onKeyDown={e => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault()
-                                  handleWorkflow(wf)
-                                }
-                              }}
+                              className="theme-input mono-text h-8 w-[84px] px-2 py-1 text-[11px]"
                             />
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleWorkflow(wf)}
-                            disabled={wf.requiresTicker && !workflowTicker.trim()}
-                            className="theme-button-secondary min-h-8 rounded-md px-2 py-1 text-[11px] text-muted transition-colors hover:text-app disabled:cursor-not-allowed disabled:opacity-40"
-                            title={wf.description}
-                          >
-                            {wf.label}
-                          </button>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {positionWorkflows.map(renderWorkflowButton)}
+                          </div>
                         </div>
-                      ))}
+                      )}
                     </div>
                   )}
                 </div>

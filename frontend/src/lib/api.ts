@@ -1313,6 +1313,29 @@ export const createResearchNote = (body: { title: string; content: string; ticke
   client.post("/research-notes", body).then(r => r.data)
 
 // Workflow Runs
+interface AgentWorkflowResponse {
+  name: string
+  label: string
+  description: string
+  requires_ticker: boolean
+}
+
+export interface AgentWorkflow {
+  name: string
+  label: string
+  description: string
+  requiresTicker: boolean
+}
+
+export const fetchAgentWorkflows = () =>
+  client.get("/agent/workflows").then(r =>
+    (r.data as AgentWorkflowResponse[]).map(wf => ({
+      name: wf.name,
+      label: wf.label,
+      description: wf.description,
+      requiresTicker: wf.requires_ticker,
+    })),
+  )
 export const fetchWorkflowRuns = (params?: { workflow_name?: string; ticker?: string; limit?: number }) =>
   client.get("/workflow-runs", { params }).then(r => r.data)
 export const fetchWorkflowRun = (runId: string) =>
