@@ -293,6 +293,7 @@ def test_async_job_runner_cli_marks_failure(monkeypatch):
 def test_stale_active_job_is_failed_and_no_longer_blocks_dedupe(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import get_job
+    from api.job_registry import get_job_spec
 
     cache.invalidate_all()
     monkeypatch.delenv("DATABASE_URL", raising=False)
@@ -306,7 +307,9 @@ def test_stale_active_job_is_failed_and_no_longer_blocks_dedupe(monkeypatch):
     )
 
     first, _disposition = async_job_runner.enqueue_registered_job("analyzer", {}, cache_key="stale-job")
-    stale_count = async_job_runner.fail_stale_active_jobs(datetime.now(UTC) + timedelta(seconds=181))
+    stale_count = async_job_runner.fail_stale_active_jobs(
+        datetime.now(UTC) + timedelta(seconds=get_job_spec("analyzer").timeout_s + 1)
+    )
 
     assert stale_count == 1
     assert get_job(first["job_id"])["status"] == "failed"
