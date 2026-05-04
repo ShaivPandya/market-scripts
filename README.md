@@ -175,6 +175,9 @@ Local password mode is the default:
 - Frontend `VITE_AUTH_MODE=password` or unset
 - Login sets an HTTP-only JWT cookie.
 - Frontend requests use `withCredentials: true`.
+- Login is protected by `AUTH_LOGIN_RATE_LIMIT` plus failed-attempt lockout:
+  `AUTH_LOGIN_FAILURE_LIMIT` failures within `AUTH_LOGIN_FAILURE_WINDOW_SECONDS`
+  blocks that client for `AUTH_LOGIN_LOCKOUT_SECONDS`.
 
 Cloudflare Access mode is also supported:
 

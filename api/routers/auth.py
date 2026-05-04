@@ -11,6 +11,9 @@ Dependency:
 """
 
 import os
+import threading
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated, Any, cast
 
@@ -28,6 +31,41 @@ _limiter = Limiter(key_func=get_remote_address)
 
 # ── Config (read from .env via load_dotenv() in main.py) ─────────────────────
 _LOGIN_RATE_LIMIT = (os.environ.get("AUTH_LOGIN_RATE_LIMIT") or "").strip() or "5/minute"
+_DEFAULT_LOGIN_FAILURE_LIMIT = 5
+_DEFAULT_LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+_DEFAULT_LOGIN_LOCKOUT_SECONDS = 15 * 60
+
+
+@dataclass
+class _LoginFailureState:
+    failures: list[float]
+    locked_until: float = 0.0
+
+
+_login_failure_lock = threading.Lock()
+_login_failures: dict[str, _LoginFailureState] = {}
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _login_failure_limit() -> int:
+    return max(0, _int_env("AUTH_LOGIN_FAILURE_LIMIT", _DEFAULT_LOGIN_FAILURE_LIMIT))
+
+
+def _login_failure_window_seconds() -> int:
+    return max(1, _int_env("AUTH_LOGIN_FAILURE_WINDOW_SECONDS", _DEFAULT_LOGIN_FAILURE_WINDOW_SECONDS))
+
+
+def _login_lockout_seconds() -> int:
+    return max(1, _int_env("AUTH_LOGIN_LOCKOUT_SECONDS", _DEFAULT_LOGIN_LOCKOUT_SECONDS))
 
 
 def _auth_mode() -> str:
@@ -82,6 +120,64 @@ def _create_token() -> str:
             algorithm=_get_jwt_algorithm(),
         ),
     )
+
+
+def _login_attempt_key(request: Request) -> str:
+    return f"ip:{get_remote_address(request) or 'unknown'}"
+
+
+def _retry_after_seconds(until: float, now: float) -> int:
+    return max(1, int(until - now + 0.999))
+
+
+def _reset_login_attempt_state() -> None:
+    """Clear in-memory login attempt state. Used by tests and local reloads."""
+    with _login_failure_lock:
+        _login_failures.clear()
+
+
+def _current_lockout_retry_after(request: Request) -> int | None:
+    limit = _login_failure_limit()
+    if limit <= 0:
+        return None
+
+    key = _login_attempt_key(request)
+    now = time.time()
+    window_start = now - _login_failure_window_seconds()
+    with _login_failure_lock:
+        state = _login_failures.get(key)
+        if state is None:
+            return None
+        state.failures = [ts for ts in state.failures if ts >= window_start]
+        if state.locked_until > now:
+            return _retry_after_seconds(state.locked_until, now)
+        if not state.failures:
+            _login_failures.pop(key, None)
+    return None
+
+
+def _record_failed_login(request: Request) -> int | None:
+    limit = _login_failure_limit()
+    if limit <= 0:
+        return None
+
+    key = _login_attempt_key(request)
+    now = time.time()
+    window_start = now - _login_failure_window_seconds()
+    with _login_failure_lock:
+        state = _login_failures.setdefault(key, _LoginFailureState(failures=[]))
+        state.failures = [ts for ts in state.failures if ts >= window_start]
+        state.failures.append(now)
+        if len(state.failures) >= limit:
+            state.locked_until = max(state.locked_until, now + _login_lockout_seconds())
+            return _retry_after_seconds(state.locked_until, now)
+    return None
+
+
+def _clear_failed_logins(request: Request) -> None:
+    key = _login_attempt_key(request)
+    with _login_failure_lock:
+        _login_failures.pop(key, None)
 
 
 # ── Dependency — inject via dependencies=[Depends(require_auth)] ──────────────
@@ -150,19 +246,49 @@ class LoginRequest(BaseModel):
 @router.post("/auth/login")
 @_limiter.limit(_LOGIN_RATE_LIMIT)
 def login(request: Request, body: LoginRequest, response: Response):
-    if not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
+    retry_after = _current_lockout_retry_after(request)
+    if retry_after is not None:
         emit_audit_event(
             "auth.login",
             "permission",
-            "failed",
-            after_summary={"auth_mode": _auth_mode(), "reason": "incorrect_password"},
-            metadata={"path": str(request.url.path)},
-            error="Incorrect password",
+            "denied",
+            after_summary={"auth_mode": _auth_mode(), "reason": "failed_login_lockout"},
+            metadata={"path": str(request.url.path), "retry_after_seconds": retry_after},
+            error="Too many failed login attempts",
         )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    if not bcrypt.checkpw(body.password.encode(), _get_password_hash()):
+        retry_after = _record_failed_login(request)
+        emit_audit_event(
+            "auth.login",
+            "permission",
+            "denied" if retry_after is not None else "failed",
+            after_summary={
+                "auth_mode": _auth_mode(),
+                "reason": "failed_login_lockout" if retry_after is not None else "incorrect_password",
+            },
+            metadata={
+                "path": str(request.url.path),
+                **({"retry_after_seconds": retry_after} if retry_after is not None else {}),
+            },
+            error="Too many failed login attempts" if retry_after is not None else "Incorrect password",
+        )
+        if retry_after is not None:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed login attempts. Try again later.",
+                headers={"Retry-After": str(retry_after)},
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect password",
         )
+    _clear_failed_logins(request)
     token = _create_token()
     response.set_cookie(
         key="__session",

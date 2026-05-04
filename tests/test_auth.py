@@ -6,6 +6,15 @@ import pytest
 from fastapi.responses import JSONResponse
 
 
+@pytest.fixture(autouse=True)
+def _reset_login_attempt_state():
+    from api.routers import auth as auth_router
+
+    auth_router._reset_login_attempt_state()
+    yield
+    auth_router._reset_login_attempt_state()
+
+
 def test_login_success(client):
     resp = client.post("/api/v1/auth/login", json={"password": "testpass"})
     assert resp.status_code == 200
@@ -98,6 +107,43 @@ def test_login_password_length_is_limited(client):
     resp = client.post("/api/v1/auth/login", json={"password": "x" * 513})
 
     assert resp.status_code == 422
+
+
+def test_repeated_bad_logins_lock_out_client(client, monkeypatch):
+    from api.routers import auth as auth_router
+
+    now = [1_000.0]
+    monkeypatch.setenv("AUTH_LOGIN_FAILURE_LIMIT", "2")
+    monkeypatch.setenv("AUTH_LOGIN_FAILURE_WINDOW_SECONDS", "300")
+    monkeypatch.setenv("AUTH_LOGIN_LOCKOUT_SECONDS", "60")
+    monkeypatch.setattr(auth_router.time, "time", lambda: now[0])
+
+    first = client.post("/api/v1/auth/login", json={"password": "wrong"})
+    second = client.post("/api/v1/auth/login", json={"password": "wrong"})
+    correct_while_locked = client.post("/api/v1/auth/login", json={"password": "testpass"})
+
+    assert first.status_code == 401
+    assert second.status_code == 429
+    assert second.headers["retry-after"] == "60"
+    assert correct_while_locked.status_code == 429
+
+    now[0] += 61
+    allowed_after_lockout = client.post("/api/v1/auth/login", json={"password": "testpass"})
+    assert allowed_after_lockout.status_code == 200
+
+
+def test_successful_login_clears_failed_login_counter(client, monkeypatch):
+    monkeypatch.setenv("AUTH_LOGIN_FAILURE_LIMIT", "2")
+    monkeypatch.setenv("AUTH_LOGIN_FAILURE_WINDOW_SECONDS", "300")
+    monkeypatch.setenv("AUTH_LOGIN_LOCKOUT_SECONDS", "60")
+
+    failed = client.post("/api/v1/auth/login", json={"password": "wrong"})
+    success = client.post("/api/v1/auth/login", json={"password": "testpass"})
+    failed_after_success = client.post("/api/v1/auth/login", json={"password": "wrong"})
+
+    assert failed.status_code == 401
+    assert success.status_code == 200
+    assert failed_after_success.status_code == 401
 
 
 def test_password_mode_does_not_require_proxy_secret_for_login(client, monkeypatch):
