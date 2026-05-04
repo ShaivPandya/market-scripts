@@ -42,6 +42,22 @@ from ontology.temporal_repository import (
     TemporalOntologyRepository,
 )
 
+_GOVERNED_OBJECT_TYPES = {
+    "ActionRun",
+    "Approval",
+    "Evaluation",
+    "HedgePosition",
+    "PolicyGateResult",
+    "Position",
+    "Recommendation",
+    "WatchTrigger",
+}
+_GOVERNED_RELATION_TYPES = {
+    "action_run_mutates_object_version",
+    "approval_applies_action_run",
+    "recommendation_requires_approval",
+}
+
 
 class OntologyObjectService:
     """Typed write boundary for temporal ontology objects and relations."""
@@ -99,6 +115,14 @@ class OntologyObjectService:
     ) -> dict[str, Any]:
         actor_fields = _actor_fields(actor)
         provenance_event_id = _provenance_event_id(provenance)
+        _require_governed_lineage(
+            "object",
+            object_type,
+            provenance_event_id=provenance_event_id,
+            action_run_id=action_run_id,
+            approval_id=approval_id,
+            source_record_id=source_record_id,
+        )
         object_uid = object_uid_for(object_type, business_key, properties)
         normalized = normalize_object_payload(object_uid, object_type, business_key, properties)
         row = self.repo.write_object_version(
@@ -142,6 +166,14 @@ class OntologyObjectService:
     ) -> dict[str, Any]:
         actor_fields = _actor_fields(actor)
         provenance_event_id = _provenance_event_id(provenance)
+        _require_governed_lineage(
+            "relation",
+            relation_type,
+            provenance_event_id=provenance_event_id,
+            action_run_id=action_run_id,
+            approval_id=approval_id,
+            source_record_id=source_record_id,
+        )
         normalized = normalize_relation_payload(source_uid, target_uid, relation_type, properties or {})
         row = self.repo.write_relation_version(
             RelationVersionWrite(
@@ -453,6 +485,23 @@ def _provenance_event_id(provenance: Mapping[str, Any] | str | None) -> str | No
         if value:
             return str(value)
     return None
+
+
+def _require_governed_lineage(
+    surface: str,
+    name: str,
+    *,
+    provenance_event_id: str | None,
+    action_run_id: int | None,
+    approval_id: int | None,
+    source_record_id: str | None,
+) -> None:
+    governed = name in _GOVERNED_OBJECT_TYPES if surface == "object" else name in _GOVERNED_RELATION_TYPES
+    if not governed:
+        return
+    if provenance_event_id or action_run_id is not None or approval_id is not None or source_record_id:
+        return
+    raise ValueError(f"Governed ontology {surface} write '{name}' requires provenance or action lineage")
 
 
 def _slug(value: str) -> str:

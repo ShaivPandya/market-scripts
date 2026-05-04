@@ -96,3 +96,34 @@ def get_entity_provenance(ref_type: str, ref_id: str, actor: ActorDep, max_depth
     from portfolio.core_db import get_provenance_trace
 
     return get_provenance_trace(ref_type=ref_type, ref_id=ref_id, max_depth=max_depth)
+
+
+@router.get("/governance/lineage")
+def get_governance_lineage_report(
+    actor: ActorDep,
+    recommendation_id: int | None = None,
+    approval_id: int | None = None,
+    action_run_id: int | None = None,
+    workflow_run_id: str | None = None,
+    object_version_id: str | None = None,
+    relation_version_id: str | None = None,
+    max_depth: int = 5,
+):
+    _require_admin(actor)
+    if max_depth < 1 or max_depth > 8:
+        raise ValidationError("max_depth must be between 1 and 8.")
+    selectors = [recommendation_id, approval_id, action_run_id, workflow_run_id, object_version_id, relation_version_id]
+    if sum(value is not None for value in selectors) != 1:
+        raise ValidationError("Provide exactly one governance lineage selector.")
+
+    from portfolio.core_db import get_decision_lineage_report
+
+    return get_decision_lineage_report(
+        recommendation_id=recommendation_id,
+        approval_id=approval_id,
+        action_run_id=action_run_id,
+        workflow_run_id=workflow_run_id,
+        object_version_id=object_version_id,
+        relation_version_id=relation_version_id,
+        max_depth=max_depth,
+    )

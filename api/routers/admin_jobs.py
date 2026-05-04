@@ -55,6 +55,17 @@ def enqueue_async_job_sweep(_sub: str = Depends(require_scheduler_or_job_admin))
     return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
 
 
+@router.post("/admin/jobs/enqueue-governance-outbox-drain")
+def enqueue_governance_outbox_drain(_sub: str = Depends(require_scheduler_or_job_admin)):
+    row, _disposition = enqueue_registered_job(
+        "governance_outbox_drain",
+        {"source": "scheduler"},
+        cache_key="maintenance:governance_outbox_drain:v1",
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/v1/admin/jobs/{job_id}")
+
+
 @router.post("/admin/jobs/enqueue-market-snapshot-refresh")
 def enqueue_market_snapshot_refresh(_sub: str = Depends(require_scheduler_or_job_admin)):
     row, _disposition = enqueue_registered_job(

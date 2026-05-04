@@ -651,6 +651,8 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
     from portfolio import core_db
 
     input_hash = _stable_hash(raw_input)
+    governed = action.risk_class == "financial" or action.effect_kind in {"approval_gated", "direct_mutation"}
+    lineage_root_id: str | None = None
     run = core_db.create_action_run(
         action_id=action.action_id,
         action_schema_version=action.schema_version,
@@ -665,6 +667,7 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
         input_payload=raw_input,
     )
     run_id = int(run["id"])
+    lineage_root_id = f"action_run:{run_id}"
     try:
         from api import provenance
 
@@ -690,6 +693,11 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
                 "source_id": context.source_id,
                 "parent_action_run_id": context.parent_action_run_id,
             },
+            criticality="financial_critical" if governed else "operational",
+            lineage_root_id=lineage_root_id if governed else None,
+            idempotency_key=f"action_run:{run_id}:started",
+            retention_class="financial_lineage_7y" if governed else provenance.DEFAULT_RETENTION_CLASS,
+            fail_closed=governed,
         )
         core_db.set_action_run_provenance_event(run_id, event_id)
         provenance.link_refs(
@@ -700,6 +708,8 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
             target_ref_type="action_run",
             target_ref_id=str(run_id),
             link_type="executed_as",
+            lineage_root_id=lineage_root_id if governed else None,
+            fail_closed=governed,
         )
         if context.source_type and context.source_id:
             provenance.link_refs(
@@ -709,6 +719,8 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
                 target_ref_type="action_run",
                 target_ref_id=str(run_id),
                 link_type="triggered",
+                lineage_root_id=lineage_root_id if governed else None,
+                fail_closed=governed,
             )
         if context.approval_id is not None:
             provenance.link_refs(
@@ -718,9 +730,15 @@ def _audit_start(action: DomainAction, raw_input: dict[str, Any], context: Actio
                 target_ref_type="action_run",
                 target_ref_id=str(run_id),
                 link_type="approved_execution",
+                lineage_root_id=lineage_root_id if governed else None,
+                fail_closed=governed,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        message = str(exc).strip() or exc.__class__.__name__
+        core_db.record_action_event(run_id, "provenance_failed", message=message)
+        core_db.complete_action_run(run_id, status="failed", error=message)
+        if governed:
+            raise
     core_db.record_action_event(run_id, "start", payload={"action_id": action.action_id})
     _emit_domain_audit(
         action,
@@ -783,11 +801,21 @@ def _emit_domain_audit(
         source_lineage=_source_lineage(context),
         metadata=metadata,
         error=error,
+        fail_closed=action.risk_class == "financial"
+        and action_name in {action.audit_spec.started_event, "domain.action.started"},
+        criticality="financial_critical" if action.risk_class == "financial" else "operational",
+        lineage_root_id=f"action_run:{action_run_id}" if action.risk_class == "financial" and action_run_id else None,
+        idempotency_key=f"domain_action:{action_run_id}:{action_name}:{status}" if action_run_id else None,
+        retention_class="financial_lineage_7y" if action.risk_class == "financial" else "audit_365d",
     )
     if action_run_id is not None and audit_event:
         try:
             from api import provenance
 
+            governed_link = action.risk_class == "financial" and action_name in {
+                action.audit_spec.started_event,
+                "domain.action.started",
+            }
             provenance.link_refs(
                 event_id=_action_run_provenance_id(action_run_id),
                 source_ref_type="action_run",
@@ -796,9 +824,15 @@ def _emit_domain_audit(
                 target_ref_id=str(audit_event.get("event_id") or audit_event.get("id")),
                 link_type="audited_by",
                 metadata={"action_name": action_name, "status": status},
+                lineage_root_id=f"action_run:{action_run_id}" if action.risk_class == "financial" else None,
+                fail_closed=governed_link,
             )
         except Exception:
-            pass
+            if action.risk_class == "financial" and action_name in {
+                action.audit_spec.started_event,
+                "domain.action.started",
+            }:
+                raise
 
 
 def _action_run_provenance_id(run_id: int) -> str:

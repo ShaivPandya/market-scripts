@@ -8,6 +8,7 @@ service's in-memory TTL cache or local filesystem cache.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger("api.maintenance_jobs")
@@ -45,3 +46,37 @@ def sweep_async_jobs(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     deleted = sweep_expired_jobs()
     logger.info("async_job_sweep stale_failed=%d deleted=%d", stale_failed, deleted)
     return {"stale_failed": stale_failed, "deleted": deleted}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def drain_governance_outbox(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    from portfolio.core_db import drain_governance_outbox as drain_outbox
+    from portfolio.core_db import get_governance_outbox_metrics
+
+    result = drain_outbox(
+        limit=_env_int("GOVERNANCE_OUTBOX_BATCH_SIZE", 50),
+        lease_seconds=_env_int("GOVERNANCE_OUTBOX_LEASE_SECONDS", 300),
+        max_attempts=_env_int("GOVERNANCE_OUTBOX_MAX_ATTEMPTS", 8),
+        retry_base_seconds=_env_int("GOVERNANCE_OUTBOX_RETRY_BASE_SECONDS", 30),
+        retry_max_seconds=_env_int("GOVERNANCE_OUTBOX_RETRY_MAX_SECONDS", 3600),
+    )
+    metrics = get_governance_outbox_metrics()
+    logger.info(
+        "governance_outbox_drain claimed=%s completed=%s failed=%s dead_lettered=%s pending=%s dead_letter=%s",
+        result.get("claimed"),
+        result.get("completed"),
+        result.get("failed"),
+        result.get("dead_lettered"),
+        metrics.get("pending"),
+        metrics.get("dead_letter"),
+    )
+    return {"result": result, "metrics": metrics}

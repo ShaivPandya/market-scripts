@@ -665,6 +665,7 @@ def persist_recommendations(
     source_json_path: str,
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
+    from portfolio import core_db
     from portfolio.action_registry import ActionContext, propose_action
     from portfolio.policy_gate import attach_policy_gate_to_recommendation
 
@@ -732,6 +733,39 @@ def persist_recommendations(
             policy_reason = f"policy_gate:{gate.get('decision')}"
             if policy_reason not in record.get("blocked_reasons", []):
                 record["blocked_reasons"] = [*record.get("blocked_reasons", []), policy_reason]
+        if gate and not record.get("policy_gate_result_id"):
+            gate_target_id = idempotency_key or action_hash
+            existing_gate_rows = core_db.list_policy_gate_results(
+                action_id="create_recommendation",
+                target_type="recommendation",
+                target_id=gate_target_id,
+                limit=1,
+            )
+            gate_row = (
+                existing_gate_rows[0]
+                if existing_gate_rows
+                else core_db.create_policy_gate_result(
+                    gate,
+                    action_id="create_recommendation",
+                    source_type="report_run",
+                    source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
+                    target_type="recommendation",
+                    target_id=gate_target_id,
+                    payload=record,
+                )
+            )
+            persisted_gate = gate_row.get("result_json") if existing_gate_rows else gate
+            if isinstance(persisted_gate, dict):
+                gate = dict(persisted_gate)
+            gate["policy_gate_result_id"] = gate_row["id"]
+            record["policy_gate_result_id"] = gate_row["id"]
+            record["policy_gate_result"] = gate
+            record["policy_gate_status"] = gate.get("decision")
+            record["policy_gate_decision"] = gate.get("decision")
+            record["policy_gate_review_required"] = bool(gate.get("review_required"))
+            record["policy_gate_failures"] = gate.get("failure_reasons", [])
+            record["policy_gate_warnings"] = gate.get("warnings", [])
+            record["policy_gate_disclosures"] = gate.get("disclosures", [])
         approval = propose_action(
             "create_recommendation",
             {"record": record},

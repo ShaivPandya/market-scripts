@@ -60,6 +60,7 @@ LINK_UPDATED = "updated"
 
 DEFAULT_REDACTION_POLICY = "audit_summary_v1"
 DEFAULT_RETENTION_CLASS = "provenance_365d"
+FINANCIAL_RETENTION_CLASS = "financial_lineage_7y"
 SOURCE_REF_RETENTION_CLASS = "source_ref_90d"
 WORKFLOW_ARTIFACT_RETENTION_CLASS = "workflow_artifact_365d"
 
@@ -86,6 +87,10 @@ _MAX_SUMMARY_DEPTH = 3
 _MAX_SUMMARY_KEYS = 24
 _MAX_SUMMARY_ITEMS = 5
 _MAX_SUMMARY_STRING = 160
+
+
+class ProvenanceWriteError(RuntimeError):
+    """Raised when a caller requires provenance before proceeding."""
 
 
 def stable_hash(value: Any, *, length: int = 16) -> str:
@@ -230,6 +235,13 @@ def start_event(
     started_at: str | None = None,
     request_id: str | None = None,
     retention_class: str = DEFAULT_RETENTION_CLASS,
+    fail_closed: bool = False,
+    schema_version: int = 1,
+    criticality: str = "operational",
+    lineage_root_id: str | None = None,
+    idempotency_key: str | None = None,
+    producer_name: str | None = None,
+    producer_version: str | None = None,
 ) -> dict | None:
     try:
         from portfolio import core_db
@@ -255,11 +267,19 @@ def start_event(
             input_hash=input_hash(input_value),
             summary=redacted_summary(summary),
             metadata=redacted_summary(metadata),
+            schema_version=schema_version,
+            criticality=criticality,
+            lineage_root_id=lineage_root_id,
+            idempotency_key=idempotency_key,
+            producer_name=producer_name,
+            producer_version=producer_version,
             redaction_policy=DEFAULT_REDACTION_POLICY,
             retention_class=retention_class,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("Failed to start provenance event type=%s name=%s", event_type, event_name, exc_info=True)
+        if fail_closed:
+            raise ProvenanceWriteError(f"Failed to write mandatory provenance event {event_type}:{event_name}") from exc
         return None
 
 
@@ -271,6 +291,7 @@ def finish_event(
     summary: Any | None = None,
     metadata: Any | None = None,
     error: str | None = None,
+    fail_closed: bool = False,
 ) -> dict | None:
     if not event_id:
         return None
@@ -285,8 +306,10 @@ def finish_event(
             metadata=redacted_summary(metadata),
             error=error,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("Failed to finish provenance event id=%s", event_id, exc_info=True)
+        if fail_closed:
+            raise ProvenanceWriteError(f"Failed to finish mandatory provenance event {event_id}") from exc
         return None
 
 
@@ -324,6 +347,8 @@ def link_refs(
     target_ref_version: str | None = None,
     metadata: Any | None = None,
     link_id: str | None = None,
+    lineage_root_id: str | None = None,
+    fail_closed: bool = False,
 ) -> dict | None:
     if not event_id:
         return None
@@ -341,8 +366,9 @@ def link_refs(
             target_ref_version=target_ref_version,
             link_type=link_type,
             metadata=redacted_summary(metadata),
+            lineage_root_id=lineage_root_id,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug(
             "Failed to link provenance refs event=%s source=%s:%s target=%s:%s",
             event_id,
@@ -352,6 +378,8 @@ def link_refs(
             target_ref_id,
             exc_info=True,
         )
+        if fail_closed:
+            raise ProvenanceWriteError(f"Failed to write mandatory provenance link for event {event_id}") from exc
         return None
 
 
@@ -365,6 +393,7 @@ def record_source_ref(
     as_of: str | None = None,
     summary: Any | None = None,
     retention_class: str = SOURCE_REF_RETENTION_CLASS,
+    fail_closed: bool = False,
 ) -> dict | None:
     if not adapter_run_event_id:
         return None
@@ -386,8 +415,10 @@ def record_source_ref(
             redaction_policy=DEFAULT_REDACTION_POLICY,
             retention_class=retention_class,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("Failed to record source ref source=%s kind=%s", source_name, record_kind, exc_info=True)
+        if fail_closed:
+            raise ProvenanceWriteError(f"Failed to write mandatory source ref {source_name}:{record_kind}") from exc
         return None
 
 
@@ -400,6 +431,7 @@ def record_workflow_artifact(
     approval_id: int | None = None,
     provenance_event_id: str | None = None,
     retention_class: str = WORKFLOW_ARTIFACT_RETENTION_CLASS,
+    fail_closed: bool = False,
 ) -> dict | None:
     artifact_hash = stable_hash(artifact_value)
     artifact_id = deterministic_id("workflow_artifact", workflow_run_id, artifact_key, artifact_index, artifact_hash)
@@ -418,6 +450,10 @@ def record_workflow_artifact(
             redaction_policy=DEFAULT_REDACTION_POLICY,
             retention_class=retention_class,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("Failed to record workflow artifact run=%s key=%s", workflow_run_id, artifact_key, exc_info=True)
+        if fail_closed:
+            raise ProvenanceWriteError(
+                f"Failed to write mandatory workflow artifact {workflow_run_id}:{artifact_key}"
+            ) from exc
         return None

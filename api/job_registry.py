@@ -193,6 +193,17 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Async job sweep failed",
     ),
+    "governance_outbox_drain": JobSpec(
+        job_type="governance_outbox_drain",
+        request_model=None,
+        compute_func="api.maintenance_jobs.drain_governance_outbox",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_MAINTENANCE", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_GOVERNANCE_OUTBOX_SECONDS", 5 * 60),
+        completed_ttl_s=_env_int("ASYNC_MAINTENANCE_COMPLETED_TTL_SECONDS", 60 * 60),
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        error_message="Governance outbox drain failed",
+    ),
     "watch_trigger_monitor": JobSpec(
         job_type="watch_trigger_monitor",
         request_model=None,

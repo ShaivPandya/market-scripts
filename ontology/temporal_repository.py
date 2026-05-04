@@ -1162,6 +1162,8 @@ def _link_version_provenance(ref_type: str, ref_id: Any, event_id: str | None) -
             target_ref_type=ref_type,
             target_ref_id=str(ref_id),
             link_type=provenance.LINK_PRODUCED,
+            lineage_root_id=f"{ref_type}:{ref_id}",
+            fail_closed=True,
         )
     except Exception:
-        pass
+        raise

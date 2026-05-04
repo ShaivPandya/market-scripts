@@ -84,6 +84,12 @@ logger = logging.getLogger(__name__)
 DB_PATH = Path(__file__).parent / "core.db"
 APPROVAL_APPLICATION_STATUSES = ("pending", "applying", "applied", "failed", "not_applicable")
 APPROVAL_APPLICATION_LEASE = timedelta(minutes=15)
+GOVERNANCE_SCHEMA_VERSION = 1
+GOVERNANCE_CRITICAL_FINANCIAL = "financial_critical"
+GOVERNANCE_OPERATIONAL = "operational"
+GOVERNANCE_REDACTION_POLICY = "audit_summary_v1"
+GOVERNANCE_FINANCIAL_RETENTION_CLASS = "financial_lineage_7y"
+GOVERNANCE_OUTBOX_STATUSES = ("pending", "processing", "completed", "failed", "dead_letter")
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -382,6 +388,9 @@ CREATE TABLE IF NOT EXISTS recommendations (
     source_quality_summary_json TEXT,
     report_id                   TEXT,
     idempotency_key             TEXT,
+    provenance_event_id         TEXT,
+    lineage_root_id             TEXT,
+    lineage_completeness        TEXT NOT NULL DEFAULT 'retry_pending',
     policy_gate_result_id       INTEGER,
     policy_gate_status          TEXT,
     policy_gate_decision        TEXT,
@@ -414,6 +423,9 @@ CREATE TABLE IF NOT EXISTS policy_gate_results (
     target_type             TEXT,
     target_id               TEXT,
     payload_hash            TEXT,
+    provenance_event_id     TEXT,
+    lineage_root_id         TEXT,
+    lineage_completeness    TEXT NOT NULL DEFAULT 'retry_pending',
     result_json             TEXT NOT NULL
 )
 """
@@ -438,7 +450,15 @@ CREATE TABLE IF NOT EXISTS audit_events (
     after_summary_json   TEXT,
     source_lineage_json  TEXT,
     metadata_json        TEXT,
-    error                TEXT
+    error                TEXT,
+    schema_version       INTEGER NOT NULL DEFAULT 1,
+    criticality          TEXT NOT NULL DEFAULT 'operational',
+    lineage_root_id      TEXT,
+    idempotency_key      TEXT,
+    producer_name        TEXT,
+    producer_version     TEXT,
+    redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
+    retention_class      TEXT NOT NULL DEFAULT 'audit_365d'
 )
 """
 
@@ -465,6 +485,12 @@ CREATE TABLE IF NOT EXISTS provenance_events (
     output_hash          TEXT,
     summary_json         TEXT,
     metadata_json        TEXT,
+    schema_version       INTEGER NOT NULL DEFAULT 1,
+    criticality          TEXT NOT NULL DEFAULT 'operational',
+    lineage_root_id      TEXT,
+    idempotency_key      TEXT,
+    producer_name        TEXT,
+    producer_version     TEXT,
     redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
     retention_class      TEXT NOT NULL DEFAULT 'provenance_365d',
     error                TEXT
@@ -483,6 +509,7 @@ CREATE TABLE IF NOT EXISTS provenance_links (
     target_ref_version   TEXT,
     link_type            TEXT NOT NULL,
     metadata_json        TEXT,
+    lineage_root_id      TEXT,
     created_at           TEXT NOT NULL
 )
 """
@@ -500,6 +527,25 @@ CREATE TABLE IF NOT EXISTS source_record_refs (
     redaction_policy     TEXT NOT NULL DEFAULT 'audit_summary_v1',
     retention_class      TEXT NOT NULL DEFAULT 'source_ref_90d',
     created_at           TEXT NOT NULL
+)
+"""
+
+_CREATE_GOVERNANCE_OUTBOX = """
+CREATE TABLE IF NOT EXISTS governance_outbox (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    idempotency_key      TEXT NOT NULL UNIQUE,
+    event_bundle_json    TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'pending'
+                         CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'dead_letter')),
+    attempt_count        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at      TEXT NOT NULL,
+    locked_at            TEXT,
+    last_error           TEXT,
+    dead_lettered_at     TEXT,
+    lineage_root_id      TEXT,
+    retention_class      TEXT NOT NULL DEFAULT 'financial_lineage_7y',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
 )
 """
 
@@ -544,6 +590,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_action_events_run ON action_events(action_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report ON recommendations(report_type, as_of DESC)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_report_id ON recommendations(report_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_lineage_root ON recommendations(lineage_root_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_lineage_completeness ON recommendations(lineage_completeness)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_recommendations_idempotency ON recommendations(idempotency_key)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_ticker ON recommendations(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_status ON recommendations(status)",
@@ -553,12 +601,16 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_decision ON policy_gate_results(decision, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_target ON policy_gate_results(target_type, target_id)",
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_action ON policy_gate_results(action_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_lineage_root ON policy_gate_results(lineage_root_id)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_request ON audit_events(request_id)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_actor_time ON audit_events(actor_id, occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_action_time ON audit_events(action_name, occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_object_time ON audit_events(object_type, object_id, occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_events_status_time ON audit_events(status, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_lineage_root ON audit_events(lineage_root_id, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_criticality_time ON audit_events(criticality, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_events_idempotency ON audit_events(idempotency_key)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_events_type_time ON provenance_events(event_type, started_at)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_events_workflow ON provenance_events(workflow_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_events_ontology ON provenance_events(ontology_run_id)",
@@ -566,14 +618,20 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_provenance_events_action_run ON provenance_events(action_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_events_approval ON provenance_events(approval_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_events_parent ON provenance_events(parent_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_lineage_root ON provenance_events(lineage_root_id, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_events_idempotency ON provenance_events(idempotency_key)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_links_event ON provenance_links(event_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_links_source ON provenance_links(source_ref_type, source_ref_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_links_target ON provenance_links(target_ref_type, target_ref_id)",
     "CREATE INDEX IF NOT EXISTS idx_provenance_links_type_time ON provenance_links(link_type, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_provenance_links_lineage_root ON provenance_links(lineage_root_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_source_record_refs_adapter ON source_record_refs(adapter_run_event_id)",
     "CREATE INDEX IF NOT EXISTS idx_source_record_refs_source ON source_record_refs(source_name, record_kind)",
     "CREATE INDEX IF NOT EXISTS idx_workflow_artifact_records_run ON workflow_artifact_records(workflow_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_workflow_artifact_records_approval ON workflow_artifact_records(approval_id)",
+    "CREATE INDEX IF NOT EXISTS idx_governance_outbox_status_next ON governance_outbox(status, next_attempt_at)",
+    "CREATE INDEX IF NOT EXISTS idx_governance_outbox_lineage_root ON governance_outbox(lineage_root_id)",
+    "CREATE INDEX IF NOT EXISTS idx_governance_outbox_dead_letter ON governance_outbox(dead_lettered_at)",
 ]
 
 # ---------------------------------------------------------------------------
@@ -613,6 +671,7 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "recommendations",
                             "policy_gate_results",
                             "audit_events",
+                            "governance_outbox",
                         }
                     )
                 else:
@@ -644,6 +703,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_PROVENANCE_LINKS,
         _CREATE_SOURCE_RECORD_REFS,
         _CREATE_WORKFLOW_ARTIFACT_RECORDS,
+        _CREATE_GOVERNANCE_OUTBOX,
     ]:
         conn.execute(stmt)
     _ensure_sqlite_columns(conn)
@@ -678,6 +738,9 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
         {
             "report_id": "TEXT",
             "idempotency_key": "TEXT",
+            "provenance_event_id": "TEXT",
+            "lineage_root_id": "TEXT",
+            "lineage_completeness": "TEXT NOT NULL DEFAULT 'legacy_partial'",
             "policy_gate_result_id": "INTEGER",
             "policy_gate_status": "TEXT",
             "policy_gate_decision": "TEXT",
@@ -689,6 +752,44 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "portfolio_id": "TEXT",
             "policy_id": "TEXT",
             "trade_proposal_json": "TEXT",
+        },
+    )
+    _add_missing(
+        "policy_gate_results",
+        {
+            "provenance_event_id": "TEXT",
+            "lineage_root_id": "TEXT",
+            "lineage_completeness": "TEXT NOT NULL DEFAULT 'legacy_partial'",
+        },
+    )
+    _add_missing(
+        "audit_events",
+        {
+            "schema_version": "INTEGER NOT NULL DEFAULT 1",
+            "criticality": "TEXT NOT NULL DEFAULT 'operational'",
+            "lineage_root_id": "TEXT",
+            "idempotency_key": "TEXT",
+            "producer_name": "TEXT",
+            "producer_version": "TEXT",
+            "redaction_policy": "TEXT NOT NULL DEFAULT 'audit_summary_v1'",
+            "retention_class": "TEXT NOT NULL DEFAULT 'audit_365d'",
+        },
+    )
+    _add_missing(
+        "provenance_events",
+        {
+            "schema_version": "INTEGER NOT NULL DEFAULT 1",
+            "criticality": "TEXT NOT NULL DEFAULT 'operational'",
+            "lineage_root_id": "TEXT",
+            "idempotency_key": "TEXT",
+            "producer_name": "TEXT",
+            "producer_version": "TEXT",
+        },
+    )
+    _add_missing(
+        "provenance_links",
+        {
+            "lineage_root_id": "TEXT",
         },
     )
     _add_missing(
@@ -1050,6 +1151,107 @@ def _parse_audit_event_row(row: Any) -> dict:
     return d
 
 
+def _record_audit_event_conn(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    *,
+    action_name: str,
+    action_category: str,
+    status: str,
+    event_id: str | None = None,
+    occurred_at: str | None = None,
+    received_at: str | None = None,
+    request_id: str | None = None,
+    actor_id: str | None = None,
+    actor_type: str = "system",
+    parent_actor_id: str | None = None,
+    object_type: str | None = None,
+    object_id: str | None = None,
+    object_refs: list[dict[str, Any]] | None = None,
+    before_summary: Any | None = None,
+    after_summary: Any | None = None,
+    source_lineage: Any | None = None,
+    metadata: Any | None = None,
+    error: str | None = None,
+    schema_version: int = GOVERNANCE_SCHEMA_VERSION,
+    criticality: str = GOVERNANCE_OPERATIONAL,
+    lineage_root_id: str | None = None,
+    idempotency_key: str | None = None,
+    producer_name: str | None = None,
+    producer_version: str | None = None,
+    redaction_policy: str = GOVERNANCE_REDACTION_POLICY,
+    retention_class: str = "audit_365d",
+) -> dict:
+    now = _now()
+    refs = object_refs or []
+    first_ref = refs[0] if refs and isinstance(refs[0], dict) else {}
+    resolved_object_type = object_type or first_ref.get("type") or first_ref.get("object_type")
+    resolved_object_id = object_id or first_ref.get("id") or first_ref.get("object_id")
+    params = (
+        event_id or uuid.uuid4().hex,
+        occurred_at or now,
+        received_at or now,
+        request_id,
+        actor_id,
+        actor_type or "system",
+        parent_actor_id,
+        action_name,
+        action_category,
+        status,
+        str(resolved_object_type) if resolved_object_type is not None else None,
+        str(resolved_object_id) if resolved_object_id is not None else None,
+        json.dumps(refs, default=str),
+        _json_or_none(before_summary),
+        _json_or_none(after_summary),
+        _json_or_none(source_lineage),
+        _json_or_none(metadata),
+        str(error)[:1000] if error is not None else None,
+        int(schema_version or GOVERNANCE_SCHEMA_VERSION),
+        criticality or GOVERNANCE_OPERATIONAL,
+        lineage_root_id,
+        idempotency_key,
+        producer_name,
+        producer_version,
+        redaction_policy or GOVERNANCE_REDACTION_POLICY,
+        retention_class or "audit_365d",
+    )
+    cur = conn.execute(
+        """
+        INSERT INTO audit_events (
+            event_id,
+            occurred_at,
+            received_at,
+            request_id,
+            actor_id,
+            actor_type,
+            parent_actor_id,
+            action_name,
+            action_category,
+            status,
+            object_type,
+            object_id,
+            object_refs_json,
+            before_summary_json,
+            after_summary_json,
+            source_lineage_json,
+            metadata_json,
+            error,
+            schema_version,
+            criticality,
+            lineage_root_id,
+            idempotency_key,
+            producer_name,
+            producer_version,
+            redaction_policy,
+            retention_class
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        params,
+    )
+    row = conn.execute("SELECT * FROM audit_events WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_audit_event_row(row)
+
+
 def record_audit_event(
     *,
     action_name: str,
@@ -1070,66 +1272,50 @@ def record_audit_event(
     source_lineage: Any | None = None,
     metadata: Any | None = None,
     error: str | None = None,
+    schema_version: int = GOVERNANCE_SCHEMA_VERSION,
+    criticality: str = GOVERNANCE_OPERATIONAL,
+    lineage_root_id: str | None = None,
+    idempotency_key: str | None = None,
+    producer_name: str | None = None,
+    producer_version: str | None = None,
+    redaction_policy: str = GOVERNANCE_REDACTION_POLICY,
+    retention_class: str = "audit_365d",
 ) -> dict:
     """Append one structured audit event."""
 
     conn = _get_conn()
-    now = _now()
-    refs = object_refs or []
-    first_ref = refs[0] if refs and isinstance(refs[0], dict) else {}
-    resolved_object_type = object_type or first_ref.get("type") or first_ref.get("object_type")
-    resolved_object_id = object_id or first_ref.get("id") or first_ref.get("object_id")
-    event_error = str(error)[:1000] if error is not None else None
-    params = (
-        event_id or uuid.uuid4().hex,
-        occurred_at or now,
-        received_at or now,
-        request_id,
-        actor_id,
-        actor_type or "system",
-        parent_actor_id,
-        action_name,
-        action_category,
-        status,
-        str(resolved_object_type) if resolved_object_type is not None else None,
-        str(resolved_object_id) if resolved_object_id is not None else None,
-        json.dumps(refs, default=str),
-        _json_or_none(before_summary),
-        _json_or_none(after_summary),
-        _json_or_none(source_lineage),
-        _json_or_none(metadata),
-        event_error,
-    )
     with _lock:
-        cur = conn.execute(
-            """
-            INSERT INTO audit_events (
-                event_id,
-                occurred_at,
-                received_at,
-                request_id,
-                actor_id,
-                actor_type,
-                parent_actor_id,
-                action_name,
-                action_category,
-                status,
-                object_type,
-                object_id,
-                object_refs_json,
-                before_summary_json,
-                after_summary_json,
-                source_lineage_json,
-                metadata_json,
-                error
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            params,
+        event = _record_audit_event_conn(
+            conn,
+            action_name=action_name,
+            action_category=action_category,
+            status=status,
+            event_id=event_id,
+            occurred_at=occurred_at,
+            received_at=received_at,
+            request_id=request_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            parent_actor_id=parent_actor_id,
+            object_type=object_type,
+            object_id=object_id,
+            object_refs=object_refs,
+            before_summary=before_summary,
+            after_summary=after_summary,
+            source_lineage=source_lineage,
+            metadata=metadata,
+            error=error,
+            schema_version=schema_version,
+            criticality=criticality,
+            lineage_root_id=lineage_root_id,
+            idempotency_key=idempotency_key,
+            producer_name=producer_name,
+            producer_version=producer_version,
+            redaction_policy=redaction_policy,
+            retention_class=retention_class,
         )
         conn.commit()
-        row = conn.execute("SELECT * FROM audit_events WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return _parse_audit_event_row(row)
+    return event
 
 
 def get_audit_events(
@@ -1139,6 +1325,8 @@ def get_audit_events(
     action_name: str | None = None,
     action_category: str | None = None,
     status: str | None = None,
+    criticality: str | None = None,
+    lineage_root_id: str | None = None,
     object_type: str | None = None,
     object_id: str | None = None,
     since: str | None = None,
@@ -1154,6 +1342,8 @@ def get_audit_events(
         ("action_name", action_name),
         ("action_category", action_category),
         ("status", status),
+        ("criticality", criticality),
+        ("lineage_root_id", lineage_root_id),
         ("object_type", object_type),
         ("object_id", object_id),
     ):
@@ -1176,7 +1366,7 @@ def get_audit_events(
     return [_parse_audit_event_row(row) for row in rows]
 
 
-def prune_audit_events(*, retention_days: int = 365, batch_size: int = 5000) -> int:
+def prune_audit_events(*, retention_days: int = 2555, batch_size: int = 5000) -> int:
     if retention_days <= 0:
         return 0
     conn = _get_conn()
@@ -1210,6 +1400,7 @@ _PROVENANCE_EVENT_JSON_FIELDS = ("summary_json", "metadata_json")
 _PROVENANCE_LINK_JSON_FIELDS = ("metadata_json",)
 _SOURCE_RECORD_REF_JSON_FIELDS = ("summary_json",)
 _WORKFLOW_ARTIFACT_JSON_FIELDS = ("summary_json",)
+_GOVERNANCE_OUTBOX_JSON_FIELDS = ("event_bundle_json",)
 
 
 def _parse_provenance_event_row(row: Any) -> dict:
@@ -1242,6 +1433,14 @@ def _parse_workflow_artifact_row(row: Any) -> dict:
     for field in _WORKFLOW_ARTIFACT_JSON_FIELDS:
         _parse_json_field(d, field)
     d["summary"] = d.get("summary_json")
+    return d
+
+
+def _parse_governance_outbox_row(row: Any) -> dict:
+    d = _require_row_dict(row)
+    for field in _GOVERNANCE_OUTBOX_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["event_bundle"] = d.get("event_bundle_json")
     return d
 
 
@@ -1308,7 +1507,8 @@ def _provenance_timeline(
     return timeline
 
 
-def upsert_provenance_event(
+def _upsert_provenance_event_conn(
+    conn: sqlite3.Connection | PostgresCompatConnection,
     *,
     event_id: str | None = None,
     event_type: str,
@@ -1331,17 +1531,16 @@ def upsert_provenance_event(
     output_hash: str | None = None,
     summary: Any | None = None,
     metadata: Any | None = None,
+    schema_version: int = GOVERNANCE_SCHEMA_VERSION,
+    criticality: str = GOVERNANCE_OPERATIONAL,
+    lineage_root_id: str | None = None,
+    idempotency_key: str | None = None,
+    producer_name: str | None = None,
+    producer_version: str | None = None,
     redaction_policy: str = "audit_summary_v1",
     retention_class: str = "provenance_365d",
     error: str | None = None,
 ) -> dict:
-    """Insert or update one provenance event.
-
-    This is intentionally plain storage. Redaction and hashing are handled by
-    api.provenance before values reach this function.
-    """
-
-    conn = _get_conn()
     eid = event_id or f"pv:{uuid.uuid4().hex}"
     now = _now()
     params = {
@@ -1366,6 +1565,12 @@ def upsert_provenance_event(
         "output_hash": output_hash,
         "summary_json": _json_or_none(summary),
         "metadata_json": _json_or_none(metadata),
+        "schema_version": int(schema_version or GOVERNANCE_SCHEMA_VERSION),
+        "criticality": criticality or GOVERNANCE_OPERATIONAL,
+        "lineage_root_id": lineage_root_id,
+        "idempotency_key": idempotency_key,
+        "producer_name": producer_name,
+        "producer_version": producer_version,
         "redaction_policy": redaction_policy,
         "retention_class": retention_class,
         "error": str(error)[:1000] if error is not None else None,
@@ -1373,15 +1578,90 @@ def upsert_provenance_event(
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
     updates = ", ".join(f"{column} = excluded.{column}" for column in params if column != "id")
+    conn.execute(
+        f"INSERT INTO provenance_events ({columns}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {updates}",
+        tuple(params.values()),
+    )
+    row = conn.execute("SELECT * FROM provenance_events WHERE id = ?", (eid,)).fetchone()
+    return _parse_provenance_event_row(row)
+
+
+def upsert_provenance_event(
+    *,
+    event_id: str | None = None,
+    event_type: str,
+    event_name: str,
+    status: str = "started",
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    actor_type: str | None = None,
+    actor_id: str | None = None,
+    parent_actor_id: str | None = None,
+    request_id: str | None = None,
+    parent_event_id: str | None = None,
+    workflow_run_id: str | None = None,
+    ontology_run_id: str | None = None,
+    agent_session_id: str | None = None,
+    action_run_id: int | None = None,
+    approval_id: int | None = None,
+    audit_event_id: str | None = None,
+    input_hash: str | None = None,
+    output_hash: str | None = None,
+    summary: Any | None = None,
+    metadata: Any | None = None,
+    schema_version: int = GOVERNANCE_SCHEMA_VERSION,
+    criticality: str = GOVERNANCE_OPERATIONAL,
+    lineage_root_id: str | None = None,
+    idempotency_key: str | None = None,
+    producer_name: str | None = None,
+    producer_version: str | None = None,
+    redaction_policy: str = "audit_summary_v1",
+    retention_class: str = "provenance_365d",
+    error: str | None = None,
+) -> dict:
+    """Insert or update one provenance event.
+
+    This is intentionally plain storage. Redaction and hashing are handled by
+    api.provenance before values reach this function.
+    """
+
+    conn = _get_conn()
     with _lock:
-        conn.execute(
-            f"INSERT INTO provenance_events ({columns}) VALUES ({placeholders}) "
-            f"ON CONFLICT(id) DO UPDATE SET {updates}",
-            tuple(params.values()),
+        event = _upsert_provenance_event_conn(
+            conn,
+            event_id=event_id,
+            event_type=event_type,
+            event_name=event_name,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            parent_actor_id=parent_actor_id,
+            request_id=request_id,
+            parent_event_id=parent_event_id,
+            workflow_run_id=workflow_run_id,
+            ontology_run_id=ontology_run_id,
+            agent_session_id=agent_session_id,
+            action_run_id=action_run_id,
+            approval_id=approval_id,
+            audit_event_id=audit_event_id,
+            input_hash=input_hash,
+            output_hash=output_hash,
+            summary=summary,
+            metadata=metadata,
+            schema_version=schema_version,
+            criticality=criticality,
+            lineage_root_id=lineage_root_id,
+            idempotency_key=idempotency_key,
+            producer_name=producer_name,
+            producer_version=producer_version,
+            redaction_policy=redaction_policy,
+            retention_class=retention_class,
+            error=error,
         )
         conn.commit()
-        row = conn.execute("SELECT * FROM provenance_events WHERE id = ?", (eid,)).fetchone()
-    return _parse_provenance_event_row(row)
+    return event
 
 
 def finish_provenance_event(
@@ -1423,7 +1703,8 @@ def finish_provenance_event(
     return _parse_provenance_event_row(row) if row else None
 
 
-def upsert_provenance_link(
+def _upsert_provenance_link_conn(
+    conn: sqlite3.Connection | PostgresCompatConnection,
     *,
     link_id: str | None = None,
     event_id: str,
@@ -1435,9 +1716,9 @@ def upsert_provenance_link(
     source_ref_version: str | None = None,
     target_ref_version: str | None = None,
     metadata: Any | None = None,
+    lineage_root_id: str | None = None,
     created_at: str | None = None,
 ) -> dict:
-    conn = _get_conn()
     lid = (
         link_id
         or f"pvlink:{_json_hash([event_id, source_ref_type, source_ref_id, target_ref_type, target_ref_id, link_type, source_ref_version, target_ref_version])}"
@@ -1454,18 +1735,53 @@ def upsert_provenance_link(
         "target_ref_version": target_ref_version,
         "link_type": link_type,
         "metadata_json": _json_or_none(metadata),
+        "lineage_root_id": lineage_root_id,
         "created_at": now,
     }
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
     updates = ", ".join(f"{column} = excluded.{column}" for column in params if column != "id")
+    conn.execute(
+        f"INSERT INTO provenance_links ({columns}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {updates}",
+        tuple(params.values()),
+    )
+    row = conn.execute("SELECT * FROM provenance_links WHERE id = ?", (lid,)).fetchone()
+    return _parse_provenance_link_row(row)
+
+
+def upsert_provenance_link(
+    *,
+    link_id: str | None = None,
+    event_id: str,
+    source_ref_type: str,
+    source_ref_id: str,
+    target_ref_type: str,
+    target_ref_id: str,
+    link_type: str,
+    source_ref_version: str | None = None,
+    target_ref_version: str | None = None,
+    metadata: Any | None = None,
+    lineage_root_id: str | None = None,
+    created_at: str | None = None,
+) -> dict:
+    conn = _get_conn()
     with _lock:
-        conn.execute(
-            f"INSERT INTO provenance_links ({columns}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {updates}",
-            tuple(params.values()),
+        row = _upsert_provenance_link_conn(
+            conn,
+            link_id=link_id,
+            event_id=event_id,
+            source_ref_type=source_ref_type,
+            source_ref_id=source_ref_id,
+            source_ref_version=source_ref_version,
+            target_ref_type=target_ref_type,
+            target_ref_id=target_ref_id,
+            target_ref_version=target_ref_version,
+            link_type=link_type,
+            metadata=metadata,
+            lineage_root_id=lineage_root_id,
+            created_at=created_at,
         )
         conn.commit()
-        row = conn.execute("SELECT * FROM provenance_links WHERE id = ?", (lid,)).fetchone()
     return _parse_provenance_link_row(row)
 
 
@@ -1553,6 +1869,418 @@ def upsert_workflow_artifact_record(
         conn.commit()
         row = conn.execute("SELECT * FROM workflow_artifact_records WHERE artifact_id = ?", (artifact_id,)).fetchone()
     return _parse_workflow_artifact_row(row)
+
+
+# ---------------------------------------------------------------------------
+# Governance outbox
+# ---------------------------------------------------------------------------
+
+
+def _governance_idempotency_key(event_bundle: dict[str, Any], prefix: str = "governance") -> str:
+    explicit = event_bundle.get("idempotency_key")
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+    return f"{prefix}:{_json_hash(event_bundle)}"
+
+
+def _lineage_root_from_bundle(event_bundle: dict[str, Any]) -> str | None:
+    root = event_bundle.get("lineage_root_id")
+    if root is not None and str(root).strip():
+        return str(root).strip()
+    for key in ("audit_events", "provenance_events", "provenance_links"):
+        rows = event_bundle.get(key)
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and row.get("lineage_root_id"):
+                    return str(row["lineage_root_id"])
+    return None
+
+
+def _enqueue_governance_outbox_tx(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    event_bundle: dict[str, Any],
+    *,
+    idempotency_key: str | None = None,
+    lineage_root_id: str | None = None,
+    retention_class: str = GOVERNANCE_FINANCIAL_RETENTION_CLASS,
+    next_attempt_at: str | None = None,
+) -> dict:
+    if not isinstance(event_bundle, dict) or not event_bundle:
+        raise ValueError("Governance outbox bundle must be a non-empty object")
+    now = _now()
+    key = idempotency_key or _governance_idempotency_key(event_bundle)
+    root = lineage_root_id or _lineage_root_from_bundle(event_bundle)
+    params = {
+        "idempotency_key": key,
+        "event_bundle_json": json.dumps(event_bundle, sort_keys=True, default=str),
+        "status": "pending",
+        "attempt_count": 0,
+        "next_attempt_at": next_attempt_at or now,
+        "locked_at": None,
+        "last_error": None,
+        "dead_lettered_at": None,
+        "lineage_root_id": root,
+        "retention_class": retention_class,
+        "created_at": now,
+        "updated_at": now,
+    }
+    columns = ", ".join(params)
+    placeholders = ", ".join("?" for _ in params)
+    updates = """
+        event_bundle_json = excluded.event_bundle_json,
+        next_attempt_at = CASE
+            WHEN governance_outbox.status IN ('completed', 'processing') THEN governance_outbox.next_attempt_at
+            ELSE excluded.next_attempt_at
+        END,
+        status = CASE
+            WHEN governance_outbox.status = 'completed' THEN governance_outbox.status
+            ELSE excluded.status
+        END,
+        lineage_root_id = COALESCE(excluded.lineage_root_id, governance_outbox.lineage_root_id),
+        retention_class = excluded.retention_class,
+        updated_at = excluded.updated_at
+    """
+    conn.execute(
+        f"INSERT INTO governance_outbox ({columns}) VALUES ({placeholders}) "
+        f"ON CONFLICT(idempotency_key) DO UPDATE SET {updates}",
+        tuple(params.values()),
+    )
+    row = conn.execute(
+        "SELECT * FROM governance_outbox WHERE idempotency_key = ?",
+        (key,),
+    ).fetchone()
+    return _parse_governance_outbox_row(row)
+
+
+def enqueue_governance_outbox(
+    event_bundle: dict[str, Any],
+    *,
+    idempotency_key: str | None = None,
+    lineage_root_id: str | None = None,
+    retention_class: str = GOVERNANCE_FINANCIAL_RETENTION_CLASS,
+    next_attempt_at: str | None = None,
+) -> dict:
+    conn = _get_conn()
+    with _lock:
+        row = _enqueue_governance_outbox_tx(
+            conn,
+            event_bundle,
+            idempotency_key=idempotency_key,
+            lineage_root_id=lineage_root_id,
+            retention_class=retention_class,
+            next_attempt_at=next_attempt_at,
+        )
+        conn.commit()
+    return row
+
+
+def _materialize_governance_bundle_tx(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    event_bundle: dict[str, Any],
+) -> dict[str, int]:
+    if not isinstance(event_bundle, dict):
+        raise ValueError("Governance event bundle must be a JSON object")
+    counts = {
+        "audit_events": 0,
+        "provenance_events": 0,
+        "provenance_links": 0,
+        "source_record_refs": 0,
+        "workflow_artifact_records": 0,
+    }
+    now = _now()
+    root = _lineage_root_from_bundle(event_bundle)
+    for event in event_bundle.get("audit_events") or []:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(
+            event.get("event_id") or event.get("idempotency_key") or _governance_idempotency_key(event, "audit")
+        )
+        existing = conn.execute("SELECT id FROM audit_events WHERE event_id = ?", (event_id,)).fetchone()
+        if existing:
+            continue
+        _record_audit_event_conn(
+            conn,
+            event_id=event_id,
+            action_name=str(event["action_name"]),
+            action_category=str(event.get("action_category") or "governance"),
+            status=str(event.get("status") or "succeeded"),
+            occurred_at=event.get("occurred_at"),
+            received_at=event.get("received_at"),
+            request_id=event.get("request_id"),
+            actor_id=event.get("actor_id"),
+            actor_type=str(event.get("actor_type") or "system"),
+            parent_actor_id=event.get("parent_actor_id"),
+            object_type=event.get("object_type"),
+            object_id=event.get("object_id"),
+            object_refs=event.get("object_refs"),
+            before_summary=event.get("before_summary"),
+            after_summary=event.get("after_summary"),
+            source_lineage=event.get("source_lineage"),
+            metadata=event.get("metadata"),
+            error=event.get("error"),
+            schema_version=int(event.get("schema_version") or GOVERNANCE_SCHEMA_VERSION),
+            criticality=str(event.get("criticality") or GOVERNANCE_CRITICAL_FINANCIAL),
+            lineage_root_id=str(event.get("lineage_root_id") or root) if event.get("lineage_root_id") or root else None,
+            idempotency_key=event.get("idempotency_key"),
+            producer_name=event.get("producer_name"),
+            producer_version=event.get("producer_version"),
+            redaction_policy=str(event.get("redaction_policy") or GOVERNANCE_REDACTION_POLICY),
+            retention_class=str(event.get("retention_class") or GOVERNANCE_FINANCIAL_RETENTION_CLASS),
+        )
+        counts["audit_events"] += 1
+
+    for event in event_bundle.get("provenance_events") or []:
+        if not isinstance(event, dict):
+            continue
+        _upsert_provenance_event_conn(
+            conn,
+            event_id=event.get("id") or event.get("event_id"),
+            event_type=str(event["event_type"]),
+            event_name=str(event["event_name"]),
+            status=str(event.get("status") or "succeeded"),
+            started_at=event.get("started_at") or now,
+            completed_at=event.get("completed_at") or now
+            if str(event.get("status") or "succeeded") != "started"
+            else event.get("completed_at"),
+            actor_type=event.get("actor_type"),
+            actor_id=event.get("actor_id"),
+            parent_actor_id=event.get("parent_actor_id"),
+            request_id=event.get("request_id"),
+            parent_event_id=event.get("parent_event_id"),
+            workflow_run_id=event.get("workflow_run_id"),
+            ontology_run_id=event.get("ontology_run_id"),
+            agent_session_id=event.get("agent_session_id"),
+            action_run_id=event.get("action_run_id"),
+            approval_id=event.get("approval_id"),
+            audit_event_id=event.get("audit_event_id"),
+            input_hash=event.get("input_hash"),
+            output_hash=event.get("output_hash"),
+            summary=event.get("summary"),
+            metadata=event.get("metadata"),
+            schema_version=int(event.get("schema_version") or GOVERNANCE_SCHEMA_VERSION),
+            criticality=str(event.get("criticality") or GOVERNANCE_CRITICAL_FINANCIAL),
+            lineage_root_id=str(event.get("lineage_root_id") or root) if event.get("lineage_root_id") or root else None,
+            idempotency_key=event.get("idempotency_key"),
+            producer_name=event.get("producer_name"),
+            producer_version=event.get("producer_version"),
+            redaction_policy=str(event.get("redaction_policy") or GOVERNANCE_REDACTION_POLICY),
+            retention_class=str(event.get("retention_class") or GOVERNANCE_FINANCIAL_RETENTION_CLASS),
+            error=event.get("error"),
+        )
+        counts["provenance_events"] += 1
+
+    for link in event_bundle.get("provenance_links") or []:
+        if not isinstance(link, dict):
+            continue
+        _upsert_provenance_link_conn(
+            conn,
+            link_id=link.get("id") or link.get("link_id"),
+            event_id=str(link["event_id"]),
+            source_ref_type=str(link["source_ref_type"]),
+            source_ref_id=str(link["source_ref_id"]),
+            source_ref_version=link.get("source_ref_version"),
+            target_ref_type=str(link["target_ref_type"]),
+            target_ref_id=str(link["target_ref_id"]),
+            target_ref_version=link.get("target_ref_version"),
+            link_type=str(link["link_type"]),
+            metadata=link.get("metadata"),
+            lineage_root_id=str(link.get("lineage_root_id") or root) if link.get("lineage_root_id") or root else None,
+            created_at=link.get("created_at") or now,
+        )
+        counts["provenance_links"] += 1
+
+    for update in event_bundle.get("recommendation_updates") or []:
+        if isinstance(update, dict) and update.get("recommendation_id"):
+            conn.execute(
+                "UPDATE recommendations SET provenance_event_id = COALESCE(?, provenance_event_id), "
+                "lineage_root_id = COALESCE(?, lineage_root_id), lineage_completeness = COALESCE(?, lineage_completeness) "
+                "WHERE id = ?",
+                (
+                    update.get("provenance_event_id"),
+                    update.get("lineage_root_id") or root,
+                    update.get("lineage_completeness"),
+                    int(update["recommendation_id"]),
+                ),
+            )
+    for update in event_bundle.get("policy_gate_result_updates") or []:
+        if isinstance(update, dict) and update.get("policy_gate_result_id"):
+            conn.execute(
+                "UPDATE policy_gate_results SET provenance_event_id = COALESCE(?, provenance_event_id), "
+                "lineage_root_id = COALESCE(?, lineage_root_id), lineage_completeness = COALESCE(?, lineage_completeness) "
+                "WHERE id = ?",
+                (
+                    update.get("provenance_event_id"),
+                    update.get("lineage_root_id") or root,
+                    update.get("lineage_completeness"),
+                    int(update["policy_gate_result_id"]),
+                ),
+            )
+    return counts
+
+
+def materialize_governance_bundle(event_bundle: dict[str, Any]) -> dict[str, int]:
+    conn = _get_conn()
+    with _lock:
+        counts = _materialize_governance_bundle_tx(conn, event_bundle)
+        conn.commit()
+    return counts
+
+
+def get_governance_outbox_items(
+    *,
+    status: str | None = None,
+    lineage_root_id: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if lineage_root_id:
+        clauses.append("lineage_root_id = ?")
+        params.append(lineage_root_id)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    safe_limit = max(1, min(int(limit), 1000))
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM governance_outbox{where} ORDER BY created_at ASC, id ASC LIMIT ?",
+            (*params, safe_limit),
+        ).fetchall()
+    return [_parse_governance_outbox_row(row) for row in rows]
+
+
+def claim_governance_outbox_batch(*, limit: int = 50, lease_seconds: int = 300) -> list[dict]:
+    conn = _get_conn()
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
+    stale_cutoff = (now_dt - timedelta(seconds=max(1, int(lease_seconds)))).isoformat()
+    safe_limit = max(1, min(int(limit), 500))
+    with _lock:
+        rows = conn.execute(
+            """
+            SELECT id FROM governance_outbox
+            WHERE (
+                    status IN ('pending', 'failed')
+                    AND next_attempt_at <= ?
+                  )
+               OR (
+                    status = 'processing'
+                    AND locked_at IS NOT NULL
+                    AND locked_at <= ?
+                  )
+            ORDER BY next_attempt_at ASC, id ASC
+            LIMIT ?
+            """,
+            (now, stale_cutoff, safe_limit),
+        ).fetchall()
+        ids = [int(row["id"]) for row in rows]
+        claimed: list[dict] = []
+        for oid in ids:
+            conn.execute(
+                "UPDATE governance_outbox SET status = 'processing', attempt_count = attempt_count + 1, "
+                "locked_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, oid),
+            )
+            row = conn.execute("SELECT * FROM governance_outbox WHERE id = ?", (oid,)).fetchone()
+            claimed.append(_parse_governance_outbox_row(row))
+        conn.commit()
+    return claimed
+
+
+def drain_governance_outbox(
+    *,
+    limit: int = 50,
+    lease_seconds: int = 300,
+    max_attempts: int = 8,
+    retry_base_seconds: int = 30,
+    retry_max_seconds: int = 3600,
+) -> dict[str, Any]:
+    items = claim_governance_outbox_batch(limit=limit, lease_seconds=lease_seconds)
+    conn = _get_conn()
+    completed = 0
+    failed = 0
+    dead_lettered = 0
+    errors: list[dict[str, Any]] = []
+    for item in items:
+        oid = int(item["id"])
+        bundle = item.get("event_bundle")
+        try:
+            if not isinstance(bundle, dict):
+                raise ValueError("Outbox bundle is not a JSON object")
+            with _lock:
+                _materialize_governance_bundle_tx(conn, bundle)
+                now = _now()
+                conn.execute(
+                    "UPDATE governance_outbox SET status = 'completed', locked_at = NULL, last_error = NULL, "
+                    "updated_at = ? WHERE id = ?",
+                    (now, oid),
+                )
+                conn.commit()
+            completed += 1
+        except Exception as exc:
+            conn.rollback()
+            failed += 1
+            error = _approval_error_message(exc)
+            attempt_count = int(item.get("attempt_count") or 1)
+            now_dt = datetime.now(UTC)
+            if attempt_count >= max(1, int(max_attempts)):
+                status = "dead_letter"
+                dead_lettered_at = now_dt.isoformat()
+                next_attempt = item.get("next_attempt_at") or now_dt.isoformat()
+                dead_lettered += 1
+            else:
+                status = "failed"
+                dead_lettered_at = None
+                delay = min(
+                    max(1, int(retry_max_seconds)), max(1, int(retry_base_seconds)) * (2 ** (attempt_count - 1))
+                )
+                next_attempt = (now_dt + timedelta(seconds=delay)).isoformat()
+            with _lock:
+                conn.execute(
+                    "UPDATE governance_outbox SET status = ?, locked_at = NULL, last_error = ?, "
+                    "next_attempt_at = ?, dead_lettered_at = COALESCE(?, dead_lettered_at), updated_at = ? "
+                    "WHERE id = ?",
+                    (status, error, next_attempt, dead_lettered_at, now_dt.isoformat(), oid),
+                )
+                conn.commit()
+            errors.append({"id": oid, "idempotency_key": item.get("idempotency_key"), "error": error, "status": status})
+    return {
+        "claimed": len(items),
+        "completed": completed,
+        "failed": failed,
+        "dead_lettered": dead_lettered,
+        "errors": errors[:20],
+    }
+
+
+def get_governance_outbox_metrics() -> dict[str, Any]:
+    conn = _get_conn()
+    now_dt = datetime.now(UTC)
+    with _lock:
+        rows = conn.execute("SELECT status, COUNT(*) AS count FROM governance_outbox GROUP BY status").fetchall()
+        oldest = conn.execute(
+            "SELECT created_at FROM governance_outbox WHERE status IN ('pending', 'failed') ORDER BY created_at ASC LIMIT 1"
+        ).fetchone()
+    counts = {str(row["status"]): int(row["count"] or 0) for row in rows}
+    oldest_age_seconds = None
+    if oldest and oldest["created_at"]:
+        try:
+            created = datetime.fromisoformat(str(oldest["created_at"]))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            oldest_age_seconds = max(0.0, (now_dt - created).total_seconds())
+        except ValueError:
+            oldest_age_seconds = None
+    return {
+        "counts": counts,
+        "pending": counts.get("pending", 0),
+        "failed": counts.get("failed", 0),
+        "processing": counts.get("processing", 0),
+        "dead_letter": counts.get("dead_letter", 0),
+        "oldest_pending_age_seconds": oldest_age_seconds,
+    }
 
 
 def set_workflow_run_provenance_event(run_id: str, provenance_event_id: str | None) -> None:
@@ -1797,6 +2525,152 @@ def provenance_summary(
     }
 
 
+def get_decision_lineage_report(
+    *,
+    recommendation_id: int | None = None,
+    approval_id: int | None = None,
+    action_run_id: int | None = None,
+    workflow_run_id: str | None = None,
+    object_version_id: str | None = None,
+    relation_version_id: str | None = None,
+    max_depth: int = 5,
+) -> dict[str, Any]:
+    selectors = [
+        recommendation_id,
+        approval_id,
+        action_run_id,
+        workflow_run_id,
+        object_version_id,
+        relation_version_id,
+    ]
+    if sum(value is not None for value in selectors) != 1:
+        raise ValueError("Provide exactly one lineage selector")
+
+    ref_type: str | None = None
+    ref_id: str | None = None
+    lineage_root_id: str | None = None
+    completeness: str | None = None
+    object_snapshot: dict[str, Any] | None = None
+    if recommendation_id is not None:
+        rec = get_recommendation(int(recommendation_id))
+        if not rec:
+            raise ValueError(f"No recommendation with id {recommendation_id}")
+        ref_type, ref_id = "recommendation", str(recommendation_id)
+        lineage_root_id = rec.get("lineage_root_id") or f"{ref_type}:{ref_id}"
+        completeness = rec.get("lineage_completeness")
+        object_snapshot = {
+            "recommendation_id": recommendation_id,
+            "ticker": rec.get("ticker"),
+            "action": rec.get("action"),
+            "status": rec.get("status"),
+            "approval_id": rec.get("approval_id"),
+            "policy_gate_result_id": rec.get("policy_gate_result_id"),
+            "model": rec.get("model"),
+            "prompt_hash": rec.get("prompt_hash"),
+            "input_hash": rec.get("input_hash"),
+        }
+    elif approval_id is not None:
+        approval = get_pending_approval(int(approval_id))
+        if not approval:
+            raise ValueError(f"No approval with id {approval_id}")
+        ref_type, ref_id = "approval", str(approval_id)
+        lineage_root_id = f"{ref_type}:{ref_id}"
+        completeness = "complete" if approval.get("provenance_event_id") else "retry_pending"
+        object_snapshot = {
+            "approval_id": approval_id,
+            "entity_type": approval.get("entity_type"),
+            "entity_id": approval.get("entity_id"),
+            "action_id": approval.get("action_id"),
+            "status": approval.get("status"),
+            "application_status": approval.get("application_status"),
+            "provenance_event_id": approval.get("provenance_event_id"),
+            "origin_provenance_event_id": approval.get("origin_provenance_event_id"),
+        }
+    elif action_run_id is not None:
+        action_run = get_action_run(int(action_run_id))
+        if not action_run:
+            raise ValueError(f"No action run with id {action_run_id}")
+        ref_type, ref_id = "action_run", str(action_run_id)
+        lineage_root_id = f"{ref_type}:{ref_id}"
+        completeness = "complete" if action_run.get("provenance_event_id") else "retry_pending"
+        object_snapshot = {
+            "action_run_id": action_run_id,
+            "action_id": action_run.get("action_id"),
+            "status": action_run.get("status"),
+            "approval_id": action_run.get("approval_id"),
+            "input_hash": action_run.get("input_hash"),
+            "provenance_event_id": action_run.get("provenance_event_id"),
+        }
+    elif workflow_run_id is not None:
+        workflow = get_workflow_run(workflow_run_id)
+        if not workflow:
+            raise ValueError(f"No workflow run with id {workflow_run_id}")
+        ref_type, ref_id = "workflow_run", workflow_run_id
+        lineage_root_id = f"{ref_type}:{ref_id}"
+        completeness = "complete" if workflow.get("provenance_event_id") else "retry_pending"
+        object_snapshot = {
+            "workflow_run_id": workflow_run_id,
+            "workflow_name": workflow.get("workflow_name"),
+            "ticker": workflow.get("ticker"),
+            "status": workflow.get("status"),
+            "provenance_event_id": workflow.get("provenance_event_id"),
+        }
+    elif object_version_id is not None:
+        ref_type, ref_id = "ontology_object_version", str(object_version_id)
+        lineage_root_id = f"{ref_type}:{ref_id}"
+        completeness = "unknown"
+    elif relation_version_id is not None:
+        ref_type, ref_id = "relation_version", str(relation_version_id)
+        lineage_root_id = f"{ref_type}:{ref_id}"
+        completeness = "unknown"
+
+    trace = get_provenance_trace(
+        workflow_run_id=workflow_run_id,
+        approval_id=approval_id,
+        action_run_id=action_run_id,
+        ref_type=ref_type
+        if recommendation_id is not None or object_version_id is not None or relation_version_id is not None
+        else None,
+        ref_id=ref_id
+        if recommendation_id is not None or object_version_id is not None or relation_version_id is not None
+        else None,
+        max_depth=max_depth,
+    )
+    audit_events = get_audit_events(lineage_root_id=lineage_root_id, limit=500) if lineage_root_id else []
+    if not audit_events and ref_type and ref_id:
+        audit_events = get_audit_events(object_type=ref_type, object_id=ref_id, limit=500)
+    outbox = get_governance_outbox_items(lineage_root_id=lineage_root_id, limit=100) if lineage_root_id else []
+    warnings: list[str] = []
+    if not trace["events"]:
+        warnings.append("No provenance events found for selector.")
+    if not audit_events:
+        warnings.append("No audit events found for lineage root.")
+    if any(row.get("status") in {"pending", "failed", "processing"} for row in outbox):
+        warnings.append("Lineage materialization has retry-pending outbox work.")
+    if any(row.get("status") == "dead_letter" for row in outbox):
+        warnings.append("Lineage materialization has dead-lettered outbox work.")
+    if completeness and completeness != "complete":
+        warnings.append(f"Lineage completeness is {completeness}.")
+    return {
+        "selector": {
+            "recommendation_id": recommendation_id,
+            "approval_id": approval_id,
+            "action_run_id": action_run_id,
+            "workflow_run_id": workflow_run_id,
+            "object_version_id": object_version_id,
+            "relation_version_id": relation_version_id,
+        },
+        "lineage_root_id": lineage_root_id,
+        "ref": {"type": ref_type, "id": ref_id},
+        "lineage_completeness": completeness,
+        "object": object_snapshot,
+        "provenance": trace,
+        "audit_events": audit_events,
+        "outbox": outbox,
+        "completeness_warnings": warnings,
+    }
+
+
 def _emit_core_audit(
     action_name: str,
     *,
@@ -1807,6 +2681,11 @@ def _emit_core_audit(
     source_lineage: Any | None = None,
     metadata: Any | None = None,
     error: str | None = None,
+    fail_closed: bool = False,
+    criticality: str = GOVERNANCE_OPERATIONAL,
+    lineage_root_id: str | None = None,
+    idempotency_key: str | None = None,
+    retention_class: str = "audit_365d",
 ) -> None:
     try:
         from api.audit import emit_audit_event
@@ -1821,9 +2700,16 @@ def _emit_core_audit(
             source_lineage=source_lineage,
             metadata=metadata,
             error=error,
+            fail_closed=fail_closed,
+            criticality=criticality,
+            lineage_root_id=lineage_root_id,
+            idempotency_key=idempotency_key,
+            retention_class=retention_class,
         )
     except Exception:
         logger.debug("Failed to emit core audit event action=%s", action_name, exc_info=True)
+        if fail_closed:
+            raise
 
 
 def _guard_legacy_domain_write(surface: str) -> None:
@@ -2006,15 +2892,75 @@ def create_workflow_run(
     ticker: str | None = None,
     run_id: str | None = None,
 ) -> dict:
+    from api import governance
+
     conn = _get_conn()
     now = _now()
     rid = run_id or uuid.uuid4().hex
     with _lock:
-        conn.execute(
-            "INSERT INTO workflow_runs (run_id, workflow_name, ticker, status, started_at) VALUES (?,?,?,?,?)",
-            (rid, workflow_name, ticker.upper() if ticker else None, "running", now),
-        )
-        conn.commit()
+        try:
+            conn.execute(
+                "INSERT INTO workflow_runs (run_id, workflow_name, ticker, status, started_at) VALUES (?,?,?,?,?)",
+                (rid, workflow_name, ticker.upper() if ticker else None, "running", now),
+            )
+            lineage_root_id = governance.lineage_root("workflow_run", rid)
+            provenance_event_id = governance.deterministic_id("pv:workflow_run", rid)
+            _materialize_governance_bundle_tx(
+                conn,
+                {
+                    "lineage_root_id": lineage_root_id,
+                    "provenance_events": [
+                        governance.provenance_event(
+                            event_id=provenance_event_id,
+                            event_type="workflow_run",
+                            event_name=workflow_name,
+                            status="started",
+                            lineage_root_id=lineage_root_id,
+                            workflow_run_id=rid,
+                            summary={
+                                "workflow_name": workflow_name,
+                                "ticker": ticker.upper() if ticker else None,
+                                "status": "running",
+                            },
+                        )
+                    ],
+                    "provenance_links": [
+                        governance.provenance_link(
+                            event_id=provenance_event_id,
+                            source_ref_type="workflow",
+                            source_ref_id=workflow_name,
+                            target_ref_type="workflow_run",
+                            target_ref_id=rid,
+                            link_type="executed_as",
+                            lineage_root_id=lineage_root_id,
+                        )
+                    ],
+                    "audit_events": [
+                        governance.audit_event(
+                            action_name="workflow.run.started",
+                            status="started",
+                            lineage_root_id=lineage_root_id,
+                            object_refs=[
+                                {"type": "workflow_run", "id": rid},
+                                {"type": "workflow", "id": workflow_name},
+                            ],
+                            after_summary={
+                                "workflow_name": workflow_name,
+                                "ticker": ticker.upper() if ticker else None,
+                                "status": "running",
+                            },
+                            source_lineage={"run_id": rid},
+                        )
+                    ],
+                },
+            )
+            conn.execute(
+                "UPDATE workflow_runs SET provenance_event_id = ? WHERE run_id = ?", (provenance_event_id, rid)
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     _emit_core_audit(
         "workflow.run.started",
         status="started",
@@ -2040,6 +2986,11 @@ def create_workflow_run(
                 "ticker": ticker.upper() if ticker else None,
                 "status": "running",
             },
+            criticality=GOVERNANCE_CRITICAL_FINANCIAL,
+            lineage_root_id=f"workflow_run:{rid}",
+            idempotency_key=f"workflow_run:{rid}:started",
+            retention_class=GOVERNANCE_FINANCIAL_RETENTION_CLASS,
+            fail_closed=True,
         )
         set_workflow_run_provenance_event(rid, event_id)
         provenance.link_refs(
@@ -2049,9 +3000,11 @@ def create_workflow_run(
             target_ref_type="workflow_run",
             target_ref_id=rid,
             link_type="executed_as",
+            lineage_root_id=f"workflow_run:{rid}",
+            fail_closed=True,
         )
     except Exception:
-        pass
+        raise
     return {"run_id": rid, "workflow_name": workflow_name, "ticker": ticker, "status": "running", "started_at": now}
 
 
@@ -3038,6 +3991,8 @@ def create_policy_gate_result(
     target_id: str | int | None = None,
     payload: dict | None = None,
 ) -> dict:
+    from api import governance
+
     conn = _get_conn()
     created_at = result.get("evaluated_at") or _now()
     decision = str(result.get("decision") or "error")
@@ -3061,12 +4016,87 @@ def create_policy_gate_result(
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
     with _lock:
-        cur = conn.execute(
-            f"INSERT INTO policy_gate_results ({columns}) VALUES ({placeholders})",
-            tuple(params.values()),
-        )
-        conn.commit()
-        row = conn.execute("SELECT * FROM policy_gate_results WHERE id = ?", (cur.lastrowid,)).fetchone()
+        try:
+            cur = conn.execute(
+                f"INSERT INTO policy_gate_results ({columns}) VALUES ({placeholders})",
+                tuple(params.values()),
+            )
+            result_id = int(cur.lastrowid)
+            lineage_root_id = governance.lineage_root(governance.REF_POLICY_GATE_RESULT, result_id)
+            provenance_event_id = governance.deterministic_id("pv:policy_gate_result", result_id)
+            bundle = {
+                "lineage_root_id": lineage_root_id,
+                "provenance_events": [
+                    governance.provenance_event(
+                        event_id=provenance_event_id,
+                        event_type="policy_gate_result",
+                        event_name=governance.EVENT_POLICY_GATE_EVALUATED,
+                        lineage_root_id=lineage_root_id,
+                        output_value=result,
+                        summary={
+                            "policy_gate_result_id": result_id,
+                            "decision": decision,
+                            "review_required": bool(result.get("review_required")),
+                            "action_id": action_id or result.get("action_id"),
+                            "target_type": target_type,
+                            "target_id": str(target_id) if target_id is not None else None,
+                        },
+                        metadata={
+                            "payload_hash": params["payload_hash"],
+                            "account_id": result.get("account_id"),
+                            "portfolio_id": result.get("portfolio_id"),
+                            "policy_id": result.get("policy_id"),
+                            "mandate_id": result.get("mandate_id"),
+                        },
+                    )
+                ],
+                "audit_events": [
+                    governance.audit_event(
+                        action_name=governance.EVENT_POLICY_GATE_EVALUATED,
+                        status=decision,
+                        lineage_root_id=lineage_root_id,
+                        object_refs=[{"type": governance.REF_POLICY_GATE_RESULT, "id": result_id}],
+                        after_summary={
+                            "policy_gate_result_id": result_id,
+                            "decision": decision,
+                            "review_required": bool(result.get("review_required")),
+                            "payload_hash": params["payload_hash"],
+                        },
+                        source_lineage={
+                            "source_type": source_type,
+                            "source_id": source_id,
+                            "target_type": target_type,
+                            "target_id": str(target_id) if target_id is not None else None,
+                        },
+                    )
+                ],
+                "policy_gate_result_updates": [
+                    {
+                        "policy_gate_result_id": result_id,
+                        "provenance_event_id": provenance_event_id,
+                        "lineage_root_id": lineage_root_id,
+                        "lineage_completeness": "complete",
+                    }
+                ],
+            }
+            if target_type and target_id is not None:
+                bundle["provenance_links"] = [
+                    governance.provenance_link(
+                        event_id=provenance_event_id,
+                        source_ref_type=governance.REF_POLICY_GATE_RESULT,
+                        source_ref_id=result_id,
+                        target_ref_type=str(target_type),
+                        target_ref_id=str(target_id),
+                        link_type="evaluated",
+                        lineage_root_id=lineage_root_id,
+                    )
+                ]
+            _materialize_governance_bundle_tx(conn, bundle)
+            row = conn.execute("SELECT * FROM policy_gate_results WHERE id = ?", (result_id,)).fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return _parse_policy_gate_result_row(row)
 
 
@@ -3127,6 +4157,152 @@ def _ensure_policy_gate_result_for_recommendation(record: dict) -> int | None:
         payload=record,
     )
     return int(row["id"])
+
+
+def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dict[str, Any]:
+    from api import governance
+
+    recommendation_id = int(recommendation["id"])
+    lineage_root_id = governance.lineage_root(governance.REF_RECOMMENDATION, recommendation_id)
+    provenance_event_id = governance.deterministic_id("pv:recommendation", recommendation_id, "generated")
+    policy_gate_result_id = recommendation.get("policy_gate_result_id")
+    object_refs: list[dict[str, Any]] = [{"type": governance.REF_RECOMMENDATION, "id": recommendation_id}]
+    if policy_gate_result_id:
+        object_refs.append({"type": governance.REF_POLICY_GATE_RESULT, "id": policy_gate_result_id})
+    if recommendation.get("approval_id"):
+        object_refs.append({"type": governance.REF_APPROVAL, "id": recommendation.get("approval_id")})
+    bundle: dict[str, Any] = {
+        "lineage_root_id": lineage_root_id,
+        "provenance_events": [
+            governance.provenance_event(
+                event_id=provenance_event_id,
+                event_type="recommendation",
+                event_name=governance.EVENT_RECOMMENDATION_GENERATED,
+                lineage_root_id=lineage_root_id,
+                input_value={
+                    "input_hash": recommendation.get("input_hash"),
+                    "prompt_hash": recommendation.get("prompt_hash"),
+                    "report_id": recommendation.get("report_id"),
+                    "policy_gate_result_id": policy_gate_result_id,
+                },
+                output_value={
+                    "recommendation_id": recommendation_id,
+                    "status": recommendation.get("status"),
+                    "recommendation_status": recommendation.get("recommendation_status"),
+                    "idempotency_key": recommendation.get("idempotency_key"),
+                },
+                summary={
+                    "recommendation_id": recommendation_id,
+                    "report_type": recommendation.get("report_type"),
+                    "ticker": recommendation.get("ticker"),
+                    "instrument": recommendation.get("instrument"),
+                    "action": recommendation.get("action"),
+                    "status": recommendation.get("status"),
+                    "recommendation_status": recommendation.get("recommendation_status"),
+                    "policy_gate_result_id": policy_gate_result_id,
+                },
+                metadata={
+                    "model": recommendation.get("model"),
+                    "prompt_hash": recommendation.get("prompt_hash"),
+                    "input_hash": recommendation.get("input_hash"),
+                    "report_id": recommendation.get("report_id"),
+                    "source_quality": recommendation.get("source_quality"),
+                    "validation_status": recommendation.get("validation_status"),
+                },
+            )
+        ],
+        "audit_events": [
+            governance.audit_event(
+                action_name=governance.EVENT_RECOMMENDATION_GENERATED,
+                status=str(recommendation.get("status") or "open"),
+                lineage_root_id=lineage_root_id,
+                object_refs=object_refs,
+                after_summary={
+                    "recommendation_id": recommendation_id,
+                    "report_type": recommendation.get("report_type"),
+                    "ticker": recommendation.get("ticker"),
+                    "instrument": recommendation.get("instrument"),
+                    "action": recommendation.get("action"),
+                    "status": recommendation.get("status"),
+                    "recommendation_status": recommendation.get("recommendation_status"),
+                    "policy_gate_result_id": policy_gate_result_id,
+                    "model": recommendation.get("model"),
+                    "prompt_hash": recommendation.get("prompt_hash"),
+                    "input_hash": recommendation.get("input_hash"),
+                },
+                source_lineage={
+                    "report_id": recommendation.get("report_id"),
+                    "source_report_path_hash": _json_hash(recommendation.get("source_report_path"))
+                    if recommendation.get("source_report_path")
+                    else None,
+                    "source_json_path_hash": _json_hash(recommendation.get("source_json_path"))
+                    if recommendation.get("source_json_path")
+                    else None,
+                },
+            )
+        ],
+        "recommendation_updates": [
+            {
+                "recommendation_id": recommendation_id,
+                "provenance_event_id": provenance_event_id,
+                "lineage_root_id": lineage_root_id,
+                "lineage_completeness": "complete",
+            }
+        ],
+    }
+    links: list[dict[str, Any]] = []
+    if recommendation.get("report_id"):
+        links.append(
+            governance.provenance_link(
+                event_id=provenance_event_id,
+                source_ref_type=governance.REF_REPORT_RUN,
+                source_ref_id=str(recommendation["report_id"]),
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=recommendation_id,
+                link_type="produced",
+                lineage_root_id=lineage_root_id,
+            )
+        )
+    if policy_gate_result_id:
+        links.append(
+            governance.provenance_link(
+                event_id=provenance_event_id,
+                source_ref_type=governance.REF_POLICY_GATE_RESULT,
+                source_ref_id=str(policy_gate_result_id),
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=recommendation_id,
+                link_type="gated",
+                lineage_root_id=lineage_root_id,
+            )
+        )
+    if recommendation.get("model"):
+        links.append(
+            governance.provenance_link(
+                event_id=provenance_event_id,
+                source_ref_type=governance.REF_MODEL_CALL,
+                source_ref_id=str(recommendation.get("model")),
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=recommendation_id,
+                link_type="used",
+                lineage_root_id=lineage_root_id,
+                metadata={"model": recommendation.get("model")},
+            )
+        )
+    if record.get("prompt_hash") or recommendation.get("prompt_hash"):
+        links.append(
+            governance.provenance_link(
+                event_id=provenance_event_id,
+                source_ref_type=governance.REF_PROMPT_TEMPLATE,
+                source_ref_id=str(record.get("prompt_hash") or recommendation.get("prompt_hash")),
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=recommendation_id,
+                link_type="used",
+                lineage_root_id=lineage_root_id,
+            )
+        )
+    if links:
+        bundle["provenance_links"] = links
+    return bundle
 
 
 def create_recommendation(record: dict) -> dict:
@@ -3196,12 +4372,19 @@ def create_recommendation(record: dict) -> dict:
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
     with _lock:
-        cur = conn.execute(
-            f"INSERT INTO recommendations ({columns}) VALUES ({placeholders})",
-            tuple(params.values()),
-        )
-        conn.commit()
-        row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (cur.lastrowid,)).fetchone()
+        try:
+            cur = conn.execute(
+                f"INSERT INTO recommendations ({columns}) VALUES ({placeholders})",
+                tuple(params.values()),
+            )
+            row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (cur.lastrowid,)).fetchone()
+            result = _parse_recommendation_json_fields(_require_row_dict(row))
+            _materialize_governance_bundle_tx(conn, _recommendation_governance_bundle(result, record))
+            row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (cur.lastrowid,)).fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return _parse_recommendation_json_fields(_require_row_dict(row))
 
 
@@ -3290,16 +4473,26 @@ def upsert_recommendation(record: dict) -> dict:
         "outcome_json = recommendations.outcome_json"
     )
     with _lock:
-        conn.execute(
-            f"INSERT INTO recommendations ({columns}) VALUES ({placeholders}) "
-            f"ON CONFLICT(idempotency_key) DO UPDATE SET {updates}",
-            tuple(params.values()),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM recommendations WHERE idempotency_key = ?",
-            (record["idempotency_key"],),
-        ).fetchone()
+        try:
+            conn.execute(
+                f"INSERT INTO recommendations ({columns}) VALUES ({placeholders}) "
+                f"ON CONFLICT(idempotency_key) DO UPDATE SET {updates}",
+                tuple(params.values()),
+            )
+            row = conn.execute(
+                "SELECT * FROM recommendations WHERE idempotency_key = ?",
+                (record["idempotency_key"],),
+            ).fetchone()
+            result = _parse_recommendation_json_fields(_require_row_dict(row))
+            _materialize_governance_bundle_tx(conn, _recommendation_governance_bundle(result, record))
+            row = conn.execute(
+                "SELECT * FROM recommendations WHERE idempotency_key = ?",
+                (record["idempotency_key"],),
+            ).fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return _parse_recommendation_json_fields(_require_row_dict(row))
 
 
@@ -3470,6 +4663,91 @@ class ApprovalApplicationError(RuntimeError):
         super().__init__(f"Approval {approval_id} application failed: {error}")
 
 
+def _approval_governance_bundle(
+    approval: dict,
+    *,
+    event_name: str,
+    status: str,
+    action_run_id: int | None = None,
+    actor_id: str | None = None,
+    summary: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    from api import governance
+
+    approval_id = int(approval["id"])
+    lineage_root_id = governance.lineage_root(governance.REF_APPROVAL, approval_id)
+    provenance_event_id = governance.deterministic_id("pv:approval", approval_id, event_name, status)
+    object_refs: list[dict[str, Any]] = [{"type": governance.REF_APPROVAL, "id": approval_id}]
+    if action_run_id is not None:
+        object_refs.append({"type": governance.REF_ACTION_RUN, "id": action_run_id})
+    if approval.get("entity_type"):
+        object_refs.append({"type": approval.get("entity_type"), "id": approval.get("entity_id")})
+    payload_summary = {
+        "approval_id": approval_id,
+        "entity_type": approval.get("entity_type"),
+        "entity_id": approval.get("entity_id"),
+        "ticker": approval.get("ticker"),
+        "action_id": approval.get("action_id"),
+        "status": approval.get("status"),
+        "application_status": approval.get("application_status"),
+        **(summary or {}),
+    }
+    bundle: dict[str, Any] = {
+        "lineage_root_id": lineage_root_id,
+        "provenance_events": [
+            governance.provenance_event(
+                event_id=provenance_event_id,
+                event_type="approval",
+                event_name=event_name,
+                status="failed" if status == "failed" else "succeeded",
+                lineage_root_id=lineage_root_id,
+                action_run_id=action_run_id,
+                approval_id=approval_id,
+                output_value=payload_summary,
+                summary=payload_summary,
+                metadata={
+                    "source_type": approval.get("source_type"),
+                    "source_id": approval.get("source_id"),
+                    "action_input_hash": approval.get("action_input_hash"),
+                    "resolved_by_actor_id": actor_id,
+                },
+                error=error,
+            )
+        ],
+        "audit_events": [
+            governance.audit_event(
+                action_name=event_name,
+                status=status,
+                lineage_root_id=lineage_root_id,
+                actor_id=actor_id,
+                object_refs=object_refs,
+                after_summary=payload_summary,
+                source_lineage={
+                    "source_type": approval.get("source_type"),
+                    "source_id": approval.get("source_id"),
+                    "action_input_hash": approval.get("action_input_hash"),
+                    "approval_provenance_event_id": approval.get("provenance_event_id"),
+                },
+                error=error,
+            )
+        ],
+    }
+    if action_run_id is not None:
+        bundle["provenance_links"] = [
+            governance.provenance_link(
+                event_id=provenance_event_id,
+                source_ref_type=governance.REF_APPROVAL,
+                source_ref_id=str(approval_id),
+                target_ref_type=governance.REF_ACTION_RUN,
+                target_ref_id=str(action_run_id),
+                link_type="resolved_by" if event_name == governance.EVENT_APPROVAL_RESOLVED else "applied_by",
+                lineage_root_id=lineage_root_id,
+            )
+        ]
+    return bundle
+
+
 def _parse_pending_approval_row(row: Any) -> dict:
     d = _require_row_dict(row)
     _parse_json_field(d, "proposed_change")
@@ -3504,137 +4782,129 @@ def create_pending_approval(
     reason_code: str | None = None,
     supersedes_approval_id: int | None = None,
 ) -> dict:
+    from api import governance
+
     conn = _get_conn()
     now = _now()
     change_json = json.dumps(proposed_change, default=str)
     with _lock:
-        cur = conn.execute(
-            "INSERT INTO pending_approvals (entity_type, entity_id, ticker, action_id, action_schema_name, "
-            "action_schema_version, action_input_hash, request_schema_name, request_schema_version, proposed_change, "
-            "reason, source_type, source_id, created_at, risk_class, approval_mode, base_state_hash, "
-            "requested_by_actor_id, approval_note_required, reason_code, supersedes_approval_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                entity_type,
-                entity_id,
-                ticker.upper() if ticker else None,
-                action_id,
-                action_schema_name,
-                action_schema_version,
-                action_input_hash,
-                request_schema_name,
-                request_schema_version,
-                change_json,
-                reason,
-                source_type,
-                source_id,
-                now,
-                risk_class,
-                approval_mode,
-                base_state_hash,
-                requested_by_actor_id,
-                1 if approval_note_required else 0,
-                reason_code,
-                supersedes_approval_id,
-            ),
-        )
-        conn.commit()
-    result = {
-        "id": cur.lastrowid,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "ticker": ticker.upper() if ticker else None,
-        "action_id": action_id,
-        "action_schema_name": action_schema_name,
-        "action_schema_version": action_schema_version,
-        "action_input_hash": action_input_hash,
-        "request_schema_name": request_schema_name,
-        "request_schema_version": request_schema_version,
-        "proposed_change": proposed_change,
-        "reason": reason,
-        "source_type": source_type,
-        "source_id": source_id,
-        "status": "pending",
-        "created_at": now,
-        "resolved_at": None,
-        "resolved_note": None,
-        "application_status": "pending",
-        "application_attempts": 0,
-        "application_started_at": None,
-        "application_completed_at": None,
-        "application_error": None,
-        "risk_class": risk_class,
-        "approval_mode": approval_mode,
-        "base_state_hash": base_state_hash,
-        "requested_by_actor_id": requested_by_actor_id,
-        "resolved_by_actor_id": None,
-        "approval_note_required": bool(approval_note_required),
-        "reason_code": reason_code,
-        "supersedes_approval_id": supersedes_approval_id,
-    }
-    _emit_core_audit(
-        "approval.created",
-        status="pending",
-        object_refs=[{"type": "approval", "id": result["id"]}, {"type": entity_type, "id": entity_id}],
-        after_summary={
-            "approval_id": result["id"],
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "ticker": result["ticker"],
-            "action_id": action_id,
-            "status": "pending",
-            "change_hash": _json_hash(proposed_change),
-            "risk_class": risk_class,
-            "approval_mode": approval_mode,
-            "base_state_hash": base_state_hash,
-        },
-        source_lineage={
-            "source_type": source_type,
-            "source_id": source_id,
-            "action_input_hash": action_input_hash,
-            "requested_by_actor_id": requested_by_actor_id,
-        },
-    )
-    try:
-        from api import provenance
-
-        event_id = provenance.deterministic_id("pv:approval", result["id"])
-        approval_id = int(cast(Any, result["id"]))
-        provenance.start_event(
-            event_id=event_id,
-            event_type="approval",
-            event_name="approval.created",
-            approval_id=approval_id,
-            input_value=proposed_change,
-            summary={
-                "approval_id": result["id"],
-                "entity_type": entity_type,
-                "entity_id": entity_id,
-                "ticker": result["ticker"],
-                "action_id": action_id,
-                "status": "pending",
-            },
-            metadata={
-                "source_type": source_type,
-                "source_id": source_id,
-                "action_input_hash": action_input_hash,
-            },
-        )
-        provenance.finish_event(event_id, status="succeeded", output_value=result, summary={"status": "pending"})
-        set_pending_approval_provenance(approval_id, provenance_event_id=event_id)
-        if source_type and source_id:
-            provenance.link_refs(
-                event_id=event_id,
-                source_ref_type=source_type,
-                source_ref_id=str(source_id),
-                target_ref_type="approval",
-                target_ref_id=str(result["id"]),
-                link_type="proposed",
-                metadata={"action_id": action_id, "entity_type": entity_type},
+        try:
+            cur = conn.execute(
+                "INSERT INTO pending_approvals (entity_type, entity_id, ticker, action_id, action_schema_name, "
+                "action_schema_version, action_input_hash, request_schema_name, request_schema_version, proposed_change, "
+                "reason, source_type, source_id, created_at, risk_class, approval_mode, base_state_hash, "
+                "requested_by_actor_id, approval_note_required, reason_code, supersedes_approval_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    entity_type,
+                    entity_id,
+                    ticker.upper() if ticker else None,
+                    action_id,
+                    action_schema_name,
+                    action_schema_version,
+                    action_input_hash,
+                    request_schema_name,
+                    request_schema_version,
+                    change_json,
+                    reason,
+                    source_type,
+                    source_id,
+                    now,
+                    risk_class,
+                    approval_mode,
+                    base_state_hash,
+                    requested_by_actor_id,
+                    1 if approval_note_required else 0,
+                    reason_code,
+                    supersedes_approval_id,
+                ),
             )
-    except Exception:
-        pass
-    return result
+            approval_id = int(cur.lastrowid)
+            lineage_root_id = governance.lineage_root(governance.REF_APPROVAL, approval_id)
+            provenance_event_id = governance.deterministic_id("pv:approval", approval_id, "created")
+            object_refs = [{"type": governance.REF_APPROVAL, "id": approval_id}, {"type": entity_type, "id": entity_id}]
+            bundle: dict[str, Any] = {
+                "lineage_root_id": lineage_root_id,
+                "provenance_events": [
+                    governance.provenance_event(
+                        event_id=provenance_event_id,
+                        event_type="approval",
+                        event_name=governance.EVENT_APPROVAL_CREATED,
+                        lineage_root_id=lineage_root_id,
+                        approval_id=approval_id,
+                        input_value=proposed_change,
+                        output_value={"approval_id": approval_id, "status": "pending"},
+                        summary={
+                            "approval_id": approval_id,
+                            "entity_type": entity_type,
+                            "entity_id": entity_id,
+                            "ticker": ticker.upper() if ticker else None,
+                            "action_id": action_id,
+                            "status": "pending",
+                        },
+                        metadata={
+                            "change_hash": _json_hash(proposed_change),
+                            "source_type": source_type,
+                            "source_id": source_id,
+                            "action_input_hash": action_input_hash,
+                            "risk_class": risk_class,
+                            "approval_mode": approval_mode,
+                            "base_state_hash": base_state_hash,
+                            "requested_by_actor_id": requested_by_actor_id,
+                        },
+                    )
+                ],
+                "audit_events": [
+                    governance.audit_event(
+                        action_name=governance.EVENT_APPROVAL_CREATED,
+                        status="pending",
+                        lineage_root_id=lineage_root_id,
+                        object_refs=object_refs,
+                        after_summary={
+                            "approval_id": approval_id,
+                            "entity_type": entity_type,
+                            "entity_id": entity_id,
+                            "ticker": ticker.upper() if ticker else None,
+                            "action_id": action_id,
+                            "status": "pending",
+                            "change_hash": _json_hash(proposed_change),
+                            "risk_class": risk_class,
+                            "approval_mode": approval_mode,
+                            "base_state_hash": base_state_hash,
+                        },
+                        source_lineage={
+                            "source_type": source_type,
+                            "source_id": source_id,
+                            "action_input_hash": action_input_hash,
+                            "requested_by_actor_id": requested_by_actor_id,
+                        },
+                    )
+                ],
+            }
+            if source_type and source_id:
+                bundle["provenance_links"] = [
+                    governance.provenance_link(
+                        event_id=provenance_event_id,
+                        source_ref_type=source_type,
+                        source_ref_id=str(source_id),
+                        target_ref_type=governance.REF_APPROVAL,
+                        target_ref_id=str(approval_id),
+                        link_type="proposed",
+                        lineage_root_id=lineage_root_id,
+                        metadata={"action_id": action_id, "entity_type": entity_type},
+                    )
+                ]
+            _materialize_governance_bundle_tx(conn, bundle)
+            conn.execute(
+                "UPDATE pending_approvals SET provenance_event_id = ? WHERE id = ?",
+                (provenance_event_id, approval_id),
+            )
+            row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return _parse_pending_approval_row(row)
 
 
 def create_pending_approval_once(
@@ -3795,6 +5065,11 @@ def resolve_approval(
             input_value={"approval_id": approval_id, "status": status, "resolved_note": resolved_note},
             summary={"action_id": "resolve_approval", "approval_id": approval_id, "status": status},
             metadata={"parent_action_run_id": parent_action_run_id},
+            criticality=GOVERNANCE_CRITICAL_FINANCIAL,
+            lineage_root_id=f"approval:{approval_id}",
+            idempotency_key=f"action_run.resolve_approval:{run_id}:start",
+            retention_class=GOVERNANCE_FINANCIAL_RETENTION_CLASS,
+            fail_closed=True,
         )
         set_action_run_provenance_event(run_id, provenance_event_id)
         provenance.link_refs(
@@ -3804,9 +5079,14 @@ def resolve_approval(
             target_ref_type="action_run",
             target_ref_id=str(run_id),
             link_type="resolved_by",
+            lineage_root_id=f"approval:{approval_id}",
+            fail_closed=True,
         )
-    except Exception:
-        provenance_event_id = None
+    except Exception as exc:
+        error = _approval_error_message(exc)
+        record_action_event(run_id, "error", message=error)
+        complete_action_run(run_id, status="failed", error=error)
+        raise
     record_action_event(run_id, "start", payload={"approval_id": approval_id, "status": status})
     try:
         result = _resolve_approval_impl(
@@ -3828,6 +5108,7 @@ def resolve_approval(
                 status="failed",
                 summary={"approval_id": approval_id, "requested_status": status},
                 error=error,
+                fail_closed=True,
             )
         except Exception:
             pass
@@ -3853,6 +5134,7 @@ def resolve_approval(
                 "status": result.get("status"),
                 "application_status": result.get("application_status"),
             },
+            fail_closed=True,
         )
     except Exception:
         pass
@@ -3901,7 +5183,12 @@ def _resolve_approval_impl(
         raise ValueError(f"Resolution status must be 'approved' or 'rejected', got '{status}'")
 
     if status == "rejected":
-        return _reject_approval(approval_id, resolved_note, resolved_by_actor_id=resolved_by_actor_id)
+        return _reject_approval(
+            approval_id,
+            resolved_note,
+            parent_action_run_id=parent_action_run_id,
+            resolved_by_actor_id=resolved_by_actor_id,
+        )
 
     conn = _get_conn()
     approval, should_apply = _claim_approval_for_application(conn, approval_id)
@@ -3926,6 +5213,29 @@ def _resolve_approval_impl(
                     (now, resolved_note, resolved_by_actor_id, now, approval_id),
                 )
                 updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+                updated_approval = _parse_pending_approval_row(updated)
+                _materialize_governance_bundle_tx(
+                    conn,
+                    _approval_governance_bundle(
+                        updated_approval,
+                        event_name="approval.resolved",
+                        status="approved",
+                        action_run_id=parent_action_run_id,
+                        actor_id=resolved_by_actor_id,
+                        summary={"resolution": "approved"},
+                    ),
+                )
+                _materialize_governance_bundle_tx(
+                    conn,
+                    _approval_governance_bundle(
+                        updated_approval,
+                        event_name="action.applied",
+                        status="succeeded",
+                        action_run_id=parent_action_run_id,
+                        actor_id=resolved_by_actor_id,
+                        summary={"resolution": "approved", "action_id": updated_approval.get("action_id")},
+                    ),
+                )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -3962,6 +5272,7 @@ def _reject_approval(
     approval_id: int,
     resolved_note: str | None,
     *,
+    parent_action_run_id: int | None = None,
     resolved_by_actor_id: str | None = None,
 ) -> dict:
     conn = _get_conn()
@@ -3987,6 +5298,18 @@ def _reject_approval(
                 (now, resolved_note, resolved_by_actor_id, now, approval_id),
             )
             updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+            updated_approval = _parse_pending_approval_row(updated)
+            _materialize_governance_bundle_tx(
+                conn,
+                _approval_governance_bundle(
+                    updated_approval,
+                    event_name="approval.resolved",
+                    status="rejected",
+                    action_run_id=parent_action_run_id,
+                    actor_id=resolved_by_actor_id,
+                    summary={"resolution": "rejected"},
+                ),
+            )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -4040,6 +5363,16 @@ def _claim_approval_for_application(
             (now, approval_id),
         )
         updated = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+        updated_approval = _parse_pending_approval_row(updated)
+        _materialize_governance_bundle_tx(
+            conn,
+            _approval_governance_bundle(
+                updated_approval,
+                event_name="approval.apply.started",
+                status="started",
+                summary={"application_attempts": updated_approval.get("application_attempts")},
+            ),
+        )
         conn.commit()
     result = _parse_pending_approval_row(updated)
     _emit_core_audit(
@@ -4084,6 +5417,19 @@ def _mark_approval_application_failed(approval_id: int, exc: Exception) -> None:
             "WHERE id = ? AND status = 'pending'",
             (now, error, approval_id),
         )
+        row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+        if row:
+            approval = _parse_pending_approval_row(row)
+            _materialize_governance_bundle_tx(
+                conn,
+                _approval_governance_bundle(
+                    approval,
+                    event_name="approval.apply.failed",
+                    status="failed",
+                    summary={"application_status": "failed"},
+                    error=error,
+                ),
+            )
         conn.commit()
     _emit_core_audit(
         "approval.apply.failed",
