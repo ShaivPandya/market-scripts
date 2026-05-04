@@ -1156,7 +1156,14 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
     _cap(
         "run_portfolio_analyzer",
         "Start or reuse the portfolio analyzer.",
-        _schema({"book": _NUMBER, "target_leverage": _NUMBER, "beta_neutral": _BOOLEAN}),
+        _schema(
+            {
+                "book": _NUMBER,
+                "target_leverage": _NUMBER,
+                "beta_neutral": _BOOLEAN,
+                "scenario": _OBJECT,
+            }
+        ),
         category="portfolio",
         access_mode="compute",
         aliases=("portfolio analyzer", "portfolio optimizer"),

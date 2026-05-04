@@ -166,3 +166,22 @@ def test_compat_cursor_is_iterable_like_sqlite_cursor():
 
     assert {row[1] for row in cursor} == {"guid", "content_url"}
     assert cursor.fetchone() is None
+
+
+def test_core_provenance_updates_do_not_emit_untyped_null_predicates(monkeypatch):
+    import api.postgres_compat as compat
+    from portfolio import core_db
+
+    fake = _FakeConn()
+    monkeypatch.setattr(compat, "open_connection", lambda register_pgvector=False: fake)
+    monkeypatch.setattr(core_db, "_conn", compat.PostgresCompatConnection())
+
+    core_db.set_action_run_provenance_event(42, "pv:action_run:42")
+    core_db.set_workflow_run_provenance_event("workflow-1", "pv:workflow:1")
+    core_db.set_pending_approval_provenance(17, provenance_event_id="pv:approval:17")
+    core_db.set_pending_approval_provenance(18, origin_provenance_event_id="pv:origin:18")
+
+    sql_statements = [sql for sql, _params in fake.queries]
+    assert all("IS NOT NULL" not in sql for sql in sql_statements)
+    assert any("UPDATE action_runs" in sql and "lineage_completeness = 'complete'" in sql for sql in sql_statements)
+    assert any("UPDATE workflow_runs" in sql and "lineage_completeness = 'complete'" in sql for sql in sql_statements)

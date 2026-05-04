@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.serializers import serialize_dataframe, serialize_value
@@ -11,16 +12,92 @@ from api.serializers import serialize_dataframe, serialize_value
 router = APIRouter()
 
 
+class AnalyzerFactorWeights(BaseModel):
+    quality: float = Field(default=0.30, ge=0)
+    price_momentum: float = Field(default=0.40, ge=0)
+    fundamental_momentum: float = Field(default=0.30, ge=0)
+    valuation: float = Field(default=0.0, ge=0)
+
+    @model_validator(mode="after")
+    def require_nonzero(self):
+        if self.quality + self.price_momentum + self.fundamental_momentum + self.valuation <= 0:
+            raise ValueError("factor_weights must include at least one positive weight.")
+        return self
+
+
+class AnalyzerFundamentalMomentumWeights(BaseModel):
+    revenue: float = Field(default=2.0, ge=0)
+    eps: float = Field(default=1.0, ge=0)
+
+    @model_validator(mode="after")
+    def require_nonzero(self):
+        if self.revenue + self.eps <= 0:
+            raise ValueError("fundamental_momentum_weights must include at least one positive weight.")
+        return self
+
+
+class AnalyzerValuationWeights(BaseModel):
+    price_sales: float = Field(default=1.0, ge=0)
+    price_operating_income: float = Field(default=1.0, ge=0)
+    price_fcf: float = Field(default=1.0, ge=0)
+    price_earnings: float = Field(default=1.0, ge=0)
+
+    @model_validator(mode="after")
+    def require_nonzero(self):
+        total = self.price_sales + self.price_operating_income + self.price_fcf + self.price_earnings
+        if total <= 0:
+            raise ValueError("valuation_weights must include at least one positive weight.")
+        return self
+
+
+class AnalyzerScenarioBrakes(BaseModel):
+    drawdown_sensitivity: float = Field(default=0.0, ge=0, le=1)
+    contrarian_penalty: float = Field(default=0.0, ge=0, le=1)
+    short_squeeze_brake: float = Field(default=0.0, ge=0, le=1)
+
+
+class AnalyzerScenario(BaseModel):
+    preset: str = "balanced"
+    factor_weights: AnalyzerFactorWeights = Field(default_factory=AnalyzerFactorWeights)
+    fundamental_momentum_weights: AnalyzerFundamentalMomentumWeights = Field(
+        default_factory=AnalyzerFundamentalMomentumWeights
+    )
+    valuation_weights: AnalyzerValuationWeights = Field(default_factory=AnalyzerValuationWeights)
+    brakes: AnalyzerScenarioBrakes = Field(default_factory=AnalyzerScenarioBrakes)
+
+
 class AnalyzerRequest(BaseModel):
     # Legacy optimizer fields are accepted for backward compatibility and ignored by analyzer logic.
     book: float | None = None
     target_leverage: float | None = None
     beta_neutral: bool | None = None
+    scenario: AnalyzerScenario | None = None
 
 
-def _cache_key(_req: AnalyzerRequest) -> str:
-    strategy_version = "v1_signal_factor_table"
-    return f"portfolio_analyzer:{strategy_version}"
+def _normalize_group(values: dict[str, Any]) -> dict[str, float]:
+    numeric = {k: max(0.0, float(v or 0.0)) for k, v in values.items()}
+    total = sum(numeric.values())
+    if total <= 0:
+        return numeric
+    return {k: round(v / total, 8) for k, v in numeric.items()}
+
+
+def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
+    scenario = req.scenario or AnalyzerScenario()
+    raw = scenario.model_dump()
+    return {
+        "preset": raw.get("preset") or "balanced",
+        "factor_weights": _normalize_group(raw["factor_weights"]),
+        "fundamental_momentum_weights": _normalize_group(raw["fundamental_momentum_weights"]),
+        "valuation_weights": _normalize_group(raw["valuation_weights"]),
+        "brakes": {k: round(max(0.0, min(1.0, float(v or 0.0))), 8) for k, v in raw["brakes"].items()},
+    }
+
+
+def _cache_key(req: AnalyzerRequest) -> str:
+    strategy_version = "v2_signal_valuation_scenario"
+    scenario = json.dumps(_canonical_scenario(req), sort_keys=True, separators=(",", ":"))
+    return f"portfolio_analyzer:{strategy_version}:scenario={scenario}"
 
 
 def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
@@ -31,6 +108,7 @@ def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
             book=req.book,
             target_leverage=req.target_leverage,
             beta_neutral=True if req.beta_neutral is None else req.beta_neutral,
+            scenario=req.scenario.model_dump() if req.scenario is not None else None,
         )
     except Exception as e:
         raise RuntimeError(str(e)) from e
