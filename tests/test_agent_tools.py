@@ -51,6 +51,37 @@ def test_get_sector_metrics_tool_uses_snapshot_when_required(monkeypatch):
     assert payload["_meta"]["snapshot"]["key"] == "sector_metrics:sp500:2y"
 
 
+def test_agent_tools_return_first_class_portfolio_risk(tmp_path, monkeypatch):
+    from api import position_risk_store
+    from api.position_risk_store import write_portfolio_risk_snapshot
+
+    monkeypatch.setattr(position_risk_store, "_SQLITE_PATH", tmp_path / "position_risk.sqlite3")
+    write_portfolio_risk_snapshot(
+        {
+            "result_id": "portfolio-risk:agent",
+            "as_of": "2099-01-01",
+            "computed_at": "2099-01-01T22:00:00+00:00",
+            "average_risk_score": 0.44,
+            "max_risk_score": 0.8,
+            "risk_score": 0.44,
+            "risk_level": "high",
+            "confidence": 0.9,
+            "quality": "ok",
+            "position_count": 1,
+            "risk_buckets": {"high": 1, "medium": 0, "low": 0},
+            "source_status": {},
+            "degraded_modules": [],
+            "input_snapshots": {},
+            "position_snapshot_ids": {"MU": "position-risk:MU:agent"},
+        }
+    )
+
+    payload = json.loads(agent_tools.execute_tool("get_portfolio_risk", {}))
+
+    assert payload["result_id"] == "portfolio-risk:agent"
+    assert payload["position_snapshot_ids"]["MU"] == "position-risk:MU:agent"
+
+
 def _proposal_tool_cases(digest_id: str) -> dict[str, tuple[dict, str, str]]:
     return {
         "propose_thesis_status_change": (

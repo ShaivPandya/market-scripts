@@ -93,6 +93,196 @@ def stable_hash(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def _quality_rank(value: Any) -> int:
+    state = str(value or "ok").strip().lower()
+    if state == "ok":
+        return 0
+    if state == "degraded":
+        return 1
+    if state == "stale":
+        return 2
+    if state in {"failed", "missing"}:
+        return 3
+    return 3
+
+
+def _quality_from_rank(rank: int) -> str:
+    if rank <= 0:
+        return "ok"
+    if rank == 1:
+        return "degraded"
+    if rank == 2:
+        return "stale"
+    return "failed"
+
+
+def _worst_quality(*values: Any) -> str:
+    return _quality_from_rank(max((_quality_rank(value) for value in values), default=0))
+
+
+def _risk_score(value: dict[str, Any] | None, *, portfolio: bool = False) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    raw = value.get("average_risk_score") if portfolio else value.get("risk_score")
+    if raw is None and portfolio:
+        raw = value.get("risk_score")
+    try:
+        return None if raw is None else float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compact_risk_snapshot(snapshot: dict[str, Any] | None, *, portfolio: bool = False) -> dict[str, Any] | None:
+    if not isinstance(snapshot, dict):
+        return None
+    out = {
+        "result_id": snapshot.get("result_id"),
+        "as_of": snapshot.get("as_of"),
+        "computed_at": snapshot.get("computed_at"),
+        "quality": snapshot.get("quality"),
+        "confidence": snapshot.get("confidence"),
+        "risk_score": _risk_score(snapshot, portfolio=portfolio),
+        "risk_level": snapshot.get("risk_level"),
+    }
+    if portfolio:
+        out.update(
+            {
+                "position_count": snapshot.get("position_count"),
+                "average_risk_score": snapshot.get("average_risk_score"),
+                "max_risk_score": snapshot.get("max_risk_score"),
+                "risk_buckets": snapshot.get("risk_buckets"),
+                "top_contributors": snapshot.get("top_contributors", [])[:5]
+                if isinstance(snapshot.get("top_contributors"), list)
+                else [],
+                "positions": [
+                    {
+                        "ticker": row.get("ticker"),
+                        "risk_score": row.get("risk_score"),
+                        "risk_level": row.get("risk_level"),
+                        "quality": row.get("quality"),
+                        "confidence": row.get("confidence"),
+                        "risk_snapshot_id": row.get("risk_snapshot_id"),
+                    }
+                    for row in (snapshot.get("results") if isinstance(snapshot.get("results"), list) else [])[:50]
+                    if isinstance(row, dict)
+                ],
+            }
+        )
+    else:
+        out.update(
+            {
+                "ticker": snapshot.get("ticker"),
+                "sector": snapshot.get("sector"),
+                "component_scores": snapshot.get("component_scores"),
+                "degraded_modules": snapshot.get("degraded_modules", [])[:5]
+                if isinstance(snapshot.get("degraded_modules"), list)
+                else [],
+            }
+        )
+    return out
+
+
+def _latest_first_class_risk_context(ticker: str | None = None) -> dict[str, Any]:
+    try:
+        from api.position_risk import get_latest_portfolio_risk, get_latest_position_risk
+    except Exception:
+        return {}
+
+    ticker_norm = str(ticker or "").strip().upper()
+    position = get_latest_position_risk(ticker_norm) if ticker_norm else None
+    portfolio = get_latest_portfolio_risk()
+    return {
+        "position": position,
+        "portfolio": portfolio,
+        "position_compact": _compact_risk_snapshot(position),
+        "portfolio_compact": _compact_risk_snapshot(portfolio, portfolio=True),
+    }
+
+
+def _first_class_risk_context_for_prompt() -> dict[str, Any]:
+    context = _latest_first_class_risk_context()
+    portfolio = context.get("portfolio_compact")
+    if not portfolio:
+        return {}
+    return {"portfolio": portfolio}
+
+
+def _actionable(action: Any) -> bool:
+    return str(action or "").strip().lower() in ACTIONABLE_ACTIONS
+
+
+def _risk_gate_enabled() -> bool:
+    try:
+        from api.position_risk import risk_recommendation_gate_enabled
+    except Exception:
+        return False
+    return risk_recommendation_gate_enabled()
+
+
+def _compat_projections_enabled() -> bool:
+    try:
+        from api.position_risk import risk_compat_projections_enabled
+    except Exception:
+        return True
+    return risk_compat_projections_enabled()
+
+
+def _attach_first_class_risk(record: dict[str, Any]) -> dict[str, Any]:
+    context = _latest_first_class_risk_context(record.get("ticker"))
+    position = context.get("position") if isinstance(context.get("position"), dict) else None
+    portfolio = context.get("portfolio") if isinstance(context.get("portfolio"), dict) else None
+    if not position and not portfolio:
+        if _risk_gate_enabled() and _actionable(record.get("action")):
+            record["risk_quality"] = "missing"
+            record["critical_data_quality"] = _worst_quality(record.get("critical_data_quality"), "failed")
+        return record
+
+    pos_score = _risk_score(position)
+    portfolio_score = _risk_score(portfolio, portfolio=True)
+    risk_quality = _worst_quality(
+        position.get("quality") if position else "ok",
+        portfolio.get("quality") if portfolio else "ok",
+    )
+    confidences = [
+        float(value)
+        for value in (
+            position.get("confidence") if position else None,
+            portfolio.get("confidence") if portfolio else None,
+        )
+        if isinstance(value, (int, float))
+    ]
+    risk_bindings = {
+        "position": context.get("position_compact"),
+        "portfolio": context.get("portfolio_compact"),
+        "risk_score": pos_score if pos_score is not None else portfolio_score,
+        "portfolio_risk_score": portfolio_score,
+        "position_risk_score": pos_score,
+    }
+    record.update(
+        {
+            "risk_snapshot_id": position.get("result_id") if position else None,
+            "portfolio_risk_snapshot_id": portfolio.get("result_id") if portfolio else None,
+            "risk_quality": risk_quality,
+            "risk_confidence": round(min(confidences), 2) if confidences else None,
+            "risk_score": pos_score if pos_score is not None else portfolio_score,
+            "risk_level": position.get("risk_level")
+            if position
+            else portfolio.get("risk_level")
+            if portfolio
+            else None,
+            "risk_source_status": {
+                "position": position.get("source_status") if position else None,
+                "portfolio": portfolio.get("source_status") if portfolio else None,
+            },
+            "risk_bindings": risk_bindings,
+        }
+    )
+    if _compat_projections_enabled():
+        record["critical_data_quality"] = _worst_quality(record.get("critical_data_quality"), risk_quality)
+        record["source_quality"] = _worst_quality(record.get("source_quality"), risk_quality)
+    return record
+
+
 def _strip_json_fence(value: str) -> str:
     text = value.strip()
     if text.startswith("```"):
@@ -661,7 +851,11 @@ def build_recommendations_user_message(
     extra_context_md: str = "",
 ) -> str:
     horizon = "today / next 1-5 trading days" if report_type == "daily" else "next week / next 1-3 months"
-    bundle_json = _json_for_prompt(evidence_bundle, MAX_RECOMMENDATIONS_EVIDENCE_CHARS)
+    enriched_bundle = dict(evidence_bundle)
+    first_class_risk = _first_class_risk_context_for_prompt()
+    if first_class_risk and "first_class_risk" not in enriched_bundle:
+        enriched_bundle["first_class_risk"] = first_class_risk
+    bundle_json = _json_for_prompt(enriched_bundle, MAX_RECOMMENDATIONS_EVIDENCE_CHARS)
     quality_json = json.dumps(data_quality, indent=2, default=str)
     commentary_context = _compact_commentary_context(commentary_md)
     extra_context = _compact_extra_context(extra_context_md)
@@ -919,11 +1113,12 @@ def persist_recommendations(
             "idempotency_key": idempotency_key,
             **prompt_metadata,
         }
+        record = _attach_first_class_risk(record)
         record, gate = attach_policy_gate_to_recommendation(
             record,
             source_quality={
-                "critical_data_quality": payload.get("critical_data_quality"),
-                "overall_status": payload.get("critical_data_quality"),
+                "critical_data_quality": record.get("critical_data_quality") or payload.get("critical_data_quality"),
+                "overall_status": record.get("critical_data_quality") or payload.get("critical_data_quality"),
             },
             context={"report_type": payload["report_type"], "as_of": payload["as_of"], "report_id": report_id},
         )

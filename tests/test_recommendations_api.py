@@ -49,6 +49,30 @@ def test_workspace_includes_recommendation_summary(auth_client, tmp_path, monkey
     _reset_core_db(tmp_path, monkeypatch)
     _create_sample_recommendation()
     import api.agent_tools as agent_tools
+    from api import position_risk_store
+    from api.position_risk_store import write_portfolio_risk_snapshot
+
+    monkeypatch.setattr(position_risk_store, "_SQLITE_PATH", tmp_path / "position_risk.sqlite3")
+    write_portfolio_risk_snapshot(
+        {
+            "result_id": "portfolio-risk:workspace",
+            "as_of": "2099-01-01",
+            "computed_at": "2099-01-01T22:00:00+00:00",
+            "average_risk_score": 0.42,
+            "max_risk_score": 0.72,
+            "risk_score": 0.42,
+            "risk_level": "medium",
+            "confidence": 0.91,
+            "quality": "ok",
+            "position_count": 2,
+            "risk_buckets": {"high": 0, "medium": 1, "low": 1},
+            "top_contributors": [{"ticker": "MU", "risk_score": 0.72}],
+            "source_status": {},
+            "degraded_modules": [],
+            "input_snapshots": {},
+            "position_snapshot_ids": {},
+        }
+    )
 
     def fake_execute_tool(name, _args):
         if name == "get_portfolio":
@@ -70,3 +94,5 @@ def test_workspace_includes_recommendation_summary(auth_client, tmp_path, monkey
     data = resp.json()
     assert data["recommendations"]["latest_daily"]["recommendation_status"] == "blocked"
     assert data["recommendations"]["blocked_warnings"][0]["critical_data_quality"] == "failed"
+    assert data["portfolio"]["risk"]["result_id"] == "portfolio-risk:workspace"
+    assert data["portfolio"]["risk"]["average_risk_score"] == 0.42

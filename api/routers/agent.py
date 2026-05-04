@@ -559,7 +559,9 @@ def _select_tool_names(user_text: str) -> list[str]:
                 selected.append(name)
 
     if re.search(r"\b(portfolio|holding|holdings|position|positions|p&l|pnl|performance|exposure|risks?)\b", text):
-        add("get_portfolio", "query_ontology")
+        add("get_portfolio", "get_portfolio_risk", "query_ontology")
+    if re.search(r"\brecommendation\b.*\brisk\b|\brisk\b.*\brecommendation\b", text):
+        add("get_recommendation_risk", "get_portfolio_risk")
     if re.search(r"\b(update|edit|replace|change)\b.*\b(portfolio|holding|holdings|position|positions)\b", text):
         add("get_portfolio_positions", "propose_portfolio_positions_update")
     if re.search(r"\b(update|edit|replace|change)\b.*\b(hedge|hedges|hedging)\b", text):

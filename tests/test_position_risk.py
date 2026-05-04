@@ -160,6 +160,71 @@ def test_position_risk_refresh_endpoint_does_not_enqueue_ontology_job(auth_clien
     assert latest.json()["result_id"] == data["result_id"]
 
 
+def test_portfolio_risk_refresh_reuses_one_global_input_bundle(monkeypatch):
+    import portfolio.portfolio_db as portfolio_db
+    from api import position_risk as pr
+    from api.position_risk_store import read_latest_portfolio_risk
+
+    portfolio_db.save_positions(
+        [
+            {"ticker": "MU", "asset": "equity", "direction": "long", "shares": 42, "conviction": 4},
+            {"ticker": "CRWD", "asset": "equity", "direction": "long", "shares": 5, "conviction": 3},
+        ]
+    )
+    _seed_required_snapshots(as_of="2099-01-01")
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
+    )
+    original_loader = pr.load_global_risk_input_bundle
+    calls = {"count": 0}
+
+    def counted_loader(*args, **kwargs):
+        calls["count"] += 1
+        return original_loader(*args, **kwargs)
+
+    monkeypatch.setattr(pr, "load_global_risk_input_bundle", counted_loader)
+
+    snapshot = pr.refresh_portfolio_risk()
+
+    assert calls["count"] == 1
+    assert snapshot["position_count"] == 2
+    assert snapshot["aggregate"]["position_count"] == 2
+    assert set(snapshot["position_snapshot_ids"]) == {"MU", "CRWD"}
+    assert all(row["portfolio_risk_snapshot_id"] == snapshot["result_id"] for row in snapshot["position_snapshots"])
+    assert read_latest_portfolio_risk()["result_id"] == snapshot["result_id"]
+
+
+def test_portfolio_risk_api_returns_latest_without_ontology_refresh(auth_client, monkeypatch):
+    import portfolio.portfolio_db as portfolio_db
+    from api import position_risk as pr
+
+    portfolio_db.save_positions(
+        [
+            {"ticker": "MU", "asset": "equity", "direction": "long", "shares": 42, "conviction": 4},
+            {"ticker": "CRWD", "asset": "equity", "direction": "long", "shares": 5, "conviction": 3},
+        ]
+    )
+    _seed_required_snapshots(as_of="2099-01-01")
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
+    )
+
+    def fail_enqueue(*args, **kwargs):
+        raise AssertionError("portfolio risk refresh must not enqueue ontology jobs")
+
+    monkeypatch.setattr("api.routers.ontology.enqueue_registered_job", fail_enqueue)
+
+    refreshed = auth_client.post("/api/v1/risk/portfolio/refresh")
+    assert refreshed.status_code == 200
+    data = refreshed.json()
+    assert data["_meta"]["intent"] == "portfolio_risk_refresh"
+    assert data["position_count"] == 2
+
+    latest = auth_client.get("/api/v1/risk/portfolio/latest")
+    assert latest.status_code == 200
+    assert latest.json()["result_id"] == data["result_id"]
+
+
 class _Sector:
     def __init__(self, sector: str):
         self.sector = sector

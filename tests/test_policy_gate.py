@@ -117,3 +117,30 @@ def test_policy_gate_evaluate_api(auth_client):
     body = resp.json()
     assert body["decision"] == "warn"
     assert body["account_id"] == "default-account"
+
+
+def test_policy_gate_blocks_actionable_recommendation_without_risk_score(monkeypatch):
+    monkeypatch.setenv("RISK_RECOMMENDATION_GATE_ENABLED", "1")
+    action = _buy_payload()["recommended_actions"][0] | {"critical_data_quality": "ok"}
+
+    gate = evaluate_policy_gate("create_recommendation", {"record": action})
+
+    assert gate["decision"] == "blocked"
+    assert any(reason["check"] == "risk.first_class_snapshot" for reason in gate["failure_reasons"])
+
+
+def test_policy_gate_requires_review_for_degraded_risk_with_score(monkeypatch):
+    monkeypatch.setenv("RISK_RECOMMENDATION_GATE_ENABLED", "1")
+    action = _buy_payload()["recommended_actions"][0] | {
+        "critical_data_quality": "degraded",
+        "risk_snapshot_id": "position-risk:MU:degraded",
+        "portfolio_risk_snapshot_id": "portfolio-risk:degraded",
+        "risk_quality": "degraded",
+        "risk_score": 0.71,
+        "risk_bindings": {"risk_score": 0.71},
+    }
+
+    gate = evaluate_policy_gate("create_recommendation", {"record": action})
+
+    assert gate["decision"] == "review_required"
+    assert any(reason["check"] == "risk.first_class_snapshot" for reason in gate["failure_reasons"])

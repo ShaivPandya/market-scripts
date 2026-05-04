@@ -1,9 +1,10 @@
-"""Durable storage for first-class position risk snapshots."""
+"""Durable storage for first-class risk snapshots."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,35 @@ def read_latest_position_risk(ticker: str) -> dict[str, Any] | None:
     if use_postgres_state():
         return _read_latest_postgres(ticker_norm)
     return _read_latest_sqlite(ticker_norm)
+
+
+def read_position_risk_snapshot(snapshot_id: str) -> dict[str, Any] | None:
+    """Read one persisted position risk snapshot by id."""
+    sid = str(snapshot_id or "").strip()
+    if not sid:
+        return None
+    if use_postgres_state():
+        return _read_position_snapshot_postgres(sid)
+    return _read_position_snapshot_sqlite(sid)
+
+
+def write_portfolio_risk_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Persist and return a complete portfolio risk snapshot payload."""
+    result_id = str(snapshot.get("result_id") or snapshot.get("run_id") or "").strip()
+    if not result_id:
+        raise ValueError("portfolio risk snapshot requires result_id")
+    if use_postgres_state():
+        _write_portfolio_postgres(result_id, snapshot)
+    else:
+        _write_portfolio_sqlite(result_id, snapshot)
+    return snapshot
+
+
+def read_latest_portfolio_risk() -> dict[str, Any] | None:
+    """Read the latest persisted portfolio risk snapshot."""
+    if use_postgres_state():
+        return _read_latest_portfolio_postgres()
+    return _read_latest_portfolio_sqlite()
 
 
 def _write_sqlite(ticker: str, result_id: str, snapshot: dict[str, Any]) -> None:
@@ -105,6 +135,88 @@ def _read_latest_sqlite(ticker: str) -> dict[str, Any] | None:
             LIMIT 1
             """,
             (ticker,),
+        ).fetchone()
+    if row is None:
+        return None
+    payload_raw = row["payload_json"] if isinstance(row, sqlite3.Row) else row[0]
+    return json.loads(payload_raw) if payload_raw else None
+
+
+def _read_position_snapshot_sqlite(snapshot_id: str) -> dict[str, Any] | None:
+    with _sqlite_connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM position_risk_snapshots WHERE id = ?",
+            (snapshot_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    payload_raw = row["payload_json"] if isinstance(row, sqlite3.Row) else row[0]
+    return json.loads(payload_raw) if payload_raw else None
+
+
+def _write_portfolio_sqlite(result_id: str, snapshot: dict[str, Any]) -> None:
+    with _sqlite_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO portfolio_risk_snapshots (
+                id,
+                as_of,
+                computed_at,
+                average_risk_score,
+                max_risk_score,
+                confidence,
+                quality,
+                position_count,
+                source_status_json,
+                degraded_modules_json,
+                input_snapshots_json,
+                position_snapshot_ids_json,
+                payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id)
+            DO UPDATE SET
+                as_of = excluded.as_of,
+                computed_at = excluded.computed_at,
+                average_risk_score = excluded.average_risk_score,
+                max_risk_score = excluded.max_risk_score,
+                confidence = excluded.confidence,
+                quality = excluded.quality,
+                position_count = excluded.position_count,
+                source_status_json = excluded.source_status_json,
+                degraded_modules_json = excluded.degraded_modules_json,
+                input_snapshots_json = excluded.input_snapshots_json,
+                position_snapshot_ids_json = excluded.position_snapshot_ids_json,
+                payload_json = excluded.payload_json
+            """,
+            (
+                result_id,
+                _string_or_none(snapshot.get("as_of")),
+                str(snapshot.get("computed_at") or datetime.now(UTC).isoformat()),
+                _float_or_zero(snapshot.get("average_risk_score")),
+                _float_or_zero(snapshot.get("max_risk_score")),
+                _float_or_zero(snapshot.get("confidence")),
+                str(snapshot.get("quality") or "missing"),
+                _int_or_zero(snapshot.get("position_count")),
+                json.dumps(snapshot.get("source_status") or {}),
+                json.dumps(snapshot.get("degraded_modules") or []),
+                json.dumps(snapshot.get("input_snapshots") or {}),
+                json.dumps(snapshot.get("position_snapshot_ids") or {}),
+                json.dumps(snapshot),
+            ),
+        )
+        conn.commit()
+
+
+def _read_latest_portfolio_sqlite() -> dict[str, Any] | None:
+    with _sqlite_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT payload_json
+            FROM portfolio_risk_snapshots
+            ORDER BY computed_at DESC
+            LIMIT 1
+            """
         ).fetchone()
     if row is None:
         return None
@@ -190,6 +302,97 @@ def _read_latest_postgres(ticker: str) -> dict[str, Any] | None:
     return dict(payload) if isinstance(payload, dict) else payload
 
 
+def _read_position_snapshot_postgres(snapshot_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        _ensure_postgres_schema(conn)
+        row = conn.execute(
+            "SELECT payload_json FROM position_risk_snapshots WHERE id = %s",
+            (snapshot_id,),
+        ).fetchone()
+    if not row:
+        return None
+    payload = row.get("payload_json") if isinstance(row, dict) else row[0]
+    if isinstance(payload, str):
+        return json.loads(payload)
+    return dict(payload) if isinstance(payload, dict) else payload
+
+
+def _write_portfolio_postgres(result_id: str, snapshot: dict[str, Any]) -> None:
+    from psycopg.types.json import Jsonb
+
+    with connect() as conn:
+        _ensure_postgres_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO portfolio_risk_snapshots (
+                id,
+                as_of,
+                computed_at,
+                average_risk_score,
+                max_risk_score,
+                confidence,
+                quality,
+                position_count,
+                source_status_json,
+                degraded_modules_json,
+                input_snapshots_json,
+                position_snapshot_ids_json,
+                payload_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT(id)
+            DO UPDATE SET
+                as_of = excluded.as_of,
+                computed_at = excluded.computed_at,
+                average_risk_score = excluded.average_risk_score,
+                max_risk_score = excluded.max_risk_score,
+                confidence = excluded.confidence,
+                quality = excluded.quality,
+                position_count = excluded.position_count,
+                source_status_json = excluded.source_status_json,
+                degraded_modules_json = excluded.degraded_modules_json,
+                input_snapshots_json = excluded.input_snapshots_json,
+                position_snapshot_ids_json = excluded.position_snapshot_ids_json,
+                payload_json = excluded.payload_json
+            """,
+            (
+                result_id,
+                _string_or_none(snapshot.get("as_of")),
+                str(snapshot.get("computed_at") or datetime.now(UTC).isoformat()),
+                _float_or_zero(snapshot.get("average_risk_score")),
+                _float_or_zero(snapshot.get("max_risk_score")),
+                _float_or_zero(snapshot.get("confidence")),
+                str(snapshot.get("quality") or "missing"),
+                _int_or_zero(snapshot.get("position_count")),
+                Jsonb(snapshot.get("source_status") or {}),
+                Jsonb(snapshot.get("degraded_modules") or []),
+                Jsonb(snapshot.get("input_snapshots") or {}),
+                Jsonb(snapshot.get("position_snapshot_ids") or {}),
+                Jsonb(snapshot),
+            ),
+        )
+        conn.commit()
+
+
+def _read_latest_portfolio_postgres() -> dict[str, Any] | None:
+    with connect() as conn:
+        _ensure_postgres_schema(conn)
+        row = conn.execute(
+            """
+            SELECT payload_json
+            FROM portfolio_risk_snapshots
+            ORDER BY computed_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if not row:
+        return None
+    payload = row.get("payload_json") if isinstance(row, dict) else row[0]
+    if isinstance(payload, str):
+        return json.loads(payload)
+    return dict(payload) if isinstance(payload, dict) else payload
+
+
 def _sqlite_connect() -> sqlite3.Connection:
     _SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(_SQLITE_PATH)
@@ -216,6 +419,28 @@ def _sqlite_connect() -> sqlite3.Connection:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_position_risk_snapshots_ticker_time "
         "ON position_risk_snapshots(ticker, computed_at DESC)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
+            id TEXT PRIMARY KEY,
+            as_of TEXT,
+            computed_at TEXT NOT NULL,
+            average_risk_score REAL NOT NULL,
+            max_risk_score REAL NOT NULL,
+            confidence REAL NOT NULL,
+            quality TEXT NOT NULL,
+            position_count INTEGER NOT NULL,
+            source_status_json TEXT NOT NULL,
+            degraded_modules_json TEXT NOT NULL,
+            input_snapshots_json TEXT NOT NULL,
+            position_snapshot_ids_json TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_portfolio_risk_snapshots_time ON portfolio_risk_snapshots(computed_at DESC)"
     )
     conn.commit()
     return conn
@@ -247,6 +472,31 @@ def _ensure_postgres_schema(conn: Any) -> None:
         ON position_risk_snapshots (upper(ticker), computed_at DESC)
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
+            id text PRIMARY KEY,
+            as_of text,
+            computed_at text NOT NULL,
+            average_risk_score double precision NOT NULL,
+            max_risk_score double precision NOT NULL,
+            confidence double precision NOT NULL,
+            quality text NOT NULL,
+            position_count integer NOT NULL,
+            source_status_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+            degraded_modules_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+            input_snapshots_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+            position_snapshot_ids_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+            payload_json jsonb NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_portfolio_risk_snapshots_time
+        ON portfolio_risk_snapshots (computed_at DESC)
+        """
+    )
 
 
 def _ticker(value: Any) -> str:
@@ -265,3 +515,10 @@ def _float_or_zero(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

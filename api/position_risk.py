@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -10,7 +11,12 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from api.position_risk_store import read_latest_position_risk, write_position_risk_snapshot
+from api.position_risk_store import (
+    read_latest_portfolio_risk,
+    read_latest_position_risk,
+    write_portfolio_risk_snapshot,
+    write_position_risk_snapshot,
+)
 from api.serializers import serialize_value
 from api.snapshot_keys import (
     SNAPSHOT_ECONOMIC_GROWTH,
@@ -72,6 +78,16 @@ class ModuleConfig:
     adapter_factory: Callable[[], SourceAdapter[Any]]
 
 
+@dataclass(frozen=True, slots=True)
+class RiskInputBundle:
+    now: datetime
+    source_status: dict[str, dict[str, Any]]
+    module_data: dict[str, Any]
+    input_snapshots: dict[str, Any]
+    components: dict[str, Any]
+    market_snapshot_as_of: str | None
+
+
 _MODULES: dict[str, ModuleConfig] = {
     "market_breadth": ModuleConfig("market_breadth", SNAPSHOT_MARKET_BREADTH, True, MarketBreadthAdapter),
     "top50_breadth": ModuleConfig("top50_breadth", SNAPSHOT_TOP50_BREADTH, True, Top50BreadthAdapter),
@@ -91,20 +107,146 @@ def get_latest_position_risk(ticker: str) -> dict[str, Any] | None:
     return read_latest_position_risk(_ticker(ticker))
 
 
+def get_latest_portfolio_risk() -> dict[str, Any] | None:
+    return read_latest_portfolio_risk()
+
+
 def refresh_position_risk(ticker: str) -> dict[str, Any]:
+    if not risk_engine_enabled():
+        latest = get_latest_position_risk(ticker)
+        if latest is not None:
+            return latest
     ticker_norm = _ticker(ticker)
     now = datetime.now(UTC)
     position = _load_portfolio_position(ticker_norm, now=now)
+    bundle = load_global_risk_input_bundle(now=now)
+    snapshot = _compute_position_snapshot(position, bundle)
+    return write_position_risk_snapshot(snapshot)
 
-    source_status: dict[str, dict[str, Any]] = {
-        "portfolio": _portfolio_source_status(position, now),
+
+def refresh_portfolio_risk() -> dict[str, Any]:
+    """Refresh risk for all current positions using one shared global input bundle."""
+    if not risk_engine_enabled():
+        latest = get_latest_portfolio_risk()
+        if latest is not None:
+            return latest
+    now = datetime.now(UTC)
+    positions = _load_portfolio_positions(now=now)
+    bundle = load_global_risk_input_bundle(now=now)
+
+    portfolio_result_id = f"portfolio-risk:{uuid.uuid4().hex[:12]}"
+    position_snapshots: list[dict[str, Any]] = []
+    position_snapshot_ids: dict[str, str] = {}
+    for position in positions:
+        snapshot = _compute_position_snapshot(
+            position,
+            bundle,
+            portfolio_risk_snapshot_id=portfolio_result_id,
+        )
+        persisted = write_position_risk_snapshot(snapshot)
+        position_snapshots.append(persisted)
+        position_snapshot_ids[str(persisted["ticker"])] = str(persisted["result_id"])
+
+    scores = [_float_or_none(row.get("risk_score")) for row in position_snapshots]
+    numeric_scores = [float(score) for score in scores if score is not None]
+    average_score = round(sum(numeric_scores) / len(numeric_scores), 4) if numeric_scores else 0.0
+    max_score = round(max(numeric_scores), 4) if numeric_scores else 0.0
+    bucket_counts = _risk_bucket_counts(position_snapshots)
+    source_status = {
+        "portfolio": _portfolio_aggregate_source_status(positions, now),
+        **{module: dict(state) for module, state in bundle.source_status.items()},
     }
+    degraded_modules = _degraded_modules(source_status)
+    confidence_values = [_float_or_none(row.get("confidence")) for row in position_snapshots]
+    confidence = round(
+        min([float(value) for value in confidence_values if value is not None] or [_confidence(source_status)]),
+        2,
+    )
+    quality = (
+        "ok" if not degraded_modules and all(row.get("quality") == "ok" for row in position_snapshots) else "degraded"
+    )
+    computed_at = now.isoformat()
+    aggregate = {
+        "exact": quality == "ok",
+        "confidence": confidence,
+        "position_count": len(position_snapshots),
+        "average_risk_score": average_score,
+        "max_risk_score": max_score,
+        "risk_buckets": bucket_counts,
+    }
+    portfolio_snapshot = {
+        "result_id": portfolio_result_id,
+        "run_id": portfolio_result_id,
+        "as_of": bundle.market_snapshot_as_of or computed_at,
+        "computed_at": computed_at,
+        "market_snapshot_as_of": bundle.market_snapshot_as_of,
+        "freshness_policy": "market_day",
+        "average_risk_score": average_score,
+        "max_risk_score": max_score,
+        "risk_score": average_score,
+        "risk_level": risk_level(max_score),
+        "confidence": confidence,
+        "quality": quality,
+        "risk_quality": quality,
+        "risk_confidence": confidence,
+        "position_count": len(position_snapshots),
+        "risk_buckets": bucket_counts,
+        "top_contributors": _top_risk_contributors(position_snapshots),
+        "degraded_modules": degraded_modules,
+        "missing_modules": [m["module"] for m in degraded_modules if m.get("status") in {"missing", "error"}],
+        "stale_modules": [m["module"] for m in degraded_modules if m.get("status") == "stale"],
+        "source_status": source_status,
+        "input_snapshots": bundle.input_snapshots,
+        "input_hash": payload_fingerprint(
+            {
+                "positions": positions,
+                "input_snapshots": bundle.input_snapshots,
+                "market_snapshot_as_of": bundle.market_snapshot_as_of,
+            }
+        ),
+        "position_snapshot_ids": position_snapshot_ids,
+        "position_snapshots": position_snapshots,
+        "results": [
+            {
+                "ticker": row.get("ticker"),
+                "asset": row.get("asset"),
+                "direction": row.get("direction"),
+                "sector": row.get("sector"),
+                "risk_score": row.get("risk_score"),
+                "risk_level": row.get("risk_level"),
+                "risk_snapshot_id": row.get("result_id"),
+                "quality": row.get("quality"),
+                "confidence": row.get("confidence"),
+                "evidence": row.get("evidence"),
+            }
+            for row in position_snapshots
+        ],
+        "aggregate": aggregate,
+        "_meta": {
+            "intent": "portfolio_risk_refresh",
+            "required_modules": list(REQUIRED_MODULES),
+            "optional_modules": list(OPTIONAL_MODULES),
+            "position_snapshot_count": len(position_snapshots),
+            "freshness_policy": {
+                "name": "market_day",
+                "timezone": "America/New_York",
+                "after_close_cutoff": _AFTER_CLOSE_FRESHNESS_CUTOFF.strftime("%H:%M"),
+            },
+        },
+    }
+    return write_portfolio_risk_snapshot(portfolio_snapshot)
+
+
+def load_global_risk_input_bundle(*, now: datetime | None = None) -> RiskInputBundle:
+    """Load/heal all non-position risk inputs once for a risk refresh run."""
+    run_now = now or datetime.now(UTC)
+    source_status: dict[str, dict[str, Any]] = {}
     module_data: dict[str, Any] = {}
     input_snapshots: dict[str, Any] = {}
 
     for name in [*REQUIRED_MODULES[1:], *OPTIONAL_MODULES]:
         config = _MODULES[name]
-        state, data = _load_module(config, now=now)
+        state, data = _load_module(config, now=run_now)
         source_status[name] = state
         if data is not None:
             module_data[name] = data
@@ -120,6 +262,29 @@ def refresh_position_risk(ticker: str) -> dict[str, Any]:
             }
 
     components = _compute_components(module_data)
+    return RiskInputBundle(
+        now=run_now,
+        source_status=source_status,
+        module_data=module_data,
+        input_snapshots=input_snapshots,
+        components=components,
+        market_snapshot_as_of=_market_snapshot_as_of(source_status),
+    )
+
+
+def _compute_position_snapshot(
+    position: dict[str, Any],
+    bundle: RiskInputBundle,
+    *,
+    portfolio_risk_snapshot_id: str | None = None,
+) -> dict[str, Any]:
+    ticker_norm = _ticker(position.get("ticker"))
+    source_status: dict[str, dict[str, Any]] = {
+        "portfolio": _portfolio_source_status(position, bundle.now),
+        **{module: dict(state) for module, state in bundle.source_status.items()},
+    }
+    input_snapshots = dict(bundle.input_snapshots)
+    components = bundle.components
     sector_resolution = SectorMapper().resolve_sector(ticker_norm, str(position.get("asset") or "equity"))
     sector_scores = components["sector_scores"]
     sector_stress = float(sector_scores.get(sector_resolution.sector, sector_scores.get("Unknown Equity", 0.5)))
@@ -142,13 +307,14 @@ def refresh_position_risk(ticker: str) -> dict[str, Any]:
     degraded_modules = _degraded_modules(source_status)
     confidence = _confidence(source_status)
     quality = "ok" if not degraded_modules else "degraded"
-    computed_at = now.isoformat()
+    computed_at = bundle.now.isoformat()
     result_id = f"position-risk:{ticker_norm}:{uuid.uuid4().hex[:12]}"
-    market_snapshot_as_of = _market_snapshot_as_of(source_status)
+    market_snapshot_as_of = bundle.market_snapshot_as_of
 
     snapshot = {
         "result_id": result_id,
         "run_id": result_id,
+        "portfolio_risk_snapshot_id": portfolio_risk_snapshot_id,
         "ticker": ticker_norm,
         "as_of": market_snapshot_as_of or computed_at,
         "computed_at": computed_at,
@@ -158,6 +324,8 @@ def refresh_position_risk(ticker: str) -> dict[str, Any]:
         "risk_level": level,
         "confidence": confidence,
         "quality": quality,
+        "risk_quality": quality,
+        "risk_confidence": confidence,
         "position": position,
         "asset": position.get("asset"),
         "direction": position.get("direction"),
@@ -176,6 +344,18 @@ def refresh_position_risk(ticker: str) -> dict[str, Any]:
         "stale_modules": [m["module"] for m in degraded_modules if m.get("status") == "stale"],
         "source_status": source_status,
         "input_snapshots": input_snapshots,
+        "input_hash": payload_fingerprint(
+            {
+                "position": position,
+                "input_snapshots": input_snapshots,
+                "component_scores": {
+                    "volatility_cluster": round(components["volatility_cluster"], 4),
+                    "breadth_stress": round(components["breadth_stress"], 4),
+                    "sector_stress": round(sector_stress, 4),
+                    "macro_regime": round(components["macro_regime"], 4),
+                },
+            }
+        ),
         "results": [
             {
                 "ticker": ticker_norm,
@@ -209,7 +389,26 @@ def refresh_position_risk(ticker: str) -> dict[str, Any]:
             },
         },
     }
-    return write_position_risk_snapshot(snapshot)
+    return snapshot
+
+
+def risk_engine_enabled() -> bool:
+    return _flag_enabled("RISK_ENGINE_ENABLED", default=True)
+
+
+def risk_compat_projections_enabled() -> bool:
+    return _flag_enabled("RISK_COMPAT_PROJECTIONS_ENABLED", default=True)
+
+
+def risk_recommendation_gate_enabled() -> bool:
+    return _flag_enabled("RISK_RECOMMENDATION_GATE_ENABLED", default=False)
+
+
+def _flag_enabled(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 def _load_module(config: ModuleConfig, *, now: datetime) -> tuple[dict[str, Any], Any | None]:
@@ -442,23 +641,36 @@ def _risk_evidence(
 
 def _load_portfolio_position(ticker: str, *, now: datetime) -> dict[str, Any]:
     from api.exceptions import NotFoundError
-    from portfolio.portfolio_db import get_positions
 
-    for row in get_positions(include_hedges=False):
+    for row in _load_portfolio_positions(now=now):
         if _ticker(row.get("ticker")) != ticker:
             continue
-        return {
-            "ticker": ticker,
-            "asset": str(row.get("asset") or "equity").strip().lower(),
-            "direction": str(row.get("direction") or "long").strip().lower(),
-            "shares": _float_or_none(row.get("shares")),
-            "cost_basis": _float_or_none(row.get("cost_basis")),
-            "conviction": _int_or_none(row.get("conviction")),
-            "contrarian": bool(row.get("contrarian")),
-            "role": str(row.get("role") or "position"),
-            "as_of": now.isoformat(),
-        }
+        return row
     raise NotFoundError("Portfolio position", ticker)
+
+
+def _load_portfolio_positions(*, now: datetime) -> list[dict[str, Any]]:
+    from portfolio.portfolio_db import get_positions
+
+    rows: list[dict[str, Any]] = []
+    for raw in get_positions(include_hedges=False):
+        ticker = _ticker(raw.get("ticker"))
+        if not ticker:
+            continue
+        rows.append(
+            {
+                "ticker": ticker,
+                "asset": str(raw.get("asset") or "equity").strip().lower(),
+                "direction": str(raw.get("direction") or "long").strip().lower(),
+                "shares": _float_or_none(raw.get("shares")),
+                "cost_basis": _float_or_none(raw.get("cost_basis")),
+                "conviction": _int_or_none(raw.get("conviction")),
+                "contrarian": bool(raw.get("contrarian")),
+                "role": str(raw.get("role") or "position"),
+                "as_of": now.isoformat(),
+            }
+        )
+    return rows
 
 
 def _portfolio_source_status(position: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -479,6 +691,64 @@ def _portfolio_source_status(position: dict[str, Any], now: datetime) -> dict[st
             "observed_as_of_date": str(now.astimezone(_EASTERN).date()),
         },
     }
+
+
+def _portfolio_aggregate_source_status(positions: list[dict[str, Any]], now: datetime) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "quality": "ok",
+        "required": True,
+        "source_name": "portfolio",
+        "source_version": "1",
+        "as_of": now.isoformat(),
+        "fetched_at": now.isoformat(),
+        "accepted": True,
+        "used": True,
+        "position_count": len(positions),
+        "freshness": {
+            "policy": "request_time",
+            "fresh": True,
+            "basis": "portfolio_db",
+            "observed_as_of_date": str(now.astimezone(_EASTERN).date()),
+        },
+    }
+
+
+def _risk_bucket_counts(snapshots: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"high": 0, "medium": 0, "low": 0}
+    for row in snapshots:
+        level = str(row.get("risk_level") or "low").lower()
+        if level not in counts:
+            level = "low"
+        counts[level] += 1
+    return counts
+
+
+def _top_risk_contributors(snapshots: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
+    rows = sorted(
+        snapshots,
+        key=lambda row: (_float_or_none(row.get("risk_score")) or 0.0, str(row.get("ticker") or "")),
+        reverse=True,
+    )
+    contributors: list[dict[str, Any]] = []
+    for row in rows[:limit]:
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), list) else []
+        top_driver = evidence[0] if evidence and isinstance(evidence[0], dict) else None
+        contributors.append(
+            {
+                "ticker": row.get("ticker"),
+                "asset": row.get("asset"),
+                "direction": row.get("direction"),
+                "sector": row.get("sector"),
+                "risk_score": row.get("risk_score"),
+                "risk_level": row.get("risk_level"),
+                "risk_snapshot_id": row.get("result_id"),
+                "quality": row.get("quality"),
+                "confidence": row.get("confidence"),
+                "top_driver": top_driver,
+            }
+        )
+    return contributors
 
 
 def _valid_for_scoring(module_name: str, payload: Any, data: Any) -> tuple[bool, str | None]:

@@ -47,6 +47,18 @@ interface WorkspaceData {
     position_count: number
     total_pnl: number | null
     total_pnl_pct: number | null
+    risk?: {
+      result_id?: string | null
+      as_of?: string | null
+      computed_at?: string | null
+      quality?: string | null
+      confidence?: number | null
+      average_risk_score?: number | null
+      max_risk_score?: number | null
+      risk_level?: string | null
+      risk_buckets?: { high?: number; medium?: number; low?: number } | null
+      top_contributors?: Array<Record<string, unknown>>
+    } | null
   } | null
   thesis_pressure: {
     ticker: string
@@ -126,6 +138,11 @@ function formatPnl(value: number | null | undefined): string {
   if (value == null) return "--"
   const sign = value >= 0 ? "+" : ""
   return `${sign}${value.toFixed(2)}%`
+}
+
+function formatRiskScore(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "--"
+  return value.toFixed(2)
 }
 
 function formatTime(iso: string): string {
@@ -239,6 +256,20 @@ function PolicyGatePanel({ gate }: { gate: PolicyGateResult | null }) {
   )
 }
 
+function RiskBindingLine({ record }: { record: RecommendationRecord | Record<string, unknown> }) {
+  const riskQuality = String(record.risk_quality || "")
+  const riskSnapshot = String(record.risk_snapshot_id || "")
+  const portfolioSnapshot = String(record.portfolio_risk_snapshot_id || "")
+  if (!riskQuality && !riskSnapshot && !portfolioSnapshot) return null
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-subtle">
+      {riskQuality && <QualityStateBadge state={riskQuality} />}
+      {riskSnapshot && <span>Risk {riskSnapshot}</span>}
+      {portfolioSnapshot && <span>Portfolio {portfolioSnapshot}</span>}
+    </div>
+  )
+}
+
 export function Workspace() {
   const qc = useQueryClient()
   const { data, isPending, error } = useApiQuery<WorkspaceData>(
@@ -315,6 +346,7 @@ export function Workspace() {
   if (!data) return null
 
   const regime = data.regime
+  const portfolioRisk = data.portfolio?.risk
   const regimeInfo = regime?.signal ? REGIME_SIGNAL_MAP[regime.signal.toLowerCase()] : null
   const regimeSubtitle = [
     regime?.composite_score != null ? `Score: ${regime.composite_score}` : null,
@@ -351,7 +383,12 @@ export function Workspace() {
         <MetricCard
           title="Positions"
           value={data.portfolio?.position_count ?? "--"}
-          subtitle={data.portfolio?.total_pnl_pct != null ? `P&L: ${formatPnl(data.portfolio.total_pnl_pct)}` : undefined}
+          subtitle={[
+            data.portfolio?.total_pnl_pct != null ? `P&L: ${formatPnl(data.portfolio.total_pnl_pct)}` : null,
+            portfolioRisk?.average_risk_score != null ? `Avg risk ${formatRiskScore(portfolioRisk.average_risk_score)}` : null,
+          ].filter(Boolean).join(" · ") || undefined}
+          signal={portfolioRisk?.quality && portfolioRisk.quality !== "ok" ? "warning" : null}
+          signalLabel={portfolioRisk?.risk_level ? String(portfolioRisk.risk_level) : undefined}
         />
         <MetricCard
           title="Pending Approvals"
@@ -369,6 +406,46 @@ export function Workspace() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {portfolioRisk && (
+          <section className="theme-surface rounded-xl p-4 lg:col-span-2">
+            <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
+              <GitBranch size={14} className={portfolioRisk.quality === "ok" ? "text-blue-500" : "text-amber-500"} />
+              Portfolio Risk
+              <span className="ml-auto text-xs text-subtle">{portfolioRisk.as_of || portfolioRisk.computed_at}</span>
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div className="rounded-lg border border-app px-3 py-2">
+                <p className="text-xs text-subtle">Average Risk</p>
+                <p className="mt-1 text-lg font-semibold text-app">{formatRiskScore(portfolioRisk.average_risk_score)}</p>
+              </div>
+              <div className="rounded-lg border border-app px-3 py-2">
+                <p className="text-xs text-subtle">Max Risk</p>
+                <p className="mt-1 text-lg font-semibold text-app">{formatRiskScore(portfolioRisk.max_risk_score)}</p>
+              </div>
+              <div className="rounded-lg border border-app px-3 py-2">
+                <p className="text-xs text-subtle">Quality</p>
+                <div className="mt-1"><QualityStateBadge state={portfolioRisk.quality || "missing"} /></div>
+              </div>
+              <div className="rounded-lg border border-app px-3 py-2">
+                <p className="text-xs text-subtle">Buckets</p>
+                <p className="mt-1 text-sm font-medium text-app">
+                  H {portfolioRisk.risk_buckets?.high ?? 0} · M {portfolioRisk.risk_buckets?.medium ?? 0} · L {portfolioRisk.risk_buckets?.low ?? 0}
+                </p>
+              </div>
+            </div>
+            {Array.isArray(portfolioRisk.top_contributors) && portfolioRisk.top_contributors.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                {portfolioRisk.top_contributors.slice(0, 5).map((row, idx) => (
+                  <span key={`${String(row.ticker || "risk")}-${idx}`} className="rounded border border-app px-2 py-1 text-muted">
+                    <span className="font-semibold text-app">{String(row.ticker || "Portfolio")}</span>
+                    {" "}risk {formatRiskScore(typeof row.risk_score === "number" ? row.risk_score : null)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Recommendation Summary */}
         {(data.recommendations.latest_daily || data.recommendations.latest_weekly || data.recommendations.blocked_warnings.length > 0) && (
           <section className="theme-surface rounded-xl p-4 lg:col-span-2">
@@ -393,6 +470,7 @@ export function Workspace() {
                     <PolicyStateBadge state={rec!.policy_state ?? rec!.policy_gate_decision ?? "missing"} />
                   </div>
                   <p className="mt-2 text-xs text-muted line-clamp-2">{rec!.rationale}</p>
+                  <RiskBindingLine record={rec!} />
                   {recommendationNeedsPolicyGate(rec!) && <PolicyGatePanel gate={policyGateFromRecommendation(rec!)} />}
                 </div>
               ))}
@@ -427,6 +505,7 @@ export function Workspace() {
                       <PolicyStateBadge state={rec.policy_state ?? rec.policy_gate_decision ?? "missing"} />
                     </div>
                     <p className="mt-1 text-xs text-muted line-clamp-2">{rec.rationale}</p>
+                    <RiskBindingLine record={rec} />
                     {recommendationNeedsPolicyGate(rec) && <PolicyGatePanel gate={policyGateFromRecommendation(rec)} />}
                   </div>
                 ))}
@@ -737,6 +816,13 @@ export function Workspace() {
                 <span>Application: {applicationLabel(approvalReview.approval)}</span>
               </div>
               {approvalReview.approval.reason && <p className="mb-2">{approvalReview.approval.reason}</p>}
+              {(() => {
+                const record = approvalReview.approval.proposed_change.record
+                if (record && typeof record === "object" && !Array.isArray(record)) {
+                  return <RiskBindingLine record={record as Record<string, unknown>} />
+                }
+                return null
+              })()}
               <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-app bg-[hsl(var(--background-card))] p-3 font-mono text-[11px] text-app">
                 {summarizeProposedChange(approvalReview.approval.proposed_change)}
               </pre>

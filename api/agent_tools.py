@@ -3242,6 +3242,39 @@ def _dispatch(
 
         return serialize_value(get_workspace()), {"cache": "n/a"}
 
+    if name == "get_portfolio_risk":
+        from api.position_risk import get_latest_portfolio_risk
+
+        snapshot = get_latest_portfolio_risk()
+        if snapshot is None:
+            return {"error": "No portfolio risk snapshot has been persisted yet."}, {"cache": "n/a"}
+        return serialize_value(snapshot), {"cache": "n/a"}
+
+    if name == "get_recommendation_risk":
+        from portfolio.core_db import get_recommendation, get_recommendation_risk_bindings
+
+        recommendation_id = int(args.get("recommendation_id") or 0)
+        recommendation = get_recommendation(recommendation_id)
+        if not recommendation:
+            return {"error": f"No recommendation with id {recommendation_id}."}, {"cache": "n/a"}
+        return {
+            "recommendation": {
+                "id": recommendation.get("id"),
+                "ticker": recommendation.get("ticker"),
+                "instrument": recommendation.get("instrument"),
+                "action": recommendation.get("action"),
+                "risk_snapshot_id": recommendation.get("risk_snapshot_id"),
+                "portfolio_risk_snapshot_id": recommendation.get("portfolio_risk_snapshot_id"),
+                "risk_quality": recommendation.get("risk_quality"),
+                "risk_confidence": recommendation.get("risk_confidence"),
+                "risk_score": recommendation.get("risk_score"),
+                "risk_level": recommendation.get("risk_level"),
+                "risk_source_status": recommendation.get("risk_source_status"),
+                "risk_bindings": recommendation.get("risk_bindings"),
+            },
+            "bindings": get_recommendation_risk_bindings(recommendation_id),
+        }, {"cache": "n/a"}
+
     if name == "get_portfolio_positions":
         from api.routers.portfolio_edit import get_portfolio_positions
 

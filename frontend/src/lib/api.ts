@@ -164,6 +164,14 @@ export interface RecommendationRecord extends DecisionStateFields {
   policy_gate_failures_json?: PolicyGateReason[]
   policy_gate_warnings_json?: PolicyGateReason[]
   policy_gate_disclosures_json?: string[]
+  risk_snapshot_id?: string | null
+  portfolio_risk_snapshot_id?: string | null
+  risk_quality?: string | null
+  risk_confidence?: number | null
+  risk_score?: number | null
+  risk_level?: string | null
+  risk_source_status?: Record<string, unknown> | null
+  risk_bindings?: Record<string, unknown> | null
 }
 
 client.interceptors.response.use(
@@ -596,6 +604,20 @@ export interface PositionRiskSnapshot {
   [key: string]: unknown
 }
 
+export interface PortfolioRiskSnapshot extends Omit<PositionRiskSnapshot, "ticker"> {
+  position_count?: number
+  average_risk_score?: number | null
+  max_risk_score?: number | null
+  risk_buckets?: {
+    high?: number
+    medium?: number
+    low?: number
+  }
+  top_contributors?: Array<Record<string, unknown>>
+  position_snapshot_ids?: Record<string, string>
+  position_snapshots?: PositionRiskSnapshot[]
+}
+
 export interface OntologyResponse {
   run_id?: string
   intent?: string
@@ -710,6 +732,21 @@ export const refreshPositionRisk = (ticker: string) =>
   client
     .post(`/risk/positions/${encodeURIComponent(ticker)}/refresh`, undefined, { timeout: 120_000 })
     .then(r => r.data as PositionRiskSnapshot)
+
+export const fetchPortfolioRiskLatest = async () => {
+  try {
+    const r = await client.get("/risk/portfolio/latest")
+    return r.data as PortfolioRiskSnapshot
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) return null
+    throw err
+  }
+}
+
+export const refreshPortfolioRisk = () =>
+  client
+    .post("/risk/portfolio/refresh", undefined, { timeout: 180_000 })
+    .then(r => r.data as PortfolioRiskSnapshot)
 
 type OntologyJobResponse =
   | { job_id: string; status: "queued" | "running"; timeout_s?: number }

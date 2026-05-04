@@ -475,3 +475,71 @@ def test_persist_do_nothing_recommendation_does_not_create_approval(temp_core_db
     core_db.resolve_approval(approvals[0]["id"], "approved", "Apply recommendation")
     assert core_db.get_recommendations(report_type="daily")[0]["approval_status"] == "none"
     assert core_db.get_pending_approvals(status="pending") == []
+
+
+def test_persist_recommendations_attaches_first_class_risk_bindings(temp_core_db, tmp_path, monkeypatch):
+    from api import position_risk_store
+    from api.position_risk_store import write_portfolio_risk_snapshot, write_position_risk_snapshot
+
+    monkeypatch.setenv("STATE_DB_BACKEND", "sqlite")
+    monkeypatch.setattr(position_risk_store, "_SQLITE_PATH", tmp_path / "position_risk.sqlite3")
+    write_position_risk_snapshot(
+        {
+            "result_id": "position-risk:MU:test",
+            "ticker": "MU",
+            "as_of": "2099-01-01",
+            "computed_at": "2099-01-01T22:00:00+00:00",
+            "risk_score": 0.72,
+            "risk_level": "medium",
+            "confidence": 0.93,
+            "quality": "ok",
+            "source_status": {"market_breadth": {"status": "ok"}},
+            "evidence": [],
+            "degraded_modules": [],
+            "input_snapshots": {},
+        }
+    )
+    write_portfolio_risk_snapshot(
+        {
+            "result_id": "portfolio-risk:test",
+            "as_of": "2099-01-01",
+            "computed_at": "2099-01-01T22:00:00+00:00",
+            "average_risk_score": 0.61,
+            "max_risk_score": 0.72,
+            "risk_score": 0.61,
+            "risk_level": "medium",
+            "confidence": 0.9,
+            "quality": "ok",
+            "position_count": 1,
+            "risk_buckets": {"high": 0, "medium": 1, "low": 0},
+            "source_status": {"market_breadth": {"status": "ok"}},
+            "degraded_modules": [],
+            "input_snapshots": {},
+            "position_snapshot_ids": {"MU": "position-risk:MU:test"},
+            "results": [{"ticker": "MU", "risk_score": 0.72, "risk_level": "medium", "quality": "ok"}],
+        }
+    )
+
+    rows = persist_recommendations(
+        _valid_payload("buy"),
+        source_report_path="/tmp/recommendations.md",
+        source_json_path="/tmp/recommendations.json",
+        prompt_metadata={"report_id": "daily:2099-01-01", "model": "test"},
+    )
+
+    staged = rows[0]["record"]
+    assert staged["risk_snapshot_id"] == "position-risk:MU:test"
+    assert staged["portfolio_risk_snapshot_id"] == "portfolio-risk:test"
+    assert staged["risk_quality"] == "ok"
+    assert staged["critical_data_quality"] == "ok"
+
+    approval = core_db.get_pending_approvals(status="pending")[0]
+    core_db.resolve_approval(approval["id"], "approved", "Risk bindings reviewed.")
+    recommendation = core_db.get_recommendations(report_type="daily")[0]
+    assert recommendation["risk_snapshot_id"] == "position-risk:MU:test"
+    assert recommendation["portfolio_risk_snapshot_id"] == "portfolio-risk:test"
+    assert recommendation["risk_bindings"]["position"]["result_id"] == "position-risk:MU:test"
+
+    bindings = core_db.get_recommendation_risk_bindings(int(recommendation["id"]))
+    assert len(bindings) == 1
+    assert bindings[0]["risk_snapshot_id"] == "position-risk:MU:test"

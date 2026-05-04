@@ -104,12 +104,35 @@ def get_workspace():
 
     # Portfolio summary
     portfolio_summary = None
+    portfolio_risk = None
+    try:
+        from api.position_risk import get_latest_portfolio_risk
+
+        portfolio_risk = get_latest_portfolio_risk()
+    except Exception:
+        portfolio_risk = None
     if isinstance(portfolio_data, dict):
         positions = portfolio_data.get("positions", [])
         portfolio_summary = {
             "position_count": len(positions) if isinstance(positions, list) else 0,
             "total_pnl": portfolio_data.get("total_pnl"),
             "total_pnl_pct": portfolio_data.get("total_pnl_pct"),
+            "risk": {
+                "result_id": portfolio_risk.get("result_id"),
+                "as_of": portfolio_risk.get("as_of"),
+                "computed_at": portfolio_risk.get("computed_at"),
+                "quality": portfolio_risk.get("quality"),
+                "confidence": portfolio_risk.get("confidence"),
+                "average_risk_score": portfolio_risk.get("average_risk_score"),
+                "max_risk_score": portfolio_risk.get("max_risk_score"),
+                "risk_level": portfolio_risk.get("risk_level"),
+                "risk_buckets": portfolio_risk.get("risk_buckets"),
+                "top_contributors": portfolio_risk.get("top_contributors", [])[:5]
+                if isinstance(portfolio_risk.get("top_contributors"), list)
+                else [],
+            }
+            if isinstance(portfolio_risk, dict)
+            else None,
         }
 
     # Positions under thesis pressure

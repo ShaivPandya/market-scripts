@@ -384,6 +384,7 @@ def _data_freshness_checks(
 ) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     record = _recommendation_record(payload)
+    action = str(record.get("action") or "").lower()
     qualities = [
         record.get("critical_data_quality"),
         record.get("source_quality"),
@@ -412,6 +413,61 @@ def _data_freshness_checks(
                 observed=[q for q in qualities if q],
             )
         )
+    if action in ACTIONABLE_RECOMMENDATION_ACTIONS:
+        try:
+            from api.position_risk import risk_recommendation_gate_enabled
+        except Exception:
+            risk_gate_enabled = False
+        else:
+            risk_gate_enabled = risk_recommendation_gate_enabled()
+
+        if risk_gate_enabled:
+            risk_quality = str(record.get("risk_quality") or "missing").lower()
+            risk_snapshot_id = record.get("risk_snapshot_id")
+            portfolio_risk_snapshot_id = record.get("portfolio_risk_snapshot_id")
+            risk_score = _risk_score_from_recommendation(record)
+            if risk_score is None:
+                checks.append(
+                    _check(
+                        "risk.first_class_snapshot",
+                        "fail",
+                        "stale_data",
+                        "Actionable recommendation requires a first-class risk score.",
+                        severity="block",
+                        observed={
+                            "risk_quality": risk_quality,
+                            "risk_snapshot_id": risk_snapshot_id,
+                            "portfolio_risk_snapshot_id": portfolio_risk_snapshot_id,
+                        },
+                    )
+                )
+            elif risk_quality != "ok":
+                checks.append(
+                    _check(
+                        "risk.first_class_snapshot",
+                        "fail",
+                        "insufficient_history",
+                        "First-class risk is degraded; human review is required before action.",
+                        severity="fail",
+                        observed={
+                            "risk_quality": risk_quality,
+                            "risk_score": risk_score,
+                            "risk_snapshot_id": risk_snapshot_id,
+                            "portfolio_risk_snapshot_id": portfolio_risk_snapshot_id,
+                        },
+                    )
+                )
+            elif not risk_snapshot_id and not portfolio_risk_snapshot_id:
+                checks.append(
+                    _check(
+                        "risk.first_class_snapshot",
+                        "fail",
+                        "stale_data",
+                        "Actionable recommendation requires linked first-class risk snapshots.",
+                        severity="block",
+                        observed={"risk_quality": risk_quality, "risk_score": risk_score},
+                    )
+                )
     return checks
 
 
@@ -821,6 +877,30 @@ def _payload_number(payload: Mapping[str, Any], key: str) -> float | None:
     record = _recommendation_record(payload)
     if key in record:
         return _to_float(record.get(key))
+    return None
+
+
+def _risk_score_from_recommendation(record: Mapping[str, Any]) -> float | None:
+    direct = _to_float(record.get("risk_score"))
+    if direct is not None:
+        return direct
+    bindings = record.get("risk_bindings")
+    if isinstance(bindings, Mapping):
+        for key in ("risk_score", "position_risk_score", "portfolio_risk_score", "average_risk_score"):
+            value = _to_float(bindings.get(key))
+            if value is not None:
+                return value
+        position = bindings.get("position")
+        if isinstance(position, Mapping):
+            value = _to_float(position.get("risk_score"))
+            if value is not None:
+                return value
+        portfolio = bindings.get("portfolio")
+        if isinstance(portfolio, Mapping):
+            for key in ("risk_score", "average_risk_score"):
+                value = _to_float(portfolio.get(key))
+                if value is not None:
+                    return value
     return None
 
 

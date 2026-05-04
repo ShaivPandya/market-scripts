@@ -411,7 +411,32 @@ CREATE TABLE IF NOT EXISTS recommendations (
     account_id                  TEXT,
     portfolio_id                TEXT,
     policy_id                   TEXT,
-    trade_proposal_json         TEXT
+    trade_proposal_json         TEXT,
+    risk_snapshot_id            TEXT,
+    portfolio_risk_snapshot_id  TEXT,
+    risk_quality                TEXT,
+    risk_confidence             REAL,
+    risk_score                  REAL,
+    risk_level                  TEXT,
+    risk_source_status_json     TEXT,
+    risk_bindings_json          TEXT
+)
+"""
+
+_CREATE_RECOMMENDATION_RISK_BINDINGS = """
+CREATE TABLE IF NOT EXISTS recommendation_risk_bindings (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    recommendation_id           INTEGER NOT NULL,
+    created_at                  TEXT NOT NULL,
+    ticker                      TEXT,
+    risk_snapshot_id            TEXT,
+    portfolio_risk_snapshot_id  TEXT,
+    risk_quality                TEXT,
+    risk_confidence             REAL,
+    risk_score                  REAL,
+    risk_level                  TEXT,
+    source_status_json          TEXT,
+    binding_json                TEXT NOT NULL
 )
 """
 
@@ -611,6 +636,11 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_recommendations_approval ON recommendations(approval_status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_outcome ON recommendations(outcome_status)",
     "CREATE INDEX IF NOT EXISTS idx_recommendations_policy_gate ON recommendations(policy_gate_decision)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_risk_snapshot ON recommendations(risk_snapshot_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendations_portfolio_risk_snapshot ON recommendations(portfolio_risk_snapshot_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendation_risk_bindings_recommendation ON recommendation_risk_bindings(recommendation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendation_risk_bindings_position ON recommendation_risk_bindings(risk_snapshot_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recommendation_risk_bindings_portfolio ON recommendation_risk_bindings(portfolio_risk_snapshot_id)",
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_decision ON policy_gate_results(decision, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_target ON policy_gate_results(target_type, target_id)",
     "CREATE INDEX IF NOT EXISTS idx_policy_gate_results_action ON policy_gate_results(action_id, created_at DESC)",
@@ -710,6 +740,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_ACTION_RUNS,
         _CREATE_ACTION_EVENTS,
         _CREATE_RECOMMENDATIONS,
+        _CREATE_RECOMMENDATION_RISK_BINDINGS,
         _CREATE_POLICY_GATE_RESULTS,
         _CREATE_AUDIT_EVENTS,
         _CREATE_PROVENANCE_EVENTS,
@@ -765,6 +796,14 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "portfolio_id": "TEXT",
             "policy_id": "TEXT",
             "trade_proposal_json": "TEXT",
+            "risk_snapshot_id": "TEXT",
+            "portfolio_risk_snapshot_id": "TEXT",
+            "risk_quality": "TEXT",
+            "risk_confidence": "REAL",
+            "risk_score": "REAL",
+            "risk_level": "TEXT",
+            "risk_source_status_json": "TEXT",
+            "risk_bindings_json": "TEXT",
         },
     )
     _add_missing(
@@ -4113,6 +4152,8 @@ _RECOMMENDATION_JSON_FIELDS = (
     "policy_gate_warnings_json",
     "policy_gate_disclosures_json",
     "trade_proposal_json",
+    "risk_source_status_json",
+    "risk_bindings_json",
 )
 
 
@@ -4123,6 +4164,10 @@ def _encode_json(value: Any) -> str:
 def _parse_recommendation_json_fields(d: dict) -> dict:
     for field in _RECOMMENDATION_JSON_FIELDS:
         _parse_json_field(d, field)
+    if "risk_source_status_json" in d:
+        d["risk_source_status"] = d.get("risk_source_status_json")
+    if "risk_bindings_json" in d:
+        d["risk_bindings"] = d.get("risk_bindings_json")
     return d
 
 
@@ -4312,6 +4357,106 @@ def _ensure_policy_gate_result_for_recommendation(record: dict) -> int | None:
     return int(row["id"])
 
 
+def _risk_projection_enabled() -> bool:
+    try:
+        from api.position_risk import risk_compat_projections_enabled
+    except Exception:
+        return True
+    return risk_compat_projections_enabled()
+
+
+def _quality_rank(value: Any) -> int:
+    state = str(value or "ok").strip().lower()
+    if state == "ok":
+        return 0
+    if state == "degraded":
+        return 1
+    if state == "stale":
+        return 2
+    return 3
+
+
+def _quality_from_rank(rank: int) -> str:
+    if rank <= 0:
+        return "ok"
+    if rank == 1:
+        return "degraded"
+    if rank == 2:
+        return "stale"
+    return "failed"
+
+
+def _project_recommendation_risk_quality(record: dict) -> dict:
+    if not _risk_projection_enabled() or not record.get("risk_quality"):
+        return record
+    out = dict(record)
+    projected = _quality_from_rank(
+        max(_quality_rank(out.get("critical_data_quality")), _quality_rank(out.get("risk_quality")))
+    )
+    out["critical_data_quality"] = projected
+    if out.get("source_quality"):
+        out["source_quality"] = _quality_from_rank(
+            max(_quality_rank(out.get("source_quality")), _quality_rank(out.get("risk_quality")))
+        )
+    return out
+
+
+def _materialize_recommendation_risk_binding_tx(
+    conn: sqlite3.Connection | PostgresCompatConnection,
+    recommendation: dict,
+    record: dict,
+) -> None:
+    binding = record.get("risk_bindings")
+    if not isinstance(binding, dict):
+        binding = {}
+    risk_snapshot_id = record.get("risk_snapshot_id") or recommendation.get("risk_snapshot_id")
+    portfolio_risk_snapshot_id = record.get("portfolio_risk_snapshot_id") or recommendation.get(
+        "portfolio_risk_snapshot_id"
+    )
+    if not risk_snapshot_id and not portfolio_risk_snapshot_id and not binding:
+        return
+
+    recommendation_id = int(recommendation["id"])
+    conn.execute("DELETE FROM recommendation_risk_bindings WHERE recommendation_id = ?", (recommendation_id,))
+    conn.execute(
+        """
+        INSERT INTO recommendation_risk_bindings (
+            recommendation_id,
+            created_at,
+            ticker,
+            risk_snapshot_id,
+            portfolio_risk_snapshot_id,
+            risk_quality,
+            risk_confidence,
+            risk_score,
+            risk_level,
+            source_status_json,
+            binding_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            recommendation_id,
+            _now(),
+            recommendation.get("ticker"),
+            risk_snapshot_id,
+            portfolio_risk_snapshot_id,
+            record.get("risk_quality") or recommendation.get("risk_quality"),
+            record.get("risk_confidence") or recommendation.get("risk_confidence"),
+            record.get("risk_score") or recommendation.get("risk_score"),
+            record.get("risk_level") or recommendation.get("risk_level"),
+            _encode_json(record.get("risk_source_status") or recommendation.get("risk_source_status_json") or {}),
+            _encode_json(
+                binding
+                or {
+                    "risk_snapshot_id": risk_snapshot_id,
+                    "portfolio_risk_snapshot_id": portfolio_risk_snapshot_id,
+                }
+            ),
+        ),
+    )
+
+
 def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dict[str, Any]:
     from api import governance
 
@@ -4337,6 +4482,8 @@ def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dic
                     "prompt_hash": recommendation.get("prompt_hash"),
                     "report_id": recommendation.get("report_id"),
                     "policy_gate_result_id": policy_gate_result_id,
+                    "risk_snapshot_id": recommendation.get("risk_snapshot_id"),
+                    "portfolio_risk_snapshot_id": recommendation.get("portfolio_risk_snapshot_id"),
                 },
                 output_value={
                     "recommendation_id": recommendation_id,
@@ -4353,6 +4500,8 @@ def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dic
                     "status": recommendation.get("status"),
                     "recommendation_status": recommendation.get("recommendation_status"),
                     "policy_gate_result_id": policy_gate_result_id,
+                    "risk_snapshot_id": recommendation.get("risk_snapshot_id"),
+                    "portfolio_risk_snapshot_id": recommendation.get("portfolio_risk_snapshot_id"),
                 },
                 metadata={
                     "model": recommendation.get("model"),
@@ -4360,6 +4509,8 @@ def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dic
                     "input_hash": recommendation.get("input_hash"),
                     "report_id": recommendation.get("report_id"),
                     "source_quality": recommendation.get("source_quality"),
+                    "risk_quality": recommendation.get("risk_quality"),
+                    "risk_confidence": recommendation.get("risk_confidence"),
                     "validation_status": recommendation.get("validation_status"),
                 },
             )
@@ -4379,6 +4530,8 @@ def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dic
                     "status": recommendation.get("status"),
                     "recommendation_status": recommendation.get("recommendation_status"),
                     "policy_gate_result_id": policy_gate_result_id,
+                    "risk_snapshot_id": recommendation.get("risk_snapshot_id"),
+                    "portfolio_risk_snapshot_id": recommendation.get("portfolio_risk_snapshot_id"),
                     "model": recommendation.get("model"),
                     "prompt_hash": recommendation.get("prompt_hash"),
                     "input_hash": recommendation.get("input_hash"),
@@ -4428,6 +4581,30 @@ def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dic
                 lineage_root_id=lineage_root_id,
             )
         )
+    if recommendation.get("risk_snapshot_id"):
+        links.append(
+            governance.provenance_link(
+                event_id=provenance_event_id,
+                source_ref_type="position_risk_snapshot",
+                source_ref_id=str(recommendation["risk_snapshot_id"]),
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=recommendation_id,
+                link_type="used",
+                lineage_root_id=lineage_root_id,
+            )
+        )
+    if recommendation.get("portfolio_risk_snapshot_id"):
+        links.append(
+            governance.provenance_link(
+                event_id=provenance_event_id,
+                source_ref_type="portfolio_risk_snapshot",
+                source_ref_id=str(recommendation["portfolio_risk_snapshot_id"]),
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=recommendation_id,
+                link_type="used",
+                lineage_root_id=lineage_root_id,
+            )
+        )
     if recommendation.get("model"):
         links.append(
             governance.provenance_link(
@@ -4460,6 +4637,7 @@ def _recommendation_governance_bundle(recommendation: dict, record: dict) -> dic
 
 def create_recommendation(record: dict) -> dict:
     _guard_legacy_domain_write("core_db.create_recommendation")
+    record = _project_recommendation_risk_quality(record)
     conn = _get_conn()
     now = record.get("created_at") or _now()
     ticker = record.get("ticker")
@@ -4521,6 +4699,14 @@ def create_recommendation(record: dict) -> dict:
         "portfolio_id": record.get("portfolio_id"),
         "policy_id": record.get("policy_id"),
         "trade_proposal_json": _encode_json(record.get("trade_proposal", {})),
+        "risk_snapshot_id": record.get("risk_snapshot_id"),
+        "portfolio_risk_snapshot_id": record.get("portfolio_risk_snapshot_id"),
+        "risk_quality": record.get("risk_quality"),
+        "risk_confidence": record.get("risk_confidence"),
+        "risk_score": record.get("risk_score"),
+        "risk_level": record.get("risk_level"),
+        "risk_source_status_json": _encode_json(record.get("risk_source_status", {})),
+        "risk_bindings_json": _encode_json(record.get("risk_bindings", {})),
     }
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
@@ -4532,6 +4718,7 @@ def create_recommendation(record: dict) -> dict:
             )
             row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (cur.lastrowid,)).fetchone()
             result = _parse_recommendation_json_fields(_require_row_dict(row))
+            _materialize_recommendation_risk_binding_tx(conn, result, record)
             _materialize_governance_bundle_tx(conn, _recommendation_governance_bundle(result, record))
             row = conn.execute("SELECT * FROM recommendations WHERE id = ?", (cur.lastrowid,)).fetchone()
             conn.commit()
@@ -4543,6 +4730,7 @@ def create_recommendation(record: dict) -> dict:
 
 def upsert_recommendation(record: dict) -> dict:
     _guard_legacy_domain_write("core_db.upsert_recommendation")
+    record = _project_recommendation_risk_quality(record)
     if not record.get("idempotency_key"):
         return create_recommendation(record)
 
@@ -4607,6 +4795,14 @@ def upsert_recommendation(record: dict) -> dict:
         "portfolio_id": record.get("portfolio_id"),
         "policy_id": record.get("policy_id"),
         "trade_proposal_json": _encode_json(record.get("trade_proposal", {})),
+        "risk_snapshot_id": record.get("risk_snapshot_id"),
+        "portfolio_risk_snapshot_id": record.get("portfolio_risk_snapshot_id"),
+        "risk_quality": record.get("risk_quality"),
+        "risk_confidence": record.get("risk_confidence"),
+        "risk_score": record.get("risk_score"),
+        "risk_level": record.get("risk_level"),
+        "risk_source_status_json": _encode_json(record.get("risk_source_status", {})),
+        "risk_bindings_json": _encode_json(record.get("risk_bindings", {})),
     }
     columns = ", ".join(params)
     placeholders = ", ".join("?" for _ in params)
@@ -4637,6 +4833,7 @@ def upsert_recommendation(record: dict) -> dict:
                 (record["idempotency_key"],),
             ).fetchone()
             result = _parse_recommendation_json_fields(_require_row_dict(row))
+            _materialize_recommendation_risk_binding_tx(conn, result, record)
             _materialize_governance_bundle_tx(conn, _recommendation_governance_bundle(result, record))
             row = conn.execute(
                 "SELECT * FROM recommendations WHERE idempotency_key = ?",
@@ -4691,6 +4888,26 @@ def get_recommendation(recommendation_id: int) -> dict | None:
     if not row:
         return None
     return _parse_recommendation_json_fields(_require_row_dict(row))
+
+
+def get_recommendation_risk_bindings(recommendation_id: int) -> list[dict]:
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM recommendation_risk_bindings
+            WHERE recommendation_id = ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (recommendation_id,),
+        ).fetchall()
+    out = []
+    for row in _rows_to_list(rows):
+        _parse_json_field(row, "source_status_json")
+        _parse_json_field(row, "binding_json")
+        out.append(row)
+    return out
 
 
 def get_latest_recommendation(report_type: str | None = None) -> dict | None:
