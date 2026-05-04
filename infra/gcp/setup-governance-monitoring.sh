@@ -18,6 +18,32 @@ metric_exists() {
   gcloud logging metrics describe "$1" --project="${PROJECT_ID}" >/dev/null 2>&1
 }
 
+metric_config_file() {
+  local description="$1"
+  local filter="$2"
+  local value_type="$3"
+  local unit="$4"
+  local value_extractor="${5:-}"
+  local file
+  file="$(mktemp)"
+
+  {
+    printf 'description: "%s"\n' "${description//\"/\\\"}"
+    printf 'filter: |-\n'
+    printf '  %s\n' "${filter}"
+    if [[ -n "${value_extractor}" ]]; then
+      printf 'valueExtractor: |-\n'
+      printf '  %s\n' "${value_extractor}"
+    fi
+    printf 'metricDescriptor:\n'
+    printf '  metricKind: DELTA\n'
+    printf '  valueType: %s\n' "${value_type}"
+    printf '  unit: "%s"\n' "${unit}"
+  } >"${file}"
+
+  echo "${file}"
+}
+
 upsert_counter_metric() {
   local name="$1"
   local description="$2"
@@ -27,11 +53,12 @@ upsert_counter_metric() {
     action="update"
   fi
   log "${action} log metric ${name}"
+  local config_file
+  config_file="$(metric_config_file "${description}" "${filter}" "INT64" "1")"
   gcloud logging metrics "${action}" "${name}" \
     --project="${PROJECT_ID}" \
-    --description="${description}" \
-    --log-filter="${filter}" \
-    --metric-descriptor="metricKind=DELTA,valueType=INT64,unit=1"
+    --config-from-file="${config_file}"
+  rm -f "${config_file}"
 }
 
 upsert_distribution_metric() {
@@ -44,12 +71,12 @@ upsert_distribution_metric() {
     action="update"
   fi
   log "${action} log metric ${name}"
+  local config_file
+  config_file="$(metric_config_file "${description}" "${filter}" "DISTRIBUTION" "s" "${value_extractor}")"
   gcloud logging metrics "${action}" "${name}" \
     --project="${PROJECT_ID}" \
-    --description="${description}" \
-    --log-filter="${filter}" \
-    --value-extractor="${value_extractor}" \
-    --metric-descriptor="metricKind=DELTA,valueType=DISTRIBUTION,unit=s"
+    --config-from-file="${config_file}"
+  rm -f "${config_file}"
 }
 
 upsert_counter_metric \
