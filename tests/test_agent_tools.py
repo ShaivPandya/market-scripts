@@ -13,7 +13,7 @@ import pytest
 
 from api import agent_tools
 from api.routers import agent as agent_router
-from ontology.action_registry import ActionValidationError
+from ontology.action_registry import ActionValidationError, iter_tool_exposures
 from ontology.policy import admin_actor, agent_actor
 
 PROPOSAL_TOOL_NAMES = {
@@ -300,6 +300,33 @@ def test_agent_capability_registry_covers_user_facing_app_surface():
     assert len(names) == len(agent_tools.AGENT_CAPABILITIES)
     assert all(cap.category and cap.access_mode and cap.aliases for cap in agent_tools.AGENT_CAPABILITIES)
     assert all(cap.schema_safe for cap in agent_tools.AGENT_CAPABILITIES)
+
+
+def test_agent_tool_exposures_have_complete_governance_metadata():
+    for tool in iter_tool_exposures(agent_exposed_only=True):
+        assert tool.required_scopes
+        assert tool.account_scope == "default-account"
+        assert tool.portfolio_scope == "default-portfolio"
+        assert tool.data_sensitivity in {
+            "public_market",
+            "portfolio_private",
+            "research_private",
+            "account_private",
+            "operational_private",
+        }
+        assert tool.provider_egress in {
+            "external_allowed",
+            "external_allowed_raw_private",
+            "external_blocked",
+            "local_only",
+        }
+        assert tool.timeout_s > 0
+        assert int(tool.retry_policy["max_attempts"]) >= 1
+        assert tool.token_budget is not None and tool.token_budget > 0
+        assert tool.cost_budget_usd is not None and tool.cost_budget_usd >= 0
+        assert tool.rate_limit.get("label")
+        assert tool.audit_level in {"standard", "enhanced", "financial_critical"}
+        assert tool.failure_mode in {"fail_closed", "partial_allowed"}
 
 
 def test_agent_capability_registry_does_not_expose_direct_mutations():

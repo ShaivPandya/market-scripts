@@ -282,7 +282,8 @@ class DecisionOntologyWriteback:
         provenance_id = _provenance_id(provenance, f"pv:action_run:{action_run_id}")
         executed_id = f"{approval_id}:{action_run_id}:{action_id}"
         rows: list[dict[str, Any]] = []
-        version_refs = [_version_ref_payload(row) for row in mutated_versions if _version_ref_payload(row)]
+        version_refs_raw = (_version_ref_payload(row) for row in mutated_versions)
+        version_refs = [ref for ref in version_refs_raw if ref is not None]
         try:
             executed_row = self.object_service.write_object(
                 "ExecutedAction",

@@ -5,6 +5,7 @@ import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SegmentedControl, SliderInput, TextInput } from "@/components/shared/FormControls"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { MetricCard } from "@/components/shared/MetricCard"
+import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 import { colorPositiveNegative } from "@/lib/colors"
 import { fetchPortfolioPositions, fetchSizerJob, fetchSizerPrefill, startSizerJob } from "@/lib/api"
 
@@ -473,12 +474,12 @@ export function PortfolioSizer() {
     postHedgeBetaIwm,
   ].some(v => v != null)
 
-  const trades = useMemo(() => {
+  const sizingDeltas = useMemo(() => {
     if (!data) return []
     const allRows = [...weightsRows, ...hedgesRows]
     if (allRows.length === 0) return []
 
-    const tradeList: {
+    const deltaList: {
       ticker: string
       type: string
       direction: string
@@ -499,7 +500,7 @@ export function PortfolioSizer() {
       const type = row.type === "hedge" ? "Hedge" : "Position"
       const direction = String(row.direction ?? "")
 
-      tradeList.push({
+      deltaList.push({
         ticker,
         type,
         direction,
@@ -511,18 +512,24 @@ export function PortfolioSizer() {
       })
     }
 
-    return tradeList.sort((a, b) => Math.abs(b.notional) - Math.abs(a.notional))
+    return deltaList.sort((a, b) => Math.abs(b.notional) - Math.abs(a.notional))
   }, [data, weightsRows, hedgesRows, currentHoldings])
 
-  const totalNotional = trades.reduce((sum, t) => sum + Math.abs(t.notional), 0)
-  const totalBuys = trades.filter(t => t.delta > 0).reduce((sum, t) => sum + t.notional, 0)
-  const totalSells = trades.filter(t => t.delta < 0).reduce((sum, t) => sum + t.notional, 0)
+  const totalNotionalDelta = sizingDeltas.reduce((sum, t) => sum + Math.abs(t.notional), 0)
+  const increaseNotional = sizingDeltas.filter(t => t.delta > 0).reduce((sum, t) => sum + t.notional, 0)
+  const decreaseNotional = sizingDeltas.filter(t => t.delta < 0).reduce((sum, t) => sum + Math.abs(t.notional), 0)
 
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Sizer</h1>
         <p className="text-sm text-gray-400 mt-0.5">Conviction-based portfolio sizing with constraint optimization and beta hedging</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <DecisionStateBadge state={String(data?.decision_state ?? "analysis")} />
+          <EffectScopeBadge scope={String(data?.effect_scope ?? "read_only")} />
+          <QualityStateBadge state={String(data?.quality_state ?? "ok")} />
+          <span className="text-xs text-gray-500">Decision support only. Sizing deltas are not orders and are not sent to a broker.</span>
+        </div>
       </div>
 
       <div className="rounded-xl border border-gray-200/80 bg-white p-5 mb-6 space-y-5">
@@ -559,7 +566,7 @@ export function PortfolioSizer() {
               onChange={setBookSizeInput}
               placeholder="100000"
             />
-            <p className="text-xs text-gray-400">$50k - $150k · applied on run</p>
+            <p className="text-xs text-gray-400">$50k - $150k · used for analysis run</p>
           </div>
         </div>
 
@@ -702,7 +709,7 @@ export function PortfolioSizer() {
               )}
 
               {hedgesRows.length > 0 && (
-                <DataTable label="Hedge Positions" columns={buildCols(hedgesRows)} rows={hedgesRows} />
+                <DataTable label="Computed Hedge Legs" columns={buildCols(hedgesRows)} rows={hedgesRows} />
               )}
 
               {weightsRows.length === 0 && hedgesRows.length === 0 && (
@@ -868,14 +875,19 @@ export function PortfolioSizer() {
             </div>
           )}
 
-          {trades.length > 0 && (
+          {sizingDeltas.length > 0 && (
             <div className="space-y-4">
-              <h2 className="text-base font-semibold text-gray-900">Buy / Sell Summary</h2>
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Sizing Delta Summary</h2>
+                <p className="mt-1 text-xs text-gray-500">
+                  Analysis only. These deltas compare current shares with computed target shares; they are not executable orders.
+                </p>
+              </div>
 
               <div className="grid grid-cols-3 gap-4">
-                <MetricCard title="Total Buys" value={currencyFormatter.format(totalBuys)} />
-                <MetricCard title="Total Sells" value={currencyFormatter.format(totalSells)} />
-                <MetricCard title="Total Turnover" value={currencyFormatter.format(totalNotional)} />
+                <MetricCard title="Increase Notional" value={currencyFormatter.format(increaseNotional)} />
+                <MetricCard title="Decrease Notional" value={currencyFormatter.format(decreaseNotional)} />
+                <MetricCard title="Total Absolute Delta" value={currencyFormatter.format(totalNotionalDelta)} />
               </div>
 
               <div className="rounded-xl border border-gray-200 overflow-x-auto">
@@ -887,20 +899,20 @@ export function PortfolioSizer() {
                       <th className="px-3 py-2 text-left font-medium text-gray-600">Direction</th>
                       <th className="px-3 py-2 text-right font-medium text-gray-600">Current</th>
                       <th className="px-3 py-2 text-right font-medium text-gray-600">Target</th>
-                      <th className="px-3 py-2 text-right font-medium text-gray-600">Delta</th>
-                      <th className="px-3 py-2 text-left font-medium text-gray-600">Action</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Share Delta</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Sizing Direction</th>
                       <th className="px-3 py-2 text-right font-medium text-gray-600">Price</th>
-                      <th className="px-3 py-2 text-right font-medium text-gray-600">Notional</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Notional Delta</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {trades.map(t => {
-                      const action =
-                        t.delta > 0 ? "BUY" : t.delta < 0 ? "SELL" : "HOLD"
-                      const actionColor =
-                        action === "BUY"
+                    {sizingDeltas.map(t => {
+                      const direction =
+                        t.delta > 0 ? "Increase" : t.delta < 0 ? "Decrease" : "No change"
+                      const directionColor =
+                        direction === "Increase"
                           ? "text-emerald-700 bg-emerald-50"
-                          : action === "SELL"
+                          : direction === "Decrease"
                             ? "text-red-700 bg-red-50"
                             : "text-gray-500 bg-gray-50"
 
@@ -919,8 +931,8 @@ export function PortfolioSizer() {
                             {t.delta >= 0 ? "+" : ""}{t.delta.toLocaleString("en-US")}
                           </td>
                           <td className="px-3 py-2">
-                            <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-semibold ${actionColor}`}>
-                              {action}
+                            <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-semibold ${directionColor}`}>
+                              {direction}
                             </span>
                           </td>
                           <td className="px-3 py-2 text-right font-mono text-gray-600">

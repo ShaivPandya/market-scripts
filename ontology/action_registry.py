@@ -26,6 +26,7 @@ from typing import Any, Literal, cast
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     ValidationError,
     create_model,
@@ -110,6 +111,21 @@ ToolActionInputAdapter = Callable[[BaseModel], dict[str, Any]]
 ToolReasonBuilder = Callable[[BaseModel], str | None]
 ToolEntityIdBuilder = Callable[[BaseModel], int | None]
 ToolAccessMode = Literal["read", "compute", "proposal", "execute"]
+ToolDataSensitivity = Literal[
+    "public_market",
+    "portfolio_private",
+    "research_private",
+    "account_private",
+    "operational_private",
+]
+ProviderEgressMode = Literal[
+    "external_allowed",
+    "external_allowed_raw_private",
+    "external_blocked",
+    "local_only",
+]
+ToolAuditLevel = Literal["standard", "enhanced", "financial_critical"]
+ToolFailureMode = Literal["fail_closed", "partial_allowed"]
 ActionEffectKind = Literal["read_only", "approval_gated", "direct_mutation"]
 ActionRiskClass = Literal["none", "low", "financial"]
 ActionExecutionMode = Literal["direct", "approval_required", "break_glass"]
@@ -2556,6 +2572,18 @@ class ToolExposure:
     entity_id_builder: ToolEntityIdBuilder | None = None
     once: bool = False
     policy_spec: PolicySpec | None = None
+    required_scopes: tuple[str, ...] = ()
+    account_scope: str | None = "default-account"
+    portfolio_scope: str | None = "default-portfolio"
+    data_sensitivity: ToolDataSensitivity = "public_market"
+    provider_egress: ProviderEgressMode = "external_allowed"
+    timeout_s: float = 15.0
+    retry_policy: Mapping[str, Any] = field(default_factory=dict)
+    token_budget: int | None = None
+    cost_budget_usd: float | None = None
+    rate_limit: Mapping[str, Any] = field(default_factory=dict)
+    audit_level: ToolAuditLevel = "standard"
+    failure_mode: ToolFailureMode = "partial_allowed"
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -2616,7 +2644,10 @@ def _input_model_from_schema(tool_name: str, schema: dict[str, Any]) -> type[Bas
             default = ...
         description = field_schema.get("description")
         fields[field_name] = (annotation, Field(default=default, description=description))
-    return cast(type[BaseModel], create_model(_tool_model_name(tool_name), **cast(Any, fields)))
+    return cast(
+        type[BaseModel],
+        create_model(_tool_model_name(tool_name), __config__=ConfigDict(extra="forbid"), **cast(Any, fields)),
+    )
 
 
 def _output_spec_for_tool(tool_name: str, access_mode: ToolAccessMode) -> OutputSchemaSpec:
@@ -2926,6 +2957,121 @@ def _tool_policy_spec(tool_name: str) -> PolicySpec | None:
     return None
 
 
+_PRIVATE_TOOL_CATEGORIES = {
+    "portfolio",
+    "thesis",
+    "process",
+    "workspace",
+    "workflows",
+    "approvals",
+    "reports",
+}
+_RESEARCH_TOOL_CATEGORIES = {"research"}
+_HIGH_COST_TOOL_NAMES = {
+    "query_ontology",
+    "get_signal_aggregator",
+    "get_sector_metrics",
+    "run_dcf_valuation",
+    "run_quality_screen",
+    "run_short_screen",
+    "run_long_screen",
+    "run_fundamental_momentum",
+    "run_portfolio_analyzer",
+    "run_portfolio_sizer",
+    "run_hedging_tool",
+    "run_hedging_recommendation",
+    "search_web",
+}
+
+
+def _tool_required_scopes(tool_name: str, category: str, access_mode: ToolAccessMode) -> tuple[str, ...]:
+    scopes = ["agent.tool.call", f"tool.{access_mode}"]
+    if category in _PRIVATE_TOOL_CATEGORIES or category in _RESEARCH_TOOL_CATEGORIES:
+        scopes.append("portfolio.read")
+    if category in {"thesis", "research"}:
+        scopes.append("research.read")
+    if access_mode == "proposal":
+        scopes.extend(["approval.propose", "portfolio.write.propose"])
+    if access_mode == "compute":
+        scopes.append("compute.run")
+    if tool_name == "search_web":
+        scopes.append("research.external_search")
+    if tool_name == "query_ontology":
+        scopes.append("ontology.query")
+    return tuple(dict.fromkeys(scopes))
+
+
+def _tool_data_sensitivity(tool_name: str, category: str, access_mode: ToolAccessMode) -> ToolDataSensitivity:
+    if access_mode == "proposal":
+        return "portfolio_private"
+    if category in _RESEARCH_TOOL_CATEGORIES or tool_name in {"search_knowledge_base", "get_research_notes"}:
+        return "research_private"
+    if category in _PRIVATE_TOOL_CATEGORIES:
+        return "portfolio_private"
+    if tool_name == "search_agent_capabilities":
+        return "operational_private"
+    return "public_market"
+
+
+def _tool_provider_egress(data_sensitivity: ToolDataSensitivity) -> ProviderEgressMode:
+    if data_sensitivity in {"portfolio_private", "research_private", "account_private"}:
+        return "external_allowed_raw_private"
+    if data_sensitivity == "operational_private":
+        return "external_allowed"
+    return "external_allowed"
+
+
+def _tool_timeout_s(tool_name: str, access_mode: ToolAccessMode) -> float:
+    if tool_name in {"search_web", "run_hedging_recommendation"}:
+        return 45.0
+    if tool_name in _HIGH_COST_TOOL_NAMES:
+        return 30.0
+    if access_mode == "proposal":
+        return 20.0
+    if access_mode == "compute":
+        return 25.0
+    return 12.0
+
+
+def _tool_retry_policy(tool_name: str, access_mode: ToolAccessMode) -> dict[str, Any]:
+    if access_mode == "proposal":
+        return {"max_attempts": 1, "backoff_s": 0.0, "retryable": []}
+    max_attempts = 2 if tool_name not in {"search_web", "run_hedging_recommendation"} else 3
+    return {"max_attempts": max_attempts, "backoff_s": 0.25, "retryable": ["timeout", "transient", "rate_limit"]}
+
+
+def _tool_budget(tool_name: str, access_mode: ToolAccessMode, sensitivity: ToolDataSensitivity) -> tuple[int, float]:
+    if tool_name in _HIGH_COST_TOOL_NAMES:
+        return 40_000, 1.50
+    if access_mode == "proposal":
+        return 20_000, 0.50
+    if sensitivity in {"portfolio_private", "research_private", "account_private"}:
+        return 30_000, 0.75
+    return 20_000, 0.25
+
+
+def _tool_rate_limit(access_mode: ToolAccessMode) -> dict[str, Any]:
+    if access_mode == "proposal":
+        return {"limit": 10, "window_s": 60, "label": "10/min"}
+    if access_mode == "compute":
+        return {"limit": 20, "window_s": 60, "label": "20/min"}
+    return {"limit": 60, "window_s": 60, "label": "60/min"}
+
+
+def _tool_audit_level(access_mode: ToolAccessMode, sensitivity: ToolDataSensitivity) -> ToolAuditLevel:
+    if access_mode == "proposal":
+        return "financial_critical"
+    if sensitivity in {"portfolio_private", "research_private", "account_private"}:
+        return "enhanced"
+    return "standard"
+
+
+def _tool_failure_mode(access_mode: ToolAccessMode) -> ToolFailureMode:
+    if access_mode == "proposal":
+        return "fail_closed"
+    return "partial_allowed"
+
+
 def _tool_binding(tool_name: str) -> dict[str, Any] | None:
     return _PROPOSAL_TOOL_BINDINGS.get(tool_name)
 
@@ -2944,11 +3090,17 @@ def _build_tool_exposure(spec: dict[str, Any]) -> ToolExposure:
     tool_name = str(spec["name"])
     binding = _tool_binding(tool_name)
     access_mode = cast(ToolAccessMode, str(spec.get("access_mode") or "read"))
+    category = str(spec.get("category") or "misc")
     input_schema = dict(spec.get("parameters") or {"type": "object", "properties": {}, "required": []})
+    sensitivity = cast(
+        ToolDataSensitivity,
+        str(spec.get("data_sensitivity") or _tool_data_sensitivity(tool_name, category, access_mode)),
+    )
+    token_budget, cost_budget = _tool_budget(tool_name, access_mode, sensitivity)
     return ToolExposure(
         tool_name=tool_name,
         access_mode=access_mode,
-        category=str(spec.get("category") or "misc"),
+        category=category,
         description=str(spec.get("description") or ""),
         input_model=_input_model_from_schema(tool_name, input_schema),
         input_schema=input_schema,
@@ -2962,6 +3114,21 @@ def _build_tool_exposure(spec: dict[str, Any]) -> ToolExposure:
         entity_id_builder=binding.get("entity_id") if binding else None,
         once=bool(binding.get("once", False)) if binding else False,
         policy_spec=_tool_policy_spec(tool_name),
+        required_scopes=tuple(spec.get("required_scopes") or _tool_required_scopes(tool_name, category, access_mode)),
+        account_scope=str(spec.get("account_scope") or "default-account"),
+        portfolio_scope=str(spec.get("portfolio_scope") or "default-portfolio"),
+        data_sensitivity=sensitivity,
+        provider_egress=cast(
+            ProviderEgressMode,
+            str(spec.get("provider_egress") or _tool_provider_egress(sensitivity)),
+        ),
+        timeout_s=float(spec.get("timeout_s") or _tool_timeout_s(tool_name, access_mode)),
+        retry_policy=dict(spec.get("retry_policy") or _tool_retry_policy(tool_name, access_mode)),
+        token_budget=int(spec.get("token_budget") or token_budget),
+        cost_budget_usd=float(spec.get("cost_budget_usd") or cost_budget),
+        rate_limit=dict(spec.get("rate_limit") or _tool_rate_limit(access_mode)),
+        audit_level=cast(ToolAuditLevel, str(spec.get("audit_level") or _tool_audit_level(access_mode, sensitivity))),
+        failure_mode=cast(ToolFailureMode, str(spec.get("failure_mode") or _tool_failure_mode(access_mode))),
     )
 
 
@@ -3013,6 +3180,18 @@ def list_tool_exposures(*, agent_exposed_only: bool = False) -> list[dict[str, A
                 "agent_exposed": tool.agent_exposed,
                 "action_id": tool.action_id,
                 "strict_output": tool.output_spec.strict,
+                "required_scopes": list(tool.required_scopes),
+                "account_scope": tool.account_scope,
+                "portfolio_scope": tool.portfolio_scope,
+                "data_sensitivity": tool.data_sensitivity,
+                "provider_egress": tool.provider_egress,
+                "timeout_s": tool.timeout_s,
+                "retry_policy": dict(tool.retry_policy),
+                "token_budget": tool.token_budget,
+                "cost_budget_usd": tool.cost_budget_usd,
+                "rate_limit": dict(tool.rate_limit),
+                "audit_level": tool.audit_level,
+                "failure_mode": tool.failure_mode,
             }
         )
     return rows

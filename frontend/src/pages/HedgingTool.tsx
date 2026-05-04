@@ -6,6 +6,7 @@ import { ActionButton, SliderInput, TextInput } from "@/components/shared/FormCo
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
 import { renderMarkdownLite } from "@/components/shared/MarkdownRenderer"
 import { MetricCard } from "@/components/shared/MetricCard"
+import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 import { colorPositiveNegative } from "@/lib/colors"
 import { fetchHedgingPortfolioWeights, fetchHedgingRecommendations, fetchHedgingToolPrefill, runHedgingToolAsync } from "@/lib/api"
 
@@ -346,6 +347,12 @@ export function HedgingTool() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Hedging Tool</h1>
         <p className="text-sm text-gray-400 mt-0.5">Compute SPY/IWM hedge legs from custom signed portfolio weights</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <DecisionStateBadge state={String(data?.decision_state ?? "analysis")} />
+          <EffectScopeBadge scope={String(data?.effect_scope ?? "read_only")} />
+          <QualityStateBadge state={String(data?.quality_state ?? "ok")} />
+          <span className="text-xs text-gray-500">Decision support only. Hedge legs and notes are not orders and are not sent to a broker.</span>
+        </div>
       </div>
 
       <div className="rounded-xl border border-gray-200/80 bg-white p-5 mb-6 space-y-5">
@@ -370,7 +377,7 @@ export function HedgingTool() {
               onChange={setBookSizeInput}
               placeholder="100000"
             />
-            <p className="text-xs text-gray-400">$10k - $10M · applied on run</p>
+            <p className="text-xs text-gray-400">$10k - $10M · used for analysis run</p>
           </div>
         </div>
 
@@ -459,7 +466,7 @@ export function HedgingTool() {
           )}
 
           {hedgesRows.length > 0 && (
-            <DataTable label="Hedge Positions" columns={buildCols(hedgesRows)} rows={hedgesRows} />
+            <DataTable label="Computed Hedge Legs" columns={buildCols(hedgesRows)} rows={hedgesRows} />
           )}
 
           {positionsRows.length === 0 && hedgesRows.length === 0 && (
@@ -468,14 +475,14 @@ export function HedgingTool() {
 
           <div className="rounded-xl border border-gray-200/80 bg-white p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold text-gray-900">AI Recommendations</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Hedge Analysis Notes</h2>
               <button
                 type="button"
                 onClick={handleGetRecommendations}
                 disabled={recommendLoading}
                 className="px-4 py-2 rounded-lg bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {recommendLoading ? "Analyzing..." : recommendations ? "Refresh" : "Get Recommendations"}
+                {recommendLoading ? "Analyzing..." : recommendations ? "Refresh Notes" : "Get Analysis Notes"}
               </button>
             </div>
             {recommendLoading && <LoadingSpinner message="Generating recommendations..." />}
@@ -486,7 +493,7 @@ export function HedgingTool() {
               </div>
             )}
             {!recommendations && !recommendLoading && !recommendError && (
-              <p className="text-gray-400 text-sm">Click "Get Recommendations" for AI-powered adjustment suggestions.</p>
+              <p className="text-gray-400 text-sm">Click "Get Analysis Notes" for AI-powered candidate adjustments. These notes are not executable orders.</p>
             )}
           </div>
         </div>

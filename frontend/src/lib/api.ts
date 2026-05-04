@@ -1,6 +1,7 @@
 import axios from "axios"
 
 import { getAuthMode } from "@/lib/authMode"
+import type { DecisionState, DecisionStateFields, EffectScope } from "@/lib/decisionState"
 
 const client = axios.create({
   baseURL: (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/, ""),
@@ -93,12 +94,76 @@ export interface StagedMutationResponse {
   entity_type: string
   ticker: string | null
   proposed_change: Record<string, unknown>
+  decision_state?: DecisionState | string
+  decision_kind?: string
+  effect_scope?: EffectScope | string
+  execution_capability?: string
+  review_route?: string | null
   summary?: {
     reason?: string | null
     risk_class?: string | null
     approval_mode?: string | null
     approval_note_required?: boolean
   }
+}
+
+export interface PolicyGateReason {
+  code?: string
+  check?: string
+  message?: string
+  observed?: unknown
+  limit?: unknown
+}
+
+export interface PolicyGateResult {
+  decision?: string
+  review_required?: boolean
+  failure_reasons?: PolicyGateReason[]
+  warnings?: PolicyGateReason[]
+  disclosures?: string[]
+}
+
+export interface ApprovalRecord extends DecisionStateFields {
+  id: number
+  status?: string | null
+  entity_type: string
+  action_id?: string | null
+  ticker: string | null
+  reason: string | null
+  created_at: string
+  application_status?: string | null
+  application_error?: string | null
+  application_attempts?: number | null
+  source_type?: string | null
+  source_id?: string | null
+  proposed_change: Record<string, unknown>
+  policy_gate?: PolicyGateResult | null
+  can_approve?: boolean
+  can_reject?: boolean
+  can_retry_apply?: boolean
+  review_route?: string | null
+}
+
+export interface RecommendationRecord extends DecisionStateFields {
+  id: number
+  report_type: string
+  as_of: string
+  stance: string
+  recommendation_status: string
+  critical_data_quality: string
+  action: string
+  ticker: string | null
+  instrument: string
+  rationale: string
+  confidence: number | null
+  approval_status: string
+  blocked_reasons_json?: string[]
+  policy_gate?: PolicyGateResult | null
+  policy_gate_decision?: string | null
+  policy_gate_review_required?: boolean | number | null
+  policy_gate_failures_json?: PolicyGateReason[]
+  policy_gate_warnings_json?: PolicyGateReason[]
+  policy_gate_disclosures_json?: string[]
 }
 
 client.interceptors.response.use(
@@ -171,6 +236,40 @@ export const updateAgentResponsePreferences = (preferences: AgentResponsePrefere
   client
     .put("/settings/agent-response-preferences", preferences)
     .then(r => r.data as AgentResponsePreferences)
+
+export interface AgentToolGovernanceMetadata {
+  required_scopes: string[]
+  account_scope: string | null
+  portfolio_scope: string | null
+  data_sensitivity: string
+  provider_egress: string
+  timeout_s: number
+  retry_policy: Record<string, unknown>
+  token_budget: number | null
+  cost_budget_usd: number | null
+  rate_limit: Record<string, unknown>
+  audit_level: string
+  failure_mode: string
+}
+
+export interface AgentCapability {
+  name: string
+  category: string
+  access_mode: "read" | "compute" | "proposal" | string
+  description: string
+  aliases: string[]
+  schema_safe: boolean
+  selectable: boolean
+  governance: AgentToolGovernanceMetadata
+}
+
+export interface AgentCapabilitiesResponse {
+  capabilities: AgentCapability[]
+  count: number
+}
+
+export const fetchAgentCapabilities = () =>
+  client.get("/agent/capabilities").then(r => r.data as AgentCapabilitiesResponse)
 
 // ─── GET endpoints ───────────────────────────────────────────────────────────
 
@@ -1260,11 +1359,11 @@ export const fetchDossier = (ticker: string) =>
 // Approvals
 export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
-export const approveItem = (id: number, note = "Approved via UI") =>
+export const approveItem = (id: number, note: string) =>
   client.post(`/approvals/${id}/approve`, { note }).then(r => r.data)
 export const rejectItem = (id: number, note?: string) =>
   client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data)
-export const bulkApprove = (ids: number[], note = "Approved via UI") =>
+export const bulkApprove = (ids: number[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
 export const bulkReject = (ids: number[], note?: string) =>
   client.post("/approvals/bulk-reject", { ids, note }).then(r => r.data)

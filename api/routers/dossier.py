@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter
 
+from api.decision_state import normalize_action_item, normalize_approval
 from api.exceptions import NotFoundError
 
 router = APIRouter()
@@ -108,10 +109,10 @@ def get_dossier(ticker: str):
     kill_conditions = get_kill_conditions(ticker)
     thesis_claims = get_thesis_claims(ticker=ticker)
     workflow_runs = get_workflow_runs(ticker=ticker, limit=10)
-    action_items = get_action_items(ticker=ticker, status="open")
+    action_items = [normalize_action_item(a) for a in get_action_items(ticker=ticker, status="open")]
     watch_triggers = get_watch_triggers(ticker=ticker)
     research_notes = get_research_notes(ticker=ticker, limit=20)
-    pending_approvals = get_pending_approvals(ticker=ticker)
+    pending_approvals = [normalize_approval(a) for a in get_pending_approvals(ticker=ticker)]
 
     # Ontology risk is loaded lazily by the frontend Risk tab. Keep the field
     # in the aggregate payload for backwards compatibility without triggering

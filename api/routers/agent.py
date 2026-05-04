@@ -26,6 +26,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from api.agent_governance import (
+    AgentBudgetExceeded,
+    AgentBudgetState,
+    blocked_tool_payload,
+    prepare_model_egress,
+)
 from api.agent_tools import AGENT_CAPABILITY_BY_NAME, TOOL_DEFINITIONS, execute_tool, list_agent_capabilities
 from api.exceptions import ConfigurationError
 from api.job_events import append_job_event, list_job_events
@@ -43,6 +49,7 @@ from llm_utils import (
     resolve_model,
     selected_provider,
 )
+from ontology.action_registry import get_tool_exposure
 from ontology.policy import Actor, actor_from_dict, actor_to_dict, agent_actor
 
 router = APIRouter()
@@ -915,6 +922,21 @@ def _tool_meta(result_str: str) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
+def _tool_result_status(result_str: str) -> str:
+    meta = _tool_meta(result_str)
+    raw = meta.get("status")
+    if raw in {"blocked", "timeout", "cancelled", "partial", "retrying", "denied", "failed_closed"}:
+        if raw in {"denied", "failed_closed"}:
+            return "blocked"
+        return str(raw)
+    return "error" if _tool_error_message(result_str) else "ok"
+
+
+def _blocked_tool_result(name: str, exc: Exception, *, status: str = "blocked") -> str:
+    payload = blocked_tool_payload(name, exc, status=status)
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
 def _capability_names_from_search_result(result_str: str) -> list[str]:
     try:
         payload = json.loads(result_str)
@@ -1359,6 +1381,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
     def generate():  # noqa: C901 — complex but linear control flow
         yield _sse_ping()
         client = _get_provider_client(provider, api_key)
+        budget = AgentBudgetState()
         agent_turn_event_id = _start_agent_turn_provenance(
             session_id=None,
             message=[m.model_dump() for m in req.messages],
@@ -1412,6 +1435,18 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             max_tokens=LLM_MAX_TOKENS,
                             reasoning_effort=reasoning_effort,
                         )
+                        stream_kwargs, egress_meta = prepare_model_egress(
+                            provider=provider,
+                            purpose="workflow_synthesis",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            budget=budget,
+                            parent_event_id=agent_turn_event_id,
+                            session_id=None,
+                            workflow_run_id=run_id,
+                        )
+                        yield _sse("egress_recorded", egress_meta)
+                        yield _sse("budget_update", budget.to_meta())
                         model_event_id = _start_model_call_provenance(
                             parent_event_id=agent_turn_event_id,
                             session_id=None,
@@ -1434,6 +1469,8 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             final_message=final_message,
                             output_text="".join(synthesis_chunks),
                         )
+                        budget.record_model_usage(_usage_dict(final_message))
+                        yield _sse("budget_update", budget.to_meta())
                         break
                     except Exception as retry_exc:
                         _finish_model_call_provenance(
@@ -1546,6 +1583,18 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 model_event_id: str | None = None
                 for attempt in range(MAX_API_RETRIES):
                     try:
+                        stream_kwargs, egress_meta = prepare_model_egress(
+                            provider=provider,
+                            purpose="agent_chat",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            budget=budget,
+                            parent_event_id=agent_turn_event_id,
+                            session_id=None,
+                            workflow_run_id=None,
+                        )
+                        yield _sse("egress_recorded", egress_meta)
+                        yield _sse("budget_update", budget.to_meta())
                         model_event_id = _start_model_call_provenance(
                             parent_event_id=agent_turn_event_id,
                             session_id=None,
@@ -1563,6 +1612,8 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             status="succeeded",
                             final_message=final_message,
                         )
+                        budget.record_model_usage(_usage_dict(final_message))
+                        yield _sse("budget_update", budget.to_meta())
                         break
                     except Exception as retry_exc:
                         _finish_model_call_provenance(
@@ -1620,6 +1671,33 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                         pending_calls.append(call_info)
 
                     if pending_calls:
+                        budgeted_pending: list[dict] = []
+                        for call_info in pending_calls:
+                            signature = _tool_call_signature(call_info["name"], call_info["args"])
+                            try:
+                                budget.check_tool_call(get_tool_exposure(call_info["name"]))
+                                budgeted_pending.append(call_info)
+                                for call_id in call_info.get("call_ids", []):
+                                    yield _sse(
+                                        "tool_progress",
+                                        {"name": call_info["name"], "id": call_id, "status": "running"},
+                                    )
+                            except AgentBudgetExceeded as exc:
+                                result_str = _blocked_tool_result(call_info["name"], exc)
+                                executed_by_signature[signature] = (result_str, 0.0)
+                                for call_id in call_info.get("call_ids", []):
+                                    payload = {
+                                        "name": call_info["name"],
+                                        "id": call_id,
+                                        "status": "blocked",
+                                        "message": str(exc),
+                                    }
+                                    yield _sse("policy_failure", payload)
+                                    yield _sse("blocked", payload)
+                        pending_calls = budgeted_pending
+                        yield _sse("budget_update", budget.to_meta())
+
+                    if pending_calls:
                         _attach_tool_provenance_context(
                             pending_calls,
                             parent_event_id=model_event_id,
@@ -1646,13 +1724,14 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
 
                         err_msg = _tool_error_message(result_str)
                         meta = _tool_meta(result_str)
+                        result_status = _tool_result_status(result_str)
                         cache_status = "turn_hit" if signature in turn_cache_hits else str(meta.get("cache", "unknown"))
                         logger.info(
                             "agent_tool_exec name=%s duration_ms=%.1f cache=%s status=%s quality_ok=%s",
                             call_info["name"],
                             elapsed_ms,
                             cache_status,
-                            "error" if err_msg else "ok",
+                            result_status,
                             str(meta.get("quality_ok", "n/a")),
                         )
 
@@ -1660,11 +1739,20 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                             payload = {
                                 "name": call_info["name"],
                                 "id": call_id,
-                                "status": "error" if err_msg else "ok",
+                                "status": result_status,
                             }
+                            if meta.get("policy_decision_id"):
+                                payload["policy_decision_id"] = meta.get("policy_decision_id")
+                            if meta.get("duration_ms") is not None:
+                                payload["elapsed_ms"] = meta.get("duration_ms")
                             if err_msg:
                                 payload["message"] = err_msg
                             yield _sse("tool_result", payload)
+                            if result_status == "blocked":
+                                yield _sse("policy_failure", payload)
+                                yield _sse("blocked", payload)
+                            elif result_status == "timeout":
+                                yield _sse("timeout", payload)
 
                             if provider == PROVIDER_ANTHROPIC:
                                 result_block: dict[str, object] = {
@@ -1893,6 +1981,7 @@ def cancel_agent_chat_async(job_id: str):
     cancel_job(job_id, "Job cancelled by user", result_ttl_seconds=ttl)
     session_id = _agent_job_session_id(row)
     append_job_event(job_id, "status", {"status": "cancelled", "session_id": session_id})
+    append_job_event(job_id, "cancelled", {"status": "cancelled", "session_id": session_id})
     append_job_event(job_id, "error", {"message": "Cancelled.", "session_id": session_id})
     try:
         payload = poll_registered_job(job_id)
@@ -1975,6 +2064,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             req.response_preferences,
         )
         client = _get_provider_client(provider, api_key)
+        budget = AgentBudgetState()
         raw_conversation, session_id = build_conversation_context(
             req.session_id,
             req.message,
@@ -2034,6 +2124,18 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             max_tokens=LLM_MAX_TOKENS,
                             reasoning_effort=reasoning_effort,
                         )
+                        stream_kwargs, egress_meta = prepare_model_egress(
+                            provider=provider,
+                            purpose="workflow_synthesis",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            budget=budget,
+                            parent_event_id=agent_turn_event_id,
+                            session_id=session_id,
+                            workflow_run_id=run_id,
+                        )
+                        yield _sse("egress_recorded", egress_meta)
+                        yield _sse("budget_update", budget.to_meta())
                         model_event_id = _start_model_call_provenance(
                             parent_event_id=agent_turn_event_id,
                             session_id=session_id,
@@ -2056,6 +2158,8 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             final_message=final_message,
                             output_text="".join(synthesis_chunks),
                         )
+                        budget.record_model_usage(_usage_dict(final_message))
+                        yield _sse("budget_update", budget.to_meta())
                         break
                     except Exception as retry_exc:
                         _finish_model_call_provenance(
@@ -2164,6 +2268,18 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 model_event_id: str | None = None
                 for attempt in range(MAX_API_RETRIES):
                     try:
+                        stream_kwargs, egress_meta = prepare_model_egress(
+                            provider=provider,
+                            purpose="agent_chat",
+                            stream_kwargs=stream_kwargs,
+                            actor=tool_actor,
+                            budget=budget,
+                            parent_event_id=agent_turn_event_id,
+                            session_id=session_id,
+                            workflow_run_id=None,
+                        )
+                        yield _sse("egress_recorded", egress_meta)
+                        yield _sse("budget_update", budget.to_meta())
                         model_event_id = _start_model_call_provenance(
                             parent_event_id=agent_turn_event_id,
                             session_id=session_id,
@@ -2187,6 +2303,8 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             final_message=final_message,
                             output_text="".join(text_parts),
                         )
+                        budget.record_model_usage(_usage_dict(final_message))
+                        yield _sse("budget_update", budget.to_meta())
                         break
                     except Exception as retry_exc:
                         _finish_model_call_provenance(
@@ -2243,6 +2361,33 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         pending_calls.append(call_info)
 
                     if pending_calls:
+                        budgeted_pending: list[dict] = []
+                        for call_info in pending_calls:
+                            signature = _tool_call_signature(call_info["name"], call_info["args"])
+                            try:
+                                budget.check_tool_call(get_tool_exposure(call_info["name"]))
+                                budgeted_pending.append(call_info)
+                                for call_id in call_info.get("call_ids", []):
+                                    yield _sse(
+                                        "tool_progress",
+                                        {"name": call_info["name"], "id": call_id, "status": "running"},
+                                    )
+                            except AgentBudgetExceeded as exc:
+                                result_str = _blocked_tool_result(call_info["name"], exc)
+                                executed_by_signature[signature] = (result_str, 0.0)
+                                for call_id in call_info.get("call_ids", []):
+                                    payload = {
+                                        "name": call_info["name"],
+                                        "id": call_id,
+                                        "status": "blocked",
+                                        "message": str(exc),
+                                    }
+                                    yield _sse("policy_failure", payload)
+                                    yield _sse("blocked", payload)
+                        pending_calls = budgeted_pending
+                        yield _sse("budget_update", budget.to_meta())
+
+                    if pending_calls:
                         _attach_tool_provenance_context(
                             pending_calls,
                             parent_event_id=model_event_id,
@@ -2269,13 +2414,14 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
 
                         err_msg = _tool_error_message(result_str)
                         meta = _tool_meta(result_str)
+                        result_status = _tool_result_status(result_str)
                         cache_status = "turn_hit" if signature in turn_cache_hits else str(meta.get("cache", "unknown"))
                         logger.info(
                             "agent_v2_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
                             call_info["name"],
                             elapsed_ms,
                             cache_status,
-                            "error" if err_msg else "ok",
+                            result_status,
                         )
                         if call_info["name"] == "search_agent_capabilities" and not err_msg:
                             discovered = [
@@ -2292,11 +2438,20 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             payload = {
                                 "name": call_info["name"],
                                 "id": call_id,
-                                "status": "error" if err_msg else "ok",
+                                "status": result_status,
                             }
+                            if meta.get("policy_decision_id"):
+                                payload["policy_decision_id"] = meta.get("policy_decision_id")
+                            if meta.get("duration_ms") is not None:
+                                payload["elapsed_ms"] = meta.get("duration_ms")
                             if err_msg:
                                 payload["message"] = err_msg
                             yield _sse("tool_result", payload)
+                            if result_status == "blocked":
+                                yield _sse("policy_failure", payload)
+                                yield _sse("blocked", payload)
+                            elif result_status == "timeout":
+                                yield _sse("timeout", payload)
 
                             if provider == PROVIDER_ANTHROPIC:
                                 result_block: dict[str, object] = {

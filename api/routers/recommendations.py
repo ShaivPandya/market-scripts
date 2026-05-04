@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from api.decision_state import normalize_recommendation
 from api.exceptions import NotFoundError
 
 router = APIRouter()
@@ -28,7 +29,7 @@ def list_recommendations(
         outcome_status=outcome_status,
         limit=limit,
     )
-    return {"recommendations": items, "count": len(items)}
+    return {"recommendations": [normalize_recommendation(item) for item in items], "count": len(items)}
 
 
 @router.get("/recommendations/latest")
@@ -36,8 +37,8 @@ def latest_recommendations():
     from portfolio.core_db import get_latest_recommendation
 
     return {
-        "daily": get_latest_recommendation("daily"),
-        "weekly": get_latest_recommendation("weekly"),
+        "daily": normalize_recommendation(get_latest_recommendation("daily")),
+        "weekly": normalize_recommendation(get_latest_recommendation("weekly")),
     }
 
 
@@ -48,4 +49,4 @@ def get_recommendation_detail(recommendation_id: int):
     item = get_recommendation(recommendation_id)
     if not item:
         raise NotFoundError("Recommendation", str(recommendation_id))
-    return item
+    return normalize_recommendation(item)

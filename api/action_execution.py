@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from api.decision_state import normalize_staged_response
 from api.exceptions import ConflictError, DataFetchError, NotFoundError, ValidationError
 from portfolio.action_registry import (
     ActionAuthorizationError,
@@ -86,13 +87,15 @@ def stage_api_action(
             )
             application_status = str(approval.get("application_status") or "applied")
             status_value = "applied" if application_status == "applied" else application_status
-        return _staged_response(
-            status=status_value,
-            approval=approval,
-            action_id=action_id,
-            proposed_change=payload,
-            reason=proposal_reason,
-            application_status=application_status,
+        return normalize_staged_response(
+            _staged_response(
+                status=status_value,
+                approval=approval,
+                action_id=action_id,
+                proposed_change=payload,
+                reason=proposal_reason,
+                application_status=application_status,
+            )
         )
     except ActionValidationError as exc:
         if validation_status_code == 400:

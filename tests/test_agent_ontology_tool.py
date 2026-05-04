@@ -160,7 +160,7 @@ def test_query_ontology_tool_fails_closed_on_invalid_filters_json(monkeypatch):
     )
 
     assert called["query"] is False
-    assert payload["_meta"]["status"] == "error"
+    assert payload["_meta"]["status"] == "blocked"
     assert "query_ontology.filters must be a valid JSON object" in payload["error"]
 
 

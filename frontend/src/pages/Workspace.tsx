@@ -2,11 +2,32 @@ import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch } from "lucide-react"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchWorkspace, approveItem, rejectItem, completeAction, dismissAction, refreshMarketSnapshots, type ProvenanceSelector } from "@/lib/api"
+import {
+  fetchWorkspace,
+  approveItem,
+  rejectItem,
+  completeAction,
+  dismissAction,
+  refreshMarketSnapshots,
+  type ApprovalRecord,
+  type PolicyGateReason,
+  type PolicyGateResult,
+  type ProvenanceSelector,
+  type RecommendationRecord,
+} from "@/lib/api"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
+import { Dialog } from "@/components/shared/Dialog"
+import { ActionButton } from "@/components/shared/FormControls"
+import {
+  DecisionStateBadge,
+  EffectScopeBadge,
+  PolicyStateBadge,
+  QualityStateBadge,
+} from "@/components/shared/DecisionStateBadge"
+import { approvalDecisionState, recommendationDecisionState } from "@/lib/decisionState"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
 
@@ -35,11 +56,11 @@ interface WorkspaceData {
     risk_flag: string | null
     evaluated_at: string
   }[]
-  pending_approvals: { count: number; items: Approval[] }
+  pending_approvals: { count: number; items: ApprovalRecord[] }
   recommendations: {
-    latest_daily: Recommendation | null
-    latest_weekly: Recommendation | null
-    pending_actionable: { count: number; items: Recommendation[] }
+    latest_daily: RecommendationRecord | null
+    latest_weekly: RecommendationRecord | null
+    pending_actionable: { count: number; items: RecommendationRecord[] }
     blocked_warnings: {
       report_type: string
       as_of: string
@@ -51,36 +72,6 @@ interface WorkspaceData {
   open_actions: { count: number; items: ActionItem[] }
   active_triggers: { count: number; items: Trigger[] }
   recent_workflow_runs: WorkflowRun[]
-}
-
-interface Approval {
-  id: number
-  entity_type: string
-  action_id?: string | null
-  ticker: string | null
-  reason: string | null
-  created_at: string
-  application_status?: string | null
-  application_attempts?: number | null
-  source_type?: string | null
-  source_id?: string | null
-  proposed_change: Record<string, unknown>
-}
-
-interface PolicyGateReason {
-  code?: string
-  check?: string
-  message?: string
-  observed?: unknown
-  limit?: unknown
-}
-
-interface PolicyGateResult {
-  decision?: string
-  review_required?: boolean
-  failure_reasons?: PolicyGateReason[]
-  warnings?: PolicyGateReason[]
-  disclosures?: string[]
 }
 
 interface ActionItem {
@@ -110,27 +101,6 @@ interface WorkflowRun {
   status: string
   started_at: string
   completed_at: string | null
-}
-
-interface Recommendation {
-  id: number
-  report_type: string
-  as_of: string
-  stance: string
-  recommendation_status: string
-  critical_data_quality: string
-  action: string
-  ticker: string | null
-  instrument: string
-  rationale: string
-  confidence: number | null
-  approval_status: string
-  blocked_reasons_json?: string[]
-  policy_gate_decision?: string | null
-  policy_gate_review_required?: boolean | number | null
-  policy_gate_failures_json?: PolicyGateReason[]
-  policy_gate_warnings_json?: PolicyGateReason[]
-  policy_gate_disclosures_json?: string[]
 }
 
 const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error"; label: string }> = {
@@ -167,7 +137,8 @@ function formatTime(iso: string): string {
   }
 }
 
-function policyGateFromRecommendation(rec: Recommendation): PolicyGateResult | null {
+function policyGateFromRecommendation(rec: RecommendationRecord): PolicyGateResult | null {
+  if (rec.policy_gate) return rec.policy_gate
   if (!rec.policy_gate_decision) return null
   return {
     decision: rec.policy_gate_decision,
@@ -178,11 +149,12 @@ function policyGateFromRecommendation(rec: Recommendation): PolicyGateResult | n
   }
 }
 
-function recommendationNeedsPolicyGate(rec: Recommendation): boolean {
+function recommendationNeedsPolicyGate(rec: RecommendationRecord): boolean {
   return Boolean(rec.policy_gate_decision) || ACTIONABLE_RECOMMENDATION_ACTIONS.has(rec.action)
 }
 
-function policyGateFromApproval(approval: Approval): PolicyGateResult | null {
+function policyGateFromApproval(approval: ApprovalRecord): PolicyGateResult | null {
+  if (approval.policy_gate) return approval.policy_gate
   const proposed = approval.proposed_change
   const direct = proposed.policy_gate_result
   if (isPolicyGateResult(direct)) return direct
@@ -194,7 +166,7 @@ function policyGateFromApproval(approval: Approval): PolicyGateResult | null {
   return null
 }
 
-function approvalNeedsPolicyGate(approval: Approval, gate: PolicyGateResult | null): boolean {
+function approvalNeedsPolicyGate(approval: ApprovalRecord, gate: PolicyGateResult | null): boolean {
   if (gate) return true
   if (approval.action_id === "update_portfolio_positions" || approval.action_id === "update_hedge_positions") return true
   if (approval.action_id === "create_action_item") {
@@ -218,6 +190,20 @@ function gateTone(decision?: string): string {
   if (decision === "warn") return "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
   if (decision === "review_required") return "text-orange-700 bg-orange-50 dark:text-orange-400 dark:bg-orange-950"
   return "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950"
+}
+
+function summarizeProposedChange(value: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function applicationLabel(a: ApprovalRecord): string {
+  const app = String(a.application_status || "pending").replace(/_/g, " ")
+  if (a.can_retry_apply) return `failed application · retry available`
+  return app
 }
 
 function reasonText(reason: PolicyGateReason): string {
@@ -265,6 +251,9 @@ export function Workspace() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)
+  const [approvalReview, setApprovalReview] = useState<{ approval: ApprovalRecord; action: "approve" | "reject" } | null>(null)
+  const [approvalNote, setApprovalNote] = useState("")
+  const [approvalError, setApprovalError] = useState<string | null>(null)
 
   function toggleExpanded(key: string) {
     setExpandedIds(prev => {
@@ -275,16 +264,32 @@ export function Workspace() {
     })
   }
 
-  async function handleApproval(id: number, action: "approve" | "reject") {
+  function openApprovalReview(approval: ApprovalRecord, action: "approve" | "reject") {
+    setApprovalReview({ approval, action })
+    setApprovalNote("")
+    setApprovalError(null)
+  }
+
+  async function handleApproval(id: number, action: "approve" | "reject", note?: string) {
     setProcessingIds(prev => new Set(prev).add(id))
+    setApprovalError(null)
     try {
       if (action === "approve") {
-        await approveItem(id)
+        const trimmed = String(note || "").trim()
+        if (!trimmed) {
+          setApprovalError("Approval note is required before applying an internal state change.")
+          return
+        }
+        await approveItem(id, trimmed)
       } else {
-        await rejectItem(id)
+        await rejectItem(id, note?.trim() || undefined)
       }
       qc.invalidateQueries({ queryKey: ["workspace"] })
       qc.invalidateQueries({ queryKey: ["portfolio", "all_timeframes"] })
+      setApprovalReview(null)
+      setApprovalNote("")
+    } catch (err) {
+      setApprovalError(err instanceof Error ? err.message : String(err))
     } finally {
       setProcessingIds(prev => {
         const next = new Set(prev)
@@ -369,8 +374,8 @@ export function Workspace() {
           <section className="theme-surface rounded-xl p-4 lg:col-span-2">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <AlertTriangle size={14} className={data.recommendations.blocked_warnings.length ? "text-amber-500" : "text-blue-500"} />
-              Recommendation Ledger
-              <span className="ml-auto text-xs text-subtle">{data.recommendations.pending_actionable.count} pending action{data.recommendations.pending_actionable.count !== 1 ? "s" : ""}</span>
+              Recommendation Review
+              <span className="ml-auto text-xs text-subtle">{data.recommendations.pending_actionable.count} pending approval{data.recommendations.pending_actionable.count !== 1 ? "s" : ""}</span>
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {[data.recommendations.latest_daily, data.recommendations.latest_weekly].filter(Boolean).map(rec => (
@@ -380,16 +385,12 @@ export function Workspace() {
                     <span className="text-xs text-subtle">{rec!.as_of}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <DecisionStateBadge state={recommendationDecisionState(rec!)} />
+                    <EffectScopeBadge scope={rec!.effect_scope ?? "read_only"} />
                     <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">{rec!.stance}</span>
                     <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--muted-2))] text-muted">{rec!.action.replace(/_/g, " ")}</span>
-                    <span className={cn(
-                      "text-xs px-1.5 py-0.5 rounded font-medium",
-                      rec!.recommendation_status === "blocked" || rec!.critical_data_quality === "failed"
-                        ? "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
-                        : "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
-                    )}>
-                      {rec!.critical_data_quality}
-                    </span>
+                    <QualityStateBadge state={rec!.quality_state ?? rec!.critical_data_quality} />
+                    <PolicyStateBadge state={rec!.policy_state ?? rec!.policy_gate_decision ?? "missing"} />
                   </div>
                   <p className="mt-2 text-xs text-muted line-clamp-2">{rec!.rationale}</p>
                   {recommendationNeedsPolicyGate(rec!) && <PolicyGatePanel gate={policyGateFromRecommendation(rec!)} />}
@@ -410,6 +411,7 @@ export function Workspace() {
                 {data.recommendations.pending_actionable.items.map(rec => (
                   <div key={`pending-rec-${rec.id}`} className="rounded-lg border border-app px-3 py-2 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
+                      <DecisionStateBadge state={recommendationDecisionState(rec)} />
                       <span className="font-semibold text-app">{rec.action.replace(/_/g, " ")}</span>
                       <span className="text-xs text-subtle">{rec.instrument}</span>
                       {rec.ticker && (
@@ -417,7 +419,12 @@ export function Workspace() {
                           {rec.ticker}
                         </Link>
                       )}
-                      <span className="ml-auto text-xs text-subtle">{rec.approval_status}</span>
+                      <span className="ml-auto text-xs text-subtle">approval {rec.approval_status}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <EffectScopeBadge scope={rec.effect_scope ?? "internal_state"} />
+                      <QualityStateBadge state={rec.quality_state ?? rec.critical_data_quality} />
+                      <PolicyStateBadge state={rec.policy_state ?? rec.policy_gate_decision ?? "missing"} />
                     </div>
                     <p className="mt-1 text-xs text-muted line-clamp-2">{rec.rationale}</p>
                     {recommendationNeedsPolicyGate(rec) && <PolicyGatePanel gate={policyGateFromRecommendation(rec)} />}
@@ -451,7 +458,7 @@ export function Workspace() {
                         ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950"
                         : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
                     )}>
-                      {tp.action}
+                      Evaluation: {tp.action}
                     </span>
                     {tp.risk_flag && (
                       <span className="text-xs text-red-500">{tp.risk_flag}</span>
@@ -485,6 +492,7 @@ export function Workspace() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
+                          <DecisionStateBadge state={approvalDecisionState(a)} />
                           {a.ticker && (
                             <Link to={`/dossier/${a.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
                               {a.ticker}
@@ -493,9 +501,14 @@ export function Workspace() {
                           <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
                           {a.application_status && (
                             <span className="rounded border border-app px-1.5 py-0.5 text-[11px] text-subtle">
-                              {a.application_status.replace(/_/g, " ")}
+                              {applicationLabel(a)}
                             </span>
                           )}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          <EffectScopeBadge scope={a.effect_scope ?? "internal_state"} />
+                          <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
+                          <QualityStateBadge state={a.quality_state ?? "missing"} />
                         </div>
                         {a.action_id && <p className="text-[11px] text-subtle mt-0.5">{a.action_id}</p>}
                         {a.reason && (
@@ -507,6 +520,11 @@ export function Workspace() {
                           <p className="text-[11px] text-subtle mt-1">
                             {[a.source_type, a.source_id].filter(Boolean).join(" · ")}
                             {a.application_attempts ? ` · attempts ${a.application_attempts}` : ""}
+                          </p>
+                        )}
+                        {a.application_error && (
+                          <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+                            Application failed: {a.application_error}
                           </p>
                         )}
                         {approvalNeedsPolicyGate(a, gate) && (
@@ -524,18 +542,20 @@ export function Workspace() {
                           <GitBranch size={14} />
                         </button>
                         <button
-                          onClick={() => handleApproval(a.id, "approve")}
-                          disabled={processingIds.has(a.id)}
+                          onClick={() => openApprovalReview(a, "approve")}
+                          disabled={processingIds.has(a.id) || a.can_approve === false}
                           className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 disabled:opacity-50"
+                          title={a.can_approve === false ? "This proposal is not in an approvable state." : "Review and apply internal state change"}
                         >
-                          Approve
+                          {a.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
                         </button>
                         <button
-                          onClick={() => handleApproval(a.id, "reject")}
-                          disabled={processingIds.has(a.id)}
+                          onClick={() => openApprovalReview(a, "reject")}
+                          disabled={processingIds.has(a.id) || a.can_reject === false}
                           className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
+                          title={a.can_reject === false ? "This proposal is not rejectable from its current state." : "Reject proposal"}
                         >
-                          Reject
+                          Reject Proposal
                         </button>
                       </div>
                     </div>
@@ -551,7 +571,7 @@ export function Workspace() {
           <section className="theme-surface rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <Play size={14} className="text-purple-500" />
-              Open Actions
+              Internal Action Items
               <span className="ml-auto text-xs text-subtle">{data.open_actions.count} total</span>
             </h2>
             <div className="space-y-2 max-h-[400px] overflow-y-auto">
@@ -579,14 +599,14 @@ export function Workspace() {
                         disabled={processingIds.has(a.id)}
                         className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
                       >
-                        Complete
+                        Propose Complete
                       </button>
                       <button
                         onClick={() => handleActionItem(a.id, "dismiss")}
                         disabled={processingIds.has(a.id)}
                         className="rounded px-2 py-1 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:text-gray-400 dark:bg-gray-800 disabled:opacity-50"
                       >
-                        Dismiss
+                        Propose Dismiss
                       </button>
                     </div>
                   </div>
@@ -684,6 +704,88 @@ export function Workspace() {
           No pending items. Run a workflow or chat with the agent to get started.
         </div>
       )}
+      <Dialog
+        open={approvalReview !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setApprovalReview(null)
+            setApprovalNote("")
+            setApprovalError(null)
+          }
+        }}
+        title={approvalReview?.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
+        description={
+          approvalReview?.action === "approve"
+            ? "Approval records the human decision and applies the staged internal state change. This is not an external execution."
+            : "Rejecting keeps the proposal in audit history and does not apply the staged change."
+        }
+        maxWidth="max-w-3xl"
+      >
+        {approvalReview && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <DecisionStateBadge state={approvalDecisionState(approvalReview.approval)} />
+              <EffectScopeBadge scope={approvalReview.approval.effect_scope ?? "internal_state"} />
+              <PolicyStateBadge state={approvalReview.approval.policy_state ?? policyGateFromApproval(approvalReview.approval)?.decision ?? "missing"} />
+              <QualityStateBadge state={approvalReview.approval.quality_state ?? "missing"} />
+            </div>
+            <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
+              <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
+                <span>Approval #{approvalReview.approval.id}</span>
+                <span>{approvalReview.approval.action_id || approvalReview.approval.entity_type}</span>
+                {approvalReview.approval.ticker && <span>{approvalReview.approval.ticker}</span>}
+                <span>Application: {applicationLabel(approvalReview.approval)}</span>
+              </div>
+              {approvalReview.approval.reason && <p className="mb-2">{approvalReview.approval.reason}</p>}
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-app bg-[hsl(var(--background-card))] p-3 font-mono text-[11px] text-app">
+                {summarizeProposedChange(approvalReview.approval.proposed_change)}
+              </pre>
+            </div>
+            <div>
+              <label htmlFor="approval-note" className="theme-field-label">
+                {approvalReview.action === "approve" ? "Approval note" : "Rejection note"}
+              </label>
+              <textarea
+                id="approval-note"
+                value={approvalNote}
+                onChange={e => setApprovalNote(e.target.value)}
+                className="theme-input mt-1 min-h-[90px] w-full"
+                placeholder={
+                  approvalReview.action === "approve"
+                    ? "State why this internal change is approved."
+                    : "Optional reason for rejecting this proposal."
+                }
+              />
+              {approvalReview.action === "approve" && (
+                <p className="theme-field-caption mt-1">Required. Approval applies app state only; it does not execute an order.</p>
+              )}
+            </div>
+            {approvalError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {approvalError}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setApprovalReview(null)}
+                className="rounded-lg border border-app px-3 py-2 text-sm font-medium text-muted hover:text-app"
+              >
+                Cancel
+              </button>
+              <ActionButton
+                onClick={() => handleApproval(approvalReview.approval.id, approvalReview.action, approvalNote)}
+                loading={processingIds.has(approvalReview.approval.id)}
+                loadingText={approvalReview.action === "approve" ? "Applying..." : "Rejecting..."}
+                disabled={approvalReview.action === "approve" && !approvalNote.trim()}
+                className="w-auto px-4"
+              >
+                {approvalReview.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
+              </ActionButton>
+            </div>
+          </div>
+        )}
+      </Dialog>
       <ProvenanceTraceDialog
         open={provenanceSelector !== null}
         onOpenChange={open => {

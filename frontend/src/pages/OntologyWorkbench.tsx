@@ -15,6 +15,7 @@ import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { SelectInput, TextInput } from "@/components/shared/FormControls"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
+import { DecisionStateBadge, EffectScopeBadge, QualityStateBadge } from "@/components/shared/DecisionStateBadge"
 
 type Intent = "auto" | "portfolio_risk_exposure" | "positions_in_deteriorating_macro" | "entity_context"
 type Timeframe = "This Week" | "Daily" | "Weekly" | "Monthly"
@@ -220,6 +221,11 @@ export function OntologyWorkbench() {
         <p className="text-sm text-gray-400 mt-0.5">
           Query materialized portfolio-linked risk snapshots with natural language and structured filters.
         </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <DecisionStateBadge state="analysis" />
+          <EffectScopeBadge scope="read_only" />
+          <span className="text-xs text-gray-500">Risk evidence only. Results do not create proposals or apply portfolio changes.</span>
+        </div>
         {showInfo && (
           <p className="text-xs text-gray-500 mt-2 max-w-xl leading-relaxed">
             Links each portfolio position to macro conditions, sector dynamics, and cross-asset signals via a
@@ -345,13 +351,18 @@ export function OntologyWorkbench() {
       {data && (
         <>
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard title="Snapshot Run" value={formatTimestampLabel(data.run_id)} />
+            <MetricCard title="Risk Analysis Snapshot" value={formatTimestampLabel(data.run_id)} />
             <MetricCard title="As Of" value={formatTimestampLabel(data.as_of)} />
             <MetricCard
               title="Confidence"
               value={typeof data.aggregate?.confidence === "number" ? `${(data.aggregate.confidence * 100).toFixed(1)}%` : "N/A"}
             />
             <MetricCard title="Positions" value={String(data.aggregate?.position_count ?? rows.length)} />
+          </div>
+          <div className="mb-4 flex flex-wrap gap-2">
+            <DecisionStateBadge state="analysis" />
+            <EffectScopeBadge scope="read_only" />
+            <QualityStateBadge state={statusRows.some(row => row.status !== "ok") ? "degraded" : "ok"} />
           </div>
 
           {data.run_id && (
@@ -375,7 +386,7 @@ export function OntologyWorkbench() {
 
           <section className="mb-8">
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">Position Results</h2>
+              <h2 className="text-xs font-semibold tracking-widest uppercase text-gray-400">Risk Analysis Results</h2>
               {pagination && (
                 <div className="flex items-center gap-3 text-xs text-subtle">
                   <span>
@@ -410,7 +421,7 @@ export function OntologyWorkbench() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Source Status</h2>
+            <h2 className="mb-3 text-xs font-semibold tracking-widest uppercase text-gray-400">Source Health And Staleness</h2>
             <DataTable columns={STATUS_COLUMNS} rows={statusRows} />
           </section>
         </>

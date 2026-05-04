@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, Trash2 } from "lucide-react"
 import { Dialog } from "@/components/shared/Dialog"
 import { ActionButton, SegmentedControl, SelectInput } from "@/components/shared/FormControls"
+import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
 import {
   fetchHedgePositions,
   fetchPortfolioPositions,
@@ -10,6 +11,7 @@ import {
   savePortfolioPositions,
   type HedgePosition,
   type PortfolioPosition,
+  type StagedMutationResponse,
 } from "@/lib/api"
 
 interface EditorRow extends PortfolioPosition {
@@ -99,6 +101,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const [positionValidationError, setPositionValidationError] = useState<string | null>(null)
   const [hedgeValidationError, setHedgeValidationError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [lastProposal, setLastProposal] = useState<StagedMutationResponse | null>(null)
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -107,6 +110,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     setLoadError(null)
     setPositionValidationError(null)
     setHedgeValidationError(null)
+    setLastProposal(null)
     setIsLoading(true)
     Promise.all([fetchPortfolioPositions(), fetchHedgePositions()])
       .then(([portfolioData, hedgeData]) => {
@@ -118,10 +122,10 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   }, [open])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  function handleSaved() {
+  function handleSaved(result: StagedMutationResponse) {
+    setLastProposal(result)
     queryClient.invalidateQueries({ queryKey: ["workspace"] })
     queryClient.invalidateQueries({ queryKey: ["approvals"] })
-    onOpenChange(false)
   }
 
   const positionMutation = useMutation({
@@ -226,7 +230,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       open={open}
       onOpenChange={onOpenChange}
       title="Edit Portfolio"
-      description="Manage portfolio positions and hedge positions."
+      description="Stage internal portfolio or hedge changes for approval. Nothing is applied until an approval is reviewed and applied."
       maxWidth="max-w-6xl"
     >
       {isLoading && (
@@ -252,6 +256,18 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
               size="sm"
             />
           </div>
+
+          {lastProposal && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              <div className="flex flex-wrap items-center gap-2">
+                <DecisionStateBadge state={lastProposal.decision_state ?? "pending_approval"} />
+                <EffectScopeBadge scope={lastProposal.effect_scope ?? "internal_state"} />
+                <span>
+                  Proposal #{lastProposal.approval_id} staged for {lastProposal.action_id.replace(/_/g, " ")}. Review it in Workspace before app state changes.
+                </span>
+              </div>
+            </div>
+          )}
 
           {tab === "Positions" ? (
             <>

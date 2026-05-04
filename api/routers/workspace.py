@@ -8,6 +8,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
+
 router = APIRouter()
 logger = logging.getLogger("api.workspace")
 
@@ -138,15 +140,15 @@ def get_workspace():
         pass
 
     # Pending approvals
-    pending_approvals = get_pending_approvals(status="pending")
+    pending_approvals = [normalize_approval(a) for a in get_pending_approvals(status="pending")]
     recommendation_approvals = [
         a
         for a in pending_approvals
         if isinstance(a.get("proposed_change"), dict) and a["proposed_change"].get("recommendation_id") is not None
     ]
 
-    latest_daily_recommendation = _safe_call(get_latest_recommendation, "daily")
-    latest_weekly_recommendation = _safe_call(get_latest_recommendation, "weekly")
+    latest_daily_recommendation = normalize_recommendation(_safe_call(get_latest_recommendation, "daily"))
+    latest_weekly_recommendation = normalize_recommendation(_safe_call(get_latest_recommendation, "weekly"))
     pending_actionable_recommendations = (
         _safe_call(
             get_recommendations,
@@ -155,6 +157,9 @@ def get_workspace():
         )
         or []
     )
+    pending_actionable_recommendations = [
+        normalize_recommendation(rec) for rec in pending_actionable_recommendations if isinstance(rec, dict)
+    ]
     blocked_recommendation_warnings = []
     for rec in (latest_daily_recommendation, latest_weekly_recommendation):
         if not isinstance(rec, dict):
@@ -170,7 +175,7 @@ def get_workspace():
             )
 
     # Open action items
-    open_actions = get_action_items(status="open")
+    open_actions = [normalize_action_item(a) for a in get_action_items(status="open")]
 
     # Active watch triggers
     active_triggers = get_watch_triggers(status="active")
