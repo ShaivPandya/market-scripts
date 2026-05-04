@@ -32,6 +32,25 @@ PROPOSAL_TOOL_NAMES = {
 }
 
 
+def test_get_sector_metrics_tool_uses_snapshot_when_required(monkeypatch):
+    monkeypatch.setattr(agent_tools, "get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agent_tools, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "api.snapshot_store.get_snapshot_response",
+        lambda key: {"weights_df": [{"Sector": "Technology"}], "_meta": {"snapshot": {"key": key}}},
+    )
+    monkeypatch.setattr("api.snapshot_store.snapshots_required", lambda: True)
+    monkeypatch.setattr(
+        "equities.sector_metrics.sector_metrics.get_data",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live compute should not run")),
+    )
+
+    payload = json.loads(agent_tools.execute_tool("get_sector_metrics", {"_force_refresh": True}))
+
+    assert payload["weights_df"][0]["Sector"] == "Technology"
+    assert payload["_meta"]["snapshot"]["key"] == "sector_metrics:sp500:2y"
+
+
 def _proposal_tool_cases(digest_id: str) -> dict[str, tuple[dict, str, str]]:
     return {
         "propose_thesis_status_change": (

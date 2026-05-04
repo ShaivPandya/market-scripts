@@ -19,6 +19,7 @@ export interface AgentMessage {
   timestamp: number
   toolCalls?: ToolCall[]
   isStreaming?: boolean
+  statusText?: string
 }
 
 export interface SessionSummary {
@@ -36,6 +37,31 @@ interface AgentChatState {
   isStreaming: boolean
   error: string | null
   sessionId: string | null
+  activeJob: ActiveAgentJob | null
+}
+
+interface ActiveAgentJob {
+  jobId: string
+  assistantId: string
+  afterSeq: number
+  clientTurnId: string
+}
+
+interface AgentJobEvent {
+  seq: number
+  event_type: "status" | "delta" | "tool_call" | "tool_result" | "error" | "done"
+  payload: Record<string, unknown>
+}
+
+interface AgentJobResponse {
+  job_id: string
+  status: "queued" | "running" | "done" | "error" | "cancelled"
+  session_id?: string | null
+  timeout_s?: number
+  error?: string
+  result?: unknown
+  events?: AgentJobEvent[]
+  next_seq?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -141,20 +167,26 @@ function loadState(): AgentChatState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as { messages?: AgentMessage[]; sessionId?: string }
+      const parsed = JSON.parse(raw) as { messages?: AgentMessage[]; sessionId?: string; activeJob?: ActiveAgentJob | null }
       if (Array.isArray(parsed.messages)) {
+        const activeJob = parsed.activeJob ?? null
         return {
-          messages: parsed.messages.map(m => ({ ...m, isStreaming: false })),
-          isStreaming: false,
+          messages: parsed.messages.map(m => ({
+            ...m,
+            isStreaming: activeJob?.assistantId === m.id,
+            statusText: activeJob?.assistantId === m.id ? (m.statusText || "Reconnecting...") : m.statusText,
+          })),
+          isStreaming: Boolean(activeJob),
           error: null,
           sessionId: parsed.sessionId ?? null,
+          activeJob,
         }
       }
     }
   } catch {
     /* ignore */
   }
-  return { messages: [], isStreaming: false, error: null, sessionId: null }
+  return { messages: [], isStreaming: false, error: null, sessionId: null, activeJob: null }
 }
 
 async function summarizeSession(sessionId: string): Promise<void> {
@@ -214,6 +246,67 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   }
 }
 
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Polling cancelled", "AbortError"))
+      return
+    }
+    const timer = window.setTimeout(resolve, ms)
+    signal?.addEventListener("abort", () => {
+      window.clearTimeout(timer)
+      reject(new DOMException("Polling cancelled", "AbortError"))
+    }, { once: true })
+  })
+}
+
+async function readJsonResponse<T>(resp: Response): Promise<T> {
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "Request failed")
+    throw new Error(formatChatHttpError(resp, errText))
+  }
+  return await resp.json() as T
+}
+
+async function startAgentJob(body: Record<string, unknown>, signal?: AbortSignal): Promise<AgentJobResponse> {
+  const url = `${BASE_URL}/agent/chat/async`
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...schemaHeaders("POST", url) },
+    credentials: "include",
+    body: JSON.stringify(body),
+    signal,
+  })
+  return readJsonResponse<AgentJobResponse>(resp)
+}
+
+async function fetchAgentJobEvents(jobId: string, afterSeq: number, signal?: AbortSignal): Promise<AgentJobResponse> {
+  const params = new URLSearchParams({ after_seq: String(afterSeq), wait_ms: "10000" })
+  const resp = await fetch(`${BASE_URL}/agent/chat/async/${encodeURIComponent(jobId)}/events?${params}`, {
+    credentials: "include",
+    signal,
+  })
+  return readJsonResponse<AgentJobResponse>(resp)
+}
+
+async function cancelAgentJob(jobId: string): Promise<void> {
+  const url = `${BASE_URL}/agent/chat/async/${encodeURIComponent(jobId)}/cancel`
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: schemaHeaders("POST", url),
+    credentials: "include",
+  })
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "")
+    throw new Error(formatChatHttpError(resp, errText))
+  }
+}
+
+function nextSeqFrom(events: AgentJobEvent[] | undefined, fallback: number): number {
+  if (!events?.length) return fallback
+  return Math.max(fallback, ...events.map(event => Number(event.seq) || 0))
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -221,15 +314,189 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
 export function useAgentChat() {
   const [state, setState] = useState<AgentChatState>(loadState)
   const abortRef = useRef<AbortController | null>(null)
+  const inFlightRef = useRef(false)
+  const activeJobRef = useRef<ActiveAgentJob | null>(state.activeJob)
+  const initialActiveJobRef = useRef<ActiveAgentJob | null>(state.activeJob)
 
   // Persist messages to localStorage
   useEffect(() => {
-    const toSave = state.messages.filter(m => !m.isStreaming || m.content.length > 0)
+    const toSave = state.messages.filter(
+      m => !m.isStreaming || m.content.length > 0 || state.activeJob?.assistantId === m.id,
+    )
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ messages: toSave, sessionId: state.sessionId }),
+      JSON.stringify({ messages: toSave, sessionId: state.sessionId, activeJob: state.activeJob }),
     )
-  }, [state.messages, state.sessionId])
+  }, [state.messages, state.sessionId, state.activeJob])
+
+  const applyJobEvents = useCallback((assistantId: string, events: AgentJobEvent[], fallbackSessionId?: string | null) => {
+    if (!events.length && !fallbackSessionId) return
+    setState(prev => {
+      let next = prev
+      let sessionId = fallbackSessionId ?? prev.sessionId
+
+      for (const event of events) {
+        const data = event.payload ?? {}
+        switch (event.event_type) {
+          case "status": {
+            const rawStatus = typeof data.status === "string" ? data.status : "running"
+            const label = rawStatus === "queued" ? "Queued..." : rawStatus === "cancelled" ? "Cancelled." : "Running..."
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId ? { ...m, statusText: label } : m,
+              ),
+            }
+            break
+          }
+          case "delta":
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId
+                  ? { ...m, content: m.content + (typeof data.text === "string" ? data.text : ""), statusText: undefined }
+                  : m,
+              ),
+            }
+            break
+          case "tool_call":
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      statusText: undefined,
+                      toolCalls: mergeToolCalls(
+                        m.toolCalls,
+                        normalizeToolCalls([{ name: data.name, id: data.id, status: "pending" }]),
+                      ),
+                    }
+                  : m,
+              ),
+            }
+            break
+          case "tool_result":
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId
+                  ? { ...m, statusText: undefined, toolCalls: mergeToolCalls(m.toolCalls, normalizeToolCalls([data])) }
+                  : m,
+              ),
+            }
+            break
+          case "error":
+            next = {
+              ...next,
+              error: (data.message as string) || "An error occurred",
+              isStreaming: false,
+              activeJob: null,
+              messages: next.messages.map(m =>
+                m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+              ),
+            }
+            activeJobRef.current = null
+            break
+          case "done":
+            sessionId = (data.session_id as string) ?? sessionId
+            next = {
+              ...next,
+              isStreaming: false,
+              sessionId,
+              activeJob: null,
+              messages: next.messages.map(m =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      toolCalls: mergeToolCalls(m.toolCalls, toolCallsFromDonePayload(data)),
+                      isStreaming: false,
+                      statusText: undefined,
+                    }
+                  : m,
+              ),
+            }
+            activeJobRef.current = null
+            break
+        }
+      }
+
+      if (fallbackSessionId && next.sessionId !== fallbackSessionId) {
+        next = { ...next, sessionId: fallbackSessionId }
+      }
+      return next
+    })
+  }, [])
+
+  const finishJobState = useCallback((assistantId: string, status: AgentJobResponse["status"], error?: string) => {
+    setState(prev => ({
+      ...prev,
+      error: status === "error" ? (error || "Agent job failed") : prev.error,
+      isStreaming: false,
+      activeJob: null,
+      messages: prev.messages.map(m =>
+        m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+      ),
+    }))
+    activeJobRef.current = null
+    inFlightRef.current = false
+  }, [])
+
+  const pollJob = useCallback(async (job: ActiveAgentJob, controller: AbortController) => {
+    let afterSeq = job.afterSeq
+    activeJobRef.current = job
+    try {
+      for (;;) {
+        if (controller.signal.aborted) throw new DOMException("Polling cancelled", "AbortError")
+        const response = await fetchAgentJobEvents(job.jobId, afterSeq, controller.signal)
+        const events = response.events ?? []
+        applyJobEvents(job.assistantId, events, response.session_id ?? null)
+        afterSeq = response.next_seq ?? nextSeqFrom(events, afterSeq)
+        if (events.some(event => event.event_type === "done" || event.event_type === "error")) {
+          inFlightRef.current = false
+          return
+        }
+
+        if (response.status === "done" || response.status === "error" || response.status === "cancelled") {
+          if (!events.some(event => event.event_type === "done" || event.event_type === "error")) {
+            finishJobState(job.assistantId, response.status, response.error)
+          } else {
+            inFlightRef.current = false
+          }
+          return
+        }
+
+        const nextJob = { ...job, afterSeq }
+        activeJobRef.current = nextJob
+        setState(prev => ({ ...prev, activeJob: nextJob, isStreaming: true }))
+        await wait(500, controller.signal)
+      }
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return
+      const message = err instanceof Error ? err.message : String(err)
+      setState(prev => ({
+        ...prev,
+        error: message,
+        isStreaming: false,
+        activeJob: null,
+        messages: prev.messages.map(m =>
+          m.id === job.assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+        ),
+      }))
+      activeJobRef.current = null
+    } finally {
+      inFlightRef.current = false
+    }
+  }, [applyJobEvents, finishJobState])
+
+  useEffect(() => {
+    const activeJob = initialActiveJobRef.current
+    if (!activeJob || inFlightRef.current) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    inFlightRef.current = true
+    pollJob(activeJob, controller)
+  }, [pollJob])
 
   // ------ sendMessage ------
   const sendMessage = useCallback(async (
@@ -237,6 +504,9 @@ export function useAgentChat() {
     screenContext?: ScreenContext | null,
     responsePreferences?: AgentResponsePreferences | null,
   ) => {
+    if (inFlightRef.current || activeJobRef.current) return
+    inFlightRef.current = true
+    const clientTurnId = crypto.randomUUID()
     const userMsg: AgentMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -251,169 +521,83 @@ export function useAgentChat() {
       timestamp: Date.now(),
       toolCalls: [],
       isStreaming: true,
+      statusText: "Queued...",
     }
+
+    const assistantId = assistantMsg.id
+    const controller = new AbortController()
+    abortRef.current = controller
 
     setState(prev => ({
       ...prev,
       messages: [...prev.messages, userMsg, assistantMsg],
       isStreaming: true,
       error: null,
+      activeJob: null,
     }))
 
-    const assistantId = assistantMsg.id
-
-    const controller = new AbortController()
-    abortRef.current = controller
-
     try {
-      const response = await fetch(`${BASE_URL}/agent/chat/v2`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...schemaHeaders("POST", `${BASE_URL}/agent/chat/v2`) },
-        credentials: "include",
-        body: JSON.stringify({
-          session_id: state.sessionId,
-          message: content,
-          ...(screenContext && {
-            screen_context: {
-              page_name: screenContext.pageName,
-              route: screenContext.route,
-              ticker: screenContext.ticker ?? null,
-              metrics: screenContext.metrics ?? null,
-              filters: screenContext.filters ?? null,
-              summary: screenContext.summary ?? null,
-              corresponding_tools: screenContext.correspondingTools ?? null,
-            },
-          }),
-          ...(responsePreferences && {
-            response_preferences: responsePreferences,
-          }),
+      const started = await startAgentJob({
+        session_id: state.sessionId,
+        client_turn_id: clientTurnId,
+        message: content,
+        ...(screenContext && {
+          screen_context: {
+            page_name: screenContext.pageName,
+            route: screenContext.route,
+            ticker: screenContext.ticker ?? null,
+            metrics: screenContext.metrics ?? null,
+            filters: screenContext.filters ?? null,
+            summary: screenContext.summary ?? null,
+            corresponding_tools: screenContext.correspondingTools ?? null,
+          },
         }),
-        signal: controller.signal,
-      })
+        ...(responsePreferences && {
+          response_preferences: responsePreferences,
+        }),
+      }, controller.signal)
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "Request failed")
-        throw new Error(formatChatHttpError(response, errText))
+      const events = started.events ?? []
+      applyJobEvents(assistantId, events, started.session_id ?? null)
+      const afterSeq = started.next_seq ?? nextSeqFrom(events, 0)
+
+      if (events.some(event => event.event_type === "done" || event.event_type === "error")) {
+        inFlightRef.current = false
+        return
       }
 
-      const reader = response.body!.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const events = buffer.split("\n\n")
-        buffer = events.pop()! // keep incomplete chunk
-
-        for (const raw of events) {
-          if (!raw.trim()) continue
-          const typeMatch = raw.match(/^event: (.+)$/m)
-          const dataMatch = raw.match(/^data: (.+)$/m)
-          if (!typeMatch || !dataMatch) continue
-
-          const eventType = typeMatch[1]
-          let data: Record<string, unknown>
-          try {
-            data = JSON.parse(dataMatch[1])
-          } catch {
-            continue
-          }
-
-          switch (eventType) {
-            case "delta":
-              setState(prev => ({
-                ...prev,
-                messages: prev.messages.map(m =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + (data.text as string) }
-                    : m,
-                ),
-              }))
-              break
-
-            case "tool_call":
-              setState(prev => ({
-                ...prev,
-                messages: prev.messages.map(m =>
-                  m.id === assistantId
-                    ? {
-                        ...m,
-                        toolCalls: mergeToolCalls(
-                          m.toolCalls,
-                          normalizeToolCalls([{ name: data.name, id: data.id, status: "pending" }]),
-                        ),
-                      }
-                    : m,
-                ),
-              }))
-              break
-
-            case "tool_result":
-              setState(prev => ({
-                ...prev,
-                messages: prev.messages.map(m =>
-                  m.id === assistantId
-                    ? { ...m, toolCalls: mergeToolCalls(m.toolCalls, normalizeToolCalls([data])) }
-                    : m,
-                ),
-              }))
-              break
-
-            case "done":
-              setState(prev => ({
-                ...prev,
-                isStreaming: false,
-                sessionId: (data.session_id as string) ?? prev.sessionId,
-                messages: prev.messages.map(m =>
-                  m.id === assistantId
-                    ? {
-                        ...m,
-                        toolCalls: mergeToolCalls(m.toolCalls, toolCallsFromDonePayload(data)),
-                        isStreaming: false,
-                      }
-                    : m,
-                ),
-              }))
-              break
-
-            case "error":
-              setState(prev => ({
-                ...prev,
-                error: (data.message as string) || "An error occurred",
-                isStreaming: false,
-                messages: prev.messages.map(m =>
-                  m.id === assistantId ? { ...m, isStreaming: false } : m,
-                ),
-              }))
-              break
-          }
-        }
+      if (started.status === "done" || started.status === "error" || started.status === "cancelled") {
+        finishJobState(assistantId, started.status, started.error)
+        return
       }
 
-      // If stream ended without a done event, finalize
-      setState(prev => {
-        if (!prev.isStreaming) return prev
-        return {
-          ...prev,
-          isStreaming: false,
-          messages: prev.messages.map(m =>
-            m.id === assistantId ? { ...m, isStreaming: false } : m,
-          ),
-        }
-      })
+      const activeJob: ActiveAgentJob = {
+        jobId: started.job_id,
+        assistantId,
+        afterSeq,
+        clientTurnId,
+      }
+      activeJobRef.current = activeJob
+      setState(prev => ({
+        ...prev,
+        sessionId: started.session_id ?? prev.sessionId,
+        activeJob,
+        isStreaming: true,
+      }))
+      await pollJob(activeJob, controller)
 
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         setState(prev => ({
           ...prev,
           isStreaming: false,
+          activeJob: null,
           messages: prev.messages.map(m =>
-            m.id === assistantId ? { ...m, isStreaming: false } : m,
+            m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
           ),
         }))
+        activeJobRef.current = null
+        inFlightRef.current = false
         return
       }
       const message = err instanceof Error ? err.message : String(err)
@@ -421,16 +605,31 @@ export function useAgentChat() {
         ...prev,
         error: message,
         isStreaming: false,
+        activeJob: null,
         messages: prev.messages.map(m =>
-          m.id === assistantId ? { ...m, isStreaming: false } : m,
+          m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
         ),
       }))
+      activeJobRef.current = null
+      inFlightRef.current = false
     }
-  }, [state.sessionId])
+  }, [applyJobEvents, finishJobState, pollJob, state.sessionId])
 
   // ------ stopStreaming ------
   const stopStreaming = useCallback(() => {
+    const jobId = activeJobRef.current?.jobId
     abortRef.current?.abort()
+    if (jobId) {
+      cancelAgentJob(jobId).catch(() => undefined)
+    }
+    inFlightRef.current = false
+    activeJobRef.current = null
+    setState(prev => ({
+      ...prev,
+      isStreaming: false,
+      activeJob: null,
+      messages: prev.messages.map(m => m.isStreaming ? { ...m, isStreaming: false, statusText: undefined } : m),
+    }))
   }, [])
 
   // ------ clearChat ------
@@ -440,18 +639,24 @@ export function useAgentChat() {
     if (state.sessionId) {
       summarizeSession(state.sessionId)
     }
-    setState({ messages: [], isStreaming: false, error: null, sessionId: null })
+    inFlightRef.current = false
+    activeJobRef.current = null
+    setState({ messages: [], isStreaming: false, error: null, sessionId: null, activeJob: null })
   }, [state.sessionId])
 
   // ------ loadSession ------
   const loadSession = useCallback(async (sessionId: string) => {
     const data = await fetchSession(sessionId)
     if (data && data.transcript.length > 0) {
+      abortRef.current?.abort()
+      inFlightRef.current = false
+      activeJobRef.current = null
       setState({
         messages: data.transcript,
         isStreaming: false,
         error: null,
         sessionId,
+        activeJob: null,
       })
     }
   }, [])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -695,6 +696,120 @@ def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeyp
     assert done_events[-1]["tools_used"] == ["get_thesis", "query_ontology"]
     assert done_events[-1]["tool_calls"][0]["status"] == "ok"
     assert finalized[0]["toolCalls"] == done_events[-1]["tool_calls"]
+
+
+def test_agent_chat_async_returns_replayable_events_and_finalizes(auth_client, monkeypatch):
+    from api import cache
+
+    cache.invalidate_all()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "async-session",
+        ),
+    )
+    finalized: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn",
+        lambda _sid, user_msg, assistant_msg: finalized.append((user_msg, assistant_msg)),
+    )
+
+    streams = [
+        (
+            [_event_text_delta("async answer")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "async answer"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+
+    started = auth_client.post(
+        "/api/v1/agent/chat/async",
+        json={"message": "How is liquidity?", "client_turn_id": "turn-1"},
+    )
+
+    assert started.status_code in (200, 202)
+    job_id = started.json()["job_id"]
+    deadline = time.time() + 4
+    after_seq = 0
+    seen_events: list[dict] = []
+    while time.time() < deadline:
+        resp = auth_client.get(f"/api/v1/agent/chat/async/{job_id}/events", params={"after_seq": after_seq})
+        assert resp.status_code == 200
+        body = resp.json()
+        seen_events.extend(body.get("events") or [])
+        after_seq = body.get("next_seq", after_seq)
+        if body["status"] == "done":
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("agent async job did not complete")
+
+    assert any(event["event_type"] == "delta" and "async answer" in event["payload"]["text"] for event in seen_events)
+    assert any(event["event_type"] == "done" for event in seen_events)
+    assert finalized and finalized[0][1]["content"] == "async answer"
+
+
+def test_agent_chat_async_reuses_duplicate_active_job(auth_client, monkeypatch):
+    from api import cache
+
+    cache.invalidate_all()
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_agent_job(req, *, job_id):
+        started.set()
+        assert release.wait(timeout=2)
+        return {"status": "done", "session_id": req.session_id}
+
+    monkeypatch.setattr(agent_router, "_run_agent_chat_turn_job", slow_agent_job)
+
+    body = {"session_id": "dup-session", "message": "same turn", "client_turn_id": "dup-turn"}
+    first = auth_client.post("/api/v1/agent/chat/async", json=body)
+    assert first.status_code == 202
+    assert started.wait(timeout=2)
+
+    second = auth_client.post("/api/v1/agent/chat/async", json=body)
+    assert second.status_code == 202
+    assert second.json()["job_id"] == first.json()["job_id"]
+
+    release.set()
+
+
+def test_agent_chat_async_cancel_marks_job_cancelled(auth_client, monkeypatch):
+    from api import cache
+
+    cache.invalidate_all()
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_agent_job(req, *, job_id):
+        started.set()
+        release.wait(timeout=2)
+        return {"status": "done", "session_id": req.session_id}
+
+    monkeypatch.setattr(agent_router, "_run_agent_chat_turn_job", slow_agent_job)
+
+    started_resp = auth_client.post(
+        "/api/v1/agent/chat/async",
+        json={"session_id": "cancel-session", "message": "cancel me", "client_turn_id": "cancel-turn"},
+    )
+    assert started_resp.status_code == 202
+    job_id = started_resp.json()["job_id"]
+    assert started.wait(timeout=2)
+
+    cancel_resp = auth_client.post(f"/api/v1/agent/chat/async/{job_id}/cancel")
+    assert cancel_resp.status_code == 200
+    body = cancel_resp.json()
+    assert body["status"] == "cancelled"
+    assert any(event["event_type"] == "error" for event in body["events"])
+    release.set()
 
 
 def test_workflow_execution_emits_keepalive_while_blocked(monkeypatch):

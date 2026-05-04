@@ -866,6 +866,7 @@ def persist_recommendations(
         source_type="workflow",
         source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
     )
+    active_idempotency_keys: list[str] = []
     for action in payload.get("recommended_actions", []):
         action_hash = stable_hash(
             {
@@ -880,6 +881,8 @@ def persist_recommendations(
             }
         )
         idempotency_key = f"{payload['report_type']}:{payload['as_of']}:{action_hash}" if report_id else None
+        if idempotency_key:
+            active_idempotency_keys.append(idempotency_key)
         record = {
             **action,
             "report_type": payload["report_type"],
@@ -963,6 +966,8 @@ def persist_recommendations(
             once=True,
         )
         persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
+    if report_id:
+        core_db.supersede_report_recommendations(report_id, active_idempotency_keys)
     return persisted
 
 

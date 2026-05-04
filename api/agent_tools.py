@@ -2700,6 +2700,16 @@ def _dispatch(
         key = "sector_metrics"
 
         def _load():
+            from api.exceptions import SnapshotUnavailableError
+            from api.snapshot_keys import SNAPSHOT_SECTOR_METRICS
+            from api.snapshot_store import get_snapshot_response, snapshots_required
+
+            snapshot = get_snapshot_response(SNAPSHOT_SECTOR_METRICS)
+            if snapshot is not None:
+                return serialize_value(snapshot)
+            if snapshots_required():
+                raise SnapshotUnavailableError(SNAPSHOT_SECTOR_METRICS)
+
             from equities.sector_metrics.sector_metrics import get_data
 
             return serialize_value(get_data())

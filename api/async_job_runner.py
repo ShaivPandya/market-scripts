@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import logging
 import os
 import sys
@@ -264,7 +265,7 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
     if status == "completed":
         result = row.get("result_json")
         return result if isinstance(result, dict) else None
-    if status == "failed":
+    if status in {"failed", "cancelled"}:
         logger.info("skip terminal async job job_id=%s status=%s", job_id, status)
         return None
 
@@ -278,6 +279,9 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
         req = parse_request(spec, payload)
         mark_job_running(job_id)
         running_row = get_job(job_id) or row
+        if str(running_row.get("status") or "") == "cancelled":
+            logger.info("skip cancelled async job job_id=%s", job_id)
+            return None
         _emit_job_audit(
             "async_job.running",
             row=running_row,
@@ -293,7 +297,12 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
 
             result = import_string(spec.compute_func)(req, progress_callback=progress_callback)
         else:
-            result = import_string(spec.compute_func)(req)
+            compute = import_string(spec.compute_func)
+            params = inspect.signature(compute).parameters
+            if "job_id" in params:
+                result = compute(req, job_id=job_id)
+            else:
+                result = compute(req)
 
         if not isinstance(result, dict):
             result = {"result": result}
@@ -303,6 +312,14 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
             update_job_progress(job_id, {"phase": "done", "done": final_count, "total": final_count})
         complete_job(job_id, result, result_ttl_seconds=spec.completed_ttl_s)
         completed_row = get_job(job_id) or row
+        if str(completed_row.get("status") or "") == "cancelled":
+            _emit_job_audit(
+                "async_job.cancelled",
+                row=completed_row,
+                status="cancelled",
+                after_summary={"status": "cancelled"},
+            )
+            return None
         _emit_job_audit(
             "async_job.completed",
             row=completed_row,
@@ -340,6 +357,8 @@ def job_response(row: dict[str, Any]) -> dict[str, Any]:
         payload: dict[str, Any] = {"job_id": job_id, "status": "done", "result": row.get("result_json")}
     elif status == "failed":
         payload = {"job_id": job_id, "status": "error", "error": row.get("error") or "Job failed"}
+    elif status == "cancelled":
+        payload = {"job_id": job_id, "status": "cancelled", "error": row.get("error") or "Job cancelled"}
     else:
         payload = {"job_id": job_id, "status": status}
 

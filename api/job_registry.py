@@ -89,6 +89,18 @@ JOB_SPECS: dict[str, JobSpec] = {
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Hedging tool failed",
     ),
+    "agent_chat_turn": JobSpec(
+        job_type="agent_chat_turn",
+        request_model="api.routers.agent.AgentChatJobRequest",
+        compute_func="api.routers.agent._run_agent_chat_turn_job",
+        cache_key_func="api.routers.agent._agent_chat_job_cache_key",
+        queue_name=_env_queue("ASYNC_QUEUE_AGENT", "agent"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_AGENT_CHAT_SECONDS", 20 * 60),
+        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        stale_grace_s=_env_int("ASYNC_STALE_GRACE_AGENT_CHAT_SECONDS", 60),
+        error_message="Agent chat turn failed",
+    ),
     "sizer": JobSpec(
         job_type="sizer",
         request_model="api.routers.sizer.SizerRequest",

@@ -304,6 +304,56 @@ def test_persist_actionable_recommendation_creates_pending_approval(temp_core_db
     assert core_db.get_action_items(status="open")[0]["source_id"] == "daily:2026-05-02"
 
 
+def test_persist_recommendations_supersedes_removed_report_actions(temp_core_db):
+    payload = _valid_payload("buy")
+    payload["recommended_actions"].append(
+        {
+            **payload["recommended_actions"][0],
+            "ticker": "AAPL",
+            "instrument": "AAPL",
+            "target_change": "start pilot size",
+            "rationale": "Second validated setup.",
+        }
+    )
+    metadata = {
+        "report_id": "daily-report-2026-05-02",
+        "model": "test",
+        "prompt_hash": "p",
+        "input_hash": "i",
+        "validation_status": "ok",
+    }
+    persist_recommendations(
+        payload,
+        source_report_path="/tmp/recommendations.md",
+        source_json_path="/tmp/recommendations.json",
+        prompt_metadata=metadata,
+    )
+    for approval in [
+        approval
+        for approval in core_db.get_pending_approvals(status="pending")
+        if approval["action_id"] == "create_recommendation"
+    ]:
+        core_db.resolve_approval(approval["id"], "approved", "Apply recommendation")
+
+    assert {row["ticker"] for row in core_db.get_recommendations(report_type="daily", status="open")} == {
+        "AAPL",
+        "MU",
+    }
+
+    rerun_payload = json.loads(json.dumps(payload))
+    rerun_payload["recommended_actions"] = [rerun_payload["recommended_actions"][0]]
+    persist_recommendations(
+        rerun_payload,
+        source_report_path="/tmp/recommendations.md",
+        source_json_path="/tmp/recommendations.json",
+        prompt_metadata=metadata,
+    )
+
+    assert {row["ticker"] for row in core_db.get_recommendations(report_type="daily", status="open")} == {"MU"}
+    superseded = core_db.get_recommendations(report_type="daily", status="superseded")
+    assert [row["ticker"] for row in superseded] == ["AAPL"]
+
+
 def test_recommendation_approval_failure_keeps_state_pending_and_retryable(temp_core_db, monkeypatch):
     persist_recommendations(
         _valid_payload("buy"),

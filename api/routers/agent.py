@@ -8,6 +8,8 @@ platform's analysis modules.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -20,12 +22,14 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.agent_tools import AGENT_CAPABILITY_BY_NAME, TOOL_DEFINITIONS, execute_tool, list_agent_capabilities
 from api.exceptions import ConfigurationError
+from api.job_events import append_job_event, list_job_events
+from api.job_queue import cancel_job, get_job
 from api.routers.auth import require_actor
 from api.workflows import AVAILABLE_WORKFLOWS, execute_workflow
 from llm_utils import (
@@ -39,7 +43,7 @@ from llm_utils import (
     resolve_model,
     selected_provider,
 )
-from ontology.policy import Actor, agent_actor
+from ontology.policy import Actor, actor_from_dict, actor_to_dict, agent_actor
 
 router = APIRouter()
 logger = logging.getLogger("api.agent")
@@ -261,9 +265,18 @@ class AgentChatRequestV2(BaseModel):
     """V2 request: frontend sends only the new message + session ID."""
 
     session_id: ScreenShortText | None = None
+    client_turn_id: ScreenShortText | None = None
     message: ChatText
     screen_context: ScreenContextModel | None = None
     response_preferences: AgentResponsePreferences | None = None
+    finalize_synchronously: bool = False
+
+
+class AgentChatJobRequest(AgentChatRequestV2):
+    """Payload executed by the durable async agent worker."""
+
+    actor: dict[str, Any] | None = None
+    message_count: int | None = None
 
 
 @router.get("/agent/workflows")
@@ -299,6 +312,81 @@ def _sse_headers() -> dict[str, str]:
         # Prevent GZipMiddleware and upstream proxies from buffering small SSE frames.
         "Content-Encoding": "identity",
     }
+
+
+def _parse_sse_frame(raw: str) -> tuple[str, dict[str, Any]] | None:
+    event_type: str | None = None
+    data_lines: list[str] = []
+    for line in raw.splitlines():
+        if line.startswith("event:"):
+            event_type = line.split(":", 1)[1].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line.split(":", 1)[1].strip())
+    if not event_type or not data_lines:
+        return None
+    try:
+        payload = json.loads("\n".join(data_lines))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return event_type, payload
+
+
+def _agent_chat_job_cache_key(req: AgentChatJobRequest) -> str:
+    session_id = str(req.session_id or "new")
+    if req.client_turn_id:
+        return f"agent_chat_turn:{session_id}:{req.client_turn_id}"
+    payload = req.model_dump(exclude={"actor", "finalize_synchronously"}, exclude_none=True)
+    stable = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(stable.encode("utf-8")).hexdigest()[:24]
+    return f"agent_chat_turn:{session_id}:active:{digest}"
+
+
+def _agent_job_session_id(row: dict[str, Any] | None) -> str | None:
+    payload = row.get("payload_json") if isinstance(row, dict) else None
+    if isinstance(payload, dict):
+        session_id = payload.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return session_id
+    return None
+
+
+def _agent_async_payload(row: dict[str, Any], *, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    from api.async_job_runner import job_response
+
+    payload = job_response(row)
+    session_id = _agent_job_session_id(row)
+    if session_id:
+        payload["session_id"] = session_id
+    if events is not None:
+        payload["events"] = events
+        payload["next_seq"] = max([int(event["seq"]) for event in events], default=0)
+    return payload
+
+
+def _append_agent_delta(
+    job_id: str,
+    buffer: list[str],
+    *,
+    force: bool = False,
+    state: dict[str, float],
+) -> None:
+    if not buffer:
+        return
+    now = time.monotonic()
+    text = "".join(buffer)
+    last = state.get("last_delta_flush", 0.0)
+    if not force and len(text) < 512 and now - last < 0.25:
+        return
+    buffer.clear()
+    state["last_delta_flush"] = now
+    append_job_event(job_id, "delta", {"text": text})
+
+
+def _job_cancelled(job_id: str) -> bool:
+    row = get_job(job_id)
+    return bool(row and str(row.get("status") or "") == "cancelled")
 
 
 MAX_TOOL_CONTINUATION_ROUNDS = 8
@@ -1646,6 +1734,176 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
 # ---------------------------------------------------------------------------
 
 
+def _run_agent_chat_turn_job(req: AgentChatJobRequest, *, job_id: str) -> dict[str, Any]:
+    """Execute one agent turn and persist replayable chat events."""
+    actor = actor_from_dict(req.actor)
+    worker_req = AgentChatRequestV2.model_validate(
+        {
+            **req.model_dump(exclude={"actor"}),
+            "finalize_synchronously": True,
+        }
+    )
+    append_job_event(job_id, "status", {"status": "running", "session_id": worker_req.session_id})
+    delta_buffer: list[str] = []
+    flush_state = {"last_delta_flush": time.monotonic()}
+    terminal_payload: dict[str, Any] | None = None
+    error_message: str | None = None
+
+    async def _consume() -> None:
+        nonlocal terminal_payload, error_message
+        response = agent_chat_v2(worker_req, actor)
+        buffer = ""
+        async for chunk in response.body_iterator:
+            if isinstance(chunk, bytes):
+                text = chunk.decode("utf-8", errors="replace")
+            else:
+                text = str(chunk)
+            buffer += text
+            frames = buffer.split("\n\n")
+            buffer = frames.pop() or ""
+            for frame in frames:
+                parsed = _parse_sse_frame(frame)
+                if parsed is None:
+                    continue
+                event_type, payload = parsed
+                if event_type == "ping":
+                    if _job_cancelled(job_id):
+                        return
+                    continue
+                if event_type == "delta":
+                    delta_text = payload.get("text")
+                    if isinstance(delta_text, str) and delta_text:
+                        delta_buffer.append(delta_text)
+                        _append_agent_delta(job_id, delta_buffer, state=flush_state)
+                    if _job_cancelled(job_id):
+                        return
+                    continue
+
+                _append_agent_delta(job_id, delta_buffer, force=True, state=flush_state)
+                append_job_event(job_id, event_type, payload)
+                if event_type == "error":
+                    error_message = str(payload.get("message") or "Agent chat turn failed")
+                elif event_type == "done":
+                    terminal_payload = payload
+                if _job_cancelled(job_id):
+                    return
+
+            if _job_cancelled(job_id):
+                return
+
+        _append_agent_delta(job_id, delta_buffer, force=True, state=flush_state)
+
+    try:
+        asyncio.run(_consume())
+    except Exception as exc:
+        message = _format_stream_error(exc)
+        append_job_event(job_id, "error", {"message": message})
+        raise RuntimeError(message) from exc
+
+    if _job_cancelled(job_id):
+        return {"status": "cancelled", "session_id": worker_req.session_id}
+
+    if error_message:
+        raise RuntimeError(error_message)
+
+    if terminal_payload is None:
+        terminal_payload = {"usage": {}, "session_id": worker_req.session_id}
+        append_job_event(job_id, "done", terminal_payload)
+
+    return {"status": "done", **terminal_payload}
+
+
+@router.post("/agent/chat/async")
+def start_agent_chat_async(req: AgentChatRequestV2, actor: ActorDep):
+    from api import memory_db
+    from api.async_job_runner import enqueue_registered_job
+
+    session = memory_db.get_or_create_session(req.session_id)
+    session_id = str(session["session_id"])
+    job_req = AgentChatJobRequest.model_validate(
+        {
+            **req.model_dump(exclude={"session_id"}),
+            "session_id": session_id,
+            "actor": actor_to_dict(actor),
+            "message_count": int(session.get("message_count") or 0),
+            "finalize_synchronously": True,
+        }
+    )
+    cache_key = _agent_chat_job_cache_key(job_req)
+    reuse_completed = bool(job_req.client_turn_id)
+    row, disposition = enqueue_registered_job(
+        "agent_chat_turn",
+        job_req.model_dump(exclude_none=True),
+        cache_key=cache_key,
+        reuse_completed=reuse_completed,
+    )
+    job_id = str(row.get("job_id") or "")
+    events = list_job_events(job_id, after_seq=0)
+    payload = _agent_async_payload(get_job(job_id) or row, events=events)
+    payload["disposition"] = disposition
+    status_code = 200 if payload.get("status") in {"done", "error", "cancelled"} else 202
+    return JSONResponse(payload, status_code=status_code)
+
+
+@router.get("/agent/chat/async/{job_id}/events")
+def get_agent_chat_async_events(
+    job_id: str,
+    after_seq: int = Query(0, ge=0),
+    wait_ms: int = Query(0, ge=0, le=14_000),
+):
+    from api.async_job_runner import poll_registered_job
+
+    deadline = time.monotonic() + min(wait_ms, 14_000) / 1000.0
+    events: list[dict[str, Any]] = []
+    status_payload: dict[str, Any]
+    row = get_job(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+
+    while True:
+        try:
+            status_payload = poll_registered_job(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown job_id") from None
+        row = get_job(job_id) or row
+        events = list_job_events(job_id, after_seq=after_seq)
+        if events or status_payload.get("status") not in {"queued", "running"} or time.monotonic() >= deadline:
+            break
+        time.sleep(0.25)
+
+    next_seq = max([int(event["seq"]) for event in events], default=after_seq)
+    payload: dict[str, Any] = {
+        **status_payload,
+        "session_id": _agent_job_session_id(row),
+        "events": events,
+        "next_seq": next_seq,
+    }
+    return payload
+
+
+@router.post("/agent/chat/async/{job_id}/cancel")
+def cancel_agent_chat_async(job_id: str):
+    from api.async_job_runner import poll_registered_job
+    from api.job_registry import get_job_spec
+
+    row = get_job(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+    ttl = get_job_spec("agent_chat_turn").failed_ttl_s
+    cancel_job(job_id, "Job cancelled by user", result_ttl_seconds=ttl)
+    session_id = _agent_job_session_id(row)
+    append_job_event(job_id, "status", {"status": "cancelled", "session_id": session_id})
+    append_job_event(job_id, "error", {"message": "Cancelled.", "session_id": session_id})
+    try:
+        payload = poll_registered_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job_id") from None
+    payload["session_id"] = session_id
+    payload["events"] = list_job_events(job_id, after_seq=0)
+    payload["next_seq"] = max([int(event["seq"]) for event in payload["events"]], default=0)
+    return payload
+
+
 @router.post("/agent/chat/v2")
 def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
     tool_actor = agent_actor(actor)
@@ -1680,7 +1938,9 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
     def generate():  # noqa: C901
         nonlocal tool_defs
         yield _sse_ping()
-        from api.memory_manager import build_conversation_context, finalize_turn_async
+        from api.memory_manager import build_conversation_context, finalize_turn, finalize_turn_async
+
+        finalize_turn_fn = finalize_turn if req.finalize_synchronously else finalize_turn_async
 
         agent_turn_event_id: str | None = None
         if casual and not workflow_name:
@@ -1698,7 +1958,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             yield _sse("delta", {"text": text})
             user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
             assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time()}
-            finalize_turn_async(session_id, user_msg, assistant_msg)
+            finalize_turn_fn(session_id, user_msg, assistant_msg)
             _finish_agent_turn_provenance(
                 agent_turn_event_id,
                 status="succeeded",
@@ -1829,7 +2089,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     "timestamp": time.time(),
                     "toolCalls": workflow_tool_calls,
                 }
-                finalize_turn_async(session_id, user_msg, assistant_msg)
+                finalize_turn_fn(session_id, user_msg, assistant_msg)
                 _finish_agent_turn_provenance(
                     agent_turn_event_id,
                     status="succeeded",
@@ -2076,7 +2336,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 full_text = "".join(text_parts)
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
                 assistant_msg = {"role": "assistant", "content": full_text, "timestamp": time.time()}
-                finalize_turn_async(session_id, user_msg, assistant_msg)
+                finalize_turn_fn(session_id, user_msg, assistant_msg)
                 _finish_agent_turn_provenance(
                     agent_turn_event_id,
                     status="succeeded",

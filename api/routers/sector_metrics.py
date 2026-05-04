@@ -4,8 +4,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.cache import get_cached, long_cache, set_cached
-from api.exceptions import ConfigurationError, DataFetchError
+from api.exceptions import ConfigurationError, DataFetchError, SnapshotUnavailableError
 from api.serializers import serialize_dataframe, serialize_value
+from api.snapshot_keys import SNAPSHOT_SECTOR_METRICS
+from api.snapshot_store import get_snapshot_response, snapshots_required
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
@@ -17,6 +19,12 @@ def get_sector_metrics():
     cached = get_cached(long_cache, key)
     if cached is not None:
         return cached
+    snapshot = get_snapshot_response(SNAPSHOT_SECTOR_METRICS)
+    if snapshot is not None:
+        set_cached(long_cache, key, snapshot)
+        return snapshot
+    if snapshots_required():
+        raise SnapshotUnavailableError(SNAPSHOT_SECTOR_METRICS)
     try:
         from equities.sector_metrics.sector_metrics import get_data
 
