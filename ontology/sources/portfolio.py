@@ -72,7 +72,7 @@ class PortfolioAdapter:
                 direction=str(meta_raw.get("direction") or "unknown").strip().lower(),
                 raw=dict(meta_raw),
             )
-            series = positions_raw.get(ticker) or positions_raw.get(str(ticker_obj))
+            series = _get_mapping_value(positions_raw, ticker, str(ticker_obj))
             positions[ticker] = PortfolioPosition(
                 ticker=ticker,
                 asset=metadata.asset,
@@ -127,3 +127,10 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip().upper() for item in value if str(item).strip()]
+
+
+def _get_mapping_value(mapping: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
