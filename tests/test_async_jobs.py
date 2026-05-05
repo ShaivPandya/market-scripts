@@ -88,6 +88,47 @@ def test_cloud_run_jobs_enabled_matches_explicit_opt_in(monkeypatch):
     assert cloud_run_jobs_enabled() is True
 
 
+def test_claim_queued_job_postgres_queue_filter_uses_typed_comparison(monkeypatch):
+    from api import job_queue
+
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class _Cursor:
+        def fetchone(self):
+            return {
+                "job_id": "job-1",
+                "job_type": "agent_chat_turn",
+                "queue_name": "agent",
+                "status": "running",
+            }
+
+    class _Conn:
+        def execute(self, sql: str, params: tuple[object, ...]):
+            calls.append((sql, params))
+            return _Cursor()
+
+        def commit(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(job_queue, "postgres_jobs_enabled", lambda: True)
+    monkeypatch.setattr(job_queue, "connect", lambda: _Conn())
+
+    claimed = job_queue.claim_queued_job("agent_chat_turn", queue_name="agent")
+
+    assert claimed is not None
+    sql, params = calls[-1]
+    assert "%s IS NULL" not in sql
+    assert "queue_name = %s" in sql
+    assert len(params) == 4
+    assert params[:2] == ("agent_chat_turn", "agent")
+
+
 def test_cloud_run_enqueue_dispatches_existing_job_once(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import get_job

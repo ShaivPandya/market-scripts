@@ -227,10 +227,11 @@ def agent_proposal_state(tmp_path, monkeypatch):
 
 
 def test_cached_singleflight_fetches_once(monkeypatch):
-    store: dict[str, object] = {}
+    from cachetools import TTLCache
 
-    monkeypatch.setattr("api.agent_tools.get_cached", lambda _cache, key: store.get(key))
-    monkeypatch.setattr("api.agent_tools.set_cached", lambda _cache, key, value: store.__setitem__(key, value))
+    import api.cache as cache_mod
+
+    monkeypatch.setattr(cache_mod, "_DISK_CACHE_ENABLED", False)
 
     calls = 0
     calls_lock = threading.Lock()
@@ -242,21 +243,22 @@ def test_cached_singleflight_fetches_once(monkeypatch):
         time.sleep(0.05)
         return {"value": 1}
 
-    cache_token = object()
+    cache_token = TTLCache(maxsize=8, ttl=60)
     with ThreadPoolExecutor(max_workers=4) as pool:
         futs = [pool.submit(agent_tools._cached_singleflight, cache_token, "k", loader) for _ in range(4)]
         results = [f.result() for f in futs]
 
     assert calls == 1
-    assert all(v[0] == {"value": 1} for v in results)
+    assert all(v[0]["value"] == 1 for v in results)
     assert {"miss_fetch", "miss_wait"} & {v[1] for v in results}
 
 
 def test_fetch_with_cache_force_refresh_bypasses_cached_value(monkeypatch):
-    store: dict[str, object] = {}
+    from cachetools import TTLCache
 
-    monkeypatch.setattr("api.agent_tools.get_cached", lambda _cache, key: store.get(key))
-    monkeypatch.setattr("api.agent_tools.set_cached", lambda _cache, key, value: store.__setitem__(key, value))
+    import api.cache as cache_mod
+
+    monkeypatch.setattr(cache_mod, "_DISK_CACHE_ENABLED", False)
 
     calls = 0
 
@@ -265,14 +267,14 @@ def test_fetch_with_cache_force_refresh_bypasses_cached_value(monkeypatch):
         calls += 1
         return {"value": calls}
 
-    cache_token = object()
+    cache_token = TTLCache(maxsize=8, ttl=60)
     first, first_meta = agent_tools._fetch_with_cache(cache_token, "k", loader)
     second, second_meta = agent_tools._fetch_with_cache(cache_token, "k", loader)
     refreshed, refreshed_meta = agent_tools._fetch_with_cache(cache_token, "k", loader, force_refresh=True)
 
-    assert first == {"value": 1}
-    assert second == {"value": 1}
-    assert refreshed == {"value": 2}
+    assert first["value"] == 1
+    assert second["value"] == 1
+    assert refreshed["value"] == 2
     assert first_meta["cache"] == "miss_fetch"
     assert second_meta["cache"] == "hit"
     assert refreshed_meta["cache"] == "refresh"

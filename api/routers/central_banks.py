@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from api.cache import get_cached, long_cache, set_cached
+from api.cache import get_or_set_cached, long_cache
 from api.exceptions import DataFetchError
 from api.serializers import serialize_response
 
@@ -20,21 +20,18 @@ def _error_detail(data) -> str | None:
 
 @router.get("/central-banks")
 def get_central_banks(refresh: bool = False):
-    if not refresh:
-        cached = get_cached(long_cache, CACHE_KEY)
-        if cached is not None:
-            return cached
-    try:
-        from macro.central_banks.central_bank import get_data
+    def loader():
+        try:
+            from macro.central_banks.central_bank import get_data
 
-        data = get_data(refresh=refresh)
-    except Exception as e:
-        raise DataFetchError(source="central_banks", detail=str(e)) from e
+            data = get_data(refresh=refresh)
+        except Exception as e:
+            raise DataFetchError(source="central_banks", detail=str(e)) from e
 
-    detail = _error_detail(data)
-    if detail:
-        raise DataFetchError(source="central_banks", detail=detail)
+        detail = _error_detail(data)
+        if detail:
+            raise DataFetchError(source="central_banks", detail=detail)
 
-    result = serialize_response(data)
-    set_cached(long_cache, CACHE_KEY, result)
-    return result
+        return serialize_response(data)
+
+    return get_or_set_cached(long_cache, CACHE_KEY, loader, force_refresh=refresh)

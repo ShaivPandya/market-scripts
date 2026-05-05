@@ -508,15 +508,23 @@ def claim_queued_job(job_type: str, *, queue_name: str | None = None) -> dict[st
             row["updated_at"] = now
             return dict(row)
 
+    queue_filter = ""
+    params: tuple[Any, ...]
+    if queue_name is not None:
+        queue_filter = "AND queue_name = %s"
+        params = (job_type, queue_name, now, now)
+    else:
+        params = (job_type, now, now)
+
     with connect() as conn:
         row = conn.execute(
-            """
+            f"""
             WITH candidate AS (
                 SELECT job_id
                 FROM async_jobs
                 WHERE job_type = %s
                   AND status = 'queued'
-                  AND (%s IS NULL OR queue_name = %s)
+                  {queue_filter}
                 ORDER BY created_at ASC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
@@ -529,7 +537,7 @@ def claim_queued_job(job_type: str, *, queue_name: str | None = None) -> dict[st
             WHERE jobs.job_id = candidate.job_id
             RETURNING jobs.*
             """,
-            (job_type, queue_name, queue_name, now, now),
+            params,
         ).fetchone()
         conn.commit()
         return dict(row) if row else None

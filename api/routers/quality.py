@@ -3,7 +3,7 @@ from typing import Any, cast
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import get_cached, long_cache, set_cached
+from api.cache import get_or_set_cached, long_cache
 from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 
@@ -63,54 +63,54 @@ def _resolve_universe_tickers(universe_label: str) -> list[str]:
 @router.post("/quality-screen")
 def run_quality_screen(req: QualityRequest):
     key = f"quality:{req.input_mode}:{req.universe}:{req.tickers}:{req.benchmark}"
-    cached = get_cached(long_cache, key)
-    if cached is not None:
-        return cached
-    try:
-        if req.input_mode == "Custom Tickers":
-            tickers = [t.strip().upper() for t in req.tickers.split(",") if t.strip()]
-        else:
-            tickers = _resolve_universe_tickers(req.universe)
 
-        if not tickers:
-            raise HTTPException(status_code=400, detail="No tickers resolved for the requested universe/input.")
+    def loader():
+        try:
+            if req.input_mode == "Custom Tickers":
+                tickers = [t.strip().upper() for t in req.tickers.split(",") if t.strip()]
+            else:
+                tickers = _resolve_universe_tickers(req.universe)
 
-        benchmark_label = req.benchmark
-        benchmark: str | None
-        if benchmark_label == "Same as Input":
-            benchmark = "self"
-        else:
-            benchmark = (
-                _BENCHMARK_MAP.get(benchmark_label)
-                or _SECTOR_PREFIX_MAP.get(benchmark_label)
-                or _UNIVERSE_MAP.get(benchmark_label)
-                or benchmark_label
+            if not tickers:
+                raise HTTPException(status_code=400, detail="No tickers resolved for the requested universe/input.")
+
+            benchmark_label = req.benchmark
+            benchmark: str | None
+            if benchmark_label == "Same as Input":
+                benchmark = "self"
+            else:
+                benchmark = (
+                    _BENCHMARK_MAP.get(benchmark_label)
+                    or _SECTOR_PREFIX_MAP.get(benchmark_label)
+                    or _UNIVERSE_MAP.get(benchmark_label)
+                    or benchmark_label
+                )
+
+            from equities.quality.quality import get_data
+
+            data = get_data(tickers=tickers, benchmark=benchmark)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise DataFetchError(source="quality", detail=str(e)) from e
+
+        if data.get("error"):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": data["error"],
+                    "failed": data.get("failed") or [],
+                },
             )
 
-        from equities.quality.quality import get_data
+        import pandas as pd
 
-        data = get_data(tickers=tickers, benchmark=benchmark)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise DataFetchError(source="quality", detail=str(e)) from e
+        result: dict[str, Any] = {}
+        for k, v in data.items():
+            if isinstance(v, pd.DataFrame):
+                result[k] = serialize_dataframe(v.reset_index())
+            else:
+                result[k] = serialize_value(v)
+        return result
 
-    if data.get("error"):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "message": data["error"],
-                "failed": data.get("failed") or [],
-            },
-        )
-
-    import pandas as pd
-
-    result: dict[str, Any] = {}
-    for k, v in data.items():
-        if isinstance(v, pd.DataFrame):
-            result[k] = serialize_dataframe(v.reset_index())
-        else:
-            result[k] = serialize_value(v)
-    set_cached(long_cache, key, result)
-    return result
+    return get_or_set_cached(long_cache, key, loader)

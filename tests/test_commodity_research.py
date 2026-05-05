@@ -393,8 +393,7 @@ def test_router_payload_uses_v3_schema(auth_client, monkeypatch):
             },
         }
 
-    monkeypatch.setattr(router_mod, "get_cached", lambda *a, **kw: None)
-    monkeypatch.setattr(router_mod, "set_cached", lambda *a, **kw: None)
+    monkeypatch.setattr(router_mod, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
 
     import commodities.commodity_research as cr_mod
 

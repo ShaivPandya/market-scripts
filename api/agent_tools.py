@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import re
-import threading
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -35,7 +34,7 @@ from api.agent_governance import (
     tool_governance_meta,
     validate_tool_output,
 )
-from api.cache import get_cached, long_cache, set_cached, short_cache
+from api.cache import _get_or_set_cached_with_status, get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
 from ontology.action_registry import (
     ActionContext as RegistryActionContext,
@@ -1422,18 +1421,6 @@ def search_agent_capabilities(query: str, top_k: int = 8) -> dict[str, Any]:
 
 
 _MAX_TOOL_RESPONSE_CHARS = 30_000
-_MISSING = object()
-_singleflight_lock = threading.Lock()
-
-
-@dataclass(slots=True)
-class _SingleFlightState:
-    event: threading.Event
-    value: object = _MISSING
-    error: Exception | None = None
-
-
-_singleflight_by_key: dict[str, _SingleFlightState] = {}
 
 
 def _stable_json_dumps(data: object) -> str:
@@ -1863,52 +1850,7 @@ def _cached_singleflight(
     *,
     force_refresh: bool = False,
 ) -> tuple[Any, str]:
-    if force_refresh:
-        value = loader()
-        set_cached(cache, key, value)
-        return value, "refresh"
-
-    cached = get_cached(cache, key)
-    if cached is not None:
-        return cached, "hit"
-
-    flight_key = f"{id(cache)}::{key}"
-    with _singleflight_lock:
-        state = _singleflight_by_key.get(flight_key)
-        if state is None:
-            state = _SingleFlightState(event=threading.Event())
-            _singleflight_by_key[flight_key] = state
-            owner = True
-        else:
-            owner = False
-
-    if owner:
-        try:
-            value = loader()
-            set_cached(cache, key, value)
-            state.value = value
-            return value, "miss_fetch"
-        except Exception as exc:
-            state.error = exc
-            raise
-        finally:
-            state.event.set()
-            with _singleflight_lock:
-                _singleflight_by_key.pop(flight_key, None)
-
-    state.event.wait(timeout=120)
-    if state.error is not None:
-        raise state.error
-    if state.value is not _MISSING:
-        return state.value, "miss_wait"
-
-    # Safety fallback if owner did not publish a value.
-    cached_after = get_cached(cache, key)
-    if cached_after is not None:
-        return cached_after, "miss_wait"
-    value = loader()
-    set_cached(cache, key, value)
-    return value, "miss_refetch"
+    return _get_or_set_cached_with_status(cache, key, loader, force_refresh=force_refresh)
 
 
 def _cache_freshness_meta(cache, value: Any, cache_status: str) -> dict[str, Any]:

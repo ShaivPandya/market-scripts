@@ -136,8 +136,6 @@ def test_central_bank_route_raises_on_error_payload(monkeypatch):
         "macro.central_banks.central_bank",
         _stub_central_bank_module(lambda refresh=False: {"error": "database unavailable"}),
     )
-    monkeypatch.setattr(router, "get_cached", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(router, "set_cached", lambda *_args, **_kwargs: None)
 
     with pytest.raises(DataFetchError) as exc:
         router.get_central_banks(refresh=True)
@@ -147,6 +145,7 @@ def test_central_bank_route_raises_on_error_payload(monkeypatch):
 
 
 def test_central_bank_route_refresh_updates_default_cache(monkeypatch):
+    import api.cache as cache_mod
     from api.routers import central_banks as router
 
     payload = {
@@ -162,8 +161,7 @@ def test_central_bank_route_refresh_updates_default_cache(monkeypatch):
         "macro.central_banks.central_bank",
         _stub_central_bank_module(lambda refresh=False: payload),
     )
-    monkeypatch.setattr(router, "get_cached", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(router, "set_cached", lambda _cache, key, value: cache_sets.append((key, value)))
+    monkeypatch.setattr(cache_mod, "set_cached", lambda _cache, key, value: cache_sets.append((key, value)))
 
     result = router.get_central_banks(refresh=True)
 

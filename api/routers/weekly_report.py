@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
 
-from api.cache import delete_cached, get_cached, long_cache, set_cached
+from api.cache import delete_cached, get_cached, get_or_set_cached, long_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from llm_utils import MODEL_HIGH, api_key_env, call_llm_text, extract_citations, has_llm_api_key
 
@@ -227,207 +227,203 @@ def get_weekly_report(
         logger.info("weekly_report refresh requested; clearing cache key=%s", key)
         delete_cached(long_cache, key)
 
-    cached = get_cached(long_cache, key)
-    if cached is not None:
-        logger.info("weekly_report cache hit")
-        return cached
+    def loader():
+        started = time.perf_counter()
+        logger.info("weekly_report cache miss; generating")
 
-    started = time.perf_counter()
-    logger.info("weekly_report cache miss; generating")
+        # 1. Fetch all required data
+        index_order = None
+        pair_order = None
+        commodity_order = None
+        week_start = (datetime.now() - timedelta(days=7)).date().isoformat()
+        try:
+            from equities.index_dashboard.index_dashboard import INDEX_ORDER
+            from equities.index_dashboard.index_dashboard import get_data as get_index_data
 
-    # 1. Fetch all required data
-    index_order = None
-    pair_order = None
-    commodity_order = None
-    week_start = (datetime.now() - timedelta(days=7)).date().isoformat()
-    try:
-        from equities.index_dashboard.index_dashboard import INDEX_ORDER
-        from equities.index_dashboard.index_dashboard import get_data as get_index_data
+            index_order = INDEX_ORDER
+            t0 = time.perf_counter()
+            indices = get_index_data("This Week")
+            logger.info(
+                "weekly_report indices fetched in %.2fs (n=%s)",
+                time.perf_counter() - t0,
+                len((indices or {}).get("indices", {})) if isinstance(indices, dict) else "n/a",
+            )
+        except Exception as e:
+            indices = {"error": str(e)}
+            logger.warning("weekly_report indices fetch failed: %s", e, exc_info=True)
 
-        index_order = INDEX_ORDER
-        t0 = time.perf_counter()
-        indices = get_index_data("This Week")
-        logger.info(
-            "weekly_report indices fetched in %.2fs (n=%s)",
-            time.perf_counter() - t0,
-            len((indices or {}).get("indices", {})) if isinstance(indices, dict) else "n/a",
-        )
-    except Exception as e:
-        indices = {"error": str(e)}
-        logger.warning("weekly_report indices fetch failed: %s", e, exc_info=True)
+        try:
+            from fx.fx_dashboard.fx_dashboard import PAIR_ORDER
+            from fx.fx_dashboard.fx_dashboard import get_data as get_fx_data
 
-    try:
-        from fx.fx_dashboard.fx_dashboard import PAIR_ORDER
-        from fx.fx_dashboard.fx_dashboard import get_data as get_fx_data
+            pair_order = PAIR_ORDER
+            t0 = time.perf_counter()
+            fx = get_fx_data("This Week")
+            logger.info(
+                "weekly_report fx fetched in %.2fs (n=%s)",
+                time.perf_counter() - t0,
+                len((fx or {}).get("pairs", {})) if isinstance(fx, dict) else "n/a",
+            )
+        except Exception as e:
+            fx = {"error": str(e)}
+            logger.warning("weekly_report fx fetch failed: %s", e, exc_info=True)
 
-        pair_order = PAIR_ORDER
-        t0 = time.perf_counter()
-        fx = get_fx_data("This Week")
-        logger.info(
-            "weekly_report fx fetched in %.2fs (n=%s)",
-            time.perf_counter() - t0,
-            len((fx or {}).get("pairs", {})) if isinstance(fx, dict) else "n/a",
-        )
-    except Exception as e:
-        fx = {"error": str(e)}
-        logger.warning("weekly_report fx fetch failed: %s", e, exc_info=True)
+        try:
+            from commodities.commodities_dashboard import COMMODITY_ORDER
+            from commodities.commodities_dashboard import get_data as get_commodity_data
 
-    try:
-        from commodities.commodities_dashboard import COMMODITY_ORDER
-        from commodities.commodities_dashboard import get_data as get_commodity_data
+            commodity_order = COMMODITY_ORDER
+            t0 = time.perf_counter()
+            commodities = get_commodity_data("This Week")
+            logger.info(
+                "weekly_report commodities fetched in %.2fs (n=%s)",
+                time.perf_counter() - t0,
+                len((commodities or {}).get("commodities", {})) if isinstance(commodities, dict) else "n/a",
+            )
+        except Exception as e:
+            commodities = {"error": str(e)}
+            logger.warning("weekly_report commodities fetch failed: %s", e, exc_info=True)
 
-        commodity_order = COMMODITY_ORDER
-        t0 = time.perf_counter()
-        commodities = get_commodity_data("This Week")
-        logger.info(
-            "weekly_report commodities fetched in %.2fs (n=%s)",
-            time.perf_counter() - t0,
-            len((commodities or {}).get("commodities", {})) if isinstance(commodities, dict) else "n/a",
-        )
-    except Exception as e:
-        commodities = {"error": str(e)}
-        logger.warning("weekly_report commodities fetch failed: %s", e, exc_info=True)
+        try:
+            from equities.market_technicals.market_breadth import get_data as get_breadth_data
 
-    try:
-        from equities.market_technicals.market_breadth import get_data as get_breadth_data
+            t0 = time.perf_counter()
+            breadth = get_breadth_data(period="1y")
+            logger.info("weekly_report breadth fetched in %.2fs", time.perf_counter() - t0)
+        except Exception as e:
+            breadth = {"error": str(e)}
+            logger.warning("weekly_report breadth fetch failed: %s", e, exc_info=True)
 
-        t0 = time.perf_counter()
-        breadth = get_breadth_data(period="1y")
-        logger.info("weekly_report breadth fetched in %.2fs", time.perf_counter() - t0)
-    except Exception as e:
-        breadth = {"error": str(e)}
-        logger.warning("weekly_report breadth fetch failed: %s", e, exc_info=True)
+        try:
+            from equities.market_technicals.top50_breadth import get_data as get_top50_data
 
-    try:
-        from equities.market_technicals.top50_breadth import get_data as get_top50_data
+            t0 = time.perf_counter()
+            top50 = get_top50_data()
+            logger.info("weekly_report top50 breadth fetched in %.2fs", time.perf_counter() - t0)
+        except Exception as e:
+            top50 = {"error": str(e)}
+            logger.warning("weekly_report top50 breadth fetch failed: %s", e, exc_info=True)
 
-        t0 = time.perf_counter()
-        top50 = get_top50_data()
-        logger.info("weekly_report top50 breadth fetched in %.2fs", time.perf_counter() - t0)
-    except Exception as e:
-        top50 = {"error": str(e)}
-        logger.warning("weekly_report top50 breadth fetch failed: %s", e, exc_info=True)
+        try:
+            from equities.market_technicals.vix_term_structure import get_data as get_vix_data
 
-    try:
-        from equities.market_technicals.vix_term_structure import get_data as get_vix_data
+            t0 = time.perf_counter()
+            vix = get_vix_data()
+            logger.info("weekly_report vix term structure fetched in %.2fs", time.perf_counter() - t0)
+        except Exception as e:
+            vix = {"error": str(e)}
+            logger.warning("weekly_report vix term structure fetch failed: %s", e, exc_info=True)
 
-        t0 = time.perf_counter()
-        vix = get_vix_data()
-        logger.info("weekly_report vix term structure fetched in %.2fs", time.perf_counter() - t0)
-    except Exception as e:
-        vix = {"error": str(e)}
-        logger.warning("weekly_report vix term structure fetch failed: %s", e, exc_info=True)
+        try:
+            from equities.sector_metrics.sector_metrics import get_data as get_sector_data
 
-    try:
-        from equities.sector_metrics.sector_metrics import get_data as get_sector_data
+            t0 = time.perf_counter()
+            sector = get_sector_data()
+            logger.info("weekly_report sector metrics fetched in %.2fs", time.perf_counter() - t0)
 
-        t0 = time.perf_counter()
-        sector = get_sector_data()
-        logger.info("weekly_report sector metrics fetched in %.2fs", time.perf_counter() - t0)
+            # We need to process sector_metrics as it returns a DataFrame for weights_df
+            weights_df = sector.get("weights_df")
+            if weights_df is not None:
+                # We just want top-level summary for the prompt
+                import pandas as pd
 
-        # We need to process sector_metrics as it returns a DataFrame for weights_df
-        weights_df = sector.get("weights_df")
-        if weights_df is not None:
-            # We just want top-level summary for the prompt
+                if isinstance(weights_df, pd.DataFrame):
+                    df = weights_df.reset_index()
+                    if "index" in df.columns and "Sector" not in df.columns:
+                        df = df.rename(columns={"index": "Sector"})
+                    df = df.round(2)
+                    sector["weights_summary"] = df.to_dict(orient="records")
+                    del sector["weights_df"]
+
+        except Exception as e:
+            sector = {"error": str(e)}
+            logger.warning("weekly_report sector metrics fetch failed: %s", e, exc_info=True)
+
+        try:
+            from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
+
+            # Fetching basic summary for positioning
+            t0 = time.perf_counter()
+            pos = fetch_multiple_instruments(
+                domain=DEFAULT_DOMAIN,
+                dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
+                app_token=os.environ.get("SODA_APP_TOKEN"),
+                instruments=["SP500", "NASDAQ", "US10Y", "EUR", "GOLD", "OIL"],
+                start="2015-01-01",
+                end=None,
+            )
+            logger.info("weekly_report positioning fetched in %.2fs", time.perf_counter() - t0)
+        except Exception as e:
+            pos = [{"error": str(e)}]
+            logger.warning("weekly_report positioning fetch failed: %s", e, exc_info=True)
+
+        try:
+            from portfolio.technical_analysis.technical_analysis import get_ratio_data
+
+            t0 = time.perf_counter()
+            silver_gold = _slim_ratio_result(get_ratio_data("SI=F", "GC=F", start_date=week_start))
+            sp_eq = _slim_ratio_result(get_ratio_data("^GSPC", "RSP", start_date=week_start))
+            logger.info("weekly_report ratios fetched in %.2fs", time.perf_counter() - t0)
+        except Exception as e:
+            silver_gold = {"error": str(e)}
+            sp_eq = {"error": str(e)}
+            logger.warning("weekly_report ratios fetch failed: %s", e, exc_info=True)
+
+        # 2a. Deterministic weekly performance tables (Indices/FX/Commodities)
+        try:
             import pandas as pd
+        except Exception:
+            pd = None  # type: ignore[assignment]
 
-            if isinstance(weights_df, pd.DataFrame):
-                df = weights_df.reset_index()
-                if "index" in df.columns and "Sector" not in df.columns:
-                    df = df.rename(columns={"index": "Sector"})
-                df = df.round(2)
-                sector["weights_summary"] = df.to_dict(orient="records")
-                del sector["weights_df"]
-
-    except Exception as e:
-        sector = {"error": str(e)}
-        logger.warning("weekly_report sector metrics fetch failed: %s", e, exc_info=True)
-
-    try:
-        from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_multiple_instruments
-
-        # Fetching basic summary for positioning
-        t0 = time.perf_counter()
-        pos = fetch_multiple_instruments(
-            domain=DEFAULT_DOMAIN,
-            dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
-            app_token=os.environ.get("SODA_APP_TOKEN"),
-            instruments=["SP500", "NASDAQ", "US10Y", "EUR", "GOLD", "OIL"],
-            start="2015-01-01",
-            end=None,
-        )
-        logger.info("weekly_report positioning fetched in %.2fs", time.perf_counter() - t0)
-    except Exception as e:
-        pos = [{"error": str(e)}]
-        logger.warning("weekly_report positioning fetch failed: %s", e, exc_info=True)
-
-    try:
-        from portfolio.technical_analysis.technical_analysis import get_ratio_data
-
-        t0 = time.perf_counter()
-        silver_gold = _slim_ratio_result(get_ratio_data("SI=F", "GC=F", start_date=week_start))
-        sp_eq = _slim_ratio_result(get_ratio_data("^GSPC", "RSP", start_date=week_start))
-        logger.info("weekly_report ratios fetched in %.2fs", time.perf_counter() - t0)
-    except Exception as e:
-        silver_gold = {"error": str(e)}
-        sp_eq = {"error": str(e)}
-        logger.warning("weekly_report ratios fetch failed: %s", e, exc_info=True)
-
-    # 2a. Deterministic weekly performance tables (Indices/FX/Commodities)
-    try:
-        import pandas as pd
-    except Exception:
-        pd = None  # type: ignore[assignment]
-
-    def _series_map_to_rows(series_map: dict, order: list[str] | None) -> list[tuple[str, float, float]]:
-        rows: list[tuple[str, float, float]] = []
-        if not isinstance(series_map, dict) or not series_map:
+        def _series_map_to_rows(series_map: dict, order: list[str] | None) -> list[tuple[str, float, float]]:
+            rows: list[tuple[str, float, float]] = []
+            if not isinstance(series_map, dict) or not series_map:
+                return rows
+            names = order or list(series_map.keys())
+            for name in names:
+                series = series_map.get(name)
+                if series is None:
+                    continue
+                try:
+                    if pd is not None and isinstance(series, pd.Series):
+                        s = series.dropna()
+                        if s.empty:
+                            continue
+                        start = float(s.iloc[0])
+                        latest = float(s.iloc[-1])
+                    else:
+                        start = float(series[0])  # type: ignore[index]
+                        latest = float(series[-1])  # type: ignore[index]
+                    rows.append((str(name), start, latest))
+                except Exception:
+                    continue
             return rows
-        names = order or list(series_map.keys())
-        for name in names:
-            series = series_map.get(name)
-            if series is None:
-                continue
-            try:
-                if pd is not None and isinstance(series, pd.Series):
-                    s = series.dropna()
-                    if s.empty:
-                        continue
-                    start = float(s.iloc[0])
-                    latest = float(s.iloc[-1])
-                else:
-                    start = float(series[0])  # type: ignore[index]
-                    latest = float(series[-1])  # type: ignore[index]
-                rows.append((str(name), start, latest))
-            except Exception:
-                continue
-        return rows
 
-    indices_rows = _series_map_to_rows(indices.get("indices", {}) if isinstance(indices, dict) else {}, index_order)  # type: ignore[arg-type]
-    fx_rows = _series_map_to_rows(fx.get("pairs", {}) if isinstance(fx, dict) else {}, pair_order)  # type: ignore[arg-type]
-    commodities_rows = _series_map_to_rows(
-        commodities.get("commodities", {}) if isinstance(commodities, dict) else {},
-        commodity_order,  # type: ignore[arg-type]
-    )
+        indices_rows = _series_map_to_rows(indices.get("indices", {}) if isinstance(indices, dict) else {}, index_order)  # type: ignore[arg-type]
+        fx_rows = _series_map_to_rows(fx.get("pairs", {}) if isinstance(fx, dict) else {}, pair_order)  # type: ignore[arg-type]
+        commodities_rows = _series_map_to_rows(
+            commodities.get("commodities", {}) if isinstance(commodities, dict) else {},
+            commodity_order,  # type: ignore[arg-type]
+        )
 
-    perf_md = "\n\n".join(
-        [
-            "## Weekly Performance",
-            _build_perf_table("Indices", indices_rows, decimals_if_lt_100=2).strip(),
-            _build_perf_table("FX", fx_rows, decimals_if_lt_100=4).strip(),
-            _build_perf_table("Commodities", commodities_rows, decimals_if_lt_100=4).strip(),
-        ]
-    ).strip()
-    perf_md = f"{perf_md}\n\n{_build_key_ratios_table([('Silver/Gold', silver_gold), ('S&P 500 / RSP', sp_eq)]).strip()}".strip()
-    logger.info(
-        "weekly_report performance computed (indices=%d fx=%d commodities=%d)",
-        len(indices_rows),
-        len(fx_rows),
-        len(commodities_rows),
-    )
+        perf_md = "\n\n".join(
+            [
+                "## Weekly Performance",
+                _build_perf_table("Indices", indices_rows, decimals_if_lt_100=2).strip(),
+                _build_perf_table("FX", fx_rows, decimals_if_lt_100=4).strip(),
+                _build_perf_table("Commodities", commodities_rows, decimals_if_lt_100=4).strip(),
+            ]
+        ).strip()
+        perf_md = f"{perf_md}\n\n{_build_key_ratios_table([('Silver/Gold', silver_gold), ('S&P 500 / RSP', sp_eq)]).strip()}".strip()
+        logger.info(
+            "weekly_report performance computed (indices=%d fx=%d commodities=%d)",
+            len(indices_rows),
+            len(fx_rows),
+            len(commodities_rows),
+        )
 
-    # 2. Extract specific rules for Breadth and VIX to include in prompt
-    rules_text = """
+        # 2. Extract specific rules for Breadth and VIX to include in prompt
+        rules_text = """
 STRICT FORMATTING RULES (Apply these to the data provided below):
 
 MARKET BREADTH THRESHOLDS:
@@ -449,7 +445,7 @@ VIX TERM STRUCTURE:
 - Otherwise 'Neutral'
 """
 
-    data_context = f"""
+        data_context = f"""
 ==== RAW WEEKLY DATA ====
 
 INDICES (This Week):
@@ -482,14 +478,14 @@ SP500/RSP: {sp_eq}
 =======================
 """
 
-    prompt = f"""You are a quantitative market analyst compiling a weekly catch-up report.
+        prompt = f"""You are a quantitative market analyst compiling a weekly catch-up report.
 Your goal is to summarize the moves of the past week into a clean report to catch up the user on what happened in the markets. 
 FLAG anything that stands out, but strictly AVOID commentary. Do not explain *why* something happened, just note *that* it happened.
 
-    The final output will already include:
-    - "Weekly Performance" (Indices/FX/Commodities) with start, latest, and % change
-    - "Key Ratios (Past Week)" (Silver/Gold and S&P 500 / RSP)
-    Do NOT repeat those sections — focus on notable moves and threshold breaches instead.
+        The final output will already include:
+        - "Weekly Performance" (Indices/FX/Commodities) with start, latest, and % change
+        - "Key Ratios (Past Week)" (Silver/Gold and S&P 500 / RSP)
+        Do NOT repeat those sections — focus on notable moves and threshold breaches instead.
 
 Use the explicit rules provided below to flag technicals.
 For other dashboards (Indices, FX, Commodities, Sectors, Positioning, Ratios), use your best judgment as an LLM to identify and highlight significant outliers, major percentage moves, or extremes.
@@ -514,54 +510,40 @@ Hard requirement: Do NOT include any assistant meta text like "If you want, I ca
 End the output immediately after the report content.
 """  # noqa: W291
 
-    if not has_llm_api_key():
-        raise ConfigurationError(api_key_env())
+        if not has_llm_api_key():
+            raise ConfigurationError(api_key_env())
 
-    try:
-        t0 = time.perf_counter()
-        report_md, citations, _resp = call_llm_text(
-            prompt=prompt,
-            model=MODEL_HIGH,
-            api_key=None,
-            max_tokens=8192,
-            allowed_domains=DEFAULT_NEWS_DOMAINS,
-        )
-        if not report_md:
-            raise ValueError("LLM returned empty response")
-        logger.info(
-            "weekly_report LLM done in %.2fs (prompt_chars=%d output_chars=%d citations=%d)",
-            time.perf_counter() - t0,
-            len(prompt),
-            len(report_md),
-            len(citations),
-        )
-    except Exception as exc:
-        logger.error("weekly_report LLM generation failed: %s", exc, exc_info=True)
-        raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
+        try:
+            t0 = time.perf_counter()
+            report_md, citations, _resp = call_llm_text(
+                prompt=prompt,
+                model=MODEL_HIGH,
+                api_key=None,
+                max_tokens=8192,
+                allowed_domains=DEFAULT_NEWS_DOMAINS,
+            )
+            if not report_md:
+                raise ValueError("LLM returned empty response")
+            logger.info(
+                "weekly_report LLM done in %.2fs (prompt_chars=%d output_chars=%d citations=%d)",
+                time.perf_counter() - t0,
+                len(prompt),
+                len(report_md),
+                len(citations),
+            )
+        except Exception as exc:
+            logger.error("weekly_report LLM generation failed: %s", exc, exc_info=True)
+            raise DataFetchError(source="ai_analysis", detail=str(exc)) from exc
 
-    report_md = _insert_weekly_performance(report_md, perf_md)
-    cleaned = _strip_llm_meta(report_md)
-    if cleaned != report_md:
-        logger.info("weekly_report stripped assistant meta text (removed_chars=%d)", len(report_md) - len(cleaned))
-    report_md = cleaned
-    report_md = _append_sources_section(report_md, citations)
-    result = {"report": report_md}
-    # Cache for 1 hour (long_cache) to prevent spamming the LLM
-    set_cached(long_cache, key, result)
-    try:
-        import api.cache as _cache
+        report_md = _insert_weekly_performance(report_md, perf_md)
+        cleaned = _strip_llm_meta(report_md)
+        if cleaned != report_md:
+            logger.info("weekly_report stripped assistant meta text (removed_chars=%d)", len(report_md) - len(cleaned))
+        report_md = cleaned
+        report_md = _append_sources_section(report_md, citations)
+        result = {"report": report_md}
+        logger.info("weekly_report generated (key=%s) total_time=%.2fs", key, time.perf_counter() - started)
 
-        disk_enabled = bool(getattr(_cache, "_DISK_CACHE_ENABLED", False))
-        disk_path = _cache._disk_cache_path(long_cache, key) if disk_enabled else None  # type: ignore[attr-defined]
-        disk_exists = bool(disk_path and disk_path.exists())
-        logger.info(
-            "weekly_report cached (key=%s disk_enabled=%s disk_exists=%s) total_time=%.2fs",
-            key,
-            disk_enabled,
-            disk_exists,
-            time.perf_counter() - started,
-        )
-    except Exception:
-        logger.info("weekly_report cached (key=%s) total_time=%.2fs", key, time.perf_counter() - started)
+        return result
 
-    return result
+    return get_or_set_cached(long_cache, key, loader, force_refresh=refresh)

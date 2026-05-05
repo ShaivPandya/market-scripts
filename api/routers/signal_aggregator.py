@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query
 
-from api.cache import get_cached, set_cached, short_cache
+from api.cache import get_or_set_cached, short_cache
 from api.exceptions import DataFetchError, SnapshotUnavailableError
 from api.serializers import serialize_value
 from api.signal_aggregator import (
@@ -46,33 +46,29 @@ def get_signal_aggregator(
 ):
     normalized_instruments = _normalize_positioning_instruments(positioning_instruments)
     key = f"signal_aggregator:{lookback_weeks}:positioning={normalized_instruments}:include_raw={include_raw_modules}"
-    if not force_refresh:
-        cached = get_cached(short_cache, key)
-        if cached is not None:
-            return cached
 
-    require_snapshots = snapshots_required()
-    if not force_refresh:
-        snapshot = get_signal_aggregator_snapshot_or_module_response(
-            lookback_weeks=lookback_weeks,
-            include_raw_modules=include_raw_modules,
-        )
-        if snapshot is not None and (require_snapshots or not _snapshot_missing_liquidity(snapshot)):
-            set_cached(short_cache, key, snapshot)
-            return snapshot
+    def loader():
+        require_snapshots = snapshots_required()
+        if not force_refresh:
+            snapshot = get_signal_aggregator_snapshot_or_module_response(
+                lookback_weeks=lookback_weeks,
+                include_raw_modules=include_raw_modules,
+            )
+            if snapshot is not None and (require_snapshots or not _snapshot_missing_liquidity(snapshot)):
+                return snapshot
 
-    if require_snapshots and not force_refresh:
-        raise SnapshotUnavailableError(SNAPSHOT_SIGNAL_AGGREGATOR)
+        if require_snapshots and not force_refresh:
+            raise SnapshotUnavailableError(SNAPSHOT_SIGNAL_AGGREGATOR)
 
-    try:
-        data = build_signal_aggregator(
-            lookback_weeks=lookback_weeks,
-            positioning_instruments=normalized_instruments,
-            include_raw_modules=include_raw_modules,
-        )
-    except Exception as e:
-        raise DataFetchError(source="signal_aggregator", detail=str(e)) from e
+        try:
+            data = build_signal_aggregator(
+                lookback_weeks=lookback_weeks,
+                positioning_instruments=normalized_instruments,
+                include_raw_modules=include_raw_modules,
+            )
+        except Exception as e:
+            raise DataFetchError(source="signal_aggregator", detail=str(e)) from e
 
-    result = serialize_value(data)
-    set_cached(short_cache, key, result)
-    return result
+        return serialize_value(data)
+
+    return get_or_set_cached(short_cache, key, loader, force_refresh=force_refresh)

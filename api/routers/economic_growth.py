@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
 
-from api.cache import delete_cached, get_cached, set_cached, short_cache
+from api.cache import delete_cached, get_or_set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError, ValidationError
 from api.request_limits import read_upload_file_bytes
 from api.serializers import serialize_response
@@ -111,28 +111,29 @@ def _write_managed_crb(payload: bytes, metadata: dict) -> None:
 @router.get("/economic-growth")
 def get_economic_growth():
     key = ECONOMIC_GROWTH_CACHE_KEY
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return _normalize_currency_payload(cached)
-    try:
-        from macro.economic_growth.economic_growth import get_data
 
-        crb_bytes, crb_metadata = _load_managed_crb()
-        if crb_bytes is not None:
-            data = get_data(
-                crb_bytes=crb_bytes,
-                crb_filename=crb_metadata.get("filename") if isinstance(crb_metadata.get("filename"), str) else None,
-                crb_uploaded_at=(
-                    crb_metadata.get("uploaded_at") if isinstance(crb_metadata.get("uploaded_at"), str) else None
-                ),
-            )
-        else:
-            data = get_data()
-    except Exception as e:
-        raise DataFetchError(source="economic_growth", detail=str(e)) from e
-    result = _normalize_currency_payload(serialize_response(data))
-    set_cached(short_cache, key, result)
-    return result
+    def loader():
+        try:
+            from macro.economic_growth.economic_growth import get_data
+
+            crb_bytes, crb_metadata = _load_managed_crb()
+            if crb_bytes is not None:
+                data = get_data(
+                    crb_bytes=crb_bytes,
+                    crb_filename=crb_metadata.get("filename")
+                    if isinstance(crb_metadata.get("filename"), str)
+                    else None,
+                    crb_uploaded_at=(
+                        crb_metadata.get("uploaded_at") if isinstance(crb_metadata.get("uploaded_at"), str) else None
+                    ),
+                )
+            else:
+                data = get_data()
+        except Exception as e:
+            raise DataFetchError(source="economic_growth", detail=str(e)) from e
+        return _normalize_currency_payload(serialize_response(data))
+
+    return _normalize_currency_payload(get_or_set_cached(short_cache, key, loader))
 
 
 @router.post("/economic-growth/crb-file")

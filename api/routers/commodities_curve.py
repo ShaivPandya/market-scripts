@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from api.cache import get_cached, set_cached, short_cache
+from api.cache import get_or_set_cached, short_cache
 from api.exceptions import DataFetchError
 from api.serializers import serialize_response
 
@@ -23,17 +23,15 @@ def get_commodities_curve(commodity: str = "CL", lookback_days: int = 30):
         )
 
     key = f"commodities_curve:{commodity}:{lookback_days}"
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return cached
 
-    try:
-        from commodities.commodities_curve import get_data
+    def loader():
+        try:
+            from commodities.commodities_curve import get_data
 
-        data = get_data(commodity=commodity, lookback_days=lookback_days)
-    except Exception as exc:
-        raise DataFetchError(source="commodities_curve", detail=str(exc)) from exc
+            data = get_data(commodity=commodity, lookback_days=lookback_days)
+        except Exception as exc:
+            raise DataFetchError(source="commodities_curve", detail=str(exc)) from exc
 
-    result = serialize_response(data)
-    set_cached(short_cache, key, result)
-    return result
+        return serialize_response(data)
+
+    return get_or_set_cached(short_cache, key, loader)

@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.cache import get_cached, set_cached, short_cache
+from api.cache import get_or_set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
@@ -14,22 +14,21 @@ router = APIRouter()
 @router.get("/liquidity")
 def get_liquidity():
     key = "liquidity"
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return cached
-    try:
-        from macro.liquidity.liquidity import get_snapshot
 
-        data = get_snapshot()
-    except Exception as e:
-        raise DataFetchError(source="liquidity", detail=str(e)) from e
+    def loader():
+        try:
+            from macro.liquidity.liquidity import get_snapshot
 
-    # Drop large DataFrame/Series objects that React doesn't need
-    # (composite_series and df_weekly are internal computation artifacts)
-    filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
-    result = serialize_response(filtered)
-    set_cached(short_cache, key, result)
-    return result
+            data = get_snapshot()
+        except Exception as e:
+            raise DataFetchError(source="liquidity", detail=str(e)) from e
+
+        # Drop large DataFrame/Series objects that React doesn't need
+        # (composite_series and df_weekly are internal computation artifacts)
+        filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
+        return serialize_response(filtered)
+
+    return get_or_set_cached(short_cache, key, loader)
 
 
 class LiquidityAnalyzeRequest(BaseModel):

@@ -14,8 +14,11 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from cachetools import TTLCache  # type: ignore[import-untyped]
 
@@ -24,6 +27,18 @@ logger = logging.getLogger("uvicorn.error")
 short_cache: TTLCache = TTLCache(maxsize=128, ttl=300)
 long_cache: TTLCache = TTLCache(maxsize=128, ttl=3600)
 _lock = threading.Lock()
+_singleflight_lock = threading.Lock()
+_MISSING = object()
+
+
+@dataclass(slots=True)
+class _SingleFlightState:
+    event: threading.Event
+    value: object = _MISSING
+    error: Exception | None = None
+
+
+_singleflight_by_key: dict[str, _SingleFlightState] = {}
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DISK_CACHE_ENABLED = os.getenv("API_DISK_CACHE_DISABLE", "").strip().lower() not in ("1", "true", "yes")
@@ -155,6 +170,89 @@ def set_cached(cache: TTLCache, key: str, value) -> None:
     with _lock:
         cache[key] = value
         _disk_set(cache, key, value)
+
+
+def _singleflight_key(cache: TTLCache, key: str) -> str:
+    return f"{id(cache)}::{key}"
+
+
+def _get_or_set_cached_with_status(
+    cache: TTLCache,
+    key: str,
+    loader: Callable[[], Any],
+    *,
+    force_refresh: bool = False,
+    wait_timeout_s: float = 120,
+) -> tuple[Any, str]:
+    if not force_refresh:
+        cached = get_cached(cache, key)
+        if cached is not None:
+            return cached, "hit"
+
+    flight_key = _singleflight_key(cache, key)
+    with _singleflight_lock:
+        state = _singleflight_by_key.get(flight_key)
+        if state is None:
+            state = _SingleFlightState(event=threading.Event())
+            _singleflight_by_key[flight_key] = state
+            owner = True
+        else:
+            owner = False
+
+    if owner:
+        status = "refresh" if force_refresh else "miss_fetch"
+        try:
+            value = loader()
+            set_cached(cache, key, value)
+            state.value = value
+            return value, status
+        except Exception as exc:
+            state.error = exc
+            raise
+        finally:
+            state.event.set()
+            with _singleflight_lock:
+                _singleflight_by_key.pop(flight_key, None)
+
+    waited = state.event.wait(timeout=wait_timeout_s)
+    if waited:
+        if state.error is not None:
+            raise state.error
+        if state.value is not _MISSING:
+            if force_refresh:
+                return state.value, "refresh"
+            return state.value, "miss_wait"
+
+    cached_after = get_cached(cache, key)
+    if cached_after is not None:
+        return cached_after, "refresh" if force_refresh else "miss_wait"
+
+    logger.warning(
+        "api cache singleflight wait timeout; running fallback loader key=%s force_refresh=%s",
+        key,
+        force_refresh,
+    )
+    value = loader()
+    set_cached(cache, key, value)
+    return value, "refresh" if force_refresh else "miss_refetch"
+
+
+def get_or_set_cached(
+    cache: TTLCache,
+    key: str,
+    loader: Callable[[], Any],
+    *,
+    force_refresh: bool = False,
+    wait_timeout_s: float = 120,
+):
+    value, _status = _get_or_set_cached_with_status(
+        cache,
+        key,
+        loader,
+        force_refresh=force_refresh,
+        wait_timeout_s=wait_timeout_s,
+    )
+    return value
 
 
 def stamp_fresh(result: dict) -> dict:

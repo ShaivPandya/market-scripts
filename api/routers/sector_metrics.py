@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import get_cached, long_cache, set_cached
+from api.cache import get_or_set_cached, long_cache
 from api.exceptions import ConfigurationError, DataFetchError, SnapshotUnavailableError
 from api.serializers import serialize_value
 from api.snapshot_keys import SNAPSHOT_SECTOR_METRICS
@@ -17,34 +17,31 @@ router = APIRouter()
 @router.get("/sector-metrics")
 def get_sector_metrics():
     key = "sector_metrics"
-    cached = get_cached(long_cache, key)
-    if cached is not None:
-        return normalize_sector_metrics_payload(cached)
-    snapshot = get_snapshot_response(SNAPSHOT_SECTOR_METRICS)
-    if snapshot is not None:
-        snapshot = normalize_sector_metrics_payload(snapshot)
-        set_cached(long_cache, key, snapshot)
-        return snapshot
-    if snapshots_required():
-        raise SnapshotUnavailableError(SNAPSHOT_SECTOR_METRICS)
-    try:
-        from equities.sector_metrics.sector_metrics import get_data
 
-        data = get_data()
-    except Exception as e:
-        raise DataFetchError(source="sector_metrics", detail=str(e)) from e
+    def loader():
+        snapshot = get_snapshot_response(SNAPSHOT_SECTOR_METRICS)
+        if snapshot is not None:
+            return normalize_sector_metrics_payload(snapshot)
+        if snapshots_required():
+            raise SnapshotUnavailableError(SNAPSHOT_SECTOR_METRICS)
+        try:
+            from equities.sector_metrics.sector_metrics import get_data
 
-    normalized = normalize_sector_metrics_payload(data)
-    weights_df = normalized.get("weights_df")
-    result = {
-        "weights_df": weights_df if isinstance(weights_df, list) else [],
-        "d_1m": data.get("d_1m"),
-        "d_3m": data.get("d_3m"),
-        "d_6m": data.get("d_6m"),
-        "timestamp": serialize_value(data.get("timestamp")),
-    }
-    set_cached(long_cache, key, result)
-    return result
+            data = get_data()
+        except Exception as e:
+            raise DataFetchError(source="sector_metrics", detail=str(e)) from e
+
+        normalized = normalize_sector_metrics_payload(data)
+        weights_df = normalized.get("weights_df")
+        return {
+            "weights_df": weights_df if isinstance(weights_df, list) else [],
+            "d_1m": data.get("d_1m"),
+            "d_3m": data.get("d_3m"),
+            "d_6m": data.get("d_6m"),
+            "timestamp": serialize_value(data.get("timestamp")),
+        }
+
+    return normalize_sector_metrics_payload(get_or_set_cached(long_cache, key, loader))
 
 
 class SectorMetricsAnalyzeRequest(BaseModel):

@@ -366,8 +366,10 @@ def test_signal_aggregator_tool_dispatch(monkeypatch):
         }
 
     monkeypatch.setattr("api.signal_aggregator.build_signal_aggregator", fake_build)
-    monkeypatch.setattr("api.agent_tools.get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr("api.agent_tools.set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr("api.cache.get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr("api.cache.set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr("api.signal_snapshot.get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
+    monkeypatch.setattr("api.snapshot_store.snapshots_required", lambda: False)
 
     raw = execute_tool(
         "get_signal_aggregator",

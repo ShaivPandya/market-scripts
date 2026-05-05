@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import get_cached, long_cache, set_cached
+from api.cache import get_or_set_cached, long_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
@@ -24,35 +24,33 @@ def get_positioning_summary(
 ):
     resolved_token = app_token or os.environ.get("SODA_APP_TOKEN") or None
     key = f"positioning_summary:{instruments}:{start}:{end}:{groups}:{z_window}:{force_threshold}"
-    cached = get_cached(long_cache, key)
-    if cached is not None:
-        return cached
-    try:
-        from macro.positioning.positioning import (
-            DATASETS,
-            DEFAULT_DOMAIN,
-            INSTRUMENTS,
-            fetch_multiple_instruments,
-        )
 
-        instrument_list = [i.strip() for i in instruments.split(",") if i.strip()]
-        results = fetch_multiple_instruments(
-            domain=DEFAULT_DOMAIN,
-            dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
-            app_token=resolved_token,
-            instruments=instrument_list,
-            start=start,
-            end=end,
-            groups=groups or None,
-            z_window=z_window,
-            force_threshold=force_threshold,
-        )
-    except Exception as e:
-        raise DataFetchError(source="positioning", detail=str(e)) from e
+    def loader():
+        try:
+            from macro.positioning.positioning import (
+                DATASETS,
+                DEFAULT_DOMAIN,
+                fetch_multiple_instruments,
+            )
 
-    result = serialize_value(results)
-    set_cached(long_cache, key, result)
-    return result
+            instrument_list = [i.strip() for i in instruments.split(",") if i.strip()]
+            results = fetch_multiple_instruments(
+                domain=DEFAULT_DOMAIN,
+                dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
+                app_token=resolved_token,
+                instruments=instrument_list,
+                start=start,
+                end=end,
+                groups=groups or None,
+                z_window=z_window,
+                force_threshold=force_threshold,
+            )
+        except Exception as e:
+            raise DataFetchError(source="positioning", detail=str(e)) from e
+
+        return serialize_value(results)
+
+    return get_or_set_cached(long_cache, key, loader)
 
 
 @router.get("/positioning/timeseries")
@@ -67,29 +65,28 @@ def get_positioning_timeseries(
 ):
     resolved_token = app_token or os.environ.get("SODA_APP_TOKEN") or None
     key = f"positioning_ts:{market}:{start}:{end}:{groups}:{z_window}:{force_threshold}"
-    cached = get_cached(long_cache, key)
-    if cached is not None:
-        return cached
-    try:
-        from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_market_timeseries
 
-        df = fetch_market_timeseries(
-            domain=DEFAULT_DOMAIN,
-            dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
-            app_token=resolved_token,
-            market_exact=market,
-            start=start,
-            end=end,
-            groups=groups or None,
-            z_window=z_window,
-            force_threshold=force_threshold,
-        )
-    except Exception as e:
-        raise DataFetchError(source="positioning", detail=str(e)) from e
+    def loader():
+        try:
+            from macro.positioning.positioning import DATASETS, DEFAULT_DOMAIN, fetch_market_timeseries
 
-    result = serialize_dataframe(df.reset_index(drop=True))
-    set_cached(long_cache, key, result)
-    return result
+            df = fetch_market_timeseries(
+                domain=DEFAULT_DOMAIN,
+                dataset_id=DATASETS.get("tff_futures_only", "tff_futures_only"),
+                app_token=resolved_token,
+                market_exact=market,
+                start=start,
+                end=end,
+                groups=groups or None,
+                z_window=z_window,
+                force_threshold=force_threshold,
+            )
+        except Exception as e:
+            raise DataFetchError(source="positioning", detail=str(e)) from e
+
+        return serialize_dataframe(df.reset_index(drop=True))
+
+    return get_or_set_cached(long_cache, key, loader)
 
 
 @router.get("/positioning/instruments")

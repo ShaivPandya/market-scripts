@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 
@@ -135,8 +138,7 @@ def test_signal_aggregator_endpoint_uses_query_params(auth_client, monkeypatch):
             },
         }
 
-    monkeypatch.setattr(signal_router, "get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(signal_router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
     monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
@@ -182,8 +184,10 @@ def test_signal_aggregator_endpoint_force_refresh_bypasses_snapshot(auth_client,
     def fail_cache_read(*args, **kwargs):
         raise AssertionError("cache should not be read")
 
-    monkeypatch.setattr(signal_router, "get_cached", fail_cache_read)
-    monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
+    import api.cache as cache_mod
+
+    monkeypatch.setattr(cache_mod, "get_cached", fail_cache_read)
+    monkeypatch.setattr(cache_mod, "set_cached", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         signal_router,
         "get_signal_aggregator_snapshot_or_module_response",
@@ -205,14 +209,67 @@ def test_signal_aggregator_endpoint_force_refresh_bypasses_snapshot(auth_client,
     assert calls == ["SP500,EUR"]
 
 
+def test_signal_aggregator_force_refresh_coalesces(monkeypatch):
+    import api.cache as cache_mod
+    import api.routers.signal_aggregator as signal_router
+
+    monkeypatch.setattr(cache_mod, "_DISK_CACHE_ENABLED", False)
+    monkeypatch.setattr(
+        signal_router,
+        "get_signal_aggregator_snapshot_or_module_response",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("snapshot should not be read")),
+    )
+
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def fake_build(lookback_weeks: int, positioning_instruments: str, include_raw_modules: bool):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        time.sleep(0.05)
+        return {
+            "status": "ok",
+            "as_of": "2026-03-07",
+            "regime": {"label": "risk-on", "score": 20.0, "confidence": 1.0, "history_percentile": None},
+            "weights": {"configured": {}, "effective": {}},
+            "factors": [],
+            "module_status": {},
+            "failed_modules": [],
+            "history": {
+                "frequency": "weekly",
+                "lookback_weeks": lookback_weeks,
+                "coverage": {},
+                "series": [],
+                "episodes": [],
+            },
+        }
+
+    monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
+
+    def request():
+        return signal_router.get_signal_aggregator(
+            lookback_weeks=111,
+            positioning_instruments="SP500,EUR",
+            include_raw_modules=False,
+            force_refresh=True,
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _idx: request(), range(4)))
+
+    assert calls == 1
+    assert [result["history"]["lookback_weeks"] for result in results] == [111, 111, 111, 111]
+
+
 def test_signal_aggregator_endpoint_cache_key_includes_positioning(auth_client, monkeypatch):
     import api.routers.signal_aggregator as signal_router
 
     cache_keys: list[str] = []
 
-    def fake_get_cached(_cache, key: str):
+    def fake_get_or_set_cached(_cache, key: str, loader, **_kwargs):
         cache_keys.append(key)
-        return None
+        return loader()
 
     def fake_build(lookback_weeks: int, positioning_instruments: str, include_raw_modules: bool):
         return {
@@ -232,8 +289,7 @@ def test_signal_aggregator_endpoint_cache_key_includes_positioning(auth_client, 
             },
         }
 
-    monkeypatch.setattr(signal_router, "get_cached", fake_get_cached)
-    monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(signal_router, "get_or_set_cached", fake_get_or_set_cached)
     monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 
@@ -263,8 +319,7 @@ def test_signal_aggregator_endpoint_degraded_payload(auth_client, monkeypatch):
             "history": {"frequency": "weekly", "lookback_weeks": 156, "coverage": {}, "series": [], "episodes": []},
         }
 
-    monkeypatch.setattr(signal_router, "get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(signal_router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(signal_router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
     monkeypatch.setattr(signal_router, "get_signal_aggregator_snapshot_or_module_response", lambda **kwargs: None)
     monkeypatch.setattr(signal_router, "build_signal_aggregator", fake_build)
 

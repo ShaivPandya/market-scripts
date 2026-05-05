@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.cache import get_cached, set_cached, short_cache
+from api.cache import get_or_set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError, SnapshotUnavailableError
 from api.serializers import serialize_response
 from api.snapshot_keys import SNAPSHOT_MARKET_BREADTH, SNAPSHOT_TOP50_BREADTH
@@ -17,83 +17,77 @@ router = APIRouter()
 @router.get("/market-breadth")
 def get_market_breadth():
     key = "market_breadth"
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return cached
-    snapshot = get_snapshot_response(SNAPSHOT_MARKET_BREADTH)
-    if snapshot is not None:
-        set_cached(short_cache, key, snapshot)
-        return snapshot
-    if snapshots_required():
-        raise SnapshotUnavailableError(SNAPSHOT_MARKET_BREADTH)
-    try:
-        from equities.market_technicals.market_breadth import get_data
 
-        data = get_data()
-    except Exception as e:
-        raise DataFetchError(source="market_breadth", detail=str(e)) from e
-    result = serialize_response(data)
-    set_cached(short_cache, key, result)
-    return result
+    def loader():
+        snapshot = get_snapshot_response(SNAPSHOT_MARKET_BREADTH)
+        if snapshot is not None:
+            return snapshot
+        if snapshots_required():
+            raise SnapshotUnavailableError(SNAPSHOT_MARKET_BREADTH)
+        try:
+            from equities.market_technicals.market_breadth import get_data
+
+            data = get_data()
+        except Exception as e:
+            raise DataFetchError(source="market_breadth", detail=str(e)) from e
+        return serialize_response(data)
+
+    return get_or_set_cached(short_cache, key, loader)
 
 
 @router.get("/top50-breadth")
 def get_top50_breadth():
     key = "top50_breadth"
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return cached
-    snapshot = get_snapshot_response(SNAPSHOT_TOP50_BREADTH)
-    if snapshot is not None:
-        set_cached(short_cache, key, snapshot)
-        return snapshot
-    if snapshots_required():
-        raise SnapshotUnavailableError(SNAPSHOT_TOP50_BREADTH)
-    try:
-        from equities.market_technicals.top50_breadth import get_data
 
-        data = get_data()
-    except Exception as e:
-        raise DataFetchError(source="top50_breadth", detail=str(e)) from e
-    result = serialize_response(data)
-    set_cached(short_cache, key, result)
-    return result
+    def loader():
+        snapshot = get_snapshot_response(SNAPSHOT_TOP50_BREADTH)
+        if snapshot is not None:
+            return snapshot
+        if snapshots_required():
+            raise SnapshotUnavailableError(SNAPSHOT_TOP50_BREADTH)
+        try:
+            from equities.market_technicals.top50_breadth import get_data
+
+            data = get_data()
+        except Exception as e:
+            raise DataFetchError(source="top50_breadth", detail=str(e)) from e
+        return serialize_response(data)
+
+    return get_or_set_cached(short_cache, key, loader)
 
 
 @router.get("/price-volume-signals")
 def get_price_volume_signals():
     key = "price_volume_signals"
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return cached
-    try:
-        from equities.market_technicals.price_volume_signals import get_data
 
-        data = get_data()
-    except Exception as e:
-        raise DataFetchError(source="price_volume_signals", detail=str(e)) from e
-    result = serialize_response(data)
-    set_cached(short_cache, key, result)
-    return result
+    def loader():
+        try:
+            from equities.market_technicals.price_volume_signals import get_data
+
+            data = get_data()
+        except Exception as e:
+            raise DataFetchError(source="price_volume_signals", detail=str(e)) from e
+        return serialize_response(data)
+
+    return get_or_set_cached(short_cache, key, loader)
 
 
 @router.get("/vix-term-structure")
 def get_vix_term_structure():
     # Keep this cache key distinct from agent-tool caches with different defaults (e.g., tail=10).
     key = "vix_term_structure:ui:tail252:start400:signals20"
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return cached
-    try:
-        from equities.market_technicals.vix_term_structure import get_data
 
-        start = (date.today() - timedelta(days=400)).isoformat()
-        data = get_data(tail=252, signals_count=20, start=start)
-    except Exception as e:
-        raise DataFetchError(source="vix_term_structure", detail=str(e)) from e
-    result = serialize_response(data)
-    set_cached(short_cache, key, result)
-    return result
+    def loader():
+        try:
+            from equities.market_technicals.vix_term_structure import get_data
+
+            start = (date.today() - timedelta(days=400)).isoformat()
+            data = get_data(tail=252, signals_count=20, start=start)
+        except Exception as e:
+            raise DataFetchError(source="vix_term_structure", detail=str(e)) from e
+        return serialize_response(data)
+
+    return get_or_set_cached(short_cache, key, loader)
 
 
 class MarketTechnicalsAnalyzeRequest(BaseModel):

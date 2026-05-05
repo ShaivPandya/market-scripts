@@ -4,8 +4,7 @@ from __future__ import annotations
 def test_market_breadth_route_uses_snapshot(auth_client, monkeypatch):
     import api.routers.market_technicals as router
 
-    monkeypatch.setattr(router, "get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
     monkeypatch.setattr(
         router,
         "get_snapshot_response",
@@ -22,8 +21,7 @@ def test_market_breadth_route_uses_snapshot(auth_client, monkeypatch):
 def test_sector_metrics_route_uses_snapshot(auth_client, monkeypatch):
     import api.routers.sector_metrics as router
 
-    monkeypatch.setattr(router, "get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
     monkeypatch.setattr(
         router,
         "get_snapshot_response",
@@ -41,8 +39,7 @@ def test_sector_metrics_route_uses_snapshot(auth_client, monkeypatch):
 def test_sector_metrics_route_repairs_legacy_snapshot_without_sector(auth_client, monkeypatch):
     import api.routers.sector_metrics as router
 
-    monkeypatch.setattr(router, "get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
     monkeypatch.setattr(
         router,
         "get_snapshot_response",
@@ -59,7 +56,7 @@ def test_sector_metrics_route_repairs_legacy_snapshot_without_sector(auth_client
 def test_sector_metrics_route_fails_fast_when_snapshot_required(auth_client, monkeypatch):
     import api.routers.sector_metrics as router
 
-    monkeypatch.setattr(router, "get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
     monkeypatch.setattr(router, "get_snapshot_response", lambda _key: None)
     monkeypatch.setattr(router, "snapshots_required", lambda: True)
     monkeypatch.setattr(
@@ -76,8 +73,7 @@ def test_sector_metrics_route_fails_fast_when_snapshot_required(auth_client, mon
 def test_signal_aggregator_route_uses_snapshot(auth_client, monkeypatch):
     import api.routers.signal_aggregator as router
 
-    monkeypatch.setattr(router, "get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
     monkeypatch.setattr(
         router,
         "get_signal_aggregator_snapshot_or_module_response",
@@ -106,8 +102,7 @@ def test_signal_aggregator_route_falls_back_to_module_snapshots(auth_client, mon
     import api.routers.signal_aggregator as router
     import api.signal_snapshot as signal_snapshot
 
-    monkeypatch.setattr(router, "get_cached", lambda *args, **kwargs: None)
-    monkeypatch.setattr(router, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(router, "get_or_set_cached", lambda _cache, _key, loader, **_kwargs: loader())
 
     def with_meta(payload, key):
         return {

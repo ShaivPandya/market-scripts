@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.cache import get_cached, set_cached, short_cache
+from api.cache import get_or_set_cached, short_cache
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_response
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
@@ -14,19 +14,18 @@ router = APIRouter()
 @router.get("/labor-market")
 def get_labor_market():
     key = "labor_market"
-    cached = get_cached(short_cache, key)
-    if cached is not None:
-        return cached
-    try:
-        from macro.labor_market.labor_market import get_data
 
-        data = get_data()
-    except Exception as e:
-        raise DataFetchError(source="labor_market", detail=str(e)) from e
+    def loader():
+        try:
+            from macro.labor_market.labor_market import get_data
 
-    result = serialize_response(data)
-    set_cached(short_cache, key, result)
-    return result
+            data = get_data()
+        except Exception as e:
+            raise DataFetchError(source="labor_market", detail=str(e)) from e
+
+        return serialize_response(data)
+
+    return get_or_set_cached(short_cache, key, loader)
 
 
 class LaborMarketAnalyzeRequest(BaseModel):

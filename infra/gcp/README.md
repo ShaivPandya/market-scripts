@@ -109,6 +109,13 @@ available for manual/admin use, and can be scheduled with
 but the default deployment does not schedule it because the warmer executes in a
 separate Cloud Run Job and does not share the API service's process cache.
 
+Cloud Run services and jobs also set `API_DISK_CACHE_DISABLE=true` through the
+shared deployment environment. This disables only `api.cache`'s generic JSON
+disk cache for route-level `short_cache` / `long_cache` entries; it does not
+disable module-specific durable caches, GCS/Postgres state, or market snapshot
+storage. Local development keeps the generic disk cache enabled unless that env
+var is set explicitly.
+
 Cloud Scheduler should send both `X-Scheduler-Secret: $SCHEDULER_SECRET` and
 `X-Api-Proxy-Secret: $API_PROXY_SECRET` when it calls the API service directly.
 The setup script pulls both values from Secret Manager.
