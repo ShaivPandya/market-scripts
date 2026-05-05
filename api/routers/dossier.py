@@ -86,6 +86,28 @@ def get_dossier(ticker: str):
         except Exception:
             pass
 
+    # Management quality content
+    management_quality_content = None
+    try:
+        from portfolio.management_quality_content import (
+            management_quality_exists,
+            read_management_quality,
+        )
+
+        if management_quality_exists(ticker):
+            management_quality_content = read_management_quality(ticker)
+    except Exception:
+        pass
+
+    management_quality_parsed = None
+    if management_quality_content:
+        try:
+            from api.routers.management_quality import parse_management_quality_markdown
+
+            management_quality_parsed = parse_management_quality_markdown(management_quality_content)
+        except Exception:
+            pass
+
     # Evaluations from thesis_db
     evaluations = []
     try:
@@ -124,6 +146,10 @@ def get_dossier(ticker: str):
         "position": position,
         "overview_content": overview_content,
         "overview_parsed": overview_parsed,
+        "management_quality": {
+            "content": management_quality_content,
+            "parsed": management_quality_parsed,
+        },
         "thesis": {
             "meta": thesis_meta,
             "content": thesis_content,

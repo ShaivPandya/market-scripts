@@ -2,6 +2,7 @@ import axios from "axios"
 
 import { getAuthMode } from "@/lib/authMode"
 import type { DecisionState, DecisionStateFields, EffectScope } from "@/lib/decisionState"
+import type { ParsedManagementQuality } from "@/lib/managementQualityTypes"
 import type { ParsedOverview } from "@/lib/overviewTypes"
 
 const client = axios.create({
@@ -538,6 +539,27 @@ export const uploadOverviewDocument = (ticker: string, file: File) => {
     .post("/overview/generate", formData, { timeout: 120_000 })
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 }
+
+// --- Management Quality ---
+
+export const saveManagementQualityContent = (ticker: string, content: string, options?: StagedMutationOptions) =>
+  client
+    .put(`/management-quality/${encodeURIComponent(ticker)}`, { content, ...options })
+    .then(r => r.data as StagedMutationResponse)
+
+export const uploadManagementQualityDocument = (ticker: string, file: File) => {
+  const formData = new FormData()
+  formData.append("ticker", ticker)
+  formData.append("file", file)
+  return client
+    .post("/management-quality/generate", formData, { timeout: 120_000 })
+    .then(r => r.data as StagedMutationResponse)
+}
+
+export const fetchManagementQuality = (ticker: string) =>
+  client
+    .get(`/management-quality/${encodeURIComponent(ticker)}`)
+    .then(r => r.data as { status: "ok"; ticker: string; content: string; parsed: ParsedManagementQuality | null })
 
 // --- Thesis metadata types ---
 

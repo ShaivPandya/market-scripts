@@ -40,6 +40,7 @@ SOURCE_DBS: dict[str, str] = {
 OBJECT_DIRS: tuple[str, ...] = (
     "investment_theses",
     "investment_overviews",
+    "investment_management_quality",
     "outputs",
     "auto_report/outputs",
     "data_cache/aluminum/processed",
@@ -1264,6 +1265,7 @@ class StateMigrator:
 
         add_files("investment_theses", lambda rel: f"live/theses/{rel.as_posix()}")
         add_files("investment_overviews", lambda rel: f"live/overviews/{rel.as_posix()}")
+        add_files("investment_management_quality", lambda rel: f"live/management_quality/{rel.as_posix()}")
         add_files("outputs", lambda rel: f"live/reports/weekly/{rel.as_posix()}")
         add_files("auto_report/outputs", lambda rel: f"live/reports/daily/{rel.as_posix()}")
         add_files("data_cache/aluminum/processed", lambda rel: f"live/snapshots/aluminum/{rel.as_posix()}")

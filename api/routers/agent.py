@@ -738,6 +738,8 @@ def _select_tool_names(user_text: str) -> list[str]:
         add("get_central_banks")
     if "industry" in text or "companies saying" in text or "management" in text:
         add("get_industry_monitor")
+    if "management quality" in text or "management team" in text or "owner mindset" in text:
+        add("get_portfolio", "get_dossier", "search_knowledge_base")
     if "breakout" in text:
         add("get_breakout")
     if re.search(r"\b(thesis|catalyst|kill condition|dossier|conviction)\b", text):

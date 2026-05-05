@@ -163,7 +163,12 @@ def _read_state_text(folder: str, ticker: str) -> tuple[str | None, str | None]:
         from paths import PROJECT_ROOT
 
         local_path = PROJECT_ROOT / folder / f"{ticker}.md"
-        gcs_key = f"live/{'overviews' if folder == 'investment_overviews' else 'theses'}/{ticker}.md"
+        gcs_prefixes = {
+            "investment_overviews": "live/overviews",
+            "investment_theses": "live/theses",
+            "investment_management_quality": "live/management_quality",
+        }
+        gcs_key = f"{gcs_prefixes.get(folder, folder)}/{ticker}.md"
         if not exists_text(local_path, gcs_key):
             return None, None
         return read_text(local_path, gcs_key, encoding="utf-8"), str(local_path)
@@ -190,6 +195,7 @@ def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
     ticker = str(idea["ticker"]).upper()
     overview, overview_error = _read_state_text("investment_overviews", ticker)
     thesis, thesis_error = _read_state_text("investment_theses", ticker)
+    management_quality, management_quality_error = _read_state_text("investment_management_quality", ticker)
 
     portfolio = _safe_tool("get_portfolio", {"include_hedges": True})
     signal_aggregator = _safe_tool("get_signal_aggregator", {"include_history": False, "lookback_weeks": 156})
@@ -210,12 +216,15 @@ def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
         tool_errors.append(overview_error)
     if thesis_error:
         tool_errors.append(thesis_error)
+    if management_quality_error:
+        tool_errors.append(management_quality_error)
 
     return {
         "idea": idea,
         "ticker": ticker,
         "overview_content": _safe_text(overview),
         "thesis_content": _safe_text(thesis),
+        "management_quality_content": _safe_text(management_quality),
         "portfolio": portfolio,
         "signal_aggregator": signal_aggregator,
         "industry_monitor": industry_monitor,
@@ -240,6 +249,7 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
     notes = str(idea.get("user_notes") or "").strip()
     overview = str(context.get("overview_content") or "").strip()
     thesis = str(context.get("thesis_content") or "").strip()
+    management_quality = str(context.get("management_quality_content") or "").strip()
     tool_errors = list(context.get("tool_errors") or [])
 
     missing: list[dict[str, Any]] = []
@@ -265,6 +275,14 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
                 "field": "thesis",
                 "severity": "medium",
                 "reason": "No full thesis file is available for this non-position idea.",
+            }
+        )
+    if not management_quality:
+        missing.append(
+            {
+                "field": "management_quality",
+                "severity": "medium",
+                "reason": "No explicit management-quality assessment is available for this idea.",
             }
         )
     if context.get("industry_monitor", {}).get("ok") is not True:
@@ -305,9 +323,13 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
             "Business quality is not fully scoreable without a complete overview and thesis.",
         ),
         "management_quality": _factor(
-            45 if not overview else 55,
-            "incomplete",
-            "Management quality requires explicit track record, capital allocation, and transcript evidence.",
+            62 if management_quality else 45,
+            "reviewable" if management_quality else "incomplete",
+            (
+                "Management quality is supported by the uploaded management-quality assessment."
+                if management_quality
+                else "Management quality requires explicit track record, capital allocation, and transcript evidence."
+            ),
         ),
         "valuation_asymmetry": _factor(
             45,
@@ -613,6 +635,9 @@ def _idea_detail(idea_id: int) -> dict[str, Any]:
         raise NotFoundError("Investment idea", str(idea_id))
     overview, overview_error = _read_state_text("investment_overviews", str(idea["ticker"]).upper())
     thesis, thesis_error = _read_state_text("investment_theses", str(idea["ticker"]).upper())
+    management_quality, management_quality_error = _read_state_text(
+        "investment_management_quality", str(idea["ticker"]).upper()
+    )
     overview_parsed = None
     if overview:
         try:
@@ -621,6 +646,14 @@ def _idea_detail(idea_id: int) -> dict[str, Any]:
             overview_parsed = parse_overview_markdown(overview)
         except Exception:
             overview_parsed = None
+    management_quality_parsed = None
+    if management_quality:
+        try:
+            from api.routers.management_quality import parse_management_quality_markdown
+
+            management_quality_parsed = parse_management_quality_markdown(management_quality)
+        except Exception:
+            management_quality_parsed = None
     return {
         "idea": idea,
         "evaluations": core_db.get_idea_evaluations(idea_id, limit=20),
@@ -632,6 +665,10 @@ def _idea_detail(idea_id: int) -> dict[str, Any]:
             "thesis_present": bool(thesis),
             "thesis_content": _safe_text(thesis, max_len=120_000),
             "thesis_error": thesis_error,
+            "management_quality_present": bool(management_quality),
+            "management_quality_content": _safe_text(management_quality, max_len=120_000),
+            "management_quality_parsed": management_quality_parsed,
+            "management_quality_error": management_quality_error,
         },
     }
 

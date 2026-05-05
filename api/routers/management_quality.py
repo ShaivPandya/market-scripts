@@ -1,0 +1,396 @@
+"""Management quality API - generate, save, and retrieve management assessment markdown."""
+
+from __future__ import annotations
+
+import re
+
+from fastapi import APIRouter, File, Form, UploadFile
+from pydantic import BaseModel, Field
+
+from api.action_execution import stage_api_action
+from api.exceptions import DataFetchError, NotFoundError, ValidationError
+from api.request_limits import read_upload_file_bytes
+from api.routers.portfolio_edit import _TICKER_RE
+from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
+from portfolio import management_quality_content
+
+router = APIRouter()
+
+MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
+_MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
+
+_REQ_SECTIONS = (
+    "## Executive Summary",
+    "## Management Scorecard",
+    "## Most Impressive Accomplishments",
+    "## Biggest Setbacks and Responses",
+    "## Chronology / Detail",
+    "## Evidence Notes",
+)
+
+_SYSTEM_PROMPT = """You are a buy-side investment analyst evaluating management quality.
+Extract a structured management-quality assessment from the source document and output it as markdown.
+
+Output only markdown and follow this structure exactly:
+
+# {ticker} Management Quality
+
+## Executive Summary
+- **Overall Rating**: Strong, Mixed, Weak, or Insufficient evidence
+- **Bottom Line**: 2-4 sentence assessment of management quality.
+- **Owner Mindset**: Strong, Mixed, Weak, or Insufficient evidence - concise evidence-backed explanation.
+- **Business Value Understanding**: Strong, Mixed, Weak, or Insufficient evidence - concise evidence-backed explanation.
+- **Follow-through / Character**: Strong, Mixed, Weak, or Insufficient evidence - concise evidence-backed explanation.
+
+## Management Scorecard
+| Question | Rating | Evidence |
+|----------|--------|----------|
+| Do managers think and act like owners? | Strong/Mixed/Weak/Insufficient evidence | concise evidence |
+| Do managers understand what drives business value? | Strong/Mixed/Weak/Insufficient evidence | concise evidence |
+| Did they do what they said they would do? | Strong/Mixed/Weak/Insufficient evidence | concise evidence |
+
+## Most Impressive Accomplishments
+- **Accomplishment title (period)**: What management accomplished, why it mattered, and source/citation markers.
+
+## Biggest Setbacks and Responses
+- **Setback title (period)**: What went wrong. **Response**: Handled well, Mixed, Handled poorly, or Too early - how management dealt with it.
+
+## Chronology / Detail
+### Period or event
+- **Said**: What management said it would do.
+- **Did**: What later happened.
+- **Assessment**: Whether management followed through and how well it responded.
+
+## Evidence Notes
+- Preserve compact citations, source markers, and source limitations where present.
+
+Evaluation standard:
+1. Owner mindset: capital allocation, acquisitions, buybacks, options, incentives, insider alignment, shareholder treatment.
+2. Business value understanding: grasp of core business, economic drivers, reinvestment discipline, unit economics, competitive position.
+3. Follow-through / character: whether management did what it said it would do, admitted misses, and acted promptly.
+
+Use source-backed facts only. Do not invent missing evidence. Preserve compact citations/source markers from the source when useful. Remove navigation lists, boilerplate, and citation artifacts that do not help audit the claim."""
+
+_PDF_USER_PROMPT = """Use the attached PDF to write the management-quality assessment markdown.
+Keep the aggregate summary brief and put detailed chronology below it.
+Preserve compact citations/source markers when present."""
+
+_MARKDOWN_USER_PROMPT = """Use the uploaded markdown below to write the management-quality assessment markdown.
+Restructure the source into the exact schema from the system prompt.
+Keep the aggregate summary brief and put detailed chronology below it.
+Preserve compact citations/source markers when present, but remove navigation lists and source metadata that are not useful to the dossier UI."""
+
+
+def _normalize_ticker(raw_ticker: str) -> str:
+    return raw_ticker.strip().upper()
+
+
+def _validate_ticker(ticker: str) -> None:
+    if not ticker:
+        raise ValidationError("Ticker cannot be empty.")
+    if not _TICKER_RE.match(ticker):
+        raise ValidationError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
+
+
+def _strip_outer_markdown_fence(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+    cleaned = re.sub(r"^```(?:markdown|md)?\s*", "", cleaned, flags=re.IGNORECASE)
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
+def _normalize_management_quality_markdown(ticker: str, content: str) -> str:
+    cleaned = _strip_outer_markdown_fence(content)
+    lines = cleaned.splitlines()
+    if lines and lines[0].startswith("# "):
+        lines[0] = f"# {ticker} Management Quality"
+        cleaned = "\n".join(lines).strip()
+    elif cleaned:
+        cleaned = f"# {ticker} Management Quality\n\n{cleaned}"
+    else:
+        cleaned = f"# {ticker} Management Quality"
+
+    for section in _REQ_SECTIONS:
+        if section not in cleaned:
+            cleaned += f"\n\n{section}\n- Insufficient evidence in source document."
+    return cleaned.strip() + "\n"
+
+
+def _decode_markdown_upload(markdown_bytes: bytes) -> str:
+    try:
+        content = markdown_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise ValidationError("Markdown file must be UTF-8 encoded.") from e
+    if not content.strip():
+        raise ValidationError("Markdown file is empty.")
+    return content
+
+
+def _llm_error_message(exc: Exception) -> str:
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return error["message"]
+        if isinstance(body.get("message"), str):
+            return body["message"]
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            data = response.json()
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict) and isinstance(error.get("message"), str):
+                return error["message"]
+            if isinstance(data.get("message"), str):
+                return data["message"]
+    return str(exc)
+
+
+def _finish_llm_management_quality(ticker: str, generated: str) -> str:
+    if not generated:
+        raise DataFetchError(source="llm", detail="LLM returned empty management-quality output.")
+    return _normalize_management_quality_markdown(ticker, generated)
+
+
+def _call_llm_management_quality_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
+    generated, _citations, _response = call_llm_pdf_text(
+        pdf_bytes=pdf_bytes,
+        prompt=_PDF_USER_PROMPT,
+        model=MODEL_MID,
+        api_key=None,
+        max_tokens=8192,
+        system=_SYSTEM_PROMPT.format(ticker=ticker),
+        filename=f"{ticker}-management-quality.pdf",
+    )
+    return _finish_llm_management_quality(ticker, generated)
+
+
+def _call_llm_management_quality_markdown(*, ticker: str, markdown: str) -> str:
+    prompt = f"{_MARKDOWN_USER_PROMPT}\n\n<uploaded_markdown>\n{markdown}\n</uploaded_markdown>"
+    generated, _citations, _response = call_llm_text(
+        prompt=prompt,
+        model=MODEL_MID,
+        api_key=None,
+        max_tokens=8192,
+        system=_SYSTEM_PROMPT.format(ticker=ticker),
+    )
+    return _finish_llm_management_quality(ticker, generated)
+
+
+def _split_sections(content: str) -> dict[str, str]:
+    sections: dict[str, str] = {}
+    current_key: str | None = None
+    current_lines: list[str] = []
+    for line in content.splitlines():
+        if line.startswith("## "):
+            if current_key is not None:
+                sections[current_key] = "\n".join(current_lines).strip()
+            current_key = line.lstrip("#").strip().lower()
+            current_lines = []
+        elif current_key is not None:
+            current_lines.append(line)
+    if current_key is not None:
+        sections[current_key] = "\n".join(current_lines).strip()
+    return sections
+
+
+def _split_rating_text(raw: str) -> dict[str, str | None]:
+    text = raw.strip()
+    match = re.match(r"^(Strong|Mixed|Weak|Insufficient evidence)\s*(?:[—–-]\s*(.+))?$", text, flags=re.I)
+    if not match:
+        return {"rating": None, "text": text}
+    rating = match.group(1).strip()
+    return {"rating": rating[0].upper() + rating[1:].lower(), "text": (match.group(2) or "").strip() or None}
+
+
+def _parse_summary(text: str) -> dict | None:
+    summary: dict[str, object] = {}
+    question_map = {
+        "owner mindset": "owner_mindset",
+        "business value understanding": "business_value_understanding",
+        "follow-through / character": "follow_through",
+        "follow-through": "follow_through",
+    }
+    for line in text.splitlines():
+        match = re.match(r"^\s*-\s*\*\*(.+?)\*\*:\s*(.+)", line)
+        if not match:
+            continue
+        label = match.group(1).strip()
+        value = match.group(2).strip()
+        label_key = label.lower()
+        if label_key == "overall rating":
+            summary["overall_rating"] = value
+        elif label_key == "bottom line":
+            summary["bottom_line"] = value
+        elif label_key in question_map:
+            summary[question_map[label_key]] = _split_rating_text(value)
+    return summary if summary else None
+
+
+def _parse_scorecard(text: str) -> list[dict] | None:
+    rows: list[dict] = []
+    for line in text.splitlines():
+        if "|" not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 3:
+            continue
+        if cells[0].lower() == "question" or re.match(r"^[-:]+$", cells[0]):
+            continue
+        rows.append({"question": cells[0], "rating": cells[1], "evidence": cells[2]})
+    return rows if rows else None
+
+
+def _parse_bullets(text: str) -> list[dict] | None:
+    rows: list[dict] = []
+    for line in text.splitlines():
+        match = re.match(r"^\s*-\s*(?:\*\*(.+?)\*\*:\s*)?(.+)", line)
+        if not match:
+            continue
+        rows.append({"title": (match.group(1) or "").strip() or None, "text": match.group(2).strip()})
+    return rows if rows else None
+
+
+def _parse_setbacks(text: str) -> list[dict] | None:
+    rows = _parse_bullets(text) or []
+    for row in rows:
+        body = str(row.get("text") or "")
+        response = re.search(
+            r"\*\*Response\*\*:\s*(Handled well|Mixed|Handled poorly|Too early)(?:\s*[—–-]\s*(.+))?",
+            body,
+            flags=re.I,
+        )
+        if response:
+            row["response_rating"] = response.group(1)
+            row["response_text"] = (response.group(2) or "").strip() or None
+    return rows if rows else None
+
+
+def parse_management_quality_markdown(content: str) -> dict | None:
+    if not content or not content.strip():
+        return None
+    sections = _split_sections(content)
+    result: dict = {}
+    try:
+        result["summary"] = _parse_summary(sections.get("executive summary", ""))
+    except Exception:
+        result["summary"] = None
+    try:
+        result["scorecard"] = _parse_scorecard(sections.get("management scorecard", ""))
+    except Exception:
+        result["scorecard"] = None
+    try:
+        result["accomplishments"] = _parse_bullets(sections.get("most impressive accomplishments", ""))
+    except Exception:
+        result["accomplishments"] = None
+    try:
+        result["setbacks"] = _parse_setbacks(sections.get("biggest setbacks and responses", ""))
+    except Exception:
+        result["setbacks"] = None
+    return result if any(v is not None for v in result.values()) else None
+
+
+@router.post("/management-quality/generate")
+async def generate_management_quality(
+    ticker: str = Form(...),  # noqa: B008 - FastAPI parameter declaration
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
+):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+
+    upload_bytes = await read_upload_file_bytes(file, limit_bytes=MAX_UPLOAD_SIZE_BYTES, limit_label="30 MiB")
+    if not upload_bytes:
+        raise ValidationError("Uploaded file is empty.")
+
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    filename = (file.filename or "").lower()
+    has_pdf_type = content_type == "application/pdf" or filename.endswith(".pdf")
+    has_pdf_signature = upload_bytes.startswith(b"%PDF-")
+    has_markdown_type = content_type in _MARKDOWN_CONTENT_TYPES or filename.endswith(".md")
+
+    if has_pdf_type or has_pdf_signature:
+        if not (has_pdf_type and has_pdf_signature):
+            raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+        try:
+            content = _call_llm_management_quality_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
+        except (ValidationError, DataFetchError):
+            raise
+        except Exception as e:
+            raise DataFetchError(
+                source="llm",
+                detail=f"Failed to generate management quality: {_llm_error_message(e)}",
+            ) from e
+    elif has_markdown_type:
+        markdown = _decode_markdown_upload(upload_bytes)
+        try:
+            content = _call_llm_management_quality_markdown(ticker=normalized_ticker, markdown=markdown)
+        except (ValidationError, DataFetchError):
+            raise
+        except Exception as e:
+            raise DataFetchError(
+                source="llm",
+                detail=f"Failed to generate management quality: {_llm_error_message(e)}",
+            ) from e
+    else:
+        raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+
+    return stage_api_action(
+        "save_management_quality_content",
+        {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
+        source_id="management_quality.generate_management_quality",
+        reason=f"Generate management quality assessment for {normalized_ticker} from uploaded document",
+    )
+
+
+class SaveManagementQualityRequest(BaseModel):
+    content: str = Field(..., max_length=MAX_UPLOAD_SIZE_BYTES)
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
+
+
+@router.put("/management-quality/{ticker}")
+def save_management_quality(ticker: str, body: SaveManagementQualityRequest):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+
+    content = body.content.strip()
+    if not content:
+        raise ValidationError("Management quality content cannot be empty.")
+
+    content = _normalize_management_quality_markdown(normalized_ticker, content)
+    return stage_api_action(
+        "save_management_quality_content",
+        {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
+        source_id="management_quality.save_management_quality",
+        reason=body.reason or f"Update management quality assessment for {normalized_ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
+    )
+
+
+@router.get("/management-quality/{ticker}")
+def get_management_quality(ticker: str):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+
+    if not management_quality_content.management_quality_exists(normalized_ticker):
+        raise NotFoundError("Management quality", normalized_ticker)
+    try:
+        content = management_quality_content.read_management_quality(normalized_ticker)
+    except Exception as e:
+        from api.exceptions import AppError
+
+        raise AppError(f"Failed to read management quality file: {e}") from e
+    return {
+        "status": "ok",
+        "ticker": normalized_ticker,
+        "content": content,
+        "parsed": parse_management_quality_markdown(content),
+    }

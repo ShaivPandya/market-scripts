@@ -36,6 +36,7 @@ def test_multipart_path_limit_allows_exact_file_limit_and_route_rejects_larger_f
 
 def test_main_multipart_endpoint_body_limits_include_form_overhead():
     import api.main as main
+    import api.routers.management_quality as management_quality_router
     import api.routers.overview as overview_router
     import api.routers.thesis as thesis_router
     from api.routers import economic_growth as economic_growth_router
@@ -46,6 +47,9 @@ def test_main_multipart_endpoint_body_limits_include_form_overhead():
     )
     assert main._ENDPOINT_BODY_LIMITS["/api/v1/overview/generate"] == (
         overview_router.MAX_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES
+    )
+    assert main._ENDPOINT_BODY_LIMITS["/api/v1/management-quality/generate"] == (
+        management_quality_router.MAX_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES
     )
     assert main._ENDPOINT_BODY_LIMITS["/api/v1/economic-growth/crb-file"] == (
         economic_growth_router.MAX_CRB_UPLOAD_SIZE_BYTES + MULTIPART_FORM_DATA_OVERHEAD_BYTES

@@ -32,6 +32,27 @@ OVERVIEW_MARKDOWN = """# AAPL Overview
 - **Installed Base**: Strong demand from services adoption.
 """
 
+MANAGEMENT_QUALITY_MARKDOWN = """# AAPL Management Quality
+
+## Executive Summary
+- **Overall Rating**: Strong
+- **Bottom Line**: Managers have generally acted like owners.
+- **Owner Mindset**: Strong - Capital allocation has been shareholder-oriented.
+- **Business Value Understanding**: Strong - Management understands services and ecosystem value.
+- **Follow-through / Character**: Mixed - Most targets were met, with some product delays.
+
+## Management Scorecard
+| Question | Rating | Evidence |
+|----------|--------|----------|
+| Do managers think and act like owners? | Strong | Buybacks and capital returns were disciplined. |
+
+## Most Impressive Accomplishments
+- **Services growth (2025)**: Expanded recurring revenue.
+
+## Biggest Setbacks and Responses
+- **Product delay (2024)**: Launch slipped. **Response**: Mixed - Reset timing.
+"""
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ideas_runtime(tmp_path, monkeypatch):
@@ -49,7 +70,11 @@ def _isolate_ideas_runtime(tmp_path, monkeypatch):
         ideas_router,
         "_read_state_text",
         lambda folder, ticker: (
-            OVERVIEW_MARKDOWN if folder == "investment_overviews" else None,
+            OVERVIEW_MARKDOWN
+            if folder == "investment_overviews"
+            else MANAGEMENT_QUALITY_MARKDOWN
+            if folder == "investment_management_quality"
+            else None,
             None,
         ),
     )
@@ -60,6 +85,7 @@ def _isolate_ideas_runtime(tmp_path, monkeypatch):
             "ticker": idea["ticker"],
             "overview_content": OVERVIEW_MARKDOWN,
             "thesis_content": None,
+            "management_quality_content": MANAGEMENT_QUALITY_MARKDOWN,
             "portfolio": {"ok": True, "data": {"positions": []}},
             "signal_aggregator": {"ok": True, "data": {"regime": "risk-on"}},
             "industry_monitor": {"ok": True, "data": {}},
@@ -142,6 +168,7 @@ def test_ideas_crud_evaluate_and_accept(auth_client):
     assert idea["ticker"] == "AAPL"
     assert created_payload["documents"]["overview_parsed"]["financials"]["revenue_growth"]["value"] == "+8.0%"
     assert created_payload["documents"]["overview_parsed"]["porters_five_forces"][0]["rating"] == "Low"
+    assert created_payload["documents"]["management_quality_parsed"]["summary"]["overall_rating"] == "Strong"
 
     listed = auth_client.get("/api/v1/ideas")
     assert listed.status_code == 200
