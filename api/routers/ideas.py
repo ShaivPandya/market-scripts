@@ -613,12 +613,21 @@ def _idea_detail(idea_id: int) -> dict[str, Any]:
         raise NotFoundError("Investment idea", str(idea_id))
     overview, overview_error = _read_state_text("investment_overviews", str(idea["ticker"]).upper())
     thesis, thesis_error = _read_state_text("investment_theses", str(idea["ticker"]).upper())
+    overview_parsed = None
+    if overview:
+        try:
+            from api.routers.overview import parse_overview_markdown
+
+            overview_parsed = parse_overview_markdown(overview)
+        except Exception:
+            overview_parsed = None
     return {
         "idea": idea,
         "evaluations": core_db.get_idea_evaluations(idea_id, limit=20),
         "documents": {
             "overview_present": bool(overview),
             "overview_content": _safe_text(overview, max_len=120_000),
+            "overview_parsed": overview_parsed,
             "overview_error": overview_error,
             "thesis_present": bool(thesis),
             "thesis_content": _safe_text(thesis, max_len=120_000),

@@ -11,8 +11,8 @@ import {
   XCircle,
 } from "lucide-react"
 
+import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
-import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
@@ -648,13 +648,21 @@ export function IdeaWatchlist() {
                   </label>
                 </div>
                 {uploadMessage && <p className="mt-2 text-xs text-subtle">{uploadMessage}</p>}
-                {detail?.documents?.overview_content && (
-                  <details className="mt-3">
-                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Preview</summary>
-                    <div className="mt-3 max-h-[24rem] overflow-y-auto rounded-lg border border-app bg-card p-3">
-                      <MarkdownRenderer content={detail.documents.overview_content} />
-                    </div>
-                  </details>
+                {detail?.documents?.overview_error && (
+                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    {detail.documents.overview_error}
+                  </p>
+                )}
+                {detail?.documents?.overview_content ? (
+                  <div className="mt-4 max-h-[46rem] overflow-y-auto pr-1">
+                    <EquityOverviewReadView
+                      content={detail.documents.overview_content}
+                      parsed={detail.documents.overview_parsed ?? null}
+                      ticker={selectedIdea.ticker}
+                    />
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">No overview stored.</p>
                 )}
               </section>
 

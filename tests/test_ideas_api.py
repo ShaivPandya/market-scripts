@@ -4,6 +4,34 @@ import time
 
 import pytest
 
+OVERVIEW_MARKDOWN = """# AAPL Overview
+
+## Financials
+- **3-Year Avg. YoY Revenue Growth**: +8.0% supported by services growth.
+- **3-Year Avg. YoY EPS Growth**: +10.0% supported by buybacks.
+- **Debt**: Balanced maturity schedule.
+| Tranche | Rate | Maturity |
+|---------|------|----------|
+| Notes | 3.0% | 2030 |
+- **Reinvestment Costs**: R&D remains elevated.
+
+## Sensitivity to Extrinsic Factors
+| Factor | Sensitivity | Capacity to Deal |
+|--------|-------------|------------------|
+| Currency/FX | Medium | Global pricing helps offset pressure. |
+
+## Industry
+
+### Porter's Five Forces
+- **Threat of New Entrants - Low**: Ecosystem and scale are durable.
+
+### Supply Outlook
+- **Components**: Supply remains moderate.
+
+### Demand Outlook
+- **Installed Base**: Strong demand from services adoption.
+"""
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ideas_runtime(tmp_path, monkeypatch):
@@ -21,7 +49,7 @@ def _isolate_ideas_runtime(tmp_path, monkeypatch):
         ideas_router,
         "_read_state_text",
         lambda folder, ticker: (
-            "# Overview\n\nBusiness overview evidence." if folder == "investment_overviews" else None,
+            OVERVIEW_MARKDOWN if folder == "investment_overviews" else None,
             None,
         ),
     )
@@ -30,7 +58,7 @@ def _isolate_ideas_runtime(tmp_path, monkeypatch):
         return {
             "idea": idea,
             "ticker": idea["ticker"],
-            "overview_content": "# Overview\n\nBusiness overview evidence.",
+            "overview_content": OVERVIEW_MARKDOWN,
             "thesis_content": None,
             "portfolio": {"ok": True, "data": {"positions": []}},
             "signal_aggregator": {"ok": True, "data": {"regime": "risk-on"}},
@@ -109,8 +137,11 @@ def test_ideas_crud_evaluate_and_accept(auth_client):
         },
     )
     assert created.status_code == 200
-    idea = created.json()["idea"]
+    created_payload = created.json()
+    idea = created_payload["idea"]
     assert idea["ticker"] == "AAPL"
+    assert created_payload["documents"]["overview_parsed"]["financials"]["revenue_growth"]["value"] == "+8.0%"
+    assert created_payload["documents"]["overview_parsed"]["porters_five_forces"][0]["rating"] == "Low"
 
     listed = auth_client.get("/api/v1/ideas")
     assert listed.status_code == 200

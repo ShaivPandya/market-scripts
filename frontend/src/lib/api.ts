@@ -2,6 +2,7 @@ import axios from "axios"
 
 import { getAuthMode } from "@/lib/authMode"
 import type { DecisionState, DecisionStateFields, EffectScope } from "@/lib/decisionState"
+import type { ParsedOverview } from "@/lib/overviewTypes"
 
 const client = axios.create({
   baseURL: (import.meta.env.VITE_API_BASE_URL ?? "/api/v1").replace(/\/+$/, ""),
@@ -279,6 +280,7 @@ export interface IdeaDetailResponse {
   documents?: {
     overview_present?: boolean
     overview_content?: string | null
+    overview_parsed?: ParsedOverview | null
     overview_error?: string | null
     thesis_present?: boolean
     thesis_content?: string | null
