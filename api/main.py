@@ -363,6 +363,7 @@ from api.routers import (
     approvals,
     domain_actions,
     dossier,
+    ideas,
     optimization,
     policy_gate,
     process_entities,
@@ -377,6 +378,7 @@ from api.routers import (
 
 app.include_router(workspace.router, prefix=_V1, dependencies=_auth_dep, tags=["workspace"])
 app.include_router(dossier.router, prefix=_V1, dependencies=_auth_dep, tags=["workspace"])
+app.include_router(ideas.router, prefix=_V1, dependencies=_auth_dep, tags=["ideas"])
 app.include_router(approvals.router, prefix=_V1, dependencies=_auth_dep, tags=["approvals"])
 app.include_router(domain_actions.router, prefix=_V1, dependencies=_auth_dep, tags=["domain-actions"])
 app.include_router(action_items.router, prefix=_V1, dependencies=_auth_dep, tags=["actions"])

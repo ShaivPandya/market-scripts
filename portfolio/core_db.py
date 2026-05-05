@@ -112,6 +112,16 @@ WATCH_TRIGGER_TYPES = (
     "macro",
     "custom",
 )
+INVESTMENT_IDEA_STATUSES = (
+    "watching",
+    "researching",
+    "ready_for_review",
+    "accepted",
+    "rejected",
+    "archived",
+)
+IDEA_RECOMMENDATION_ACTIONS = ("buy", "watch", "avoid", "do_nothing")
+IDEA_RECOMMENDATION_STATUSES = ("clear", "review_required", "blocked", "error")
 
 _CREATE_CATALYSTS = """
 CREATE TABLE IF NOT EXISTS catalysts (
@@ -263,6 +273,61 @@ CREATE TABLE IF NOT EXISTS optimization_alerts (
     created_at               TEXT NOT NULL,
     dismissed_at             TEXT,
     dismissed_note           TEXT
+)
+"""
+
+_CREATE_INVESTMENT_IDEAS = """
+CREATE TABLE IF NOT EXISTS investment_ideas (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker                     TEXT NOT NULL,
+    company_name               TEXT,
+    status                     TEXT NOT NULL DEFAULT 'watching'
+                               CHECK (status IN ('watching', 'researching', 'ready_for_review', 'accepted', 'rejected', 'archived')),
+    user_notes                 TEXT NOT NULL DEFAULT '',
+    tags_json                  TEXT NOT NULL DEFAULT '[]',
+    created_at                 TEXT NOT NULL,
+    updated_at                 TEXT NOT NULL,
+    source_type                TEXT NOT NULL DEFAULT 'user'
+                               CHECK (source_type IN ('workflow', 'agent', 'user')),
+    source_id                  TEXT,
+    latest_evaluation_id       INTEGER,
+    latest_job_id              TEXT,
+    accepted_recommendation_id INTEGER,
+    metadata_json              TEXT NOT NULL DEFAULT '{}'
+)
+"""
+
+_CREATE_IDEA_EVALUATIONS = """
+CREATE TABLE IF NOT EXISTS idea_evaluations (
+    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+    idea_id                      INTEGER NOT NULL,
+    ticker                       TEXT NOT NULL,
+    job_id                       TEXT,
+    evaluated_at                 TEXT NOT NULL,
+    action                       TEXT NOT NULL
+                                 CHECK (action IN ('buy', 'watch', 'avoid', 'do_nothing')),
+    recommendation_status        TEXT NOT NULL DEFAULT 'clear'
+                                 CHECK (recommendation_status IN ('clear', 'review_required', 'blocked', 'error')),
+    score                        REAL,
+    confidence                   REAL,
+    thesis_statement             TEXT,
+    rationale                    TEXT NOT NULL DEFAULT '',
+    factor_scores_json           TEXT NOT NULL DEFAULT '{}',
+    missing_information_json     TEXT NOT NULL DEFAULT '[]',
+    data_quality_json            TEXT NOT NULL DEFAULT '{}',
+    evidence_json                TEXT NOT NULL DEFAULT '[]',
+    disconfirming_evidence_json  TEXT NOT NULL DEFAULT '[]',
+    catalyst                     TEXT,
+    invalidation                 TEXT,
+    portfolio_fit_json           TEXT NOT NULL DEFAULT '{}',
+    recommendation_record_json   TEXT NOT NULL DEFAULT '{}',
+    recommendation_id            INTEGER,
+    approval_id                  INTEGER,
+    action_approval_id           INTEGER,
+    accepted_at                  TEXT,
+    accepted_by                  TEXT,
+    raw_result_json              TEXT NOT NULL DEFAULT '{}',
+    created_at                   TEXT NOT NULL
 )
 """
 
@@ -694,6 +759,12 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_optimization_alerts_status ON optimization_alerts(status, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_optimization_alerts_mission ON optimization_alerts(mission_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_optimization_alerts_ticker ON optimization_alerts(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_investment_ideas_ticker ON investment_ideas(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_investment_ideas_status ON investment_ideas(status)",
+    "CREATE INDEX IF NOT EXISTS idx_investment_ideas_latest_eval ON investment_ideas(latest_evaluation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_idea_evaluations_idea_created ON idea_evaluations(idea_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_idea_evaluations_ticker_created ON idea_evaluations(ticker, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_idea_evaluations_job ON idea_evaluations(job_id)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_status ON action_items(status)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_ticker ON action_items(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_watch_triggers_status ON watch_triggers(status)",
@@ -804,6 +875,8 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "optimization_missions",
                             "optimization_action_snapshots",
                             "optimization_alerts",
+                            "investment_ideas",
+                            "idea_evaluations",
                         }
                     )
                 else:
@@ -825,6 +898,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_OPTIMIZATION_RUNS,
         _CREATE_OPTIMIZATION_ACTION_SNAPSHOTS,
         _CREATE_OPTIMIZATION_ALERTS,
+        _CREATE_INVESTMENT_IDEAS,
+        _CREATE_IDEA_EVALUATIONS,
         _CREATE_ACTION_ITEMS,
         _CREATE_WATCH_TRIGGERS,
         _CREATE_THESIS_CLAIMS,
@@ -3987,6 +4062,350 @@ def dismiss_optimization_alert(alert_id: int, note: str | None = None) -> dict:
     if not row:
         raise ValueError(f"No optimization alert with id {alert_id}")
     return _hydrate_optimization_alert(_parse_optimization_alert_json_fields(_require_row_dict(row)))
+
+
+# ---------------------------------------------------------------------------
+# Investment Ideas / Watchlist
+# ---------------------------------------------------------------------------
+
+_UNSET = object()
+_IDEA_JSON_FIELDS = ("tags_json", "metadata_json")
+_IDEA_EVALUATION_JSON_FIELDS = (
+    "factor_scores_json",
+    "missing_information_json",
+    "data_quality_json",
+    "evidence_json",
+    "disconfirming_evidence_json",
+    "portfolio_fit_json",
+    "recommendation_record_json",
+    "raw_result_json",
+)
+
+
+def _normalize_investment_idea_status(status: str | None) -> str:
+    normalized = str(status or "watching").strip().lower()
+    if normalized not in INVESTMENT_IDEA_STATUSES:
+        raise ValueError(f"Invalid investment idea status: {status}")
+    return normalized
+
+
+def _normalize_idea_action(action: str | None) -> str:
+    normalized = str(action or "watch").strip().lower()
+    if normalized not in IDEA_RECOMMENDATION_ACTIONS:
+        raise ValueError(f"Invalid idea recommendation action: {action}")
+    return normalized
+
+
+def _normalize_idea_recommendation_status(status: str | None) -> str:
+    normalized = str(status or "clear").strip().lower()
+    if normalized not in IDEA_RECOMMENDATION_STATUSES:
+        return "review_required"
+    return normalized
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_investment_idea_json_fields(d: dict) -> dict:
+    for field in _IDEA_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["tags"] = d.get("tags_json") if isinstance(d.get("tags_json"), list) else []
+    d["metadata"] = d.get("metadata_json") if isinstance(d.get("metadata_json"), dict) else {}
+    return d
+
+
+def _parse_idea_evaluation_json_fields(d: dict) -> dict:
+    for field in _IDEA_EVALUATION_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["factor_scores"] = d.get("factor_scores_json") if isinstance(d.get("factor_scores_json"), dict) else {}
+    d["missing_information"] = (
+        d.get("missing_information_json") if isinstance(d.get("missing_information_json"), list) else []
+    )
+    d["data_quality"] = d.get("data_quality_json") if isinstance(d.get("data_quality_json"), dict) else {}
+    d["evidence"] = d.get("evidence_json") if isinstance(d.get("evidence_json"), list) else []
+    d["disconfirming_evidence"] = (
+        d.get("disconfirming_evidence_json") if isinstance(d.get("disconfirming_evidence_json"), list) else []
+    )
+    d["portfolio_fit"] = d.get("portfolio_fit_json") if isinstance(d.get("portfolio_fit_json"), dict) else {}
+    d["recommendation_record"] = (
+        d.get("recommendation_record_json") if isinstance(d.get("recommendation_record_json"), dict) else {}
+    )
+    d["raw_result"] = d.get("raw_result_json") if isinstance(d.get("raw_result_json"), dict) else {}
+    return d
+
+
+def create_investment_idea(
+    ticker: str,
+    *,
+    company_name: str | None = None,
+    user_notes: str | None = None,
+    tags: list[str] | None = None,
+    status: str = "watching",
+    source_type: str = "user",
+    source_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict:
+    _guard_legacy_domain_write("core_db.create_investment_idea")
+    normalized_ticker = str(ticker or "").strip().upper()
+    if not normalized_ticker:
+        raise ValueError("Ticker cannot be empty.")
+    normalized_status = _normalize_investment_idea_status(status)
+    now = _now()
+    conn = _get_conn()
+    with _lock:
+        existing = conn.execute(
+            "SELECT * FROM investment_ideas WHERE ticker = ? AND status != 'archived' ORDER BY id DESC LIMIT 1",
+            (normalized_ticker,),
+        ).fetchone()
+        if existing:
+            row = _parse_investment_idea_json_fields(_require_row_dict(existing))
+            updates: dict[str, Any] = {"updated_at": now}
+            if company_name is not None:
+                updates["company_name"] = str(company_name).strip() or None
+            if user_notes is not None:
+                updates["user_notes"] = str(user_notes)
+            if tags is not None:
+                updates["tags_json"] = json.dumps([str(tag).strip() for tag in tags if str(tag).strip()])
+            if normalized_status != "watching" or row.get("status") == "watching":
+                updates["status"] = normalized_status
+            if metadata is not None:
+                updates["metadata_json"] = json.dumps(metadata, default=str)
+            set_sql = ", ".join(f"{key} = ?" for key in updates)
+            conn.execute(
+                f"UPDATE investment_ideas SET {set_sql} WHERE id = ?",
+                (*updates.values(), int(row["id"])),
+            )
+            conn.commit()
+            refreshed = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (int(row["id"]),)).fetchone()
+            return _parse_investment_idea_json_fields(_require_row_dict(refreshed))
+
+        cur = conn.execute(
+            "INSERT INTO investment_ideas "
+            "(ticker, company_name, status, user_notes, tags_json, created_at, updated_at, source_type, source_id, metadata_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                normalized_ticker,
+                str(company_name).strip() if company_name else None,
+                normalized_status,
+                str(user_notes or ""),
+                json.dumps([str(tag).strip() for tag in tags or [] if str(tag).strip()]),
+                now,
+                now,
+                source_type,
+                source_id,
+                json.dumps(metadata or {}, default=str),
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_investment_idea_json_fields(_require_row_dict(row))
+
+
+def update_investment_idea(
+    idea_id: int,
+    *,
+    ticker: str | object = _UNSET,
+    company_name: str | None | object = _UNSET,
+    status: str | object = _UNSET,
+    user_notes: str | object = _UNSET,
+    tags: list[str] | object = _UNSET,
+    latest_job_id: str | None | object = _UNSET,
+    latest_evaluation_id: int | None | object = _UNSET,
+    accepted_recommendation_id: int | None | object = _UNSET,
+    metadata: dict[str, Any] | object = _UNSET,
+) -> dict:
+    _guard_legacy_domain_write("core_db.update_investment_idea")
+    conn = _get_conn()
+    updates: dict[str, Any] = {"updated_at": _now()}
+    if ticker is not _UNSET:
+        normalized_ticker = str(ticker or "").strip().upper()
+        if not normalized_ticker:
+            raise ValueError("Ticker cannot be empty.")
+        updates["ticker"] = normalized_ticker
+    if company_name is not _UNSET:
+        updates["company_name"] = str(company_name).strip() if company_name else None
+    if status is not _UNSET:
+        updates["status"] = _normalize_investment_idea_status(cast(str, status))
+    if user_notes is not _UNSET:
+        updates["user_notes"] = str(user_notes or "")
+    if tags is not _UNSET:
+        updates["tags_json"] = json.dumps([str(tag).strip() for tag in cast(list[str], tags) if str(tag).strip()])
+    if latest_job_id is not _UNSET:
+        updates["latest_job_id"] = latest_job_id
+    if latest_evaluation_id is not _UNSET:
+        updates["latest_evaluation_id"] = latest_evaluation_id
+    if accepted_recommendation_id is not _UNSET:
+        updates["accepted_recommendation_id"] = accepted_recommendation_id
+    if metadata is not _UNSET:
+        updates["metadata_json"] = json.dumps(metadata if isinstance(metadata, dict) else {}, default=str)
+    with _lock:
+        row = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (int(idea_id),)).fetchone()
+        if not row:
+            raise ValueError(f"No investment idea with id {idea_id}")
+        set_sql = ", ".join(f"{key} = ?" for key in updates)
+        conn.execute(f"UPDATE investment_ideas SET {set_sql} WHERE id = ?", (*updates.values(), int(idea_id)))
+        conn.commit()
+        updated = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (int(idea_id),)).fetchone()
+    return _parse_investment_idea_json_fields(_require_row_dict(updated))
+
+
+def archive_investment_idea(idea_id: int) -> dict:
+    return update_investment_idea(idea_id, status="archived")
+
+
+def get_investment_idea(idea_id: int) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (int(idea_id),)).fetchone()
+    return _parse_investment_idea_json_fields(_require_row_dict(row)) if row else None
+
+
+def list_investment_ideas(
+    *,
+    status: str | None = None,
+    include_archived: bool = False,
+    limit: int = 200,
+) -> list[dict]:
+    conn = _get_conn()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(_normalize_investment_idea_status(status))
+    elif not include_archived:
+        clauses.append("status != 'archived'")
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    safe_limit = max(1, min(int(limit), 500))
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM investment_ideas{where} ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (*params, safe_limit),
+        ).fetchall()
+    return [_parse_investment_idea_json_fields(d) for d in _rows_to_list(rows)]
+
+
+def create_idea_evaluation(
+    idea_id: int,
+    result: dict[str, Any],
+    *,
+    job_id: str | None = None,
+) -> dict:
+    _guard_legacy_domain_write("core_db.create_idea_evaluation")
+    idea = get_investment_idea(int(idea_id))
+    if not idea:
+        raise ValueError(f"No investment idea with id {idea_id}")
+    action = _normalize_idea_action(cast(str | None, result.get("action")))
+    evaluated_at = str(result.get("evaluated_at") or _now())
+    created_at = _now()
+    factor_scores = result.get("factor_scores") if isinstance(result.get("factor_scores"), dict) else {}
+    missing_information = (
+        result.get("missing_information") if isinstance(result.get("missing_information"), list) else []
+    )
+    data_quality = result.get("data_quality") if isinstance(result.get("data_quality"), dict) else {}
+    evidence = result.get("evidence") if isinstance(result.get("evidence"), list) else []
+    disconfirming = (
+        result.get("disconfirming_evidence") if isinstance(result.get("disconfirming_evidence"), list) else []
+    )
+    portfolio_fit = result.get("portfolio_fit") if isinstance(result.get("portfolio_fit"), dict) else {}
+    recommendation_record = (
+        result.get("recommendation_record") if isinstance(result.get("recommendation_record"), dict) else {}
+    )
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO idea_evaluations "
+            "(idea_id, ticker, job_id, evaluated_at, action, recommendation_status, score, confidence, "
+            "thesis_statement, rationale, factor_scores_json, missing_information_json, data_quality_json, "
+            "evidence_json, disconfirming_evidence_json, catalyst, invalidation, portfolio_fit_json, "
+            "recommendation_record_json, recommendation_id, approval_id, action_approval_id, raw_result_json, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                int(idea_id),
+                str(idea["ticker"]).upper(),
+                job_id or result.get("job_id"),
+                evaluated_at,
+                action,
+                _normalize_idea_recommendation_status(cast(str | None, result.get("recommendation_status"))),
+                _optional_float(result.get("score")),
+                _optional_float(result.get("confidence")),
+                result.get("thesis_statement"),
+                str(result.get("rationale") or ""),
+                json.dumps(factor_scores, default=str),
+                json.dumps(missing_information, default=str),
+                json.dumps(data_quality, default=str),
+                json.dumps(evidence, default=str),
+                json.dumps(disconfirming, default=str),
+                result.get("catalyst"),
+                result.get("invalidation"),
+                json.dumps(portfolio_fit, default=str),
+                json.dumps(recommendation_record, default=str),
+                result.get("recommendation_id"),
+                result.get("approval_id"),
+                result.get("action_approval_id"),
+                json.dumps(result, default=str),
+                created_at,
+            ),
+        )
+        evaluation_id = cast(int, cur.lastrowid)
+        next_status = "ready_for_review"
+        if str(idea.get("status") or "") in {"accepted", "rejected", "archived"}:
+            next_status = str(idea["status"])
+        conn.execute(
+            "UPDATE investment_ideas SET latest_evaluation_id = ?, latest_job_id = ?, status = ?, updated_at = ? WHERE id = ?",
+            (evaluation_id, job_id or result.get("job_id"), next_status, created_at, int(idea_id)),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM idea_evaluations WHERE id = ?", (evaluation_id,)).fetchone()
+    return _parse_idea_evaluation_json_fields(_require_row_dict(row))
+
+
+def get_idea_evaluation(evaluation_id: int) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM idea_evaluations WHERE id = ?", (int(evaluation_id),)).fetchone()
+    return _parse_idea_evaluation_json_fields(_require_row_dict(row)) if row else None
+
+
+def get_idea_evaluations(idea_id: int, *, limit: int = 20) -> list[dict]:
+    conn = _get_conn()
+    safe_limit = max(1, min(int(limit), 100))
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM idea_evaluations WHERE idea_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+            (int(idea_id), safe_limit),
+        ).fetchall()
+    return [_parse_idea_evaluation_json_fields(d) for d in _rows_to_list(rows)]
+
+
+def mark_idea_evaluation_accepted(
+    evaluation_id: int,
+    *,
+    recommendation_id: int,
+    action_approval_id: int | None = None,
+    accepted_by: str | None = None,
+) -> dict:
+    _guard_legacy_domain_write("core_db.mark_idea_evaluation_accepted")
+    evaluation = get_idea_evaluation(evaluation_id)
+    if not evaluation:
+        raise ValueError(f"No idea evaluation with id {evaluation_id}")
+    accepted_at = _now()
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE idea_evaluations SET recommendation_id = ?, action_approval_id = ?, accepted_at = ?, accepted_by = ? WHERE id = ?",
+            (int(recommendation_id), action_approval_id, accepted_at, accepted_by, int(evaluation_id)),
+        )
+        conn.execute(
+            "UPDATE investment_ideas SET status = 'accepted', accepted_recommendation_id = ?, updated_at = ? WHERE id = ?",
+            (int(recommendation_id), accepted_at, int(evaluation["idea_id"])),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM idea_evaluations WHERE id = ?", (int(evaluation_id),)).fetchone()
+    return _parse_idea_evaluation_json_fields(_require_row_dict(row))
 
 
 # ---------------------------------------------------------------------------

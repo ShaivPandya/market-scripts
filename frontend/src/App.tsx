@@ -42,6 +42,7 @@ import { OntologyWorkbench } from "@/pages/OntologyWorkbench"
 import { ThesisManager } from "@/pages/ThesisManager"
 import { Workspace } from "@/pages/Workspace"
 import { PositionDossier } from "@/pages/PositionDossier"
+import { IdeaWatchlist } from "@/pages/IdeaWatchlist"
 import { DCFModel } from "@/pages/DCFModel"
 import { AISettings } from "@/pages/AISettings"
 
@@ -81,6 +82,7 @@ function AppRoutes() {
           <Route path="/portfolio" element={<Navigate to="/" replace />} />
           <Route path="/workspace" element={<Workspace />} />
           <Route path="/dossier/:ticker" element={<PositionDossier />} />
+          <Route path="/ideas" element={<IdeaWatchlist />} />
           <Route path="/theses" element={<ThesisManager />} />
           <Route path="/analyzer" element={<PortfolioAnalyzer />} />
           <Route path="/optimizer" element={<Navigate to="/analyzer" replace />} />

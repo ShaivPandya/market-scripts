@@ -221,6 +221,7 @@ export interface InvestmentIdea {
   latest_job_id: string | null
   accepted_recommendation_id: number | null
   metadata?: Record<string, unknown>
+  latest_evaluation?: IdeaEvaluation | null
 }
 
 export interface IdeaFactorScore {

@@ -175,6 +175,79 @@ class TestActionItems:
 
 
 # ---------------------------------------------------------------------------
+# Investment Ideas
+# ---------------------------------------------------------------------------
+
+
+class TestInvestmentIdeas:
+    def test_create_update_list_and_archive(self):
+        idea = core_db.create_investment_idea(
+            "aapl",
+            company_name="Apple",
+            user_notes="High-quality compounder under review.",
+            tags=["quality", "mega-cap"],
+        )
+
+        assert idea["ticker"] == "AAPL"
+        assert idea["status"] == "watching"
+        assert idea["tags"] == ["quality", "mega-cap"]
+
+        updated = core_db.update_investment_idea(
+            idea["id"],
+            status="researching",
+            user_notes="Waiting for valuation and management evidence.",
+            tags=["quality"],
+        )
+        assert updated["status"] == "researching"
+        assert updated["user_notes"].startswith("Waiting")
+        assert updated["tags"] == ["quality"]
+
+        ideas = core_db.list_investment_ideas()
+        assert [row["ticker"] for row in ideas] == ["AAPL"]
+
+        archived = core_db.archive_investment_idea(idea["id"])
+        assert archived["status"] == "archived"
+        assert core_db.list_investment_ideas() == []
+        assert core_db.list_investment_ideas(include_archived=True)[0]["ticker"] == "AAPL"
+
+    def test_evaluation_persistence_and_acceptance_links_recommendation(self):
+        idea = core_db.create_investment_idea("GOOG", company_name="Alphabet", user_notes="Review search and cloud.")
+        result = {
+            "action": "watch",
+            "recommendation_status": "review_required",
+            "score": 64,
+            "confidence": 0.52,
+            "thesis_statement": "Alphabet needs more valuation evidence.",
+            "rationale": "Evidence is incomplete.",
+            "factor_scores": {"business_quality": {"score": 75, "status": "strong"}},
+            "missing_information": [{"field": "valuation", "severity": "critical", "reason": "No downside case."}],
+            "data_quality": {"critical_data_quality": "degraded", "source_quality": "degraded"},
+            "evidence": [{"source": "notes", "summary": "User wants review."}],
+            "disconfirming_evidence": [{"source": "data_gap", "summary": "No valuation."}],
+            "portfolio_fit": {"status": "needs_review"},
+            "recommendation_record": {"action": "watch"},
+        }
+
+        evaluation = core_db.create_idea_evaluation(idea["id"], result, job_id="job-1")
+
+        assert evaluation["ticker"] == "GOOG"
+        assert evaluation["missing_information"][0]["field"] == "valuation"
+        refreshed = core_db.get_investment_idea(idea["id"])
+        assert refreshed["latest_evaluation_id"] == evaluation["id"]
+        assert refreshed["latest_job_id"] == "job-1"
+        assert refreshed["status"] == "ready_for_review"
+
+        accepted = core_db.mark_idea_evaluation_accepted(
+            evaluation["id"], recommendation_id=123, action_approval_id=456
+        )
+
+        assert accepted["recommendation_id"] == 123
+        assert accepted["action_approval_id"] == 456
+        assert accepted["accepted_at"] is not None
+        assert core_db.get_investment_idea(idea["id"])["status"] == "accepted"
+
+
+# ---------------------------------------------------------------------------
 # Watch Triggers
 # ---------------------------------------------------------------------------
 
