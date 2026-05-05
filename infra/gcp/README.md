@@ -99,6 +99,10 @@ Required services:
   - weekdays at 23:00 UTC: run `${TOP50_REFRESH_JOB}`
   - weekdays at 23:15 UTC: `POST /api/v1/admin/jobs/enqueue-market-snapshot-refresh`
 
+Cloud Run worker pools run a fixed number of instances, not min/max autoscaling.
+Set `AGENT_WORKER_INSTANCES` in `infra/gcp/config.sh` to control warm agent
+worker capacity.
+
 Scheduled cache warming is disabled by default. The cache-warm endpoint remains
 available for manual/admin use, and can be scheduled with
 `SCHEDULE_CACHE_WARM=1 CACHE_WARM_SCHEDULE="0 * * * *" ./infra/gcp/setup-scheduler.sh`,
@@ -132,7 +136,7 @@ override. `iam.sh` applies that binding after the job exists.
 Legacy cleanup after cutover:
 
 ```bash
-gcloud beta run worker-pools delete talisman-worker --region="${REGION}" --project="${PROJECT_ID}"
+gcloud run worker-pools delete talisman-worker --region="${REGION}" --project="${PROJECT_ID}"
 gcloud redis instances delete talisman --region="${REGION}" --project="${PROJECT_ID}"
 gcloud secrets delete REDIS_URL --project="${PROJECT_ID}"
 ```

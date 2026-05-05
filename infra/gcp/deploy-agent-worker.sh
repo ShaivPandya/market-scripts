@@ -5,7 +5,7 @@
 # Tunables:
 #   AGENT_WORKER_POOL=talisman-agent-worker
 #   AGENT_WORKER_CPU=2  AGENT_WORKER_MEMORY=2Gi
-#   AGENT_WORKER_MIN_INSTANCES=1  AGENT_WORKER_MAX_INSTANCES=3
+#   AGENT_WORKER_INSTANCES=1
 #   AGENT_WORKER_POLL_INTERVAL_SECONDS=0.25
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -20,6 +20,13 @@ require_image_exists
 
 AGENT_WORKER_POOL="${AGENT_WORKER_POOL:-talisman-agent-worker}"
 
+if [[ -n "${AGENT_WORKER_MAX_INSTANCES:-}" && -z "${AGENT_WORKER_INSTANCES+x}" ]]; then
+  echo "AGENT_WORKER_MAX_INSTANCES is ignored; Cloud Run worker pools use fixed --instances." >&2
+  echo "Set AGENT_WORKER_INSTANCES to change the worker pool capacity." >&2
+fi
+
+AGENT_WORKER_INSTANCES="${AGENT_WORKER_INSTANCES:-${AGENT_WORKER_MIN_INSTANCES:-1}}"
+
 mapfile -t COMMON_ENV < <(common_env_vars)
 
 AGENT_WORKER_ENV_VARS=(
@@ -31,7 +38,7 @@ AGENT_WORKER_ENV_VARS=(
   "AGENT_WORKER_POLL_INTERVAL_SECONDS=${AGENT_WORKER_POLL_INTERVAL_SECONDS:-0.25}"
 )
 
-gcloud beta run worker-pools deploy "${AGENT_WORKER_POOL}" \
+gcloud run worker-pools deploy "${AGENT_WORKER_POOL}" \
   --project="${PROJECT_ID}" \
   --region="${REGION}" \
   --image="$(image_uri)" \
@@ -43,5 +50,4 @@ gcloud beta run worker-pools deploy "${AGENT_WORKER_POOL}" \
   --set-secrets="$(join_kv "${WORKER_SECRETS[@]}")" \
   --cpu="${AGENT_WORKER_CPU:-2}" \
   --memory="${AGENT_WORKER_MEMORY:-2Gi}" \
-  --min-instances="${AGENT_WORKER_MIN_INSTANCES:-1}" \
-  --max-instances="${AGENT_WORKER_MAX_INSTANCES:-3}"
+  --instances="${AGENT_WORKER_INSTANCES}"
