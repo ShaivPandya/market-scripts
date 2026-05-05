@@ -66,7 +66,9 @@ def test_approval_summary_filters_ticker_and_application_status(auth_client, tmp
         conn.execute("UPDATE pending_approvals SET application_status = 'failed' WHERE id = ?", (failed["id"],))
         conn.commit()
 
-    resp = auth_client.get("/api/v1/approvals/summary", params={"ticker": "mu", "application_status": "failed", "limit": 50})
+    resp = auth_client.get(
+        "/api/v1/approvals/summary", params={"ticker": "mu", "application_status": "failed", "limit": 50}
+    )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -84,7 +86,9 @@ def test_approval_summary_all_filters_preserve_existing_semantics(auth_client, t
     pending = _approval(ticker="TSM")
     core_db.resolve_approval(rejected["id"], "rejected", "No longer needed")
 
-    resp = auth_client.get("/api/v1/approvals/summary", params={"status": "all", "application_status": "all", "limit": 50})
+    resp = auth_client.get(
+        "/api/v1/approvals/summary", params={"status": "all", "application_status": "all", "limit": 50}
+    )
 
     assert resp.status_code == 200
     data = resp.json()
