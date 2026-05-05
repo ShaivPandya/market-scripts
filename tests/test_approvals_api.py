@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import portfolio.core_db as core_db
+from portfolio.action_registry import ActionContext, compute_action_base_state_hash, propose_action
 
 
 def _reset_core_db(tmp_path, monkeypatch):
@@ -105,3 +106,77 @@ def test_approval_summary_route_is_not_treated_as_approval_id(auth_client, tmp_p
 
     assert resp.status_code == 200
     assert resp.json()["count"] == 0
+
+
+def test_approve_stale_action_backed_approval_returns_conflict_without_applying(auth_client, tmp_path, monkeypatch):
+    _reset_core_db(tmp_path, monkeypatch)
+    item = core_db.create_action_item("Review MU thesis", "review", ticker="MU")
+    approval = propose_action(
+        "complete_action_item",
+        {"item_id": item["id"], "resolution_note": "Done"},
+        ActionContext(actor_type="workflow", source_type="workflow", source_id="run-stale"),
+        reason="Complete action item",
+    )
+    core_db.dismiss_action_item(item["id"])
+
+    resp = auth_client.post(f"/api/v1/approvals/{approval['id']}/approve", json={"note": "Apply"})
+
+    assert resp.status_code == 409
+    assert "base state changed" in str(resp.json()).lower()
+    current = core_db.get_action_items()[0]
+    assert current["id"] == item["id"]
+    assert current["status"] == "dismissed"
+
+
+def test_reject_and_restage_stale_action_backed_approval_creates_replacement(auth_client, tmp_path, monkeypatch):
+    _reset_core_db(tmp_path, monkeypatch)
+    item = core_db.create_action_item("Review MU thesis", "review", ticker="MU")
+    approval = propose_action(
+        "complete_action_item",
+        {"item_id": item["id"], "resolution_note": "Done"},
+        ActionContext(actor_type="workflow", source_type="workflow", source_id="run-restage"),
+        reason="Complete action item",
+    )
+    core_db.dismiss_action_item(item["id"])
+
+    resp = auth_client.post(
+        f"/api/v1/approvals/{approval['id']}/reject-and-restage",
+        json={"note": "Restage from current state"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "replacement_created"
+    assert data["original"]["status"] == "rejected"
+    assert data["original"]["application_status"] == "not_applicable"
+    replacement = data["replacement"]
+    assert replacement["status"] == "pending"
+    assert replacement["supersedes_approval_id"] == approval["id"]
+    assert replacement["reason_code"] == "state_changed"
+    assert replacement["base_state_status"] == "valid"
+    assert replacement["base_state_hash"] == compute_action_base_state_hash(
+        "complete_action_item",
+        {"item_id": item["id"], "resolution_note": "Done"},
+    )
+
+
+def test_reject_and_restage_rejects_missing_non_stale_and_non_pending(auth_client, tmp_path, monkeypatch):
+    _reset_core_db(tmp_path, monkeypatch)
+
+    missing = auth_client.post("/api/v1/approvals/999/reject-and-restage", json={})
+    assert missing.status_code == 404
+
+    item = core_db.create_action_item("Review MU thesis", "review", ticker="MU")
+    approval = propose_action(
+        "complete_action_item",
+        {"item_id": item["id"], "resolution_note": "Done"},
+        ActionContext(actor_type="workflow", source_type="workflow", source_id="run-not-stale"),
+        reason="Complete action item",
+    )
+
+    non_stale = auth_client.post(f"/api/v1/approvals/{approval['id']}/reject-and-restage", json={})
+    assert non_stale.status_code == 409
+
+    core_db.resolve_approval(approval["id"], "rejected", "Skip")
+    non_pending = auth_client.post(f"/api/v1/approvals/{approval['id']}/reject-and-restage", json={})
+    assert non_pending.status_code == 409

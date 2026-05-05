@@ -134,6 +134,9 @@ export interface ApprovalRecord extends DecisionStateFields {
   application_status?: string | null
   application_error?: string | null
   application_attempts?: number | null
+  base_state_status?: "valid" | "stale" | "untracked" | "unknown" | string | null
+  base_state_valid?: boolean | null
+  base_state_message?: string | null
   source_type?: string | null
   source_id?: string | null
   proposed_change: Record<string, unknown>
@@ -141,7 +144,14 @@ export interface ApprovalRecord extends DecisionStateFields {
   can_approve?: boolean
   can_reject?: boolean
   can_retry_apply?: boolean
+  can_restage?: boolean
   review_route?: string | null
+}
+
+export interface RejectAndRestageResponse {
+  status: "replacement_created" | string
+  original: ApprovalRecord
+  replacement: ApprovalRecord
 }
 
 export interface ApprovalSummaryResponse {
@@ -1770,6 +1780,10 @@ export const approveItem = (id: number, note: string) =>
   client.post(`/approvals/${id}/approve`, { note }).then(r => r.data as ApprovalRecord)
 export const rejectItem = (id: number, note?: string) =>
   client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
+export const rejectAndRestageApproval = (id: number, note?: string) =>
+  client
+    .post(`/approvals/${id}/reject-and-restage`, note ? { note } : {})
+    .then(r => r.data as RejectAndRestageResponse)
 export const bulkApprove = (ids: number[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
 export const bulkReject = (ids: number[], note?: string) =>

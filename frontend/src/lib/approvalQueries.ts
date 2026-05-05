@@ -3,6 +3,8 @@ import type { QueryClient } from "@tanstack/react-query"
 import type { ApprovalRecord, ApprovalSummaryParams, ApprovalSummaryResponse } from "@/lib/api"
 
 const APPROVAL_SUMMARY_QUERY_ROOT = ["approvals", "summary"] as const
+export const STALE_APPROVAL_MESSAGE =
+  "This proposal is stale because the underlying state changed. Reject and restage it to review the current state."
 
 const THESIS_FACING_ACTIONS = new Set([
   "change_thesis_status",
@@ -101,4 +103,12 @@ export function invalidateAfterApprovalResolution(queryClient: QueryClient, appr
 export function shouldRefetchApprovalSummariesAfterError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
   return /already|conflict|not found|no pending|404|409/i.test(message)
+}
+
+export function formatApprovalResolutionError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  if (/base state changed|stale approval|stale proposal|reject and restage/i.test(message)) {
+    return STALE_APPROVAL_MESSAGE
+  }
+  return message
 }

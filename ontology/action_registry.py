@@ -1518,6 +1518,8 @@ def propose_action(
     reason: str | None = None,
     entity_id: int | None = None,
     once: bool = False,
+    reason_code: str | None = None,
+    supersedes_approval_id: int | None = None,
 ) -> dict[str, Any]:
     action = get_action(action_id)
     approval_spec = action.approval_spec
@@ -1593,6 +1595,8 @@ def propose_action(
             base_state_hash=base_state_hash,
             requested_by_actor_id=context.actor_id,
             approval_note_required=action.reason_required,
+            reason_code=reason_code,
+            supersedes_approval_id=supersedes_approval_id,
         )
         try:
             from api import provenance

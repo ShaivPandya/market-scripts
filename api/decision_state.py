@@ -2,17 +2,76 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
 ACTIONABLE_RECOMMENDATION_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+STALE_APPROVAL_MESSAGE = (
+    "This proposal is stale because the underlying state changed. Reject and restage it to review the current state."
+)
 
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if isinstance(parsed, dict):
+            return parsed
     return None
+
+
+def _approval_base_state(record: dict[str, Any]) -> dict[str, Any]:
+    action_id = str(record.get("action_id") or "").strip()
+    stored_hash = str(record.get("base_state_hash") or "").strip()
+    if not action_id or not stored_hash:
+        return {
+            "base_state_status": "untracked",
+            "base_state_valid": None,
+            "base_state_message": None,
+        }
+
+    proposed_change = _as_dict(record.get("proposed_change"))
+    if proposed_change is None:
+        return {
+            "base_state_status": "unknown",
+            "base_state_valid": None,
+            "base_state_message": "Unable to evaluate approval base state from the proposed change.",
+        }
+
+    try:
+        from portfolio.action_registry import compute_action_base_state_hash
+
+        current_hash = compute_action_base_state_hash(action_id, proposed_change)
+    except Exception:
+        return {
+            "base_state_status": "unknown",
+            "base_state_valid": None,
+            "base_state_message": "Unable to evaluate approval base state right now.",
+        }
+
+    if not current_hash:
+        return {
+            "base_state_status": "unknown",
+            "base_state_valid": None,
+            "base_state_message": "Approval base state could not be recomputed.",
+        }
+    if current_hash != stored_hash:
+        return {
+            "base_state_status": "stale",
+            "base_state_valid": False,
+            "base_state_message": STALE_APPROVAL_MESSAGE,
+        }
+    return {
+        "base_state_status": "valid",
+        "base_state_valid": True,
+        "base_state_message": None,
+    }
 
 
 def _nested_policy_gate(record: dict[str, Any]) -> dict[str, Any] | None:
@@ -114,9 +173,13 @@ def normalize_approval(record: dict[str, Any] | None) -> dict[str, Any] | None:
         or proposed_record.get("critical_data_quality")
     )
     out["lineage_state"] = _lineage_state(out.get("lineage_completeness"))
-    out["can_approve"] = status == "pending" and application_status in {"pending", "failed"}
+    base_state = _approval_base_state(out)
+    out.update(base_state)
+    is_stale = base_state["base_state_status"] == "stale"
+    out["can_approve"] = status == "pending" and application_status in {"pending", "failed"} and not is_stale
     out["can_reject"] = status == "pending"
-    out["can_retry_apply"] = status == "pending" and application_status == "failed"
+    out["can_retry_apply"] = status == "pending" and application_status == "failed" and not is_stale
+    out["can_restage"] = status == "pending" and bool(out.get("action_id")) and is_stale
     out["review_route"] = f"/workspace?approval_id={out.get('id')}" if out.get("id") is not None else None
     return out
 

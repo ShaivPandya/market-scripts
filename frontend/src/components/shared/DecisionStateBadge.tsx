@@ -65,6 +65,19 @@ export function QualityStateBadge({ state }: { state: string | null | undefined 
   )
 }
 
+export function BaseStateBadge({ state, message }: { state: string | null | undefined; message?: string | null }) {
+  const normalized = String(state || "untracked")
+  if (normalized !== "stale") return null
+  return (
+    <StatusBadge
+      tone="warning"
+      tooltip={message || "The underlying state changed after this proposal was created."}
+    >
+      State Changed
+    </StatusBadge>
+  )
+}
+
 export function EffectScopeBadge({ scope }: { scope: string | null | undefined }) {
   const normalized = String(scope || "unknown")
   const label = normalized === "read_only"

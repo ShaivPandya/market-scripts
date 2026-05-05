@@ -25,6 +25,7 @@ export type EffectScope = "read_only" | "internal_state" | "external_execution"
 export type PolicyState = "pass" | "warn" | "review_required" | "blocked" | "error" | "missing" | string
 export type QualityState = "ok" | "degraded" | "stale" | "failed" | "missing" | string
 export type LineageState = "complete" | "partial" | "legacy_partial" | "retry_pending" | "missing" | string
+export type BaseStateStatus = "valid" | "stale" | "untracked" | "unknown" | string
 
 export interface DecisionStateFields {
   decision_state?: DecisionState | string | null
@@ -34,6 +35,9 @@ export interface DecisionStateFields {
   policy_state?: PolicyState | null
   quality_state?: QualityState | null
   lineage_state?: LineageState | null
+  base_state_status?: BaseStateStatus | null
+  base_state_valid?: boolean | null
+  base_state_message?: string | null
   application_status?: string | null
   approval_state?: string | null
   outcome_state?: string | null
