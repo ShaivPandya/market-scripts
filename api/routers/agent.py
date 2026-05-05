@@ -300,7 +300,10 @@ def _agent_chat_job_cache_key(req: AgentChatJobRequest) -> str:
     session_id = str(req.session_id or "new")
     if req.client_turn_id:
         return f"agent_chat_turn:{session_id}:{req.client_turn_id}"
-    payload = req.model_dump(exclude={"actor", "finalize_synchronously"}, exclude_none=True)
+    payload = req.model_dump(
+        exclude={"actor", "finalize_synchronously", "allow_workflow_handoff"},
+        exclude_none=True,
+    )
     stable = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(stable.encode("utf-8")).hexdigest()[:24]
     return f"agent_chat_turn:{session_id}:active:{digest}"
@@ -326,6 +329,51 @@ def _agent_async_payload(row: dict[str, Any], *, events: list[dict[str, Any]] | 
         payload["events"] = events
         payload["next_seq"] = max([int(event["seq"]) for event in events], default=0)
     return payload
+
+
+def _enqueue_agent_chat_turn(
+    req: AgentChatRequestV2,
+    actor: Actor,
+    *,
+    emit_starting_event: bool = True,
+) -> tuple[dict[str, Any], str]:
+    from api import memory_db
+    from api.async_job_runner import enqueue_registered_job
+
+    session = memory_db.get_or_create_session(req.session_id)
+    session_id = str(session["session_id"])
+    job_req = AgentChatJobRequest.model_validate(
+        {
+            **req.model_dump(exclude={"session_id"}),
+            "session_id": session_id,
+            "actor": actor_to_dict(actor),
+            "message_count": int(session.get("message_count") or 0),
+            "finalize_synchronously": True,
+            "allow_workflow_handoff": False,
+        }
+    )
+    cache_key = _agent_chat_job_cache_key(job_req)
+    reuse_completed = bool(job_req.client_turn_id)
+    row, disposition = enqueue_registered_job(
+        "agent_chat_turn",
+        job_req.model_dump(exclude_none=True),
+        cache_key=cache_key,
+        reuse_completed=reuse_completed,
+    )
+    job_id = str(row.get("job_id") or "")
+    current_row = get_job(job_id) or row
+    events = list_job_events(job_id, after_seq=0)
+    if (
+        emit_starting_event
+        and disposition == "created"
+        and not events
+        and str(current_row.get("status") or "") == "queued"
+    ):
+        append_job_event(job_id, "status", {"status": "starting", "session_id": session_id})
+        events = list_job_events(job_id, after_seq=0)
+    payload = _agent_async_payload(get_job(job_id) or current_row, events=events)
+    payload["disposition"] = disposition
+    return payload, disposition
 
 
 MAX_TOOL_CONTINUATION_ROUNDS = 8
@@ -1781,36 +1829,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
 
 @router.post("/agent/chat/async")
 def start_agent_chat_async(req: AgentChatRequestV2, actor: ActorDep):
-    from api import memory_db
-    from api.async_job_runner import enqueue_registered_job
-
-    session = memory_db.get_or_create_session(req.session_id)
-    session_id = str(session["session_id"])
-    job_req = AgentChatJobRequest.model_validate(
-        {
-            **req.model_dump(exclude={"session_id"}),
-            "session_id": session_id,
-            "actor": actor_to_dict(actor),
-            "message_count": int(session.get("message_count") or 0),
-            "finalize_synchronously": True,
-        }
-    )
-    cache_key = _agent_chat_job_cache_key(job_req)
-    reuse_completed = bool(job_req.client_turn_id)
-    row, disposition = enqueue_registered_job(
-        "agent_chat_turn",
-        job_req.model_dump(exclude_none=True),
-        cache_key=cache_key,
-        reuse_completed=reuse_completed,
-    )
-    job_id = str(row.get("job_id") or "")
-    current_row = get_job(job_id) or row
-    events = list_job_events(job_id, after_seq=0)
-    if disposition == "created" and not events and str(current_row.get("status") or "") == "queued":
-        append_job_event(job_id, "status", {"status": "starting", "session_id": session_id})
-        events = list_job_events(job_id, after_seq=0)
-    payload = _agent_async_payload(get_job(job_id) or current_row, events=events)
-    payload["disposition"] = disposition
+    payload, _disposition = _enqueue_agent_chat_turn(req, actor)
     status_code = 200 if payload.get("status") in {"done", "error", "cancelled"} else 202
     return JSONResponse(payload, status_code=status_code)
 
@@ -1885,18 +1904,24 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
     and retrieval hits.
     """
     casual = _is_casual(req.message)
-    try:
-        provider = selected_provider()
-    except ValueError as exc:
-        raise ConfigurationError(str(exc)) from exc
     workflow_name, workflow_ticker = _detect_workflow(req.message)
-    active_tool_names = [] if casual else _select_tool_names(req.message)
-    tool_defs = _tool_definitions_from_names(provider, active_tool_names)
+    if workflow_name and req.allow_workflow_handoff:
+        provider_label = "deferred"
+        active_tool_names: list[str] = []
+        tool_defs: list[dict] = []
+    else:
+        try:
+            provider = selected_provider()
+        except ValueError as exc:
+            raise ConfigurationError(str(exc)) from exc
+        provider_label = provider
+        active_tool_names = [] if casual else _select_tool_names(req.message)
+        tool_defs = _tool_definitions_from_names(provider, active_tool_names)
     force_refresh = _wants_fresh_data(req.message)
     enable_retrieval = _should_use_retrieval(req.message)
     logger.info(
         "agent_v2 provider=%s casual=%s workflow=%s ticker=%s tools=%d refresh=%s retrieval=%s session=%s",
-        provider,
+        provider_label,
         casual,
         workflow_name,
         workflow_ticker,
@@ -1909,6 +1934,11 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
     def generate():  # noqa: C901
         nonlocal tool_defs
         yield _sse_ping()
+        if workflow_name and req.allow_workflow_handoff:
+            payload, _disposition = _enqueue_agent_chat_turn(req, actor)
+            yield _sse("handoff", payload)
+            return
+
         from api.memory_manager import build_conversation_context, finalize_turn, finalize_turn_async
 
         finalize_turn_fn = finalize_turn if req.finalize_synchronously else finalize_turn_async
@@ -1927,8 +1957,9 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             )
             text = _casual_response(req.message, req.response_preferences)
             yield _sse("delta", {"text": text})
-            user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
-            assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time()}
+            turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
+            user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
+            assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time(), **turn_meta}
             finalize_turn_fn(session_id, user_msg, assistant_msg)
             _finish_agent_turn_provenance(
                 agent_turn_event_id,
@@ -2068,12 +2099,14 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
 
                 usage = _usage_dict(final_message)
                 # Finalize turn before last yield
-                user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
+                turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
+                user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
                 assistant_msg = {
                     "role": "assistant",
                     "content": synthesis_text,
                     "timestamp": time.time(),
                     "toolCalls": workflow_tool_calls,
+                    **turn_meta,
                 }
                 finalize_turn_fn(session_id, user_msg, assistant_msg)
                 _finish_agent_turn_provenance(
@@ -2371,8 +2404,9 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 usage = _usage_dict(final_message)
                 # Finalize turn before last yield
                 full_text = "".join(text_parts)
-                user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
-                assistant_msg = {"role": "assistant", "content": full_text, "timestamp": time.time()}
+                turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
+                user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
+                assistant_msg = {"role": "assistant", "content": full_text, "timestamp": time.time(), **turn_meta}
                 finalize_turn_fn(session_id, user_msg, assistant_msg)
                 _finish_agent_turn_provenance(
                     agent_turn_event_id,

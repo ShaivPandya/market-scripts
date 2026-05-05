@@ -25,6 +25,7 @@ export MIGRATOR_SA="migrator-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 # Cloud Run service / job names.
 export API_SERVICE="talisman-api"      # must match firebase.json rewrite
 export ASYNC_JOB_RUNNER_JOB="talisman-async-job"
+export AGENT_WORKER_POOL="talisman-agent-worker"
 export MIGRATION_JOB="talisman-migrate"
 export TOP50_REFRESH_JOB="talisman-top50-refresh"
 

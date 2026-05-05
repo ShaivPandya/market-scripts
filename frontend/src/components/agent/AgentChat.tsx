@@ -190,7 +190,7 @@ export function AgentChat({ open, onClose, screenContext }: AgentChatProps) {
     const cmd = wf.requiresTicker
       ? `/workflow:${wf.name}:${ticker}`
       : `/workflow:${wf.name}`
-    sendMessage(cmd, screenContext, activePreferences)
+    sendMessage(cmd, screenContext, activePreferences, { durable: true })
     setWorkflowTicker("")
     setShowWorkflows(false)
   }

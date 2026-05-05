@@ -85,6 +85,7 @@ def _run_agent_chat_turn_job(req: AgentChatJobRequest, *, job_id: str) -> dict[s
         {
             **req.model_dump(exclude={"actor"}),
             "finalize_synchronously": True,
+            "allow_workflow_handoff": False,
         }
     )
     append_job_event(job_id, "status", {"status": "running", "session_id": worker_req.session_id})

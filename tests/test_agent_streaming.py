@@ -697,7 +697,7 @@ def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeyp
 
     resp = auth_client.post(
         "/api/v1/agent/chat/v2",
-        json={"message": "/workflow:thesis_review:NVDA"},
+        json={"message": "/workflow:thesis_review:NVDA", "allow_workflow_handoff": False},
     )
 
     assert resp.status_code == 200
@@ -707,6 +707,37 @@ def test_agent_chat_v2_workflow_done_includes_tool_metadata(auth_client, monkeyp
     assert done_events[-1]["tools_used"] == ["get_thesis", "query_ontology"]
     assert done_events[-1]["tool_calls"][0]["status"] == "ok"
     assert finalized[0]["toolCalls"] == done_events[-1]["tool_calls"]
+
+
+def test_agent_chat_v2_workflow_hands_off_to_durable_job(auth_client, monkeypatch):
+    from api import async_job_runner, cache
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("AGENT_CHAT_DISPATCH_BACKEND", "warm_worker")
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "/workflow:thesis_review:NVDA", "client_turn_id": "handoff-turn"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    handoffs = [payload for event, payload in parsed if event == "handoff"]
+    assert handoffs
+    assert handoffs[-1]["status"] == "queued"
+    assert handoffs[-1]["job_id"]
+    assert any(
+        event["event_type"] == "status" and event["payload"].get("status") == "starting"
+        for event in handoffs[-1].get("events") or []
+    )
+    assert not any(event == "tool_call" for event, _payload in parsed)
 
 
 def test_agent_chat_async_returns_replayable_events_and_finalizes(auth_client, monkeypatch):

@@ -111,6 +111,85 @@ def test_cloud_run_enqueue_dispatches_existing_job_once(monkeypatch):
     assert persisted["status"] == "queued"
 
 
+def test_agent_chat_warm_worker_dispatch_leaves_job_queued(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("AGENT_CHAT_DISPATCH_BACKEND", "warm_worker")
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+    )
+
+    row, disposition = async_job_runner.enqueue_registered_job(
+        "agent_chat_turn",
+        {"session_id": "warm-session", "message": "hello", "client_turn_id": "warm-turn"},
+        cache_key="agent-chat-warm-worker",
+    )
+
+    assert disposition == "created"
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "queued"
+    assert persisted["queue_name"] == "agent"
+
+
+def test_claim_queued_agent_job_is_exclusive(monkeypatch):
+    from api import cache
+    from api.job_queue import claim_queued_job, create_or_reuse_job, get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+
+    row, _disposition = create_or_reuse_job(
+        "agent_chat_turn",
+        payload={"session_id": "claim-session", "message": "hello"},
+        cache_key="agent-claim",
+        queue_name="agent",
+    )
+
+    first = claim_queued_job("agent_chat_turn", queue_name="agent")
+    second = claim_queued_job("agent_chat_turn", queue_name="agent")
+
+    assert first is not None
+    assert first["job_id"] == row["job_id"]
+    assert second is None
+    assert get_job(row["job_id"])["status"] == "running"
+
+
+def test_agent_worker_loop_claims_and_completes_one_job(monkeypatch):
+    import api.agent_chat_worker as agent_chat_worker
+    from api import async_job_runner, cache
+    from api.agent_worker_loop import run_once
+    from api.job_queue import get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    monkeypatch.setenv("AGENT_CHAT_DISPATCH_BACKEND", "warm_worker")
+
+    monkeypatch.setattr(
+        agent_chat_worker,
+        "_run_agent_chat_turn_job",
+        lambda req, *, job_id: {"status": "done", "session_id": req.session_id, "job_id": job_id},
+    )
+    row, _disposition = async_job_runner.enqueue_registered_job(
+        "agent_chat_turn",
+        {"session_id": "worker-session", "message": "hello"},
+        cache_key="agent-worker-loop",
+    )
+
+    assert run_once() is True
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "completed"
+
+
 def test_cloud_run_dedupe_reuses_active_and_completed_jobs(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import complete_job

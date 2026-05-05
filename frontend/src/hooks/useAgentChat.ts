@@ -20,6 +20,7 @@ export interface AgentMessage {
   role: "user" | "assistant"
   content: string
   timestamp: number
+  clientTurnId?: string
   toolCalls?: ToolCall[]
   isStreaming?: boolean
   statusText?: string
@@ -78,6 +79,15 @@ interface AgentJobResponse {
   result?: unknown
   events?: AgentJobEvent[]
   next_seq?: number
+}
+
+interface AgentStreamEvent {
+  event_type: AgentJobEvent["event_type"] | "ping" | "handoff"
+  payload: Record<string, unknown>
+}
+
+interface AgentSendOptions {
+  durable?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +181,55 @@ function toolCallsFromDonePayload(data: Record<string, unknown>): ToolCall[] {
   return normalizeToolCalls(data.tools_used)
 }
 
+function buildAgentRequestBody(
+  sessionId: string | null,
+  clientTurnId: string,
+  content: string,
+  screenContext?: ScreenContext | null,
+  responsePreferences?: AgentResponsePreferences | null,
+): Record<string, unknown> {
+  return {
+    session_id: sessionId,
+    client_turn_id: clientTurnId,
+    message: content,
+    ...(screenContext && {
+      screen_context: {
+        page_name: screenContext.pageName,
+        route: screenContext.route,
+        ticker: screenContext.ticker ?? null,
+        metrics: screenContext.metrics ?? null,
+        filters: screenContext.filters ?? null,
+        summary: screenContext.summary ?? null,
+        corresponding_tools: screenContext.correspondingTools ?? null,
+      },
+    }),
+    ...(responsePreferences && {
+      response_preferences: responsePreferences,
+    }),
+  }
+}
+
+function parseSseFrame(frame: string): AgentStreamEvent | null {
+  let eventType: string | null = null
+  const dataLines: string[] = []
+  for (const rawLine of frame.split(/\r?\n/)) {
+    const line = rawLine.trimEnd()
+    if (line.startsWith("event:")) {
+      eventType = line.slice("event:".length).trim()
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trim())
+    }
+  }
+  if (!eventType || dataLines.length === 0) return null
+  try {
+    const payload = JSON.parse(dataLines.join("\n"))
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null
+    return { event_type: eventType as AgentStreamEvent["event_type"], payload: payload as Record<string, unknown> }
+  } catch {
+    return null
+  }
+}
+
 function formatChatHttpError(response: Response, body: string): string {
   const statusPrefix = `${response.status}: `
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
@@ -261,6 +320,11 @@ export async function fetchSession(sessionId: string): Promise<{ transcript: Age
       role: m.role as "user" | "assistant",
       content: (m.content as string) ?? "",
       timestamp: (m.timestamp as number) ?? Date.now(),
+      clientTurnId: typeof m.clientTurnId === "string"
+        ? m.clientTurnId
+        : typeof m.client_turn_id === "string"
+          ? m.client_turn_id
+          : undefined,
       toolCalls: normalizeToolCalls(m.toolCalls ?? m.tool_calls),
       isStreaming: false,
     }))
@@ -300,6 +364,59 @@ async function startAgentJob(body: Record<string, unknown>, signal?: AbortSignal
     signal,
   })
   return readJsonResponse<AgentJobResponse>(resp)
+}
+
+async function startLiveAgentStream(
+  body: Record<string, unknown>,
+  onEvent: (event: AgentStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<{ handoff?: AgentJobResponse }> {
+  const url = `${BASE_URL}/agent/chat/v2`
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...schemaHeaders("POST", url) },
+    credentials: "include",
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "Request failed")
+    throw new Error(formatChatHttpError(resp, errText))
+  }
+  if (!resp.body) {
+    throw new Error("Agent stream did not include a response body.")
+  }
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+      const frames = buffer.split(/\r?\n\r?\n/)
+      buffer = frames.pop() ?? ""
+      for (const frame of frames) {
+        const event = parseSseFrame(frame)
+        if (!event || event.event_type === "ping") continue
+        if (event.event_type === "handoff") {
+          return { handoff: event.payload as unknown as AgentJobResponse }
+        }
+        onEvent(event)
+      }
+    }
+    if (done) break
+  }
+
+  const trailing = parseSseFrame(buffer)
+  if (trailing && trailing.event_type !== "ping") {
+    if (trailing.event_type === "handoff") {
+      return { handoff: trailing.payload as unknown as AgentJobResponse }
+    }
+    onEvent(trailing)
+  }
+  return {}
 }
 
 async function fetchAgentJobEvents(jobId: string, afterSeq: number, signal?: AbortSignal): Promise<AgentJobResponse> {
@@ -581,6 +698,42 @@ export function useAgentChat() {
     }
   }, [applyJobEvents, finishJobState])
 
+  const beginDurableResponse = useCallback(async (
+    assistantId: string,
+    clientTurnId: string,
+    started: AgentJobResponse,
+    controller: AbortController,
+  ) => {
+    const events = started.events ?? []
+    applyJobEvents(assistantId, events, started.session_id ?? null)
+    const afterSeq = started.next_seq ?? nextSeqFrom(events, 0)
+
+    if (events.some(event => event.event_type === "done" || event.event_type === "error")) {
+      inFlightRef.current = false
+      return
+    }
+
+    if (started.status === "done" || started.status === "error" || started.status === "cancelled") {
+      finishJobState(assistantId, started.status, started.error)
+      return
+    }
+
+    const activeJob: ActiveAgentJob = {
+      jobId: started.job_id,
+      assistantId,
+      afterSeq,
+      clientTurnId,
+    }
+    activeJobRef.current = activeJob
+    setState(prev => ({
+      ...prev,
+      sessionId: started.session_id ?? prev.sessionId,
+      activeJob,
+      isStreaming: true,
+    }))
+    await pollJob(activeJob, controller)
+  }, [applyJobEvents, finishJobState, pollJob])
+
   useEffect(() => {
     const activeJob = initialActiveJobRef.current
     if (!activeJob || inFlightRef.current) return
@@ -595,6 +748,7 @@ export function useAgentChat() {
     content: string,
     screenContext?: ScreenContext | null,
     responsePreferences?: AgentResponsePreferences | null,
+    options?: AgentSendOptions,
   ) => {
     if (inFlightRef.current || activeJobRef.current) return
     inFlightRef.current = true
@@ -604,6 +758,7 @@ export function useAgentChat() {
       role: "user",
       content,
       timestamp: Date.now(),
+      clientTurnId,
     }
 
     const assistantMsg: AgentMessage = {
@@ -611,6 +766,7 @@ export function useAgentChat() {
       role: "assistant",
       content: "",
       timestamp: Date.now(),
+      clientTurnId,
       toolCalls: [],
       isStreaming: true,
       statusText: "Starting...",
@@ -628,71 +784,23 @@ export function useAgentChat() {
       activeJob: null,
     }))
 
-    try {
-      const started = await startAgentJob({
-        session_id: state.sessionId,
-        client_turn_id: clientTurnId,
-        message: content,
-        ...(screenContext && {
-          screen_context: {
-            page_name: screenContext.pageName,
-            route: screenContext.route,
-            ticker: screenContext.ticker ?? null,
-            metrics: screenContext.metrics ?? null,
-            filters: screenContext.filters ?? null,
-            summary: screenContext.summary ?? null,
-            corresponding_tools: screenContext.correspondingTools ?? null,
-          },
-        }),
-        ...(responsePreferences && {
-          response_preferences: responsePreferences,
-        }),
-      }, controller.signal)
+    const body = buildAgentRequestBody(state.sessionId, clientTurnId, content, screenContext, responsePreferences)
+    let sawAssistantDelta = false
 
-      const events = started.events ?? []
-      applyJobEvents(assistantId, events, started.session_id ?? null)
-      const afterSeq = started.next_seq ?? nextSeqFrom(events, 0)
-
-      if (events.some(event => event.event_type === "done" || event.event_type === "error")) {
-        inFlightRef.current = false
-        return
-      }
-
-      if (started.status === "done" || started.status === "error" || started.status === "cancelled") {
-        finishJobState(assistantId, started.status, started.error)
-        return
-      }
-
-      const activeJob: ActiveAgentJob = {
-        jobId: started.job_id,
-        assistantId,
-        afterSeq,
-        clientTurnId,
-      }
-      activeJobRef.current = activeJob
+    const handleAbort = () => {
       setState(prev => ({
         ...prev,
-        sessionId: started.session_id ?? prev.sessionId,
-        activeJob,
-        isStreaming: true,
+        isStreaming: false,
+        activeJob: null,
+        messages: prev.messages.map(m =>
+          m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+        ),
       }))
-      await pollJob(activeJob, controller)
+      activeJobRef.current = null
+      inFlightRef.current = false
+    }
 
-    } catch (err) {
-      if ((err as Error).name === "AbortError") {
-        setState(prev => ({
-          ...prev,
-          isStreaming: false,
-          activeJob: null,
-          messages: prev.messages.map(m =>
-            m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
-          ),
-        }))
-        activeJobRef.current = null
-        inFlightRef.current = false
-        return
-      }
-      const message = err instanceof Error ? err.message : String(err)
+    const handleError = (message: string) => {
       setState(prev => ({
         ...prev,
         error: message,
@@ -705,7 +813,67 @@ export function useAgentChat() {
       activeJobRef.current = null
       inFlightRef.current = false
     }
-  }, [applyJobEvents, finishJobState, pollJob, state.sessionId])
+
+    try {
+      if (options?.durable) {
+        const started = await startAgentJob(body, controller.signal)
+        await beginDurableResponse(assistantId, clientTurnId, started, controller)
+        return
+      }
+
+      let directSeq = 0
+      const live = await startLiveAgentStream(body, event => {
+        if (event.event_type === "delta" && typeof event.payload.text === "string" && event.payload.text) {
+          sawAssistantDelta = true
+        }
+        const sessionId = typeof event.payload.session_id === "string" ? event.payload.session_id : null
+        applyJobEvents(assistantId, [{
+          seq: ++directSeq,
+          event_type: event.event_type as AgentJobEvent["event_type"],
+          payload: event.payload,
+        }], sessionId)
+      }, controller.signal)
+
+      if (live.handoff) {
+        await beginDurableResponse(assistantId, clientTurnId, live.handoff, controller)
+        return
+      }
+
+      setState(prev => ({
+        ...prev,
+        isStreaming: false,
+        activeJob: null,
+        messages: prev.messages.map(m =>
+          m.id === assistantId ? { ...m, isStreaming: false, statusText: undefined } : m,
+        ),
+      }))
+      inFlightRef.current = false
+    } catch (err) {
+      if ((err as Error).name === "AbortError") {
+        handleAbort()
+        return
+      }
+
+      if (!options?.durable && !sawAssistantDelta) {
+        try {
+          const started = await startAgentJob(body, controller.signal)
+          await beginDurableResponse(assistantId, clientTurnId, started, controller)
+          return
+        } catch (fallbackErr) {
+          if ((fallbackErr as Error).name === "AbortError") {
+            handleAbort()
+            return
+          }
+          const message = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+          handleError(message)
+          return
+        }
+      }
+
+      const message = err instanceof Error ? err.message : String(err)
+      handleError(`Agent stream interrupted after the response started. ${message}`)
+    }
+  }, [applyJobEvents, beginDurableResponse, state.sessionId])
 
   // ------ stopStreaming ------
   const stopStreaming = useCallback(() => {

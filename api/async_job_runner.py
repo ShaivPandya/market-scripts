@@ -93,6 +93,25 @@ def _env_backend() -> str:
     return "local"
 
 
+def _agent_chat_dispatch_backend() -> str | None:
+    value = _normalize_backend(os.getenv("AGENT_CHAT_DISPATCH_BACKEND") or "")
+    if not value:
+        return None
+    if value in {"warm_worker", "warm_workers", "postgres_poll", "postgres_poller"}:
+        return "warm_worker"
+    if value in {"cloud_run_jobs", "cloudrunjobs", "rq"}:
+        return "cloud_run_jobs"
+    if value in {"local", "memory", "in_memory", "in_process"}:
+        return "local"
+    return value
+
+
+def _dispatch_backend_for_job(job_type: str) -> str:
+    if job_type == "agent_chat_turn":
+        return _agent_chat_dispatch_backend() or _env_backend()
+    return _env_backend()
+
+
 def _stale_grace_seconds() -> int:
     value = (os.getenv("ASYNC_JOB_STALE_GRACE_SECONDS") or "").strip()
     if not value:
@@ -230,7 +249,10 @@ def enqueue_registered_job(
             return _sync_stale_active_job(row), disposition
 
     try:
-        if _env_backend() in {"cloud_run_jobs", "cloudrunjobs"}:
+        dispatch_backend = _dispatch_backend_for_job(job_type)
+        if dispatch_backend == "warm_worker":
+            logger.info("async job queued for warm worker job_type=%s job_id=%s", job_type, row["job_id"])
+        elif dispatch_backend in {"cloud_run_jobs", "cloudrunjobs"}:
             _enqueue_cloud_run_job(job_type, str(row["job_id"]))
         else:
             _enqueue_local_job(str(row["job_id"]))

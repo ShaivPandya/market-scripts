@@ -484,6 +484,57 @@ def list_active_jobs() -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
+def claim_queued_job(job_type: str, *, queue_name: str | None = None) -> dict[str, Any] | None:
+    """Atomically claim the oldest queued job for one worker.
+
+    Postgres workers use ``FOR UPDATE SKIP LOCKED`` so multiple warm workers can
+    poll the same queue without running the same job twice.
+    """
+    now = _now()
+    if not postgres_jobs_enabled():
+        with _memory_lock:
+            candidates = [
+                row
+                for row in _memory_jobs.values()
+                if row.get("job_type") == job_type
+                and row.get("status") == "queued"
+                and (queue_name is None or row.get("queue_name") == queue_name)
+            ]
+            if not candidates:
+                return None
+            row = sorted(candidates, key=lambda item: _memory_timestamp(item, "created_at"))[0]
+            row["status"] = "running"
+            row["started_at"] = row.get("started_at") or now
+            row["updated_at"] = now
+            return dict(row)
+
+    with connect() as conn:
+        row = conn.execute(
+            """
+            WITH candidate AS (
+                SELECT job_id
+                FROM async_jobs
+                WHERE job_type = %s
+                  AND status = 'queued'
+                  AND (%s IS NULL OR queue_name = %s)
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE async_jobs AS jobs
+            SET status = 'running',
+                started_at = COALESCE(jobs.started_at, %s),
+                updated_at = %s
+            FROM candidate
+            WHERE jobs.job_id = candidate.job_id
+            RETURNING jobs.*
+            """,
+            (job_type, queue_name, queue_name, now, now),
+        ).fetchone()
+        conn.commit()
+        return dict(row) if row else None
+
+
 def clear_memory_jobs() -> None:
     """Clear local fallback jobs. Used by tests and local cache invalidation."""
     with _memory_lock:

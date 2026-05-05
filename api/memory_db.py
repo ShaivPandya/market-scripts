@@ -325,6 +325,7 @@ def append_messages(session_id: str, messages: list[dict[str, Any]]) -> int:
     """Append messages to a session's server_messages. Returns new total count."""
     conn = _get_conn()
     now = datetime.now(UTC).isoformat()
+    turn_ids = {str(m.get("client_turn_id")) for m in messages if m.get("client_turn_id")}
     with _lock:
         row = conn.execute(
             "SELECT server_messages, transcript FROM conversation_sessions WHERE session_id = ?",
@@ -341,6 +342,8 @@ def append_messages(session_id: str, messages: list[dict[str, Any]]) -> int:
                 existing = json.loads(row["transcript"]) if row["transcript"] else []
             except Exception:
                 existing = []
+        if turn_ids and any(str(m.get("client_turn_id")) in turn_ids for m in existing if isinstance(m, dict)):
+            return len(existing)
         existing.extend(messages)
         conn.execute(
             """

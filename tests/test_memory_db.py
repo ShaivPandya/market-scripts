@@ -43,6 +43,24 @@ def test_append_messages_updates_transcript_for_v2_sessions(temp_memory_db):
     assert loaded["message_count"] == 2
 
 
+def test_append_messages_dedupes_client_turn_id(temp_memory_db):
+    session = memory_db.get_or_create_session(None)
+    sid = session["session_id"]
+    messages = [
+        {"role": "user", "content": "hello", "timestamp": 1.0, "client_turn_id": "turn-1"},
+        {"role": "assistant", "content": "Hey.", "timestamp": 2.0, "client_turn_id": "turn-1"},
+    ]
+
+    first_total = memory_db.append_messages(sid, messages)
+    second_total = memory_db.append_messages(sid, messages)
+    loaded = memory_db.get_session(sid)
+
+    assert first_total == 2
+    assert second_total == 2
+    assert loaded is not None
+    assert loaded["transcript"] == messages
+
+
 def test_get_session_falls_back_to_server_messages_for_existing_v2_sessions(temp_memory_db):
     session = memory_db.get_or_create_session(None)
     sid = session["session_id"]

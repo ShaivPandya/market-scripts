@@ -154,12 +154,17 @@ if [[ "${PARALLEL_JOB_DEPLOYS}" == "1" ]]; then
     "${_repo_root}/infra/gcp/deploy-top50-refresh-job.sh"
   start_parallel_step "async job runner deploy" \
     "${_repo_root}/infra/gcp/deploy-async-job.sh"
+  start_parallel_step "agent worker pool deploy" \
+    "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
 else
   log "Deploying top50 refresh job"
   "${_repo_root}/infra/gcp/deploy-top50-refresh-job.sh"
 
   log "Deploying async job runner"
   "${_repo_root}/infra/gcp/deploy-async-job.sh"
+
+  log "Deploying agent worker pool"
+  "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
 fi
 
 if [[ "${SYNC_IAM}" == "1" ]]; then
@@ -187,7 +192,7 @@ fi
 log "Deploying API service"
 "${_repo_root}/infra/gcp/deploy-api.sh"
 
-log "Skipping legacy worker pool deploy; async work now runs via Cloud Run Jobs"
+log "Skipping legacy talisman-worker deploy; agent chat uses ${AGENT_WORKER_POOL:-talisman-agent-worker}"
 
 if [[ "${SYNC_SCHEDULER}" == "1" ]]; then
   log "Syncing Cloud Scheduler jobs"

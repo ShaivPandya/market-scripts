@@ -58,6 +58,7 @@ class AgentChatRequestV2(BaseModel):
     screen_context: ScreenContextModel | None = None
     response_preferences: AgentResponsePreferences | None = None
     finalize_synchronously: bool = False
+    allow_workflow_handoff: bool = True
 
 
 class AgentChatJobRequest(AgentChatRequestV2):
