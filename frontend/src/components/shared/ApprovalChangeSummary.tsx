@@ -5,6 +5,20 @@ type DetailRow = {
   value: string
 }
 
+type PositionChangeField = {
+  field?: unknown
+  before?: unknown
+  after?: unknown
+}
+
+type PositionChange = {
+  ticker?: unknown
+  change_type?: unknown
+  before?: unknown
+  after?: unknown
+  fields?: unknown
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -54,6 +68,12 @@ function formatDateTime(value: unknown): string {
   })
 }
 
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(item => item && typeof item === "object" && !Array.isArray(item)) as Record<string, unknown>[]
+    : []
+}
+
 function compactJson(value: Record<string, unknown>): string {
   try {
     return JSON.stringify(value, null, 2)
@@ -86,6 +106,55 @@ function actionTitle(actionId: string | null | undefined, entityType: string): s
       return "Create recommendation"
     default:
       return sentenceCase(actionId || entityType || "Proposed change")
+  }
+}
+
+function positionDescriptor(value: unknown): string {
+  const record = asRecord(value)
+  const bits: string[] = []
+  if (record.direction || record.asset) bits.push([record.direction, record.asset].filter(Boolean).map(formatValue).join(" "))
+  if (record.shares != null) bits.push(`${formatValue(record.shares)} shares`)
+  if (record.cost_basis != null) bits.push(`cost basis ${formatValue(record.cost_basis)}`)
+  if (record.conviction != null) bits.push(`conviction ${formatValue(record.conviction)}`)
+  if (record.contrarian === true) bits.push("contrarian")
+  return bits.filter(Boolean).join(", ") || "-"
+}
+
+function positionChangeSummary(change: Record<string, unknown>): { summary: string; rows: DetailRow[] } {
+  const changes = asRecordArray(change.position_changes) as PositionChange[]
+  const countSummary = asRecord(change.position_change_summary)
+  const beforeCount = countSummary.before_count
+  const afterCount = countSummary.after_count
+  const countText =
+    typeof beforeCount === "number" && typeof afterCount === "number"
+      ? ` Captured book size: ${formatValue(beforeCount)} before, ${formatValue(afterCount)} after.`
+      : ""
+
+  if (!changes.length) {
+    const proposedCount = Array.isArray(change.positions) ? change.positions.length : null
+    return {
+      summary: proposedCount == null
+        ? "This replaces portfolio positions after approval. No captured position-level changes were provided."
+        : "This replaces portfolio positions after approval. Change details are unavailable for this legacy proposal.",
+      rows: proposedCount == null ? [] : [{ label: "Proposed count", value: formatValue(proposedCount) }],
+    }
+  }
+
+  const rows = changes.map(item => {
+    const ticker = formatValue(item.ticker)
+    const type = String(item.change_type || "").toLowerCase()
+    if (type === "added") return { label: `${ticker} added`, value: positionDescriptor(item.after) }
+    if (type === "removed") return { label: `${ticker} removed`, value: positionDescriptor(item.before) }
+    const fieldChanges = asRecordArray(item.fields) as PositionChangeField[]
+    const value = fieldChanges.length
+      ? fieldChanges.map(field => `${humanizeKey(String(field.field || "Field"))}: ${formatValue(field.before)} to ${formatValue(field.after)}`).join("; ")
+      : `${positionDescriptor(item.before)} to ${positionDescriptor(item.after)}`
+    return { label: `${ticker} updated`, value }
+  })
+
+  return {
+    summary: `This applies captured portfolio position changes after approval.${countText}`,
+    rows,
   }
 }
 
@@ -180,6 +249,8 @@ function proposedChangeSummary(approval: ApprovalRecord): { title: string; summa
   const change = approval.proposed_change
   const title = actionTitle(actionId, approval.entity_type)
   switch (actionId) {
+    case "update_portfolio_positions":
+      return { title, ...positionChangeSummary(change) }
     case "update_watch_trigger_check":
       return { title, ...watchTriggerCheckSummary(change) }
     case "create_watch_trigger":
