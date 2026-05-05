@@ -42,17 +42,11 @@ type ScenarioPreset =
 
 interface AnalyzerScenarioState {
   preset: ScenarioPreset
-  factor_weights: {
+  metric_scores: {
     quality: number
     price_momentum: number
-    fundamental_momentum: number
-    valuation: number
-  }
-  fundamental_momentum_weights: {
     revenue: number
     eps: number
-  }
-  valuation_weights: {
     price_sales: number
     price_operating_income: number
     price_fcf: number
@@ -74,38 +68,73 @@ const OPTIMIZATION_RUNS_QUERY_KEY = ["optimization", "runs"] as const
 const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenarioState> = {
   balanced: {
     preset: "balanced",
-    factor_weights: { quality: 0.30, price_momentum: 0.40, fundamental_momentum: 0.30, valuation: 0.0 },
-    fundamental_momentum_weights: { revenue: 0.67, eps: 0.33 },
-    valuation_weights: { price_sales: 0.25, price_operating_income: 0.25, price_fcf: 0.25, price_earnings: 0.25 },
-    brakes: { drawdown_sensitivity: 0.0, contrarian_penalty: 0.0, short_squeeze_brake: 0.0 },
+    metric_scores: {
+      quality: 30,
+      price_momentum: 40,
+      revenue: 20,
+      eps: 10,
+      price_sales: 0,
+      price_operating_income: 0,
+      price_fcf: 0,
+      price_earnings: 0,
+    },
+    brakes: { drawdown_sensitivity: 0, contrarian_penalty: 0, short_squeeze_brake: 0 },
   },
   capital_preservation: {
     preset: "capital_preservation",
-    factor_weights: { quality: 0.35, price_momentum: 0.15, fundamental_momentum: 0.20, valuation: 0.30 },
-    fundamental_momentum_weights: { revenue: 0.50, eps: 0.50 },
-    valuation_weights: { price_sales: 0.15, price_operating_income: 0.30, price_fcf: 0.35, price_earnings: 0.20 },
-    brakes: { drawdown_sensitivity: 0.55, contrarian_penalty: 0.45, short_squeeze_brake: 0.55 },
+    metric_scores: {
+      quality: 70,
+      price_momentum: 30,
+      revenue: 20,
+      eps: 20,
+      price_sales: 10,
+      price_operating_income: 20,
+      price_fcf: 20,
+      price_earnings: 10,
+    },
+    brakes: { drawdown_sensitivity: 60, contrarian_penalty: 50, short_squeeze_brake: 60 },
   },
   momentum_exploitation: {
     preset: "momentum_exploitation",
-    factor_weights: { quality: 0.15, price_momentum: 0.50, fundamental_momentum: 0.30, valuation: 0.05 },
-    fundamental_momentum_weights: { revenue: 0.55, eps: 0.45 },
-    valuation_weights: { price_sales: 0.25, price_operating_income: 0.25, price_fcf: 0.25, price_earnings: 0.25 },
-    brakes: { drawdown_sensitivity: 0.10, contrarian_penalty: 0.10, short_squeeze_brake: 0.20 },
+    metric_scores: {
+      quality: 30,
+      price_momentum: 100,
+      revenue: 30,
+      eps: 30,
+      price_sales: 0,
+      price_operating_income: 0,
+      price_fcf: 0,
+      price_earnings: 0,
+    },
+    brakes: { drawdown_sensitivity: 10, contrarian_penalty: 10, short_squeeze_brake: 20 },
   },
   value_dislocation: {
     preset: "value_dislocation",
-    factor_weights: { quality: 0.20, price_momentum: 0.10, fundamental_momentum: 0.20, valuation: 0.50 },
-    fundamental_momentum_weights: { revenue: 0.55, eps: 0.45 },
-    valuation_weights: { price_sales: 0.25, price_operating_income: 0.25, price_fcf: 0.30, price_earnings: 0.20 },
-    brakes: { drawdown_sensitivity: 0.20, contrarian_penalty: 0.20, short_squeeze_brake: 0.25 },
+    metric_scores: {
+      quality: 40,
+      price_momentum: 20,
+      revenue: 20,
+      eps: 20,
+      price_sales: 30,
+      price_operating_income: 30,
+      price_fcf: 30,
+      price_earnings: 20,
+    },
+    brakes: { drawdown_sensitivity: 20, contrarian_penalty: 20, short_squeeze_brake: 30 },
   },
   short_defense: {
     preset: "short_defense",
-    factor_weights: { quality: 0.30, price_momentum: 0.35, fundamental_momentum: 0.25, valuation: 0.10 },
-    fundamental_momentum_weights: { revenue: 0.55, eps: 0.45 },
-    valuation_weights: { price_sales: 0.20, price_operating_income: 0.25, price_fcf: 0.35, price_earnings: 0.20 },
-    brakes: { drawdown_sensitivity: 0.25, contrarian_penalty: 0.20, short_squeeze_brake: 0.70 },
+    metric_scores: {
+      quality: 60,
+      price_momentum: 70,
+      revenue: 30,
+      eps: 20,
+      price_sales: 0,
+      price_operating_income: 0,
+      price_fcf: 10,
+      price_earnings: 0,
+    },
+    brakes: { drawdown_sensitivity: 30, contrarian_penalty: 20, short_squeeze_brake: 70 },
   },
 }
 
@@ -187,14 +216,64 @@ const COLUMN_ORDER = [
   "avg10_rel_roc",
 ]
 
-function cloneScenario<T extends AnalyzerScenarioState>(scenario: T): T {
+const SCORE_MIN = 0
+const SCORE_MAX = 100
+const SCORE_STEP = 10
+
+type MetricScores = AnalyzerScenarioState["metric_scores"]
+type BrakeScores = AnalyzerScenarioState["brakes"]
+type LegacyScenarioState = Partial<AnalyzerScenarioState> & {
+  factor_weights?: {
+    quality?: number
+    price_momentum?: number
+    fundamental_momentum?: number
+    valuation?: number
+  }
+  fundamental_momentum_weights?: {
+    revenue?: number
+    eps?: number
+  }
+  valuation_weights?: {
+    price_sales?: number
+    price_operating_income?: number
+    price_fcf?: number
+    price_earnings?: number
+  }
+}
+
+function clampScore(value: number) {
+  if (!Number.isFinite(value)) return SCORE_MIN
+  const stepped = Math.round(value / SCORE_STEP) * SCORE_STEP
+  return Math.min(SCORE_MAX, Math.max(SCORE_MIN, stepped))
+}
+
+function normalizeScoreMap<T extends Record<string, number>>(values: Partial<T> | undefined, defaults: T): T {
+  const raw = (values ?? {}) as Partial<Record<keyof T, number>>
+  return Object.fromEntries(
+    Object.entries(defaults).map(([key, fallback]) => {
+      const value = Number(raw[key as keyof T] ?? fallback)
+      return [key, clampScore(value)]
+    }),
+  ) as T
+}
+
+function normalizeBrakeScores(values: Partial<BrakeScores> | undefined, defaults: BrakeScores): BrakeScores {
+  const raw = values ?? {}
+  return Object.fromEntries(
+    Object.entries(defaults).map(([key, fallback]) => {
+      const value = Number(raw[key as keyof BrakeScores] ?? fallback)
+      const scoreValue = value > 0 && value <= 1 ? value * SCORE_MAX : value
+      return [key, clampScore(scoreValue)]
+    }),
+  ) as BrakeScores
+}
+
+function cloneScenario(scenario: AnalyzerScenarioState): AnalyzerScenarioState {
   return {
     preset: scenario.preset,
-    factor_weights: normalizeWeightGroup(scenario.factor_weights),
-    fundamental_momentum_weights: normalizeWeightGroup(scenario.fundamental_momentum_weights),
-    valuation_weights: normalizeWeightGroup(scenario.valuation_weights),
-    brakes: { ...scenario.brakes },
-  } as T
+    metric_scores: normalizeScoreMap(scenario.metric_scores, scenario.metric_scores),
+    brakes: normalizeBrakeScores(scenario.brakes, scenario.brakes),
+  }
 }
 
 function normalizeScenarioState(value: AnalyzerScenarioState | undefined): AnalyzerScenarioState {
@@ -202,18 +281,14 @@ function normalizeScenarioState(value: AnalyzerScenarioState | undefined): Analy
   const rawPreset = value.preset
   const preset: ScenarioPreset = rawPreset === "custom" || rawPreset in SCENARIO_PRESETS ? rawPreset : "balanced"
   const base = preset === "custom" ? SCENARIO_PRESETS.balanced : SCENARIO_PRESETS[preset]
+  const legacyValue = value as LegacyScenarioState
   return {
     preset: value.preset === "custom" ? "custom" : preset as ScenarioPreset,
-    factor_weights: normalizeWeightGroup(value.factor_weights ?? base.factor_weights),
-    fundamental_momentum_weights: normalizeWeightGroup(value.fundamental_momentum_weights ?? base.fundamental_momentum_weights),
-    valuation_weights: normalizeWeightGroup(value.valuation_weights ?? base.valuation_weights),
-    brakes: { ...base.brakes, ...(value.brakes ?? {}) },
+    metric_scores: value.metric_scores
+      ? normalizeScoreMap(value.metric_scores, base.metric_scores)
+      : legacyWeightsToMetricScores(legacyValue, base.metric_scores),
+    brakes: normalizeBrakeScores(value.brakes, base.brakes),
   }
-}
-
-function clampUnit(value: number) {
-  if (!Number.isFinite(value)) return 0
-  return Math.min(1, Math.max(0, value))
 }
 
 function normalizeWeightGroup<T extends Record<string, number>>(weights: T): T {
@@ -230,26 +305,43 @@ function normalizeWeightGroup<T extends Record<string, number>>(weights: T): T {
   ) as T
 }
 
-function rebalanceWeightGroup<T extends Record<string, number>>(weights: T, key: keyof T, value: number): T {
-  const nextValue = clampUnit(value)
-  const entries = Object.entries(weights) as [keyof T, number][]
-  const otherEntries = entries.filter(([entryKey]) => entryKey !== key)
-  const remaining = 1 - nextValue
-  const otherTotal = otherEntries.reduce(
-    (sum, [, entryValue]) => sum + Math.max(0, Number.isFinite(entryValue) ? entryValue : 0),
-    0,
-  )
+function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: MetricScores): MetricScores {
+  if (!value.factor_weights && !value.fundamental_momentum_weights && !value.valuation_weights) {
+    return normalizeScoreMap(defaults, defaults)
+  }
 
-  const nextEntries = entries.map(([entryKey, entryValue]) => {
-    if (entryKey === key) return [entryKey, nextValue]
-    const adjustedValue =
-      otherTotal > 0
-        ? (Math.max(0, Number.isFinite(entryValue) ? entryValue : 0) / otherTotal) * remaining
-        : remaining / Math.max(1, otherEntries.length)
-    return [entryKey, adjustedValue]
+  const defaultValuationTotal =
+    defaults.price_sales + defaults.price_operating_income + defaults.price_fcf + defaults.price_earnings
+  const factorWeights = normalizeWeightGroup({
+    quality: defaults.quality,
+    price_momentum: defaults.price_momentum,
+    fundamental_momentum: defaults.revenue + defaults.eps,
+    valuation: defaultValuationTotal,
+    ...(value.factor_weights ?? {}),
+  })
+  const fundamentalWeights = normalizeWeightGroup({
+    revenue: defaults.revenue,
+    eps: defaults.eps,
+    ...(value.fundamental_momentum_weights ?? {}),
+  })
+  const valuationWeights = normalizeWeightGroup({
+    price_sales: defaults.price_sales,
+    price_operating_income: defaults.price_operating_income,
+    price_fcf: defaults.price_fcf,
+    price_earnings: defaults.price_earnings,
+    ...(value.valuation_weights ?? {}),
   })
 
-  return normalizeWeightGroup(Object.fromEntries(nextEntries) as T)
+  return {
+    quality: clampScore(factorWeights.quality * SCORE_MAX),
+    price_momentum: clampScore(factorWeights.price_momentum * SCORE_MAX),
+    revenue: clampScore(factorWeights.fundamental_momentum * fundamentalWeights.revenue * SCORE_MAX),
+    eps: clampScore(factorWeights.fundamental_momentum * fundamentalWeights.eps * SCORE_MAX),
+    price_sales: clampScore(factorWeights.valuation * valuationWeights.price_sales * SCORE_MAX),
+    price_operating_income: clampScore(factorWeights.valuation * valuationWeights.price_operating_income * SCORE_MAX),
+    price_fcf: clampScore(factorWeights.valuation * valuationWeights.price_fcf * SCORE_MAX),
+    price_earnings: clampScore(factorWeights.valuation * valuationWeights.price_earnings * SCORE_MAX),
+  }
 }
 
 function toRows(value: unknown): Record<string, unknown>[] {
@@ -343,10 +435,8 @@ function buildColumns(rows: Record<string, unknown>[]): ColumnDef[] {
 function toScenarioRequest(scenario: AnalyzerScenarioState): AnalyzerScenarioRequest {
   return {
     preset: scenario.preset,
-    factor_weights: normalizeWeightGroup(scenario.factor_weights),
-    fundamental_momentum_weights: normalizeWeightGroup(scenario.fundamental_momentum_weights),
-    valuation_weights: normalizeWeightGroup(scenario.valuation_weights),
-    brakes: { ...scenario.brakes },
+    metric_scores: normalizeScoreMap(scenario.metric_scores, scenario.metric_scores),
+    brakes: normalizeBrakeScores(scenario.brakes, scenario.brakes),
   }
 }
 
@@ -794,24 +884,16 @@ export function PortfolioAnalyzer() {
     setScenario(cloneScenario(SCENARIO_PRESETS[preset]))
   }
 
-  function setFactorWeight(key: keyof AnalyzerScenarioState["factor_weights"], value: number) {
-    setScenario(prev => ({ ...prev, preset: "custom", factor_weights: rebalanceWeightGroup(prev.factor_weights, key, value) }))
-  }
-
-  function setFundamentalWeight(key: keyof AnalyzerScenarioState["fundamental_momentum_weights"], value: number) {
+  function setMetricScore(key: keyof AnalyzerScenarioState["metric_scores"], value: number) {
     setScenario(prev => ({
       ...prev,
       preset: "custom",
-      fundamental_momentum_weights: rebalanceWeightGroup(prev.fundamental_momentum_weights, key, value),
+      metric_scores: { ...prev.metric_scores, [key]: clampScore(value) },
     }))
   }
 
-  function setValuationWeight(key: keyof AnalyzerScenarioState["valuation_weights"], value: number) {
-    setScenario(prev => ({ ...prev, preset: "custom", valuation_weights: rebalanceWeightGroup(prev.valuation_weights, key, value) }))
-  }
-
   function setBrake(key: keyof AnalyzerScenarioState["brakes"], value: number) {
-    setScenario(prev => ({ ...prev, preset: "custom", brakes: { ...prev.brakes, [key]: value } }))
+    setScenario(prev => ({ ...prev, preset: "custom", brakes: { ...prev.brakes, [key]: clampScore(value) } }))
   }
 
   function handleBrief() {
@@ -884,39 +966,37 @@ export function PortfolioAnalyzer() {
           className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-muted hover:text-app"
         >
           {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          Advanced metric weights
+          Advanced metric scores
           {scenario.preset === "custom" && <Badge tone="info">Custom</Badge>}
         </button>
 
         {advancedOpen && (
           <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-4">
             <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-app">Factor Mix</h3>
-              <SliderInput label="Quality" value={scenario.factor_weights.quality} onChange={v => setFactorWeight("quality", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="Price Momentum" value={scenario.factor_weights.price_momentum} onChange={v => setFactorWeight("price_momentum", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="Fundamental Momentum" value={scenario.factor_weights.fundamental_momentum} onChange={v => setFactorWeight("fundamental_momentum", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="Valuation" value={scenario.factor_weights.valuation} onChange={v => setFactorWeight("valuation", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
+              <h3 className="text-sm font-semibold text-app">Signal Scores</h3>
+              <SliderInput label="Quality" value={scenario.metric_scores.quality} onChange={v => setMetricScore("quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Price Momentum" value={scenario.metric_scores.price_momentum} onChange={v => setMetricScore("price_momentum", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Fundamental Momentum</h3>
-              <SliderInput label="Revenue" value={scenario.fundamental_momentum_weights.revenue} onChange={v => setFundamentalWeight("revenue", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="EPS" value={scenario.fundamental_momentum_weights.eps} onChange={v => setFundamentalWeight("eps", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
+              <SliderInput label="Revenue" value={scenario.metric_scores.revenue} onChange={v => setMetricScore("revenue", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="EPS" value={scenario.metric_scores.eps} onChange={v => setMetricScore("eps", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Valuation</h3>
-              <SliderInput label="P/S" value={scenario.valuation_weights.price_sales} onChange={v => setValuationWeight("price_sales", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="P/Operating Income" value={scenario.valuation_weights.price_operating_income} onChange={v => setValuationWeight("price_operating_income", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="P/FCF" value={scenario.valuation_weights.price_fcf} onChange={v => setValuationWeight("price_fcf", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="P/E" value={scenario.valuation_weights.price_earnings} onChange={v => setValuationWeight("price_earnings", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
+              <SliderInput label="P/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="P/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="P/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Risk Brakes</h3>
-              <SliderInput label="Drawdown" value={scenario.brakes.drawdown_sensitivity} onChange={v => setBrake("drawdown_sensitivity", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="Contrarian" value={scenario.brakes.contrarian_penalty} onChange={v => setBrake("contrarian_penalty", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
-              <SliderInput label="Short Squeeze" value={scenario.brakes.short_squeeze_brake} onChange={v => setBrake("short_squeeze_brake", v)} min={0} max={1} step={0.05} formatValue={v => `${Math.round(v * 100)}%`} />
+              <SliderInput label="Drawdown" value={scenario.brakes.drawdown_sensitivity} onChange={v => setBrake("drawdown_sensitivity", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Contrarian" value={scenario.brakes.contrarian_penalty} onChange={v => setBrake("contrarian_penalty", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Short Squeeze" value={scenario.brakes.short_squeeze_brake} onChange={v => setBrake("short_squeeze_brake", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>
           </div>
         )}
@@ -928,7 +1008,7 @@ export function PortfolioAnalyzer() {
       {data && !mutation.isPending && !mutation.isError && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <SummaryCard title="Mission" value={missionLabel(summary?.mission ?? scenario.preset)} detail={scenario.preset === "custom" ? "Custom weights" : "Preset weights"} />
+            <SummaryCard title="Mission" value={missionLabel(summary?.mission ?? scenario.preset)} detail={scenario.preset === "custom" ? "Custom scores" : "Preset scores"} />
             <SummaryCard title="Actionable" value={String(actionableCount)} detail="Non-held pass-gated actions" />
             <SummaryCard title="Reviews" value={String(reviewCount)} detail="Gated or review actions" />
             <SummaryCard title="Data Warnings" value={String(dataWarnings)} detail={asOf} />

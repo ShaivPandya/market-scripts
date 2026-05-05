@@ -50,14 +50,42 @@ class AnalyzerValuationWeights(BaseModel):
         return self
 
 
+class AnalyzerMetricScores(BaseModel):
+    quality: float = Field(default=0.0, ge=0, le=100)
+    price_momentum: float = Field(default=0.0, ge=0, le=100)
+    revenue: float = Field(default=0.0, ge=0, le=100)
+    eps: float = Field(default=0.0, ge=0, le=100)
+    price_sales: float = Field(default=0.0, ge=0, le=100)
+    price_operating_income: float = Field(default=0.0, ge=0, le=100)
+    price_fcf: float = Field(default=0.0, ge=0, le=100)
+    price_earnings: float = Field(default=0.0, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def require_nonzero(self):
+        total = (
+            self.quality
+            + self.price_momentum
+            + self.revenue
+            + self.eps
+            + self.price_sales
+            + self.price_operating_income
+            + self.price_fcf
+            + self.price_earnings
+        )
+        if total <= 0:
+            raise ValueError("metric_scores must include at least one positive score.")
+        return self
+
+
 class AnalyzerScenarioBrakes(BaseModel):
-    drawdown_sensitivity: float = Field(default=0.0, ge=0, le=1)
-    contrarian_penalty: float = Field(default=0.0, ge=0, le=1)
-    short_squeeze_brake: float = Field(default=0.0, ge=0, le=1)
+    drawdown_sensitivity: float = Field(default=0.0, ge=0, le=100)
+    contrarian_penalty: float = Field(default=0.0, ge=0, le=100)
+    short_squeeze_brake: float = Field(default=0.0, ge=0, le=100)
 
 
 class AnalyzerScenario(BaseModel):
     preset: str = "balanced"
+    metric_scores: AnalyzerMetricScores | None = None
     factor_weights: AnalyzerFactorWeights = Field(default_factory=AnalyzerFactorWeights)
     fundamental_momentum_weights: AnalyzerFundamentalMomentumWeights = Field(
         default_factory=AnalyzerFundamentalMomentumWeights
@@ -86,15 +114,76 @@ def _normalize_group(values: dict[str, Any]) -> dict[str, float]:
     return {k: round(v / total, 8) for k, v in numeric.items()}
 
 
+def _unit_brake_value(value: Any) -> float:
+    numeric = max(0.0, float(value or 0.0))
+    if numeric > 1.0:
+        numeric = numeric / 100.0
+    return round(max(0.0, min(1.0, numeric)), 8)
+
+
+def _scenario_from_metric_scores(metric_scores: dict[str, Any]) -> dict[str, dict[str, float]]:
+    scores = {key: max(0.0, float(value or 0.0)) for key, value in metric_scores.items()}
+    total = sum(scores.values())
+    if total <= 0:
+        raise ValueError("metric_scores must include at least one positive score.")
+
+    fundamental_total = scores.get("revenue", 0.0) + scores.get("eps", 0.0)
+    valuation_total = (
+        scores.get("price_sales", 0.0)
+        + scores.get("price_operating_income", 0.0)
+        + scores.get("price_fcf", 0.0)
+        + scores.get("price_earnings", 0.0)
+    )
+
+    factor_weights = _normalize_group(
+        {
+            "quality": scores.get("quality", 0.0),
+            "price_momentum": scores.get("price_momentum", 0.0),
+            "fundamental_momentum": fundamental_total,
+            "valuation": valuation_total,
+        }
+    )
+    fundamental_momentum_weights = (
+        _normalize_group({"revenue": scores.get("revenue", 0.0), "eps": scores.get("eps", 0.0)})
+        if fundamental_total > 0
+        else _normalize_group(AnalyzerFundamentalMomentumWeights().model_dump())
+    )
+    valuation_weights = (
+        _normalize_group(
+            {
+                "price_sales": scores.get("price_sales", 0.0),
+                "price_operating_income": scores.get("price_operating_income", 0.0),
+                "price_fcf": scores.get("price_fcf", 0.0),
+                "price_earnings": scores.get("price_earnings", 0.0),
+            }
+        )
+        if valuation_total > 0
+        else _normalize_group(AnalyzerValuationWeights().model_dump())
+    )
+
+    return {
+        "factor_weights": factor_weights,
+        "fundamental_momentum_weights": fundamental_momentum_weights,
+        "valuation_weights": valuation_weights,
+    }
+
+
 def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
     scenario = req.scenario or AnalyzerScenario()
     raw = scenario.model_dump()
+    weights = (
+        _scenario_from_metric_scores(raw["metric_scores"])
+        if raw.get("metric_scores") is not None
+        else {
+            "factor_weights": _normalize_group(raw["factor_weights"]),
+            "fundamental_momentum_weights": _normalize_group(raw["fundamental_momentum_weights"]),
+            "valuation_weights": _normalize_group(raw["valuation_weights"]),
+        }
+    )
     return {
         "preset": raw.get("preset") or "balanced",
-        "factor_weights": _normalize_group(raw["factor_weights"]),
-        "fundamental_momentum_weights": _normalize_group(raw["fundamental_momentum_weights"]),
-        "valuation_weights": _normalize_group(raw["valuation_weights"]),
-        "brakes": {k: round(max(0.0, min(1.0, float(v or 0.0))), 8) for k, v in raw["brakes"].items()},
+        **weights,
+        "brakes": {k: _unit_brake_value(v) for k, v in raw["brakes"].items()},
     }
 
 
@@ -112,7 +201,7 @@ def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
             book=req.book,
             target_leverage=req.target_leverage,
             beta_neutral=True if req.beta_neutral is None else req.beta_neutral,
-            scenario=req.scenario.model_dump() if req.scenario is not None else None,
+            scenario=_canonical_scenario(req),
         )
     except Exception as e:
         raise RuntimeError(str(e)) from e

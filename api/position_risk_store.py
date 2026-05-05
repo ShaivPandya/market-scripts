@@ -229,7 +229,6 @@ def _write_postgres(ticker: str, result_id: str, snapshot: dict[str, Any]) -> No
     from psycopg.types.json import Jsonb
 
     with connect() as conn:
-        _ensure_postgres_schema(conn)
         conn.execute(
             """
             INSERT INTO position_risk_snapshots (
@@ -284,7 +283,6 @@ def _write_postgres(ticker: str, result_id: str, snapshot: dict[str, Any]) -> No
 
 def _read_latest_postgres(ticker: str) -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure_postgres_schema(conn)
         row = conn.execute(
             """
             SELECT payload_json
@@ -303,7 +301,6 @@ def _read_latest_postgres(ticker: str) -> dict[str, Any] | None:
 
 def _read_position_snapshot_postgres(snapshot_id: str) -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure_postgres_schema(conn)
         row = conn.execute(
             "SELECT payload_json FROM position_risk_snapshots WHERE id = %s",
             (snapshot_id,),
@@ -318,7 +315,6 @@ def _write_portfolio_postgres(result_id: str, snapshot: dict[str, Any]) -> None:
     from psycopg.types.json import Jsonb
 
     with connect() as conn:
-        _ensure_postgres_schema(conn)
         conn.execute(
             """
             INSERT INTO portfolio_risk_snapshots (
@@ -373,7 +369,6 @@ def _write_portfolio_postgres(result_id: str, snapshot: dict[str, Any]) -> None:
 
 def _read_latest_portfolio_postgres() -> dict[str, Any] | None:
     with connect() as conn:
-        _ensure_postgres_schema(conn)
         row = conn.execute(
             """
             SELECT payload_json
@@ -447,59 +442,6 @@ def _sqlite_connect() -> sqlite3.Connection:
     )
     conn.commit()
     return conn
-
-
-def _ensure_postgres_schema(conn: Any) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS position_risk_snapshots (
-            id text PRIMARY KEY,
-            ticker text NOT NULL,
-            as_of text,
-            computed_at text NOT NULL,
-            risk_score double precision NOT NULL,
-            risk_level text NOT NULL,
-            confidence double precision NOT NULL,
-            quality text NOT NULL,
-            source_status_json jsonb NOT NULL DEFAULT '{}'::jsonb,
-            evidence_json jsonb NOT NULL DEFAULT '[]'::jsonb,
-            degraded_modules_json jsonb NOT NULL DEFAULT '[]'::jsonb,
-            input_snapshots_json jsonb NOT NULL DEFAULT '{}'::jsonb,
-            payload_json jsonb NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_position_risk_snapshots_ticker_time
-        ON position_risk_snapshots (upper(ticker), computed_at DESC)
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
-            id text PRIMARY KEY,
-            as_of text,
-            computed_at text NOT NULL,
-            average_risk_score double precision NOT NULL,
-            max_risk_score double precision NOT NULL,
-            confidence double precision NOT NULL,
-            quality text NOT NULL,
-            position_count integer NOT NULL,
-            source_status_json jsonb NOT NULL DEFAULT '{}'::jsonb,
-            degraded_modules_json jsonb NOT NULL DEFAULT '[]'::jsonb,
-            input_snapshots_json jsonb NOT NULL DEFAULT '{}'::jsonb,
-            position_snapshot_ids_json jsonb NOT NULL DEFAULT '{}'::jsonb,
-            payload_json jsonb NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_portfolio_risk_snapshots_time
-        ON portfolio_risk_snapshots (computed_at DESC)
-        """
-    )
 
 
 def _ticker(value: Any) -> str:

@@ -44,6 +44,10 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     return numeric
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _action_is_hold(action: str) -> bool:
     return action in {"Hold Long", "Hold Short", "Watch"}
 
@@ -71,7 +75,7 @@ def _severity_for_state(state: dict[str, Any]) -> str:
 def _material_fingerprint(state: dict[str, Any], thresholds: dict[str, Any]) -> dict[str, Any]:
     confidence_edges = list(thresholds.get("confidence_bucket_edges") or [0.35, 0.65, 0.8])
     priority_edges = list(thresholds.get("priority_bucket_edges") or [0.75, 1.5, 2.5])
-    risk = state.get("risk") if isinstance(state.get("risk"), dict) else {}
+    risk = _as_dict(state.get("risk"))
     return {
         "action": state.get("action"),
         "conviction_band": state.get("conviction_band"),
@@ -86,10 +90,10 @@ def _material_fingerprint(state: dict[str, Any], thresholds: dict[str, Any]) -> 
 def _alert_type(previous: dict[str, Any] | None, current: dict[str, Any]) -> str:
     if previous is None:
         return "new_action_state"
-    prev = previous.get("evidence") if isinstance(previous.get("evidence"), dict) else {}
-    cur = current.get("evidence") if isinstance(current.get("evidence"), dict) else {}
-    prev_material = prev.get("material_state") if isinstance(prev.get("material_state"), dict) else {}
-    cur_material = cur.get("material_state") if isinstance(cur.get("material_state"), dict) else {}
+    prev = _as_dict(previous.get("evidence"))
+    cur = _as_dict(current.get("evidence"))
+    prev_material = _as_dict(prev.get("material_state"))
+    cur_material = _as_dict(cur.get("material_state"))
     if prev_material.get("risk_level") != cur_material.get("risk_level"):
         return "risk_gate_changed"
     if prev_material.get("gate_status") != cur_material.get("gate_status"):
@@ -103,10 +107,10 @@ def _change_summary(previous: dict[str, Any] | None, current: dict[str, Any]) ->
     ticker = str(current.get("ticker") or "").upper()
     if previous is None:
         return f"{ticker}: new optimizer state is {current.get('action')} ({current.get('conviction_band')})."
-    prev_evidence = previous.get("evidence") if isinstance(previous.get("evidence"), dict) else {}
-    prev_material = prev_evidence.get("material_state") if isinstance(prev_evidence.get("material_state"), dict) else {}
-    cur_evidence = current.get("evidence") if isinstance(current.get("evidence"), dict) else {}
-    cur_material = cur_evidence.get("material_state") if isinstance(cur_evidence.get("material_state"), dict) else {}
+    prev_evidence = _as_dict(previous.get("evidence"))
+    prev_material = _as_dict(prev_evidence.get("material_state"))
+    cur_evidence = _as_dict(current.get("evidence"))
+    cur_material = _as_dict(cur_evidence.get("material_state"))
     changes = []
     for label, key in (
         ("action", "action"),
@@ -288,7 +292,7 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> int |
         action_type = "research" if action.startswith("Research") else "review"
     if action in {"Trim Long", "Cover Short", "Exit Review"}:
         action_type = "exit" if action == "Exit Review" else "resize"
-    evidence = snapshot.get("evidence") if isinstance(snapshot.get("evidence"), dict) else {}
+    evidence = _as_dict(snapshot.get("evidence"))
     rationale = str(evidence.get("deterministic_rationale") or alert.get("change_summary") or "").strip()
     description = f"Continuous optimizer: {alert['change_summary']}"
     if rationale:
@@ -322,7 +326,7 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
             "alerts_created": 0,
         }
 
-    scenario = mission.get("scenario") if isinstance(mission.get("scenario"), dict) else {}
+    scenario = _as_dict(mission.get("scenario"))
     input_payload = {
         "mission_id": mission["id"],
         "mission_name": mission["name"],

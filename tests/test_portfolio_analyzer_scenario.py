@@ -69,6 +69,71 @@ def test_analyzer_cache_key_changes_with_scenario_weights():
     assert _cache_key(quality_req) != _cache_key(value_req)
 
 
+def test_metric_scores_normalize_across_all_alpha_metrics():
+    scenario = normalize_analyzer_scenario(
+        {
+            "metric_scores": {
+                "quality": 10,
+                "price_momentum": 0,
+                "revenue": 20,
+                "eps": 20,
+                "price_sales": 0,
+                "price_operating_income": 0,
+                "price_fcf": 0,
+                "price_earnings": 0,
+            }
+        }
+    )
+
+    assert math.isclose(scenario["factor_weights"]["quality"], 0.20)
+    assert math.isclose(scenario["factor_weights"]["fundamental_momentum"], 0.80)
+    assert math.isclose(scenario["fundamental_momentum_weights"]["revenue"], 0.50)
+    assert math.isclose(scenario["fundamental_momentum_weights"]["eps"], 0.50)
+
+
+def test_metric_score_cache_key_is_ratio_based_and_brakes_accept_scores():
+    raw_score_req = AnalyzerRequest(
+        scenario={
+            "metric_scores": {
+                "quality": 10,
+                "price_momentum": 0,
+                "revenue": 20,
+                "eps": 20,
+                "price_sales": 0,
+                "price_operating_income": 0,
+                "price_fcf": 0,
+                "price_earnings": 0,
+            },
+            "brakes": {
+                "drawdown_sensitivity": 60,
+                "contrarian_penalty": 20,
+                "short_squeeze_brake": 0,
+            },
+        }
+    )
+    normalized_req = AnalyzerRequest(
+        scenario={
+            "metric_scores": {
+                "quality": 20,
+                "price_momentum": 0,
+                "revenue": 40,
+                "eps": 40,
+                "price_sales": 0,
+                "price_operating_income": 0,
+                "price_fcf": 0,
+                "price_earnings": 0,
+            },
+            "brakes": {
+                "drawdown_sensitivity": 0.6,
+                "contrarian_penalty": 0.2,
+                "short_squeeze_brake": 0,
+            },
+        }
+    )
+
+    assert _cache_key(raw_score_req) == _cache_key(normalized_req)
+
+
 def test_valuation_signal_ranks_lower_positive_multiples_higher():
     raw = pd.DataFrame(
         {

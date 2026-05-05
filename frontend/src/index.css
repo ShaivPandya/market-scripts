@@ -565,6 +565,72 @@
     color: hsl(var(--destructive));
     border-color: hsl(var(--destructive) / 0.16);
   }
+
+  .theme-tooltip {
+    position: relative;
+    cursor: help;
+    overflow: visible;
+  }
+
+  .theme-tooltip::before {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    left: 50%;
+    z-index: 70;
+    width: max-content;
+    max-width: min(18rem, calc(100vw - 2rem));
+    padding: 0.5rem 0.65rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.65rem;
+    background-color: hsl(var(--background-overlay));
+    color: hsl(0 0% 100%);
+    box-shadow: var(--shadow-floating);
+    content: attr(data-tooltip);
+    font-size: 0.74rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1.35;
+    opacity: 0;
+    pointer-events: none;
+    text-align: left;
+    transform: translate(-50%, -0.15rem);
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease;
+    white-space: normal;
+  }
+
+  .theme-tooltip::after {
+    position: absolute;
+    top: calc(100% + 0.2rem);
+    left: 50%;
+    z-index: 71;
+    height: 0.55rem;
+    width: 0.55rem;
+    border-left: 1px solid hsl(var(--border));
+    border-top: 1px solid hsl(var(--border));
+    background-color: hsl(var(--background-overlay));
+    content: "";
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 0.05rem) rotate(45deg);
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease;
+  }
+
+  .theme-tooltip:hover::before,
+  .theme-tooltip:hover::after,
+  .theme-tooltip:focus-visible::before,
+  .theme-tooltip:focus-visible::after {
+    opacity: 1;
+    transform: translate(-50%, 0) rotate(0);
+  }
+
+  .theme-tooltip:hover::after,
+  .theme-tooltip:focus-visible::after {
+    transform: translate(-50%, 0) rotate(45deg);
+  }
 }
 
 @layer utilities {

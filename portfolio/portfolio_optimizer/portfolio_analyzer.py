@@ -237,6 +237,16 @@ SCENARIO_VALUATION_DEFAULTS = {
     "price_fcf": 1.0,
     "price_earnings": 1.0,
 }
+SCENARIO_METRIC_SCORE_DEFAULTS = {
+    "quality": 0.0,
+    "price_momentum": 0.0,
+    "revenue": 0.0,
+    "eps": 0.0,
+    "price_sales": 0.0,
+    "price_operating_income": 0.0,
+    "price_fcf": 0.0,
+    "price_earnings": 0.0,
+}
 SCENARIO_BRAKE_DEFAULTS = {
     "drawdown_sensitivity": 0.0,
     "contrarian_penalty": 0.0,
@@ -304,31 +314,96 @@ def _nonnegative_weight_group(
 
 def _clamped_brakes(values: Mapping[str, Any] | None) -> dict[str, float]:
     raw = dict(values or {})
+    out: dict[str, float] = {}
+    for key, default in SCENARIO_BRAKE_DEFAULTS.items():
+        value = _safe_float(raw.get(key, default))
+        if not np.isfinite(value):
+            value = default
+        value = max(0.0, value)
+        if value > 1.0:
+            value = value / 100.0
+        out[key] = float(min(1.0, value))
+    return out
+
+
+def _weights_from_metric_scores(values: Mapping[str, Any] | None) -> dict[str, dict[str, float]]:
+    raw = dict(values or {})
+    scores = {
+        key: max(0.0, _safe_float(raw.get(key, default))) for key, default in SCENARIO_METRIC_SCORE_DEFAULTS.items()
+    }
+    total = sum(scores.values())
+    if total <= 0:
+        raise ValueError("metric_scores must include at least one positive score.")
+
+    fundamental_total = scores["revenue"] + scores["eps"]
+    valuation_total = sum(scores[key] for key in VALUATION_COLUMNS)
+
+    factor_weights = _nonnegative_weight_group(
+        {
+            "quality": scores["quality"],
+            "price_momentum": scores["price_momentum"],
+            "fundamental_momentum": fundamental_total,
+            "valuation": valuation_total,
+        },
+        SCENARIO_FACTOR_DEFAULTS,
+        group_name="factor_weights",
+    )
+    fundamental_momentum_weights = (
+        _nonnegative_weight_group(
+            {"revenue": scores["revenue"], "eps": scores["eps"]},
+            SCENARIO_FUNDAMENTAL_DEFAULTS,
+            group_name="fundamental_momentum_weights",
+        )
+        if fundamental_total > 0
+        else _nonnegative_weight_group(
+            None,
+            SCENARIO_FUNDAMENTAL_DEFAULTS,
+            group_name="fundamental_momentum_weights",
+        )
+    )
+    valuation_weights = (
+        _nonnegative_weight_group(
+            {key: scores[key] for key in VALUATION_COLUMNS},
+            SCENARIO_VALUATION_DEFAULTS,
+            group_name="valuation_weights",
+        )
+        if valuation_total > 0
+        else _nonnegative_weight_group(None, SCENARIO_VALUATION_DEFAULTS, group_name="valuation_weights")
+    )
+
     return {
-        key: float(min(1.0, max(0.0, _safe_float(raw.get(key, default)))))
-        for key, default in SCENARIO_BRAKE_DEFAULTS.items()
+        "factor_weights": factor_weights,
+        "fundamental_momentum_weights": fundamental_momentum_weights,
+        "valuation_weights": valuation_weights,
     }
 
 
 def normalize_analyzer_scenario(scenario: Mapping[str, Any] | None = None) -> dict[str, Any]:
     raw = dict(scenario or {})
+    weights = (
+        _weights_from_metric_scores(raw.get("metric_scores"))
+        if raw.get("metric_scores") is not None
+        else {
+            "factor_weights": _nonnegative_weight_group(
+                raw.get("factor_weights"),
+                SCENARIO_FACTOR_DEFAULTS,
+                group_name="factor_weights",
+            ),
+            "fundamental_momentum_weights": _nonnegative_weight_group(
+                raw.get("fundamental_momentum_weights"),
+                SCENARIO_FUNDAMENTAL_DEFAULTS,
+                group_name="fundamental_momentum_weights",
+            ),
+            "valuation_weights": _nonnegative_weight_group(
+                raw.get("valuation_weights"),
+                SCENARIO_VALUATION_DEFAULTS,
+                group_name="valuation_weights",
+            ),
+        }
+    )
     return {
         "preset": str(raw.get("preset") or "balanced"),
-        "factor_weights": _nonnegative_weight_group(
-            raw.get("factor_weights"),
-            SCENARIO_FACTOR_DEFAULTS,
-            group_name="factor_weights",
-        ),
-        "fundamental_momentum_weights": _nonnegative_weight_group(
-            raw.get("fundamental_momentum_weights"),
-            SCENARIO_FUNDAMENTAL_DEFAULTS,
-            group_name="fundamental_momentum_weights",
-        ),
-        "valuation_weights": _nonnegative_weight_group(
-            raw.get("valuation_weights"),
-            SCENARIO_VALUATION_DEFAULTS,
-            group_name="valuation_weights",
-        ),
+        **weights,
         "brakes": _clamped_brakes(raw.get("brakes")),
     }
 

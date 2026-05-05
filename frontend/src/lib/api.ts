@@ -1036,6 +1036,16 @@ export const runPriceRatioChart = (body: {
 
 export type AnalyzerScenarioRequest = {
   preset?: string
+  metric_scores?: {
+    quality: number
+    price_momentum: number
+    revenue: number
+    eps: number
+    price_sales: number
+    price_operating_income: number
+    price_fcf: number
+    price_earnings: number
+  }
   factor_weights?: {
     quality: number
     price_momentum: number

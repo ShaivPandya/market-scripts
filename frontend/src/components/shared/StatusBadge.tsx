@@ -23,12 +23,17 @@ interface StatusBadgeProps {
   tone?: StatusTone
   children: React.ReactNode
   className?: string
+  tooltip?: string
 }
 
-export function StatusBadge({ tone = "neutral", children, className }: StatusBadgeProps) {
+export function StatusBadge({ tone = "neutral", children, className, tooltip }: StatusBadgeProps) {
   const Icon = ICONS[tone]
   return (
-    <span className={cn("theme-badge", TONE_CLASSES[tone], className)}>
+    <span
+      className={cn("theme-badge", TONE_CLASSES[tone], tooltip && "theme-tooltip", className)}
+      data-tooltip={tooltip}
+      title={tooltip}
+    >
       <Icon size={12} aria-hidden="true" />
       {children}
     </span>

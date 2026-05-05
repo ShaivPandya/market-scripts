@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 
 
@@ -253,10 +255,82 @@ def test_portfolio_risk_api_returns_latest_without_ontology_refresh(auth_client,
     assert latest.json()["result_id"] == data["result_id"]
 
 
+def test_postgres_position_risk_store_does_not_run_runtime_ddl(monkeypatch):
+    from api import position_risk_store as store
+
+    conn = _FakePostgresConnection(
+        [
+            {"payload_json": {"result_id": "position-risk:MU:cached", "ticker": "MU"}},
+            {"payload_json": {"result_id": "portfolio-risk:cached"}},
+        ]
+    )
+
+    @contextmanager
+    def fake_connect():
+        yield conn
+
+    monkeypatch.setattr(store, "use_postgres_state", lambda: True)
+    monkeypatch.setattr(store, "connect", fake_connect)
+
+    assert store.read_latest_position_risk("MU") == {"result_id": "position-risk:MU:cached", "ticker": "MU"}
+    store.write_position_risk_snapshot(
+        {
+            "result_id": "position-risk:MU:fresh",
+            "ticker": "MU",
+            "computed_at": "2099-01-01T00:00:00+00:00",
+            "risk_score": 0.2,
+            "risk_level": "low",
+            "confidence": 1.0,
+            "quality": "ok",
+        }
+    )
+    assert store.read_latest_portfolio_risk() == {"result_id": "portfolio-risk:cached"}
+    store.write_portfolio_risk_snapshot(
+        {
+            "result_id": "portfolio-risk:fresh",
+            "computed_at": "2099-01-01T00:00:00+00:00",
+            "average_risk_score": 0.2,
+            "max_risk_score": 0.3,
+            "confidence": 1.0,
+            "quality": "ok",
+            "position_count": 1,
+        }
+    )
+
+    ddl_verbs = ("CREATE ", "ALTER ", "DROP ", "GRANT ", "REVOKE ")
+    ddl_statements = [sql for sql in conn.sql if sql.lstrip().upper().startswith(ddl_verbs)]
+    assert ddl_statements == []
+
+
 class _Sector:
     def __init__(self, sector: str):
         self.sector = sector
         self.source = "test"
+
+
+class _FakeResult:
+    def __init__(self, row):
+        self._row = row
+
+    def fetchone(self):
+        return self._row
+
+
+class _FakePostgresConnection:
+    def __init__(self, rows):
+        self._rows = list(rows)
+        self.sql = []
+        self.commits = 0
+
+    def execute(self, sql, params=None):
+        self.sql.append(str(sql))
+        statement = str(sql).lstrip().upper()
+        if statement.startswith("SELECT "):
+            return _FakeResult(self._rows.pop(0) if self._rows else None)
+        return _FakeResult(None)
+
+    def commit(self):
+        self.commits += 1
 
 
 def _seed_required_snapshots(*, as_of: str) -> None:

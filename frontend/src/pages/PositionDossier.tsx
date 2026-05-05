@@ -35,6 +35,7 @@ import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { Dialog } from "@/components/shared/Dialog"
+import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ActionButton, SegmentedControl, SelectInput, TextInput } from "@/components/shared/FormControls"
 import {
   DecisionStateBadge,
@@ -515,9 +516,7 @@ export function PositionDossier() {
                 <span>Application: {approvalReview.approval.application_status || "pending"}</span>
               </div>
               {approvalReview.approval.reason && <p className="mb-2">{approvalReview.approval.reason}</p>}
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-app bg-[hsl(var(--background-card))] p-3 font-mono text-[11px] text-app">
-                {summarizeProposedChange(approvalReview.approval.proposed_change)}
-              </pre>
+              <ApprovalChangeSummary approval={approvalReview.approval} />
             </div>
             <div>
               <label htmlFor="dossier-approval-note" className="theme-field-label">
@@ -1569,14 +1568,6 @@ function formatMetricValue(value: unknown): string {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
-}
-
-function summarizeProposedChange(value: Record<string, unknown>): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 function riskLevelClass(level: unknown): string {

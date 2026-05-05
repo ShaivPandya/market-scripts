@@ -20,6 +20,7 @@ import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { ProvenanceTraceDialog } from "@/components/shared/ProvenanceTraceDialog"
 import { Dialog } from "@/components/shared/Dialog"
+import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ActionButton } from "@/components/shared/FormControls"
 import {
   DecisionStateBadge,
@@ -207,14 +208,6 @@ function gateTone(decision?: string): string {
   if (decision === "warn") return "text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950"
   if (decision === "review_required") return "text-orange-700 bg-orange-50 dark:text-orange-400 dark:bg-orange-950"
   return "text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950"
-}
-
-function summarizeProposedChange(value: Record<string, unknown>): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 function applicationLabel(a: ApprovalRecord): string {
@@ -527,23 +520,25 @@ export function Workspace() {
                   key={tp.ticker}
                   to={`/dossier/${tp.ticker}`}
                   state={{ from: "workspace" }}
-                  className="flex items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[hsl(var(--muted-2))] transition-colors"
+                  className="grid grid-cols-1 gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[hsl(var(--muted-2))] sm:grid-cols-[3rem_7.25rem_minmax(0,1fr)_4.5rem] sm:items-center"
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-between gap-2 sm:contents">
                     <span className="font-semibold text-app">{tp.ticker}</span>
                     <span className={cn(
-                      "text-xs px-1.5 py-0.5 rounded font-medium",
+                      "w-fit rounded px-1.5 py-0.5 text-xs font-medium leading-4",
                       tp.action === "exit" || tp.action === "reduce"
                         ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950"
                         : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950",
                     )}>
                       Evaluation: {tp.action}
                     </span>
-                    {tp.risk_flag && (
-                      <span className="text-xs text-red-500">{tp.risk_flag}</span>
-                    )}
                   </div>
-                  <span className="text-xs text-subtle">{tp.confidence}</span>
+                  {tp.risk_flag ? (
+                    <span className="text-xs leading-5 text-red-500">{tp.risk_flag}</span>
+                  ) : (
+                    <span className="hidden sm:block" />
+                  )}
+                  <span className="text-xs text-subtle sm:text-right">{tp.confidence}</span>
                 </Link>
               ))}
             </div>
@@ -823,9 +818,7 @@ export function Workspace() {
                 }
                 return null
               })()}
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-app bg-[hsl(var(--background-card))] p-3 font-mono text-[11px] text-app">
-                {summarizeProposedChange(approvalReview.approval.proposed_change)}
-              </pre>
+              <ApprovalChangeSummary approval={approvalReview.approval} />
             </div>
             <div>
               <label htmlFor="approval-note" className="theme-field-label">
