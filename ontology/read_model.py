@@ -32,15 +32,7 @@ class TemporalReadModelRepository:
     def refresh(self) -> None:
         """Refresh the current temporal read models after ontology object/relation writes."""
         with self._connect() as conn:
-            for name in (
-                "ontology_current_position_risk_read_model",
-                "ontology_current_position_signal_evidence_read_model",
-                "ontology_current_position_thesis_context_read_model",
-                "ontology_current_decision_lineage_read_model",
-                "ontology_current_source_status_read_model",
-                "ontology_current_computed_snapshot_read_model",
-            ):
-                conn.execute(f"REFRESH MATERIALIZED VIEW {name}")
+            conn.execute("SELECT refresh_ontology_temporal_read_models()")
             commit = getattr(conn, "commit", None)
             if callable(commit):
                 commit()

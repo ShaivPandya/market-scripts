@@ -16,6 +16,79 @@ down_revision: str | None = "20260505_0005"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+READ_MODEL_VIEWS = (
+    "ontology_current_position_risk_read_model",
+    "ontology_current_position_signal_evidence_read_model",
+    "ontology_current_position_thesis_context_read_model",
+    "ontology_current_decision_lineage_read_model",
+    "ontology_current_source_status_read_model",
+    "ontology_current_computed_snapshot_read_model",
+)
+
+
+def _pg_text_array(values: Sequence[str]) -> str:
+    return "ARRAY[" + ", ".join(f"'{value}'" for value in values) + "]"
+
+
+def _grant_postgres() -> None:
+    refresh_statements = "\n          ".join(
+        f"REFRESH MATERIALIZED VIEW {view_name};" for view_name in READ_MODEL_VIEWS
+    )
+    view_names = _pg_text_array(READ_MODEL_VIEWS)
+    # PostgreSQL 16 refreshes require materialized-view ownership. Keep the
+    # migrator-owned wrapper as the compatible runtime refresh path, and grant
+    # MAINTAIN directly when PostgreSQL 17+ supports it.
+    op.execute(
+        f"""
+        CREATE OR REPLACE FUNCTION refresh_ontology_temporal_read_models()
+        RETURNS void
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = public, pg_temp
+        AS $$
+        BEGIN
+          {refresh_statements}
+        END;
+        $$;
+
+        REVOKE ALL ON FUNCTION refresh_ontology_temporal_read_models() FROM PUBLIC;
+        """
+    )
+    op.execute(
+        f"""
+        DO $$
+        DECLARE
+            view_name text;
+            supports_maintain boolean := current_setting('server_version_num')::integer >= 170000;
+        BEGIN
+            FOREACH view_name IN ARRAY {view_names}
+            LOOP
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'talisman_app') THEN
+                    EXECUTE format('GRANT SELECT ON TABLE %I TO talisman_app', view_name);
+                    IF supports_maintain THEN
+                        EXECUTE format('GRANT MAINTAIN ON TABLE %I TO talisman_app', view_name);
+                    END IF;
+                END IF;
+
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'talisman_worker') THEN
+                    EXECUTE format('GRANT SELECT ON TABLE %I TO talisman_worker', view_name);
+                    IF supports_maintain THEN
+                        EXECUTE format('GRANT MAINTAIN ON TABLE %I TO talisman_worker', view_name);
+                    END IF;
+                END IF;
+            END LOOP;
+
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'talisman_app') THEN
+                GRANT EXECUTE ON FUNCTION refresh_ontology_temporal_read_models() TO talisman_app;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'talisman_worker') THEN
+                GRANT EXECUTE ON FUNCTION refresh_ontology_temporal_read_models() TO talisman_worker;
+            END IF;
+        END $$;
+        """
+    )
+
 
 def upgrade() -> None:
     bind = op.get_bind()
@@ -373,6 +446,7 @@ def upgrade() -> None:
         ON ontology_current_computed_snapshot_read_model(status, quality)
         """
     )
+    _grant_postgres()
 
 
 def downgrade() -> None:
@@ -380,6 +454,7 @@ def downgrade() -> None:
     if bind.dialect.name != "postgresql":
         raise RuntimeError("Temporal ontology read models require PostgreSQL.")
 
+    op.execute("DROP FUNCTION IF EXISTS refresh_ontology_temporal_read_models()")
     op.execute("DROP MATERIALIZED VIEW IF EXISTS ontology_current_computed_snapshot_read_model")
     op.execute("DROP MATERIALIZED VIEW IF EXISTS ontology_current_source_status_read_model")
     op.execute("DROP MATERIALIZED VIEW IF EXISTS ontology_current_decision_lineage_read_model")
