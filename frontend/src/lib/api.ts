@@ -134,6 +134,9 @@ export interface ApprovalRecord extends DecisionStateFields {
   application_status?: string | null
   application_error?: string | null
   application_attempts?: number | null
+  base_state_status?: "valid" | "stale" | "untracked" | "unknown" | string | null
+  base_state_valid?: boolean | null
+  base_state_message?: string | null
   source_type?: string | null
   source_id?: string | null
   proposed_change: Record<string, unknown>
@@ -141,7 +144,14 @@ export interface ApprovalRecord extends DecisionStateFields {
   can_approve?: boolean
   can_reject?: boolean
   can_retry_apply?: boolean
+  can_restage?: boolean
   review_route?: string | null
+}
+
+export interface RejectAndRestageResponse {
+  status: "replacement_created" | string
+  original: ApprovalRecord
+  replacement: ApprovalRecord
 }
 
 export interface ApprovalSummaryResponse {
@@ -959,6 +969,14 @@ export interface NewsDigestDetail extends NewsDigestSummary {
   }
 }
 
+export type NewsDigestUploadResponse =
+  | { status: "ok"; digest: NewsDigestDetail }
+  | StagedMutationResponse
+
+export type NewsDigestDeleteResponse =
+  | { status: "ok"; deleted: boolean; id: string }
+  | StagedMutationResponse
+
 export const fetchPortfolioNews = () =>
   client.get("/portfolio-news").then(r => r.data as NewsDigestListResponse)
 
@@ -972,13 +990,13 @@ export const uploadPortfolioNewsDigest = (file: File) => {
   formData.append("file", file)
   return client
     .post("/portfolio-news", formData, { timeout: 120_000 })
-    .then(r => r.data as { status: "ok"; digest: NewsDigestDetail })
+    .then(r => r.data as NewsDigestUploadResponse)
 }
 
 export const deletePortfolioNewsDigest = (digestId: string) =>
   client
     .delete(`/portfolio-news/${encodeURIComponent(digestId)}`)
-    .then(r => r.data as { status: "ok"; deleted: boolean; id: string })
+    .then(r => r.data as NewsDigestDeleteResponse)
 
 export const fetchSectorMetrics = () =>
   client.get("/sector-metrics").then(r => r.data)
@@ -1762,6 +1780,10 @@ export const approveItem = (id: number, note: string) =>
   client.post(`/approvals/${id}/approve`, { note }).then(r => r.data as ApprovalRecord)
 export const rejectItem = (id: number, note?: string) =>
   client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
+export const rejectAndRestageApproval = (id: number, note?: string) =>
+  client
+    .post(`/approvals/${id}/reject-and-restage`, note ? { note } : {})
+    .then(r => r.data as RejectAndRestageResponse)
 export const bulkApprove = (ids: number[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
 export const bulkReject = (ids: number[], note?: string) =>

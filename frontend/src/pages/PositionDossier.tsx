@@ -7,6 +7,7 @@ import {
   fetchApprovalSummary,
   approveItem,
   rejectItem,
+  rejectAndRestageApproval,
   updateThesisStatus,
   fetchThesisStatus,
   saveThesisContent,
@@ -34,6 +35,7 @@ import {
   approvalSummaryQueryKey,
   invalidateAfterApprovalResolution,
   invalidateApprovalSummaries,
+  formatApprovalResolutionError,
   patchResolvedApprovalSummaries,
   shouldRefetchApprovalSummariesAfterError,
 } from "@/lib/approvalQueries"
@@ -48,6 +50,7 @@ import { ActionButton, SegmentedControl, SelectInput, TextInput } from "@/compon
 import {
   DecisionStateBadge,
   EffectScopeBadge,
+  BaseStateBadge,
   PolicyStateBadge,
   QualityStateBadge,
 } from "@/components/shared/DecisionStateBadge"
@@ -249,7 +252,24 @@ export function PositionDossier() {
       setApprovalNote("")
       invalidateAfterApprovalResolution(qc, approval)
     } catch (err) {
-      setApprovalError(err instanceof Error ? err.message : String(err))
+      setApprovalError(formatApprovalResolutionError(err))
+      if (shouldRefetchApprovalSummariesAfterError(err)) void invalidateApprovalSummaries(qc)
+    } finally {
+      setProcessingIds(prev => { const n = new Set(prev); n.delete(approval.id); return n })
+    }
+  }
+
+  async function handleRejectAndRestage(approval: ApprovalRecord, note?: string) {
+    setProcessingIds(prev => new Set(prev).add(approval.id))
+    setApprovalError(null)
+    try {
+      const result = await rejectAndRestageApproval(approval.id, note?.trim() || undefined)
+      patchResolvedApprovalSummaries(qc, result.original, approval)
+      setApprovalReview(null)
+      setApprovalNote("")
+      invalidateAfterApprovalResolution(qc, approval)
+    } catch (err) {
+      setApprovalError(formatApprovalResolutionError(err))
       if (shouldRefetchApprovalSummariesAfterError(err)) void invalidateApprovalSummaries(qc)
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(approval.id); return n })
@@ -412,6 +432,7 @@ export function PositionDossier() {
                       <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
                       <div className="mt-1 flex flex-wrap gap-2">
                         <DecisionStateBadge state={approvalDecisionState(a)} />
+                        <BaseStateBadge state={a.base_state_status} message={a.base_state_message} />
                         <EffectScopeBadge scope={a.effect_scope ?? "internal_state"} />
                         <PolicyStateBadge state={a.policy_state ?? a.policy_gate?.decision ?? "missing"} />
                         <QualityStateBadge state={a.quality_state ?? "missing"} />
@@ -430,9 +451,21 @@ export function PositionDossier() {
                         onClick={() => openApprovalReview(a, "approve")}
                         disabled={processingIds.has(a.id) || a.can_approve === false}
                         className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 disabled:opacity-50"
+                        title={a.base_state_status === "stale" ? a.base_state_message || "The underlying state changed." : "Review and apply internal state change"}
                       >
                         {a.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
                       </button>
+                      {a.can_restage && (
+                        <button
+                          type="button"
+                          onClick={() => handleRejectAndRestage(a)}
+                          disabled={processingIds.has(a.id)}
+                          className="rounded px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-950 disabled:opacity-50"
+                          title="Reject this stale proposal and create a fresh proposal from current state"
+                        >
+                          Reject & Restage
+                        </button>
+                      )}
                       <button
                         onClick={() => openApprovalReview(a, "reject")}
                         disabled={processingIds.has(a.id) || a.can_reject === false}
@@ -537,6 +570,10 @@ export function PositionDossier() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               <DecisionStateBadge state={approvalDecisionState(approvalReview.approval)} />
+              <BaseStateBadge
+                state={approvalReview.approval.base_state_status}
+                message={approvalReview.approval.base_state_message}
+              />
               <EffectScopeBadge scope={approvalReview.approval.effect_scope ?? "internal_state"} />
               <PolicyStateBadge state={approvalReview.approval.policy_state ?? approvalReview.approval.policy_gate?.decision ?? "missing"} />
               <QualityStateBadge state={approvalReview.approval.quality_state ?? "missing"} />
@@ -545,11 +582,18 @@ export function PositionDossier() {
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
                 <span>Approval #{approvalReview.approval.id}</span>
                 <span>{approvalReview.approval.action_id || approvalReview.approval.entity_type}</span>
-                <span>Application: {approvalReview.approval.application_status || "pending"}</span>
+                <span>
+                  Application: {approvalReview.approval.base_state_status === "stale" ? "state changed" : approvalReview.approval.application_status || "pending"}
+                </span>
               </div>
               {approvalReview.approval.reason && <p className="mb-2">{approvalReview.approval.reason}</p>}
               <ApprovalChangeSummary approval={approvalReview.approval} />
             </div>
+            {approvalReview.approval.base_state_status === "stale" && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {approvalReview.approval.base_state_message || "The underlying state changed after this proposal was created."}
+              </div>
+            )}
             <div>
               <label htmlFor="dossier-approval-note" className="theme-field-label">
                 {approvalReview.action === "approve" ? "Approval note" : "Rejection note"}
@@ -582,11 +626,24 @@ export function PositionDossier() {
                 onClick={() => handleApproval(approvalReview.approval, approvalReview.action, approvalNote)}
                 loading={processingIds.has(approvalReview.approval.id)}
                 loadingText={approvalReview.action === "approve" ? "Applying..." : "Rejecting..."}
-                disabled={approvalReview.action === "approve" && !approvalNote.trim()}
+                disabled={
+                  approvalReview.action === "approve" &&
+                  (!approvalNote.trim() || approvalReview.approval.can_approve === false)
+                }
                 className="w-auto px-4"
               >
                 {approvalReview.action === "approve" ? "Approve And Apply Internal State" : "Reject Proposal"}
               </ActionButton>
+              {approvalReview.approval.can_restage && (
+                <ActionButton
+                  onClick={() => handleRejectAndRestage(approvalReview.approval, approvalNote)}
+                  loading={processingIds.has(approvalReview.approval.id)}
+                  loadingText="Restaging..."
+                  className="w-auto px-4 bg-amber-600 hover:bg-amber-700"
+                >
+                  Reject & Restage
+                </ActionButton>
+              )}
             </div>
           </div>
         )}

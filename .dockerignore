@@ -25,6 +25,18 @@ data_cache/
 outputs/
 **/outputs/
 macro/industry/files/**/*.pdf
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 # Keep tracked SQLite seed DBs in the image for Render/local Docker startup.
 portfolio/*.db
 !portfolio/portfolio.db
@@ -46,3 +58,7 @@ frontend/
 .firebase/
 .playwright-cli/
 .vscode/
+.claude/
+
+# Local GCP tooling
+cloud-sql-proxy

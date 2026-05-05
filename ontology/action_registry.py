@@ -605,6 +605,83 @@ def _model_payload_exclude_unset(model: BaseModel) -> dict[str, Any]:
     return model.model_dump(exclude_unset=True)
 
 
+_POSITION_DIFF_FIELDS = ("asset", "direction", "contrarian", "conviction", "cost_basis", "shares")
+
+
+def _portfolio_position_for_diff(row: Mapping[str, Any]) -> dict[str, Any]:
+    ticker = str(row.get("ticker") or "").strip().upper()
+    out: dict[str, Any] = {"ticker": ticker}
+    for field_name in _POSITION_DIFF_FIELDS:
+        value = row.get(field_name)
+        if field_name == "contrarian":
+            value = bool(value)
+        out[field_name] = value
+    return out
+
+
+def _portfolio_position_changes(
+    before_rows: Sequence[Mapping[str, Any]],
+    after_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    before_by_ticker = {
+        normalized["ticker"]: normalized
+        for row in before_rows
+        if (normalized := _portfolio_position_for_diff(row)).get("ticker")
+    }
+    after_by_ticker = {
+        normalized["ticker"]: normalized
+        for row in after_rows
+        if (normalized := _portfolio_position_for_diff(row)).get("ticker")
+    }
+
+    changes: list[dict[str, Any]] = []
+    emitted: set[str] = set()
+    for after in after_by_ticker.values():
+        ticker = str(after["ticker"])
+        before = before_by_ticker.get(ticker)
+        emitted.add(ticker)
+        if before is None:
+            changes.append({"ticker": ticker, "change_type": "added", "before": None, "after": after, "fields": []})
+            continue
+        field_changes = [
+            {"field": field_name, "before": before.get(field_name), "after": after.get(field_name)}
+            for field_name in _POSITION_DIFF_FIELDS
+            if before.get(field_name) != after.get(field_name)
+        ]
+        if field_changes:
+            changes.append(
+                {
+                    "ticker": ticker,
+                    "change_type": "updated",
+                    "before": before,
+                    "after": after,
+                    "fields": field_changes,
+                }
+            )
+
+    for before in before_by_ticker.values():
+        ticker = str(before["ticker"])
+        if ticker not in emitted:
+            changes.append({"ticker": ticker, "change_type": "removed", "before": before, "after": None, "fields": []})
+    return changes
+
+
+def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
+    typed = cast(UpdatePortfolioPositionsInput, model)
+    from portfolio.portfolio_db import get_positions
+
+    before_rows = get_positions(include_hedges=False)
+    after_rows = _position_rows(typed)
+    return {
+        "positions": [position.model_dump() for position in typed.positions],
+        "position_changes": _portfolio_position_changes(before_rows, after_rows),
+        "position_change_summary": {
+            "before_count": len(before_rows),
+            "after_count": len(after_rows),
+        },
+    }
+
+
 def _hash_current_portfolio_book(_model: BaseModel) -> dict[str, Any]:
     from portfolio.portfolio_db import get_positions
 
@@ -1441,6 +1518,8 @@ def propose_action(
     reason: str | None = None,
     entity_id: int | None = None,
     once: bool = False,
+    reason_code: str | None = None,
+    supersedes_approval_id: int | None = None,
 ) -> dict[str, Any]:
     action = get_action(action_id)
     approval_spec = action.approval_spec
@@ -1516,6 +1595,8 @@ def propose_action(
             base_state_hash=base_state_hash,
             requested_by_actor_id=context.actor_id,
             approval_note_required=action.reason_required,
+            reason_code=reason_code,
+            supersedes_approval_id=supersedes_approval_id,
         )
         try:
             from api import provenance
@@ -2250,7 +2331,7 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         input_model=UpdatePortfolioPositionsInput,
         handler=_update_portfolio_positions,
         approval_entity_type="portfolio_positions",
-        approval_payload=_model_payload,
+        approval_payload=_portfolio_positions_approval_payload,
         precondition_builder=_hash_current_portfolio_book,
         base_state_hash_fields=("positions",),
     ),

@@ -62,6 +62,61 @@ def test_normalize_approval_distinguishes_pending_failed_and_applied():
     assert applied["decision_state"] == "applied"
 
 
+def test_normalize_approval_reports_base_state_valid_stale_and_untracked(monkeypatch):
+    import portfolio.action_registry as action_registry
+
+    monkeypatch.setattr(action_registry, "compute_action_base_state_hash", lambda _action_id, _change: "current")
+
+    valid = normalize_approval(
+        {
+            "id": 10,
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "action_item_status",
+            "action_id": "complete_action_item",
+            "base_state_hash": "current",
+            "proposed_change": {"item_id": 1},
+        }
+    )
+    assert valid is not None
+    assert valid["base_state_status"] == "valid"
+    assert valid["base_state_valid"] is True
+    assert valid["can_approve"] is True
+
+    stale = normalize_approval(
+        {
+            "id": 11,
+            "status": "pending",
+            "application_status": "failed",
+            "entity_type": "action_item_status",
+            "action_id": "complete_action_item",
+            "base_state_hash": "old",
+            "proposed_change": {"item_id": 1},
+        }
+    )
+    assert stale is not None
+    assert stale["base_state_status"] == "stale"
+    assert stale["base_state_valid"] is False
+    assert stale["can_approve"] is False
+    assert stale["can_retry_apply"] is False
+    assert stale["can_restage"] is True
+
+    untracked = normalize_approval(
+        {
+            "id": 12,
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "action_item",
+            "action_id": "create_action_item",
+            "proposed_change": {"description": "Review MU"},
+        }
+    )
+    assert untracked is not None
+    assert untracked["base_state_status"] == "untracked"
+    assert untracked["base_state_valid"] is None
+    assert untracked["can_approve"] is True
+
+
 def test_normalize_recommendation_keeps_execution_capability_none():
     rec = normalize_recommendation(
         {
@@ -165,3 +220,16 @@ def test_sizing_and_hedging_copy_does_not_imply_broker_orders():
     assert "applied on run" not in hedging
     assert "Hedge Analysis Notes" in hedging
     assert "not executable orders" in hedging
+
+
+def test_stale_approval_controls_are_wired_on_review_surfaces():
+    workspace = (ROOT / "frontend/src/pages/Workspace.tsx").read_text()
+    dossier = (ROOT / "frontend/src/pages/PositionDossier.tsx").read_text()
+    badge = (ROOT / "frontend/src/components/shared/DecisionStateBadge.tsx").read_text()
+
+    assert "State Changed" in badge
+    for source in (workspace, dossier):
+        assert "BaseStateBadge" in source
+        assert "Reject & Restage" in source
+        assert "handleRejectAndRestage" in source
+        assert "approvalReview.approval.can_approve === false" in source

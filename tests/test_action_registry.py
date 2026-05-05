@@ -127,6 +127,78 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
     assert succeeded["after_summary"]["status"] == "ok"
 
 
+def test_portfolio_update_approval_payload_lists_position_changes():
+    portfolio_db.save_positions(
+        [
+            {
+                "ticker": "MU",
+                "asset": "equity",
+                "direction": "long",
+                "contrarian": False,
+                "conviction": 3,
+                "cost_basis": 100,
+                "shares": 10,
+            },
+            {
+                "ticker": "NVDA",
+                "asset": "equity",
+                "direction": "long",
+                "contrarian": False,
+                "conviction": 4,
+                "cost_basis": 200,
+                "shares": 2,
+            },
+        ],
+        role="position",
+    )
+
+    approval = propose_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "MU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 100,
+                    "shares": 15,
+                },
+                {
+                    "ticker": "CRWD",
+                    "asset": "equity",
+                    "direction": "short",
+                    "contrarian": True,
+                    "conviction": 2,
+                    "cost_basis": 300,
+                    "shares": 3,
+                },
+            ]
+        },
+        ActionContext(actor_type="user", source_type="user", source_id="test"),
+        reason="rebalance test",
+    )
+
+    change = approval["proposed_change"]
+    assert [item["ticker"] for item in change["position_changes"]] == ["MU", "CRWD", "NVDA"]
+    assert change["position_change_summary"] == {"before_count": 2, "after_count": 2}
+
+    mu_change = change["position_changes"][0]
+    assert mu_change["change_type"] == "updated"
+    assert mu_change["fields"] == [{"field": "shares", "before": 10.0, "after": 15.0}]
+
+    crwd_change = change["position_changes"][1]
+    assert crwd_change["change_type"] == "added"
+    assert crwd_change["before"] is None
+    assert crwd_change["after"]["contrarian"] is True
+
+    nvda_change = change["position_changes"][2]
+    assert nvda_change["change_type"] == "removed"
+    assert nvda_change["before"]["ticker"] == "NVDA"
+    assert nvda_change["after"] is None
+
+
 def test_execute_action_shadow_writes_ontology_versions(monkeypatch):
     captured: dict[str, list[dict]] = {"objects": [], "relations": []}
 
