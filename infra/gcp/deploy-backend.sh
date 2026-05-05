@@ -158,6 +158,8 @@ if [[ "${PARALLEL_JOB_DEPLOYS}" == "1" ]]; then
     "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
   start_parallel_step "sizer worker pool deploy" \
     "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"
+  start_parallel_step "ontology worker pool deploy" \
+    "${_repo_root}/infra/gcp/deploy-ontology-worker.sh"
 else
   log "Deploying top50 refresh job"
   "${_repo_root}/infra/gcp/deploy-top50-refresh-job.sh"
@@ -170,6 +172,9 @@ else
 
   log "Deploying sizer worker pool"
   "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"
+
+  log "Deploying ontology worker pool"
+  "${_repo_root}/infra/gcp/deploy-ontology-worker.sh"
 fi
 
 if [[ "${SYNC_IAM}" == "1" ]]; then

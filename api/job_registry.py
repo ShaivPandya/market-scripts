@@ -146,10 +146,11 @@ JOB_SPECS: dict[str, JobSpec] = {
         request_model="api.routers.ontology.OntologyQueryJobRequest",
         compute_func="api.routers.ontology._execute_query",
         cache_key_func="api.routers.ontology._job_cache_key",
-        queue_name=_env_queue("ASYNC_QUEUE_ONTOLOGY", "default"),
+        queue_name=_env_queue("ASYNC_QUEUE_ONTOLOGY", "ontology"),
         timeout_s=_env_int("ASYNC_TIMEOUT_ONTOLOGY_SECONDS", 300),
         completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        stale_grace_s=_env_int("ASYNC_STALE_GRACE_ONTOLOGY_SECONDS", 60),
         error_message="Ontology query failed",
     ),
     "short_screen": JobSpec(

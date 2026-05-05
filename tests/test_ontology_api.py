@@ -612,6 +612,28 @@ def test_query_preflight_denies_refresh_snapshot_without_enqueuing_job(auth_clie
     assert called["enqueued"] is False
 
 
+def test_read_model_deprecates_refresh_snapshot_without_enqueuing_job(auth_client, monkeypatch):
+    import api.routers.ontology as ontology_router
+
+    called = {"enqueued": False}
+
+    monkeypatch.setenv("ONTOLOGY_READ_MODEL", "true")
+    monkeypatch.setattr(
+        ontology_router,
+        "enqueue_registered_job",
+        lambda *args, **kwargs: called.__setitem__("enqueued", True),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/ontology/query",
+        json={"intent": "portfolio_risk_exposure", "refresh_snapshot": True, "schema_mode": "upgraded"},
+    )
+
+    assert resp.status_code == 422
+    assert "refresh_snapshot is deprecated" in resp.json()["error"]
+    assert called["enqueued"] is False
+
+
 def test_refresh_snapshot_does_not_reuse_completed_ontology_job(auth_client, monkeypatch):
     import api.routers.ontology as ontology_router
 

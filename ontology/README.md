@@ -80,6 +80,8 @@ versions.
   bitemporal object, relation, source record, and computed snapshot versions.
 - `object_service.py` is the typed write/read boundary above the temporal
   repository.
+- `read_model.py` refreshes and queries indexed temporal Postgres read models
+  for semantic ontology query paths.
 - `decision_writeback.py` records report outputs, workflow artifacts, approval
   proposals, executed actions, and exact object-version mutation references
   through `OntologyObjectService`.
@@ -92,8 +94,9 @@ versions.
 
 ## Snapshot Graph
 
-Semantic ontology queries currently read a materialized snapshot graph rather
-than the temporal object tables directly.
+Semantic ontology queries can read indexed temporal Postgres read models when
+`ONTOLOGY_READ_MODEL=true`. Snapshot graph rows remain a migration/debug
+compatibility path, especially for explicit `run_id` queries during cutover.
 
 The graph shape is:
 
@@ -125,10 +128,12 @@ Snapshot ingestion flow:
    source status.
 7. With Postgres state enabled, `_write_temporal_graph_versions()` writes the
    normalized nodes and edges through `OntologyObjectService`.
-8. `OntologyRepository.save_snapshot()` writes `ontology_runs`,
+8. When `ONTOLOGY_READ_MODEL=true`, temporal read models are refreshed after
+   successful temporal writes.
+9. `OntologyRepository.save_snapshot()` writes `ontology_runs`,
    `ontology_snapshot_nodes`, `ontology_snapshot_edges`, schema bindings, audit,
    and provenance links.
-9. Runs older than `SNAPSHOT_RETENTION_DAYS` are pruned.
+10. Runs older than `SNAPSHOT_RETENTION_DAYS` are pruned.
 
 `schema_mode="upgraded"` is the semantic-query mode. Repository helpers can
 load stored legacy payloads, but service-level semantic queries intentionally
@@ -160,8 +165,15 @@ against the schema registry, preserves actor/provenance/action/approval/source
 metadata, and returns `_meta.temporal` envelopes.
 
 The `/ontology/objects`, `/ontology/relations`, and `/ontology/source-records`
-routes read temporal tables. `/ontology/query` still returns
-`mode="snapshot_compatibility"` because it is backed by snapshot graph tables.
+routes read temporal tables. With `ONTOLOGY_READ_MODEL=true`, `/ontology/query`
+returns `mode="temporal_read_model"` and object-bearing rows include mandatory
+`_meta.temporal` fields. Snapshot compatibility remains available for explicit
+`run_id` debug/migration queries; `refresh_snapshot` is deprecated in read-model
+mode unless paired with `run_id`.
+
+The one-time ontology backfill utilities are cutover-only scaffolding. After
+production verification gates pass, remove those utilities and their dedicated
+tests; keep Alembic migrations and schema history permanently.
 
 ## Identity And Schemas
 

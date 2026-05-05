@@ -6,14 +6,17 @@ compatibility artifact for existing query paths.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
 from api.postgres import use_postgres_state
+from ontology.domain_write_service import ontology_primary_writes_enabled, ontology_read_model_enabled
 from ontology.models import OntologyEdge, OntologyNode
 from ontology.object_service import OntologyObjectService
+from ontology.read_model import TemporalReadModelRepository
 from ontology.repository import OntologyRepository
 from ontology.risk import (
     compute_breadth_stress,
@@ -52,6 +55,7 @@ from ontology.sources.registry import build_adapter_registry, run_adapters, sour
 from ontology.temporal_repository import TemporalOntologyRepository
 
 SNAPSHOT_RETENTION_DAYS = 90
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -482,6 +486,7 @@ def ingest_into_repository(
             provenance_event_id=provenance_event_id,
             repository=temporal_repo,
         )
+        _refresh_temporal_read_models_after_ingestion()
 
     repo.save_snapshot(
         run_id=run_id,
@@ -705,6 +710,17 @@ def _write_temporal_graph_versions(
             actor=actor,
             provenance=provenance,
         )
+
+
+def _refresh_temporal_read_models_after_ingestion() -> None:
+    if not ontology_read_model_enabled():
+        return
+    try:
+        TemporalReadModelRepository().refresh()
+    except Exception:
+        if ontology_primary_writes_enabled():
+            raise
+        logger.exception("ontology read model refresh failed after ingestion")
 
 
 def _source_rows_for_provenance(

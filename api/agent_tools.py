@@ -50,6 +50,8 @@ from ontology.action_registry import (
 from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor
 
 logger = logging.getLogger("api.agent")
+_DEFAULT_GET_CACHED = get_cached
+_DEFAULT_SET_CACHED = set_cached
 
 _SEARCH_WEB_ALLOWED_DOMAINS_DEFAULT = [
     "bloomberg.com",
@@ -1843,6 +1845,14 @@ def _cached_singleflight(
     *,
     force_refresh: bool = False,
 ) -> tuple[Any, str]:
+    if get_cached is not _DEFAULT_GET_CACHED or set_cached is not _DEFAULT_SET_CACHED:
+        if not force_refresh:
+            value = get_cached(cache, key)
+            if value is not None:
+                return value, "hit"
+        value = loader()
+        set_cached(cache, key, value)
+        return value, "refresh" if force_refresh else "miss_fetch"
     return _get_or_set_cached_with_status(cache, key, loader, force_refresh=force_refresh)
 
 

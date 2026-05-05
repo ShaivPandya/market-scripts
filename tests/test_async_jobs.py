@@ -270,6 +270,33 @@ def test_sizer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
     assert persisted["queue_name"] == "sizer"
 
 
+def test_ontology_warm_worker_dispatch_leaves_job_queued(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_ONTOLOGY", "warm_worker")
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+    )
+
+    row, disposition = async_job_runner.enqueue_registered_job(
+        "ontology",
+        {"query": "risk", "schema_mode": "stored"},
+        cache_key="ontology-warm-worker",
+    )
+
+    assert disposition == "created"
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "queued"
+    assert persisted["queue_name"] == "ontology"
+
+
 def test_claim_queued_agent_job_is_exclusive(monkeypatch):
     from api import cache
     from api.job_queue import claim_queued_job, create_or_reuse_job, get_job
@@ -345,6 +372,31 @@ def test_generic_worker_loop_claims_and_completes_sizer_job(monkeypatch):
     assert persisted is not None
     assert persisted["status"] == "completed"
     assert persisted["result_json"] == {"ok": "AAA"}
+
+
+def test_generic_worker_loop_claims_and_completes_ontology_job(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+    from api.job_worker_loop import run_once
+    from api.routers import ontology
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_ONTOLOGY", "warm_worker")
+    monkeypatch.setattr(ontology, "_execute_query", lambda req: {"ok": req.query})
+
+    row, _disposition = async_job_runner.enqueue_registered_job(
+        "ontology",
+        {"query": "risk", "schema_mode": "stored"},
+        cache_key="ontology-worker-loop",
+    )
+
+    assert run_once(job_type="ontology", queue_name="ontology") is True
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "completed"
+    assert persisted["result_json"] == {"ok": "risk"}
 
 
 def test_generic_worker_loop_parser_reads_job_defaults_from_env(monkeypatch):
