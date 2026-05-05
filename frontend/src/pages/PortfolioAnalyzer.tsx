@@ -999,13 +999,21 @@ export function PortfolioAnalyzer() {
   const asOf = summary?.as_of ? new Date(summary.as_of).toLocaleString() : "Not run"
   const visibleBrief = briefTicker === selectedAction?.ticker ? briefMutation.data?.brief ?? null : null
   const briefError = briefTicker === selectedAction?.ticker && briefMutation.isError ? String(briefMutation.error) : null
-  const visibleWorkspaceProposal = workspaceProposal?.ticker === selectedAction?.ticker ? workspaceProposal.response : null
+  const selectedActionTicker = selectedAction?.ticker ?? null
+  const visibleWorkspaceProposal =
+    workspaceProposal && selectedActionTicker != null && workspaceProposal.ticker === selectedActionTicker
+      ? workspaceProposal.response
+      : null
   const workspaceActionError =
-    workspaceActionMutation.variables?.ticker === selectedAction?.ticker && workspaceActionMutation.isError
+    selectedActionTicker != null &&
+    workspaceActionMutation.variables?.ticker === selectedActionTicker &&
+    workspaceActionMutation.isError
       ? String(workspaceActionMutation.error)
       : null
   const workspaceActionLoading =
-    workspaceActionMutation.variables?.ticker === selectedAction?.ticker && workspaceActionMutation.isPending
+    selectedActionTicker != null &&
+    workspaceActionMutation.variables?.ticker === selectedActionTicker &&
+    workspaceActionMutation.isPending
 
   function applyPreset(preset: Exclude<ScenarioPreset, "custom">) {
     setScenario(cloneScenario(SCENARIO_PRESETS[preset]))
