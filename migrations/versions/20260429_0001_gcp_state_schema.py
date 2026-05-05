@@ -31,6 +31,10 @@ def upgrade() -> None:
         sa.Column("conviction", sa.Integer, nullable=False, server_default=sa.text("3")),
         sa.Column("cost_basis", sa.Float),
         sa.Column("shares", sa.Float),
+        sa.Column("quantity", sa.Float),
+        sa.Column("instrument_type", sa.Text, nullable=False, server_default="security"),
+        sa.Column("price_symbol", sa.Text),
+        sa.Column("contract_multiplier", sa.Float, nullable=False, server_default=sa.text("1.0")),
         sa.Column("role", sa.Text, nullable=False, server_default="position"),
     )
 

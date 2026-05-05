@@ -18,19 +18,27 @@ import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 interface EditorRow extends PortfolioPosition {
   _id: string
   _isNew: boolean
+  _contractMultiplierTouched: boolean
 }
 
 interface HedgeEditorRow extends HedgePosition {
   _id: string
+  _contractMultiplierTouched: boolean
 }
 
 type EditorTab = "Positions" | "Hedges"
+type InstrumentType = NonNullable<PortfolioPosition["instrument_type"]>
 
 const ASSET_OPTIONS = [
   { value: "equity", label: "Equity" },
   { value: "commodity", label: "Commodity" },
   { value: "fx", label: "FX" },
   { value: "bond", label: "Bond" },
+]
+
+const INSTRUMENT_TYPE_OPTIONS = [
+  { value: "security", label: "Security" },
+  { value: "future", label: "Future" },
 ]
 
 const DIRECTION_OPTIONS = [
@@ -50,8 +58,86 @@ function makeId() {
   return Math.random().toString(36).slice(2, 10)
 }
 
+function inferInstrumentType(ticker: string, instrumentType?: PortfolioPosition["instrument_type"] | null): InstrumentType {
+  if (ticker.trim().toUpperCase().endsWith("=F")) return "future"
+  return instrumentType ?? "security"
+}
+
+function normalizedSymbol(value?: string | null) {
+  return (value ?? "").trim().toUpperCase()
+}
+
+function effectivePriceSymbol(row: { ticker: string; price_symbol?: string | null }) {
+  return normalizedSymbol(row.price_symbol) || normalizedSymbol(row.ticker)
+}
+
+function nextContractMultiplier(
+  row: {
+    ticker: string
+    price_symbol?: string | null
+    instrument_type?: PortfolioPosition["instrument_type"] | null
+    contract_multiplier?: number | null
+    _contractMultiplierTouched: boolean
+  },
+  nextInstrumentType: InstrumentType,
+  nextPriceSymbol = effectivePriceSymbol(row),
+) {
+  if (nextInstrumentType === "security") return 1
+  if (row._contractMultiplierTouched) return row.contract_multiplier ?? null
+
+  const currentInstrumentType = inferInstrumentType(row.ticker, row.instrument_type)
+  const currentPriceSymbol = effectivePriceSymbol(row)
+  const futureSymbolChanged = currentInstrumentType === "future" && nextPriceSymbol !== currentPriceSymbol
+  if (currentInstrumentType !== "future" || futureSymbolChanged || row.contract_multiplier === 1) {
+    return null
+  }
+  return row.contract_multiplier ?? null
+}
+
+function rowQuantity(row: { quantity?: number | null; shares?: number | null }) {
+  return row.quantity ?? row.shares ?? null
+}
+
+function formatBaseCurrency(value: number, currency?: string | null) {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      maximumFractionDigits: 0,
+    }).format(value)
+  } catch {
+    return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)
+  }
+}
+
+function valuationSummary(row: PortfolioPosition | HedgePosition) {
+  const parts: string[] = []
+  const market = [row.country, row.exchange].filter(Boolean).join(" / ")
+  if (market) parts.push(market)
+  if (row.currency) parts.push(`${row.currency}${row.base_currency ? ` to ${row.base_currency}` : ""}`)
+  if (typeof row.notional_base === "number" && Number.isFinite(row.notional_base)) {
+    parts.push(`${formatBaseCurrency(row.notional_base, row.base_currency)} base notional`)
+  }
+  if (row.valuation_status && row.valuation_status !== "ok") {
+    parts.push(row.valuation_status.replace(/_/g, " "))
+  }
+  return parts.join(" - ")
+}
+
 function positionToRow(p: PortfolioPosition): EditorRow {
-  return { ...p, _id: makeId(), _isNew: false }
+  const instrumentType = inferInstrumentType(p.ticker, p.instrument_type)
+  const quantity = rowQuantity(p)
+  return {
+    ...p,
+    _id: makeId(),
+    _isNew: false,
+    _contractMultiplierTouched: false,
+    quantity,
+    shares: quantity,
+    instrument_type: instrumentType,
+    price_symbol: p.price_symbol ?? p.ticker,
+    contract_multiplier: p.contract_multiplier ?? (instrumentType === "security" ? 1 : null),
+  }
 }
 
 function newRow(): EditorRow {
@@ -65,16 +151,30 @@ function newRow(): EditorRow {
     conviction: 3,
     cost_basis: null,
     shares: null,
+    quantity: null,
+    instrument_type: "security",
+    price_symbol: "",
+    contract_multiplier: null,
+    _contractMultiplierTouched: false,
   }
 }
 
 function hedgeToRow(p: HedgePosition): HedgeEditorRow {
+  const instrumentType = inferInstrumentType(p.ticker, p.instrument_type)
+  const quantity = rowQuantity(p)
   return {
+    ...p,
     _id: makeId(),
+    _contractMultiplierTouched: false,
     ticker: p.ticker,
+    asset: p.asset ?? "equity",
     direction: p.direction,
     cost_basis: p.cost_basis,
-    shares: p.shares,
+    shares: quantity,
+    quantity,
+    instrument_type: instrumentType,
+    price_symbol: p.price_symbol ?? p.ticker,
+    contract_multiplier: p.contract_multiplier ?? (instrumentType === "security" ? 1 : null),
   }
 }
 
@@ -82,9 +182,15 @@ function newHedgeRow(): HedgeEditorRow {
   return {
     _id: makeId(),
     ticker: "",
+    asset: "equity",
     direction: "short",
     cost_basis: null,
     shares: null,
+    quantity: null,
+    instrument_type: "security",
+    price_symbol: "",
+    contract_multiplier: null,
+    _contractMultiplierTouched: false,
   }
 }
 
@@ -180,15 +286,31 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       return
     }
 
-    const positions: PortfolioPosition[] = positionRows.map(r => ({
-      ticker: r.ticker.trim().toUpperCase(),
-      asset: r.asset,
-      direction: r.direction,
-      contrarian: r.contrarian,
-      conviction: r.conviction,
-      cost_basis: r.cost_basis,
-      shares: r.shares,
-    }))
+    const positions: PortfolioPosition[] = positionRows.map(r => {
+      const instrumentType = inferInstrumentType(r.ticker, r.instrument_type)
+      return {
+        ticker: r.ticker.trim().toUpperCase(),
+        asset: r.asset,
+        direction: r.direction,
+        contrarian: r.contrarian,
+        conviction: r.conviction,
+        cost_basis: r.cost_basis,
+        shares: rowQuantity(r),
+        quantity: rowQuantity(r),
+        instrument_type: instrumentType,
+        price_symbol: (r.price_symbol?.trim() || r.ticker).toUpperCase(),
+        contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
+        currency: r.currency ?? null,
+        country: r.country ?? null,
+        exchange: r.exchange ?? null,
+        base_currency: r.base_currency ?? null,
+        fx_rate_to_base: r.fx_rate_to_base ?? null,
+        fx_rate_as_of: r.fx_rate_as_of ?? null,
+        cost_basis_base: r.cost_basis_base ?? null,
+        notional_base: r.notional_base ?? null,
+        valuation_status: r.valuation_status ?? null,
+      }
+    })
 
     positionMutation.mutate(positions)
   }
@@ -207,12 +329,29 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
       return
     }
 
-    const positions: HedgePosition[] = hedgeRows.map(r => ({
-      ticker: r.ticker.trim().toUpperCase(),
-      direction: r.direction,
-      cost_basis: r.cost_basis,
-      shares: r.shares,
-    }))
+    const positions: HedgePosition[] = hedgeRows.map(r => {
+      const instrumentType = inferInstrumentType(r.ticker, r.instrument_type)
+      return {
+        ticker: r.ticker.trim().toUpperCase(),
+        asset: r.asset ?? "equity",
+        direction: r.direction,
+        cost_basis: r.cost_basis,
+        shares: rowQuantity(r),
+        quantity: rowQuantity(r),
+        instrument_type: instrumentType,
+        price_symbol: (r.price_symbol?.trim() || r.ticker).toUpperCase(),
+        contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
+        currency: r.currency ?? null,
+        country: r.country ?? null,
+        exchange: r.exchange ?? null,
+        base_currency: r.base_currency ?? null,
+        fx_rate_to_base: r.fx_rate_to_base ?? null,
+        fx_rate_as_of: r.fx_rate_as_of ?? null,
+        cost_basis_base: r.cost_basis_base ?? null,
+        notional_base: r.notional_base ?? null,
+        valuation_status: r.valuation_status ?? null,
+      }
+    })
 
     hedgeMutation.mutate(positions)
   }
@@ -271,27 +410,59 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
           {tab === "Positions" ? (
             <>
-              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
+              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(18, minmax(0, 1fr))" }}>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Conviction</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Cost Basis</p>
-                <p className="col-span-2 text-xs font-medium text-gray-500">Shares</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Quantity</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Multiplier</p>
                 <p className="col-span-1 text-xs font-medium text-gray-500">Contrarian</p>
                 <p className="col-span-1 text-xs font-medium text-gray-500"></p>
               </div>
 
               <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
                 {positionRows.map(row => (
-                  <div key={row._id} className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
+                  <div key={row._id} className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(18, minmax(0, 1fr))" }}>
                     <div className="col-span-2">
                       <input
                         type="text"
                         value={row.ticker}
-                        onChange={e => updatePositionRow(row._id, { ticker: e.target.value.toUpperCase() })}
-                        placeholder="AAPL"
+                        onChange={e => {
+                          const nextTicker = e.target.value.toUpperCase()
+                          const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
+                          const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
+                            ? nextTicker
+                            : row.price_symbol
+                          const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
+                          updatePositionRow(row._id, {
+                            ticker: nextTicker,
+                            price_symbol: nextPriceSymbol,
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
+                          })
+                        }}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "AAPL"}
                         className="theme-input w-full font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="col-span-2">
+                      <SelectInput
+                        value={inferInstrumentType(row.ticker, row.instrument_type)}
+                        onChange={v => {
+                          const nextInstrumentType = v as InstrumentType
+                          updatePositionRow(row._id, {
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType),
+                            _contractMultiplierTouched: nextInstrumentType === "security"
+                              ? false
+                              : row._contractMultiplierTouched,
+                          })
+                        }}
+                        options={INSTRUMENT_TYPE_OPTIONS}
                       />
                     </div>
 
@@ -366,15 +537,35 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     <div className="col-span-2">
                       <input
                         type="number"
-                        value={row.shares ?? ""}
+                        value={rowQuantity(row) ?? ""}
                         onChange={e => {
                           const v = e.target.value
-                          updatePositionRow(row._id, { shares: v === "" ? null : Number(v) })
+                          const quantity = v === "" ? null : Number(v)
+                          updatePositionRow(row._id, { shares: quantity, quantity })
                         }}
-                        placeholder="Optional"
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="any"
                         min="0"
+                      />
+                    </div>
+
+                    <div className="col-span-2">
+                      <input
+                        type="number"
+                        value={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? row.contract_multiplier ?? "" : 1}
+                        onChange={e => {
+                          const v = e.target.value
+                          updatePositionRow(row._id, {
+                            contract_multiplier: v === "" ? null : Number(v),
+                            _contractMultiplierTouched: true,
+                          })
+                        }}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Auto" : "1"}
+                        className="theme-input w-full text-sm"
+                        step="any"
+                        min="0"
+                        disabled={inferInstrumentType(row.ticker, row.instrument_type) !== "future"}
                       />
                     </div>
 
@@ -404,6 +595,12 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         <Trash2 size={14} />
                       </button>
                     </div>
+
+                    {valuationSummary(row) && (
+                      <div className="-mt-1 text-[11px] text-muted" style={{ gridColumn: "1 / -1" }}>
+                        {valuationSummary(row)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -419,24 +616,65 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
             </>
           ) : (
             <>
-              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(8, minmax(0, 1fr))" }}>
+              <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Ticker</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Type</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Asset Class</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Direction</p>
                 <p className="col-span-2 text-xs font-medium text-gray-500">Cost Basis</p>
-                <p className="col-span-1 text-xs font-medium text-gray-500">Shares</p>
-                <p className="col-span-1 text-xs font-medium text-gray-500"></p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Quantity</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500">Multiplier</p>
+                <p className="col-span-2 text-xs font-medium text-gray-500"></p>
               </div>
 
               <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
                 {hedgeRows.map(row => (
-                  <div key={row._id} className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(8, minmax(0, 1fr))" }}>
+                  <div key={row._id} className="grid gap-2 items-center" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
                     <div className="col-span-2">
                       <input
                         type="text"
                         value={row.ticker}
-                        onChange={e => updateHedgeRow(row._id, { ticker: e.target.value.toUpperCase() })}
-                        placeholder="SPY"
+                        onChange={e => {
+                          const nextTicker = e.target.value.toUpperCase()
+                          const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
+                          const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
+                            ? nextTicker
+                            : row.price_symbol
+                          const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
+                          updateHedgeRow(row._id, {
+                            ticker: nextTicker,
+                            price_symbol: nextPriceSymbol,
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
+                          })
+                        }}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "SPY"}
                         className="theme-input w-full font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="col-span-2">
+                      <SelectInput
+                        value={inferInstrumentType(row.ticker, row.instrument_type)}
+                        onChange={v => {
+                          const nextInstrumentType = v as InstrumentType
+                          updateHedgeRow(row._id, {
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType),
+                            _contractMultiplierTouched: nextInstrumentType === "security"
+                              ? false
+                              : row._contractMultiplierTouched,
+                          })
+                        }}
+                        options={INSTRUMENT_TYPE_OPTIONS}
+                      />
+                    </div>
+
+                    <div className="col-span-2">
+                      <SelectInput
+                        value={row.asset ?? "equity"}
+                        onChange={v => updateHedgeRow(row._id, { asset: v as HedgePosition["asset"] })}
+                        options={ASSET_OPTIONS}
                       />
                     </div>
 
@@ -463,21 +701,41 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                       />
                     </div>
 
-                    <div className="col-span-1">
+                    <div className="col-span-2">
                       <input
                         type="number"
-                        value={row.shares ?? ""}
+                        value={rowQuantity(row) ?? ""}
                         onChange={e => {
                           const v = e.target.value
-                          updateHedgeRow(row._id, { shares: v === "" ? null : Number(v) })
+                          const quantity = v === "" ? null : Number(v)
+                          updateHedgeRow(row._id, { shares: quantity, quantity })
                         }}
-                        placeholder="Optional"
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Contracts" : "Optional"}
                         className="theme-input w-full text-sm"
                         step="any"
                       />
                     </div>
 
-                    <div className="col-span-1 flex justify-center">
+                    <div className="col-span-2">
+                      <input
+                        type="number"
+                        value={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? row.contract_multiplier ?? "" : 1}
+                        onChange={e => {
+                          const v = e.target.value
+                          updateHedgeRow(row._id, {
+                            contract_multiplier: v === "" ? null : Number(v),
+                            _contractMultiplierTouched: true,
+                          })
+                        }}
+                        placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Auto" : "1"}
+                        className="theme-input w-full text-sm"
+                        step="any"
+                        min="0"
+                        disabled={inferInstrumentType(row.ticker, row.instrument_type) !== "future"}
+                      />
+                    </div>
+
+                    <div className="col-span-2 flex justify-center">
                       <button
                         type="button"
                         onClick={() => removeHedgeRow(row._id)}
@@ -487,6 +745,12 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         <Trash2 size={14} />
                       </button>
                     </div>
+
+                    {valuationSummary(row) && (
+                      <div className="-mt-1 text-[11px] text-muted" style={{ gridColumn: "1 / -1" }}>
+                        {valuationSummary(row)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
@@ -12,7 +13,13 @@ from pydantic import ValidationError as PydanticValidationError
 from api.audit import emit_audit_event
 from api.exceptions import ValidationError
 from api.llm_settings import (
+    ALLOWED_LLM_PROVIDERS,
+    DEFAULT_REASONING_EFFORTS,
+    LLM_PROVIDER_KEY,
+    REASONING_EFFORTS,
+    _reasoning_key,
     get_setting,
+    get_settings,
     set_llm_provider_setting,
     set_llm_reasoning_effort_settings,
     set_setting,
@@ -27,10 +34,8 @@ from llm_utils import (
     api_key_env,
     get_api_key,
     model_for_tier,
-    reasoning_effort_for_tier,
     reasoning_effort_options,
     require_api_key,
-    selected_provider,
 )
 from ontology.policy import Actor
 
@@ -125,8 +130,35 @@ def _validate_reasoning_efforts(provider: str, efforts: dict[str, str]) -> None:
             )
 
 
+def _llm_settings_keys() -> list[str]:
+    providers = (PROVIDER_ANTHROPIC, PROVIDER_OPENAI)
+    tiers = (MODEL_LOW, MODEL_MID, MODEL_HIGH)
+    return [LLM_PROVIDER_KEY, *(_reasoning_key(provider, tier) for provider in providers for tier in tiers)]
+
+
+def _provider_from_settings(rows: dict[str, dict]) -> str:
+    stored = str(rows.get(LLM_PROVIDER_KEY, {}).get("value") or "").strip().lower()
+    if stored in ALLOWED_LLM_PROVIDERS:
+        return stored
+
+    provider = (os.environ.get("LLM_PROVIDER") or PROVIDER_ANTHROPIC).strip().lower()
+    if provider not in ALLOWED_LLM_PROVIDERS:
+        raise ValueError("LLM_PROVIDER must be 'anthropic' or 'openai'")
+    return provider
+
+
+def _reasoning_effort_from_settings(rows: dict[str, dict], provider: str, tier: str, model: str) -> str:
+    fallback = DEFAULT_REASONING_EFFORTS[provider]
+    key = _reasoning_key(provider, tier)
+    effort = str(rows.get(key, {}).get("value") or "").strip().lower()
+    if effort not in REASONING_EFFORTS:
+        effort = fallback
+    return effort if effort in reasoning_effort_options(provider, model) else fallback
+
+
 def _settings_response() -> dict:
-    provider = selected_provider()
+    rows = get_settings(_llm_settings_keys())
+    provider = _provider_from_settings(rows)
     models_by_provider = {
         PROVIDER_ANTHROPIC: _models_for_provider(PROVIDER_ANTHROPIC),
         PROVIDER_OPENAI: _models_for_provider(PROVIDER_OPENAI),
@@ -141,10 +173,16 @@ def _settings_response() -> dict:
         "models_by_provider": models_by_provider,
         "reasoning_efforts": {
             PROVIDER_ANTHROPIC: {
-                tier: reasoning_effort_for_tier(tier, PROVIDER_ANTHROPIC) for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
+                tier: _reasoning_effort_from_settings(
+                    rows, PROVIDER_ANTHROPIC, tier, models_by_provider[PROVIDER_ANTHROPIC][tier]
+                )
+                for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
             },
             PROVIDER_OPENAI: {
-                tier: reasoning_effort_for_tier(tier, PROVIDER_OPENAI) for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
+                tier: _reasoning_effort_from_settings(
+                    rows, PROVIDER_OPENAI, tier, models_by_provider[PROVIDER_OPENAI][tier]
+                )
+                for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
             },
         },
         "reasoning_options": {

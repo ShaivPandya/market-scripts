@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from portfolio.instruments import default_contract_multiplier, is_continuous_future_symbol
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
     BASE_CCY,
     BETA_EWMA_HALFLIFE_DAYS,
@@ -113,12 +114,25 @@ def _build_positions_df(
         }
     )
     df["dollar_weight"] = df["weight"] * float(book)
+    df["instrument_type"] = ["future" if is_continuous_future_symbol(ticker) else "security" for ticker in df["ticker"]]
+    df["contract_multiplier"] = [
+        default_contract_multiplier(
+            instrument_type="future" if is_continuous_future_symbol(ticker) else "security",
+            symbol=ticker,
+        )
+        for ticker in df["ticker"]
+    ]
+    unit_notional = pd.to_numeric(df["price"], errors="coerce") * pd.to_numeric(
+        df["contract_multiplier"], errors="coerce"
+    ).replace(0, np.nan)
     shares = np.where(
-        pd.to_numeric(df["price"], errors="coerce").replace(0, np.nan).notna(),
-        np.round(df["dollar_weight"] / pd.to_numeric(df["price"], errors="coerce")),
+        unit_notional.notna(),
+        np.round(df["dollar_weight"] / unit_notional),
         0.0,
     )
-    df["shares"] = shares.astype(int)
+    df["quantity"] = shares.astype(int)
+    df["contracts"] = df["quantity"].where(df["instrument_type"].eq("future"))
+    df["shares"] = df["quantity"]
     df = df.sort_values("weight", ascending=False).reset_index(drop=True)
     return df
 
@@ -269,6 +283,26 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
     if df.empty:
         raise ValueError("No positions found in portfolio database.")
 
+    excluded_metadata: list[dict[str, Any]] = []
+    if {"asset", "instrument_type"}.issubset(df.columns):
+        excluded = df[
+            df["instrument_type"].astype(str).str.lower().eq("future")
+            & ~df["asset"].astype(str).str.lower().eq("equity")
+        ]
+        for _, row in excluded.iterrows():
+            ticker = str(row.get("ticker") or "").strip().upper()
+            if ticker:
+                excluded_metadata.append(
+                    {
+                        "ticker": ticker,
+                        "direction": str(row.get("direction") or "long").strip().lower(),
+                        "instrument_type": "future",
+                        "asset": str(row.get("asset") or "").strip().lower(),
+                        "excluded_from_hedging": True,
+                        "exclusion_reason": "Only equity and equity-index futures are included in SPY/IWM beta hedging.",
+                    }
+                )
+
     if "asset" in df.columns:
         equity_df = df[df["asset"] == "equity"].copy()
     else:
@@ -285,25 +319,30 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
         direction = str(row.get("direction", "long")).strip().lower()
         sign = 1.0 if direction == "long" else -1.0
 
-        shares_val = row.get("shares")
+        quantity_val = row.get("quantity") if row.get("quantity") is not None else row.get("shares")
         cost_val = row.get("cost_basis")
+        instrument_type = str(row.get("instrument_type") or "security").strip().lower()
+        contract_multiplier = float(row.get("contract_multiplier") or 1.0)
         try:
             conviction = max(1, min(5, int(row.get("conviction", 3))))
         except (TypeError, ValueError):
             conviction = 3
 
-        has_dollar = pd.notna(shares_val) and pd.notna(cost_val) and float(shares_val) > 0 and float(cost_val) > 0
+        has_dollar = pd.notna(quantity_val) and pd.notna(cost_val) and float(quantity_val) > 0 and float(cost_val) > 0
 
         records.append(
             {
                 "ticker": ticker,
                 "direction": direction,
                 "sign": sign,
-                "shares": float(shares_val) if pd.notna(shares_val) else None,
+                "shares": float(quantity_val) if pd.notna(quantity_val) else None,
+                "quantity": float(quantity_val) if pd.notna(quantity_val) else None,
                 "cost_basis": float(cost_val) if pd.notna(cost_val) else None,
                 "conviction": conviction,
+                "instrument_type": instrument_type,
+                "contract_multiplier": contract_multiplier,
                 "has_dollar": has_dollar,
-                "dollar_value": float(shares_val) * float(cost_val) if has_dollar else None,
+                "dollar_value": float(quantity_val) * float(cost_val) * contract_multiplier if has_dollar else None,
             }
         )
 
@@ -330,11 +369,14 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
             "direction": r["direction"],
             "conviction": r["conviction"],
             "shares": r["shares"],
+            "quantity": r["quantity"],
             "cost_basis": r["cost_basis"],
             "weight": r["weight"],
+            "instrument_type": r["instrument_type"],
+            "contract_multiplier": r["contract_multiplier"],
         }
         for r in records
-    ]
+    ] + excluded_metadata
 
     return positions, metadata, suggested_book
 

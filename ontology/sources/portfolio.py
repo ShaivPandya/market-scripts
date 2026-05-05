@@ -70,6 +70,12 @@ class PortfolioAdapter:
                 ticker=ticker,
                 asset=str(meta_raw.get("asset") or "unknown").strip().lower(),
                 direction=str(meta_raw.get("direction") or "unknown").strip().lower(),
+                instrument_type=str(meta_raw.get("instrument_type") or "security").strip().lower(),
+                price_symbol=clean_str(meta_raw.get("price_symbol")) or ticker,
+                quantity=_float_or_none(
+                    meta_raw.get("quantity") if meta_raw.get("quantity") is not None else meta_raw.get("shares")
+                ),
+                contract_multiplier=_float_or_none(meta_raw.get("contract_multiplier")) or 1.0,
                 raw=dict(meta_raw),
             )
             series = _get_mapping_value(positions_raw, ticker, str(ticker_obj))
@@ -81,6 +87,10 @@ class PortfolioAdapter:
                 series_points=series_point_count(series),
                 as_of=iso_string(raw.get("timestamp")),
                 metadata=metadata,
+                instrument_type=metadata.instrument_type,
+                price_symbol=metadata.price_symbol,
+                quantity=metadata.quantity,
+                contract_multiplier=metadata.contract_multiplier,
             )
 
         snapshot = PortfolioSnapshot(
@@ -134,3 +144,11 @@ def _get_mapping_value(mapping: dict[str, Any], *keys: str) -> Any:
         if key in mapping:
             return mapping[key]
     return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out

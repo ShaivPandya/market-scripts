@@ -39,6 +39,7 @@ _AUTH_GET_ENDPOINTS = [
     f"{_API_PREFIX}/portfolio-news",
     f"{_API_PREFIX}/fx-model/pairs",
     f"{_API_PREFIX}/thesis/status",
+    f"{_API_PREFIX}/ideas",
 ]
 
 

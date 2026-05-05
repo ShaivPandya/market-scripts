@@ -23,6 +23,17 @@ def test_async_jobs_migration_contract():
     assert 'PrimaryKeyConstraint("job_id", "seq")' in event_migration
 
 
+def test_idea_evaluation_job_registered_with_progress():
+    from api.job_registry import get_job_spec
+
+    spec = get_job_spec("idea_evaluation")
+
+    assert spec.request_model == "api.routers.ideas.IdeaEvaluationRequest"
+    assert spec.compute_func == "api.routers.ideas._compute_idea_evaluation_result"
+    assert spec.cache_key_func == "api.routers.ideas._cache_key"
+    assert spec.supports_progress is True
+
+
 def test_async_job_storage_stays_local_when_backend_is_local(monkeypatch):
     from api.job_queue import postgres_jobs_enabled
 

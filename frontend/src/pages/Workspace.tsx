@@ -533,7 +533,7 @@ export function Workspace() {
                       <span className="font-semibold text-app">{rec.action.replace(/_/g, " ")}</span>
                       <span className="text-xs text-subtle">{rec.instrument}</span>
                       {rec.ticker && (
-                        <Link to={`/dossier/${rec.ticker}`} state={{ from: "workspace" }} className="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400">
+                        <Link to={`/dossier/${encodeURIComponent(rec.ticker)}`} state={{ from: "workspace" }} className="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400">
                           {rec.ticker}
                         </Link>
                       )}
@@ -556,16 +556,16 @@ export function Workspace() {
 
         {/* Thesis Pressure */}
         {data.thesis_pressure.length > 0 && (
-          <section className="theme-surface rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <AlertTriangle size={14} className="text-amber-500" />
               Positions Under Pressure
             </h2>
-            <div className="space-y-2">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {data.thesis_pressure.map(tp => (
                 <Link
                   key={tp.ticker}
-                  to={`/dossier/${tp.ticker}`}
+                  to={`/dossier/${encodeURIComponent(tp.ticker)}`}
                   state={{ from: "workspace" }}
                   className="grid grid-cols-1 gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[hsl(var(--muted-2))] sm:grid-cols-[3rem_7.25rem_minmax(0,1fr)_4.5rem] sm:items-center"
                 >
@@ -594,7 +594,7 @@ export function Workspace() {
 
         {/* Pending Approvals */}
         {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
-          <section className="theme-surface flex min-h-0 flex-col rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
@@ -625,7 +625,7 @@ export function Workspace() {
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <DecisionStateBadge state={approvalDecisionState(a)} />
                           {a.ticker && (
-                            <Link to={`/dossier/${a.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
+                            <Link to={`/dossier/${encodeURIComponent(a.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
                               {a.ticker}
                             </Link>
                           )}
@@ -728,7 +728,7 @@ export function Workspace() {
                         {a.urgency}
                       </span>
                       {a.ticker && (
-                        <Link to={`/dossier/${a.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
+                        <Link to={`/dossier/${encodeURIComponent(a.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
                           {a.ticker}
                         </Link>
                       )}
@@ -772,7 +772,7 @@ export function Workspace() {
                 <div key={t.id} className="rounded-lg px-3 py-2 text-sm">
                   <div className="flex items-center gap-3">
                     {t.ticker && (
-                      <Link to={`/dossier/${t.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
+                      <Link to={`/dossier/${encodeURIComponent(t.ticker)}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline shrink-0">
                         {t.ticker}
                       </Link>
                     )}
@@ -809,7 +809,7 @@ export function Workspace() {
                     )} />
                     <span className="font-medium text-app">{run.workflow_name.replace(/_/g, " ")}</span>
                     {run.ticker && (
-                      <Link to={`/dossier/${run.ticker}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
+                      <Link to={`/dossier/${encodeURIComponent(run.ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
                         {run.ticker}
                       </Link>
                     )}

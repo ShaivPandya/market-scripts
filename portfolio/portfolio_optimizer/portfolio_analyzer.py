@@ -1136,6 +1136,49 @@ def to_usd_price(local_price: pd.Series, ccy: str, prices_all: pd.DataFrame) -> 
     raise RuntimeError("Unexpected FX mode")
 
 
+def prepare_instrument_metadata(meta: pd.DataFrame) -> pd.DataFrame:
+    out = meta.copy()
+    if "price_symbol" not in out.columns:
+        out["price_symbol"] = out.index
+    else:
+        out["price_symbol"] = out["price_symbol"].fillna("").astype(str).str.strip().str.upper()
+        out.loc[out["price_symbol"].eq(""), "price_symbol"] = out.index[out["price_symbol"].eq("")]
+    if "instrument_type" not in out.columns:
+        out["instrument_type"] = "security"
+    else:
+        out["instrument_type"] = out["instrument_type"].fillna("security").astype(str).str.strip().str.lower()
+        out.loc[out["instrument_type"].eq(""), "instrument_type"] = "security"
+    if "contract_multiplier" not in out.columns:
+        out["contract_multiplier"] = 1.0
+    out["contract_multiplier"] = pd.to_numeric(out["contract_multiplier"], errors="coerce").fillna(1.0)
+    if "quantity" not in out.columns:
+        out["quantity"] = out["shares"] if "shares" in out.columns else np.nan
+    else:
+        fallback = out["shares"] if "shares" in out.columns else np.nan
+        out["quantity"] = pd.to_numeric(out["quantity"], errors="coerce").fillna(fallback)
+    return out
+
+
+def fetch_prices_for_portfolio_symbols(
+    meta: pd.DataFrame,
+    tickers: list[str],
+    extra_tickers: list[str],
+) -> tuple[pd.DataFrame, dict[str, str], dict[str, str]]:
+    symbol_map = {ticker: str(meta.loc[ticker, "price_symbol"] or ticker).strip().upper() for ticker in tickers}
+    symbols_to_fetch = list(dict.fromkeys([*symbol_map.values(), *extra_tickers]))
+    symbol_currencies = fetch_currencies(symbols_to_fetch)
+    fx_tickers = get_required_fx_tickers(symbol_currencies)
+    prices_by_symbol = download_prices(symbols_to_fetch, fx_tickers)
+    prices = prices_by_symbol.copy()
+    for ticker, symbol in symbol_map.items():
+        if symbol in prices_by_symbol.columns:
+            prices[ticker] = prices_by_symbol[symbol]
+    ticker_currencies = {ticker: symbol_currencies.get(symbol, BASE_CCY) for ticker, symbol in symbol_map.items()}
+    for ticker in extra_tickers:
+        ticker_currencies[ticker] = symbol_currencies.get(ticker, BASE_CCY)
+    return prices, ticker_currencies, symbol_map
+
+
 def parse_bool_column(series: pd.Series) -> pd.Series:
     """Parse a CSV boolean-ish column into a strict boolean series."""
     true_values = {"1", "true", "t", "yes", "y"}
@@ -2041,19 +2084,15 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
         meta = _get_positions_df()
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
+        meta = prepare_instrument_metadata(meta)
 
         tickers = meta.index.tolist()
         if not tickers:
             return {"error": "portfolio.csv has no tickers."}
 
-        # Determine required currencies
         market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
-        all_tickers_to_fetch = list(set(tickers + market_tickers))
-        ticker_currencies = fetch_currencies(all_tickers_to_fetch)
-
-        # Download prices needed for signals and contrarian gating.
-        fx_tickers = get_required_fx_tickers(ticker_currencies)
-        prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
+        prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
+        all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
 
         missing_cols = [t for t in tickers if t not in prices_all.columns]
         if missing_cols:
@@ -2080,11 +2119,15 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
 
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
         asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
+        signal_asset_map = dict(asset_map)
+        for t in tickers:
+            if str(meta.loc[t, "instrument_type"]).lower() == "future":
+                signal_asset_map[t] = "future"
         direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
 
         signals_df, _ = generate_composite_signals(
             tickers=active_tickers,
-            asset_map=asset_map,
+            asset_map=signal_asset_map,
             benchmark_override=MARKET_TICKER_LONG,
             direction_map=direction_map,
             weights_short=DEFAULT_WEIGHTS_SHORT,
@@ -2126,7 +2169,12 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
             )
             signal_effective.loc[contrarian_tickers] = contrarian_signal
 
-        valuation_tickers = [t for t in active_tickers if str(meta.loc[t, "asset"]).strip().lower() == "equity"]
+        valuation_tickers = [
+            t
+            for t in active_tickers
+            if str(meta.loc[t, "asset"]).strip().lower() == "equity"
+            and str(meta.loc[t, "instrument_type"]).strip().lower() != "future"
+        ]
         valuation_df = fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
         valuation_signal = compute_valuation_signal(
             valuation_df,
@@ -2170,6 +2218,10 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
             {
                 "ticker": tickers,
                 "asset": meta["asset"].values,
+                "instrument_type": meta["instrument_type"].values,
+                "price_symbol": meta["price_symbol"].values,
+                "quantity": meta["quantity"].values,
+                "contract_multiplier": meta["contract_multiplier"].values,
                 "direction": direction_display.values,
                 "contrarian": meta["contrarian"].values,
                 "drawdown_52w": meta["drawdown_52w"].values,
@@ -2244,17 +2296,13 @@ def optimize_portfolio(
         meta = _get_positions_df()
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
+        meta = prepare_instrument_metadata(meta)
 
         tickers = meta.index.tolist()
 
-        # Determine required currencies
         market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
-        all_tickers_to_fetch = list(set(tickers + market_tickers))
-        ticker_currencies = fetch_currencies(all_tickers_to_fetch)
-
-        # Determine required FX tickers and download all prices
-        fx_tickers = get_required_fx_tickers(ticker_currencies)
-        prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
+        prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
+        all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
 
         missing_cols = [t for t in tickers if t not in prices_all.columns]
         if missing_cols:
@@ -2283,7 +2331,11 @@ def optimize_portfolio(
         meta["realized_vol"] = defense_vol
 
         # Flag equities that fell 60%+ from their 104-week high at any point
-        equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
+        equity_tickers_dd = [
+            t
+            for t in tickers
+            if meta.loc[t, "asset"].lower() == "equity" and str(meta.loc[t, "instrument_type"]).lower() != "future"
+        ]
         severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
         meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
         flagged_shorts = [
@@ -2311,10 +2363,14 @@ def optimize_portfolio(
         # Generate composite signals
         active_tickers = [t for t in tickers if meta.loc[t, "direction"].strip()]
         asset_map = dict(zip(meta.index, meta["asset"]))  # noqa: B905
+        signal_asset_map = dict(asset_map)
+        for t in tickers:
+            if str(meta.loc[t, "instrument_type"]).lower() == "future":
+                signal_asset_map[t] = "future"
         direction_map = {t: meta.loc[t, "direction"].strip().lower() for t in active_tickers}
         signals_df, _ = generate_composite_signals(
             tickers=active_tickers,
-            asset_map=asset_map,
+            asset_map=signal_asset_map,
             benchmark_override=MARKET_TICKER_LONG,
             direction_map=direction_map,
             weights_short=DEFAULT_WEIGHTS_SHORT,
@@ -2537,6 +2593,10 @@ def optimize_portfolio(
             {
                 "ticker": tickers,
                 "asset": meta["asset"].values,
+                "instrument_type": meta["instrument_type"].values,
+                "price_symbol": meta["price_symbol"].values,
+                "quantity": meta["quantity"].values,
+                "contract_multiplier": meta["contract_multiplier"].values,
                 "direction": meta["direction"].values,
                 "direction_intended": meta["direction_intended"].values,
                 "contrarian": meta["contrarian"].values,
@@ -2563,7 +2623,11 @@ def optimize_portfolio(
         )
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
-            weights_df["shares"] = (weights_df["dollar_weight"] / weights_df["price"]).round(0).astype(int)
+            unit_notional = weights_df["price"] * weights_df["contract_multiplier"].replace(0, np.nan)
+            weights_df["quantity"] = (weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
+            weights_df["target_quantity"] = weights_df["quantity"]
+            weights_df["contracts"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("future"))
+            weights_df["shares"] = weights_df["quantity"]
         weights_df = weights_df.sort_values("weight", ascending=False)
 
         # Build hedges DataFrame
@@ -2595,6 +2659,9 @@ def optimize_portfolio(
             {
                 "ticker": tickers,
                 "asset": meta["asset"].values,
+                "instrument_type": meta["instrument_type"].values,
+                "price_symbol": meta["price_symbol"].values,
+                "contract_multiplier": meta["contract_multiplier"].values,
                 "direction": meta["direction"].values,
                 "weight": w_max_scaled.values,
                 "price": latest_prices.values,
@@ -2602,9 +2669,17 @@ def optimize_portfolio(
         )
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
-            max_scaled_weights_df["shares"] = (
-                (max_scaled_weights_df["dollar_weight"] / max_scaled_weights_df["price"]).round(0).astype(int)
+            unit_notional = max_scaled_weights_df["price"] * max_scaled_weights_df["contract_multiplier"].replace(
+                0, np.nan
             )
+            max_scaled_weights_df["quantity"] = (
+                (max_scaled_weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
+            )
+            max_scaled_weights_df["target_quantity"] = max_scaled_weights_df["quantity"]
+            max_scaled_weights_df["contracts"] = max_scaled_weights_df["quantity"].where(
+                max_scaled_weights_df["instrument_type"].eq("future")
+            )
+            max_scaled_weights_df["shares"] = max_scaled_weights_df["quantity"]
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
 
         return {

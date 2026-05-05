@@ -346,7 +346,12 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
             def progress_callback(phase: str, done: int, total: int) -> None:
                 update_job_progress(job_id, {"phase": phase, "done": done, "total": total})
 
-            result = import_string(spec.compute_func)(req, progress_callback=progress_callback)
+            compute = import_string(spec.compute_func)
+            params = inspect.signature(compute).parameters
+            kwargs: dict[str, Any] = {"progress_callback": progress_callback}
+            if "job_id" in params:
+                kwargs["job_id"] = job_id
+            result = compute(req, **kwargs)
         else:
             compute = import_string(spec.compute_func)
             params = inspect.signature(compute).parameters

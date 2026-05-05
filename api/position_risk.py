@@ -709,6 +709,12 @@ def _load_portfolio_positions(*, now: datetime) -> list[dict[str, Any]]:
                 "asset": str(raw.get("asset") or "equity").strip().lower(),
                 "direction": str(raw.get("direction") or "long").strip().lower(),
                 "shares": _float_or_none(raw.get("shares")),
+                "quantity": _float_or_none(
+                    raw.get("quantity") if raw.get("quantity") is not None else raw.get("shares")
+                ),
+                "instrument_type": str(raw.get("instrument_type") or "security").strip().lower(),
+                "price_symbol": str(raw.get("price_symbol") or ticker).strip().upper(),
+                "contract_multiplier": _float_or_none(raw.get("contract_multiplier")) or 1.0,
                 "cost_basis": _float_or_none(raw.get("cost_basis")),
                 "conviction": _int_or_none(raw.get("conviction")),
                 "contrarian": bool(raw.get("contrarian")),

@@ -35,6 +35,14 @@ from pydantic import (
 )
 
 from api.audit import emit_audit_event, summarize_for_audit
+from portfolio.instruments import (
+    default_contract_multiplier,
+    is_continuous_future_symbol,
+    normalize_asset,
+    normalize_instrument_type,
+    normalize_quantity,
+    normalize_symbol,
+)
 
 logger = logging.getLogger(__name__)
 PydanticValidationError = ValidationError
@@ -42,7 +50,7 @@ PydanticValidationError = ValidationError
 ActionId = str
 ActionActor = Literal["user", "admin", "agent", "workflow", "approval_apply", "system"]
 
-_TICKER_RE = re.compile(r"^[A-Z0-9.]{1,20}$")
+_TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.=-]{0,31}$")
 _EXECUTE_ACTORS = {"user", "admin", "approval_apply", "system"}
 _PROPOSE_ACTORS = {"user", "admin", "agent", "workflow", "system"}
 _APPROVAL_APPLY_ACTORS = frozenset({"approval_apply"})
@@ -199,7 +207,7 @@ _ACTION_INPUT_MODELS: dict[tuple[ActionId, int], type[BaseModel]] = {}
 _ACTION_UPGRADE_ADAPTERS: dict[tuple[ActionId, int, int], ActionUpgradeAdapter] = {}
 
 
-class PortfolioPositionInput(BaseModel):
+class PortfolioPositionInputV1(BaseModel):
     ticker: str
     asset: Literal["equity", "commodity", "fx", "bond"]
     direction: Literal["long", "short"]
@@ -215,8 +223,66 @@ class PortfolioPositionInput(BaseModel):
         if not ticker:
             raise ValueError("Ticker cannot be empty.")
         if not _TICKER_RE.match(ticker):
-            raise ValueError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
+            raise ValueError(f"Invalid ticker format: '{ticker}'.")
         return ticker
+
+
+class UpdatePortfolioPositionsInputV1(BaseModel):
+    positions: list[PortfolioPositionInputV1]
+
+    @model_validator(mode="after")
+    def _validate_positions(self) -> UpdatePortfolioPositionsInputV1:
+        if not self.positions:
+            raise ValueError("At least one position is required.")
+        tickers = [position.ticker for position in self.positions]
+        if len(set(tickers)) != len(tickers):
+            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
+            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        return self
+
+
+class PortfolioPositionInput(BaseModel):
+    ticker: str
+    asset: Literal["equity", "commodity", "fx", "bond"] | None = None
+    direction: Literal["long", "short"]
+    contrarian: bool = False
+    conviction: int = Field(default=3, ge=1, le=5)
+    cost_basis: float | None = None
+    shares: float | None = None
+    quantity: float | None = None
+    instrument_type: Literal["security", "future"] | None = None
+    price_symbol: str | None = None
+    contract_multiplier: float | None = None
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
+    base_currency: str | None = None
+    fx_rate_to_base: float | None = None
+    fx_rate_as_of: str | None = None
+    cost_basis_base: float | None = None
+    notional_base: float | None = None
+    valuation_status: str | None = None
+
+    @model_validator(mode="after")
+    def _normalize_instrument(self) -> PortfolioPositionInput:
+        self.ticker = normalize_symbol(self.ticker)
+        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+        self.instrument_type = normalize_instrument_type(
+            self.instrument_type,
+            ticker=self.ticker,
+            price_symbol=self.price_symbol,
+        )
+        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
+            raise ValueError("Futures positions require a continuous '=F' price_symbol.")
+        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
+        self.contract_multiplier = default_contract_multiplier(
+            instrument_type=self.instrument_type,
+            symbol=self.price_symbol,
+            override=self.contract_multiplier,
+        )
+        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares)
+        self.shares = self.quantity
+        return self
 
 
 class UpdatePortfolioPositionsInput(BaseModel):
@@ -233,7 +299,7 @@ class UpdatePortfolioPositionsInput(BaseModel):
         return self
 
 
-class HedgePositionInput(BaseModel):
+class HedgePositionInputV1(BaseModel):
     ticker: str
     direction: Literal["long", "short"]
     cost_basis: float | None = None
@@ -248,6 +314,60 @@ class HedgePositionInput(BaseModel):
         if not _TICKER_RE.match(ticker):
             raise ValueError(f"Invalid ticker format: '{ticker}'.")
         return ticker
+
+
+class UpdateHedgePositionsInputV1(BaseModel):
+    positions: list[HedgePositionInputV1]
+
+    @model_validator(mode="after")
+    def _validate_positions(self) -> UpdateHedgePositionsInputV1:
+        tickers = [position.ticker for position in self.positions]
+        if len(set(tickers)) != len(tickers):
+            duplicate = next(ticker for ticker in tickers if tickers.count(ticker) > 1)
+            raise ValueError(f"Duplicate ticker: '{duplicate}'.")
+        return self
+
+
+class HedgePositionInput(BaseModel):
+    ticker: str
+    direction: Literal["long", "short"]
+    cost_basis: float | None = None
+    shares: float | None = None
+    quantity: float | None = None
+    asset: Literal["equity", "commodity", "fx", "bond"] | None = None
+    instrument_type: Literal["security", "future"] | None = None
+    price_symbol: str | None = None
+    contract_multiplier: float | None = None
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
+    base_currency: str | None = None
+    fx_rate_to_base: float | None = None
+    fx_rate_as_of: str | None = None
+    cost_basis_base: float | None = None
+    notional_base: float | None = None
+    valuation_status: str | None = None
+
+    @model_validator(mode="after")
+    def _normalize_instrument(self) -> HedgePositionInput:
+        self.ticker = normalize_symbol(self.ticker)
+        self.price_symbol = normalize_symbol(self.price_symbol or self.ticker, field_name="price_symbol")
+        self.instrument_type = normalize_instrument_type(
+            self.instrument_type,
+            ticker=self.ticker,
+            price_symbol=self.price_symbol,
+        )
+        if self.instrument_type == "future" and not is_continuous_future_symbol(self.price_symbol):
+            raise ValueError("Futures hedge positions require a continuous '=F' price_symbol.")
+        self.asset = normalize_asset(self.asset, instrument_type=self.instrument_type, symbol=self.price_symbol)
+        self.contract_multiplier = default_contract_multiplier(
+            instrument_type=self.instrument_type,
+            symbol=self.price_symbol,
+            override=self.contract_multiplier,
+        )
+        self.quantity = normalize_quantity(quantity=self.quantity, shares=self.shares)
+        self.shares = self.quantity
+        return self
 
 
 class UpdateHedgePositionsInput(BaseModel):
@@ -605,7 +725,17 @@ def _model_payload_exclude_unset(model: BaseModel) -> dict[str, Any]:
     return model.model_dump(exclude_unset=True)
 
 
-_POSITION_DIFF_FIELDS = ("asset", "direction", "contrarian", "conviction", "cost_basis", "shares")
+_POSITION_DIFF_FIELDS = (
+    "asset",
+    "direction",
+    "contrarian",
+    "conviction",
+    "cost_basis",
+    "quantity",
+    "instrument_type",
+    "price_symbol",
+    "contract_multiplier",
+)
 
 
 def _portfolio_position_for_diff(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -673,13 +803,29 @@ def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
     before_rows = get_positions(include_hedges=False)
     after_rows = _position_rows(typed)
     return {
-        "positions": [position.model_dump() for position in typed.positions],
+        "positions": after_rows,
         "position_changes": _portfolio_position_changes(before_rows, after_rows),
         "position_change_summary": {
             "before_count": len(before_rows),
             "after_count": len(after_rows),
         },
+        "critical_data_quality": _valuation_quality(after_rows),
     }
+
+
+def _hedge_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
+    typed = cast(UpdateHedgePositionsInput, model)
+    rows = _hedge_rows(typed)
+    return {"positions": rows, "critical_data_quality": _valuation_quality(rows)}
+
+
+def _valuation_quality(rows: Sequence[Mapping[str, Any]]) -> str:
+    statuses = {str(row.get("valuation_status") or "").strip() for row in rows}
+    if statuses & {"missing_currency", "missing_fx_rate"}:
+        return "missing"
+    if any(status and status != "ok" for status in statuses):
+        return "degraded"
+    return "ok"
 
 
 def _hash_current_portfolio_book(_model: BaseModel) -> dict[str, Any]:
@@ -1769,8 +1915,14 @@ def _validate_and_upgrade_action_input(
     return action.input_model.model_validate(payload)
 
 
-def _position_rows(input_model: UpdatePortfolioPositionsInput) -> list[dict[str, Any]]:
-    return [
+def _position_rows(
+    input_model: UpdatePortfolioPositionsInput,
+    *,
+    preserve_existing_valuation: bool = False,
+) -> list[dict[str, Any]]:
+    from portfolio.valuation import enrich_position_valuations
+
+    rows = [
         {
             "ticker": pos.ticker,
             "asset": pos.asset,
@@ -1779,24 +1931,58 @@ def _position_rows(input_model: UpdatePortfolioPositionsInput) -> list[dict[str,
             "conviction": pos.conviction,
             "cost_basis": pos.cost_basis,
             "shares": pos.shares,
+            "quantity": pos.quantity,
+            "instrument_type": pos.instrument_type,
+            "price_symbol": pos.price_symbol,
+            "contract_multiplier": pos.contract_multiplier,
+            "currency": pos.currency,
+            "country": pos.country,
+            "exchange": pos.exchange,
+            "base_currency": pos.base_currency,
+            "fx_rate_to_base": pos.fx_rate_to_base,
+            "fx_rate_as_of": pos.fx_rate_as_of,
+            "cost_basis_base": pos.cost_basis_base,
+            "notional_base": pos.notional_base,
+            "valuation_status": pos.valuation_status,
         }
         for pos in input_model.positions
     ]
+    return enrich_position_valuations(rows, preserve_existing=preserve_existing_valuation)
 
 
-def _hedge_rows(input_model: UpdateHedgePositionsInput) -> list[dict[str, Any]]:
-    return [
+def _hedge_rows(
+    input_model: UpdateHedgePositionsInput,
+    *,
+    preserve_existing_valuation: bool = False,
+) -> list[dict[str, Any]]:
+    from portfolio.valuation import enrich_position_valuations
+
+    rows = [
         {
             "ticker": pos.ticker,
-            "asset": "equity",
+            "asset": pos.asset or "equity",
             "direction": pos.direction,
             "contrarian": False,
             "conviction": 3,
             "cost_basis": pos.cost_basis,
             "shares": pos.shares,
+            "quantity": pos.quantity,
+            "instrument_type": pos.instrument_type,
+            "price_symbol": pos.price_symbol,
+            "contract_multiplier": pos.contract_multiplier,
+            "currency": pos.currency,
+            "country": pos.country,
+            "exchange": pos.exchange,
+            "base_currency": pos.base_currency,
+            "fx_rate_to_base": pos.fx_rate_to_base,
+            "fx_rate_as_of": pos.fx_rate_as_of,
+            "cost_basis_base": pos.cost_basis_base,
+            "notional_base": pos.notional_base,
+            "valuation_status": pos.valuation_status,
         }
         for pos in input_model.positions
     ]
+    return enrich_position_valuations(rows, preserve_existing=preserve_existing_valuation)
 
 
 def _portfolio_callbacks() -> tuple[ActionCallback, ...]:
@@ -1842,9 +2028,10 @@ def _update_portfolio_positions(input_model: BaseModel, context: ActionContext) 
     from portfolio.portfolio_db import get_positions, save_positions
 
     previous = get_positions(include_hedges=False)
-    rows = _position_rows(typed)
+    preserve_existing_valuation = context.actor_type == "approval_apply"
+    rows = _position_rows(typed, preserve_existing_valuation=preserve_existing_valuation)
     try:
-        save_positions(rows, role="position")
+        save_positions(rows, role="position", preserve_existing_valuation=preserve_existing_valuation)
         updated = get_positions(include_hedges=False)
         if len(updated) != len(rows):
             raise RuntimeError("Portfolio position postcondition failed: saved row count mismatch")
@@ -1860,7 +2047,8 @@ def _update_hedge_positions(input_model: BaseModel, context: ActionContext) -> A
 
     from portfolio.portfolio_db import get_positions, save_positions
 
-    rows = _hedge_rows(typed)
+    preserve_existing_valuation = context.actor_type == "approval_apply"
+    rows = _hedge_rows(typed, preserve_existing_valuation=preserve_existing_valuation)
     tickers = {row["ticker"] for row in rows}
     existing_position_tickers = {p["ticker"] for p in get_positions(include_hedges=False)}
     collisions = tickers & existing_position_tickers
@@ -1873,7 +2061,7 @@ def _update_hedge_positions(input_model: BaseModel, context: ActionContext) -> A
     previous = get_positions(include_hedges=True)
     previous_hedges = [row for row in previous if row.get("role") == "hedge"]
     try:
-        save_positions(rows, role="hedge")
+        save_positions(rows, role="hedge", preserve_existing_valuation=preserve_existing_valuation)
         updated = get_positions(include_hedges=True)
         hedge_count = len([row for row in updated if row.get("role") == "hedge"])
         if hedge_count != len(rows):
@@ -2330,6 +2518,7 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         action_id="update_portfolio_positions",
         input_model=UpdatePortfolioPositionsInput,
         handler=_update_portfolio_positions,
+        schema_version=2,
         approval_entity_type="portfolio_positions",
         approval_payload=_portfolio_positions_approval_payload,
         precondition_builder=_hash_current_portfolio_book,
@@ -2339,8 +2528,9 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         action_id="update_hedge_positions",
         input_model=UpdateHedgePositionsInput,
         handler=_update_hedge_positions,
+        schema_version=2,
         approval_entity_type="hedge_positions",
-        approval_payload=_model_payload,
+        approval_payload=_hedge_positions_approval_payload,
         precondition_builder=_hash_current_hedge_book,
         base_state_hash_fields=("positions",),
     ),
@@ -2590,6 +2780,51 @@ def list_actions() -> list[dict[str, Any]]:
 
 for _action in _ACTIONS.values():
     register_action_schema_version(_action.action_id, _action.schema_version, _action.input_model)
+
+
+def _upgrade_portfolio_positions_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = []
+    for row in payload.get("positions") or []:
+        if not isinstance(row, Mapping):
+            rows.append(row)
+            continue
+        ticker = str(row.get("ticker") or "").strip().upper()
+        rows.append(
+            {
+                **dict(row),
+                "quantity": row.get("shares"),
+                "instrument_type": "security",
+                "price_symbol": ticker,
+                "contract_multiplier": 1.0,
+            }
+        )
+    return {**payload, "positions": rows}
+
+
+def _upgrade_hedge_positions_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = []
+    for row in payload.get("positions") or []:
+        if not isinstance(row, Mapping):
+            rows.append(row)
+            continue
+        ticker = str(row.get("ticker") or "").strip().upper()
+        rows.append(
+            {
+                **dict(row),
+                "asset": "equity",
+                "quantity": row.get("shares"),
+                "instrument_type": "security",
+                "price_symbol": ticker,
+                "contract_multiplier": 1.0,
+            }
+        )
+    return {**payload, "positions": rows}
+
+
+register_action_schema_version("update_portfolio_positions", 1, UpdatePortfolioPositionsInputV1)
+register_action_upgrade_adapter("update_portfolio_positions", 1, 2, _upgrade_portfolio_positions_v1_to_v2)
+register_action_schema_version("update_hedge_positions", 1, UpdateHedgePositionsInputV1)
+register_action_upgrade_adapter("update_hedge_positions", 1, 2, _upgrade_hedge_positions_v1_to_v2)
 
 
 WorkflowArtifactPayloadAdapter = Callable[[dict[str, Any], str | None], dict[str, Any]]
@@ -2961,7 +3196,7 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_labor_market', 'description': 'Fetch US labor market indicators. Returns time series and latest values for initial claims, continuing claims, unemployment rate, nonfarm payrolls, and wage growth. Use this to assess labor market tightness and recession risk.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('labor', 'jobs', 'claims', 'payrolls', 'get labor market'), 'selectable': True}
 {'name': 'get_housing', 'description': 'Fetch US housing market indicators. Returns time series and latest values for housing starts, building permits, NAHB housing market index, and existing home sales. Use this to assess the residential construction cycle, builder sentiment, and housing demand.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('housing', 'starts', 'permits', 'nahb', 'get housing'), 'selectable': True}
 {'name': 'get_sector_metrics', 'description': 'Fetch S&P 500 sector metrics. Returns sector weights, weight changes over 1M/3M/6M, relative performance vs SPY, and percentage of sector constituents above their 200-day moving average. Use this to identify sector rotation, concentration risk, and leadership changes.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'equities', 'access_mode': 'read', 'aliases': ('sector', 'rotation', 'sector metrics', 'get sector metrics'), 'selectable': True}
-{'name': 'get_portfolio', 'description': "Fetch the user's portfolio dashboard. Returns current positions with their direction, cost basis, share quantity, conviction, P&L, contribution, and current price data. Cost basis is average/book cost, not first entry price, and the payload does not contain entry date, first purchase price, holding-period, or averaging-up/down history. Portfolio performance fields are direction-adjusted: price declines are favorable for short positions. Never judge a position from raw price moves alone; combine direction, quantity, cost basis, conviction, and P&L/return fields. Use this when the user asks about their portfolio, holdings, performance, or any specific position. Pair with get_thesis for investment reasoning context.", 'parameters': {'type': 'object', 'properties': {'timeframe': {'type': 'string', 'description': "Period for returns. Options: 'This Week', 'Daily', 'Weekly', 'Monthly'. Default: 'Daily'."}, 'include_hedges': {'type': 'boolean', 'description': 'Include hedge rows. Default false; use only for hedge, beta, or risk-exposure questions.'}}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('portfolio', 'holdings', 'positions', 'pnl', 'p&l', 'get portfolio'), 'selectable': True}
+{'name': 'get_portfolio', 'description': "Fetch the user's portfolio dashboard. Returns current positions with their direction, cost basis, canonical quantity, conviction, P&L, contribution, and current price data. Cost basis is average/book cost, not first entry price, and the payload does not contain entry date, first purchase price, holding-period, or averaging-up/down history. Portfolio performance fields are direction-adjusted: price declines are favorable for short positions. Never judge a position from raw price moves alone; combine direction, quantity, cost basis, multiplier, conviction, and P&L/return fields. For futures, quantity means contracts and notional/P&L use contract_multiplier. Use this when the user asks about their portfolio, holdings, performance, or any specific position. Pair with get_thesis for investment reasoning context.", 'parameters': {'type': 'object', 'properties': {'timeframe': {'type': 'string', 'description': "Period for returns. Options: 'This Week', 'Daily', 'Weekly', 'Monthly'. Default: 'Daily'."}, 'include_hedges': {'type': 'boolean', 'description': 'Include hedge rows. Default false; use only for hedge, beta, or risk-exposure questions.'}}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('portfolio', 'holdings', 'positions', 'pnl', 'p&l', 'get portfolio'), 'selectable': True}
 {'name': 'get_yield_curve', 'description': 'Fetch government bond yield curve data for the US, Germany, UK, and Japan. Returns current yields across tenors (3M through 30Y) and comparison vs a lookback period. Use this to assess yield curve shape, inversions, and changes in rate expectations.', 'parameters': {'type': 'object', 'properties': {'lookback_days': {'type': 'integer', 'description': 'Number of days to look back for comparison. Default: 90.'}}, 'required': []}, 'category': 'fixed_income', 'access_mode': 'read', 'aliases': ('yield curve', 'rates', 'bonds', 'get yield curve'), 'selectable': True}
 {'name': 'get_bond_dashboard', 'description': 'Fetch government bond yield time-series for 2Y, 10Y, and 30Y tenors across US, UK, Germany, and Japan. Returns the past year of daily yields, latest values, and year-over-year changes in basis points per country and tenor. Use this to compare sovereign yield levels and trends across major economies.', 'parameters': {'type': 'object', 'properties': {'tenor': {'type': 'string', 'description': "Filter to a single tenor: '2Y', '10Y', or '30Y'. Default: return all tenors."}}, 'required': []}, 'category': 'fixed_income', 'access_mode': 'read', 'aliases': ('bond dashboard', 'sovereign yields', 'get bond dashboard'), 'selectable': True}
 {'name': 'get_sentiment', 'description': 'Fetch market sentiment indicators. Returns put/call ratios (equity aggregate,SPY, QQQ, IWM), investor surveys (AAII bull/bear spread, NAAIM exposure index), and volatility indices (VIX, VXN, VVIX). Includes quality checks and latest-date validation metadata. If quality.ok is false, do not draw directional sentiment conclusions and treat sentiment as unavailable for this turn.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'macro', 'access_mode': 'read', 'aliases': ('sentiment', 'put call', 'aaii', 'naaim', 'get sentiment'), 'selectable': True}

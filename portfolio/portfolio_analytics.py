@@ -4,29 +4,40 @@ portfolio_analytics.py — PnL, drawdown, and attribution from portfolio positio
 Consumes price series (from portfolio_dashboard) and position metadata
 (from portfolio_db) to compute per-position and portfolio-level metrics.
 
-Attribution is weighted by notional value (shares x current price) when
-shares are available, falling back to equal-weight otherwise.
+Attribution is weighted by notional value when quantity and current price are
+available. Futures use quantity x price x contract multiplier; securities use
+the same formula with multiplier 1.0. Missing quantities fall back to equal
+weight.
 """
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
+
+from portfolio.instruments import notional_value
 
 
 def _position_pnl(
     cost_basis: float | None,
     current_price: float,
     direction: str,
-) -> tuple[float | None, float | None]:
-    """Unrealized PnL % and $ (per-share, direction-adjusted)."""
+    quantity: float | None = None,
+    contract_multiplier: float = 1.0,
+) -> tuple[float | None, float | None, float | None]:
+    """Unrealized PnL % plus total and per-unit dollars, direction-adjusted."""
     if cost_basis is None or cost_basis == 0:
-        return None, None
+        return None, None, None
     if direction == "short":
-        pnl_dollar = cost_basis - current_price
+        pnl_per_unit = cost_basis - current_price
     else:
-        pnl_dollar = current_price - cost_basis
-    pnl_pct = (pnl_dollar / cost_basis) * 100
-    return round(pnl_pct, 2), round(pnl_dollar, 4)
+        pnl_per_unit = current_price - cost_basis
+    pnl_pct = (pnl_per_unit / cost_basis) * 100
+    pnl_dollar = None
+    if quantity is not None:
+        pnl_dollar = pnl_per_unit * quantity * contract_multiplier
+    return round(pnl_pct, 2), round(pnl_dollar, 4) if pnl_dollar is not None else None, round(pnl_per_unit, 4)
 
 
 def _drawdown_52w(
@@ -132,8 +143,8 @@ def compute_analytics(
 ) -> dict:
     """Compute per-position PnL, drawdown, and attribution.
 
-    Attribution weights are based on notional value (shares x current price).
-    Positions without shares fall back to equal-weight.
+    Attribution weights are based on current notional value. Positions without
+    quantity fall back to equal-weight.
     """
     n_positions = len(positions)
     if n_positions == 0:
@@ -148,11 +159,13 @@ def compute_analytics(
         series = prices.get(ticker)
         cp = float(series.iloc[-1]) if series is not None and not series.empty else None
         current_prices[ticker] = cp
-        shares = pos.get("shares")
-        if cp is not None and shares is not None and shares > 0:
-            notionals[ticker] = shares * cp
+        quantity = pos.get("quantity", pos.get("shares"))
+        contract_multiplier = pos.get("contract_multiplier") or 1.0
+        current_notional = _base_notional_value(quantity, cp, contract_multiplier, pos.get("fx_rate_to_base"))
+        if current_notional is not None:
+            notionals[ticker] = current_notional
 
-    # Build weights: notional-weighted if any shares exist, else equal-weight
+    # Build weights: notional-weighted if any quantity exists, else equal-weight
     weights: dict[str, float] = {}
     if notionals:
         total_notional = sum(notionals.values())
@@ -171,10 +184,24 @@ def compute_analytics(
         series = prices.get(ticker)
         direction = pos.get("direction", "long")
         cost_basis = pos.get("cost_basis")
-        shares = pos.get("shares")
+        quantity = pos.get("quantity", pos.get("shares"))
+        contract_multiplier = pos.get("contract_multiplier") or 1.0
+        instrument_type = pos.get("instrument_type", "security")
         cp = current_prices[ticker]
 
-        pnl_pct, pnl_dollar = _position_pnl(cost_basis, cp, direction) if cp is not None else (None, None)
+        pnl_pct, pnl_dollar, pnl_per_unit = (
+            _position_pnl(cost_basis, cp, direction, quantity, contract_multiplier)
+            if cp is not None
+            else (None, None, None)
+        )
+        notional_base = _float_or_none(pos.get("notional_base"))
+        cost_basis_base = _float_or_none(pos.get("cost_basis_base"))
+        current_notional = _base_notional_value(quantity, cp, contract_multiplier, pos.get("fx_rate_to_base"))
+        cost_notional = (
+            notional_base
+            if notional_base is not None
+            else _base_notional_value(quantity, cost_basis, contract_multiplier, pos.get("fx_rate_to_base"))
+        )
         high_52w, dd_pct = _drawdown_52w(series, direction) if series is not None else (None, None)
         weekly_ret = _period_return(series, 7, direction) if series is not None else None
         monthly_ret = _period_return(series, 30, direction) if series is not None else None
@@ -186,10 +213,21 @@ def compute_analytics(
         per_position[ticker] = {
             "cost_basis": cost_basis,
             "current_price": cp,
-            "shares": shares,
+            "shares": quantity,
+            "quantity": quantity,
+            "instrument_type": instrument_type,
+            "contract_multiplier": contract_multiplier,
+            "current_notional": round(current_notional, 2) if current_notional is not None else None,
+            "cost_notional": round(cost_notional, 2) if cost_notional is not None else None,
+            "notional_base": round(notional_base, 2) if notional_base is not None else None,
+            "cost_basis_base": round(cost_basis_base, 4) if cost_basis_base is not None else None,
+            "currency": pos.get("currency"),
+            "base_currency": pos.get("base_currency"),
+            "valuation_status": pos.get("valuation_status"),
             "direction": direction,
             "unrealized_pnl_pct": pnl_pct,
             "unrealized_pnl_dollar": pnl_dollar,
+            "unrealized_pnl_per_unit": pnl_per_unit,
             "high_52w": high_52w,
             "drawdown_from_52w_pct": dd_pct,
             "weekly_return_pct": weekly_ret,
@@ -201,3 +239,28 @@ def compute_analytics(
 
     portfolio = _portfolio_summary(per_position)
     return {"per_position": per_position, "portfolio": portfolio}
+
+
+def _float_or_none(value) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if pd.notna(out) and math.isfinite(out) else None
+
+
+def _base_notional_value(
+    quantity,
+    price,
+    contract_multiplier,
+    fx_rate_to_base,
+) -> float | None:
+    local_notional = notional_value(quantity, price, contract_multiplier)
+    if local_notional is None:
+        return None
+    fx_rate = _float_or_none(fx_rate_to_base)
+    if fx_rate is None:
+        return local_notional
+    if fx_rate <= 0:
+        return None
+    return local_notional * fx_rate

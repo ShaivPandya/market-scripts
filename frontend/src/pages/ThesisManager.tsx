@@ -135,7 +135,7 @@ export function ThesisManager() {
   const navigate = useNavigate()
 
   const handleSelect = (ticker: string) => {
-    navigate(`/dossier/${ticker}`, { state: { from: "theses" } })
+    navigate(`/dossier/${encodeURIComponent(ticker)}`, { state: { from: "theses" } })
   }
 
   return (

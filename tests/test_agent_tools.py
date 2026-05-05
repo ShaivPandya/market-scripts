@@ -436,7 +436,10 @@ def test_agent_proposal_tools_create_action_backed_approvals(agent_proposal_stat
         assert approval["entity_type"] == expected_entity_type
         assert approval["action_id"] == expected_action_id
         assert approval["action_schema_name"] == expected_action_id
-        assert approval["action_schema_version"] == 1
+        expected_schema_version = (
+            2 if expected_action_id in {"update_portfolio_positions", "update_hedge_positions"} else 1
+        )
+        assert approval["action_schema_version"] == expected_schema_version
         assert approval["action_input_hash"]
         assert approval["source_type"] == "agent"
         assert approval["source_id"] == "admin"

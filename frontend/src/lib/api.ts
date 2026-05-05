@@ -202,6 +202,115 @@ export interface RecommendationRecord extends DecisionStateFields {
   risk_bindings?: Record<string, unknown> | null
 }
 
+export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "accepted" | "rejected" | "archived"
+export type IdeaAction = "buy" | "watch" | "avoid" | "do_nothing"
+
+export interface InvestmentIdea {
+  id: number
+  ticker: string
+  company_name: string | null
+  status: IdeaStatus | string
+  user_notes: string
+  tags: string[]
+  tags_json?: string[] | string
+  created_at: string
+  updated_at: string
+  source_type?: string | null
+  source_id?: string | null
+  latest_evaluation_id: number | null
+  latest_job_id: string | null
+  accepted_recommendation_id: number | null
+  metadata?: Record<string, unknown>
+  latest_evaluation?: IdeaEvaluation | null
+}
+
+export interface IdeaFactorScore {
+  score?: number
+  status?: string
+  rationale?: string
+  missing?: string[]
+}
+
+export interface IdeaMissingInformation {
+  field: string
+  severity: "critical" | "high" | "medium" | "low" | string
+  reason?: string
+}
+
+export interface IdeaEvidenceItem {
+  source?: string
+  url?: string
+  summary?: string
+  [key: string]: unknown
+}
+
+export interface IdeaEvaluation {
+  id: number
+  idea_id: number
+  ticker: string
+  job_id: string | null
+  evaluated_at: string
+  action: IdeaAction | string
+  recommendation_status: string
+  score: number | null
+  confidence: number | null
+  thesis_statement: string | null
+  rationale: string
+  factor_scores: Record<string, IdeaFactorScore>
+  missing_information: IdeaMissingInformation[]
+  data_quality: Record<string, unknown>
+  evidence: IdeaEvidenceItem[]
+  disconfirming_evidence: IdeaEvidenceItem[]
+  catalyst: string | null
+  invalidation: string | null
+  portfolio_fit: Record<string, unknown>
+  recommendation_record?: Partial<RecommendationRecord> & Record<string, unknown>
+  recommendation_id: number | null
+  approval_id: number | null
+  action_approval_id: number | null
+  accepted_at: string | null
+  accepted_by: string | null
+  created_at: string
+}
+
+export interface IdeaDetailResponse {
+  idea: InvestmentIdea
+  evaluations: IdeaEvaluation[]
+  documents?: {
+    overview_present?: boolean
+    overview_content?: string | null
+    overview_error?: string | null
+    thesis_present?: boolean
+    thesis_content?: string | null
+    thesis_error?: string | null
+  }
+}
+
+export interface IdeaListResponse {
+  ideas: InvestmentIdea[]
+  count: number
+}
+
+export interface IdeaEvaluationJobResult {
+  idea: InvestmentIdea
+  evaluation: IdeaEvaluation
+  result?: Record<string, unknown>
+}
+
+export type IdeaEvaluationJobResponse =
+  | { job_id: string; status: "queued" | "running"; timeout_s?: number; progress?: Record<string, unknown> }
+  | { job_id: string; status: "done"; timeout_s?: number; result?: IdeaEvaluationJobResult; progress?: Record<string, unknown> }
+  | { job_id: string; status: "error" | "cancelled"; timeout_s?: number; error?: string; progress?: Record<string, unknown> }
+
+export interface IdeaAcceptResponse {
+  status: string
+  idea: InvestmentIdea
+  evaluation: IdeaEvaluation
+  recommendation: RecommendationRecord
+  action_proposal: StagedMutationResponse | null
+  action_error?: string | null
+}
+
 client.interceptors.response.use(
   res => res,
   err => {
@@ -326,14 +435,30 @@ export const fetchPortfolio = (timeframe: string) =>
 export const fetchPortfolioAllTimeframes = () =>
   client.get("/portfolio?all_timeframes=true").then(r => r.data)
 
+export type InstrumentType = "security" | "future"
+export type PortfolioAsset = "equity" | "commodity" | "fx" | "bond"
+
 export interface PortfolioPosition {
   ticker: string
-  asset: "equity" | "commodity" | "fx" | "bond"
+  asset: PortfolioAsset
   direction: "long" | "short"
   contrarian: boolean
   conviction: number
   cost_basis: number | null
   shares: number | null
+  quantity?: number | null
+  instrument_type?: InstrumentType | null
+  price_symbol?: string | null
+  contract_multiplier?: number | null
+  currency?: string | null
+  country?: string | null
+  exchange?: string | null
+  base_currency?: string | null
+  fx_rate_to_base?: number | null
+  fx_rate_as_of?: string | null
+  cost_basis_base?: number | null
+  notional_base?: number | null
+  valuation_status?: string | null
   role?: "position" | "hedge"
 }
 
@@ -347,9 +472,23 @@ export const savePortfolioPositions = (positions: PortfolioPosition[], options?:
 
 export interface HedgePosition {
   ticker: string
+  asset?: PortfolioAsset | null
   direction: "long" | "short"
   cost_basis: number | null
   shares: number | null
+  quantity?: number | null
+  instrument_type?: InstrumentType | null
+  price_symbol?: string | null
+  contract_multiplier?: number | null
+  currency?: string | null
+  country?: string | null
+  exchange?: string | null
+  base_currency?: string | null
+  fx_rate_to_base?: number | null
+  fx_rate_as_of?: string | null
+  cost_basis_base?: number | null
+  notional_base?: number | null
+  valuation_status?: string | null
 }
 
 export const fetchHedgePositions = () =>
@@ -1049,7 +1188,18 @@ export const fetchHedgingPortfolioWeights = (book?: number) =>
     .get("/hedging-tool/portfolio-weights", { params: book ? { book } : undefined })
     .then(r => r.data as {
       positions: { ticker: string; weight: number }[]
-      metadata: { ticker: string; direction: string; conviction: number; shares: number | null; cost_basis: number | null; weight: number }[]
+      metadata: {
+        ticker: string
+        direction: string
+        conviction: number
+        shares: number | null
+        quantity?: number | null
+        instrument_type?: InstrumentType | null
+        price_symbol?: string | null
+        contract_multiplier?: number | null
+        cost_basis: number | null
+        weight: number
+      }[]
       book: number
       source: string
     })
@@ -1752,6 +1902,50 @@ export const fetchOptimizationAlerts = (params?: { status?: string; mission_id?:
 
 export const dismissOptimizationAlert = (id: number, note?: string) =>
   client.put(`/optimization/alerts/${id}/dismiss`, note ? { note } : {}).then(r => r.data as OptimizationAlert)
+
+// Idea Watchlist
+export const fetchIdeas = (params?: { status?: IdeaStatus | string; include_archived?: boolean; limit?: number }) =>
+  client.get("/ideas", { params }).then(r => r.data as IdeaListResponse)
+
+export const fetchIdea = (id: number) =>
+  client.get(`/ideas/${id}`).then(r => r.data as IdeaDetailResponse)
+
+export const createIdea = (body: {
+  ticker: string
+  company_name?: string | null
+  user_notes?: string | null
+  tags?: string[]
+  status?: IdeaStatus
+}) => client.post("/ideas", body).then(r => r.data as IdeaDetailResponse)
+
+export const updateIdea = (id: number, body: {
+  ticker?: string
+  company_name?: string | null
+  user_notes?: string | null
+  tags?: string[]
+  status?: IdeaStatus
+}) => client.put(`/ideas/${id}`, body).then(r => r.data as IdeaDetailResponse)
+
+export const archiveIdea = (id: number) =>
+  client.delete(`/ideas/${id}`).then(r => r.data as { status: string; idea: InvestmentIdea })
+
+export const startIdeaEvaluationJob = (id: number, body?: { force_refresh?: boolean }) =>
+  client
+    .post(`/ideas/${id}/evaluate/async`, body ?? {}, { timeout: 30_000 })
+    .then(r => r.data as IdeaEvaluationJobResponse)
+
+export const fetchIdeaEvaluationJob = (jobId: string) =>
+  client
+    .get(`/ideas/evaluate/async/${encodeURIComponent(jobId)}`, { timeout: 30_000 })
+    .then(r => r.data as IdeaEvaluationJobResponse)
+
+export const acceptIdeaEvaluation = (ideaId: number, evaluationId: number, body?: { note?: string }) =>
+  client
+    .post(`/ideas/${ideaId}/evaluations/${evaluationId}/accept`, body ?? {})
+    .then(r => r.data as IdeaAcceptResponse)
+
+export const rejectIdea = (id: number, note?: string) =>
+  client.post(`/ideas/${id}/reject`, note ? { note } : {}).then(r => r.data as { status: string; idea: InvestmentIdea })
 
 // Recommendations
 export const fetchRecommendations = (params?: {

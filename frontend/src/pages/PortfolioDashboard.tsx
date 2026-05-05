@@ -240,7 +240,7 @@ export function PortfolioDashboard() {
               <ChartTile
                 key={ticker}
                 title={ticker}
-                href={`/dossier/${ticker}`}
+                href={`/dossier/${encodeURIComponent(ticker)}`}
                 meta={ret != null ? (
                   <span className={`text-xs font-semibold ${ret >= 0 ? "text-positive" : "text-negative"}`}>
                     {ret >= 0 ? "+" : ""}{ret.toFixed(2)}%
@@ -264,7 +264,7 @@ export function PortfolioDashboard() {
             {unifiedPerformance.sortedPositions.map(position => (
               <Link
                 key={position.ticker}
-                to={`/dossier/${position.ticker}`}
+                to={`/dossier/${encodeURIComponent(position.ticker)}`}
                 className="rounded-xl border border-app bg-card px-4 py-3 shadow-sm transition-colors hover:border-strong hover:bg-card-muted"
               >
                 <div className="flex items-start justify-between gap-3">

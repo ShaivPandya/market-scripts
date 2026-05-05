@@ -136,10 +136,20 @@ def get_sizer_prefill():
             if "conviction" in df.columns
             else pd.Series([3] * len(df))
         )
+        instrument_types = (
+            df["instrument_type"].astype(str).str.strip().str.lower()
+            if "instrument_type" in df.columns
+            else pd.Series(["security"] * len(df))
+        )
 
         deduped_rows: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for ticker, direction, conviction in zip(tickers.tolist(), directions.tolist(), convictions.tolist()):  # noqa: B905
+        for ticker, direction, conviction, instrument_type in zip(  # noqa: B905
+            tickers.tolist(),
+            directions.tolist(),
+            convictions.tolist(),
+            instrument_types.tolist(),
+        ):
             if ticker and ticker not in seen:
                 seen.add(ticker)
                 deduped_rows.append(
@@ -147,6 +157,7 @@ def get_sizer_prefill():
                         "ticker": ticker,
                         "conviction": conviction,
                         "direction": direction,
+                        "instrument_type": instrument_type,
                     }
                 )
 

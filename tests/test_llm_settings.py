@@ -78,6 +78,69 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     assert "sk-ant-test" not in response.text
 
 
+def test_get_llm_settings_uses_bulk_settings_fetch(auth_client, monkeypatch):
+    from api.routers import settings
+
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    calls = []
+
+    def fake_get_settings(keys):
+        calls.append(list(keys))
+        return {}
+
+    def fail_get_setting(_key):
+        raise AssertionError("GET /settings/llm should not call individual get_setting")
+
+    monkeypatch.setattr(settings, "get_settings", fake_get_settings)
+    monkeypatch.setattr(settings, "get_setting", fail_get_setting)
+    monkeypatch.setattr("api.llm_settings.get_setting", fail_get_setting)
+
+    response = auth_client.get("/api/v1/settings/llm")
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0] == [
+        "llm.provider",
+        "llm.reasoning_effort.anthropic.low",
+        "llm.reasoning_effort.anthropic.mid",
+        "llm.reasoning_effort.anthropic.high",
+        "llm.reasoning_effort.openai.low",
+        "llm.reasoning_effort.openai.mid",
+        "llm.reasoning_effort.openai.high",
+    ]
+
+
+def test_get_settings_returns_rows_without_creating_missing_sqlite_db(temp_llm_settings):
+    assert not temp_llm_settings.DB_PATH.exists()
+
+    rows = temp_llm_settings.get_settings(["llm.provider"])
+
+    assert rows == {}
+    assert not temp_llm_settings.DB_PATH.exists()
+
+
+def test_get_settings_returns_unique_persisted_rows(temp_llm_settings):
+    temp_llm_settings.set_setting("llm.provider", "openai")
+    temp_llm_settings.set_setting("llm.reasoning_effort.openai.mid", "xhigh")
+
+    rows = temp_llm_settings.get_settings(
+        [
+            "llm.provider",
+            "llm.provider",
+            "llm.reasoning_effort.openai.mid",
+            "missing",
+        ]
+    )
+
+    assert set(rows) == {"llm.provider", "llm.reasoning_effort.openai.mid"}
+    assert rows["llm.provider"]["value"] == "openai"
+    assert rows["llm.reasoning_effort.openai.mid"]["value"] == "xhigh"
+    assert temp_llm_settings.get_settings([]) == {}
+
+
 def test_put_llm_settings_persists_provider(temp_llm_settings, auth_client, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")

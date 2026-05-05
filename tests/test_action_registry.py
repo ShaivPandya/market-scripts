@@ -9,6 +9,7 @@ import portfolio.core_db as core_db
 import portfolio.news_digests as digests
 import portfolio.portfolio_db as portfolio_db
 import portfolio.thesis_db as thesis_db
+import portfolio.valuation as valuation
 from portfolio.action_registry import (
     ActionAuthorizationError,
     ActionContext,
@@ -53,6 +54,16 @@ def _temp_action_state(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cache, "invalidate_all", lambda: None)
     monkeypatch.setattr(dashboard, "reload_portfolio", lambda: None)
+    monkeypatch.setattr(
+        valuation,
+        "_cached_yfinance_metadata",
+        lambda symbol: {"currency": "USD", "country": "United States", "exchange": None},
+    )
+    monkeypatch.setattr(
+        valuation,
+        "fx_rate_to_base",
+        lambda currency, base_currency="USD": {"rate": 1.0, "as_of": "2026-05-05"},
+    )
     base = tmp_path / "news_digests"
     monkeypatch.setattr(digests, "DIGESTS_DIR", base)
     monkeypatch.setattr(digests, "MANIFEST_PATH", base / "manifest.json")
@@ -103,6 +114,19 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
             "conviction": 4,
             "cost_basis": 100.0,
             "shares": 12.0,
+            "quantity": 12.0,
+            "instrument_type": "security",
+            "price_symbol": "MU",
+            "contract_multiplier": 1.0,
+            "currency": "USD",
+            "country": "United States",
+            "exchange": None,
+            "base_currency": "USD",
+            "fx_rate_to_base": 1.0,
+            "fx_rate_as_of": "2026-05-05",
+            "cost_basis_base": 100.0,
+            "notional_base": 1200.0,
+            "valuation_status": "ok",
             "role": "position",
         }
     ]
@@ -125,6 +149,33 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
     ][0]
     assert succeeded["object_refs"][0] == {"type": "domain_action", "id": "update_portfolio_positions"}
     assert succeeded["after_summary"]["status"] == "ok"
+
+
+def test_portfolio_action_accepts_continuous_future_positions():
+    result = _approve_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "CL=F",
+                    "instrument_type": "future",
+                    "direction": "short",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 75,
+                    "quantity": 1,
+                }
+            ]
+        },
+    )
+
+    assert result == {"status": "ok", "count": 1}
+    position = portfolio_db.get_positions()[0]
+    assert position["ticker"] == "CL=F"
+    assert position["instrument_type"] == "future"
+    assert position["asset"] == "commodity"
+    assert position["quantity"] == 1.0
+    assert position["contract_multiplier"] == 1000.0
 
 
 def test_portfolio_update_approval_payload_lists_position_changes():
@@ -186,7 +237,7 @@ def test_portfolio_update_approval_payload_lists_position_changes():
 
     mu_change = change["position_changes"][0]
     assert mu_change["change_type"] == "updated"
-    assert mu_change["fields"] == [{"field": "shares", "before": 10.0, "after": 15.0}]
+    assert mu_change["fields"] == [{"field": "quantity", "before": 10.0, "after": 15.0}]
 
     crwd_change = change["position_changes"][1]
     assert crwd_change["change_type"] == "added"
@@ -352,6 +403,42 @@ def test_action_backed_approval_applies_registered_action():
     assert "approval.created" in audit_names
     assert "approval.apply.started" in audit_names
     assert "approval.applied" in audit_names
+
+
+def test_v1_portfolio_approval_upgrades_and_applies_after_schema_bump():
+    approval = core_db.create_pending_approval(
+        entity_type="portfolio_positions",
+        proposed_change={
+            "positions": [
+                {
+                    "ticker": "MU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 100,
+                    "shares": 5,
+                }
+            ]
+        },
+        reason="legacy approval",
+        source_type="workflow",
+        source_id="legacy-run",
+        action_id="update_portfolio_positions",
+        action_schema_name="update_portfolio_positions",
+        action_schema_version=1,
+    )
+
+    resolved = core_db.resolve_approval(approval["id"], "approved", "Approved in test")
+
+    assert resolved["application_status"] == "applied"
+    position = portfolio_db.get_positions()[0]
+    assert position["ticker"] == "MU"
+    assert position["quantity"] == 5.0
+    assert position["instrument_type"] == "security"
+    assert position["contract_multiplier"] == 1.0
+    child_run = core_db.get_action_runs("update_portfolio_positions", approval_id=approval["id"])[0]
+    assert child_run["action_schema_version"] == 1
 
 
 def test_thesis_status_action_noops_same_status_without_history_row():

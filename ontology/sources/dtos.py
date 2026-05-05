@@ -9,6 +9,10 @@ class PortfolioMetadata:
     ticker: str
     asset: str
     direction: str
+    instrument_type: str = "security"
+    price_symbol: str | None = None
+    quantity: float | None = None
+    contract_multiplier: float = 1.0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -21,6 +25,10 @@ class PortfolioPosition:
     series_points: int
     as_of: str | None
     metadata: PortfolioMetadata
+    instrument_type: str = "security"
+    price_symbol: str | None = None
+    quantity: float | None = None
+    contract_multiplier: float = 1.0
 
 
 @dataclass(slots=True)
