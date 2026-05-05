@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react"
+import { Suspense, useEffect, useState, type Dispatch, type SetStateAction } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Menu, MessageCircle, PanelRightOpen } from "lucide-react"
 import { Sidebar, getRouteLabel } from "./Sidebar"
@@ -108,7 +108,9 @@ function LayoutInner({
             </button>
           </div>
 
-          <Outlet />
+          <Suspense fallback={<PageLoading />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 
@@ -127,6 +129,14 @@ function LayoutInner({
         onOpenChange={setPageSearchOpen}
         onNavigate={() => setSidebarOpen(false)}
       />
+    </div>
+  )
+}
+
+function PageLoading() {
+  return (
+    <div className="flex min-h-[240px] items-center justify-center text-sm text-muted">
+      Loading...
     </div>
   )
 }
