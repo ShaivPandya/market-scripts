@@ -194,7 +194,7 @@ def _read_state_text(folder: str, ticker: str) -> tuple[str | None, str | None]:
         gcs_key = f"{gcs_prefixes.get(folder, folder)}/{ticker}.md"
         if not exists_text(local_path, gcs_key):
             return None, None
-        return read_text(local_path, gcs_key, encoding="utf-8"), str(local_path)
+        return read_text(local_path, gcs_key, encoding="utf-8"), None
     except Exception as exc:
         return None, f"{folder}: {exc}"
 
