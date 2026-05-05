@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Bell, ChevronDown, ChevronRight, Play, Sparkles } from "lucide-react"
+import { Link } from "react-router-dom"
+import { Bell, ChevronDown, ChevronRight, Play, Send, Sparkles } from "lucide-react"
 
 import { DataTable, type ColumnDef } from "@/components/shared/DataTable"
 import { ActionButton, SliderInput } from "@/components/shared/FormControls"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
+import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import { colorPositiveNegative } from "@/lib/colors"
 import {
@@ -13,6 +15,7 @@ import {
   fetchOptimizationMissions,
   fetchOptimizationRuns,
   generatePortfolioAnalyzerBrief,
+  createAction,
   dismissOptimizationAlert,
   runOptimizationMissionAsync,
   runPortfolioAnalyzerAsync,
@@ -24,6 +27,7 @@ import {
   type OptimizationAlert,
   type OptimizationMission,
   type OptimizationRun,
+  type StagedMutationResponse,
 } from "@/lib/api"
 
 interface AnalyzerResponse {
@@ -479,6 +483,71 @@ function actionIsHold(action: string) {
   return action === "Hold Long" || action === "Hold Short" || action === "Watch"
 }
 
+function workspaceActionType(action: AnalyzerCourseAction) {
+  if (["Research Long", "Research Short"].includes(action.action)) return "research"
+  if (["Review", "Squeeze Review"].includes(action.action)) return "review"
+  if (action.action === "Exit Review") return "exit"
+  if (["Increase Long", "Trim Long", "Press Short", "Cover Short"].includes(action.action)) return "resize"
+  return "review"
+}
+
+function workspaceActionVerb(action: AnalyzerCourseAction) {
+  switch (action.action) {
+    case "Increase Long":
+      return "Increase long exposure"
+    case "Trim Long":
+      return "Trim long exposure"
+    case "Press Short":
+      return "Press short exposure"
+    case "Cover Short":
+      return "Cover short exposure"
+    case "Research Long":
+      return "Research long setup"
+    case "Research Short":
+      return "Research short setup"
+    case "Exit Review":
+      return "Review exit"
+    case "Squeeze Review":
+      return "Review short squeeze risk"
+    case "Review":
+      return "Review position"
+    default:
+      return action.action || "Review position"
+  }
+}
+
+function workspaceActionUrgency(action: AnalyzerCourseAction) {
+  const band = String(action.conviction_band || "").toLowerCase()
+  if (band === "large") return "high"
+  if (band === "small" || band === "none" || action.gate_status === "watch") return "low"
+  return "normal"
+}
+
+function workspaceActionDescription(action: AnalyzerCourseAction) {
+  const lines = [
+    `${workspaceActionVerb(action)} for ${action.ticker}.`,
+    `Analyzer result: ${action.action}; direction ${action.direction || "n/a"}; conviction ${action.conviction_band}; gate ${action.gate_status}; confidence ${formatPercent(action.confidence)}.`,
+    `Scenario ${formatScore(action.scenario_score)}, delta ${formatScore(action.score_delta)}.`,
+  ]
+  if (action.sizing_implication?.implication) {
+    lines.push(`Sizing implication: ${action.sizing_implication.implication}.`)
+  }
+  if (action.deterministic_rationale) {
+    lines.push(`Evidence: ${action.deterministic_rationale}`)
+  }
+  return lines.join("\n")
+}
+
+function toWorkspaceActionRequest(action: AnalyzerCourseAction) {
+  return {
+    ticker: action.ticker,
+    action_type: workspaceActionType(action),
+    urgency: workspaceActionUrgency(action),
+    description: workspaceActionDescription(action),
+    reason: `Stage portfolio analyzer result for ${action.ticker}: ${action.action}`,
+  }
+}
+
 function formatDateTime(value: string | undefined | null) {
   if (!value) return "Not run"
   const parsed = new Date(value)
@@ -597,14 +666,22 @@ function ActionDetail({
   brief,
   briefLoading,
   briefError,
+  workspaceProposal,
+  workspaceLoading,
+  workspaceError,
   onGenerateBrief,
+  onStageWorkspaceAction,
 }: {
   action: AnalyzerCourseAction | null
   llmReady: boolean
   brief: string | null
   briefLoading: boolean
   briefError: string | null
+  workspaceProposal: StagedMutationResponse | null
+  workspaceLoading: boolean
+  workspaceError: string | null
   onGenerateBrief: () => void
+  onStageWorkspaceAction: () => void
 }) {
   if (!action) {
     return (
@@ -614,6 +691,8 @@ function ActionDetail({
       </section>
     )
   }
+
+  const canStageWorkspaceAction = !actionIsHold(action.action)
 
   return (
     <section className="theme-surface p-5">
@@ -646,6 +725,33 @@ function ActionDetail({
         </div>
         <div className="space-y-4">
           <div>
+            <h3 className="card-title">Workspace Action</h3>
+            <p className="mt-2 text-sm text-muted">
+              Stage this analyzer result as an internal action item. It will show in Workspace as a proposal before anything is applied.
+            </p>
+            <ActionButton
+              onClick={onStageWorkspaceAction}
+              loading={workspaceLoading}
+              loadingText="Staging..."
+              disabled={!canStageWorkspaceAction}
+              className="mt-3 w-auto px-3 text-xs"
+            >
+              <Send className="h-4 w-4" />
+              Stage Workspace Action
+            </ActionButton>
+            {!canStageWorkspaceAction && (
+              <p className="mt-2 text-xs text-subtle">Hold and watch rows are not staged as action items.</p>
+            )}
+            {workspaceError && <p className="mt-2 text-sm text-negative">{workspaceError}</p>}
+            {workspaceProposal && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                Proposal #{workspaceProposal.approval_id} staged for {workspaceProposal.action_id.replace(/_/g, " ")}.{" "}
+                <Link to="/workspace" className="font-semibold underline underline-offset-2">Review in Workspace</Link>.
+              </div>
+            )}
+          </div>
+
+          <div>
             <h3 className="card-title">Sizing Implication</h3>
             <p className="mt-2 text-sm text-muted">{action.sizing_implication?.implication ?? "review before sizing"}</p>
             <p className="mt-1 text-xs text-subtle">{action.sizing_implication?.note ?? "Analysis only."}</p>
@@ -676,7 +782,11 @@ function ActionDetail({
                 {briefLoading ? "Writing brief..." : "AI Brief"}
               </button>
               {briefError && <p className="mt-2 text-sm text-negative">{briefError}</p>}
-              {brief && <div className="mt-3 whitespace-pre-wrap rounded-lg border border-app bg-card-muted p-3 text-sm text-muted">{brief}</div>}
+              {brief && (
+                <div className="mt-3 rounded-lg border border-app bg-card-muted p-3 text-sm text-muted">
+                  <MarkdownRenderer content={brief} />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -809,6 +919,7 @@ export function PortfolioAnalyzer() {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
   const [briefTicker, setBriefTicker] = useState<string | null>(null)
+  const [workspaceProposal, setWorkspaceProposal] = useState<{ ticker: string; response: StagedMutationResponse } | null>(null)
 
   const llmSettings = useApiQuery<LLMSettings>(LLM_SETTINGS_QUERY_KEY, fetchLLMSettings, 30_000)
   const llmReady = Boolean(
@@ -838,6 +949,15 @@ export function PortfolioAnalyzer() {
   const briefMutation = useMutation({
     mutationFn: generatePortfolioAnalyzerBrief,
     onSuccess: () => undefined,
+  })
+
+  const workspaceActionMutation = useMutation({
+    mutationFn: (action: AnalyzerCourseAction) => createAction(toWorkspaceActionRequest(action)),
+    onSuccess: (response, action) => {
+      setWorkspaceProposal({ ticker: action.ticker, response })
+      void queryClient.invalidateQueries({ queryKey: ["workspace"] })
+      void queryClient.invalidateQueries({ queryKey: ["actions"] })
+    },
   })
 
   const runOptimizerMutation = useMutation({
@@ -879,6 +999,13 @@ export function PortfolioAnalyzer() {
   const asOf = summary?.as_of ? new Date(summary.as_of).toLocaleString() : "Not run"
   const visibleBrief = briefTicker === selectedAction?.ticker ? briefMutation.data?.brief ?? null : null
   const briefError = briefTicker === selectedAction?.ticker && briefMutation.isError ? String(briefMutation.error) : null
+  const visibleWorkspaceProposal = workspaceProposal?.ticker === selectedAction?.ticker ? workspaceProposal.response : null
+  const workspaceActionError =
+    workspaceActionMutation.variables?.ticker === selectedAction?.ticker && workspaceActionMutation.isError
+      ? String(workspaceActionMutation.error)
+      : null
+  const workspaceActionLoading =
+    workspaceActionMutation.variables?.ticker === selectedAction?.ticker && workspaceActionMutation.isPending
 
   function applyPreset(preset: Exclude<ScenarioPreset, "custom">) {
     setScenario(cloneScenario(SCENARIO_PRESETS[preset]))
@@ -1041,7 +1168,13 @@ export function PortfolioAnalyzer() {
             brief={visibleBrief}
             briefLoading={briefTicker === selectedAction?.ticker && briefMutation.isPending}
             briefError={briefError}
+            workspaceProposal={visibleWorkspaceProposal}
+            workspaceLoading={workspaceActionLoading}
+            workspaceError={workspaceActionError}
             onGenerateBrief={handleBrief}
+            onStageWorkspaceAction={() => {
+              if (selectedAction) workspaceActionMutation.mutate(selectedAction)
+            }}
           />
 
           <details className="theme-surface p-5">

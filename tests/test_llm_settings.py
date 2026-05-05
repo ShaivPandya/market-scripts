@@ -50,6 +50,22 @@ def test_get_llm_settings_returns_env_fallback(temp_llm_settings, auth_client, m
     payload = response.json()
     assert payload["provider"] == "anthropic"
     assert payload["models"]["low"] == "claude-haiku-4-5"
+    assert payload["models_by_provider"]["openai"]["mid"] == "gpt-5.4"
+    assert payload["reasoning_efforts"]["anthropic"] == {
+        "low": "high",
+        "mid": "high",
+        "high": "high",
+    }
+    assert [item["effort"] for item in payload["reasoning_options"]["anthropic"]["high"]] == [
+        "none",
+        "high",
+        "max",
+    ]
+    assert [item["effort"] for item in payload["reasoning_options"]["openai"]["mid"]] == [
+        "none",
+        "medium",
+        "xhigh",
+    ]
     anthropic = next(item for item in payload["available_providers"] if item["provider"] == "anthropic")
     openai = next(item for item in payload["available_providers"] if item["provider"] == "openai")
     assert anthropic == {
@@ -66,11 +82,27 @@ def test_put_llm_settings_persists_provider(temp_llm_settings, auth_client, monk
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    response = auth_client.put("/api/v1/settings/llm", json={"provider": "openai"})
+    response = auth_client.put(
+        "/api/v1/settings/llm",
+        json={
+            "provider": "openai",
+            "reasoning_efforts": {
+                "low": "none",
+                "mid": "xhigh",
+                "high": "medium",
+            },
+        },
+    )
 
     assert response.status_code == 200
     assert response.json()["provider"] == "openai"
+    assert response.json()["reasoning_efforts"]["openai"] == {
+        "low": "none",
+        "mid": "xhigh",
+        "high": "medium",
+    }
     assert temp_llm_settings.get_llm_provider_setting() == "openai"
+    assert temp_llm_settings.get_llm_reasoning_effort_setting("openai", "mid") == "xhigh"
 
 
 def test_put_llm_settings_rejects_invalid_provider(temp_llm_settings, auth_client):
@@ -86,6 +118,26 @@ def test_put_llm_settings_rejects_missing_provider_key(temp_llm_settings, auth_c
 
     assert response.status_code == 422
     assert "OPENAI_API_KEY" in response.text
+
+
+def test_put_llm_settings_rejects_unsupported_reasoning_effort(temp_llm_settings, auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    response = auth_client.put(
+        "/api/v1/settings/llm",
+        json={
+            "provider": "anthropic",
+            "reasoning_efforts": {
+                "low": "xhigh",
+                "mid": "high",
+                "high": "high",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "claude-haiku-4-5" in response.text
 
 
 def test_get_agent_response_preferences_returns_defaults(temp_llm_settings, auth_client):

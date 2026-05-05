@@ -258,9 +258,19 @@ def test_agent_stream_openai_function_call_roundtrip(auth_client, monkeypatch):
 
 
 def test_agent_stream_openai_thinking_keeps_required_tool_choice(auth_client, monkeypatch):
+    from api import llm_settings
+
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    llm_settings.set_llm_reasoning_effort_settings(
+        "openai",
+        {
+            "low": "none",
+            "mid": "xhigh",
+            "high": "medium",
+        },
+    )
 
     streams = [
         (
@@ -297,9 +307,9 @@ def test_agent_stream_openai_thinking_keeps_required_tool_choice(auth_client, mo
     )
 
     assert resp.status_code == 200
-    assert fake_client.responses.kwargs_history[0]["reasoning"] == {"effort": "medium"}
+    assert fake_client.responses.kwargs_history[0]["reasoning"] == {"effort": "xhigh"}
     assert fake_client.responses.kwargs_history[0]["tool_choice"] == "required"
-    assert fake_client.responses.kwargs_history[1]["reasoning"] == {"effort": "medium"}
+    assert fake_client.responses.kwargs_history[1]["reasoning"] == {"effort": "xhigh"}
 
 
 def test_agent_stream_anthropic_thinking_relaxes_forced_tool_choice(auth_client, monkeypatch):
@@ -329,7 +339,7 @@ def test_agent_stream_anthropic_thinking_relaxes_forced_tool_choice(auth_client,
 
     assert resp.status_code == 200
     assert fake_client.messages.kwargs_history[0]["thinking"] == {"type": "adaptive", "display": "omitted"}
-    assert fake_client.messages.kwargs_history[0]["output_config"] == {"effort": "medium"}
+    assert fake_client.messages.kwargs_history[0]["output_config"] == {"effort": "high"}
     assert "tool_choice" not in fake_client.messages.kwargs_history[0]
     assert fake_client.messages.kwargs_history[0]["tools"]
 

@@ -197,6 +197,10 @@ export const authApi = {
 }
 
 export type LLMProvider = "anthropic" | "openai"
+export type LLMModelTier = "low" | "mid" | "high"
+export type LLMReasoningEffort = "none" | "medium" | "high" | "xhigh" | "max"
+export type LLMModelTierMap = Record<LLMModelTier, string>
+export type LLMReasoningEffortMap = Record<LLMModelTier, LLMReasoningEffort>
 
 export interface LLMProviderStatus {
   provider: LLMProvider
@@ -205,21 +209,28 @@ export interface LLMProviderStatus {
   api_key_env: string
 }
 
+export interface LLMReasoningEffortOption {
+  effort: LLMReasoningEffort
+  label: string
+}
+
 export interface LLMSettings {
   provider: LLMProvider
   available_providers: LLMProviderStatus[]
-  models: {
-    low: string
-    mid: string
-    high: string
-  }
+  models: LLMModelTierMap
+  models_by_provider: Record<LLMProvider, LLMModelTierMap>
+  reasoning_efforts: Record<LLMProvider, LLMReasoningEffortMap>
+  reasoning_options: Record<LLMProvider, Record<LLMModelTier, LLMReasoningEffortOption[]>>
 }
 
 export const fetchLLMSettings = () =>
   client.get("/settings/llm").then(r => r.data as LLMSettings)
 
-export const updateLLMSettings = (provider: LLMProvider) =>
-  client.put("/settings/llm", { provider }).then(r => r.data as LLMSettings)
+export const updateLLMSettings = (settings: {
+  provider: LLMProvider
+  reasoning_efforts?: LLMReasoningEffortMap
+}) =>
+  client.put("/settings/llm", settings).then(r => r.data as LLMSettings)
 
 export type AgentPreferenceLevel = "less" | "balanced" | "more"
 export type AgentPersonality = "friendly" | "pragmatic"

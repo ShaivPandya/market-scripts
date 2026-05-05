@@ -7,8 +7,11 @@ import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchLLMSettings,
   updateLLMSettings,
+  type LLMModelTier,
   type LLMProvider,
   type LLMProviderStatus,
+  type LLMReasoningEffort,
+  type LLMReasoningEffortMap,
   type LLMSettings,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -22,6 +25,19 @@ const MODEL_TIERS = [
   { key: "mid", label: "Mid" },
   { key: "high", label: "High" },
 ] as const
+
+const DEFAULT_REASONING_EFFORTS_BY_PROVIDER: Record<LLMProvider, LLMReasoningEffortMap> = {
+  anthropic: {
+    low: "high",
+    mid: "high",
+    high: "high",
+  },
+  openai: {
+    low: "medium",
+    mid: "medium",
+    high: "medium",
+  },
+}
 
 function providerDescription(provider: LLMProvider) {
   return provider === "anthropic" ? "Claude runtime requests" : "OpenAI runtime requests"
@@ -39,6 +55,8 @@ export function AISettings() {
   const queryClient = useQueryClient()
   const { data, isLoading, error } = useApiQuery<LLMSettings>(QUERY_KEY, fetchLLMSettings, 30_000)
   const [selectedProvider, setSelectedProvider] = useState<LLMProvider | null>(null)
+  const [draftReasoningEfforts, setDraftReasoningEfforts] =
+    useState<Record<LLMProvider, LLMReasoningEffortMap> | null>(null)
   const effectiveProvider = selectedProvider ?? data?.provider ?? "anthropic"
 
   const selectedStatus = useMemo(
@@ -46,16 +64,39 @@ export function AISettings() {
     [data?.available_providers, effectiveProvider],
   )
 
+  const effectiveModels = data?.models_by_provider?.[effectiveProvider] ?? data?.models
+  const providerDefaultReasoningEfforts = DEFAULT_REASONING_EFFORTS_BY_PROVIDER[effectiveProvider]
+  const savedReasoningEfforts = data?.reasoning_efforts?.[effectiveProvider] ?? providerDefaultReasoningEfforts
+  const effectiveReasoningEfforts = draftReasoningEfforts?.[effectiveProvider] ?? savedReasoningEfforts
+
   const mutation = useMutation({
     mutationFn: updateLLMSettings,
     onSuccess: settings => {
       queryClient.setQueryData(QUERY_KEY, settings)
       setSelectedProvider(null)
+      setDraftReasoningEfforts(null)
     },
   })
 
-  const hasChanges = data ? effectiveProvider !== data.provider : false
+  const hasReasoningChanges = data
+    ? MODEL_TIERS.some(tier => effectiveReasoningEfforts[tier.key] !== savedReasoningEfforts[tier.key])
+    : false
+  const hasChanges = data ? effectiveProvider !== data.provider || hasReasoningChanges : false
   const canSave = Boolean(hasChanges && selectedStatus?.configured && !mutation.isPending)
+
+  const updateReasoningEffort = (tier: LLMModelTier, effort: LLMReasoningEffort) => {
+    if (!data) return
+    setDraftReasoningEfforts(prev => {
+      const base = prev ?? data.reasoning_efforts
+      return {
+        ...base,
+        [effectiveProvider]: {
+          ...(base[effectiveProvider] ?? providerDefaultReasoningEfforts),
+          [tier]: effort,
+        },
+      }
+    })
+  }
 
   if (isLoading) return <LoadingSpinner message="Loading AI settings..." />
   if (error || !data) return <ErrorMessage message={String(error) || "Failed to load AI settings"} />
@@ -77,7 +118,10 @@ export function AISettings() {
           </div>
           <button
             type="button"
-            onClick={() => mutation.mutate(effectiveProvider)}
+            onClick={() => mutation.mutate({
+              provider: effectiveProvider,
+              reasoning_efforts: effectiveReasoningEfforts,
+            })}
             disabled={!canSave}
             className="theme-button-base theme-button-primary px-4 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -135,14 +179,37 @@ export function AISettings() {
       </SurfaceCard>
 
       <SurfaceCard className="mt-5 p-5">
-        <h2 className="section-title">Resolved Model Tiers</h2>
+        <div>
+          <h2 className="section-title">Reasoning Effort</h2>
+          <p className="mt-1 text-xs text-muted">
+            {effectiveProvider === "anthropic" ? "Claude" : "OpenAI"} thinking depth by model tier.
+          </p>
+        </div>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          {MODEL_TIERS.map(tier => (
-            <div key={tier.key} className="theme-surface-muted px-3 py-3">
-              <p className="label-text">{tier.label}</p>
-              <p className="mt-2 break-words font-mono text-sm text-app">{data.models[tier.key]}</p>
-            </div>
-          ))}
+          {MODEL_TIERS.map(tier => {
+            const options = data.reasoning_options?.[effectiveProvider]?.[tier.key] ?? []
+            return (
+              <div key={tier.key} className="theme-surface-muted px-3 py-3">
+                <div className="min-h-[4.5rem]">
+                  <p className="label-text">{tier.label}</p>
+                  <p className="mt-2 break-words font-mono text-sm text-app">
+                    {effectiveModels?.[tier.key] ?? data.models[tier.key]}
+                  </p>
+                </div>
+                <select
+                  value={effectiveReasoningEfforts[tier.key]}
+                  onChange={event => updateReasoningEffort(tier.key, event.target.value as LLMReasoningEffort)}
+                  className="theme-input mt-3 w-full px-3 py-2 text-sm"
+                >
+                  {options.map(option => (
+                    <option key={option.effort} value={option.effort}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )
+          })}
         </div>
       </SurfaceCard>
     </div>

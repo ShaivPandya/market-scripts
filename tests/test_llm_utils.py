@@ -180,12 +180,45 @@ def test_openai_reasoning_effort_request_shape(monkeypatch):
         model=llm_utils.MODEL_HIGH,
         api_key=None,
         max_tokens=456,
-        reasoning_effort=llm_utils.REASONING_HIGH,
+        reasoning_effort=llm_utils.REASONING_XHIGH,
     )
 
     assert text == "reasoned"
     assert fake_responses.kwargs["model"] == "gpt-5.5"
-    assert fake_responses.kwargs["reasoning"] == {"effort": "high"}
+    assert fake_responses.kwargs["reasoning"] == {"effort": "xhigh"}
+
+
+def test_openai_none_reasoning_effort_request_shape(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    class FakeResponses:
+        def __init__(self):
+            self.kwargs = None
+
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(output_text="fast")
+
+    fake_responses = FakeResponses()
+
+    class FakeOpenAI:
+        def __init__(self, *args, **kwargs):
+            self.responses = fake_responses
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+
+    text, _citations, _response = llm_utils.call_llm_text(
+        prompt="hello",
+        model=llm_utils.MODEL_MID,
+        api_key=None,
+        max_tokens=456,
+        reasoning_effort=llm_utils.REASONING_NONE,
+    )
+
+    assert text == "fast"
+    assert fake_responses.kwargs["model"] == "gpt-5.4"
+    assert fake_responses.kwargs["reasoning"] == {"effort": "none"}
 
 
 def test_anthropic_adaptive_thinking_request_shape(monkeypatch):
@@ -213,13 +246,13 @@ def test_anthropic_adaptive_thinking_request_shape(monkeypatch):
         model=llm_utils.MODEL_MID,
         api_key=None,
         max_tokens=4096,
-        reasoning_effort=llm_utils.REASONING_MEDIUM,
+        reasoning_effort=llm_utils.REASONING_HIGH,
     )
 
     assert text == "reasoned"
     assert fake_messages.kwargs["model"] == "claude-sonnet-4-6"
     assert fake_messages.kwargs["thinking"] == {"type": "adaptive", "display": "omitted"}
-    assert fake_messages.kwargs["output_config"] == {"effort": "medium"}
+    assert fake_messages.kwargs["output_config"] == {"effort": "high"}
 
 
 def test_anthropic_manual_thinking_request_shape(monkeypatch):
@@ -257,7 +290,7 @@ def test_anthropic_manual_thinking_request_shape(monkeypatch):
         "budget_tokens": 2048,
         "display": "omitted",
     }
-    assert "output_config" not in fake_messages.kwargs
+    assert fake_messages.kwargs["output_config"] == {"effort": "high"}
 
 
 def test_pdf_input_shapes(monkeypatch):

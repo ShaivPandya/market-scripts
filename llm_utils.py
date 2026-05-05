@@ -15,10 +15,26 @@ MODEL_MID = "mid"
 MODEL_HIGH = "high"
 MODEL_TIERS = {MODEL_LOW, MODEL_MID, MODEL_HIGH}
 
-REASONING_LOW = "low"
 REASONING_MEDIUM = "medium"
 REASONING_HIGH = "high"
-REASONING_EFFORTS = {REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH}
+REASONING_NONE = "none"
+REASONING_XHIGH = "xhigh"
+REASONING_MAX = "max"
+OPENAI_REASONING_EFFORTS = (
+    REASONING_NONE,
+    REASONING_MEDIUM,
+    REASONING_XHIGH,
+)
+ANTHROPIC_REASONING_EFFORTS = (
+    REASONING_NONE,
+    REASONING_HIGH,
+    REASONING_MAX,
+)
+REASONING_EFFORTS = set(OPENAI_REASONING_EFFORTS) | set(ANTHROPIC_REASONING_EFFORTS)
+DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
+    PROVIDER_ANTHROPIC: REASONING_HIGH,
+    PROVIDER_OPENAI: REASONING_MEDIUM,
+}
 
 ANTHROPIC_DEFAULT_MODELS = {
     MODEL_LOW: "claude-haiku-4-5",
@@ -121,6 +137,28 @@ def model_for_tier(tier: str, provider: str | None = None) -> str:
         return override
     defaults = ANTHROPIC_DEFAULT_MODELS if resolved_provider == PROVIDER_ANTHROPIC else OPENAI_DEFAULT_MODELS
     return defaults[normalized_tier]
+
+
+def reasoning_effort_for_tier(tier: str, provider: str | None = None) -> str:
+    resolved_provider = _normalize_provider(provider)
+    normalized_tier = _normalize_tier(tier)
+    resolved_model = model_for_tier(normalized_tier, resolved_provider)
+    fallback = DEFAULT_REASONING_EFFORT_BY_PROVIDER[resolved_provider]
+    try:
+        from api.llm_settings import get_llm_reasoning_effort_setting
+
+        effort = get_llm_reasoning_effort_setting(resolved_provider, normalized_tier)
+    except Exception:
+        effort = fallback
+    return effort if effort in reasoning_effort_options(resolved_provider, resolved_model) else fallback
+
+
+def reasoning_effort_options(provider: str, model: str | None = None) -> list[str]:
+    resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_OPENAI:
+        return [REASONING_NONE, REASONING_MEDIUM, REASONING_XHIGH]
+
+    return [REASONING_NONE, REASONING_HIGH, REASONING_MAX]
 
 
 def resolve_model(model: str, provider: str | None = None) -> str:
@@ -478,11 +516,11 @@ def apply_reasoning_config(
     max_tokens: int,
     reasoning_effort: str | None,
 ) -> None:
-    effort = _normalize_reasoning_effort(reasoning_effort)
+    resolved_provider = _normalize_provider(provider)
+    effort = _normalize_reasoning_effort(reasoning_effort, provider=resolved_provider, model=model)
     if effort is None:
         return
 
-    resolved_provider = _normalize_provider(provider)
     if resolved_provider == PROVIDER_OPENAI:
         kwargs["reasoning"] = {"effort": effort}
         return
@@ -499,6 +537,9 @@ def apply_reasoning_config(
         "budget_tokens": _anthropic_manual_thinking_budget(max_tokens=max_tokens, effort=effort),
         "display": "omitted",
     }
+    output_config = dict(kwargs.get("output_config") or {})
+    output_config["effort"] = effort
+    kwargs["output_config"] = output_config
 
 
 def _normalize_provider(provider: str | None) -> str:
@@ -526,14 +567,24 @@ def _normalize_tier(tier: str) -> str:
     return normalized
 
 
-def _normalize_reasoning_effort(effort: str | None) -> str | None:
+def _normalize_reasoning_effort(
+    effort: str | None,
+    *,
+    provider: str,
+    model: str | None = None,
+) -> str | None:
     if effort is None:
         return None
     normalized = effort.strip().lower()
-    if normalized in {"", "none", "off", "disabled"}:
+    if normalized in {"", "off", "disabled"}:
         return None
-    if normalized not in REASONING_EFFORTS:
-        raise ValueError("reasoning_effort must be 'low', 'medium', or 'high'")
+    resolved_provider = _normalize_provider(provider)
+    if resolved_provider == PROVIDER_ANTHROPIC and normalized == REASONING_NONE:
+        return None
+    options = OPENAI_REASONING_EFFORTS if resolved_provider == PROVIDER_OPENAI else ANTHROPIC_REASONING_EFFORTS
+    if normalized not in options:
+        allowed = "', '".join(options)
+        raise ValueError(f"reasoning_effort must be one of '{allowed}'")
     return normalized
 
 
@@ -554,9 +605,8 @@ def _anthropic_manual_thinking_budget(*, max_tokens: int, effort: str) -> int:
     if max_tokens < 2048:
         raise ValueError("Anthropic manual thinking requires max_tokens >= 2048")
     cap_by_effort = {
-        REASONING_LOW: 2048,
-        REASONING_MEDIUM: 4096,
         REASONING_HIGH: 8192,
+        REASONING_MAX: 32768,
     }
     return min(cap_by_effort[effort], max(max_tokens // 2, 1024))
 

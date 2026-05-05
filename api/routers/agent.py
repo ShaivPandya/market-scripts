@@ -42,10 +42,10 @@ from llm_utils import (
     MODEL_MID,
     PROVIDER_ANTHROPIC,
     PROVIDER_OPENAI,
-    REASONING_MEDIUM,
     api_key_env,
     apply_reasoning_config,
     get_llm_client,
+    reasoning_effort_for_tier,
     resolve_model,
     selected_provider,
 )
@@ -518,8 +518,8 @@ def _prefers_no_followups(prefs: AgentResponsePreferences | None) -> bool:
     return "no follow-up" in custom or "do not ask follow" in custom or "don't ask follow" in custom
 
 
-def _chat_reasoning_effort(prefs: AgentResponsePreferences | None) -> str | None:
-    return REASONING_MEDIUM if prefs and prefs.thinking_enabled else None
+def _chat_reasoning_effort(provider: str, prefs: AgentResponsePreferences | None) -> str | None:
+    return reasoning_effort_for_tier(MODEL_MID, provider) if prefs and prefs.thinking_enabled else None
 
 
 def _casual_response(user_text: str, prefs: AgentResponsePreferences | None = None) -> str:
@@ -1362,7 +1362,7 @@ def _attach_tool_provenance_context(
 def agent_chat(req: AgentChatRequest, actor: ActorDep):
     tool_actor = agent_actor(actor)
     provider, api_key = _read_llm_api_key()
-    reasoning_effort = _chat_reasoning_effort(req.response_preferences)
+    reasoning_effort = _chat_reasoning_effort(provider, req.response_preferences)
     instructions = _with_response_preferences(
         _build_agent_instructions(screen_context=req.screen_context),
         req.response_preferences,
@@ -2060,7 +2060,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             return
 
         provider, api_key = _read_llm_api_key()
-        reasoning_effort = _chat_reasoning_effort(req.response_preferences)
+        reasoning_effort = _chat_reasoning_effort(provider, req.response_preferences)
         instructions = _with_response_preferences(
             _build_agent_instructions(screen_context=req.screen_context),
             req.response_preferences,

@@ -11,7 +11,12 @@ from pydantic import ValidationError as PydanticValidationError
 
 from api.audit import emit_audit_event
 from api.exceptions import ValidationError
-from api.llm_settings import get_setting, set_llm_provider_setting, set_setting
+from api.llm_settings import (
+    get_setting,
+    set_llm_provider_setting,
+    set_llm_reasoning_effort_settings,
+    set_setting,
+)
 from api.routers.auth import require_actor
 from llm_utils import (
     MODEL_HIGH,
@@ -22,6 +27,8 @@ from llm_utils import (
     api_key_env,
     get_api_key,
     model_for_tier,
+    reasoning_effort_for_tier,
+    reasoning_effort_options,
     require_api_key,
     selected_provider,
 )
@@ -31,14 +38,22 @@ router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
 
 Provider = Literal["anthropic", "openai"]
+ReasoningEffort = Literal["none", "medium", "high", "xhigh", "max"]
 PreferenceLevel = Literal["less", "balanced", "more"]
 Personality = Literal["friendly", "pragmatic"]
 CustomInstructionText = Annotated[str, Field(max_length=2000)]
 AGENT_RESPONSE_PREFERENCES_KEY = "agent.response_preferences"
 
 
+class ReasoningEffortSettings(BaseModel):
+    low: ReasoningEffort
+    mid: ReasoningEffort
+    high: ReasoningEffort
+
+
 class LLMSettingsUpdate(BaseModel):
     provider: Provider
+    reasoning_efforts: ReasoningEffortSettings | None = None
 
 
 class AgentResponsePreferencesSettings(BaseModel):
@@ -70,18 +85,71 @@ def _provider_status(provider: str) -> dict:
     }
 
 
+def _models_for_provider(provider: str) -> dict:
+    return {
+        MODEL_LOW: model_for_tier(MODEL_LOW, provider),
+        MODEL_MID: model_for_tier(MODEL_MID, provider),
+        MODEL_HIGH: model_for_tier(MODEL_HIGH, provider),
+    }
+
+
+def _reasoning_label(effort: str) -> str:
+    return {
+        "none": "None",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "XHigh",
+        "max": "Max",
+    }[effort]
+
+
+def _reasoning_options_for_provider(provider: str) -> dict:
+    models = _models_for_provider(provider)
+    return {
+        tier: [
+            {"effort": effort, "label": _reasoning_label(effort)}
+            for effort in reasoning_effort_options(provider, model)
+        ]
+        for tier, model in models.items()
+    }
+
+
+def _validate_reasoning_efforts(provider: str, efforts: dict[str, str]) -> None:
+    models = _models_for_provider(provider)
+    for tier, effort in efforts.items():
+        allowed = reasoning_effort_options(provider, models[tier])
+        if effort not in allowed:
+            allowed_list = ", ".join(allowed)
+            raise ValidationError(
+                f"{effort} is not supported for {models[tier]} reasoning effort. Use one of: {allowed_list}."
+            )
+
+
 def _settings_response() -> dict:
     provider = selected_provider()
+    models_by_provider = {
+        PROVIDER_ANTHROPIC: _models_for_provider(PROVIDER_ANTHROPIC),
+        PROVIDER_OPENAI: _models_for_provider(PROVIDER_OPENAI),
+    }
     return {
         "provider": provider,
         "available_providers": [
             _provider_status(PROVIDER_ANTHROPIC),
             _provider_status(PROVIDER_OPENAI),
         ],
-        "models": {
-            MODEL_LOW: model_for_tier(MODEL_LOW, provider),
-            MODEL_MID: model_for_tier(MODEL_MID, provider),
-            MODEL_HIGH: model_for_tier(MODEL_HIGH, provider),
+        "models": models_by_provider[provider],
+        "models_by_provider": models_by_provider,
+        "reasoning_efforts": {
+            PROVIDER_ANTHROPIC: {
+                tier: reasoning_effort_for_tier(tier, PROVIDER_ANTHROPIC) for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
+            },
+            PROVIDER_OPENAI: {
+                tier: reasoning_effort_for_tier(tier, PROVIDER_OPENAI) for tier in (MODEL_LOW, MODEL_MID, MODEL_HIGH)
+            },
+        },
+        "reasoning_options": {
+            PROVIDER_ANTHROPIC: _reasoning_options_for_provider(PROVIDER_ANTHROPIC),
+            PROVIDER_OPENAI: _reasoning_options_for_provider(PROVIDER_OPENAI),
         },
     }
 
@@ -126,15 +194,25 @@ def update_llm_settings(body: LLMSettingsUpdate, actor: ActorDep):
         raise ValidationError(str(exc)) from exc
 
     before = _settings_response()
+    if body.reasoning_efforts is not None:
+        _validate_reasoning_efforts(body.provider, body.reasoning_efforts.model_dump())
     set_llm_provider_setting(body.provider)
+    if body.reasoning_efforts is not None:
+        set_llm_reasoning_effort_settings(body.provider, body.reasoning_efforts.model_dump())
     after = _settings_response()
     emit_audit_event(
         "settings.llm_provider.updated",
         "permission",
         "succeeded",
         actor=actor,
-        before_summary={"provider": before.get("provider")},
-        after_summary={"provider": after.get("provider")},
+        before_summary={
+            "provider": before.get("provider"),
+            "reasoning_efforts": before.get("reasoning_efforts", {}).get(body.provider),
+        },
+        after_summary={
+            "provider": after.get("provider"),
+            "reasoning_efforts": after.get("reasoning_efforts", {}).get(body.provider),
+        },
     )
     return after
 
