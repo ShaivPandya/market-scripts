@@ -959,6 +959,14 @@ export interface NewsDigestDetail extends NewsDigestSummary {
   }
 }
 
+export type NewsDigestUploadResponse =
+  | { status: "ok"; digest: NewsDigestDetail }
+  | StagedMutationResponse
+
+export type NewsDigestDeleteResponse =
+  | { status: "ok"; deleted: boolean; id: string }
+  | StagedMutationResponse
+
 export const fetchPortfolioNews = () =>
   client.get("/portfolio-news").then(r => r.data as NewsDigestListResponse)
 
@@ -972,13 +980,13 @@ export const uploadPortfolioNewsDigest = (file: File) => {
   formData.append("file", file)
   return client
     .post("/portfolio-news", formData, { timeout: 120_000 })
-    .then(r => r.data as { status: "ok"; digest: NewsDigestDetail })
+    .then(r => r.data as NewsDigestUploadResponse)
 }
 
 export const deletePortfolioNewsDigest = (digestId: string) =>
   client
     .delete(`/portfolio-news/${encodeURIComponent(digestId)}`)
-    .then(r => r.data as { status: "ok"; deleted: boolean; id: string })
+    .then(r => r.data as NewsDigestDeleteResponse)
 
 export const fetchSectorMetrics = () =>
   client.get("/sector-metrics").then(r => r.data)
