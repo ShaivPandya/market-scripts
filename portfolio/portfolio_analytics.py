@@ -12,6 +12,8 @@ weight.
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from portfolio.instruments import notional_value
@@ -159,7 +161,7 @@ def compute_analytics(
         current_prices[ticker] = cp
         quantity = pos.get("quantity", pos.get("shares"))
         contract_multiplier = pos.get("contract_multiplier") or 1.0
-        current_notional = _float_or_none(pos.get("notional_base")) or notional_value(quantity, cp, contract_multiplier)
+        current_notional = _base_notional_value(quantity, cp, contract_multiplier, pos.get("fx_rate_to_base"))
         if current_notional is not None:
             notionals[ticker] = current_notional
 
@@ -194,8 +196,12 @@ def compute_analytics(
         )
         notional_base = _float_or_none(pos.get("notional_base"))
         cost_basis_base = _float_or_none(pos.get("cost_basis_base"))
-        current_notional = notional_base or notional_value(quantity, cp, contract_multiplier)
-        cost_notional = notional_base or notional_value(quantity, cost_basis, contract_multiplier)
+        current_notional = _base_notional_value(quantity, cp, contract_multiplier, pos.get("fx_rate_to_base"))
+        cost_notional = (
+            notional_base
+            if notional_base is not None
+            else _base_notional_value(quantity, cost_basis, contract_multiplier, pos.get("fx_rate_to_base"))
+        )
         high_52w, dd_pct = _drawdown_52w(series, direction) if series is not None else (None, None)
         weekly_ret = _period_return(series, 7, direction) if series is not None else None
         monthly_ret = _period_return(series, 30, direction) if series is not None else None
@@ -240,4 +246,21 @@ def _float_or_none(value) -> float | None:
         out = float(value)
     except (TypeError, ValueError):
         return None
-    return out if pd.notna(out) else None
+    return out if pd.notna(out) and math.isfinite(out) else None
+
+
+def _base_notional_value(
+    quantity,
+    price,
+    contract_multiplier,
+    fx_rate_to_base,
+) -> float | None:
+    local_notional = notional_value(quantity, price, contract_multiplier)
+    if local_notional is None:
+        return None
+    fx_rate = _float_or_none(fx_rate_to_base)
+    if fx_rate is None:
+        return local_notional
+    if fx_rate <= 0:
+        return None
+    return local_notional * fx_rate
