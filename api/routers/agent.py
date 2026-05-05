@@ -638,8 +638,10 @@ def _portfolio_summary_fallback(portfolio_result: str) -> str:
     if isinstance(error, str) and error.strip():
         return f"I tried to read the portfolio, but the portfolio tool returned an error: {error.strip()}"
 
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+    summary_value = payload.get("summary")
+    positions_value = payload.get("positions")
+    summary: dict[Any, Any] = summary_value if isinstance(summary_value, dict) else {}
+    positions: list[Any] = positions_value if isinstance(positions_value, list) else []
     position_count = summary.get("position_count", len(positions))
     long_count = summary.get("long_count")
     short_count = summary.get("short_count")
