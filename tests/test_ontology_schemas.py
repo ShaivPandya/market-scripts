@@ -76,6 +76,32 @@ def test_operational_object_schemas_have_stable_identities():
     assert action_item.properties["status"] == "open"
 
 
+def test_account_schema_drops_deprecated_tax_lot_field():
+    account = normalize_node(
+        OntologyNode(
+            id="account:default_account",
+            type="Account",
+            label="Default Account",
+            properties={
+                "schema_version": 1,
+                "account_id": "default-account",
+                "investor_id": "default-investor",
+                "account_type": "unspecified",
+                "tax_status": "unknown",
+                "tax_lot_data_available": None,
+                "ontology_run_id": "operational",
+            },
+            schema_name="Account",
+            schema_version=1,
+        ),
+        allow_legacy=False,
+    )
+
+    assert account.schema_version == 1
+    assert account.properties["account_id"] == "default_account"
+    assert "tax_lot_data_available" not in account.properties
+
+
 def test_legacy_signal_node_is_canonicalized_to_stable_identity():
     node = normalize_node(
         OntologyNode(
