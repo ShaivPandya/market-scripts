@@ -63,7 +63,11 @@ const COLUMN_LABELS: Record<string, string> = {
   direction: "Direction",
   weight: "Weight",
   price: "Price",
-  shares: "Shares",
+  instrument_type: "Instrument",
+  contract_multiplier: "Multiplier",
+  quantity: "Quantity",
+  contracts: "Contracts",
+  shares: "Quantity",
   dollar_weight: "Dollar",
   beta_spy: "Beta SPY",
   beta_iwm: "Beta IWM",
@@ -118,7 +122,8 @@ function isCurrencyColumn(key: string) {
 }
 
 function isIntegerColumn(key: string) {
-  return key.toLowerCase() === "shares"
+  const normalized = key.toLowerCase()
+  return normalized === "shares" || normalized === "quantity" || normalized === "contracts"
 }
 
 function buildCols(rows: Record<string, unknown>[]): ColumnDef[] {

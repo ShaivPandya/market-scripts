@@ -52,9 +52,11 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     ensure_psd,
     exposures_by_class,
     fetch_currencies,
+    fetch_prices_for_portfolio_symbols,
     get_required_fx_tickers,
     identify_binding_constraint,
     max_scale_to_respect_linear_caps,
+    prepare_instrument_metadata,
     solve_joint_hedge_weights,
     to_usd_price,
 )
@@ -182,6 +184,7 @@ def size_portfolio(
         meta = _get_positions_df(fallback_to_csv=True)
         meta["direction"] = meta["direction"].fillna("")
         meta = meta.set_index("ticker")
+        meta = prepare_instrument_metadata(meta)
 
         # Filter to user-requested tickers that exist in CSV
         requested = list(convictions.keys())
@@ -199,14 +202,8 @@ def size_portfolio(
             raise ValueError("Need at least 2 tickers to size a portfolio.")
 
         market_tickers = [MARKET_TICKER_LONG, MARKET_TICKER_SHORT]
-        all_tickers_to_fetch = list(set(tickers + market_tickers))
-
-        # Determine required currencies
-        ticker_currencies = fetch_currencies(all_tickers_to_fetch)
-
-        # Download prices
-        fx_tickers = get_required_fx_tickers(ticker_currencies)
-        prices_all = download_prices(all_tickers_to_fetch, fx_tickers)
+        prices_all, ticker_currencies, _symbol_map = fetch_prices_for_portfolio_symbols(meta, tickers, market_tickers)
+        all_tickers_to_fetch = list(dict.fromkeys([*tickers, *market_tickers]))
 
         missing_cols = [t for t in tickers if t not in prices_all.columns]
         if missing_cols:
@@ -248,7 +245,11 @@ def size_portfolio(
         meta["realized_vol"] = defense_vol
 
         # Severe drawdown flags
-        equity_tickers_dd = [t for t in tickers if meta.loc[t, "asset"].lower() == "equity"]
+        equity_tickers_dd = [
+            t
+            for t in tickers
+            if meta.loc[t, "asset"].lower() == "equity" and str(meta.loc[t, "instrument_type"]).lower() != "future"
+        ]
         severe_dd_flags = compute_severe_drawdown_flags(usd_prices, equity_tickers_dd)
         meta["severe_drawdown"] = pd.Series({t: severe_dd_flags.get(t, False) for t in meta.index})
 
@@ -446,6 +447,10 @@ def size_portfolio(
             {
                 "ticker": tickers,
                 "asset": meta["asset"].values,
+                "instrument_type": meta["instrument_type"].values,
+                "price_symbol": meta["price_symbol"].values,
+                "quantity": meta["quantity"].values,
+                "contract_multiplier": meta["contract_multiplier"].values,
                 "direction": meta["direction"].values,
                 "contrarian": meta["contrarian"].values if "contrarian" in meta.columns else False,
                 "conviction": [convictions.get(t, 0) for t in tickers],
@@ -458,7 +463,11 @@ def size_portfolio(
         )
         if book is not None:
             weights_df["dollar_weight"] = w_final.values * book
-            weights_df["shares"] = (weights_df["dollar_weight"] / weights_df["price"]).round(0).astype(int)
+            unit_notional = weights_df["price"] * weights_df["contract_multiplier"].replace(0, np.nan)
+            weights_df["quantity"] = (weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
+            weights_df["target_quantity"] = weights_df["quantity"]
+            weights_df["contracts"] = weights_df["quantity"].where(weights_df["instrument_type"].eq("future"))
+            weights_df["shares"] = weights_df["quantity"]
         weights_df = weights_df.sort_values("weight", ascending=False)
 
         # Build hedges DataFrame
@@ -518,6 +527,9 @@ def size_portfolio(
             {
                 "ticker": tickers,
                 "asset": meta["asset"].values,
+                "instrument_type": meta["instrument_type"].values,
+                "price_symbol": meta["price_symbol"].values,
+                "contract_multiplier": meta["contract_multiplier"].values,
                 "direction": meta["direction"].values,
                 "weight": w_max_scaled.values,
                 "price": latest_prices.values,
@@ -525,9 +537,17 @@ def size_portfolio(
         )
         if book is not None:
             max_scaled_weights_df["dollar_weight"] = w_max_scaled.values * book
-            max_scaled_weights_df["shares"] = (
-                (max_scaled_weights_df["dollar_weight"] / max_scaled_weights_df["price"]).round(0).astype(int)
+            unit_notional = max_scaled_weights_df["price"] * max_scaled_weights_df["contract_multiplier"].replace(
+                0, np.nan
             )
+            max_scaled_weights_df["quantity"] = (
+                (max_scaled_weights_df["dollar_weight"] / unit_notional).round(0).astype("Int64")
+            )
+            max_scaled_weights_df["target_quantity"] = max_scaled_weights_df["quantity"]
+            max_scaled_weights_df["contracts"] = max_scaled_weights_df["quantity"].where(
+                max_scaled_weights_df["instrument_type"].eq("future")
+            )
+            max_scaled_weights_df["shares"] = max_scaled_weights_df["quantity"]
         max_scaled_weights_df = max_scaled_weights_df.sort_values("weight", ascending=False)
 
         return {

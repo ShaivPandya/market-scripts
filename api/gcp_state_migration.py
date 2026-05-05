@@ -375,9 +375,37 @@ class StateMigrator:
         rows = _sqlite_rows(db, "positions")
         for row in rows:
             row["contrarian"] = bool(row.get("contrarian"))
+            row["quantity"] = row.get("quantity") if row.get("quantity") is not None else row.get("shares")
+            row["instrument_type"] = row.get("instrument_type") or "security"
+            row["price_symbol"] = row.get("price_symbol") or row.get("ticker")
+            row["contract_multiplier"] = row.get("contract_multiplier") or 1.0
+            row["base_currency"] = row.get("base_currency") or "USD"
+            row["valuation_status"] = row.get("valuation_status") or "missing_position_inputs"
         self._upsert_rows(
             "positions",
-            ["ticker", "asset", "direction", "contrarian", "conviction", "cost_basis", "shares", "role"],
+            [
+                "ticker",
+                "asset",
+                "direction",
+                "contrarian",
+                "conviction",
+                "cost_basis",
+                "shares",
+                "quantity",
+                "instrument_type",
+                "price_symbol",
+                "contract_multiplier",
+                "currency",
+                "country",
+                "exchange",
+                "base_currency",
+                "fx_rate_to_base",
+                "fx_rate_as_of",
+                "cost_basis_base",
+                "notional_base",
+                "valuation_status",
+                "role",
+            ],
             ["ticker"],
             rows,
         )

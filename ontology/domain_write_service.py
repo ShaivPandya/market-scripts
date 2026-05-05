@@ -525,6 +525,10 @@ def _position_properties(row: Mapping[str, Any], *, role: str) -> dict[str, Any]
         "conviction": _optional_int(row.get("conviction")) or 3,
         "cost_basis": _optional_float(row.get("cost_basis")),
         "shares": _optional_float(row.get("shares")),
+        "quantity": _optional_float(row.get("quantity") if row.get("quantity") is not None else row.get("shares")),
+        "instrument_type": str(row.get("instrument_type") or "security").lower(),
+        "price_symbol": str(row.get("price_symbol") or ticker).upper(),
+        "contract_multiplier": _optional_float(row.get("contract_multiplier")) or 1.0,
         "role": role,
     }
 
@@ -537,6 +541,10 @@ def _hedge_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "asset": str(row.get("asset") or "equity").lower(),
         "cost_basis": _optional_float(row.get("cost_basis")),
         "shares": _optional_float(row.get("shares")),
+        "quantity": _optional_float(row.get("quantity") if row.get("quantity") is not None else row.get("shares")),
+        "instrument_type": str(row.get("instrument_type") or "security").lower(),
+        "price_symbol": str(row.get("price_symbol") or ticker).upper(),
+        "contract_multiplier": _optional_float(row.get("contract_multiplier")) or 1.0,
     }
 
 

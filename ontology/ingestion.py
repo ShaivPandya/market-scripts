@@ -175,6 +175,10 @@ def ingest_into_repository(
                     "ticker": ticker_norm,
                     "asset": asset_class,
                     "direction": direction,
+                    "instrument_type": getattr(position, "instrument_type", "security"),
+                    "price_symbol": getattr(position, "price_symbol", None) or ticker_norm,
+                    "quantity": getattr(position, "quantity", None),
+                    "contract_multiplier": getattr(position, "contract_multiplier", 1.0),
                     "latest_price": latest_price,
                     "timeframe": timeframe,
                     "as_of": portfolio_timestamp,
@@ -190,6 +194,8 @@ def ingest_into_repository(
                 properties={
                     "ticker": ticker_norm,
                     "asset": asset_class,
+                    "instrument_type": getattr(position, "instrument_type", "security"),
+                    "price_symbol": getattr(position, "price_symbol", None) or ticker_norm,
                 },
             )
         )

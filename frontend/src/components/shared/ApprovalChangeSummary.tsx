@@ -113,7 +113,13 @@ function positionDescriptor(value: unknown): string {
   const record = asRecord(value)
   const bits: string[] = []
   if (record.direction || record.asset) bits.push([record.direction, record.asset].filter(Boolean).map(formatValue).join(" "))
-  if (record.shares != null) bits.push(`${formatValue(record.shares)} shares`)
+  const quantity = record.quantity ?? record.shares
+  if (quantity != null) {
+    bits.push(`${formatValue(quantity)} ${record.instrument_type === "future" ? "contracts" : "quantity"}`)
+  }
+  if (record.contract_multiplier != null && record.instrument_type === "future") {
+    bits.push(`multiplier ${formatValue(record.contract_multiplier)}`)
+  }
   if (record.cost_basis != null) bits.push(`cost basis ${formatValue(record.cost_basis)}`)
   if (record.conviction != null) bits.push(`conviction ${formatValue(record.conviction)}`)
   if (record.contrarian === true) bits.push("contrarian")

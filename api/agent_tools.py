@@ -202,12 +202,13 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
         "name": "get_portfolio",
         "description": (
             "Fetch the user's portfolio dashboard. Returns current positions with their "
-            "direction, cost basis, share quantity, conviction, P&L, contribution, and "
+            "direction, cost basis, canonical quantity, conviction, P&L, contribution, and "
             "current price data. Cost basis is average/book cost, not first entry price, "
             "and the payload does not contain entry date, first purchase price, holding-period, "
             "or averaging-up/down history. Portfolio performance fields are direction-adjusted: "
             "price declines are favorable for short positions. Never judge a position from raw price moves "
-            "alone; combine direction, quantity, cost basis, conviction, and P&L/return fields. "
+            "alone; combine direction, quantity, cost basis, multiplier, conviction, and P&L/return fields. "
+            "For futures, quantity means contracts and notional/P&L use contract_multiplier. "
             "Use this when the user asks about their portfolio, holdings, performance, "
             "or any specific position. Pair with get_thesis for investment reasoning context."
         ),
@@ -1611,6 +1612,11 @@ def _compact_portfolio_payload(payload: Any) -> Any:
                 "ticker": ticker,
                 "asset": meta.get("asset"),
                 "direction": meta.get("direction"),
+                "instrument_type": meta.get("instrument_type") or "security",
+                "price_symbol": meta.get("price_symbol") or ticker,
+                "quantity": meta.get("quantity"),
+                "contract_multiplier": meta.get("contract_multiplier") or 1,
+                "current_notional": meta.get("current_notional"),
                 "price_as_of": last.get("date") if isinstance(last, dict) else None,
                 "current_price": last_val,
                 "data_points": len(series_rows),
@@ -1629,6 +1635,9 @@ def _compact_portfolio_payload(payload: Any) -> Any:
             "entry_history_available": False,
             "cost_basis": "average/book cost, not first entry price",
             "price_history": "market-window price data only; do not infer entry date, first purchase price, holding period, or averaging up/down",
+            "quantity_field": "quantity",
+            "futures_quantity": "contracts",
+            "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
         },
         "summary": {
             "position_count": len(compact_rows),
@@ -1702,21 +1711,33 @@ def _build_agent_portfolio_payload(
             else (_to_float(last.get("value")) if isinstance(last, dict) else None)
         )
 
-        shares = holding.get("shares")
+        quantity = holding.get("quantity")
+        if quantity is None:
+            quantity = holding.get("shares")
+        instrument_type = holding.get("instrument_type") or "security"
+        contract_multiplier = holding.get("contract_multiplier")
+        if contract_multiplier is None:
+            contract_multiplier = 1
         row = {
             "ticker": ticker,
             "asset": holding.get("asset"),
             "direction": holding.get("direction"),
+            "instrument_type": instrument_type,
+            "price_symbol": holding.get("price_symbol") or ticker,
             "cost_basis": holding.get("cost_basis"),
-            "shares": shares,
-            "quantity": shares,
+            "shares": quantity,
+            "quantity": quantity,
+            "contract_multiplier": contract_multiplier,
             "conviction": holding.get("conviction"),
             "contrarian": bool(holding.get("contrarian")),
             "role": holding.get("role") or "position",
             "current_price": last_price,
             "price_as_of": last.get("date") if isinstance(last, dict) else None,
+            "current_notional": perf.get("current_notional"),
+            "cost_notional": perf.get("cost_notional"),
             "unrealized_pnl_pct": perf.get("unrealized_pnl_pct"),
             "unrealized_pnl_dollar": perf.get("unrealized_pnl_dollar"),
+            "unrealized_pnl_per_unit": perf.get("unrealized_pnl_per_unit"),
             "weekly_return_pct": perf.get("weekly_return_pct"),
             "monthly_return_pct": perf.get("monthly_return_pct"),
             "weekly_contribution_pct": perf.get("weekly_contribution_pct"),
@@ -1740,7 +1761,10 @@ def _build_agent_portfolio_payload(
                 "cost_basis": "average/book cost, not first entry price",
                 "price_history": "market-window price data only; do not infer entry date, first purchase price, holding period, or averaging up/down",
                 "short_price_declines_are_favorable": True,
-                "quantity_field": "shares",
+                "quantity_field": "quantity",
+                "legacy_shares_alias": True,
+                "futures_quantity": "contracts",
+                "futures_notional_pnl": "quantity * price * contract_multiplier; continuous futures do not model roll P&L",
             },
             "summary": {
                 "position_count": len(rows),

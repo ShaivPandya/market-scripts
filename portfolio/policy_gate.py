@@ -782,9 +782,10 @@ def _position_exposures(positions: list[Mapping[str, Any]]) -> list[dict[str, An
         asset = str(raw.get("asset") or "equity").lower()
         direction = str(raw.get("direction") or "long").lower()
         cost_basis = _to_float(raw.get("cost_basis"))
-        shares = _to_float(raw.get("shares"))
+        quantity = _to_float(raw.get("quantity") if raw.get("quantity") is not None else raw.get("shares"))
+        multiplier = _to_float(raw.get("contract_multiplier")) or 1.0
         conviction = _to_float(raw.get("conviction")) or 1.0
-        notional = (cost_basis * shares) if cost_basis is not None and shares is not None else conviction
+        notional = cost_basis * quantity * multiplier if cost_basis is not None and quantity is not None else conviction
         if direction == "short":
             notional *= -1
         exposures.append({"ticker": ticker or "UNKNOWN", "asset": asset, "direction": direction, "notional": notional})

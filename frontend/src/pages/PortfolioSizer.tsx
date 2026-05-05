@@ -97,7 +97,12 @@ const BASIC_COLUMNS = new Set([
   "realized_vol",
   "weight",
   "price",
+  "instrument_type",
+  "contract_multiplier",
   "dollar_weight",
+  "target_quantity",
+  "quantity",
+  "contracts",
   "shares",
 ])
 
@@ -141,7 +146,13 @@ const COLUMN_LABELS: Record<string, string> = {
   weight: "Weight",
   dollar_weight: "Dollar",
   price: "Price",
-  shares: "Shares",
+  instrument_type: "Instrument",
+  price_symbol: "Price Symbol",
+  contract_multiplier: "Multiplier",
+  quantity: "Quantity",
+  target_quantity: "Target Qty",
+  contracts: "Contracts",
+  shares: "Quantity",
   type: "Type",
 }
 
@@ -198,7 +209,14 @@ function isPercentColumn(key: string) {
 }
 
 function isIntegerColumn(key: string) {
-  return key.toLowerCase() === "shares" || key.toLowerCase() === "conviction"
+  const normalized = key.toLowerCase()
+  return (
+    normalized === "shares" ||
+    normalized === "quantity" ||
+    normalized === "target_quantity" ||
+    normalized === "contracts" ||
+    normalized === "conviction"
+  )
 }
 
 function isCurrencyColumn(key: string) {
@@ -307,7 +325,8 @@ export function PortfolioSizer() {
       .then(({ positions }) => {
         const map: Record<string, number> = {}
         for (const p of positions) {
-          if (p.shares != null) map[p.ticker.toUpperCase()] = p.shares
+          const quantity = p.quantity ?? p.shares
+          if (quantity != null) map[p.ticker.toUpperCase()] = quantity
         }
         setCurrentHoldings(map)
       })
@@ -496,8 +515,9 @@ export function PortfolioSizer() {
     for (const row of allRows) {
       const ticker = String(row.ticker ?? "").trim().toUpperCase()
       if (!ticker) continue
-      const targetShares = toNumber(row.shares) ?? 0
+      const targetShares = toNumber(row.target_quantity) ?? toNumber(row.contracts) ?? toNumber(row.quantity) ?? toNumber(row.shares) ?? 0
       const price = toNumber(row.price) ?? 0
+      const multiplier = toNumber(row.contract_multiplier) ?? 1
       const currentShares = currentHoldings[ticker] ?? 0
       const delta = targetShares - currentShares
       const type = row.type === "hedge" ? "Hedge" : "Position"
@@ -511,7 +531,7 @@ export function PortfolioSizer() {
         targetShares: Math.round(targetShares),
         delta: Math.round(delta),
         price,
-        notional: Math.round(delta) * price,
+        notional: Math.round(delta) * price * multiplier,
       })
     }
 
@@ -883,7 +903,7 @@ export function PortfolioSizer() {
               <div>
                 <h2 className="text-base font-semibold text-gray-900">Sizing Delta Summary</h2>
                 <p className="mt-1 text-xs text-gray-500">
-                  Analysis only. These deltas compare current shares with computed target shares; they are not executable orders.
+                  Analysis only. These deltas compare current quantity with computed target quantity; they are not executable orders.
                 </p>
               </div>
 
@@ -902,7 +922,7 @@ export function PortfolioSizer() {
                       <th className="px-3 py-2 text-left font-medium text-gray-600">Direction</th>
                       <th className="px-3 py-2 text-right font-medium text-gray-600">Current</th>
                       <th className="px-3 py-2 text-right font-medium text-gray-600">Target</th>
-                      <th className="px-3 py-2 text-right font-medium text-gray-600">Share Delta</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-600">Quantity Delta</th>
                       <th className="px-3 py-2 text-left font-medium text-gray-600">Sizing Direction</th>
                       <th className="px-3 py-2 text-right font-medium text-gray-600">Price</th>
                       <th className="px-3 py-2 text-right font-medium text-gray-600">Notional Delta</th>

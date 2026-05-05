@@ -32,9 +32,21 @@ def _load_portfolio() -> pd.DataFrame:
 
 
 def _build_globals(df: pd.DataFrame) -> tuple[dict, list, dict]:
-    positions = {row.ticker: row.ticker for row in df.itertuples()}
+    positions = {row.ticker: getattr(row, "price_symbol", None) or row.ticker for row in df.itertuples()}
     order = list(df.ticker)
-    meta = {row.ticker: {"asset": row.asset, "direction": row.direction} for row in df.itertuples()}
+    meta = {
+        row.ticker: {
+            "asset": row.asset,
+            "direction": row.direction,
+            "instrument_type": getattr(row, "instrument_type", "security"),
+            "price_symbol": getattr(row, "price_symbol", row.ticker),
+            "quantity": getattr(row, "quantity", getattr(row, "shares", None)),
+            "shares": getattr(row, "quantity", getattr(row, "shares", None)),
+            "contract_multiplier": getattr(row, "contract_multiplier", 1.0),
+            "role": getattr(row, "role", "position"),
+        }
+        for row in df.itertuples()
+    }
     return positions, order, meta
 
 
@@ -91,7 +103,7 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     if tf is None:
         return {"error": f"Invalid timeframe: {timeframe}"}
 
-    tickers = list(POSITIONS.values())
+    tickers = list(dict.fromkeys(POSITIONS.values()))
     if not tickers:
         return _empty_payload(timeframe, "No portfolio positions configured.")
 
@@ -117,11 +129,12 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
     positions = {}
 
     for ticker in POSITION_ORDER:
+        price_symbol = POSITIONS.get(ticker, ticker)
         try:
             if is_multi:
-                if ticker not in raw.columns.get_level_values(0):
+                if price_symbol not in raw.columns.get_level_values(0):
                     continue
-                series = raw[ticker]["Close"].dropna()
+                series = raw[price_symbol]["Close"].dropna()
             else:
                 series = raw["Close"].dropna()
 
@@ -135,15 +148,29 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
         except Exception:
             continue
 
-    analytics = compute_analytics(positions, get_positions())
+    holdings = get_positions()
+    analytics = compute_analytics(positions, holdings)
+    metadata = {ticker: dict(meta) for ticker, meta in POSITION_META.items()}
+    per_position = analytics.get("per_position", {}) if isinstance(analytics, dict) else {}
+    for ticker, metrics in per_position.items():
+        if ticker in metadata and isinstance(metrics, dict):
+            metadata[ticker]["current_notional"] = metrics.get("current_notional")
+            metadata[ticker]["cost_notional"] = metrics.get("cost_notional")
 
-    return {
+    warnings_out: list[str] = []
+    if any(str(row.get("instrument_type") or "").lower() == "future" for row in holdings):
+        warnings_out.append("Continuous futures use front/active contract pricing; roll P&L is not modeled.")
+
+    payload = {
         "positions": positions,
-        "metadata": POSITION_META,
+        "metadata": metadata,
         "timeframe": timeframe,
         "timestamp": datetime.now(),
         "analytics": analytics,
     }
+    if warnings_out:
+        payload["warning"] = "; ".join(warnings_out)
+    return payload
 
 
 def fetch_all_timeframes_data() -> dict:

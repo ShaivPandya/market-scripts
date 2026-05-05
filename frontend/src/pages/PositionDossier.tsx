@@ -297,10 +297,13 @@ export function PositionDossier() {
   const approvalItems = approvalSummaryData?.items ?? []
   const approvalSummaryInitialLoading = approvalSummary.isPending && !approvalSummaryData
   const approvalSummaryError = approvalSummary.error
-  const isEquity = String(data.position?.asset ?? "") === "equity"
+  const isEquity =
+    String(data.position?.asset ?? "") === "equity" && String(data.position?.instrument_type ?? "security") !== "future"
   const visibleTabs: Tab[] = isEquity ? ["Overview", ...BASE_TABS] : [...BASE_TABS]
   const activeTab: Tab = tab === "Overview" && !isEquity ? "Thesis" : tab
   const pos = data.position
+  const positionQuantity = pos?.quantity ?? pos?.shares
+  const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
   const meta = data.thesis?.meta
 
   return (
@@ -343,7 +346,8 @@ export function PositionDossier() {
       {/* Position summary bar */}
       {pos && (
         <div className="theme-surface rounded-xl p-3 mb-4 flex flex-wrap gap-6 text-sm">
-          {pos.shares != null && <div><span className="text-subtle">Shares</span> <span className="font-medium text-app ml-1">{String(pos.shares)}</span></div>}
+          {positionQuantity != null && <div><span className="text-subtle">{positionQuantityLabel}</span> <span className="font-medium text-app ml-1">{String(positionQuantity)}</span></div>}
+          {pos.instrument_type === "future" && pos.contract_multiplier != null && <div><span className="text-subtle">Multiplier</span> <span className="font-medium text-app ml-1">{String(pos.contract_multiplier)}</span></div>}
           {pos.avg_cost != null && <div><span className="text-subtle">Avg Cost</span> <span className="font-medium text-app ml-1">${Number(pos.avg_cost).toFixed(2)}</span></div>}
           {pos.market_value != null && <div><span className="text-subtle">Mkt Value</span> <span className="font-medium text-app ml-1">${Number(pos.market_value).toLocaleString()}</span></div>}
           {pos.pnl_pct != null && (

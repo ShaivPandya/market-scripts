@@ -103,6 +103,10 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
             "conviction": 4,
             "cost_basis": 100.0,
             "shares": 12.0,
+            "quantity": 12.0,
+            "instrument_type": "security",
+            "price_symbol": "MU",
+            "contract_multiplier": 1.0,
             "role": "position",
         }
     ]
@@ -125,6 +129,33 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
     ][0]
     assert succeeded["object_refs"][0] == {"type": "domain_action", "id": "update_portfolio_positions"}
     assert succeeded["after_summary"]["status"] == "ok"
+
+
+def test_portfolio_action_accepts_continuous_future_positions():
+    result = _approve_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "CL=F",
+                    "instrument_type": "future",
+                    "direction": "short",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 75,
+                    "quantity": 1,
+                }
+            ]
+        },
+    )
+
+    assert result == {"status": "ok", "count": 1}
+    position = portfolio_db.get_positions()[0]
+    assert position["ticker"] == "CL=F"
+    assert position["instrument_type"] == "future"
+    assert position["asset"] == "commodity"
+    assert position["quantity"] == 1.0
+    assert position["contract_multiplier"] == 1000.0
 
 
 def test_portfolio_update_approval_payload_lists_position_changes():
@@ -186,7 +217,7 @@ def test_portfolio_update_approval_payload_lists_position_changes():
 
     mu_change = change["position_changes"][0]
     assert mu_change["change_type"] == "updated"
-    assert mu_change["fields"] == [{"field": "shares", "before": 10.0, "after": 15.0}]
+    assert mu_change["fields"] == [{"field": "quantity", "before": 10.0, "after": 15.0}]
 
     crwd_change = change["position_changes"][1]
     assert crwd_change["change_type"] == "added"
@@ -352,6 +383,42 @@ def test_action_backed_approval_applies_registered_action():
     assert "approval.created" in audit_names
     assert "approval.apply.started" in audit_names
     assert "approval.applied" in audit_names
+
+
+def test_v1_portfolio_approval_upgrades_and_applies_after_schema_bump():
+    approval = core_db.create_pending_approval(
+        entity_type="portfolio_positions",
+        proposed_change={
+            "positions": [
+                {
+                    "ticker": "MU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": 100,
+                    "shares": 5,
+                }
+            ]
+        },
+        reason="legacy approval",
+        source_type="workflow",
+        source_id="legacy-run",
+        action_id="update_portfolio_positions",
+        action_schema_name="update_portfolio_positions",
+        action_schema_version=1,
+    )
+
+    resolved = core_db.resolve_approval(approval["id"], "approved", "Approved in test")
+
+    assert resolved["application_status"] == "applied"
+    position = portfolio_db.get_positions()[0]
+    assert position["ticker"] == "MU"
+    assert position["quantity"] == 5.0
+    assert position["instrument_type"] == "security"
+    assert position["contract_multiplier"] == 1.0
+    child_run = core_db.get_action_runs("update_portfolio_positions", approval_id=approval["id"])[0]
+    assert child_run["action_schema_version"] == 1
 
 
 def test_thesis_status_action_noops_same_status_without_history_row():

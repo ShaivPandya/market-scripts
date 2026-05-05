@@ -326,14 +326,21 @@ export const fetchPortfolio = (timeframe: string) =>
 export const fetchPortfolioAllTimeframes = () =>
   client.get("/portfolio?all_timeframes=true").then(r => r.data)
 
+export type InstrumentType = "security" | "future"
+export type PortfolioAsset = "equity" | "commodity" | "fx" | "bond"
+
 export interface PortfolioPosition {
   ticker: string
-  asset: "equity" | "commodity" | "fx" | "bond"
+  asset: PortfolioAsset
   direction: "long" | "short"
   contrarian: boolean
   conviction: number
   cost_basis: number | null
   shares: number | null
+  quantity?: number | null
+  instrument_type?: InstrumentType | null
+  price_symbol?: string | null
+  contract_multiplier?: number | null
   role?: "position" | "hedge"
 }
 
@@ -347,9 +354,14 @@ export const savePortfolioPositions = (positions: PortfolioPosition[], options?:
 
 export interface HedgePosition {
   ticker: string
+  asset?: PortfolioAsset | null
   direction: "long" | "short"
   cost_basis: number | null
   shares: number | null
+  quantity?: number | null
+  instrument_type?: InstrumentType | null
+  price_symbol?: string | null
+  contract_multiplier?: number | null
 }
 
 export const fetchHedgePositions = () =>
@@ -1049,7 +1061,18 @@ export const fetchHedgingPortfolioWeights = (book?: number) =>
     .get("/hedging-tool/portfolio-weights", { params: book ? { book } : undefined })
     .then(r => r.data as {
       positions: { ticker: string; weight: number }[]
-      metadata: { ticker: string; direction: string; conviction: number; shares: number | null; cost_basis: number | null; weight: number }[]
+      metadata: {
+        ticker: string
+        direction: string
+        conviction: number
+        shares: number | null
+        quantity?: number | null
+        instrument_type?: InstrumentType | null
+        price_symbol?: string | null
+        contract_multiplier?: number | null
+        cost_basis: number | null
+        weight: number
+      }[]
       book: number
       source: string
     })

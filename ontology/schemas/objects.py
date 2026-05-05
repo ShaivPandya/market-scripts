@@ -62,6 +62,10 @@ class PositionV1(OntologySchemaBase):
     conviction: int | None = Field(default=None, ge=1, le=5)
     cost_basis: float | None = None
     shares: float | None = None
+    quantity: float | None = None
+    instrument_type: str = "security"
+    price_symbol: str | None = None
+    contract_multiplier: float = 1.0
     role: str = "position"
 
     @field_validator("ticker", mode="before")
@@ -74,12 +78,12 @@ class PositionV1(OntologySchemaBase):
     def _lower_text(cls, value: object) -> str:
         return clean_lower_text(value)
 
-    @field_validator("timeframe", "ontology_run_id", mode="before")
+    @field_validator("timeframe", "ontology_run_id", "instrument_type", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("as_of", mode="before")
+    @field_validator("as_of", "price_symbol", mode="before")
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -684,6 +688,10 @@ class HedgePositionV1(OntologySchemaBase):
     asset: NonBlankStr = "equity"
     cost_basis: float | None = None
     shares: float | None = None
+    quantity: float | None = None
+    instrument_type: str = "security"
+    price_symbol: str | None = None
+    contract_multiplier: float = 1.0
     ontology_run_id: NonBlankStr = "operational"
 
     @field_validator("ticker", mode="before")
@@ -695,6 +703,16 @@ class HedgePositionV1(OntologySchemaBase):
     @classmethod
     def _lower_text(cls, value: object) -> str:
         return clean_lower_text(value)
+
+    @field_validator("instrument_type", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("price_symbol", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
 
 
 class KillConditionV1(OntologySchemaBase):
