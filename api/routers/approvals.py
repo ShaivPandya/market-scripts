@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -60,15 +62,17 @@ def approval_summary(
         )
     except ValueError as e:
         raise ValidationError(str(e)) from e
-    normalized = [normalize_approval(a) for a in approvals]
-    recommendation_approval_count = len(
-        [
-            approval
-            for approval in normalized
-            if isinstance(approval.get("proposed_change"), dict)
-            and approval["proposed_change"].get("recommendation_id") is not None
-        ]
-    )
+    normalized: list[dict[str, Any]] = []
+    for approval in approvals:
+        normalized_approval = normalize_approval(approval)
+        if normalized_approval is not None:
+            normalized.append(normalized_approval)
+
+    recommendation_approval_count = 0
+    for approval in normalized:
+        proposed_change = approval.get("proposed_change")
+        if isinstance(proposed_change, dict) and proposed_change.get("recommendation_id") is not None:
+            recommendation_approval_count += 1
     items = normalized[:limit]
     return {
         "count": len(normalized),
