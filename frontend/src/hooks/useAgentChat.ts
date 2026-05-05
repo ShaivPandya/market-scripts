@@ -329,6 +329,19 @@ function nextSeqFrom(events: AgentJobEvent[] | undefined, fallback: number): num
   return Math.max(fallback, ...events.map(event => Number(event.seq) || 0))
 }
 
+function statusTextForEventStatus(value: unknown): string {
+  if (value === "starting") return "Starting..."
+  if (value === "queued") return "Queued..."
+  if (value === "cancelled") return "Cancelled."
+  return "Running..."
+}
+
+function statusTextForPolledStatus(status: AgentJobResponse["status"], current?: string): string | undefined {
+  if (status === "running") return "Running..."
+  if (status === "queued") return current === "Starting..." ? current : "Queued..."
+  return undefined
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -366,7 +379,7 @@ export function useAgentChat() {
         switch (event.event_type) {
           case "status": {
             const rawStatus = typeof data.status === "string" ? data.status : "running"
-            const label = rawStatus === "queued" ? "Queued..." : rawStatus === "cancelled" ? "Cancelled." : "Running..."
+            const label = statusTextForEventStatus(rawStatus)
             next = {
               ...next,
               messages: next.messages.map(m =>
@@ -522,6 +535,16 @@ export function useAgentChat() {
         const events = response.events ?? []
         applyJobEvents(job.assistantId, events, response.session_id ?? null)
         afterSeq = response.next_seq ?? nextSeqFrom(events, afterSeq)
+        if (!events.some(event => event.event_type === "status")) {
+          setState(prev => ({
+            ...prev,
+            messages: prev.messages.map(m => {
+              if (m.id !== job.assistantId) return m
+              const statusText = statusTextForPolledStatus(response.status, m.statusText)
+              return statusText ? { ...m, statusText } : m
+            }),
+          }))
+        }
         if (events.some(event => event.event_type === "done" || event.event_type === "error")) {
           inFlightRef.current = false
           return
@@ -590,7 +613,7 @@ export function useAgentChat() {
       timestamp: Date.now(),
       toolCalls: [],
       isStreaming: true,
-      statusText: "Queued...",
+      statusText: "Starting...",
     }
 
     const assistantId = assistantMsg.id

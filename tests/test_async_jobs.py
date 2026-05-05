@@ -173,6 +173,30 @@ def test_cloud_run_dispatch_failure_marks_job_failed(monkeypatch):
     assert "run api unavailable" in failed["error"]
 
 
+def test_perform_job_marks_running_before_request_parse(monkeypatch):
+    import pytest
+
+    from api import async_job_runner, cache
+    from api.job_queue import create_or_reuse_job, get_job
+
+    cache.invalidate_all()
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    row, _disposition = create_or_reuse_job("analyzer", payload={}, cache_key="parse-order")
+    observed: dict[str, str] = {}
+
+    def fail_parse(_spec, _payload):
+        observed["status_during_parse"] = str((get_job(row["job_id"]) or {}).get("status") or "")
+        raise RuntimeError("parse boom")
+
+    monkeypatch.setattr(async_job_runner, "parse_request", fail_parse)
+
+    with pytest.raises(RuntimeError, match="parse boom"):
+        async_job_runner.perform_job(row["job_id"])
+
+    assert observed["status_during_parse"] == "running"
+    assert get_job(row["job_id"])["status"] == "failed"
+
+
 def test_dispatch_cloud_run_job_invokes_generic_runner(monkeypatch):
     from api import cache
     from api.cloud_run_jobs import dispatch_cloud_run_job

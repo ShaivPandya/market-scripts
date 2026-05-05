@@ -91,8 +91,8 @@ JOB_SPECS: dict[str, JobSpec] = {
     ),
     "agent_chat_turn": JobSpec(
         job_type="agent_chat_turn",
-        request_model="api.routers.agent.AgentChatJobRequest",
-        compute_func="api.routers.agent._run_agent_chat_turn_job",
+        request_model="api.agent_models.AgentChatJobRequest",
+        compute_func="api.agent_chat_worker._run_agent_chat_turn_job",
         cache_key_func="api.routers.agent._agent_chat_job_cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_AGENT", "agent"),
         timeout_s=_env_int("ASYNC_TIMEOUT_AGENT_CHAT_SECONDS", 20 * 60),

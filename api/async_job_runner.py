@@ -276,7 +276,6 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
         payload = {}
 
     try:
-        req = parse_request(spec, payload)
         mark_job_running(job_id)
         running_row = get_job(job_id) or row
         if str(running_row.get("status") or "") == "cancelled":
@@ -288,6 +287,7 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
             status="running",
             after_summary={"status": "running"},
         )
+        req = parse_request(spec, payload)
 
         if spec.supports_progress:
             update_job_progress(job_id, {"phase": "running", "done": 0, "total": 0})

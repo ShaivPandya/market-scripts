@@ -6,6 +6,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+import api.agent_chat_worker as agent_chat_worker
 import api.routers.agent as agent_router
 
 
@@ -766,6 +767,34 @@ def test_agent_chat_async_returns_replayable_events_and_finalizes(auth_client, m
     assert finalized and finalized[0][1]["content"] == "async answer"
 
 
+def test_agent_chat_async_created_cloud_run_job_returns_starting_event(auth_client, monkeypatch):
+    from api import async_job_runner, cache
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    dispatched: list[str] = []
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda _job_type, job_id: dispatched.append(job_id),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/async",
+        json={"message": "How is liquidity?", "client_turn_id": "starting-turn"},
+    )
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert dispatched == [body["job_id"]]
+    assert any(
+        event["event_type"] == "status" and event["payload"].get("status") == "starting"
+        for event in body.get("events") or []
+    )
+
+
 def test_agent_chat_async_reuses_duplicate_active_job(auth_client, monkeypatch):
     from api import cache
 
@@ -778,7 +807,7 @@ def test_agent_chat_async_reuses_duplicate_active_job(auth_client, monkeypatch):
         assert release.wait(timeout=2)
         return {"status": "done", "session_id": req.session_id}
 
-    monkeypatch.setattr(agent_router, "_run_agent_chat_turn_job", slow_agent_job)
+    monkeypatch.setattr(agent_chat_worker, "_run_agent_chat_turn_job", slow_agent_job)
 
     body = {"session_id": "dup-session", "message": "same turn", "client_turn_id": "dup-turn"}
     first = auth_client.post("/api/v1/agent/chat/async", json=body)
@@ -804,7 +833,7 @@ def test_agent_chat_async_cancel_marks_job_cancelled(auth_client, monkeypatch):
         release.wait(timeout=2)
         return {"status": "done", "session_id": req.session_id}
 
-    monkeypatch.setattr(agent_router, "_run_agent_chat_turn_job", slow_agent_job)
+    monkeypatch.setattr(agent_chat_worker, "_run_agent_chat_turn_job", slow_agent_job)
 
     started_resp = auth_client.post(
         "/api/v1/agent/chat/async",

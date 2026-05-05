@@ -8,7 +8,6 @@ platform's analysis modules.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import inspect
 import json
@@ -19,12 +18,12 @@ import time
 from collections import Counter
 from collections.abc import Sized
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from functools import cache, lru_cache
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
 
 from api.agent_governance import (
     AgentBudgetExceeded,
@@ -32,7 +31,14 @@ from api.agent_governance import (
     blocked_tool_payload,
     prepare_model_egress,
 )
-from api.agent_tools import AGENT_CAPABILITY_BY_NAME, TOOL_DEFINITIONS, execute_tool, list_agent_capabilities
+from api.agent_models import (
+    AgentChatJobRequest,
+    AgentChatRequest,
+    AgentChatRequestV2,
+    AgentResponsePreferences,
+    ChatMessage,
+    ScreenContextModel,
+)
 from api.exceptions import ConfigurationError
 from api.job_events import append_job_event, list_job_events
 from api.job_queue import cancel_job, get_job
@@ -50,11 +56,44 @@ from llm_utils import (
     selected_provider,
 )
 from ontology.action_registry import get_tool_exposure
-from ontology.policy import Actor, actor_from_dict, actor_to_dict, agent_actor
+from ontology.policy import Actor, actor_to_dict, agent_actor
 
 router = APIRouter()
 logger = logging.getLogger("api.agent")
 ActorDep = Annotated[Actor, Depends(require_actor)]
+
+
+@lru_cache(maxsize=1)
+def _agent_capability_by_name() -> dict[str, Any]:
+    from api.agent_tools import AGENT_CAPABILITY_BY_NAME
+
+    return AGENT_CAPABILITY_BY_NAME
+
+
+@lru_cache(maxsize=1)
+def _tool_definitions() -> tuple[dict[str, Any], ...]:
+    from api.agent_tools import TOOL_DEFINITIONS
+
+    return tuple(TOOL_DEFINITIONS)
+
+
+@lru_cache(maxsize=1)
+def _tool_names() -> frozenset[str]:
+    return frozenset(tool["name"] for tool in _tool_definitions() if isinstance(tool.get("name"), str))
+
+
+def _list_agent_capabilities() -> list[dict[str, Any]]:
+    from api.agent_tools import list_agent_capabilities
+
+    return list_agent_capabilities()
+
+
+def execute_tool(name: str, arguments: dict, **kwargs: Any) -> str:
+    """Lazy wrapper kept patchable for tests and local tool execution hooks."""
+    from api.agent_tools import execute_tool as _execute_tool
+
+    return _execute_tool(name, arguments, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Prompt loading
@@ -222,70 +261,6 @@ def _build_memory_context() -> str:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
-ChatText = Annotated[str, Field(min_length=1, max_length=64 * 1024)]
-ScreenShortText = Annotated[str, Field(max_length=512)]
-ScreenValueText = Annotated[str, Field(max_length=4096)]
-ToolNameText = Annotated[str, Field(max_length=128)]
-
-
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: ChatText
-
-
-class ScreenContextModel(BaseModel):
-    page_name: ScreenShortText
-    route: ScreenShortText
-    ticker: ScreenShortText | None = None
-    metrics: dict[ScreenShortText, ScreenValueText] | None = Field(default=None, max_length=100)
-    filters: dict[ScreenShortText, ScreenValueText] | None = Field(default=None, max_length=100)
-    summary: ScreenValueText | None = None
-    corresponding_tools: list[ToolNameText] | None = Field(default=None, max_length=50)
-
-
-PreferenceLevel = Literal["less", "balanced", "more"]
-Personality = Literal["friendly", "pragmatic"]
-CustomInstructionText = Annotated[str, Field(max_length=2000)]
-
-
-class AgentResponsePreferences(BaseModel):
-    personality: Personality = "pragmatic"
-    warmth: PreferenceLevel = "less"
-    enthusiasm: PreferenceLevel = "less"
-    headers_lists: PreferenceLevel = "less"
-    emoji: PreferenceLevel = "less"
-    fast_answers: bool = True
-    thinking_enabled: bool = False
-    custom_instructions: CustomInstructionText | None = None
-
-
-class AgentChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(..., min_length=1, max_length=50)
-    screen_context: ScreenContextModel | None = None
-    response_preferences: AgentResponsePreferences | None = None
-
-
-class AgentChatRequestV2(BaseModel):
-    """V2 request: frontend sends only the new message + session ID."""
-
-    session_id: ScreenShortText | None = None
-    client_turn_id: ScreenShortText | None = None
-    message: ChatText
-    screen_context: ScreenContextModel | None = None
-    response_preferences: AgentResponsePreferences | None = None
-    finalize_synchronously: bool = False
-
-
-class AgentChatJobRequest(AgentChatRequestV2):
-    """Payload executed by the durable async agent worker."""
-
-    actor: dict[str, Any] | None = None
-    message_count: int | None = None
-
-
 @router.get("/agent/workflows")
 def list_workflows():
     """List available deterministic workflows."""
@@ -295,7 +270,7 @@ def list_workflows():
 @router.get("/agent/capabilities")
 def list_capabilities():
     """List Stan's provider-neutral app capabilities."""
-    return {"capabilities": list_agent_capabilities(), "count": len(TOOL_DEFINITIONS)}
+    return {"capabilities": _list_agent_capabilities(), "count": len(_tool_definitions())}
 
 
 # ---------------------------------------------------------------------------
@@ -319,25 +294,6 @@ def _sse_headers() -> dict[str, str]:
         # Prevent GZipMiddleware and upstream proxies from buffering small SSE frames.
         "Content-Encoding": "identity",
     }
-
-
-def _parse_sse_frame(raw: str) -> tuple[str, dict[str, Any]] | None:
-    event_type: str | None = None
-    data_lines: list[str] = []
-    for line in raw.splitlines():
-        if line.startswith("event:"):
-            event_type = line.split(":", 1)[1].strip()
-        elif line.startswith("data:"):
-            data_lines.append(line.split(":", 1)[1].strip())
-    if not event_type or not data_lines:
-        return None
-    try:
-        payload = json.loads("\n".join(data_lines))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return event_type, payload
 
 
 def _agent_chat_job_cache_key(req: AgentChatJobRequest) -> str:
@@ -372,63 +328,33 @@ def _agent_async_payload(row: dict[str, Any], *, events: list[dict[str, Any]] | 
     return payload
 
 
-def _append_agent_delta(
-    job_id: str,
-    buffer: list[str],
-    *,
-    force: bool = False,
-    state: dict[str, float],
-) -> None:
-    if not buffer:
-        return
-    now = time.monotonic()
-    text = "".join(buffer)
-    last = state.get("last_delta_flush", 0.0)
-    if not force and len(text) < 512 and now - last < 0.25:
-        return
-    buffer.clear()
-    state["last_delta_flush"] = now
-    append_job_event(job_id, "delta", {"text": text})
-
-
-def _job_cancelled(job_id: str) -> bool:
-    row = get_job(job_id)
-    return bool(row and str(row.get("status") or "") == "cancelled")
-
-
 MAX_TOOL_CONTINUATION_ROUNDS = 8
 MAX_API_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
 SSE_KEEPALIVE_INTERVAL_S = 15.0
 LLM_MAX_TOKENS = 8_192
 LLM_CHAT_MAX_TOKENS = 2_048
-ANTHROPIC_TOOL_DEFINITIONS: list[dict] = [
-    {
-        "name": tool["name"],
-        "description": tool.get("description", ""),
-        "input_schema": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
-    }
-    for tool in TOOL_DEFINITIONS
-    if isinstance(tool.get("name"), str)
-]
-OPENAI_TOOL_DEFINITIONS: list[dict] = [
-    {
-        "type": "function",
-        "name": tool["name"],
-        "description": tool.get("description", ""),
-        "parameters": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
-    }
-    for tool in TOOL_DEFINITIONS
-    if isinstance(tool.get("name"), str)
-]
-_TOOL_DEFINITIONS_BY_PROVIDER = {
-    PROVIDER_ANTHROPIC: ANTHROPIC_TOOL_DEFINITIONS,
-    PROVIDER_OPENAI: OPENAI_TOOL_DEFINITIONS,
-}
-_TOOL_DEFINITION_BY_NAME_BY_PROVIDER = {
-    provider: {tool["name"]: tool for tool in tools} for provider, tools in _TOOL_DEFINITIONS_BY_PROVIDER.items()
-}
-_TOOL_NAMES = {tool["name"] for tool in TOOL_DEFINITIONS if isinstance(tool.get("name"), str)}
+
+
+class _LazyProviderToolDefinitions:
+    def __init__(self, provider: str):
+        self.provider = provider
+
+    def _items(self) -> list[dict]:
+        return list(_tool_definition_by_name_for_provider(self.provider).values())
+
+    def __iter__(self):
+        return iter(self._items())
+
+    def __len__(self) -> int:
+        return len(self._items())
+
+    def __getitem__(self, index: int) -> dict:
+        return self._items()[index]
+
+
+ANTHROPIC_TOOL_DEFINITIONS = _LazyProviderToolDefinitions(PROVIDER_ANTHROPIC)
+OPENAI_TOOL_DEFINITIONS = _LazyProviderToolDefinitions(PROVIDER_OPENAI)
 _HIGH_COST_TOOLS = {"get_sector_metrics", "query_ontology", "get_signal_aggregator"}
 _CASUAL_RX = re.compile(
     r"^\s*(hi|hello|hey|yo|thanks|thank you|cool|ok|okay|who are you|what can you do)[\s!.?]*$",
@@ -555,7 +481,7 @@ def _select_tool_names(user_text: str) -> list[str]:
 
     def add(*names: str) -> None:
         for name in names:
-            if name in _TOOL_NAMES and name not in selected:
+            if name in _tool_names() and name not in selected:
                 selected.append(name)
 
     if re.search(r"\b(portfolio|holding|holdings|position|positions|p&l|pnl|performance|exposure|risks?)\b", text):
@@ -659,7 +585,7 @@ def _select_tool_names(user_text: str) -> list[str]:
     # Registry lexical pass. This catches newly registered app capabilities
     # without adding a new regex branch for every route.
     registry_matches: list[tuple[int, str]] = []
-    for cap in AGENT_CAPABILITY_BY_NAME.values():
+    for cap in _agent_capability_by_name().values():
         if not cap.selectable or cap.name == "search_agent_capabilities":
             continue
         terms = [cap.name.replace("_", " "), *cap.aliases]
@@ -683,7 +609,7 @@ def _select_tool_names(user_text: str) -> list[str]:
 
 
 def _tool_definitions_from_names(provider: str, names: list[str]) -> list[dict]:
-    definitions = _TOOL_DEFINITION_BY_NAME_BY_PROVIDER[provider]
+    definitions = _tool_definition_by_name_for_provider(provider)
     return [definitions[name] for name in names if name in definitions]
 
 
@@ -954,7 +880,7 @@ def _capability_names_from_search_result(result_str: str) -> list[str]:
         if not isinstance(row, dict):
             continue
         name = row.get("name")
-        if isinstance(name, str) and name in _TOOL_NAMES and name not in names:
+        if isinstance(name, str) and name in _tool_names() and name not in names:
             names.append(name)
     return names
 
@@ -1044,8 +970,37 @@ def _obj_value(value: object, key: str, default: object = None) -> object:
     return getattr(value, key, default)
 
 
+@cache
+def _tool_definition_by_name_for_provider(provider: str) -> dict[str, dict]:
+    tools: list[dict] = []
+    for tool in _tool_definitions():
+        name = tool.get("name")
+        if not isinstance(name, str):
+            continue
+        if provider == PROVIDER_ANTHROPIC:
+            tools.append(
+                {
+                    "name": name,
+                    "description": tool.get("description", ""),
+                    "input_schema": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
+                }
+            )
+        elif provider == PROVIDER_OPENAI:
+            tools.append(
+                {
+                    "type": "function",
+                    "name": name,
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("parameters", {"type": "object", "properties": {}, "required": []}),
+                }
+            )
+        else:
+            raise KeyError(provider)
+    return {tool["name"]: tool for tool in tools}
+
+
 def _tool_definitions_for_provider(provider: str) -> list[dict]:
-    return _TOOL_DEFINITIONS_BY_PROVIDER[provider]
+    return list(_tool_definition_by_name_for_provider(provider).values())
 
 
 def _model_stream_kwargs(
@@ -1824,85 +1779,6 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
 # ---------------------------------------------------------------------------
 
 
-def _run_agent_chat_turn_job(req: AgentChatJobRequest, *, job_id: str) -> dict[str, Any]:
-    """Execute one agent turn and persist replayable chat events."""
-    actor = actor_from_dict(req.actor)
-    worker_req = AgentChatRequestV2.model_validate(
-        {
-            **req.model_dump(exclude={"actor"}),
-            "finalize_synchronously": True,
-        }
-    )
-    append_job_event(job_id, "status", {"status": "running", "session_id": worker_req.session_id})
-    delta_buffer: list[str] = []
-    flush_state = {"last_delta_flush": time.monotonic()}
-    terminal_payload: dict[str, Any] | None = None
-    error_message: str | None = None
-
-    async def _consume() -> None:
-        nonlocal terminal_payload, error_message
-        response = agent_chat_v2(worker_req, actor)
-        buffer = ""
-        async for chunk in response.body_iterator:
-            if isinstance(chunk, bytes):
-                text = chunk.decode("utf-8", errors="replace")
-            else:
-                text = str(chunk)
-            buffer += text
-            frames = buffer.split("\n\n")
-            buffer = frames.pop() or ""
-            for frame in frames:
-                parsed = _parse_sse_frame(frame)
-                if parsed is None:
-                    continue
-                event_type, payload = parsed
-                if event_type == "ping":
-                    if _job_cancelled(job_id):
-                        return
-                    continue
-                if event_type == "delta":
-                    delta_text = payload.get("text")
-                    if isinstance(delta_text, str) and delta_text:
-                        delta_buffer.append(delta_text)
-                        _append_agent_delta(job_id, delta_buffer, state=flush_state)
-                    if _job_cancelled(job_id):
-                        return
-                    continue
-
-                _append_agent_delta(job_id, delta_buffer, force=True, state=flush_state)
-                append_job_event(job_id, event_type, payload)
-                if event_type == "error":
-                    error_message = str(payload.get("message") or "Agent chat turn failed")
-                elif event_type == "done":
-                    terminal_payload = payload
-                if _job_cancelled(job_id):
-                    return
-
-            if _job_cancelled(job_id):
-                return
-
-        _append_agent_delta(job_id, delta_buffer, force=True, state=flush_state)
-
-    try:
-        asyncio.run(_consume())
-    except Exception as exc:
-        message = _format_stream_error(exc)
-        append_job_event(job_id, "error", {"message": message})
-        raise RuntimeError(message) from exc
-
-    if _job_cancelled(job_id):
-        return {"status": "cancelled", "session_id": worker_req.session_id}
-
-    if error_message:
-        raise RuntimeError(error_message)
-
-    if terminal_payload is None:
-        terminal_payload = {"usage": {}, "session_id": worker_req.session_id}
-        append_job_event(job_id, "done", terminal_payload)
-
-    return {"status": "done", **terminal_payload}
-
-
 @router.post("/agent/chat/async")
 def start_agent_chat_async(req: AgentChatRequestV2, actor: ActorDep):
     from api import memory_db
@@ -1928,8 +1804,12 @@ def start_agent_chat_async(req: AgentChatRequestV2, actor: ActorDep):
         reuse_completed=reuse_completed,
     )
     job_id = str(row.get("job_id") or "")
+    current_row = get_job(job_id) or row
     events = list_job_events(job_id, after_seq=0)
-    payload = _agent_async_payload(get_job(job_id) or row, events=events)
+    if disposition == "created" and not events and str(current_row.get("status") or "") == "queued":
+        append_job_event(job_id, "status", {"status": "starting", "session_id": session_id})
+        events = list_job_events(job_id, after_seq=0)
+    payload = _agent_async_payload(get_job(job_id) or current_row, events=events)
     payload["disposition"] = disposition
     status_code = 200 if payload.get("status") in {"done", "error", "cancelled"} else 202
     return JSONResponse(payload, status_code=status_code)
