@@ -44,6 +44,9 @@ def _obsolete_policy_fragments() -> tuple[str, ...]:
         ".".join(("tax", "_".join(("tax", "lots")))),
         " ".join(("tax", "lots")),
         "-".join(("tax", "lot")),
+        "_".join(("time", "horizon")),
+        " ".join(("time", "horizon")),
+        "_".join(("horizon", "mismatch")),
     )
 
 

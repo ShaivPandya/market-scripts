@@ -777,7 +777,7 @@ export function IdeaWatchlist() {
         {createMutation.error && <p className="mt-3 text-sm text-red-600">{createMutation.error.message}</p>}
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(38rem,1fr)_minmax(28rem,0.9fr)]">
+      <div className="space-y-5">
         <section className="theme-surface rounded-lg p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="section-title text-sm">Watchlist</h2>
@@ -796,9 +796,9 @@ export function IdeaWatchlist() {
           ) : rows.length === 0 ? (
             <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-app bg-card">
+            <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
               <table className="w-full min-w-[760px] border-collapse text-sm">
-                <thead className="bg-card-muted">
+                <thead className="sticky top-0 z-10 bg-card-muted">
                   <tr>
                     {["Ticker", "Status", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted"].map(label => (
                       <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">

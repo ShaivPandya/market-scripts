@@ -8,7 +8,6 @@ human review.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -24,7 +23,6 @@ FAILURE_REASON_CODES = {
     "missing_constraint",
     "mandate_violation",
     "suitability_warning",
-    "horizon_mismatch",
     "liquidity_shortfall",
     "concentration_limit",
     "leverage_limit",
@@ -62,8 +60,6 @@ DEFAULT_POLICY: dict[str, Any] = {
         "permitted_asset_classes": ["equity", "commodity", "fx", "bond"],
         "permitted_actions": sorted(ACTIONABLE_RECOMMENDATION_ACTIONS | {"hold", "watch", "avoid", "do_nothing"}),
         "benchmark": "SPY",
-        "time_horizon_days_min": None,
-        "time_horizon_days_max": None,
         "liquidity_needs": None,
     },
     "policy": {
@@ -86,8 +82,6 @@ MISSING_CONSTRAINT_PATHS: tuple[tuple[str, ...], ...] = (
     ("investor", "suitability_profile"),
     ("account", "account_type"),
     ("account", "tax_status"),
-    ("mandate", "time_horizon_days_min"),
-    ("mandate", "time_horizon_days_max"),
     ("mandate", "liquidity_needs"),
     ("policy", "min_cash_reserve_pct"),
     ("policy", "taxable_account_rules"),
@@ -217,7 +211,7 @@ def evaluate_policy_gate(
     check_results.extend(_data_freshness_checks(payload, source_quality=source_quality))
     check_results.extend(_mandate_checks(action_id, payload, policy))
     check_results.extend(_portfolio_constraint_checks(action_id, payload, policy))
-    check_results.extend(_horizon_liquidity_checks(action_id, payload, policy))
+    check_results.extend(_liquidity_checks(payload, policy))
     check_results.extend(_tax_checks(payload, policy))
     check_results.extend(_scenario_checks(action_id, payload, policy))
 
@@ -666,40 +660,11 @@ def _portfolio_constraint_checks(
     return checks
 
 
-def _horizon_liquidity_checks(
-    action_id: str,
+def _liquidity_checks(
     payload: Mapping[str, Any],
     policy: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
-    record = _recommendation_record(payload)
-    horizon_days = _horizon_days(record.get("horizon"))
-    min_days = _deep_get(policy, ("mandate", "time_horizon_days_min"))
-    max_days = _deep_get(policy, ("mandate", "time_horizon_days_max"))
-    if horizon_days is not None and min_days is not None and horizon_days < float(min_days):
-        checks.append(
-            _check(
-                "horizon.minimum",
-                "fail",
-                "horizon_mismatch",
-                "Recommendation horizon is shorter than mandate minimum.",
-                severity="fail",
-                observed=horizon_days,
-                limit=min_days,
-            )
-        )
-    if horizon_days is not None and max_days is not None and horizon_days > float(max_days):
-        checks.append(
-            _check(
-                "horizon.maximum",
-                "fail",
-                "horizon_mismatch",
-                "Recommendation horizon is longer than mandate maximum.",
-                severity="fail",
-                observed=horizon_days,
-                limit=max_days,
-            )
-        )
     exit_days = _payload_number(payload, "estimated_exit_days")
     max_exit = _deep_get(policy, ("policy", "max_exit_days"))
     if exit_days is not None and max_exit is not None and exit_days > float(max_exit):
@@ -967,21 +932,6 @@ def _to_float(value: Any) -> float | None:
         return float(text)
     except ValueError:
         return None
-
-
-def _horizon_days(value: Any) -> float | None:
-    text = str(value or "").lower()
-    number_match = re.search(r"(\d+(?:\.\d+)?)", text)
-    number = float(number_match.group(1)) if number_match else 1.0
-    if "month" in text:
-        return number * 30
-    if "year" in text:
-        return number * 365
-    if "week" in text:
-        return number * 7
-    if "day" in text:
-        return number
-    return None
 
 
 def _deep_get(mapping: Mapping[str, Any], path: tuple[str, ...], default: Any = None) -> Any:

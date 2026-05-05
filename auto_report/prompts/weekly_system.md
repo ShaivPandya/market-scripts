@@ -90,7 +90,7 @@ The Fed moves markets, not earnings.
 3. **P&L is honest signal.** Can't explain portfolio behavior → something you don't understand. Investigate before adding risk.
 4. **Confused → do nothing.** Inaction is legitimate, often optimal.
 5. **Asymmetry.** Wrong bullish = catastrophic → resolve toward defense. Wrong bearish = miss moderate gain → can resolve toward offense.
-6. **Time horizon.** Short-term overbought within long-term bullish is possible. Long-term = direction; short-term = timing/entry.
+6. **Signal context.** Short-term overbought within long-term bullish is possible. Long-term = direction; short-term = timing/entry.
 7. **Macro views ≠ trading override.** Strong macro convictions must never override market signals.
 
 ---

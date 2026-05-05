@@ -140,6 +140,10 @@ function formatTime(iso: string): string {
   }
 }
 
+function subjectLabel(entityType?: string | null): string {
+  return String(entityType || "proposal").replace(/_/g, " ")
+}
+
 function ProposalNotice({ proposal }: { proposal: StagedMutationResponse | null }) {
   if (!proposal) return null
   return (
@@ -355,7 +359,7 @@ export function PositionDossier() {
             <DecisionStateBadge state={lastProposal.decision_state ?? "pending_approval"} />
             <EffectScopeBadge scope={lastProposal.effect_scope ?? "internal_state"} />
             <span>
-              Proposal #{lastProposal.approval_id} staged for {lastProposal.action_id.replace(/_/g, " ")}. It will not change app state until approved and applied.
+              Proposal #{lastProposal.approval_id} staged for {subjectLabel(lastProposal.entity_type)}. It will not change app state until approved and applied.
             </span>
           </div>
         </div>
@@ -427,7 +431,7 @@ export function PositionDossier() {
                 <div key={a.id} className="rounded-lg px-3 py-2 text-sm border border-app">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+                      <span className="text-xs text-subtle">{subjectLabel(a.entity_type)}</span>
                       <div className="mt-1 flex flex-wrap gap-2">
                         <DecisionStateBadge state={approvalDecisionState(a)} />
                         <BaseStateBadge state={a.base_state_status} message={a.base_state_message} />
@@ -579,7 +583,7 @@ export function PositionDossier() {
             <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
                 <span>Approval #{approvalReview.approval.id}</span>
-                <span>{approvalReview.approval.action_id || approvalReview.approval.entity_type}</span>
+                <span>{subjectLabel(approvalReview.approval.entity_type)}</span>
                 <span>
                   Application: {approvalReview.approval.base_state_status === "stale" ? "state changed" : approvalReview.approval.application_status || "pending"}
                 </span>

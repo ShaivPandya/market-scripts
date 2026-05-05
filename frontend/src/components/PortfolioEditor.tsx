@@ -58,6 +58,10 @@ function makeId() {
   return Math.random().toString(36).slice(2, 10)
 }
 
+function proposalSubjectLabel(entityType?: string | null): string {
+  return String(entityType || "proposal").replace(/_/g, " ")
+}
+
 function inferInstrumentType(ticker: string, instrumentType?: PortfolioPosition["instrument_type"] | null): InstrumentType {
   if (ticker.trim().toUpperCase().endsWith("=F")) return "future"
   return instrumentType ?? "security"
@@ -402,7 +406,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                 <DecisionStateBadge state={lastProposal.decision_state ?? "pending_approval"} />
                 <EffectScopeBadge scope={lastProposal.effect_scope ?? "internal_state"} />
                 <span>
-                  Proposal #{lastProposal.approval_id} staged for {lastProposal.action_id.replace(/_/g, " ")}. Review it in Workspace before app state changes.
+                  Proposal #{lastProposal.approval_id} staged for {proposalSubjectLabel(lastProposal.entity_type)}. Review it in Workspace before app state changes.
                 </span>
               </div>
             </div>

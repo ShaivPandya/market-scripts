@@ -202,8 +202,6 @@ class MandateV1(OntologySchemaBase):
     permitted_asset_classes: list[str] = Field(default_factory=list)
     permitted_actions: list[str] = Field(default_factory=list)
     liquidity_needs: str | None = None
-    time_horizon_days_min: int | None = None
-    time_horizon_days_max: int | None = None
     ontology_run_id: NonBlankStr = "operational"
 
     @field_validator("mandate_id", mode="before")

@@ -147,6 +147,17 @@ def _legacy_policy_reason() -> dict:
     }
 
 
+def _legacy_mandate_reason() -> dict:
+    retired_field = "_".join(("time", "horizon", "days", "min"))
+    return {
+        "code": "missing_constraint",
+        "check": ".".join(("mandate", retired_field)),
+        "message": f"Missing investor/account constraint: mandate.{retired_field}.",
+        "status": "warn",
+        "severity": "warn",
+    }
+
+
 def test_normalize_recommendation_filters_obsolete_policy_warning():
     rec = normalize_recommendation(
         {
@@ -196,6 +207,42 @@ def test_normalize_approval_filters_obsolete_policy_warning():
     assert approval is not None
     assert approval["policy_state"] == "pass"
     assert approval["policy_gate"]["warnings"] == []
+
+
+def test_normalize_approval_filters_retired_mandate_policy_warning():
+    retired_field = "_".join(("time", "horizon", "days", "min"))
+    approval = normalize_approval(
+        {
+            "id": 21,
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "portfolio_positions",
+            "reason": "Review",
+            "proposed_change": {
+                "policy_gate_result": {
+                    "decision": "warn",
+                    "review_required": False,
+                    "warnings": [_legacy_mandate_reason()],
+                    "failure_reasons": [],
+                    "check_results": [_legacy_mandate_reason()],
+                    "constraints_snapshot": {
+                        "mandate": {
+                            "mandate_id": "default-mandate",
+                            retired_field: None,
+                        }
+                    },
+                }
+            },
+        }
+    )
+
+    assert approval is not None
+    assert approval["policy_state"] == "pass"
+    assert approval["policy_gate"]["warnings"] == []
+    assert approval["policy_gate"]["check_results"] == []
+    assert retired_field not in str(approval["policy_gate"])
+    assert approval["proposed_change"]["policy_gate_result"]["warnings"] == []
+    assert retired_field not in str(approval["proposed_change"]["policy_gate_result"])
 
 
 def test_normalize_action_item_preserves_open_state():

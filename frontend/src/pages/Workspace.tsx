@@ -228,6 +228,10 @@ function applicationLabel(a: ApprovalRecord): string {
   return app
 }
 
+function approvalSubjectLabel(approval: ApprovalRecord): string {
+  return String(approval.entity_type || "proposal").replace(/_/g, " ")
+}
+
 function reasonText(reason: PolicyGateReason): string {
   return reason.message || reason.code || reason.check || "Policy gate issue"
 }
@@ -629,7 +633,7 @@ export function Workspace() {
                               {a.ticker}
                             </Link>
                           )}
-                          <span className="min-w-0 break-words text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+                          <span className="min-w-0 break-words text-xs text-subtle">{approvalSubjectLabel(a)}</span>
                           {a.application_status && (
                             <span className="max-w-full truncate rounded border border-app px-1.5 py-0.5 text-[11px] text-subtle">
                               {applicationLabel(a)}
@@ -642,16 +646,9 @@ export function Workspace() {
                           <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
                           <QualityStateBadge state={a.quality_state ?? "missing"} />
                         </div>
-                        {a.action_id && <p className="mt-0.5 break-words text-[11px] text-subtle">{a.action_id}</p>}
                         {a.reason && (
                           <p onClick={() => toggleExpanded(key)} className={cn("mt-0.5 cursor-pointer break-words text-xs text-muted", !expanded && "line-clamp-1")}>
                             {a.reason}
-                          </p>
-                        )}
-                        {(a.source_type || a.source_id) && (
-                          <p className="text-[11px] text-subtle mt-1">
-                            {[a.source_type, a.source_id].filter(Boolean).join(" · ")}
-                            {a.application_attempts ? ` · attempts ${a.application_attempts}` : ""}
                           </p>
                         )}
                         {a.application_error && (
@@ -881,7 +878,7 @@ export function Workspace() {
             <div className="rounded-lg border border-app bg-[hsl(var(--muted-2))] p-3 text-xs text-muted">
               <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
                 <span>Approval #{approvalReview.approval.id}</span>
-                <span>{approvalReview.approval.action_id || approvalReview.approval.entity_type}</span>
+                <span>{approvalSubjectLabel(approvalReview.approval)}</span>
                 {approvalReview.approval.ticker && <span>{approvalReview.approval.ticker}</span>}
                 <span>Application: {applicationLabel(approvalReview.approval)}</span>
               </div>

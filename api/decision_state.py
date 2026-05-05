@@ -16,6 +16,17 @@ _OBSOLETE_POLICY_REASON_FRAGMENTS = (
     ".".join(("tax", "_".join(("tax", "lots")))),
     " ".join(("tax", "lots")),
     "-".join(("tax", "lot")),
+    "_".join(("time", "horizon")),
+    " ".join(("time", "horizon")),
+    "_".join(("horizon", "mismatch")),
+    ".".join(("horizon", "minimum")),
+    ".".join(("horizon", "maximum")),
+    "recommendation horizon is shorter than mandate minimum",
+    "recommendation horizon is longer than mandate maximum",
+)
+_RETIRED_MANDATE_FIELDS = (
+    "_".join(("time", "horizon", "days", "min")),
+    "_".join(("time", "horizon", "days", "max")),
 )
 
 
@@ -152,14 +163,22 @@ def _filter_policy_gate(gate: dict[str, Any] | None) -> dict[str, Any] | None:
     if not gate:
         return None
     filtered = deepcopy(gate)
-    changed = False
+    reasons_changed = False
     for key in ("failure_reasons", "warnings", "check_results"):
         original = filtered.get(key)
         if isinstance(original, list):
             next_rows = _filter_obsolete_policy_reasons(original)
-            changed = changed or len(next_rows) != len(original)
+            row_changed = len(next_rows) != len(original)
+            reasons_changed = reasons_changed or row_changed
             filtered[key] = next_rows
-    if changed:
+    snapshot = filtered.get("constraints_snapshot")
+    if isinstance(snapshot, dict):
+        mandate = snapshot.get("mandate")
+        if isinstance(mandate, dict):
+            for field in _RETIRED_MANDATE_FIELDS:
+                if field in mandate:
+                    mandate.pop(field, None)
+    if reasons_changed:
         filtered["decision"] = _decision_from_gate_reasons(filtered, changed=True)
         filtered["review_required"] = filtered["decision"] == "review_required"
         uncertainty = filtered.get("uncertainty")
@@ -175,6 +194,25 @@ def _filter_policy_gate(gate: dict[str, Any] | None) -> dict[str, Any] | None:
             next_uncertainty["notes"] = ["Missing constraints are warnings in v1, not hard blocks."] if missing else []
             filtered["uncertainty"] = next_uncertainty
     return filtered
+
+
+def _replace_nested_policy_gate(record: dict[str, Any], gate: dict[str, Any] | None) -> dict[str, Any]:
+    if gate is None:
+        return record
+    out = deepcopy(record)
+    if isinstance(out.get("policy_gate_result"), dict):
+        out["policy_gate_result"] = gate
+    nested_record = _as_dict(out.get("record"))
+    if nested_record is not None and isinstance(nested_record.get("policy_gate_result"), dict):
+        nested_record["policy_gate_result"] = gate
+        nested_record["policy_gate_status"] = gate.get("decision")
+        nested_record["policy_gate_decision"] = gate.get("decision")
+        nested_record["policy_gate_review_required"] = bool(gate.get("review_required"))
+        nested_record["policy_gate_failures"] = gate.get("failure_reasons", [])
+        nested_record["policy_gate_warnings"] = gate.get("warnings", [])
+        nested_record["policy_gate_disclosures"] = gate.get("disclosures", [])
+        out["record"] = nested_record
+    return out
 
 
 def _filter_top_level_policy_fields(record: dict[str, Any]) -> None:
@@ -252,13 +290,14 @@ def normalize_approval(record: dict[str, Any] | None) -> dict[str, Any] | None:
     status = str(out.get("status") or "pending").strip().lower()
     application_status = str(out.get("application_status") or "pending").strip().lower()
     gate = _filter_policy_gate(_nested_policy_gate(out))
+    proposed_change = _replace_nested_policy_gate(_as_dict(out.get("proposed_change")) or {}, gate)
+    out["proposed_change"] = proposed_change
     out["decision_state"] = _approval_decision_state(status, application_status)
     out["decision_kind"] = "proposal"
     out["effect_scope"] = "internal_state"
     out["execution_capability"] = "none"
     out["policy_gate"] = gate
     out["policy_state"] = _policy_state_from_fields(out, gate)
-    proposed_change = _as_dict(out.get("proposed_change")) or {}
     proposed_record = _as_dict(proposed_change.get("record")) or {}
     out["quality_state"] = _quality_state(
         out.get("critical_data_quality")
