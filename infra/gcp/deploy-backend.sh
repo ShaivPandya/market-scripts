@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the image at the current short git SHA and complete a backend
-# production rollout: run DB migrations and roll the API service + Cloud Run
-# jobs. Optional full sync mode also reconciles IAM, Scheduler, and monitoring.
+# production rollout: run DB migrations and roll the API service, Cloud Run
+# jobs, and worker pools. Optional full sync mode also reconciles IAM, Scheduler, and monitoring.
 #
 # Usage:
 #   ./infra/gcp/deploy-backend.sh                 # build + deploy at git short SHA
@@ -13,7 +13,7 @@
 #
 # Tunables:
 #   RUN_DB_MIGRATIONS=0   skip Alembic upgrade head
-#   PARALLEL_JOB_DEPLOYS=0 deploy Cloud Run jobs sequentially
+#   PARALLEL_JOB_DEPLOYS=0 deploy Cloud Run jobs / worker pools sequentially
 #   SYNC_IAM=1            run iam.sh (default: only when FULL_SYNC=1)
 #   SYNC_SCHEDULER=1      run setup-scheduler.sh (default: only when FULL_SYNC=1)
 #   SYNC_MONITORING=1     run setup-governance-monitoring.sh (default: only when FULL_SYNC=1)
@@ -149,13 +149,15 @@ log "Deploying migration job"
 "${_repo_root}/infra/gcp/deploy-migration-job.sh"
 
 if [[ "${PARALLEL_JOB_DEPLOYS}" == "1" ]]; then
-  log "Deploying non-migration Cloud Run jobs in parallel"
+  log "Deploying non-migration Cloud Run jobs and worker pools in parallel"
   start_parallel_step "top50 refresh job deploy" \
     "${_repo_root}/infra/gcp/deploy-top50-refresh-job.sh"
   start_parallel_step "async job runner deploy" \
     "${_repo_root}/infra/gcp/deploy-async-job.sh"
   start_parallel_step "agent worker pool deploy" \
     "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
+  start_parallel_step "sizer worker pool deploy" \
+    "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"
 else
   log "Deploying top50 refresh job"
   "${_repo_root}/infra/gcp/deploy-top50-refresh-job.sh"
@@ -165,6 +167,9 @@ else
 
   log "Deploying agent worker pool"
   "${_repo_root}/infra/gcp/deploy-agent-worker.sh"
+
+  log "Deploying sizer worker pool"
+  "${_repo_root}/infra/gcp/deploy-sizer-worker.sh"
 fi
 
 if [[ "${SYNC_IAM}" == "1" ]]; then

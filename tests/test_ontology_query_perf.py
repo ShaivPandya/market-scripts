@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from time import perf_counter
 
 import pytest
@@ -88,9 +87,6 @@ def _seed_perf_snapshot(repo: OntologyRepository, *, run_id: str, size: int) -> 
     )
 
 
-@pytest.mark.skipif(
-    os.getenv("RUN_ONTOLOGY_PERF") != "1", reason="set RUN_ONTOLOGY_PERF=1 to run local ontology perf benchmark"
-)
 @pytest.mark.parametrize("size", [1000, 5000, 20000])
 def test_ontology_query_perf_benchmark(tmp_path, size: int):
     db_path = tmp_path / f"ontology-perf-{size}.sqlite3"

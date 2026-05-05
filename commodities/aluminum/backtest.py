@@ -248,9 +248,20 @@ def compute_factor_diagnostics(features: pd.DataFrame) -> pd.DataFrame:
         subset[TARGET_COLUMN] = pd.to_numeric(subset[TARGET_COLUMN], errors="coerce")
         subset = subset.dropna()
         obs = len(subset)
+        has_correlation_sample = (
+            obs >= 3 and subset[feature].nunique(dropna=True) >= 2 and subset[TARGET_COLUMN].nunique(dropna=True) >= 2
+        )
 
-        pearson = float(subset[feature].corr(subset[TARGET_COLUMN], method="pearson")) if obs >= 3 else float("nan")
-        spearman = float(subset[feature].corr(subset[TARGET_COLUMN], method="spearman")) if obs >= 3 else float("nan")
+        pearson = (
+            float(subset[feature].corr(subset[TARGET_COLUMN], method="pearson"))
+            if has_correlation_sample
+            else float("nan")
+        )
+        spearman = (
+            float(subset[feature].corr(subset[TARGET_COLUMN], method="spearman"))
+            if has_correlation_sample
+            else float("nan")
+        )
 
         low_mean = high_mean = spread = float("nan")
         if obs >= 6 and subset[feature].nunique() >= 3:
@@ -302,9 +313,14 @@ def _max_single_year_pnl_share(trades: pd.DataFrame) -> float:
 
 
 def _prediction_ic(trades: pd.DataFrame) -> float:
-    if len(trades) < 3:
+    aligned = trades[["forecast_return", "actual_forward_return"]].apply(pd.to_numeric, errors="coerce").dropna()
+    if (
+        len(aligned) < 3
+        or aligned["forecast_return"].nunique(dropna=True) < 2
+        or aligned["actual_forward_return"].nunique(dropna=True) < 2
+    ):
         return float("nan")
-    return float(trades["forecast_return"].corr(trades["actual_forward_return"], method="spearman"))
+    return float(aligned["forecast_return"].corr(aligned["actual_forward_return"], method="spearman"))
 
 
 def evaluate_validation_bar(

@@ -18,6 +18,10 @@ os.environ.setdefault("LLM_PROVIDER", "anthropic")
 os.environ["ENVIRONMENT"] = "development"
 os.environ["STATE_STORAGE_BACKEND"] = "local"
 
+collect_ignore = []
+if os.environ.get("RUN_ONTOLOGY_PERF") != "1":
+    collect_ignore.append("test_ontology_query_perf.py")
+
 
 @pytest.fixture
 def client():
