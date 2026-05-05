@@ -772,13 +772,14 @@ function OverviewTab({ content, parsed, ticker }: { content: string | null; pars
 function ManagementRatingBadge({ value }: { value?: string | null }) {
   const rating = (value || "Insufficient evidence").trim()
   const normalized = rating.toLowerCase()
-  const className = normalized.includes("strong")
-    ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
-    : normalized.includes("weak") || normalized.includes("poor")
-      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
-      : normalized.includes("mixed") || normalized.includes("too early")
-        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-        : "border-app bg-[hsl(var(--muted-2))] text-muted"
+  const className =
+    normalized.includes("strong") || normalized.includes("handled well")
+      ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
+      : normalized.includes("weak") || normalized.includes("poor") || normalized.includes("handled poorly")
+        ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+        : normalized.includes("mixed") || normalized.includes("too early")
+          ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+          : "border-app bg-[hsl(var(--muted-2))] text-muted"
 
   return (
     <span className={cn("inline-flex shrink-0 items-center rounded border px-2 py-0.5 text-xs font-semibold", className)}>
@@ -787,17 +788,34 @@ function ManagementRatingBadge({ value }: { value?: string | null }) {
   )
 }
 
+function cleanedManagementBullets(items?: ManagementQualityBullet[] | null): ManagementQualityBullet[] {
+  return (items || [])
+    .map(item => ({
+      ...item,
+      text: item.text.replace(/\s*\*\*Response\*\*:\s*(Handled well|Mixed|Handled poorly|Too early)(?:\s*[\u2014\u2013-]\s*.+)?$/i, "").trim(),
+    }))
+    .filter(item => {
+      const title = (item.title || "").trim()
+      const text = item.text.trim()
+      if (title || !["", "-", "--", "\u2014", "\u2013"].includes(text)) return true
+      return Boolean(item.response_rating || item.response_text)
+    })
+}
+
 function ManagementBulletList({ items }: { items: ManagementQualityBullet[] }) {
+  const visibleItems = cleanedManagementBullets(items)
+  if (!visibleItems.length) return null
+
   return (
     <div className="space-y-2">
-      {items.map((item, index) => (
+      {visibleItems.map((item, index) => (
         <div key={`${item.title || "item"}-${index}`} className="rounded-lg border border-app px-3 py-2 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             {item.title && <h4 className="font-semibold text-app">{item.title}</h4>}
             {item.response_rating && <ManagementRatingBadge value={item.response_rating} />}
           </div>
-          <p className="mt-1 text-muted">{item.text}</p>
-          {item.response_text && <p className="mt-1 text-xs text-subtle">Response: {item.response_text}</p>}
+          {item.text && <p className="mt-1 text-muted">{item.text}</p>}
+          {item.response_text && <p className="mt-1 text-muted">Response: {item.response_text}</p>}
         </div>
       ))}
     </div>
@@ -843,6 +861,8 @@ function ManagementQualityTab({
     },
     { label: "Follow-through", rating: summary?.follow_through?.rating, text: summary?.follow_through?.text },
   ]
+  const accomplishments = cleanedManagementBullets(parsed?.accomplishments)
+  const setbacks = cleanedManagementBullets(parsed?.setbacks)
 
   if (!content) {
     return (
@@ -940,17 +960,17 @@ function ManagementQualityTab({
         </section>
       )}
 
-      {parsed?.accomplishments && (
+      {accomplishments.length > 0 && (
         <section className="mb-5">
           <h3 className="mb-2 text-sm font-semibold text-app">Most Impressive Accomplishments</h3>
-          <ManagementBulletList items={parsed.accomplishments} />
+          <ManagementBulletList items={accomplishments} />
         </section>
       )}
 
-      {parsed?.setbacks && (
+      {setbacks.length > 0 && (
         <section className="mb-5">
           <h3 className="mb-2 text-sm font-semibold text-app">Biggest Setbacks And Responses</h3>
-          <ManagementBulletList items={parsed.setbacks} />
+          <ManagementBulletList items={setbacks} />
         </section>
       )}
 

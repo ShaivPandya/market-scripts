@@ -25,6 +25,31 @@ def temp_core_db(tmp_path, monkeypatch):
     monkeypatch.setattr(core_db, "_conn", None)
 
 
+def _use_document_generation_warm_worker(monkeypatch):
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_DOCUMENT_GENERATION", "warm_worker")
+
+
+def _finish_document_generation_job(auth_client, job_id: str) -> dict:
+    from api.async_job_runner import perform_job
+
+    perform_job(job_id)
+    polled = auth_client.get(f"/api/v1/document-generation/async/{job_id}")
+    assert polled.status_code == 200
+    payload = polled.json()
+    assert payload["status"] == "done"
+    return payload["result"]
+
+
+def _document_generation_upload_path(job_id: str):
+    from api.document_generation_jobs import _local_path_for_storage_key
+    from api.job_queue import get_job
+
+    row = get_job(job_id)
+    assert row is not None
+    payload = row["payload_json"]
+    return _local_path_for_storage_key(payload["storage_key"])
+
+
 def test_thesis_status(auth_client, monkeypatch, tmp_path):
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
@@ -113,6 +138,7 @@ def test_get_thesis_not_found(auth_client, monkeypatch, tmp_path):
 
 
 def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
+    _use_document_generation_warm_worker(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     import llm_utils
 
@@ -120,9 +146,11 @@ def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
     monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
+    llm_calls = []
 
     class FakeMessages:
         def create(self, **kwargs):
+            llm_calls.append(kwargs)
             assert kwargs["model"] == model_for_tier(MODEL_MID, "anthropic")
             return {
                 "content": [
@@ -150,17 +178,25 @@ def test_generate_thesis_from_pdf(auth_client, monkeypatch, tmp_path):
         data={"ticker": "mu"},
         files={"file": ("deck.pdf", b"%PDF-1.4\nfake content\n", "application/pdf")},
     )
-    assert resp.status_code == 200
-    payload = resp.json()
+    assert resp.status_code == 202
+    assert resp.headers["location"].startswith("/api/v1/document-generation/async/")
+    queued = resp.json()
+    assert queued["status"] == "queued"
+    assert queued["timeout_s"] == 1200
+    assert llm_calls == []
+
+    payload = _finish_document_generation_job(auth_client, queued["job_id"])
     assert payload["status"] == "pending_approval_created"
     assert payload["ticker"] == "MU"
     assert "## Thesis" in payload["proposed_change"]["content"]
+    assert len(llm_calls) == 1
     approved = auth_client.post(f"/api/v1/approvals/{payload['approval_id']}/approve", json={"note": "Apply thesis"})
     assert approved.status_code == 200
     assert (thesis_dir / "MU.md").exists()
 
 
 def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path):
+    _use_document_generation_warm_worker(monkeypatch)
     thesis_dir = tmp_path / "investment_theses"
     thesis_dir.mkdir()
     monkeypatch.setattr(thesis_router, "THESES_DIR", thesis_dir)
@@ -181,8 +217,8 @@ def test_generate_thesis_from_markdown(auth_client, monkeypatch, tmp_path):
             )
         },
     )
-    assert resp.status_code == 200
-    payload = resp.json()
+    assert resp.status_code == 202
+    payload = _finish_document_generation_job(auth_client, resp.json()["job_id"])
     assert payload["status"] == "pending_approval_created"
     assert payload["ticker"] == "MU"
     assert payload["proposed_change"]["content"].startswith("# MU")
@@ -228,6 +264,7 @@ def test_save_thesis_syncs_catalysts_kill_conditions_and_claims(auth_client, mon
 
 
 def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
+    _use_document_generation_warm_worker(monkeypatch)
     overview_dir = tmp_path / "investment_overviews"
     overview_dir.mkdir()
     monkeypatch.setattr(overview_router, "OVERVIEWS_DIR", overview_dir)
@@ -235,7 +272,10 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
     def fail_pdf_call(*args, **kwargs):
         raise AssertionError("PDF generation should not run for markdown uploads")
 
+    markdown_calls = []
+
     def fake_markdown_call(*, ticker: str, markdown: str):
+        markdown_calls.append(markdown)
         assert ticker == "MU"
         assert "Revenue growth: improving" in markdown
         return (
@@ -272,16 +312,51 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
             )
         },
     )
-    assert resp.status_code == 200
-    payload = resp.json()
+    assert resp.status_code == 202
+    assert markdown_calls == []
+    job_id = resp.json()["job_id"]
+    upload_path = _document_generation_upload_path(job_id)
+    assert upload_path.exists()
+    payload = _finish_document_generation_job(auth_client, job_id)
     assert payload["status"] == "ok"
     assert payload["ticker"] == "MU"
     assert payload["content"].startswith("# MU Overview")
     assert "### Porter's Five Forces" in payload["content"]
     assert (overview_dir / "MU.md").read_text(encoding="utf-8") == payload["content"]
+    assert len(markdown_calls) == 1
+    assert not upload_path.exists()
+
+
+def test_parse_management_quality_filters_placeholders_and_splits_responses():
+    parsed = management_quality_router.parse_management_quality_markdown(
+        "# NVDA Management Quality\n\n"
+        "## Most Impressive Accomplishments\n"
+        "- **AI demand ramp (2024)**: Delivered accelerated revenue growth.\n"
+        "- --\n\n"
+        "## Biggest Setbacks and Responses\n"
+        "- **Gaming correction (2023)**: Demand fell below guidance. **Response**: Handled well - Reset guidance and reduced channel inventory.\n"
+        "- --\n"
+    )
+
+    assert parsed is not None
+    assert parsed["accomplishments"] == [
+        {
+            "title": "AI demand ramp (2024)",
+            "text": "Delivered accelerated revenue growth.",
+        }
+    ]
+    assert parsed["setbacks"] == [
+        {
+            "title": "Gaming correction (2023)",
+            "text": "Demand fell below guidance.",
+            "response_rating": "Handled well",
+            "response_text": "Reset guidance and reduced channel inventory.",
+        }
+    ]
 
 
 def test_generate_management_quality_from_markdown_stages_and_indexes(auth_client, monkeypatch, tmp_path, temp_core_db):
+    _use_document_generation_warm_worker(monkeypatch)
     mgmt_dir = tmp_path / "investment_management_quality"
     mgmt_dir.mkdir()
 
@@ -301,7 +376,10 @@ def test_generate_management_quality_from_markdown_stages_and_indexes(auth_clien
     def fail_pdf_call(*args, **kwargs):
         raise AssertionError("PDF generation should not run for markdown uploads")
 
+    markdown_calls = []
+
     def fake_markdown_call(*, ticker: str, markdown: str):
+        markdown_calls.append(markdown)
         assert ticker == "MU"
         assert "Owner mindset evidence" in markdown
         return (
@@ -343,12 +421,14 @@ def test_generate_management_quality_from_markdown_stages_and_indexes(auth_clien
             )
         },
     )
-    assert resp.status_code == 200
-    payload = resp.json()
+    assert resp.status_code == 202
+    assert markdown_calls == []
+    payload = _finish_document_generation_job(auth_client, resp.json()["job_id"])
     assert payload["status"] == "pending_approval_created"
     assert payload["ticker"] == "MU"
     assert payload["proposed_change"]["content"].startswith("# MU Management Quality")
     assert not (mgmt_dir / "MU.md").exists()
+    assert len(markdown_calls) == 1
 
     approved = auth_client.post(
         f"/api/v1/approvals/{payload['approval_id']}/approve", json={"note": "Apply assessment"}
@@ -414,6 +494,99 @@ def test_thesis_overview_and_management_uploads_reject_endpoint_oversized_files(
     assert thesis.status_code == 413
     assert overview.status_code == 413
     assert management_quality.status_code == 413
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/v1/thesis/generate", "/api/v1/overview/generate", "/api/v1/management-quality/generate"],
+)
+@pytest.mark.parametrize(
+    ("data", "file_tuple", "expected_status"),
+    [
+        ({"ticker": "bad-!"}, ("upload.md", b"# Notes", "text/markdown"), 422),
+        ({"ticker": "mu"}, ("upload.md", b"", "text/markdown"), 422),
+        ({"ticker": "mu"}, ("upload.pdf", b"not a pdf", "application/pdf"), 422),
+        ({"ticker": "mu"}, ("upload.txt", b"notes", "text/plain"), 422),
+    ],
+)
+def test_document_uploads_reject_invalid_inputs_synchronously(auth_client, path, data, file_tuple, expected_status):
+    resp = auth_client.post(path, data=data, files={"file": file_tuple})
+
+    assert resp.status_code == expected_status
+    assert "job_id" not in resp.text
+
+
+def test_failed_management_quality_generation_marks_job_error_and_cleans_upload(
+    auth_client,
+    monkeypatch,
+    tmp_path,
+    temp_core_db,
+):
+    _use_document_generation_warm_worker(monkeypatch)
+    mgmt_dir = tmp_path / "investment_management_quality"
+    mgmt_dir.mkdir()
+
+    import portfolio.management_quality_content as management_quality_content
+
+    monkeypatch.setattr(management_quality_content, "MANAGEMENT_QUALITY_DIR", mgmt_dir)
+    monkeypatch.setattr(
+        management_quality_router,
+        "_call_llm_management_quality_markdown",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("model unavailable")),
+    )
+
+    started = auth_client.post(
+        "/api/v1/management-quality/generate",
+        data={"ticker": "mu"},
+        files={"file": ("management.md", b"# Notes\n\nOwner mindset evidence\n", "text/markdown")},
+    )
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    upload_path = _document_generation_upload_path(job_id)
+    assert upload_path.exists()
+
+    from api.async_job_runner import perform_job
+
+    with pytest.raises(RuntimeError, match="Failed to generate management quality: model unavailable"):
+        perform_job(job_id)
+
+    polled = auth_client.get(f"/api/v1/document-generation/async/{job_id}")
+    assert polled.status_code == 200
+    payload = polled.json()
+    assert payload["status"] == "error"
+    assert "Failed to generate management quality: model unavailable" in payload["error"]
+    assert not upload_path.exists()
+    assert temp_core_db.get_pending_approvals(ticker="MU") == []
+    assert not (mgmt_dir / "MU.md").exists()
+
+
+def test_failed_overview_generation_does_not_write_content(auth_client, monkeypatch, tmp_path):
+    _use_document_generation_warm_worker(monkeypatch)
+    overview_dir = tmp_path / "investment_overviews"
+    overview_dir.mkdir()
+    monkeypatch.setattr(overview_router, "OVERVIEWS_DIR", overview_dir)
+    monkeypatch.setattr(
+        overview_router,
+        "_call_llm_overview_markdown",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("model unavailable")),
+    )
+
+    started = auth_client.post(
+        "/api/v1/overview/generate",
+        data={"ticker": "mu"},
+        files={"file": ("overview.md", b"# Notes\n\nRevenue growth\n", "text/markdown")},
+    )
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    upload_path = _document_generation_upload_path(job_id)
+
+    from api.async_job_runner import perform_job
+
+    with pytest.raises(RuntimeError, match="Failed to generate overview: model unavailable"):
+        perform_job(job_id)
+
+    assert not upload_path.exists()
+    assert not (overview_dir / "MU.md").exists()
 
 
 def test_direct_markdown_save_models_have_pydantic_size_limits():

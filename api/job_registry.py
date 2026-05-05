@@ -203,6 +203,18 @@ JOB_SPECS: dict[str, JobSpec] = {
         supports_progress=True,
         initial_progress={"phase": "queued", "done": 0, "total": 0},
     ),
+    "document_generation": JobSpec(
+        job_type="document_generation",
+        request_model="api.document_generation_jobs.DocumentGenerationJobRequest",
+        compute_func="api.document_generation_jobs.run_document_generation_job",
+        cache_key_func=None,
+        queue_name=_env_queue("ASYNC_QUEUE_DOCUMENT_GENERATION", "default"),
+        timeout_s=_env_int("ASYNC_TIMEOUT_DOCUMENT_GENERATION_SECONDS", 20 * 60),
+        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        failed_ttl_s=DEFAULT_FAILED_TTL_S,
+        stale_grace_s=_env_int("ASYNC_STALE_GRACE_DOCUMENT_GENERATION_SECONDS", 60),
+        error_message="Document generation failed",
+    ),
     "cache_warm": JobSpec(
         job_type="cache_warm",
         request_model=None,

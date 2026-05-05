@@ -51,6 +51,7 @@ logger = logging.getLogger("api")
 # Core routers (must succeed)
 from api.routers import (
     agent,
+    document_generation,
     management_quality,
     memory,
     overview,
@@ -355,6 +356,7 @@ app.include_router(portfolio_edit.router, prefix=_V1, dependencies=_auth_dep, ta
 app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(overview.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(management_quality.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(document_generation.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(memory.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(settings.router, prefix=_V1, dependencies=_auth_dep, tags=["settings"])
