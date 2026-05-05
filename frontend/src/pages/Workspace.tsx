@@ -575,7 +575,7 @@ export function Workspace() {
               Pending Approvals
               <span className="ml-auto text-xs text-subtle">{approvalSummaryInitialLoading ? "loading" : `${approvalCount} total`}</span>
             </h2>
-            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+            <div className="max-h-[400px] space-y-3 overflow-y-auto pr-1">
               {approvalSummaryInitialLoading && (
                 <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
                   Loading approvals...
@@ -593,20 +593,20 @@ export function Workspace() {
                 return (
                   <div
                     key={a.id}
-                    className="rounded-lg px-3 py-2 text-sm border border-app"
+                    className="overflow-hidden rounded-lg border border-app px-3 py-3 text-sm"
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_auto] 2xl:items-start">
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <DecisionStateBadge state={approvalDecisionState(a)} />
                           {a.ticker && (
                             <Link to={`/dossier/${a.ticker}`} state={{ from: "workspace" }} className="font-semibold text-app hover:underline">
                               {a.ticker}
                             </Link>
                           )}
-                          <span className="text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
+                          <span className="min-w-0 break-words text-xs text-subtle">{a.entity_type.replace(/_/g, " ")}</span>
                           {a.application_status && (
-                            <span className="rounded border border-app px-1.5 py-0.5 text-[11px] text-subtle">
+                            <span className="max-w-full truncate rounded border border-app px-1.5 py-0.5 text-[11px] text-subtle">
                               {applicationLabel(a)}
                             </span>
                           )}
@@ -616,9 +616,9 @@ export function Workspace() {
                           <PolicyStateBadge state={a.policy_state ?? gate?.decision ?? "missing"} />
                           <QualityStateBadge state={a.quality_state ?? "missing"} />
                         </div>
-                        {a.action_id && <p className="text-[11px] text-subtle mt-0.5">{a.action_id}</p>}
+                        {a.action_id && <p className="mt-0.5 break-words text-[11px] text-subtle">{a.action_id}</p>}
                         {a.reason && (
-                          <p onClick={() => toggleExpanded(key)} className={cn("text-xs text-muted mt-0.5 cursor-pointer", !expanded && "line-clamp-1")}>
+                          <p onClick={() => toggleExpanded(key)} className={cn("mt-0.5 cursor-pointer break-words text-xs text-muted", !expanded && "line-clamp-1")}>
                             {a.reason}
                           </p>
                         )}
@@ -629,7 +629,7 @@ export function Workspace() {
                           </p>
                         )}
                         {a.application_error && (
-                          <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+                          <p className="mt-1 break-words text-[11px] text-red-600 dark:text-red-400">
                             Application failed: {a.application_error}
                           </p>
                         )}
@@ -637,11 +637,11 @@ export function Workspace() {
                           <PolicyGatePanel gate={gate} />
                         )}
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
                         <button
                           type="button"
                           onClick={() => setProvenanceSelector({ approval_id: a.id })}
-                          className="theme-icon-button h-8 w-8"
+                          className="theme-icon-button h-8 w-8 shrink-0"
                           aria-label={`View approval ${a.id} lineage`}
                           title="Lineage"
                         >
@@ -650,7 +650,7 @@ export function Workspace() {
                         <button
                           onClick={() => openApprovalReview(a, "approve")}
                           disabled={processingIds.has(a.id) || a.can_approve === false}
-                          className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 disabled:opacity-50"
+                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 disabled:opacity-50"
                           title={a.can_approve === false ? "This proposal is not in an approvable state." : "Review and apply internal state change"}
                         >
                           {a.can_retry_apply ? "Retry Apply" : "Approve & Apply"}
@@ -658,7 +658,7 @@ export function Workspace() {
                         <button
                           onClick={() => openApprovalReview(a, "reject")}
                           disabled={processingIds.has(a.id) || a.can_reject === false}
-                          className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
+                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded px-2.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-950 dark:hover:bg-red-900 disabled:opacity-50"
                           title={a.can_reject === false ? "This proposal is not rejectable from its current state." : "Reject proposal"}
                         >
                           Reject Proposal
