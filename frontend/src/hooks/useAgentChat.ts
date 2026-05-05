@@ -56,6 +56,7 @@ interface AgentJobEvent {
   event_type:
     | "status"
     | "delta"
+    | "phase"
     | "tool_call"
     | "tool_result"
     | "tool_progress"
@@ -459,6 +460,20 @@ function statusTextForPolledStatus(status: AgentJobResponse["status"], current?:
   return undefined
 }
 
+function statusTextForPhase(data: Record<string, unknown>): string | undefined {
+  const phase = typeof data.phase === "string" ? data.phase : ""
+  const label = typeof data.label === "string" && data.label.trim() ? data.label.trim() : null
+  if (phase === "tool_running" && Array.isArray(data.tool_names) && data.tool_names.includes("get_portfolio")) {
+    return "Reading portfolio..."
+  }
+  if (label) return label
+  if (phase === "model_thinking") return "Thinking..."
+  if (phase === "tool_running") return "Running tools..."
+  if (phase === "model_writing") return "Writing answer..."
+  if (phase === "finalizing") return "Finalizing..."
+  return undefined
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -515,6 +530,17 @@ export function useAgentChat() {
               ),
             }
             break
+          case "phase": {
+            const label = statusTextForPhase(data)
+            if (!label) break
+            next = {
+              ...next,
+              messages: next.messages.map(m =>
+                m.id === assistantId ? { ...m, statusText: label } : m,
+              ),
+            }
+            break
+          }
           case "tool_call":
             next = {
               ...next,
@@ -547,12 +573,6 @@ export function useAgentChat() {
             break
           case "budget_update":
           case "egress_recorded":
-            next = {
-              ...next,
-              messages: next.messages.map(m =>
-                m.id === assistantId ? { ...m, statusText: undefined } : m,
-              ),
-            }
             break
           case "tool_result":
             next = {

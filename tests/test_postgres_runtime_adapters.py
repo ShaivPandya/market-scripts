@@ -70,6 +70,7 @@ class _FakeConn:
     def __init__(self):
         self.queries: list[tuple[str, tuple[Any, ...]]] = []
         self.commits = 0
+        self.rollbacks = 0
         self.closed = False
 
     def __enter__(self):
@@ -89,7 +90,25 @@ class _FakeConn:
         self.commits += 1
 
     def rollback(self):
-        pass
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+
+
+class _FakePool:
+    def __init__(self, conn):
+        self.conn = conn
+        self.timeouts: list[float] = []
+        self.returned: list[_FakeConn] = []
+        self.closed = False
+
+    def getconn(self, *, timeout):
+        self.timeouts.append(timeout)
+        return self.conn
+
+    def putconn(self, conn):
+        self.returned.append(conn)
 
     def close(self):
         self.closed = True
@@ -111,6 +130,52 @@ def test_portfolio_uses_postgres_in_production(monkeypatch):
 
     assert any("DELETE FROM positions WHERE role = %s" in sql for sql, _params in fake.queries)
     assert any("INSERT INTO positions" in sql for sql, _params in fake.queries)
+
+
+def test_postgres_connect_uses_pool_when_enabled(monkeypatch):
+    from api import postgres
+
+    fake_conn = _FakeConn()
+    fake_pool = _FakePool(fake_conn)
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("POSTGRES_POOL_ENABLED", "true")
+    monkeypatch.setenv("POSTGRES_POOL_TIMEOUT_SECONDS", "2.5")
+    monkeypatch.setattr(postgres, "_POOLS", {})
+    monkeypatch.setattr(postgres, "_new_pool", lambda *args, **kwargs: fake_pool)
+
+    with postgres.connect() as conn:
+        assert conn is fake_conn
+
+    assert fake_pool.timeouts == [2.5]
+    assert fake_pool.returned == [fake_conn]
+    assert fake_conn.rollbacks == 1
+    assert fake_conn.closed is False
+
+
+def test_postgres_connect_can_bypass_pool(monkeypatch):
+    from api import postgres
+
+    fake_conn = _FakeConn()
+
+    monkeypatch.setenv("POSTGRES_POOL_ENABLED", "false")
+    monkeypatch.setattr(postgres, "open_connection", lambda *args, **kwargs: fake_conn)
+
+    with postgres.connect() as conn:
+        assert conn is fake_conn
+
+    assert fake_conn.closed is True
+
+
+def test_postgres_open_connection_remains_direct_when_pool_enabled(monkeypatch):
+    from api import postgres
+
+    fake_conn = _FakeConn()
+
+    monkeypatch.setenv("POSTGRES_POOL_ENABLED", "true")
+    monkeypatch.setattr(postgres, "_new_direct_connection", lambda *args, **kwargs: fake_conn)
+
+    assert postgres.open_connection() is fake_conn
 
 
 def test_retrieval_search_uses_pgvector_tables(monkeypatch):

@@ -35,6 +35,36 @@ def _event_text_delta(text: str):
     )
 
 
+def test_agent_delta_flush_uses_env_coalescing_and_force(monkeypatch):
+    events: list[tuple[str, str, dict]] = []
+    times = iter([0.10, 0.20, 0.30])
+
+    monkeypatch.setenv("AGENT_DELTA_FLUSH_INTERVAL_MS", "500")
+    monkeypatch.setenv("AGENT_DELTA_FLUSH_BYTES", "1024")
+    monkeypatch.setattr(agent_chat_worker.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        agent_chat_worker,
+        "append_job_event",
+        lambda job_id, event_type, payload: events.append((job_id, event_type, payload)),
+    )
+
+    state = {"last_delta_flush": 0.0}
+    buffer = ["small"]
+    agent_chat_worker._append_agent_delta("job-1", buffer, state=state)
+    assert events == []
+    assert buffer == ["small"]
+
+    buffer.append("x" * 1024)
+    agent_chat_worker._append_agent_delta("job-1", buffer, state=state)
+    assert events == [("job-1", "delta", {"text": "small" + ("x" * 1024)})]
+    assert buffer == []
+
+    buffer.append("tail")
+    agent_chat_worker._append_agent_delta("job-1", buffer, force=True, state=state)
+    assert events[-1] == ("job-1", "delta", {"text": "tail"})
+    assert buffer == []
+
+
 def _event_tool_use_start(name: str, call_id: str):
     return SimpleNamespace(
         type="content_block_start",
@@ -609,9 +639,126 @@ def test_agent_chat_v2_sends_initial_ping_and_disables_gzip(auth_client, monkeyp
     assert "no-transform" in resp.headers.get("cache-control", "")
     parsed = _parse_sse(resp.text)
     assert parsed[0][0] == "ping"
+    assert any(e == "phase" and p.get("phase") == "model_thinking" for e, p in parsed)
     assert any(e == "delta" and p.get("text") == "hi there" for e, p in parsed)
     done_events = [p for e, p in parsed if e == "done"]
     assert done_events[-1]["session_id"] == "session-1"
+    assert done_events[-1]["timings"]["total_ms"] >= 0
+    assert done_events[-1]["timings"]["models"][0]["phase"] == "model_thinking"
+    assert "agent instructions" not in json.dumps(done_events[-1]["timings"])
+
+
+def test_agent_chat_v2_fast_paths_simple_portfolio_summary(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-portfolio",
+        ),
+    )
+    finalized: list[dict] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+
+    streams = [
+        (
+            [_event_text_delta("Portfolio summary")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "Portfolio summary"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_anthropic(monkeypatch, streams)
+    seen_tools: list[tuple[str, dict]] = []
+
+    def fake_execute_tool(name: str, args: dict, **_kwargs):
+        seen_tools.append((name, args))
+        return json.dumps(
+            {
+                "summary": {"position_count": 1},
+                "_meta": {"duration_ms": 12.3, "cache": "hit", "status": "ok"},
+            }
+        )
+
+    monkeypatch.setattr(agent_router, "execute_tool", fake_execute_tool)
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "Summarize my portfolio's performance"},
+    )
+
+    assert resp.status_code == 200
+    assert seen_tools == [("get_portfolio", {})]
+    assert fake_client.messages.calls == 1
+    assert "tools" not in fake_client.messages.kwargs_history[0]
+    assert fake_client.messages.kwargs_history[0]["max_tokens"] == agent_router.PORTFOLIO_SUMMARY_MAX_TOKENS
+    parsed = _parse_sse(resp.text)
+    assert any(
+        e == "phase" and p.get("phase") == "tool_running" and p.get("label") == "Reading portfolio..."
+        for e, p in parsed
+    )
+    assert any(e == "phase" and p.get("phase") == "model_writing" for e, p in parsed)
+    assert any(
+        e == "tool_result" and p.get("name") == "get_portfolio" and p.get("elapsed_ms") == 12.3 for e, p in parsed
+    )
+    done_events = [p for e, p in parsed if e == "done"]
+    assert done_events[-1]["tools_used"] == ["get_portfolio"]
+    assert done_events[-1]["timings"]["tools"][0]["cache"] == "hit"
+    assert done_events[-1]["timings"]["models"][0]["purpose"] == "portfolio_summary_synthesis"
+    assert finalized[0]["content"] == "Portfolio summary"
+
+
+def test_agent_chat_v2_portfolio_risk_uses_normal_agent_loop(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-risk",
+        ),
+    )
+    monkeypatch.setattr("api.memory_manager.finalize_turn_async", lambda *_args, **_kwargs: None)
+
+    streams = [
+        (
+            [_event_tool_use_start("get_portfolio", "call-portfolio")],
+            SimpleNamespace(
+                content=[{"type": "tool_use", "name": "get_portfolio", "id": "call-portfolio", "input": {}}],
+                stop_reason="tool_use",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        (
+            [_event_text_delta("Risk-aware answer")],
+            SimpleNamespace(
+                content=[{"type": "text", "text": "Risk-aware answer"}],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_anthropic(monkeypatch, streams)
+    monkeypatch.setattr(agent_router, "execute_tool", lambda _name, _args, **_kwargs: json.dumps({"ok": True}))
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "Summarize my portfolio risk"},
+    )
+
+    assert resp.status_code == 200
+    assert fake_client.messages.calls == 2
+    assert fake_client.messages.kwargs_history[0].get("tools")
+    parsed = _parse_sse(resp.text)
+    assert any(e == "phase" and p.get("phase") == "model_thinking" for e, p in parsed)
+    assert any(e == "phase" and p.get("phase") == "tool_running" for e, p in parsed)
+    assert any(e == "phase" and p.get("phase") == "model_writing" for e, p in parsed)
 
 
 def test_agent_chat_v2_casual_prompt_skips_anthropic_tools_and_retrieval(auth_client, monkeypatch):
@@ -794,7 +941,12 @@ def test_agent_chat_async_returns_replayable_events_and_finalizes(auth_client, m
         raise AssertionError("agent async job did not complete")
 
     assert any(event["event_type"] == "delta" and "async answer" in event["payload"]["text"] for event in seen_events)
+    assert any(
+        event["event_type"] == "phase" and event["payload"].get("phase") == "model_thinking" for event in seen_events
+    )
     assert any(event["event_type"] == "done" for event in seen_events)
+    done_event = next(event for event in seen_events if event["event_type"] == "done")
+    assert done_event["payload"]["timings"]["models"][0]["phase"] == "model_thinking"
     assert finalized and finalized[0][1]["content"] == "async answer"
 
 

@@ -296,6 +296,48 @@ def _sse_headers() -> dict[str, str]:
     }
 
 
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)
+
+
+_PHASE_LABELS = {
+    "model_thinking": "Thinking...",
+    "tool_running": "Running tools...",
+    "model_writing": "Writing answer...",
+    "finalizing": "Finalizing...",
+}
+
+
+def _phase_payload(phase: str, turn_started: float, **extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "phase": phase,
+        "label": str(extra.pop("label", _PHASE_LABELS.get(phase, phase))),
+        "elapsed_ms": _elapsed_ms(turn_started),
+    }
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return payload
+
+
+def _phase_sse(phase: str, turn_started: float, **extra: Any) -> str:
+    return _sse("phase", _phase_payload(phase, turn_started, **extra))
+
+
+def _new_agent_timings() -> dict[str, Any]:
+    return {"models": [], "tools": [], "first_token_ms": None}
+
+
+def _done_payload(base: dict[str, Any], timings: dict[str, Any], turn_started: float) -> dict[str, Any]:
+    out = dict(base)
+    compact = {
+        "total_ms": _elapsed_ms(turn_started),
+        "first_token_ms": timings.get("first_token_ms"),
+        "models": timings.get("models") or [],
+        "tools": timings.get("tools") or [],
+    }
+    out["timings"] = compact
+    return out
+
+
 def _agent_chat_job_cache_key(req: AgentChatJobRequest) -> str:
     session_id = str(req.session_id or "new")
     if req.client_turn_id:
@@ -404,6 +446,7 @@ class _LazyProviderToolDefinitions:
 ANTHROPIC_TOOL_DEFINITIONS = _LazyProviderToolDefinitions(PROVIDER_ANTHROPIC)
 OPENAI_TOOL_DEFINITIONS = _LazyProviderToolDefinitions(PROVIDER_OPENAI)
 _HIGH_COST_TOOLS = {"get_sector_metrics", "query_ontology", "get_signal_aggregator"}
+PORTFOLIO_SUMMARY_MAX_TOKENS = 900
 _CASUAL_RX = re.compile(
     r"^\s*(hi|hello|hey|yo|thanks|thank you|cool|ok|okay|who are you|what can you do)[\s!.?]*$",
     flags=re.IGNORECASE,
@@ -417,6 +460,21 @@ _RETRIEVAL_INTENT_RX = re.compile(
     flags=re.IGNORECASE,
 )
 _HEDGE_CONTEXT_RX = re.compile(r"\b(hedge|hedges|hedging|beta|net exposure|gross exposure)\b", flags=re.IGNORECASE)
+_SIMPLE_PORTFOLIO_SUMMARY_RX = re.compile(
+    r"\b("
+    r"summar(?:y|ize|ise)|performance|doing|how\s+is|how\s+are|p&l|pnl|snapshot|update"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+_PORTFOLIO_SUMMARY_EXCLUSION_RX = re.compile(
+    r"\b("
+    r"risk|risks|macro|liquidity|hedge|hedges|hedging|beta|thesis|recommend|recommendation|"
+    r"edit|update|replace|change|analyzer|optimizer|sizer|size|sizing|workflow|approval|"
+    r"trigger|action item|news|latest|search|sector|exposure|dossier|valuation|dcf|chart|"
+    r"technical|compare|versus|vs\.?|why|should|buy|sell|trim|add|exit"
+    r")\b",
+    flags=re.IGNORECASE,
+)
 _DATA_SEEKING_RX = re.compile(
     r"\b("
     r"portfolio|holding|position|performance|p&l|pnl|risks?|market|macro|liquidity|breadth|vix|volatility|"
@@ -521,6 +579,30 @@ def _wants_hedge_context(user_text: str) -> bool:
 
 def _is_data_seeking(user_text: str) -> bool:
     return bool(_DATA_SEEKING_RX.search(user_text or ""))
+
+
+def _is_simple_portfolio_summary(user_text: str) -> bool:
+    text = (user_text or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if "portfolio" not in lowered and "holdings" not in lowered:
+        return False
+    if _PORTFOLIO_SUMMARY_EXCLUSION_RX.search(text):
+        return False
+    return bool(_SIMPLE_PORTFOLIO_SUMMARY_RX.search(text))
+
+
+def _build_portfolio_summary_prompt(user_text: str, portfolio_result: str) -> str:
+    return (
+        "The user asked for a simple portfolio performance summary.\n\n"
+        "Use only the portfolio tool JSON below. Do not infer facts that are not present. "
+        "Keep the answer concise and analytical. Mention the position count, long/short mix, "
+        "overall performance fields that are available, what is working, what is not working, "
+        "and one or two key observations. Do not recommend trades or portfolio changes.\n\n"
+        f"User request:\n{user_text.strip()}\n\n"
+        f"Portfolio tool JSON:\n{portfolio_result}"
+    )
 
 
 def _select_tool_names(user_text: str) -> list[str]:
@@ -1130,12 +1212,28 @@ def _openai_user_prompt(prompt: str) -> list[dict]:
 
 
 def _stream_llm_response(
-    client: Any, provider: str, stream_kwargs: dict[str, object], text_parts: list[str] | None = None
+    client: Any,
+    provider: str,
+    stream_kwargs: dict[str, object],
+    text_parts: list[str] | None = None,
+    *,
+    model_timing: dict[str, Any] | None = None,
+    turn_timings: dict[str, Any] | None = None,
+    turn_started: float | None = None,
 ):
+    model_started = time.perf_counter()
+
+    def record_first_token() -> None:
+        if model_timing is not None and model_timing.get("first_token_ms") is None:
+            model_timing["first_token_ms"] = _elapsed_ms(model_started)
+        if turn_timings is not None and turn_started is not None and turn_timings.get("first_token_ms") is None:
+            turn_timings["first_token_ms"] = _elapsed_ms(turn_started)
+
     if provider == PROVIDER_ANTHROPIC:
         with client.messages.stream(**stream_kwargs) as stream:
             for event in stream:
                 if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                    record_first_token()
                     if text_parts is not None:
                         text_parts.append(event.delta.text)
                     yield _sse("delta", {"text": event.delta.text})
@@ -1156,6 +1254,7 @@ def _stream_llm_response(
             if event_type == "response.output_text.delta":
                 delta = _obj_value(event, "delta", "")
                 if isinstance(delta, str) and delta:
+                    record_first_token()
                     if text_parts is not None:
                         text_parts.append(delta)
                     yield _sse("delta", {"text": delta})
@@ -1333,6 +1432,34 @@ def _finish_model_call_provenance(
         )
     except Exception:
         logger.debug("Failed to finish model call provenance event=%s", event_id, exc_info=True)
+
+
+def _record_model_timing(
+    timings: dict[str, Any],
+    model_timing: dict[str, Any],
+    *,
+    started: float,
+    status: str,
+    provider: str,
+    model: object,
+) -> None:
+    model_timing["duration_ms"] = _elapsed_ms(started)
+    model_timing["status"] = status
+    models = timings.setdefault("models", [])
+    if isinstance(models, list):
+        models.append(dict(model_timing))
+    logger.info(
+        "agent_v2_model_call phase=%s purpose=%s attempt=%s round=%s provider=%s model=%s duration_ms=%.1f first_token_ms=%s status=%s",
+        model_timing.get("phase"),
+        model_timing.get("purpose"),
+        model_timing.get("attempt"),
+        model_timing.get("round_index"),
+        provider,
+        model,
+        float(model_timing["duration_ms"]),
+        model_timing.get("first_token_ms"),
+        status,
+    )
 
 
 def _attach_tool_provenance_context(
@@ -1933,6 +2060,8 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
 
     def generate():  # noqa: C901
         nonlocal tool_defs
+        turn_started = time.perf_counter()
+        timings = _new_agent_timings()
         yield _sse_ping()
         if workflow_name and req.allow_workflow_handoff:
             payload, _disposition = _enqueue_agent_chat_turn(req, actor)
@@ -1956,10 +2085,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 actor=tool_actor,
             )
             text = _casual_response(req.message, req.response_preferences)
+            timings["first_token_ms"] = _elapsed_ms(turn_started)
             yield _sse("delta", {"text": text})
             turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
             user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
             assistant_msg = {"role": "assistant", "content": text, "timestamp": time.time(), **turn_meta}
+            yield _phase_sse("finalizing", turn_started)
             finalize_turn_fn(session_id, user_msg, assistant_msg)
             _finish_agent_turn_provenance(
                 agent_turn_event_id,
@@ -1967,7 +2098,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 output_value=text,
                 usage={},
             )
-            yield _sse("done", {"usage": {}, "session_id": session_id})
+            yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
             return
 
         provider, api_key = _read_llm_api_key()
@@ -1995,6 +2126,200 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             raw_conversation if provider == PROVIDER_ANTHROPIC else _openai_conversation_from_context(raw_conversation)
         )
 
+        if not workflow_name and _is_simple_portfolio_summary(req.message):
+            call_info = {
+                "name": "get_portfolio",
+                "args": _execution_args("get_portfolio", {}, force_refresh=force_refresh, user_text=req.message),
+                "call_ids": ["portfolio-summary:get_portfolio"],
+            }
+            yield _sse("tool_call", {"name": call_info["name"], "id": call_info["call_ids"][0]})
+            yield _phase_sse(
+                "tool_running",
+                turn_started,
+                label="Reading portfolio...",
+                tool_names=[call_info["name"]],
+                round_index=0,
+            )
+            yield _sse(
+                "tool_progress",
+                {"name": call_info["name"], "id": call_info["call_ids"][0], "status": "running"},
+            )
+            _attach_tool_provenance_context(
+                [call_info],
+                parent_event_id=agent_turn_event_id,
+                session_id=session_id,
+                workflow_run_id=None,
+                source="agent.chat.v2.portfolio_summary",
+            )
+            portfolio_result = ""
+            portfolio_elapsed_ms = 0.0
+            for tool_item in _execute_tools_parallel_keepalive([call_info], actor=tool_actor):
+                if tool_item is None:
+                    yield _sse_ping()
+                    continue
+                _tool_call, portfolio_result, portfolio_elapsed_ms = tool_item
+
+            err_msg = _tool_error_message(portfolio_result)
+            meta = _tool_meta(portfolio_result)
+            result_status = _tool_result_status(portfolio_result)
+            cache_status = str(meta.get("cache", "unknown"))
+            timings["tools"].append(
+                {
+                    "name": call_info["name"],
+                    "duration_ms": portfolio_elapsed_ms,
+                    "cache": cache_status,
+                    "status": result_status,
+                }
+            )
+            logger.info(
+                "agent_v2_tool_exec name=%s duration_ms=%.1f cache=%s status=%s",
+                call_info["name"],
+                portfolio_elapsed_ms,
+                cache_status,
+                result_status,
+            )
+            tool_payload = {"name": call_info["name"], "id": call_info["call_ids"][0], "status": result_status}
+            if meta.get("policy_decision_id"):
+                tool_payload["policy_decision_id"] = meta.get("policy_decision_id")
+            if meta.get("duration_ms") is not None:
+                tool_payload["elapsed_ms"] = meta.get("duration_ms")
+            if err_msg:
+                tool_payload["message"] = err_msg
+            yield _sse("tool_result", tool_payload)
+            if result_status == "blocked":
+                yield _sse("policy_failure", tool_payload)
+                yield _sse("blocked", tool_payload)
+            elif result_status == "timeout":
+                yield _sse("timeout", tool_payload)
+
+            synthesis_chunks: list[str] = []
+            final_message: object | None = None
+            for attempt in range(MAX_API_RETRIES):
+                model_timing: dict[str, Any] = {
+                    "phase": "model_writing",
+                    "purpose": "portfolio_summary_synthesis",
+                    "attempt": attempt,
+                    "round_index": 0,
+                    "first_token_ms": None,
+                }
+                model_started = time.perf_counter()
+                model_event_id: str | None = None
+                try:
+                    yield _phase_sse(
+                        "model_writing",
+                        turn_started,
+                        model_purpose="portfolio_summary_synthesis",
+                        attempt=attempt,
+                    )
+                    synthesis_conversation = (
+                        [{"role": "user", "content": _build_portfolio_summary_prompt(req.message, portfolio_result)}]
+                        if provider == PROVIDER_ANTHROPIC
+                        else _openai_user_prompt(_build_portfolio_summary_prompt(req.message, portfolio_result))
+                    )
+                    stream_kwargs = _model_stream_kwargs(
+                        provider=provider,
+                        instructions=instructions,
+                        conversation=synthesis_conversation,
+                        max_tokens=PORTFOLIO_SUMMARY_MAX_TOKENS,
+                        reasoning_effort=reasoning_effort,
+                    )
+                    stream_kwargs, egress_meta = prepare_model_egress(
+                        provider=provider,
+                        purpose="portfolio_summary_synthesis",
+                        stream_kwargs=stream_kwargs,
+                        actor=tool_actor,
+                        budget=budget,
+                        parent_event_id=agent_turn_event_id,
+                        session_id=session_id,
+                        workflow_run_id=None,
+                    )
+                    yield _sse("egress_recorded", egress_meta)
+                    yield _sse("budget_update", budget.to_meta())
+                    model_event_id = _start_model_call_provenance(
+                        parent_event_id=agent_turn_event_id,
+                        session_id=session_id,
+                        workflow_run_id=None,
+                        provider=provider,
+                        purpose="portfolio_summary_synthesis",
+                        stream_kwargs=stream_kwargs,
+                        actor=tool_actor,
+                        attempt=attempt,
+                        round_index=0,
+                    )
+                    final_message = yield from _stream_llm_response(
+                        client,
+                        provider,
+                        stream_kwargs,
+                        synthesis_chunks,
+                        model_timing=model_timing,
+                        turn_timings=timings,
+                        turn_started=turn_started,
+                    )
+                    _record_model_timing(
+                        timings,
+                        model_timing,
+                        started=model_started,
+                        status="ok",
+                        provider=provider,
+                        model=stream_kwargs.get("model"),
+                    )
+                    _finish_model_call_provenance(
+                        model_event_id,
+                        status="succeeded",
+                        final_message=final_message,
+                        output_text="".join(synthesis_chunks),
+                    )
+                    budget.record_model_usage(_usage_dict(final_message))
+                    yield _sse("budget_update", budget.to_meta())
+                    break
+                except Exception as retry_exc:
+                    _record_model_timing(
+                        timings,
+                        model_timing,
+                        started=model_started,
+                        status="error",
+                        provider=provider,
+                        model=locals().get("stream_kwargs", {}).get("model")
+                        if isinstance(locals().get("stream_kwargs"), dict)
+                        else None,
+                    )
+                    _finish_model_call_provenance(
+                        model_event_id,
+                        status="failed",
+                        error=str(retry_exc) or retry_exc.__class__.__name__,
+                    )
+                    if attempt < MAX_API_RETRIES - 1 and _is_retryable_error(retry_exc):
+                        time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                        continue
+                    raise
+
+            synthesis_text = "".join(synthesis_chunks)
+            turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
+            user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
+            assistant_msg = {"role": "assistant", "content": synthesis_text, "timestamp": time.time(), **turn_meta}
+            yield _phase_sse("finalizing", turn_started)
+            finalize_turn_fn(session_id, user_msg, assistant_msg)
+            _finish_agent_turn_provenance(
+                agent_turn_event_id,
+                status="succeeded",
+                output_value=synthesis_text,
+                usage=_usage_dict(final_message),
+            )
+            yield _sse(
+                "done",
+                _done_payload(
+                    {
+                        "usage": _usage_dict(final_message),
+                        "session_id": session_id,
+                        "tool_calls": [tool_payload],
+                        "tools_used": [call_info["name"]],
+                    },
+                    timings,
+                    turn_started,
+                ),
+            )
+            return
+
         # --- Workflow path ---
         if workflow_name:
             try:
@@ -2007,9 +2332,15 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         },
                     )
                     _finish_agent_turn_provenance(agent_turn_event_id, status="succeeded", usage={})
-                    yield _sse("done", {"usage": {}, "session_id": session_id})
+                    yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
                     return
 
+                yield _phase_sse(
+                    "tool_running",
+                    turn_started,
+                    label="Running workflow...",
+                    tool_names=[workflow_name],
+                )
                 run_id, synthesis_prompt, sections = yield from _execute_workflow_keepalive(
                     workflow_name,
                     workflow_ticker,
@@ -2019,12 +2350,35 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     {"name": str(section["tool"]), "id": str(section["tool"]), "status": "ok"} for section in sections
                 ]
                 for section in sections:
+                    timings["tools"].append(
+                        {
+                            "name": str(section["tool"]),
+                            "duration_ms": section.get("duration_ms"),
+                            "cache": "workflow",
+                            "status": "ok",
+                        }
+                    )
                     yield _sse("tool_call", {"name": section["tool"], "id": section["tool"]})
                     yield _sse("tool_result", {"name": section["tool"], "id": section["tool"], "status": "ok"})
 
                 synthesis_chunks: list[str] = []
                 for attempt in range(MAX_API_RETRIES):
+                    model_timing: dict[str, Any] = {
+                        "phase": "model_writing",
+                        "purpose": "workflow_synthesis",
+                        "attempt": attempt,
+                        "round_index": None,
+                        "first_token_ms": None,
+                    }
+                    model_started = time.perf_counter()
+                    model_event_id: str | None = None
                     try:
+                        yield _phase_sse(
+                            "model_writing",
+                            turn_started,
+                            model_purpose="workflow_synthesis",
+                            attempt=attempt,
+                        )
                         synthesis_conversation = (
                             [{"role": "user", "content": synthesis_prompt}]
                             if provider == PROVIDER_ANTHROPIC
@@ -2064,6 +2418,17 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             provider,
                             stream_kwargs,
                             synthesis_chunks,
+                            model_timing=model_timing,
+                            turn_timings=timings,
+                            turn_started=turn_started,
+                        )
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="ok",
+                            provider=provider,
+                            model=stream_kwargs.get("model"),
                         )
                         _finish_model_call_provenance(
                             model_event_id,
@@ -2075,8 +2440,18 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         yield _sse("budget_update", budget.to_meta())
                         break
                     except Exception as retry_exc:
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="error",
+                            provider=provider,
+                            model=locals().get("stream_kwargs", {}).get("model")
+                            if isinstance(locals().get("stream_kwargs"), dict)
+                            else None,
+                        )
                         _finish_model_call_provenance(
-                            locals().get("model_event_id"),
+                            model_event_id,
                             status="failed",
                             error=str(retry_exc) or retry_exc.__class__.__name__,
                         )
@@ -2108,6 +2483,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     "toolCalls": workflow_tool_calls,
                     **turn_meta,
                 }
+                yield _phase_sse("finalizing", turn_started)
                 finalize_turn_fn(session_id, user_msg, assistant_msg)
                 _finish_agent_turn_provenance(
                     agent_turn_event_id,
@@ -2117,13 +2493,17 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 )
                 yield _sse(
                     "done",
-                    {
-                        "usage": usage,
-                        "session_id": session_id,
-                        "workflow_run_id": run_id,
-                        "tool_calls": workflow_tool_calls,
-                        "tools_used": [call["name"] for call in workflow_tool_calls],
-                    },
+                    _done_payload(
+                        {
+                            "usage": usage,
+                            "session_id": session_id,
+                            "workflow_run_id": run_id,
+                            "tool_calls": workflow_tool_calls,
+                            "tools_used": [call["name"] for call in workflow_tool_calls],
+                        },
+                        timings,
+                        turn_started,
+                    ),
                 )
                 return
 
@@ -2142,7 +2522,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     error=str(exc) or exc.__class__.__name__,
                 )
                 yield _sse("error", {"message": f"Workflow failed: {exc}"})
-                yield _sse("done", {"usage": {}, "session_id": session_id})
+                yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
                 return
 
         # --- Normal tool-calling path ---
@@ -2167,7 +2547,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         usage={},
                         error=f"Tool-call loop limit reached ({MAX_TOOL_CONTINUATION_ROUNDS} rounds).",
                     )
-                    yield _sse("done", {"usage": {}, "session_id": session_id})
+                    yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
                     return
 
                 stream_kwargs = _model_stream_kwargs(
@@ -2180,9 +2560,25 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     reasoning_effort=reasoning_effort,
                 )
 
-                model_event_id: str | None = None
                 for attempt in range(MAX_API_RETRIES):
+                    model_phase = "model_thinking" if continuation_round == 0 and tool_defs else "model_writing"
+                    model_timing: dict[str, Any] = {
+                        "phase": model_phase,
+                        "purpose": "agent_chat",
+                        "attempt": attempt,
+                        "round_index": continuation_round,
+                        "first_token_ms": None,
+                    }
+                    model_started = time.perf_counter()
+                    model_event_id: str | None = None
                     try:
+                        yield _phase_sse(
+                            model_phase,
+                            turn_started,
+                            round_index=continuation_round,
+                            model_purpose="agent_chat",
+                            attempt=attempt,
+                        )
                         stream_kwargs, egress_meta = prepare_model_egress(
                             provider=provider,
                             purpose="agent_chat",
@@ -2211,6 +2607,17 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             provider,
                             stream_kwargs,
                             text_parts,
+                            model_timing=model_timing,
+                            turn_timings=timings,
+                            turn_started=turn_started,
+                        )
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="ok",
+                            provider=provider,
+                            model=stream_kwargs.get("model"),
                         )
                         _finish_model_call_provenance(
                             model_event_id,
@@ -2222,6 +2629,16 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                         yield _sse("budget_update", budget.to_meta())
                         break
                     except Exception as retry_exc:
+                        _record_model_timing(
+                            timings,
+                            model_timing,
+                            started=model_started,
+                            status="error",
+                            provider=provider,
+                            model=locals().get("stream_kwargs", {}).get("model")
+                            if isinstance(locals().get("stream_kwargs"), dict)
+                            else None,
+                        )
                         _finish_model_call_provenance(
                             model_event_id,
                             status="failed",
@@ -2277,6 +2694,12 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
 
                     if pending_calls:
                         budgeted_pending: list[dict] = []
+                        yield _phase_sse(
+                            "tool_running",
+                            turn_started,
+                            tool_names=[str(call.get("name")) for call in pending_calls],
+                            round_index=continuation_round,
+                        )
                         for call_info in pending_calls:
                             signature = _tool_call_signature(call_info["name"], call_info["args"])
                             try:
@@ -2337,6 +2760,14 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                             elapsed_ms,
                             cache_status,
                             result_status,
+                        )
+                        timings["tools"].append(
+                            {
+                                "name": call_info["name"],
+                                "duration_ms": elapsed_ms,
+                                "cache": cache_status,
+                                "status": result_status,
+                            }
                         )
                         if call_info["name"] == "search_agent_capabilities" and not err_msg:
                             discovered = [
@@ -2407,6 +2838,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
                 user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
                 assistant_msg = {"role": "assistant", "content": full_text, "timestamp": time.time(), **turn_meta}
+                yield _phase_sse("finalizing", turn_started)
                 finalize_turn_fn(session_id, user_msg, assistant_msg)
                 _finish_agent_turn_provenance(
                     agent_turn_event_id,
@@ -2414,7 +2846,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     output_value=full_text,
                     usage=usage,
                 )
-                yield _sse("done", {"usage": usage, "session_id": session_id})
+                yield _sse("done", _done_payload({"usage": usage, "session_id": session_id}, timings, turn_started))
                 return
 
         except Exception as exc:
@@ -2426,7 +2858,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 error=str(exc) or exc.__class__.__name__,
             )
             yield _sse("error", {"message": _format_stream_error(exc)})
-            yield _sse("done", {"usage": {}, "session_id": session_id})
+            yield _sse("done", _done_payload({"usage": {}, "session_id": session_id}, timings, turn_started))
 
     return StreamingResponse(
         generate(),

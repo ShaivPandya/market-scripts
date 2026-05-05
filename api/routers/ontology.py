@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from inspect import Parameter, signature
 from typing import Annotated, Any, Literal, cast
 
@@ -28,6 +29,21 @@ from ontology.temporal_repository import TemporalOntologyRepository
 router = APIRouter()
 _service = OntologyQueryService()
 ActorDep = Annotated[Actor, Depends(require_actor)]
+
+
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if raw in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
+
+
+def _success_job_read_audit_enabled() -> bool:
+    return _env_bool("ONTOLOGY_JOB_SUCCESS_READ_AUDIT_ENABLED", default=False)
 
 
 class OntologyFilters(BaseModel):
@@ -296,16 +312,17 @@ def start_query_ontology_async(req: OntologyQueryRequest, actor: ActorDep):
 @router.get("/ontology/query/async/{job_id}")
 def get_query_ontology_async(job_id: str, actor: ActorDep):
     try:
-        _preflight_job_read(job_id, actor)
-        result = poll_registered_job(job_id)
-        emit_audit_event(
-            "ontology.job.read",
-            "ontology_read",
-            "succeeded",
-            actor=actor,
-            object_refs=[{"type": "async_job", "id": job_id}],
-            after_summary={"job_id": job_id, "status": result.get("status")},
-        )
+        row = _preflight_job_read(job_id, actor)
+        result = poll_registered_job(job_id, row=row)
+        if _success_job_read_audit_enabled():
+            emit_audit_event(
+                "ontology.job.read",
+                "ontology_read",
+                "succeeded",
+                actor=actor,
+                object_refs=[{"type": "async_job", "id": job_id}],
+                after_summary={"job_id": job_id, "status": result.get("status")},
+            )
         return result
     except KeyError:
         raise NotFoundError("Ontology job", job_id)  # noqa: B904
@@ -355,7 +372,7 @@ def _require_temporal_read(actor: Actor) -> None:
     require_allowed(policy.check_action(actor, OntologyAction.QUERY, {"surface": "temporal_ontology"}))
 
 
-def _preflight_job_read(job_id: str, actor: Actor) -> None:
+def _preflight_job_read(job_id: str, actor: Actor) -> dict[str, Any]:
     policy = getattr(_service, "policy", None)
     try:
         if policy is not None:
@@ -369,6 +386,7 @@ def _preflight_job_read(job_id: str, actor: Actor) -> None:
         roles = {role.lower() for role in actor.roles}
         if actor.actor_type != "system" and "admin" not in roles and actor.actor_id != payload_actor.actor_id:
             raise PolicyDenied("Actor is not allowed to read this ontology job")
+        return row
     except PolicyDenied as exc:
         emit_audit_event(
             "ontology.job.read",

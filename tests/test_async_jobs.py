@@ -53,6 +53,48 @@ def test_async_job_storage_defaults_postgres_in_production(monkeypatch):
     assert postgres_jobs_enabled() is True
 
 
+def test_poll_registered_job_suppresses_success_read_audit_by_default(monkeypatch):
+    from api import async_job_runner
+
+    audits: list[str] = []
+    row = {"job_id": "job-1", "job_type": "analyzer", "status": "running", "progress_json": {}}
+
+    monkeypatch.delenv("ASYNC_JOB_SUCCESS_READ_AUDIT_ENABLED", raising=False)
+    monkeypatch.setattr(async_job_runner, "get_job", lambda job_id: row if job_id == "job-1" else None)
+    monkeypatch.setattr(async_job_runner, "_sync_stale_active_job", lambda loaded: loaded)
+    monkeypatch.setattr(
+        async_job_runner,
+        "_emit_job_audit",
+        lambda action_name, **_kwargs: audits.append(action_name),
+    )
+
+    payload = async_job_runner.poll_registered_job("job-1")
+
+    assert payload["status"] == "running"
+    assert audits == []
+
+
+def test_poll_registered_job_success_read_audit_can_be_reenabled(monkeypatch):
+    from api import async_job_runner
+
+    audits: list[str] = []
+    row = {"job_id": "job-1", "job_type": "analyzer", "status": "running", "progress_json": {}}
+
+    monkeypatch.setenv("ASYNC_JOB_SUCCESS_READ_AUDIT_ENABLED", "true")
+    monkeypatch.setattr(async_job_runner, "get_job", lambda job_id: row if job_id == "job-1" else None)
+    monkeypatch.setattr(async_job_runner, "_sync_stale_active_job", lambda loaded: loaded)
+    monkeypatch.setattr(
+        async_job_runner,
+        "_emit_job_audit",
+        lambda action_name, **_kwargs: audits.append(action_name),
+    )
+
+    payload = async_job_runner.poll_registered_job("job-1")
+
+    assert payload["status"] == "running"
+    assert audits == ["async_job.read"]
+
+
 def test_async_job_execution_defaults_local_without_cloud_run_opt_in(monkeypatch):
     from api import async_job_runner
 

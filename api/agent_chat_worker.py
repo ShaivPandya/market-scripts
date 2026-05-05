@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from typing import Any
 
@@ -11,6 +12,24 @@ from api.agent_models import AgentChatJobRequest, AgentChatRequestV2
 from api.job_events import append_job_event
 from api.job_queue import get_job
 from llm_utils import api_key_env, selected_provider
+
+
+def _env_int(name: str, *, default: int, minimum: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+def _delta_flush_interval_s() -> float:
+    return _env_int("AGENT_DELTA_FLUSH_INTERVAL_MS", default=500, minimum=0) / 1000.0
+
+
+def _delta_flush_bytes() -> int:
+    return _env_int("AGENT_DELTA_FLUSH_BYTES", default=1024, minimum=1)
 
 
 def _parse_sse_frame(raw: str) -> tuple[str, dict[str, Any]] | None:
@@ -44,7 +63,7 @@ def _append_agent_delta(
     now = time.monotonic()
     text = "".join(buffer)
     last = state.get("last_delta_flush", 0.0)
-    if not force and len(text) < 512 and now - last < 0.25:
+    if not force and len(text.encode("utf-8")) < _delta_flush_bytes() and now - last < _delta_flush_interval_s():
         return
     buffer.clear()
     state["last_delta_flush"] = now

@@ -155,6 +155,7 @@ proto-plus==1.27.2
 protobuf==6.33.5
 psycopg==3.3.3
 psycopg-binary==3.3.3
+psycopg-pool==3.3.1
 psycopg2==2.9.9
 ptyprocess==0.7.0
 pure_eval==0.2.3

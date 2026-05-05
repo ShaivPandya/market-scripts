@@ -93,6 +93,21 @@ def _env_backend() -> str:
     return "local"
 
 
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if raw in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
+
+
+def _success_read_audit_enabled() -> bool:
+    return _env_bool("ASYNC_JOB_SUCCESS_READ_AUDIT_ENABLED", default=False)
+
+
 def _agent_chat_dispatch_backend() -> str | None:
     value = _normalize_backend(os.getenv("AGENT_CHAT_DISPATCH_BACKEND") or "")
     if not value:
@@ -392,18 +407,19 @@ def job_response(row: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def poll_registered_job(job_id: str) -> dict[str, Any]:
-    row = get_job(job_id)
+def poll_registered_job(job_id: str, *, row: dict[str, Any] | None = None) -> dict[str, Any]:
+    row = row or get_job(job_id)
     if not row:
         raise KeyError(job_id)
     row = _sync_stale_active_job(row)
     response = job_response(row)
-    _emit_job_audit(
-        "async_job.read",
-        row=row,
-        status=str(row.get("status") or response.get("status") or "unknown"),
-        after_summary={"status": response.get("status"), "has_progress": bool(response.get("progress"))},
-    )
+    if _success_read_audit_enabled():
+        _emit_job_audit(
+            "async_job.read",
+            row=row,
+            status=str(row.get("status") or response.get("status") or "unknown"),
+            after_summary={"status": response.get("status"), "has_progress": bool(response.get("progress"))},
+        )
     return response
 
 

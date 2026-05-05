@@ -723,6 +723,9 @@ def test_async_job_read_allows_submitter_and_admin_but_denies_other_actor(client
     app.dependency_overrides[require_actor] = lambda: other
     other_read = client.get(f"/api/v1/ontology/query/async/{job_id}")
     assert other_read.status_code == 403
+    denied_read = core_db.get_audit_events(action_name="ontology.job.read", limit=5)[0]
+    assert denied_read["status"] == "denied"
+    assert denied_read["object_refs"] == [{"type": "async_job", "id": job_id}]
 
     app.dependency_overrides[require_actor] = lambda: admin
     admin_read = client.get(f"/api/v1/ontology/query/async/{job_id}")
@@ -761,7 +764,7 @@ def test_schema_mode_stored_surfaces_as_terminal_async_error(auth_client, monkey
     assert "schema_mode='upgraded'" in str(result.get("error", ""))
 
 
-def test_query_preflight_and_job_read_emit_expected_audit_rows(auth_client, monkeypatch):
+def test_query_preflight_and_success_job_read_audit_policy(auth_client, monkeypatch):
     import api.routers.ontology as ontology_router
 
     class _DeniedService:
@@ -814,9 +817,15 @@ def test_query_preflight_and_job_read_emit_expected_audit_rows(auth_client, monk
     assert read.status_code == 200
 
     preflight = core_db.get_audit_events(action_name="ontology.query.preflight", limit=5)[0]
-    job_read = core_db.get_audit_events(action_name="ontology.job.read", limit=5)[0]
+    job_reads = core_db.get_audit_events(action_name="ontology.job.read", limit=5)
     assert preflight["status"] == "denied"
     assert preflight["metadata"]["include_graph"] is True
+    assert job_reads == []
+
+    monkeypatch.setenv("ONTOLOGY_JOB_SUCCESS_READ_AUDIT_ENABLED", "true")
+    read = auth_client.get(f"/api/v1/ontology/query/async/{job_id}")
+    assert read.status_code == 200
+    job_read = core_db.get_audit_events(action_name="ontology.job.read", limit=5)[0]
     assert job_read["status"] == "succeeded"
     assert job_read["object_refs"] == [{"type": "async_job", "id": job_id}]
 
