@@ -623,6 +623,30 @@ class StateMigrator:
                 "raw_result_json",
                 "created_at",
             ],
+            "idea_comparison_runs": [
+                "id",
+                "run_id",
+                "job_id",
+                "scope_statuses_json",
+                "summary",
+                "ranking_count",
+                "raw_result_json",
+                "created_at",
+            ],
+            "idea_comparison_rankings": [
+                "id",
+                "run_id",
+                "idea_id",
+                "evaluation_id",
+                "ticker",
+                "rank",
+                "action",
+                "score",
+                "confidence",
+                "confidence_level",
+                "rationale",
+                "created_at",
+            ],
             "action_items": [
                 "id",
                 "ticker",
@@ -966,6 +990,8 @@ class StateMigrator:
                 if table == "report_runs"
                 else ["run_id"]
                 if table == "optimization_runs"
+                else ["run_id"]
+                if table == "idea_comparison_runs"
                 else ["event_id"]
                 if table == "audit_events"
                 else ["idempotency_key"]

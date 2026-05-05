@@ -318,6 +318,49 @@ export interface IdeaAcceptResponse {
   action_error?: string | null
 }
 
+export interface IdeaComparisonRanking {
+  id: number
+  run_id: string
+  idea_id: number
+  evaluation_id: number
+  ticker: string
+  rank: number
+  action: IdeaAction | string
+  score: number | null
+  confidence: number | null
+  confidence_level: "high" | "medium" | "low" | string
+  rationale: string
+  created_at: string
+}
+
+export interface IdeaComparisonRun {
+  id: number
+  run_id: string
+  job_id: string | null
+  scope_statuses: string[]
+  summary: string
+  ranking_count: number
+  raw_result?: Record<string, unknown>
+  created_at: string
+  rankings: IdeaComparisonRanking[]
+}
+
+export interface IdeaComparisonRunListResponse {
+  runs: IdeaComparisonRun[]
+  count: number
+}
+
+export interface IdeaComparisonJobResult {
+  run: IdeaComparisonRun
+  rankings: IdeaComparisonRanking[]
+  evaluations?: IdeaEvaluation[]
+}
+
+export type IdeaComparisonJobResponse =
+  | { job_id: string; status: "queued" | "running"; timeout_s?: number; progress?: Record<string, unknown> }
+  | { job_id: string; status: "done"; timeout_s?: number; result?: IdeaComparisonJobResult; progress?: Record<string, unknown> }
+  | { job_id: string; status: "error" | "cancelled"; timeout_s?: number; error?: string; progress?: Record<string, unknown> }
+
 client.interceptors.response.use(
   res => res,
   err => {
@@ -1966,6 +2009,22 @@ export const fetchIdeaEvaluationJob = (jobId: string) =>
   client
     .get(`/ideas/evaluate/async/${encodeURIComponent(jobId)}`, { timeout: 30_000 })
     .then(r => r.data as IdeaEvaluationJobResponse)
+
+export const startIdeaComparisonEvaluationJob = () =>
+  client
+    .post("/ideas/evaluate-all/async", {}, { timeout: 30_000 })
+    .then(r => r.data as IdeaComparisonJobResponse)
+
+export const fetchIdeaComparisonEvaluationJob = (jobId: string) =>
+  client
+    .get(`/ideas/evaluate-all/async/${encodeURIComponent(jobId)}`, { timeout: 30_000 })
+    .then(r => r.data as IdeaComparisonJobResponse)
+
+export const fetchIdeaComparisonRuns = (params?: { limit?: number }) =>
+  client.get("/ideas/comparison-runs", { params }).then(r => r.data as IdeaComparisonRunListResponse)
+
+export const fetchIdeaComparisonRun = (runId: string) =>
+  client.get(`/ideas/comparison-runs/${encodeURIComponent(runId)}`).then(r => r.data as IdeaComparisonRun)
 
 export const acceptIdeaEvaluation = (ideaId: number, evaluationId: number, body?: { note?: string }) =>
   client

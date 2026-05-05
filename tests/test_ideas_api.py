@@ -192,6 +192,57 @@ def test_ideas_crud_evaluate_and_accept(auth_client):
     assert accepted_payload["action_proposal"]["approval_id"] is not None
 
 
+def test_evaluate_all_persists_comparative_run_and_excludes_inactive(auth_client, monkeypatch):
+    from api.routers import ideas as ideas_router
+
+    monkeypatch.setattr(
+        ideas_router,
+        "_call_llm_comparison_ranker",
+        lambda evaluations: ideas_router._deterministic_comparison_result(evaluations),
+    )
+
+    for ticker, status in [
+        ("MSFT", "watching"),
+        ("AAPL", "ready_for_review"),
+        ("TSLA", "accepted"),
+        ("META", "rejected"),
+        ("IBM", "watching"),
+    ]:
+        resp = auth_client.post(
+            "/api/v1/ideas",
+            json={
+                "ticker": ticker,
+                "company_name": ticker,
+                "user_notes": f"Review {ticker}.",
+                "tags": ["test"],
+                "status": status,
+            },
+        )
+        assert resp.status_code == 200
+        if ticker == "IBM":
+            archived = auth_client.delete(f"/api/v1/ideas/{resp.json()['idea']['id']}")
+            assert archived.status_code == 200
+
+    started = auth_client.post("/api/v1/ideas/evaluate-all/async", json={})
+    assert started.status_code in {200, 202}
+    job = _poll_until_done(auth_client, started.json()["job_id"])
+
+    assert job["status"] == "done"
+    run = job["result"]["run"]
+    assert run["ranking_count"] == 2
+    assert run["scope_statuses"] == ["watching", "researching", "ready_for_review"]
+    assert [row["ticker"] for row in run["rankings"]] == ["AAPL", "MSFT"]
+    assert {row["confidence_level"] for row in run["rankings"]} == {"high"}
+    assert len(job["result"]["evaluations"]) == 2
+
+    listed = auth_client.get("/api/v1/ideas/comparison-runs", params={"limit": 1})
+    assert listed.status_code == 200
+    listed_payload = listed.json()
+    assert listed_payload["count"] == 1
+    assert listed_payload["runs"][0]["run_id"] == run["run_id"]
+    assert [row["ticker"] for row in listed_payload["runs"][0]["rankings"]] == ["AAPL", "MSFT"]
+
+
 def test_critical_missing_information_forces_watch():
     from api.routers import ideas as ideas_router
 
@@ -214,3 +265,36 @@ def test_critical_missing_information_forces_watch():
 
     assert result["action"] == "watch"
     assert result["missing_information"][0]["field"] == "management"
+
+
+def test_comparison_fallback_caps_confidence_when_evidence_is_missing():
+    from api.routers import ideas as ideas_router
+
+    result = ideas_router._deterministic_comparison_result(
+        [
+            {
+                "id": 11,
+                "idea_id": 101,
+                "ticker": "FULL",
+                "action": "watch",
+                "score": 70,
+                "confidence": 0.8,
+                "missing_information": [],
+                "rationale": "Complete enough for ranking.",
+            },
+            {
+                "id": 12,
+                "idea_id": 102,
+                "ticker": "MISS",
+                "action": "watch",
+                "score": 72,
+                "confidence": 0.9,
+                "missing_information": [{"field": "overview", "severity": "critical", "reason": "No overview."}],
+                "rationale": "Missing critical evidence.",
+            },
+        ]
+    )
+
+    missing_row = next(row for row in result["rankings"] if row["ticker"] == "MISS")
+    assert missing_row["confidence"] == 0.35
+    assert missing_row["confidence_level"] == "low"

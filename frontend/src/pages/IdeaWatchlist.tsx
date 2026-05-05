@@ -22,14 +22,19 @@ import {
   archiveIdea,
   createIdea,
   fetchIdea,
+  fetchIdeaComparisonEvaluationJob,
+  fetchIdeaComparisonRuns,
   fetchIdeaEvaluationJob,
   fetchIdeas,
   rejectIdea,
+  startIdeaComparisonEvaluationJob,
   startIdeaEvaluationJob,
   updateIdea,
   uploadManagementQualityDocument,
   uploadOverviewDocument,
   type IdeaAction,
+  type IdeaComparisonJobResponse,
+  type IdeaComparisonRun,
   type IdeaDetailResponse,
   type IdeaEvaluation,
   type IdeaEvaluationJobResponse,
@@ -43,6 +48,8 @@ import type { ParsedManagementQuality } from "@/lib/managementQualityTypes"
 import { cn } from "@/lib/utils"
 
 const ACTIVE_JOBS_KEY = "idea-watchlist-active-jobs-v1"
+const ACTIVE_COMPARISON_JOB_KEY = "idea-watchlist-active-comparison-job-v1"
+const ACTIONABLE_IDEA_STATUSES = new Set<IdeaStatus | string>(["watching", "researching", "ready_for_review"])
 
 const IDEA_STATUSES: { value: IdeaStatus; label: string }[] = [
   { value: "watching", label: "Watching" },
@@ -85,6 +92,23 @@ function writeActiveJobs(jobs: Record<string, string>) {
   window.localStorage.setItem(ACTIVE_JOBS_KEY, JSON.stringify(jobs))
 }
 
+function readActiveComparisonJob(): string | null {
+  try {
+    const jobId = window.localStorage.getItem(ACTIVE_COMPARISON_JOB_KEY)
+    return jobId && jobId.trim() ? jobId : null
+  } catch {
+    return null
+  }
+}
+
+function writeActiveComparisonJob(jobId: string | null) {
+  if (jobId) {
+    window.localStorage.setItem(ACTIVE_COMPARISON_JOB_KEY, jobId)
+  } else {
+    window.localStorage.removeItem(ACTIVE_COMPARISON_JOB_KEY)
+  }
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "Never"
   const date = new Date(value)
@@ -116,6 +140,65 @@ function StatusPill({ status }: { status: string }) {
 function ActionPill({ action }: { action?: string | null }) {
   if (!action) return <span className="text-sm text-subtle">N/A</span>
   return <StatusBadge tone={ACTION_TONE[action] ?? "neutral"}>{formatLabel(action)}</StatusBadge>
+}
+
+function ConfidencePill({ level, confidence }: { level?: string | null; confidence?: number | null }) {
+  const normalized = String(level || "").toLowerCase()
+  const tone: StatusTone = normalized === "high" ? "success" : normalized === "medium" ? "warning" : "neutral"
+  const confidenceLabel = confidence == null ? "N/A" : `${Math.round(Number(confidence) * 100)}%`
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <StatusBadge tone={tone}>{formatLabel(normalized || "low")}</StatusBadge>
+      <span className="font-mono text-xs text-subtle">{confidenceLabel}</span>
+    </span>
+  )
+}
+
+function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
+  const rankings = run?.rankings ?? []
+  return (
+    <section className="mb-4 rounded-lg border border-app bg-card-muted p-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="section-title text-sm">Comparative Ranking</h3>
+          <p className="mt-1 text-xs text-subtle">
+            {run ? `${rankings.length} ranked ideas / ${formatDate(run.created_at)}` : "No comparative run yet."}
+          </p>
+        </div>
+        {run?.run_id && <span className="font-mono text-xs text-subtle">{run.run_id.slice(0, 18)}</span>}
+      </div>
+      {run?.summary && <p className="mb-3 text-sm leading-6 text-muted">{run.summary}</p>}
+      {rankings.length ? (
+        <div className="overflow-x-auto rounded-lg border border-app bg-card">
+          <table className="w-full min-w-[760px] border-collapse text-sm">
+            <thead className="bg-card-muted">
+              <tr>
+                {["Rank", "Ticker", "Action", "Score", "Confidence", "Rationale"].map(label => (
+                  <th key={label} className="border-b border-app px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rankings.map(row => (
+                <tr key={`${row.run_id}-${row.rank}-${row.idea_id}`} className="border-b border-app last:border-b-0">
+                  <td className="px-3 py-3 font-mono text-app">#{row.rank}</td>
+                  <td className="px-3 py-3 font-semibold text-app">{row.ticker}</td>
+                  <td className="px-3 py-3"><ActionPill action={row.action} /></td>
+                  <td className="px-3 py-3 font-mono text-app">{scoreText(row.score)}</td>
+                  <td className="px-3 py-3"><ConfidencePill level={row.confidence_level} confidence={row.confidence} /></td>
+                  <td className="max-w-[28rem] px-3 py-3 text-muted">{row.rationale || "N/A"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">Run Evaluate All to rank active ideas together.</p>
+      )}
+    </section>
+  )
 }
 
 function FactorScore({ name, factor }: { name: string; factor: IdeaFactorScore }) {
@@ -342,8 +425,11 @@ export function IdeaWatchlist() {
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [activeJobs, setActiveJobs] = useState<Record<string, string>>(() => readActiveJobs())
+  const [activeComparisonJob, setActiveComparisonJob] = useState<string | null>(() => readActiveComparisonJob())
   const [jobSnapshots, setJobSnapshots] = useState<Record<string, IdeaEvaluationJobResponse>>({})
+  const [comparisonJobSnapshot, setComparisonJobSnapshot] = useState<IdeaComparisonJobResponse | null>(null)
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({})
+  const [comparisonJobError, setComparisonJobError] = useState<string | null>(null)
   const [ticker, setTicker] = useState("")
   const [companyName, setCompanyName] = useState("")
   const [tags, setTags] = useState("")
@@ -357,6 +443,16 @@ export function IdeaWatchlist() {
 
   const ideasQuery = useApiQuery(["ideas"], () => fetchIdeas({ include_archived: false, limit: 300 }), 30_000)
   const ideas = useMemo(() => ideasQuery.data?.ideas ?? [], [ideasQuery.data?.ideas])
+  const actionableIdeas = useMemo(
+    () => ideas.filter(idea => ACTIONABLE_IDEA_STATUSES.has(idea.status)),
+    [ideas],
+  )
+  const comparisonQuery = useApiQuery(["idea-comparison-runs"], () => fetchIdeaComparisonRuns({ limit: 1 }), 30_000)
+  const latestComparisonRun = useMemo(() => {
+    const persisted = comparisonQuery.data?.runs?.[0] ?? null
+    if (persisted) return persisted
+    return comparisonJobSnapshot?.status === "done" ? comparisonJobSnapshot.result?.run ?? null : null
+  }, [comparisonJobSnapshot, comparisonQuery.data?.runs])
 
   useEffect(() => {
     if (selectedId == null && ideas.length > 0) setSelectedId(ideas[0].id)
@@ -382,6 +478,11 @@ export function IdeaWatchlist() {
   function setActiveJobsAndPersist(next: Record<string, string>) {
     setActiveJobs(next)
     writeActiveJobs(next)
+  }
+
+  function setActiveComparisonJobAndPersist(jobId: string | null) {
+    setActiveComparisonJob(jobId)
+    writeActiveComparisonJob(jobId)
   }
 
   useEffect(() => {
@@ -420,6 +521,37 @@ export function IdeaWatchlist() {
       window.clearInterval(handle)
     }
   }, [activeJobs, qc])
+
+  useEffect(() => {
+    if (!activeComparisonJob) return
+    let stopped = false
+
+    async function pollComparisonJob() {
+      try {
+        const job = await fetchIdeaComparisonEvaluationJob(activeComparisonJob as string)
+        setComparisonJobSnapshot(job)
+        if (job.status === "done") {
+          setComparisonJobError(null)
+          if (!stopped) setActiveComparisonJobAndPersist(null)
+          await qc.invalidateQueries({ queryKey: ["ideas"] })
+          await qc.invalidateQueries({ queryKey: ["idea-comparison-runs"] })
+          if (selectedId != null) await qc.invalidateQueries({ queryKey: ["idea", selectedId] })
+        } else if (job.status === "error" || job.status === "cancelled") {
+          if (!stopped) setActiveComparisonJobAndPersist(null)
+          setComparisonJobError(job.error || "Comparative evaluation failed.")
+        }
+      } catch (err) {
+        setComparisonJobError(err instanceof Error ? err.message : "Unable to poll comparative evaluation.")
+      }
+    }
+
+    void pollComparisonJob()
+    const handle = window.setInterval(() => void pollComparisonJob(), 2500)
+    return () => {
+      stopped = true
+      window.clearInterval(handle)
+    }
+  }, [activeComparisonJob, qc, selectedId])
 
   const createMutation = useMutation({
     mutationFn: () => createIdea({
@@ -473,6 +605,23 @@ export function IdeaWatchlist() {
       void qc.invalidateQueries({ queryKey: ["ideas"] })
       void qc.invalidateQueries({ queryKey: ["idea", variables.ideaId] })
     },
+  })
+
+  const evaluateAllMutation = useMutation({
+    mutationFn: () => startIdeaComparisonEvaluationJob(),
+    onSuccess: job => {
+      setComparisonJobError(null)
+      setComparisonJobSnapshot(job)
+      if (job.status === "done") {
+        void qc.invalidateQueries({ queryKey: ["ideas"] })
+        void qc.invalidateQueries({ queryKey: ["idea-comparison-runs"] })
+        if (selectedId != null) void qc.invalidateQueries({ queryKey: ["idea", selectedId] })
+        return
+      }
+      setActiveComparisonJobAndPersist(job.job_id)
+      void qc.invalidateQueries({ queryKey: ["ideas"] })
+    },
+    onError: err => setComparisonJobError(err instanceof Error ? err.message : "Comparative evaluation failed."),
   })
 
   const archiveMutation = useMutation({
@@ -555,22 +704,56 @@ export function IdeaWatchlist() {
     return { jobId, message: `Evaluation ${phase}${suffix}` }
   }
 
+  function currentComparisonJobResponse(): { jobId: string; message: string } | null {
+    if (!activeComparisonJob) return null
+    const progress = comparisonJobSnapshot?.progress
+    const phase = typeof progress?.phase === "string" ? formatLabel(progress.phase) : "running"
+    const done = typeof progress?.done === "number" ? progress.done : null
+    const total = typeof progress?.total === "number" && progress.total > 0 ? progress.total : null
+    const suffix = done != null && total != null ? ` ${done}/${total}` : ""
+    return { jobId: activeComparisonJob, message: `Comparative evaluation ${phase}${suffix}` }
+  }
+
+  const comparisonJob = currentComparisonJobResponse()
+
   return (
     <main className="mx-auto w-full max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-app">Idea Watchlist</h1>
-          <p className="mt-1 text-sm text-subtle">{ideas.length} active ideas</p>
+          <p className="mt-1 text-sm text-subtle">{ideas.length} active ideas / {actionableIdeas.length} actionable</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void ideasQuery.refetch()}
-          className="theme-button-base theme-button-secondary min-h-10 px-4 text-sm"
-        >
-          <RefreshCw size={16} aria-hidden="true" />
-          Refresh
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => evaluateAllMutation.mutate()}
+            disabled={!actionableIdeas.length || Boolean(activeComparisonJob) || evaluateAllMutation.isPending}
+            className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
+          >
+            <Play size={16} aria-hidden="true" />
+            {activeComparisonJob || evaluateAllMutation.isPending ? "Evaluating All" : "Evaluate All"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void ideasQuery.refetch()}
+            className="theme-button-base theme-button-secondary min-h-10 px-4 text-sm"
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {comparisonJob && (
+        <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
+          {comparisonJob.message} ({comparisonJob.jobId.slice(0, 8)})
+        </div>
+      )}
+      {comparisonJobError && (
+        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {comparisonJobError}
+        </div>
+      )}
 
       <section className="theme-surface mb-5 rounded-lg p-4">
         <form
@@ -598,8 +781,15 @@ export function IdeaWatchlist() {
         <section className="theme-surface rounded-lg p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="section-title text-sm">Watchlist</h2>
-            {ideasQuery.isLoading && <LoadingSpinner message="Loading ideas" />}
+            {(ideasQuery.isLoading || comparisonQuery.isLoading) && <LoadingSpinner message="Loading ideas" />}
           </div>
+
+          <ComparativeRankingPanel run={latestComparisonRun} />
+          {comparisonQuery.error && (
+            <div className="mb-4">
+              <ErrorMessage message={`Could not load comparison runs: ${comparisonQuery.error.message}`} />
+            </div>
+          )}
 
           {ideasQuery.error ? (
             <ErrorMessage message={`Could not load ideas: ${ideasQuery.error.message}`} />

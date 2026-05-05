@@ -331,6 +331,38 @@ CREATE TABLE IF NOT EXISTS idea_evaluations (
 )
 """
 
+_CREATE_IDEA_COMPARISON_RUNS = """
+CREATE TABLE IF NOT EXISTS idea_comparison_runs (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                TEXT NOT NULL UNIQUE,
+    job_id                TEXT,
+    scope_statuses_json   TEXT NOT NULL DEFAULT '[]',
+    summary               TEXT NOT NULL DEFAULT '',
+    ranking_count         INTEGER NOT NULL DEFAULT 0,
+    raw_result_json       TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL
+)
+"""
+
+_CREATE_IDEA_COMPARISON_RANKINGS = """
+CREATE TABLE IF NOT EXISTS idea_comparison_rankings (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                TEXT NOT NULL,
+    idea_id               INTEGER NOT NULL,
+    evaluation_id         INTEGER NOT NULL,
+    ticker                TEXT NOT NULL,
+    rank                  INTEGER NOT NULL,
+    action                TEXT NOT NULL
+                          CHECK (action IN ('buy', 'watch', 'avoid', 'do_nothing')),
+    score                 REAL,
+    confidence            REAL,
+    confidence_level      TEXT NOT NULL
+                          CHECK (confidence_level IN ('high', 'medium', 'low')),
+    rationale             TEXT NOT NULL DEFAULT '',
+    created_at            TEXT NOT NULL
+)
+"""
+
 _CREATE_ACTION_ITEMS = """
 CREATE TABLE IF NOT EXISTS action_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -765,6 +797,10 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_idea_evaluations_idea_created ON idea_evaluations(idea_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_idea_evaluations_ticker_created ON idea_evaluations(ticker, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_idea_evaluations_job ON idea_evaluations(job_id)",
+    "CREATE INDEX IF NOT EXISTS idx_idea_comparison_runs_created ON idea_comparison_runs(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_idea_comparison_runs_job ON idea_comparison_runs(job_id)",
+    "CREATE INDEX IF NOT EXISTS idx_idea_comparison_rankings_run_rank ON idea_comparison_rankings(run_id, rank)",
+    "CREATE INDEX IF NOT EXISTS idx_idea_comparison_rankings_idea ON idea_comparison_rankings(idea_id)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_status ON action_items(status)",
     "CREATE INDEX IF NOT EXISTS idx_action_items_ticker ON action_items(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_watch_triggers_status ON watch_triggers(status)",
@@ -877,6 +913,8 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "optimization_alerts",
                             "investment_ideas",
                             "idea_evaluations",
+                            "idea_comparison_runs",
+                            "idea_comparison_rankings",
                         }
                     )
                 else:
@@ -900,6 +938,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_OPTIMIZATION_ALERTS,
         _CREATE_INVESTMENT_IDEAS,
         _CREATE_IDEA_EVALUATIONS,
+        _CREATE_IDEA_COMPARISON_RUNS,
+        _CREATE_IDEA_COMPARISON_RANKINGS,
         _CREATE_ACTION_ITEMS,
         _CREATE_WATCH_TRIGGERS,
         _CREATE_THESIS_CLAIMS,
@@ -4080,6 +4120,7 @@ _IDEA_EVALUATION_JSON_FIELDS = (
     "recommendation_record_json",
     "raw_result_json",
 )
+_IDEA_COMPARISON_RUN_JSON_FIELDS = ("scope_statuses_json", "raw_result_json")
 
 
 def _normalize_investment_idea_status(status: str | None) -> str:
@@ -4101,6 +4142,11 @@ def _normalize_idea_recommendation_status(status: str | None) -> str:
     if normalized not in IDEA_RECOMMENDATION_STATUSES:
         return "review_required"
     return normalized
+
+
+def _normalize_idea_confidence_level(value: str | None) -> str:
+    normalized = str(value or "low").strip().lower()
+    return normalized if normalized in {"high", "medium", "low"} else "low"
 
 
 def _optional_float(value: Any) -> float | None:
@@ -4134,6 +4180,14 @@ def _parse_idea_evaluation_json_fields(d: dict) -> dict:
     d["recommendation_record"] = (
         d.get("recommendation_record_json") if isinstance(d.get("recommendation_record_json"), dict) else {}
     )
+    d["raw_result"] = d.get("raw_result_json") if isinstance(d.get("raw_result_json"), dict) else {}
+    return d
+
+
+def _parse_idea_comparison_run_json_fields(d: dict) -> dict:
+    for field in _IDEA_COMPARISON_RUN_JSON_FIELDS:
+        _parse_json_field(d, field)
+    d["scope_statuses"] = d.get("scope_statuses_json") if isinstance(d.get("scope_statuses_json"), list) else []
     d["raw_result"] = d.get("raw_result_json") if isinstance(d.get("raw_result_json"), dict) else {}
     return d
 
@@ -4379,6 +4433,98 @@ def get_idea_evaluations(idea_id: int, *, limit: int = 20) -> list[dict]:
             (int(idea_id), safe_limit),
         ).fetchall()
     return [_parse_idea_evaluation_json_fields(d) for d in _rows_to_list(rows)]
+
+
+def _get_idea_comparison_rankings(run_id: str) -> list[dict]:
+    conn = _get_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM idea_comparison_rankings WHERE run_id = ? ORDER BY rank ASC, id ASC",
+            (str(run_id),),
+        ).fetchall()
+    return _rows_to_list(rows)
+
+
+def create_idea_comparison_run(
+    *,
+    job_id: str | None = None,
+    scope_statuses: list[str] | None = None,
+    summary: str | None = None,
+    rankings: list[dict[str, Any]] | None = None,
+    raw_result: dict[str, Any] | None = None,
+    run_id: str | None = None,
+) -> dict:
+    _guard_legacy_domain_write("core_db.create_idea_comparison_run")
+    rid = str(run_id or f"idea-compare-{uuid.uuid4().hex}")
+    now = _now()
+    normalized_rankings = list(rankings or [])
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO idea_comparison_runs "
+            "(run_id, job_id, scope_statuses_json, summary, ranking_count, raw_result_json, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                rid,
+                job_id,
+                json.dumps([str(status) for status in scope_statuses or []], default=str),
+                str(summary or ""),
+                len(normalized_rankings),
+                json.dumps(raw_result or {}, default=str, sort_keys=True),
+                now,
+            ),
+        )
+        for index, row in enumerate(normalized_rankings, start=1):
+            action = _normalize_idea_action(cast(str | None, row.get("action")))
+            rank = int(row.get("rank") or index)
+            conn.execute(
+                "INSERT INTO idea_comparison_rankings "
+                "(run_id, idea_id, evaluation_id, ticker, rank, action, score, confidence, confidence_level, rationale, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    rid,
+                    int(row["idea_id"]),
+                    int(row["evaluation_id"]),
+                    str(row.get("ticker") or "").upper(),
+                    rank,
+                    action,
+                    _optional_float(row.get("score")),
+                    _optional_float(row.get("confidence")),
+                    _normalize_idea_confidence_level(cast(str | None, row.get("confidence_level"))),
+                    str(row.get("rationale") or ""),
+                    now,
+                ),
+            )
+        conn.commit()
+    created = get_idea_comparison_run(rid)
+    if not created:
+        raise ValueError(f"No idea comparison run with id {rid}")
+    return created
+
+
+def get_idea_comparison_run(run_id: str) -> dict | None:
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM idea_comparison_runs WHERE run_id = ?", (str(run_id),)).fetchone()
+    if not row:
+        return None
+    result = _parse_idea_comparison_run_json_fields(_require_row_dict(row))
+    result["rankings"] = _get_idea_comparison_rankings(str(result["run_id"]))
+    return result
+
+
+def list_idea_comparison_runs(*, limit: int = 20) -> list[dict]:
+    conn = _get_conn()
+    safe_limit = max(1, min(int(limit), 100))
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM idea_comparison_runs ORDER BY created_at DESC, id DESC LIMIT ?",
+            (safe_limit,),
+        ).fetchall()
+    runs = [_parse_idea_comparison_run_json_fields(row) for row in _rows_to_list(rows)]
+    for run in runs:
+        run["rankings"] = _get_idea_comparison_rankings(str(run["run_id"]))
+    return runs
 
 
 def mark_idea_evaluation_accepted(
