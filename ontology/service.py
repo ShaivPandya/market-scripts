@@ -6,6 +6,7 @@ from typing import Any
 
 from api.audit import emit_audit_event
 from ontology.action_registry import get_tool_exposure
+from ontology.domain_write_service import ontology_read_model_enabled
 from ontology.ingestion import ingest_into_repository
 from ontology.parser import parse_hybrid_query
 from ontology.policy import (
@@ -21,6 +22,7 @@ from ontology.policy import (
     redact_properties,
     require_allowed,
 )
+from ontology.read_model import TEMPORAL_READ_MODEL_RUN_ID, TemporalReadModelRepository
 from ontology.repository import OntologyRepository
 
 VALID_TIMEFRAMES = {"This Week", "Daily", "Weekly", "Monthly"}
@@ -62,9 +64,11 @@ class OntologyQueryService:
     def __init__(
         self,
         repository: OntologyRepository | None = None,
+        read_model_repository: TemporalReadModelRepository | None = None,
         policy: OntologyPolicy | None = None,
     ):
         self.repo = repository or OntologyRepository()
+        self.read_model_repo = read_model_repository or TemporalReadModelRepository()
         self.policy = policy or DEFAULT_ONTOLOGY_POLICY
 
     def list_runs(self, limit: int = 100, actor: Actor | None = None) -> list[dict[str, Any]]:
@@ -146,6 +150,24 @@ class OntologyQueryService:
             filters=filters,
             known_sectors=KNOWN_SECTORS,
         )
+
+        if ontology_read_model_enabled() and not run_id:
+            if refresh_snapshot:
+                raise ValueError(
+                    "refresh_snapshot is deprecated when ONTOLOGY_READ_MODEL=true; "
+                    "omit refresh_snapshot for temporal read-model queries or provide run_id for snapshot compatibility."
+                )
+            return self._query_temporal_read_model(
+                interpreted=interpreted,
+                timeframe=tf,
+                include_graph=include_graph,
+                safe_page=safe_page,
+                safe_page_size=safe_page_size,
+                as_of=as_of,
+                tx_as_of=tx_as_of,
+                include_history=include_history,
+                actor=actor,
+            )
 
         if run_id:
             run = self.repo.get_run(run_id)
@@ -357,6 +379,213 @@ class OntologyQueryService:
                 "authorization": dict(auth_stats),
             },
             source_lineage={"run_id": resolved_run_id, "as_of": as_of, "source_status": source_status},
+        )
+        return response
+
+    def _query_temporal_read_model(
+        self,
+        *,
+        interpreted: Any,
+        timeframe: str,
+        include_graph: bool,
+        safe_page: int,
+        safe_page_size: int,
+        as_of: str | None,
+        tx_as_of: str | None,
+        include_history: bool,
+        actor: Actor,
+    ) -> dict[str, Any]:
+        auth_stats = _empty_auth_stats()
+        response_as_of = as_of or datetime.now(UTC).isoformat()
+        source_status, required_modules = self.read_model_repo.source_status_summary()
+
+        effective_filters = dict(interpreted.filters)
+        if interpreted.intent == "entity_context" and interpreted.entity:
+            if "tickers" not in effective_filters and "sectors" not in effective_filters:
+                token = str(interpreted.entity).strip()
+                if token.upper() == token and any(ch.isalpha() for ch in token):
+                    effective_filters["tickers"] = [token.upper()]
+                else:
+                    effective_filters["sectors"] = [token]
+        applied_filters = _query_filters_for_sql(effective_filters, interpreted.intent)
+        page_data = self.read_model_repo.query_positions_page(
+            filters=applied_filters,
+            page=safe_page,
+            page_size=safe_page_size,
+            as_of=as_of,
+            tx_as_of=tx_as_of,
+            include_history=include_history,
+        )
+        rows = page_data["rows"]
+        position_ids = [str(row.get("position_id") or "") for row in rows if row.get("position_id")]
+        evidence_by_position = self.read_model_repo.fetch_position_signal_evidence_batch(
+            position_ids,
+            as_of=as_of,
+            tx_as_of=tx_as_of,
+            include_history=include_history,
+        )
+        thesis_context = (
+            self.read_model_repo.fetch_position_thesis_context_batch(
+                position_ids,
+                as_of=as_of,
+                tx_as_of=tx_as_of,
+                include_history=include_history,
+            )
+            if include_graph or interpreted.intent == "thesis_review"
+            else {}
+        )
+
+        results: list[dict[str, Any]] = []
+        result_position_ids: list[str] = []
+        visible_rows: list[dict[str, Any]] = []
+        for row in rows:
+            position_resource = _position_resource_from_row(row)
+            if not self.policy.check_object(actor, position_resource).allowed:
+                auth_stats["filtered_objects"] += 1
+                continue
+            raw_pos = _as_dict(row.get("position_props"))
+            pos, redacted = redact_properties(actor, self.policy, position_resource, raw_pos)
+            auth_stats["redacted_fields"] += redacted
+            position_id = str(row.get("position_id") or "")
+            ticker = str(pos.get("ticker")) if pos.get("ticker") is not None else None
+            if ticker is None and _field_visible(actor, self.policy, position_resource, "ticker"):
+                ticker = position_id.split(":")[-1]
+            asset = _resolved_asset(row, pos, position_resource, actor, self.policy, auth_stats)
+            direction = str(pos.get("direction")) if pos.get("direction") is not None else None
+            risk_score = _to_float(pos.get("risk_score")) or 0.0
+            risk_level = None
+            if pos.get("risk_level") is not None:
+                risk_level = str(pos.get("risk_level"))
+            elif "risk_score" in pos and _field_visible(actor, self.policy, position_resource, "risk_level"):
+                risk_level = _risk_level_from_score(risk_score)
+            sector = _resolved_sector(row, position_resource, actor, self.policy, auth_stats)
+
+            evidence = self._build_evidence_from_batch(
+                evidence_by_position.get(position_id, []),
+                actor=actor,
+                position_resource=position_resource,
+                auth_stats=auth_stats,
+            )
+
+            results.append(
+                {
+                    "ticker": ticker,
+                    "asset": asset,
+                    "direction": direction,
+                    "sector": sector,
+                    "risk_score": round(risk_score, 4) if "risk_score" in pos else None,
+                    "risk_level": risk_level,
+                    "evidence": evidence,
+                    "_meta": {"temporal": _temporal_meta_from_position_row(row)},
+                }
+            )
+            result_position_ids.append(position_id)
+            visible_rows.append(row)
+
+        if interpreted.intent == "thesis_review":
+            _enrich_with_thesis_context(
+                results,
+                position_ids=result_position_ids,
+                thesis_context=thesis_context,
+                actor=actor,
+                policy=self.policy,
+                auth_stats=auth_stats,
+            )
+
+        exact_totals = _has_exact_query_totals(actor, self.policy)
+        aggregate = self.read_model_repo.aggregate_positions(
+            filters=applied_filters,
+            as_of=as_of,
+            tx_as_of=tx_as_of,
+            include_history=include_history,
+        )
+        aggregate["confidence"] = round(_compute_confidence(source_status, required_modules), 4)
+        aggregate["exact"] = exact_totals
+        _sanitize_aggregate_for_policy(actor, self.policy, aggregate)
+        pagination_meta = _build_pagination_meta(
+            page=safe_page,
+            page_size=safe_page_size,
+            returned_results=len(results),
+            total_results=int(page_data["total_results"] or 0),
+            exact_total=exact_totals,
+        )
+        response: dict[str, Any] = {
+            "run_id": TEMPORAL_READ_MODEL_RUN_ID,
+            "intent": interpreted.intent,
+            "interpreted_query": {
+                "source": interpreted.source,
+                "query": interpreted.original_query,
+                "entity": interpreted.entity,
+                "filters": applied_filters,
+            },
+            "as_of": response_as_of,
+            "source_status": source_status,
+            "results": results,
+            "aggregate": aggregate,
+        }
+
+        if include_graph:
+            raw_graph, graph_meta = _build_page_graph(
+                visible_rows,
+                evidence_by_position,
+                thesis_context,
+                run_id=TEMPORAL_READ_MODEL_RUN_ID,
+            )
+            graph, graph_stats = filter_graph(actor, self.policy, raw_graph)
+            response["graph"] = graph
+            _merge_auth_stats(auth_stats, graph_stats)
+            graph_meta["node_count"] = len(graph.get("nodes", []))
+            graph_meta["edge_count"] = len(graph.get("edges", []))
+        else:
+            graph_meta = None
+
+        response["_meta"] = {
+            "authorization": dict(auth_stats),
+            "pagination": pagination_meta,
+            "temporal": {
+                "as_of": response_as_of,
+                "tx_as_of": tx_as_of,
+                "include_history": include_history,
+                "mode": "temporal_read_model",
+                "read_model": True,
+                "run_id_compatibility": TEMPORAL_READ_MODEL_RUN_ID,
+            },
+        }
+        if graph_meta is not None:
+            response["_meta"]["graph"] = graph_meta
+
+        _emit_ontology_read_audit(
+            "ontology.query",
+            actor=actor,
+            status="succeeded",
+            object_refs=[{"type": "ontology_read_model", "id": TEMPORAL_READ_MODEL_RUN_ID}],
+            metadata={
+                "intent": interpreted.intent,
+                "include_graph": include_graph,
+                "refresh_snapshot": False,
+                "page": safe_page,
+                "page_size": safe_page_size,
+                "timeframe": timeframe,
+                "as_of": as_of,
+                "tx_as_of": tx_as_of,
+                "include_history": include_history,
+            },
+            after_summary={
+                "run_id": TEMPORAL_READ_MODEL_RUN_ID,
+                "intent": interpreted.intent,
+                "result_count": len(results),
+                "total_results": pagination_meta["total_results"],
+                "include_graph": include_graph,
+                "page": safe_page,
+                "page_size": safe_page_size,
+                "authorization": dict(auth_stats),
+            },
+            source_lineage={
+                "mode": "temporal_read_model",
+                "as_of": response_as_of,
+                "tx_as_of": tx_as_of,
+                "source_status": source_status,
+            },
         )
         return response
 
@@ -593,6 +822,19 @@ class OntologyQueryService:
 
 def _empty_auth_stats() -> dict[str, int]:
     return {"filtered_objects": 0, "filtered_relationships": 0, "redacted_fields": 0}
+
+
+def _temporal_meta_from_position_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "object_uid": row.get("position_id"),
+        "version_id": row.get("position_version_id"),
+        "valid_from": row.get("position_valid_from"),
+        "valid_to": row.get("position_valid_to"),
+        "tx_from": row.get("position_tx_from"),
+        "tx_to": row.get("position_tx_to"),
+        "temporal_confidence": row.get("position_temporal_confidence") or "temporal",
+        "mode": "temporal_read_model",
+    }
 
 
 def _emit_ontology_read_audit(

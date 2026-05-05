@@ -2,6 +2,7 @@ import axios from "axios"
 
 import { getAuthMode } from "@/lib/authMode"
 import type { DecisionState, DecisionStateFields, EffectScope } from "@/lib/decisionState"
+import type { ParsedManagementQuality } from "@/lib/managementQualityTypes"
 import type { ParsedOverview } from "@/lib/overviewTypes"
 
 const client = axios.create({
@@ -285,6 +286,10 @@ export interface IdeaDetailResponse {
     thesis_present?: boolean
     thesis_content?: string | null
     thesis_error?: string | null
+    management_quality_present?: boolean
+    management_quality_content?: string | null
+    management_quality_parsed?: ParsedManagementQuality | null
+    management_quality_error?: string | null
   }
 }
 
@@ -312,6 +317,49 @@ export interface IdeaAcceptResponse {
   action_proposal: StagedMutationResponse | null
   action_error?: string | null
 }
+
+export interface IdeaComparisonRanking {
+  id: number
+  run_id: string
+  idea_id: number
+  evaluation_id: number
+  ticker: string
+  rank: number
+  action: IdeaAction | string
+  score: number | null
+  confidence: number | null
+  confidence_level: "high" | "medium" | "low" | string
+  rationale: string
+  created_at: string
+}
+
+export interface IdeaComparisonRun {
+  id: number
+  run_id: string
+  job_id: string | null
+  scope_statuses: string[]
+  summary: string
+  ranking_count: number
+  raw_result?: Record<string, unknown>
+  created_at: string
+  rankings: IdeaComparisonRanking[]
+}
+
+export interface IdeaComparisonRunListResponse {
+  runs: IdeaComparisonRun[]
+  count: number
+}
+
+export interface IdeaComparisonJobResult {
+  run: IdeaComparisonRun
+  rankings: IdeaComparisonRanking[]
+  evaluations?: IdeaEvaluation[]
+}
+
+export type IdeaComparisonJobResponse =
+  | { job_id: string; status: "queued" | "running"; timeout_s?: number; progress?: Record<string, unknown> }
+  | { job_id: string; status: "done"; timeout_s?: number; result?: IdeaComparisonJobResult; progress?: Record<string, unknown> }
+  | { job_id: string; status: "error" | "cancelled"; timeout_s?: number; error?: string; progress?: Record<string, unknown> }
 
 client.interceptors.response.use(
   res => res,
@@ -538,6 +586,27 @@ export const uploadOverviewDocument = (ticker: string, file: File) => {
     .post("/overview/generate", formData, { timeout: 120_000 })
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 }
+
+// --- Management Quality ---
+
+export const saveManagementQualityContent = (ticker: string, content: string, options?: StagedMutationOptions) =>
+  client
+    .put(`/management-quality/${encodeURIComponent(ticker)}`, { content, ...options })
+    .then(r => r.data as StagedMutationResponse)
+
+export const uploadManagementQualityDocument = (ticker: string, file: File) => {
+  const formData = new FormData()
+  formData.append("ticker", ticker)
+  formData.append("file", file)
+  return client
+    .post("/management-quality/generate", formData, { timeout: 120_000 })
+    .then(r => r.data as StagedMutationResponse)
+}
+
+export const fetchManagementQuality = (ticker: string) =>
+  client
+    .get(`/management-quality/${encodeURIComponent(ticker)}`)
+    .then(r => r.data as { status: "ok"; ticker: string; content: string; parsed: ParsedManagementQuality | null })
 
 // --- Thesis metadata types ---
 
@@ -1940,6 +2009,22 @@ export const fetchIdeaEvaluationJob = (jobId: string) =>
   client
     .get(`/ideas/evaluate/async/${encodeURIComponent(jobId)}`, { timeout: 30_000 })
     .then(r => r.data as IdeaEvaluationJobResponse)
+
+export const startIdeaComparisonEvaluationJob = () =>
+  client
+    .post("/ideas/evaluate-all/async", {}, { timeout: 30_000 })
+    .then(r => r.data as IdeaComparisonJobResponse)
+
+export const fetchIdeaComparisonEvaluationJob = (jobId: string) =>
+  client
+    .get(`/ideas/evaluate-all/async/${encodeURIComponent(jobId)}`, { timeout: 30_000 })
+    .then(r => r.data as IdeaComparisonJobResponse)
+
+export const fetchIdeaComparisonRuns = (params?: { limit?: number }) =>
+  client.get("/ideas/comparison-runs", { params }).then(r => r.data as IdeaComparisonRunListResponse)
+
+export const fetchIdeaComparisonRun = (runId: string) =>
+  client.get(`/ideas/comparison-runs/${encodeURIComponent(runId)}`).then(r => r.data as IdeaComparisonRun)
 
 export const acceptIdeaEvaluation = (ideaId: number, evaluationId: number, body?: { note?: string }) =>
   client

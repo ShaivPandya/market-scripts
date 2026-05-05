@@ -47,7 +47,7 @@ _CHARS_PER_TOKEN = 4  # rough estimate
 _CREATE_DOCUMENTS = """
 CREATE TABLE IF NOT EXISTS documents (
     doc_id     TEXT PRIMARY KEY,
-    doc_type   TEXT NOT NULL,   -- thesis, news_digest, weekly_report, daily_report, conversation_summary
+    doc_type   TEXT NOT NULL,   -- thesis, management_quality, news_digest, weekly_report, daily_report, conversation_summary
     source_path TEXT,
     ticker     TEXT,
     content    TEXT NOT NULL,
@@ -228,10 +228,10 @@ def _chunk_by_window(text: str, heading: str | None = None) -> list[tuple[str | 
 def _chunk_document(content: str, doc_type: str) -> list[tuple[str | None, str]]:
     """Chunk a document based on its type.
 
-    Markdown docs (thesis, news digests, reports): split by ## headings, then window large sections.
+    Markdown docs (thesis, management quality, news digests, reports): split by ## headings, then window large sections.
     Plain text (summaries): window-based chunking.
     """
-    if doc_type in ("thesis", "news_digest", "weekly_report", "daily_report"):
+    if doc_type in ("thesis", "management_quality", "news_digest", "weekly_report", "daily_report"):
         heading_chunks = _chunk_by_headings(content)
         # Sub-chunk large sections
         max_chars = _MAX_CHUNK_TOKENS * _CHARS_PER_TOKEN

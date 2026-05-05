@@ -40,6 +40,7 @@ SOURCE_DBS: dict[str, str] = {
 OBJECT_DIRS: tuple[str, ...] = (
     "investment_theses",
     "investment_overviews",
+    "investment_management_quality",
     "outputs",
     "auto_report/outputs",
     "data_cache/aluminum/processed",
@@ -622,6 +623,30 @@ class StateMigrator:
                 "raw_result_json",
                 "created_at",
             ],
+            "idea_comparison_runs": [
+                "id",
+                "run_id",
+                "job_id",
+                "scope_statuses_json",
+                "summary",
+                "ranking_count",
+                "raw_result_json",
+                "created_at",
+            ],
+            "idea_comparison_rankings": [
+                "id",
+                "run_id",
+                "idea_id",
+                "evaluation_id",
+                "ticker",
+                "rank",
+                "action",
+                "score",
+                "confidence",
+                "confidence_level",
+                "rationale",
+                "created_at",
+            ],
             "action_items": [
                 "id",
                 "ticker",
@@ -965,6 +990,8 @@ class StateMigrator:
                 if table == "report_runs"
                 else ["run_id"]
                 if table == "optimization_runs"
+                else ["run_id"]
+                if table == "idea_comparison_runs"
                 else ["event_id"]
                 if table == "audit_events"
                 else ["idempotency_key"]
@@ -1264,6 +1291,7 @@ class StateMigrator:
 
         add_files("investment_theses", lambda rel: f"live/theses/{rel.as_posix()}")
         add_files("investment_overviews", lambda rel: f"live/overviews/{rel.as_posix()}")
+        add_files("investment_management_quality", lambda rel: f"live/management_quality/{rel.as_posix()}")
         add_files("outputs", lambda rel: f"live/reports/weekly/{rel.as_posix()}")
         add_files("auto_report/outputs", lambda rel: f"live/reports/daily/{rel.as_posix()}")
         add_files("data_cache/aluminum/processed", lambda rel: f"live/snapshots/aluminum/{rel.as_posix()}")

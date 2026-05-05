@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService, object_uid_for
+from ontology.read_model import TemporalReadModelRepository
 from ontology.schemas.identity import action_run_id, object_version_ref_id, thesis_id
 
 logger = logging.getLogger(__name__)
@@ -153,36 +154,42 @@ class DomainOntologyWriteService:
         rows: list[dict[str, Any]] = []
 
         if action_run_id_value is not None:
-            rows.append(
-                self.write_object(
-                    OntologyMutation(
-                        "ActionRun",
-                        str(action_run_id_value),
-                        {
-                            "legacy_id": action_run_id_value,
-                            "action_id": action_id,
-                            "action_schema_version": 1,
-                            "actor_type": actor.get("actor_type") or "unknown",
-                            "actor_id": actor.get("actor_id"),
-                            "source_type": _context_str(context, "source_type"),
-                            "source_id": _context_str(context, "source_id"),
-                            "approval_id": approval_id,
-                            "parent_action_run_id": _context_int(context, "parent_action_run_id"),
-                            "input_hash": input_hash,
-                            "output_hash": _stable_hash(output),
-                            "status": "succeeded",
-                            "execution_state": "succeeded",
-                            "completed_at": now,
-                            "provenance_event_id": provenance_event_id,
-                        },
-                        now,
-                    ),
-                    actor=actor,
-                    provenance_event_id=provenance_event_id,
-                    action_run_id_value=action_run_id_value,
-                    approval_id=approval_id,
-                    input_hash=input_hash,
-                )
+            action_run_row = self.write_object(
+                OntologyMutation(
+                    "ActionRun",
+                    str(action_run_id_value),
+                    {
+                        "legacy_id": action_run_id_value,
+                        "action_id": action_id,
+                        "action_schema_version": 1,
+                        "actor_type": actor.get("actor_type") or "unknown",
+                        "actor_id": actor.get("actor_id"),
+                        "source_type": _context_str(context, "source_type"),
+                        "source_id": _context_str(context, "source_id"),
+                        "approval_id": approval_id,
+                        "parent_action_run_id": _context_int(context, "parent_action_run_id"),
+                        "input_hash": input_hash,
+                        "output_hash": _stable_hash(output),
+                        "status": "succeeded",
+                        "execution_state": "succeeded",
+                        "completed_at": now,
+                        "provenance_event_id": provenance_event_id,
+                    },
+                    now,
+                ),
+                actor=actor,
+                provenance_event_id=provenance_event_id,
+                action_run_id_value=action_run_id_value,
+                approval_id=approval_id,
+                input_hash=input_hash,
+            )
+            rows.append(action_run_row)
+            _log_shadow_parity(
+                action_id=action_id,
+                row=action_run_row,
+                action_run_id_value=action_run_id_value,
+                approval_id=approval_id,
+                provenance_event_id=provenance_event_id,
             )
 
         for mutation in action_mutations(action_id, input_payload, output, now=now):
@@ -195,6 +202,13 @@ class DomainOntologyWriteService:
                 input_hash=input_hash,
             )
             rows.append(row)
+            _log_shadow_parity(
+                action_id=action_id,
+                row=row,
+                action_run_id_value=action_run_id_value,
+                approval_id=approval_id,
+                provenance_event_id=provenance_event_id,
+            )
             if action_run_id_value is not None:
                 self._link_action_run_to_version(
                     action_run_id_value,
@@ -205,6 +219,7 @@ class DomainOntologyWriteService:
                     approval_id=approval_id,
                     input_hash=input_hash,
                 )
+        _refresh_temporal_read_models_if_enabled()
         return rows
 
     def write_pending_approval(
@@ -216,7 +231,7 @@ class DomainOntologyWriteService:
     ) -> dict[str, Any]:
         now = str(approval.get("created_at") or _now())
         actor = _actor(context)
-        return self.write_object(
+        row = self.write_object(
             OntologyMutation(
                 "Approval",
                 str(approval.get("id") or approval.get("legacy_id") or _stable_hash(approval)),
@@ -231,6 +246,17 @@ class DomainOntologyWriteService:
             approval_id=_optional_int(approval.get("id")),
             input_hash=input_hash,
         )
+        _log_shadow_parity(
+            action_id="pending_approval",
+            row=row,
+            action_run_id_value=_context_int(context, "action_run_id"),
+            approval_id=_optional_int(approval.get("id")),
+            provenance_event_id=str(
+                approval.get("provenance_event_id") or _context_str(context, "provenance_event_id") or ""
+            ),
+        )
+        _refresh_temporal_read_models_if_enabled()
+        return row
 
     def _link_action_run_to_version(
         self,
@@ -318,6 +344,40 @@ def record_pending_approval_ontology_version(
     if not ontology_shadow_writes_enabled():
         return None
     return DomainOntologyWriteService().write_pending_approval(approval, context=context, input_hash=input_hash)
+
+
+def _refresh_temporal_read_models_if_enabled() -> None:
+    if not ontology_read_model_enabled():
+        return
+    try:
+        TemporalReadModelRepository().refresh()
+    except Exception:
+        if ontology_primary_writes_enabled():
+            raise
+        logger.exception("ontology read model refresh failed during shadow write")
+
+
+def _log_shadow_parity(
+    *,
+    action_id: str,
+    row: Mapping[str, Any],
+    action_run_id_value: int | None,
+    approval_id: int | None,
+    provenance_event_id: str | None,
+) -> None:
+    temporal = _temporal(row)
+    logger.info(
+        "ontology shadow parity action_id=%s object_type=%s business_key=%s object_uid=%s "
+        "version_id=%s action_run_id=%s approval_id=%s provenance_event_id=%s",
+        action_id,
+        row.get("object_type"),
+        row.get("business_key"),
+        row.get("object_uid") or temporal.get("object_uid"),
+        temporal.get("version_id") or row.get("version_id"),
+        action_run_id_value,
+        approval_id,
+        provenance_event_id,
+    )
 
 
 def action_mutations(

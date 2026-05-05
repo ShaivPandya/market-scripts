@@ -20,6 +20,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-async-job.sh` — generic Cloud Run Job running `python -m api.async_job_runner run`. Tunables: `ASYNC_JOB_CPU`, `ASYNC_JOB_MEMORY`, `ASYNC_JOB_TIMEOUT`, `ASYNC_JOB_MAX_RETRIES`.
 - `deploy-agent-worker.sh` — warm Cloud Run worker pool running `python -m api.agent_worker_loop run` for durable agent workflow turns.
 - `deploy-sizer-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with sizer job/queue defaults from env for low-latency portfolio sizer jobs.
+- `deploy-ontology-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with ontology job/queue defaults from env for low-latency ontology query jobs.
 - `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
@@ -59,6 +60,7 @@ Routine deploys:
 ./infra/gcp/deploy-async-job.sh
 ./infra/gcp/deploy-agent-worker.sh
 ./infra/gcp/deploy-sizer-worker.sh
+./infra/gcp/deploy-ontology-worker.sh
 ```
 
 Routine backend deploys are optimized for the common code-rollout path:
@@ -89,8 +91,9 @@ Cloud Run services and jobs must include:
 
 Production async work uses the `async_jobs` Postgres table for durable status,
 progress, results, and dedupe. Batch jobs run through the generic Cloud Run Job;
-agent chat workflow turns and portfolio sizer jobs run through warm Cloud Run
-worker pools so they do not pay per-request Cloud Run Job startup latency.
+agent chat workflow turns, portfolio sizer jobs, and ontology query jobs run
+through warm Cloud Run worker pools so they do not pay per-request Cloud Run
+Job startup latency.
 
 Required services:
 
@@ -98,14 +101,16 @@ Required services:
 - Cloud Run Job `talisman-async-job`: `python -m api.async_job_runner run`
 - Cloud Run worker pool `talisman-agent-worker`: `python -m api.agent_worker_loop run`
 - Cloud Run worker pool `talisman-sizer-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=sizer` and `JOB_WORKER_QUEUE=sizer`
+- Cloud Run worker pool `talisman-ontology-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=ontology` and `JOB_WORKER_QUEUE=ontology`
 - Cloud Scheduler jobs:
   - hourly: `POST /api/v1/admin/jobs/enqueue-async-job-sweep`
   - weekdays at 23:00 UTC: run `${TOP50_REFRESH_JOB}`
   - weekdays at 23:15 UTC: `POST /api/v1/admin/jobs/enqueue-market-snapshot-refresh`
 
 Cloud Run worker pools run a fixed number of instances, not min/max autoscaling.
-Set `AGENT_WORKER_INSTANCES` and `SIZER_WORKER_INSTANCES` in
-`infra/gcp/config.sh` to control warm worker capacity.
+Set `AGENT_WORKER_INSTANCES`, `SIZER_WORKER_INSTANCES`, and
+`ONTOLOGY_WORKER_INSTANCES` in `infra/gcp/config.sh` to control warm worker
+capacity.
 
 Scheduled cache warming is disabled by default. The cache-warm endpoint remains
 available for manual/admin use, and can be scheduled with
@@ -134,7 +139,9 @@ Required async env/secrets:
 ASYNC_JOB_BACKEND="cloud_run_jobs"
 AGENT_CHAT_DISPATCH_BACKEND="warm_worker"
 ASYNC_DISPATCH_BACKEND_SIZER="warm_worker"
+ASYNC_DISPATCH_BACKEND_ONTOLOGY="warm_worker"
 ASYNC_QUEUE_SIZER="sizer"
+ASYNC_QUEUE_ONTOLOGY="ontology"
 ASYNC_CLOUD_RUN_JOB="talisman-async-job"
 ASYNC_JOB_COMPLETED_TTL_SECONDS="86400"
 ASYNC_JOB_FAILED_TTL_SECONDS="604800"

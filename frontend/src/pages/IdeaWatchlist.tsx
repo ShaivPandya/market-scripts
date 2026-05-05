@@ -13,6 +13,7 @@ import {
 
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
+import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
@@ -21,13 +22,19 @@ import {
   archiveIdea,
   createIdea,
   fetchIdea,
+  fetchIdeaComparisonEvaluationJob,
+  fetchIdeaComparisonRuns,
   fetchIdeaEvaluationJob,
   fetchIdeas,
   rejectIdea,
+  startIdeaComparisonEvaluationJob,
   startIdeaEvaluationJob,
   updateIdea,
+  uploadManagementQualityDocument,
   uploadOverviewDocument,
   type IdeaAction,
+  type IdeaComparisonJobResponse,
+  type IdeaComparisonRun,
   type IdeaDetailResponse,
   type IdeaEvaluation,
   type IdeaEvaluationJobResponse,
@@ -37,9 +44,12 @@ import {
   type InvestmentIdea,
 } from "@/lib/api"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
+import type { ParsedManagementQuality } from "@/lib/managementQualityTypes"
 import { cn } from "@/lib/utils"
 
 const ACTIVE_JOBS_KEY = "idea-watchlist-active-jobs-v1"
+const ACTIVE_COMPARISON_JOB_KEY = "idea-watchlist-active-comparison-job-v1"
+const ACTIONABLE_IDEA_STATUSES = new Set<IdeaStatus | string>(["watching", "researching", "ready_for_review"])
 
 const IDEA_STATUSES: { value: IdeaStatus; label: string }[] = [
   { value: "watching", label: "Watching" },
@@ -82,6 +92,23 @@ function writeActiveJobs(jobs: Record<string, string>) {
   window.localStorage.setItem(ACTIVE_JOBS_KEY, JSON.stringify(jobs))
 }
 
+function readActiveComparisonJob(): string | null {
+  try {
+    const jobId = window.localStorage.getItem(ACTIVE_COMPARISON_JOB_KEY)
+    return jobId && jobId.trim() ? jobId : null
+  } catch {
+    return null
+  }
+}
+
+function writeActiveComparisonJob(jobId: string | null) {
+  if (jobId) {
+    window.localStorage.setItem(ACTIVE_COMPARISON_JOB_KEY, jobId)
+  } else {
+    window.localStorage.removeItem(ACTIVE_COMPARISON_JOB_KEY)
+  }
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "Never"
   const date = new Date(value)
@@ -115,6 +142,65 @@ function ActionPill({ action }: { action?: string | null }) {
   return <StatusBadge tone={ACTION_TONE[action] ?? "neutral"}>{formatLabel(action)}</StatusBadge>
 }
 
+function ConfidencePill({ level, confidence }: { level?: string | null; confidence?: number | null }) {
+  const normalized = String(level || "").toLowerCase()
+  const tone: StatusTone = normalized === "high" ? "success" : normalized === "medium" ? "warning" : "neutral"
+  const confidenceLabel = confidence == null ? "N/A" : `${Math.round(Number(confidence) * 100)}%`
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <StatusBadge tone={tone}>{formatLabel(normalized || "low")}</StatusBadge>
+      <span className="font-mono text-xs text-subtle">{confidenceLabel}</span>
+    </span>
+  )
+}
+
+function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
+  const rankings = run?.rankings ?? []
+  return (
+    <section className="mb-4 rounded-lg border border-app bg-card-muted p-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="section-title text-sm">Comparative Ranking</h3>
+          <p className="mt-1 text-xs text-subtle">
+            {run ? `${rankings.length} ranked ideas / ${formatDate(run.created_at)}` : "No comparative run yet."}
+          </p>
+        </div>
+        {run?.run_id && <span className="font-mono text-xs text-subtle">{run.run_id.slice(0, 18)}</span>}
+      </div>
+      {run?.summary && <p className="mb-3 text-sm leading-6 text-muted">{run.summary}</p>}
+      {rankings.length ? (
+        <div className="overflow-x-auto rounded-lg border border-app bg-card">
+          <table className="w-full min-w-[760px] border-collapse text-sm">
+            <thead className="bg-card-muted">
+              <tr>
+                {["Rank", "Ticker", "Action", "Score", "Confidence", "Rationale"].map(label => (
+                  <th key={label} className="border-b border-app px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rankings.map(row => (
+                <tr key={`${row.run_id}-${row.rank}-${row.idea_id}`} className="border-b border-app last:border-b-0">
+                  <td className="px-3 py-3 font-mono text-app">#{row.rank}</td>
+                  <td className="px-3 py-3 font-semibold text-app">{row.ticker}</td>
+                  <td className="px-3 py-3"><ActionPill action={row.action} /></td>
+                  <td className="px-3 py-3 font-mono text-app">{scoreText(row.score)}</td>
+                  <td className="px-3 py-3"><ConfidencePill level={row.confidence_level} confidence={row.confidence} /></td>
+                  <td className="max-w-[28rem] px-3 py-3 text-muted">{row.rationale || "N/A"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">Run Evaluate All to rank active ideas together.</p>
+      )}
+    </section>
+  )
+}
+
 function FactorScore({ name, factor }: { name: string; factor: IdeaFactorScore }) {
   const score = typeof factor?.score === "number" ? factor.score : null
   return (
@@ -146,6 +232,83 @@ function MissingRows({ rows }: { rows: IdeaMissingInformation[] }) {
           {row.reason && <p className="mt-2 text-sm leading-6 text-muted">{row.reason}</p>}
         </div>
       ))}
+    </div>
+  )
+}
+
+function ManagementRatingBadge({ value }: { value?: string | null }) {
+  const rating = String(value || "Insufficient evidence")
+  const normalized = rating.toLowerCase()
+  const className = normalized.includes("strong")
+    ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
+    : normalized.includes("weak") || normalized.includes("poor")
+      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+      : normalized.includes("mixed") || normalized.includes("too early")
+        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+        : "border-app bg-card-muted text-muted"
+
+  return <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", className)}>{rating}</span>
+}
+
+function ManagementQualityPreview({ parsed, content }: { parsed?: ParsedManagementQuality | null; content: string }) {
+  const summary = parsed?.summary ?? null
+  const scorecard = parsed?.scorecard ?? []
+  const hasStructured = Boolean(summary || scorecard.length)
+
+  return (
+    <div className="space-y-4">
+      {summary && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="border-l border-app pl-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h4 className="section-title text-xs">Overall</h4>
+              <ManagementRatingBadge value={summary.overall_rating} />
+            </div>
+            {summary.bottom_line && <p className="text-sm leading-6 text-muted">{summary.bottom_line}</p>}
+          </div>
+          {[
+            ["Owner Mindset", summary.owner_mindset],
+            ["Business Value", summary.business_value_understanding],
+            ["Follow-through", summary.follow_through],
+          ].map(([label, item]) => {
+            const row = item as { rating?: string | null; text?: string | null } | undefined
+            return (
+              <div key={String(label)} className="border-l border-app pl-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="section-title text-xs">{String(label)}</h4>
+                  <ManagementRatingBadge value={row?.rating} />
+                </div>
+                {row?.text && <p className="text-sm leading-6 text-muted">{row.text}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {scorecard.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-app">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-app text-xs uppercase text-subtle">
+              <tr>
+                <th className="px-3 py-2 font-semibold">Question</th>
+                <th className="px-3 py-2 font-semibold">Rating</th>
+                <th className="px-3 py-2 font-semibold">Evidence</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[hsl(var(--border))]">
+              {scorecard.map(row => (
+                <tr key={row.question}>
+                  <td className="px-3 py-2 text-app">{row.question}</td>
+                  <td className="px-3 py-2"><ManagementRatingBadge value={row.rating} /></td>
+                  <td className="px-3 py-2 text-muted">{row.evidence}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className={cn("prose prose-sm dark:prose-invert max-w-none", hasStructured && "border-t border-app pt-3")}>
+        <MarkdownRenderer content={content} />
+      </div>
     </div>
   )
 }
@@ -262,8 +425,11 @@ export function IdeaWatchlist() {
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [activeJobs, setActiveJobs] = useState<Record<string, string>>(() => readActiveJobs())
+  const [activeComparisonJob, setActiveComparisonJob] = useState<string | null>(() => readActiveComparisonJob())
   const [jobSnapshots, setJobSnapshots] = useState<Record<string, IdeaEvaluationJobResponse>>({})
+  const [comparisonJobSnapshot, setComparisonJobSnapshot] = useState<IdeaComparisonJobResponse | null>(null)
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({})
+  const [comparisonJobError, setComparisonJobError] = useState<string | null>(null)
   const [ticker, setTicker] = useState("")
   const [companyName, setCompanyName] = useState("")
   const [tags, setTags] = useState("")
@@ -272,10 +438,21 @@ export function IdeaWatchlist() {
   const [editTags, setEditTags] = useState("")
   const [editStatus, setEditStatus] = useState<IdeaStatus>("watching")
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
+  const [managementUploadMessage, setManagementUploadMessage] = useState<string | null>(null)
   const [acceptMessage, setAcceptMessage] = useState<string | null>(null)
 
   const ideasQuery = useApiQuery(["ideas"], () => fetchIdeas({ include_archived: false, limit: 300 }), 30_000)
   const ideas = useMemo(() => ideasQuery.data?.ideas ?? [], [ideasQuery.data?.ideas])
+  const actionableIdeas = useMemo(
+    () => ideas.filter(idea => ACTIONABLE_IDEA_STATUSES.has(idea.status)),
+    [ideas],
+  )
+  const comparisonQuery = useApiQuery(["idea-comparison-runs"], () => fetchIdeaComparisonRuns({ limit: 1 }), 30_000)
+  const latestComparisonRun = useMemo(() => {
+    const persisted = comparisonQuery.data?.runs?.[0] ?? null
+    if (persisted) return persisted
+    return comparisonJobSnapshot?.status === "done" ? comparisonJobSnapshot.result?.run ?? null : null
+  }, [comparisonJobSnapshot, comparisonQuery.data?.runs])
 
   useEffect(() => {
     if (selectedId == null && ideas.length > 0) setSelectedId(ideas[0].id)
@@ -301,6 +478,11 @@ export function IdeaWatchlist() {
   function setActiveJobsAndPersist(next: Record<string, string>) {
     setActiveJobs(next)
     writeActiveJobs(next)
+  }
+
+  function setActiveComparisonJobAndPersist(jobId: string | null) {
+    setActiveComparisonJob(jobId)
+    writeActiveComparisonJob(jobId)
   }
 
   useEffect(() => {
@@ -339,6 +521,37 @@ export function IdeaWatchlist() {
       window.clearInterval(handle)
     }
   }, [activeJobs, qc])
+
+  useEffect(() => {
+    if (!activeComparisonJob) return
+    let stopped = false
+
+    async function pollComparisonJob() {
+      try {
+        const job = await fetchIdeaComparisonEvaluationJob(activeComparisonJob as string)
+        setComparisonJobSnapshot(job)
+        if (job.status === "done") {
+          setComparisonJobError(null)
+          if (!stopped) setActiveComparisonJobAndPersist(null)
+          await qc.invalidateQueries({ queryKey: ["ideas"] })
+          await qc.invalidateQueries({ queryKey: ["idea-comparison-runs"] })
+          if (selectedId != null) await qc.invalidateQueries({ queryKey: ["idea", selectedId] })
+        } else if (job.status === "error" || job.status === "cancelled") {
+          if (!stopped) setActiveComparisonJobAndPersist(null)
+          setComparisonJobError(job.error || "Comparative evaluation failed.")
+        }
+      } catch (err) {
+        setComparisonJobError(err instanceof Error ? err.message : "Unable to poll comparative evaluation.")
+      }
+    }
+
+    void pollComparisonJob()
+    const handle = window.setInterval(() => void pollComparisonJob(), 2500)
+    return () => {
+      stopped = true
+      window.clearInterval(handle)
+    }
+  }, [activeComparisonJob, qc, selectedId])
 
   const createMutation = useMutation({
     mutationFn: () => createIdea({
@@ -394,6 +607,23 @@ export function IdeaWatchlist() {
     },
   })
 
+  const evaluateAllMutation = useMutation({
+    mutationFn: () => startIdeaComparisonEvaluationJob(),
+    onSuccess: job => {
+      setComparisonJobError(null)
+      setComparisonJobSnapshot(job)
+      if (job.status === "done") {
+        void qc.invalidateQueries({ queryKey: ["ideas"] })
+        void qc.invalidateQueries({ queryKey: ["idea-comparison-runs"] })
+        if (selectedId != null) void qc.invalidateQueries({ queryKey: ["idea", selectedId] })
+        return
+      }
+      setActiveComparisonJobAndPersist(job.job_id)
+      void qc.invalidateQueries({ queryKey: ["ideas"] })
+    },
+    onError: err => setComparisonJobError(err instanceof Error ? err.message : "Comparative evaluation failed."),
+  })
+
   const archiveMutation = useMutation({
     mutationFn: (ideaId: number) => archiveIdea(ideaId),
     onSuccess: () => {
@@ -409,6 +639,21 @@ export function IdeaWatchlist() {
       if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
     },
     onError: err => setUploadMessage(err instanceof Error ? err.message : "Upload failed."),
+  })
+
+  const managementUploadMutation = useMutation({
+    mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) =>
+      uploadManagementQualityDocument(idea.ticker, file),
+    onSuccess: result => {
+      setManagementUploadMessage(
+        result.approval_id
+          ? `Management quality proposal #${result.approval_id} staged.`
+          : "Management quality proposal staged.",
+      )
+      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
+      void invalidateApprovalSummaries(qc)
+    },
+    onError: err => setManagementUploadMessage(err instanceof Error ? err.message : "Upload failed."),
   })
 
   const acceptMutation = useMutation({
@@ -459,22 +704,56 @@ export function IdeaWatchlist() {
     return { jobId, message: `Evaluation ${phase}${suffix}` }
   }
 
+  function currentComparisonJobResponse(): { jobId: string; message: string } | null {
+    if (!activeComparisonJob) return null
+    const progress = comparisonJobSnapshot?.progress
+    const phase = typeof progress?.phase === "string" ? formatLabel(progress.phase) : "running"
+    const done = typeof progress?.done === "number" ? progress.done : null
+    const total = typeof progress?.total === "number" && progress.total > 0 ? progress.total : null
+    const suffix = done != null && total != null ? ` ${done}/${total}` : ""
+    return { jobId: activeComparisonJob, message: `Comparative evaluation ${phase}${suffix}` }
+  }
+
+  const comparisonJob = currentComparisonJobResponse()
+
   return (
     <main className="mx-auto w-full max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-app">Idea Watchlist</h1>
-          <p className="mt-1 text-sm text-subtle">{ideas.length} active ideas</p>
+          <p className="mt-1 text-sm text-subtle">{ideas.length} active ideas / {actionableIdeas.length} actionable</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void ideasQuery.refetch()}
-          className="theme-button-base theme-button-secondary min-h-10 px-4 text-sm"
-        >
-          <RefreshCw size={16} aria-hidden="true" />
-          Refresh
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => evaluateAllMutation.mutate()}
+            disabled={!actionableIdeas.length || Boolean(activeComparisonJob) || evaluateAllMutation.isPending}
+            className="theme-button-base theme-button-primary min-h-10 px-4 text-sm disabled:pointer-events-none disabled:opacity-50"
+          >
+            <Play size={16} aria-hidden="true" />
+            {activeComparisonJob || evaluateAllMutation.isPending ? "Evaluating All" : "Evaluate All"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void ideasQuery.refetch()}
+            className="theme-button-base theme-button-secondary min-h-10 px-4 text-sm"
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {comparisonJob && (
+        <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
+          {comparisonJob.message} ({comparisonJob.jobId.slice(0, 8)})
+        </div>
+      )}
+      {comparisonJobError && (
+        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {comparisonJobError}
+        </div>
+      )}
 
       <section className="theme-surface mb-5 rounded-lg p-4">
         <form
@@ -502,8 +781,15 @@ export function IdeaWatchlist() {
         <section className="theme-surface rounded-lg p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="section-title text-sm">Watchlist</h2>
-            {ideasQuery.isLoading && <LoadingSpinner message="Loading ideas" />}
+            {(ideasQuery.isLoading || comparisonQuery.isLoading) && <LoadingSpinner message="Loading ideas" />}
           </div>
+
+          <ComparativeRankingPanel run={latestComparisonRun} />
+          {comparisonQuery.error && (
+            <div className="mb-4">
+              <ErrorMessage message={`Could not load comparison runs: ${comparisonQuery.error.message}`} />
+            </div>
+          )}
 
           {ideasQuery.error ? (
             <ErrorMessage message={`Could not load ideas: ${ideasQuery.error.message}`} />
@@ -630,6 +916,7 @@ export function IdeaWatchlist() {
                     <p className="mt-1 text-xs text-subtle">
                       {detail?.documents?.overview_present ? "Stored" : "Missing"}
                       {detail?.documents?.thesis_present ? " / thesis stored" : ""}
+                      {detail?.documents?.management_quality_present ? " / management stored" : ""}
                     </p>
                   </div>
                   <label className="theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm">
@@ -663,6 +950,53 @@ export function IdeaWatchlist() {
                   </div>
                 ) : (
                   <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">No overview stored.</p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-app bg-card-muted p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="section-title text-sm">Management Quality</h3>
+                    <p className="mt-1 text-xs text-subtle">
+                      {detail?.documents?.management_quality_present ? "Stored" : "Missing"}
+                    </p>
+                  </div>
+                  <label className={cn(
+                    "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
+                    managementUploadMutation.isPending && "pointer-events-none opacity-60",
+                  )}>
+                    <FileUp size={16} aria-hidden="true" />
+                    {managementUploadMutation.isPending ? "Uploading" : "Upload"}
+                    <input
+                      type="file"
+                      accept=".md,.markdown,.pdf,text/markdown,application/pdf"
+                      className="hidden"
+                      disabled={managementUploadMutation.isPending}
+                      onChange={event => {
+                        const file = event.target.files?.[0]
+                        event.currentTarget.value = ""
+                        if (file) managementUploadMutation.mutate({ idea: selectedIdea, file })
+                      }}
+                    />
+                  </label>
+                </div>
+                {managementUploadMessage && <p className="mt-2 text-xs text-subtle">{managementUploadMessage}</p>}
+                {detail?.documents?.management_quality_error && (
+                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    {detail.documents.management_quality_error}
+                  </p>
+                )}
+                {detail?.documents?.management_quality_content ? (
+                  <div className="mt-4 max-h-[46rem] overflow-y-auto pr-1">
+                    <ManagementQualityPreview
+                      content={detail.documents.management_quality_content}
+                      parsed={detail.documents.management_quality_parsed ?? null}
+                    />
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">
+                    No management quality assessment stored.
+                  </p>
                 )}
               </section>
 

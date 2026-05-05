@@ -246,6 +246,93 @@ class TestInvestmentIdeas:
         assert accepted["accepted_at"] is not None
         assert core_db.get_investment_idea(idea["id"])["status"] == "accepted"
 
+    def test_comparison_run_persists_rankings_and_lists_latest_first(self):
+        first = core_db.create_investment_idea("MSFT", company_name="Microsoft")
+        second = core_db.create_investment_idea("NVDA", company_name="Nvidia")
+        first_eval = core_db.create_idea_evaluation(
+            first["id"],
+            {
+                "action": "watch",
+                "score": 70,
+                "confidence": 0.61,
+                "rationale": "Good but not top ranked.",
+                "recommendation_record": {"action": "watch"},
+            },
+            job_id="comparison-job-1",
+        )
+        second_eval = core_db.create_idea_evaluation(
+            second["id"],
+            {
+                "action": "buy",
+                "score": 84,
+                "confidence": 0.82,
+                "rationale": "Best fresh setup.",
+                "recommendation_record": {"action": "buy"},
+            },
+            job_id="comparison-job-1",
+        )
+
+        old_run = core_db.create_idea_comparison_run(
+            job_id="comparison-job-0",
+            scope_statuses=["watching"],
+            summary="Older run.",
+            rankings=[
+                {
+                    "idea_id": first["id"],
+                    "evaluation_id": first_eval["id"],
+                    "ticker": "MSFT",
+                    "rank": 1,
+                    "action": "watch",
+                    "score": 70,
+                    "confidence": 0.61,
+                    "confidence_level": "medium",
+                    "rationale": "Older ranking.",
+                }
+            ],
+            raw_result={"summary": "Older run."},
+            run_id="older-run",
+        )
+        latest = core_db.create_idea_comparison_run(
+            job_id="comparison-job-1",
+            scope_statuses=["watching", "ready_for_review"],
+            summary="Fresh comparative ranking.",
+            rankings=[
+                {
+                    "idea_id": second["id"],
+                    "evaluation_id": second_eval["id"],
+                    "ticker": "NVDA",
+                    "rank": 1,
+                    "action": "buy",
+                    "score": 84,
+                    "confidence": 0.82,
+                    "confidence_level": "high",
+                    "rationale": "Best fresh setup.",
+                },
+                {
+                    "idea_id": first["id"],
+                    "evaluation_id": first_eval["id"],
+                    "ticker": "MSFT",
+                    "rank": 2,
+                    "action": "watch",
+                    "score": 70,
+                    "confidence": 0.61,
+                    "confidence_level": "medium",
+                    "rationale": "Good but lower confidence.",
+                },
+            ],
+            raw_result={"summary": "Fresh comparative ranking."},
+            run_id="latest-run",
+        )
+
+        loaded = core_db.get_idea_comparison_run(latest["run_id"])
+        assert loaded["summary"] == "Fresh comparative ranking."
+        assert loaded["scope_statuses"] == ["watching", "ready_for_review"]
+        assert [row["ticker"] for row in loaded["rankings"]] == ["NVDA", "MSFT"]
+        assert loaded["rankings"][0]["confidence_level"] == "high"
+
+        runs = core_db.list_idea_comparison_runs(limit=2)
+        assert [run["run_id"] for run in runs] == [latest["run_id"], old_run["run_id"]]
+
 
 # ---------------------------------------------------------------------------
 # Watch Triggers

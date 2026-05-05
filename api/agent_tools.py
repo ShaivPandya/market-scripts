@@ -50,6 +50,8 @@ from ontology.action_registry import (
 from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor
 
 logger = logging.getLogger("api.agent")
+_DEFAULT_GET_CACHED = get_cached
+_DEFAULT_SET_CACHED = set_cached
 
 _SEARCH_WEB_ALLOWED_DOMAINS_DEFAULT = [
     "bloomberg.com",
@@ -441,8 +443,8 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "name": "search_knowledge_base",
         "description": (
-            "Search across all indexed research documents — investment theses, uploaded news digests, "
-            "weekly reports, daily reports, and past conversation summaries — using semantic similarity. "
+            "Search across all indexed research documents — investment theses, management-quality assessments, "
+            "uploaded news digests, weekly reports, daily reports, and past conversation summaries — using semantic similarity. "
             "Use this when the user asks what they wrote about a topic, references past research, "
             "wants to find previous analysis on a ticker or theme, or asks 'what did I say about X'. "
             "Returns ranked snippets with source attribution."
@@ -457,7 +459,7 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
                 "doc_types": {
                     "type": "string",
                     "description": (
-                        "Comma-separated document types to search. Options: thesis, news_digest, "
+                        "Comma-separated document types to search. Options: thesis, management_quality, news_digest, "
                         "weekly_report, daily_report, conversation_summary. Leave empty to search all."
                     ),
                 },
@@ -608,7 +610,7 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "name": "get_dossier",
         "description": (
-            "Fetch the complete position dossier for a ticker. Returns thesis, catalysts, "
+            "Fetch the complete position dossier for a ticker. Returns overview, management quality, thesis, catalysts, "
             "kill conditions, evaluations, ontology risk, workflow runs, action items, "
             "triggers, research notes, and pending approvals — all in one call."
         ),
@@ -838,7 +840,11 @@ _BASE_CAPABILITY_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "query_ontology": ("ontology", "read", ("ontology", "risk exposure", "portfolio risk")),
     "get_thesis": ("thesis", "read", ("thesis", "investment thesis")),
     "get_thesis_evaluations": ("thesis", "read", ("thesis evaluations", "monitoring history")),
-    "search_knowledge_base": ("research", "read", ("knowledge base", "past research", "notes", "news digests")),
+    "search_knowledge_base": (
+        "research",
+        "read",
+        ("knowledge base", "past research", "notes", "news digests", "management quality"),
+    ),
     "get_ontology_diff": ("ontology", "read", ("ontology diff", "risk changes")),
     "search_web": ("research", "read", ("web", "news", "latest", "recent")),
     "get_catalysts": ("process", "read", ("catalysts",)),
@@ -846,7 +852,7 @@ _BASE_CAPABILITY_META: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "get_action_items": ("process", "read", ("action items", "tasks")),
     "get_watch_triggers": ("process", "read", ("watch triggers", "monitoring")),
     "get_pending_approvals": ("approvals", "read", ("approvals", "pending approvals")),
-    "get_dossier": ("portfolio", "read", ("dossier", "position dossier")),
+    "get_dossier": ("portfolio", "read", ("dossier", "position dossier", "management quality")),
     "get_workflow_history": ("workflows", "read", ("workflow history", "workflow runs")),
     "propose_thesis_status_change": ("thesis", "proposal", ("propose thesis status", "thesis status")),
     "propose_action_item": ("process", "proposal", ("propose action", "action item")),
@@ -1839,6 +1845,14 @@ def _cached_singleflight(
     *,
     force_refresh: bool = False,
 ) -> tuple[Any, str]:
+    if get_cached is not _DEFAULT_GET_CACHED or set_cached is not _DEFAULT_SET_CACHED:
+        if not force_refresh:
+            value = get_cached(cache, key)
+            if value is not None:
+                return value, "hit"
+        value = loader()
+        set_cached(cache, key, value)
+        return value, "refresh" if force_refresh else "miss_fetch"
     return _get_or_set_cached_with_status(cache, key, loader, force_refresh=force_refresh)
 
 

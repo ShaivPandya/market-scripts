@@ -12,6 +12,7 @@ import {
   fetchThesisStatus,
   saveThesisContent,
   saveOverviewContent,
+  saveManagementQualityContent,
   completeAction,
   dismissAction,
   updateCatalystStatus,
@@ -45,6 +46,7 @@ import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
+import type { ParsedManagementQuality, ManagementQualityBullet } from "@/lib/managementQualityTypes"
 import type { ParsedOverview } from "@/lib/overviewTypes"
 import {
   DecisionStateBadge,
@@ -56,6 +58,7 @@ import {
 import { approvalDecisionState } from "@/lib/decisionState"
 import { ThesisUpload } from "@/components/ThesisUpload"
 import { OverviewUpload } from "@/components/OverviewUpload"
+import { ManagementQualityUpload } from "@/components/ManagementQualityUpload"
 import { cn } from "@/lib/utils"
 
 interface DossierData {
@@ -63,6 +66,10 @@ interface DossierData {
   position: Record<string, unknown> | null
   overview_content: string | null
   overview_parsed: ParsedOverview | null
+  management_quality: {
+    content: string | null
+    parsed: ParsedManagementQuality | null
+  }
   thesis: {
     meta: ThesisMeta | null
     content: string | null
@@ -107,7 +114,7 @@ interface Trigger { id: number; condition: string; trigger_type: string; status:
 interface ResearchNote { id: number; title: string; content: string; note_type: string | null; created_at: string }
 
 const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Research", "Workflows"] as const
-type Tab = "Overview" | typeof BASE_TABS[number]
+type Tab = "Overview" | "Management Quality" | typeof BASE_TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
   active: "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
@@ -278,8 +285,8 @@ export function PositionDossier() {
   const approvalSummaryError = approvalSummary.error
   const isEquity =
     String(data.position?.asset ?? "") === "equity" && String(data.position?.instrument_type ?? "security") !== "future"
-  const visibleTabs: Tab[] = isEquity ? ["Overview", ...BASE_TABS] : [...BASE_TABS]
-  const activeTab: Tab = tab === "Overview" && !isEquity ? "Thesis" : tab
+  const visibleTabs: Tab[] = isEquity ? ["Overview", "Management Quality", ...BASE_TABS] : [...BASE_TABS]
+  const activeTab: Tab = (tab === "Overview" || tab === "Management Quality") && !isEquity ? "Thesis" : tab
   const pos = data.position
   const positionQuantity = pos?.quantity ?? pos?.shares
   const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
@@ -303,6 +310,7 @@ export function PositionDossier() {
           <div className="flex max-w-full flex-wrap items-center gap-2">
             <ThesisUpload ticker={ticker!} status={(thesisStatus?.[ticker!] ?? "missing") as ThesisStatus} />
             {isEquity && <OverviewUpload ticker={ticker!} hasContent={!!data.overview_content} />}
+            {isEquity && <ManagementQualityUpload ticker={ticker!} hasContent={!!data.management_quality?.content} />}
           </div>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
@@ -378,6 +386,13 @@ export function PositionDossier() {
       {/* Tab content */}
       <div className="theme-surface rounded-xl p-4">
         {activeTab === "Overview" && <OverviewTab content={data.overview_content} parsed={data.overview_parsed} ticker={data.ticker} />}
+        {activeTab === "Management Quality" && (
+          <ManagementQualityTab
+            content={data.management_quality?.content ?? null}
+            parsed={data.management_quality?.parsed ?? null}
+            ticker={data.ticker}
+          />
+        )}
         {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
         {activeTab === "Claims" && <ClaimsTab claims={data.thesis_claims} catalysts={data.catalysts} conditions={data.kill_conditions} ticker={ticker!} />}
         {activeTab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} ticker={ticker!} />}
@@ -746,6 +761,201 @@ function OverviewTab({ content, parsed, ticker }: { content: string | null; pars
         </button>
       </div>
       <EquityOverviewReadView content={content} parsed={parsed} ticker={ticker} />
+    </div>
+  )
+}
+
+function ManagementRatingBadge({ value }: { value?: string | null }) {
+  const rating = (value || "Insufficient evidence").trim()
+  const normalized = rating.toLowerCase()
+  const className = normalized.includes("strong")
+    ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
+    : normalized.includes("weak") || normalized.includes("poor")
+      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+      : normalized.includes("mixed") || normalized.includes("too early")
+        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+        : "border-app bg-[hsl(var(--muted-2))] text-muted"
+
+  return (
+    <span className={cn("inline-flex shrink-0 items-center rounded border px-2 py-0.5 text-xs font-semibold", className)}>
+      {rating}
+    </span>
+  )
+}
+
+function ManagementBulletList({ items }: { items: ManagementQualityBullet[] }) {
+  return (
+    <div className="space-y-2">
+      {items.map((item, index) => (
+        <div key={`${item.title || "item"}-${index}`} className="rounded-lg border border-app px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            {item.title && <h4 className="font-semibold text-app">{item.title}</h4>}
+            {item.response_rating && <ManagementRatingBadge value={item.response_rating} />}
+          </div>
+          <p className="mt-1 text-muted">{item.text}</p>
+          {item.response_text && <p className="mt-1 text-xs text-subtle">Response: {item.response_text}</p>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ManagementQualityTab({
+  content,
+  parsed,
+  ticker,
+}: {
+  content: string | null
+  parsed: ParsedManagementQuality | null
+  ticker: string
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState("")
+  const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
+  const qc = useQueryClient()
+  const saveMutation = useMutation({
+    mutationFn: () => saveManagementQualityContent(ticker, draft),
+    onSuccess: result => {
+      setProposal(result as StagedMutationResponse)
+      void invalidateApprovalSummaries(qc)
+      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      setEditing(false)
+    },
+  })
+
+  const startEdit = () => {
+    setDraft(content ?? "")
+    setEditing(true)
+  }
+
+  const summary = parsed?.summary ?? null
+  const summaryCards = [
+    { label: "Overall", rating: summary?.overall_rating, text: summary?.bottom_line },
+    { label: "Owner Mindset", rating: summary?.owner_mindset?.rating, text: summary?.owner_mindset?.text },
+    {
+      label: "Business Value",
+      rating: summary?.business_value_understanding?.rating,
+      text: summary?.business_value_understanding?.text,
+    },
+    { label: "Follow-through", rating: summary?.follow_through?.rating, text: summary?.follow_through?.text },
+  ]
+
+  if (!content) {
+    return (
+      <div>
+        <ProposalNotice proposal={proposal} />
+        <p className="mb-3 text-sm text-muted">No management quality assessment on file for this position.</p>
+        <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
+          Draft Management Quality Proposal
+        </button>
+        {editing && (
+          <div className="mt-3">
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              className="w-full min-h-[320px] rounded-lg border border-app bg-transparent p-3 text-sm text-app font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder={"# TICKER Management Quality\n\n## Executive Summary\n\n## Management Scorecard\n\n## Most Impressive Accomplishments\n\n## Biggest Setbacks and Responses"}
+            />
+            {saveMutation.isError && <p className="mt-1 text-xs text-red-600">{String(saveMutation.error)}</p>}
+            <div className="mt-2 flex gap-2">
+              <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Staging proposal...">Submit Proposed Assessment</ActionButton>
+              <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (editing) {
+    return (
+      <div>
+        <ProposalNotice proposal={proposal} />
+        <textarea
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          className="w-full min-h-[420px] rounded-lg border border-app bg-transparent p-3 text-sm text-app font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+        {saveMutation.isError && <p className="mt-1 text-xs text-red-600">{String(saveMutation.error)}</p>}
+        <div className="mt-2 flex gap-2">
+          <ActionButton onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} loadingText="Staging proposal...">Submit Proposed Assessment</ActionButton>
+          <button type="button" onClick={() => setEditing(false)} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">Cancel</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <ProposalNotice proposal={proposal} />
+      <div className="mb-4 flex justify-end">
+        <button type="button" onClick={startEdit} className="rounded-lg border border-app px-3 py-1.5 text-sm font-medium text-muted hover:text-app transition-colors">
+          Edit
+        </button>
+      </div>
+
+      {summary && (
+        <section className="mb-5">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
+            {summaryCards.map(card => (
+              <div key={card.label} className="rounded-lg border border-app px-3 py-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-xs font-semibold uppercase text-subtle">{card.label}</h3>
+                  <ManagementRatingBadge value={card.rating} />
+                </div>
+                {card.text && <p className="text-sm leading-6 text-muted">{card.text}</p>}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {parsed?.scorecard && (
+        <section className="mb-5">
+          <h3 className="mb-2 text-sm font-semibold text-app">Management Scorecard</h3>
+          <div className="overflow-x-auto rounded-lg border border-app">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-app text-xs uppercase text-subtle">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Question</th>
+                  <th className="px-3 py-2 font-semibold">Rating</th>
+                  <th className="px-3 py-2 font-semibold">Evidence</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[hsl(var(--border))]">
+                {parsed.scorecard.map(row => (
+                  <tr key={row.question}>
+                    <td className="px-3 py-2 text-app">{row.question}</td>
+                    <td className="px-3 py-2"><ManagementRatingBadge value={row.rating} /></td>
+                    <td className="px-3 py-2 text-muted">{row.evidence}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {parsed?.accomplishments && (
+        <section className="mb-5">
+          <h3 className="mb-2 text-sm font-semibold text-app">Most Impressive Accomplishments</h3>
+          <ManagementBulletList items={parsed.accomplishments} />
+        </section>
+      )}
+
+      {parsed?.setbacks && (
+        <section className="mb-5">
+          <h3 className="mb-2 text-sm font-semibold text-app">Biggest Setbacks And Responses</h3>
+          <ManagementBulletList items={parsed.setbacks} />
+        </section>
+      )}
+
+      <section className="border-t border-app pt-4">
+        <h3 className="mb-2 text-sm font-semibold text-app">Full Assessment</h3>
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          <MarkdownRenderer content={content} />
+        </div>
+      </section>
     </div>
   )
 }

@@ -10,10 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.audit import emit_audit_event
-from api.exceptions import DataFetchError, NotFoundError
+from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.job_queue import get_job
 from api.routers.auth import require_actor
 from ontology.action_registry import get_tool_exposure
+from ontology.domain_write_service import ontology_read_model_enabled
 from ontology.object_service import OntologyObjectService
 from ontology.policy import (
     Actor,
@@ -275,6 +276,7 @@ def list_ontology_source_records(
 
 @router.post("/ontology/query")
 def query_ontology(req: OntologyQueryRequest, actor: ActorDep):
+    _preflight_read_model_deprecations(req)
     _preflight_query_policy(req, actor)
     job_req = _job_request(req, actor)
     row, _disposition = enqueue_registered_job(
@@ -297,6 +299,7 @@ def _reuse_completed_job(req: OntologyQueryRequest | OntologyQueryJobRequest) ->
 
 @router.post("/ontology/query/async")
 def start_query_ontology_async(req: OntologyQueryRequest, actor: ActorDep):
+    _preflight_read_model_deprecations(req)
     _preflight_query_policy(req, actor)
     job_req = _job_request(req, actor)
     key = _job_cache_key(job_req)
@@ -332,6 +335,14 @@ def _job_request(req: OntologyQueryRequest, actor: Actor) -> OntologyQueryJobReq
     payload = req.model_dump(exclude_none=True)
     payload["actor"] = actor_to_dict(actor)
     return OntologyQueryJobRequest.model_validate(payload)
+
+
+def _preflight_read_model_deprecations(req: OntologyQueryRequest) -> None:
+    if ontology_read_model_enabled() and req.refresh_snapshot and not req.run_id:
+        raise ValidationError(
+            "refresh_snapshot is deprecated when ONTOLOGY_READ_MODEL=true; "
+            "omit refresh_snapshot for temporal read-model queries or provide run_id for snapshot compatibility."
+        )
 
 
 def _preflight_query_policy(req: OntologyQueryRequest, actor: Actor) -> None:

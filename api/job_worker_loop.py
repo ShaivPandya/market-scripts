@@ -29,6 +29,10 @@ _PRELOAD_MODULES: dict[str, tuple[str, ...]] = {
         "portfolio.portfolio_optimizer.portfolio_sizer",
         "api.routers.sizer",
     ),
+    "ontology": (
+        "ontology.service",
+        "api.routers.ontology",
+    ),
 }
 
 

@@ -690,6 +690,28 @@ def test_save_thesis_content_action_writes_meta_and_runs_callbacks(monkeypatch, 
     assert synced == ["MU"]
 
 
+def test_save_management_quality_content_action_writes_and_indexes(monkeypatch, tmp_path):
+    import portfolio.management_quality_content as management_quality_content
+
+    indexed: list[dict] = []
+    mgmt_dir = tmp_path / "investment_management_quality"
+    mgmt_dir.mkdir()
+    monkeypatch.setattr(management_quality_content, "MANAGEMENT_QUALITY_DIR", mgmt_dir)
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: indexed.append(kwargs))
+
+    result = _approve_action(
+        "save_management_quality_content",
+        {"ticker": "mu", "content": "# MU Management Quality\n\n## Executive Summary\n- **Overall Rating**: Strong"},
+    )
+
+    assert result["status"] == "ok"
+    assert result["ticker"] == "MU"
+    assert (mgmt_dir / "MU.md").read_text(encoding="utf-8").endswith("\n")
+    assert indexed[0]["doc_type"] == "management_quality"
+    assert indexed[0]["ticker"] == "MU"
+    assert indexed[0]["doc_id"] == "management_quality-MU"
+
+
 def test_resolve_approval_action_applies_action_backed_approval_without_duplicate_top_level_run():
     approval = propose_action(
         "create_action_item",

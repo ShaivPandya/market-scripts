@@ -51,6 +51,7 @@ logger = logging.getLogger("api")
 # Core routers (must succeed)
 from api.routers import (
     agent,
+    management_quality,
     memory,
     overview,
     portfolio,
@@ -144,6 +145,7 @@ def _multipart_request_body_limit(file_limit_bytes: int) -> int:
 _ENDPOINT_BODY_LIMITS = {
     "/api/v1/thesis/generate": _multipart_request_body_limit(30 * 1024 * 1024),
     "/api/v1/overview/generate": _multipart_request_body_limit(30 * 1024 * 1024),
+    "/api/v1/management-quality/generate": _multipart_request_body_limit(30 * 1024 * 1024),
     "/api/v1/economic-growth/crb-file": _multipart_request_body_limit(10 * 1024 * 1024),
     "/api/v1/portfolio-news": _multipart_request_body_limit(10 * 1024 * 1024),
 }
@@ -352,6 +354,7 @@ app.include_router(portfolio.router, prefix=_V1, dependencies=_auth_dep, tags=["
 app.include_router(portfolio_edit.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(overview.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(management_quality.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(memory.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(settings.router, prefix=_V1, dependencies=_auth_dep, tags=["settings"])

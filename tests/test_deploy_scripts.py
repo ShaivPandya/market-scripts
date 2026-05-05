@@ -25,3 +25,14 @@ def test_sizer_worker_deploy_uses_env_for_duplicate_sizer_values() -> None:
     assert "--job-type,sizer,--queue,sizer" not in script
     assert '"JOB_WORKER_JOB_TYPE=sizer"' in script
     assert '"JOB_WORKER_QUEUE=sizer"' in script
+
+
+def test_ontology_worker_deploy_uses_env_for_duplicate_ontology_values() -> None:
+    script = (ROOT / "infra/gcp/deploy-ontology-worker.sh").read_text()
+
+    assert "--args=-m,api.job_worker_loop,run \\" in script
+    assert "--job-type,ontology,--queue,ontology" not in script
+    assert '"ASYNC_DISPATCH_BACKEND_ONTOLOGY=warm_worker"' in script
+    assert '"ASYNC_QUEUE_ONTOLOGY=ontology"' in script
+    assert '"JOB_WORKER_JOB_TYPE=ontology"' in script
+    assert '"JOB_WORKER_QUEUE=ontology"' in script

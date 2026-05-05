@@ -5,6 +5,7 @@ import types
 
 import pytest
 
+import api.routers.management_quality as management_quality_router
 import api.routers.overview as overview_router
 import api.routers.thesis as thesis_router
 from llm_utils import MODEL_MID, model_for_tier
@@ -280,9 +281,119 @@ def test_generate_overview_from_markdown(auth_client, monkeypatch, tmp_path):
     assert (overview_dir / "MU.md").read_text(encoding="utf-8") == payload["content"]
 
 
-def test_thesis_and_overview_uploads_reject_endpoint_oversized_files(auth_client, monkeypatch):
+def test_generate_management_quality_from_markdown_stages_and_indexes(auth_client, monkeypatch, tmp_path, temp_core_db):
+    mgmt_dir = tmp_path / "investment_management_quality"
+    mgmt_dir.mkdir()
+
+    import portfolio.management_quality_content as management_quality_content
+    import portfolio.portfolio_db as portfolio_db
+
+    monkeypatch.setattr(management_quality_content, "MANAGEMENT_QUALITY_DIR", mgmt_dir)
+    monkeypatch.setattr(
+        portfolio_db,
+        "get_positions",
+        lambda: [{"ticker": "MU", "asset": "equity", "instrument_type": "security"}],
+    )
+
+    indexed: list[dict] = []
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: indexed.append(kwargs))
+
+    def fail_pdf_call(*args, **kwargs):
+        raise AssertionError("PDF generation should not run for markdown uploads")
+
+    def fake_markdown_call(*, ticker: str, markdown: str):
+        assert ticker == "MU"
+        assert "Owner mindset evidence" in markdown
+        return (
+            "# MU Management Quality\n\n"
+            "## Executive Summary\n"
+            "- **Overall Rating**: Strong\n"
+            "- **Bottom Line**: Management allocates capital with discipline.\n"
+            "- **Owner Mindset**: Strong - Buybacks were disciplined.\n"
+            "- **Business Value Understanding**: Strong - Focused on HBM mix.\n"
+            "- **Follow-through / Character**: Mixed - Some targets slipped.\n\n"
+            "## Management Scorecard\n"
+            "| Question | Rating | Evidence |\n"
+            "|----------|--------|----------|\n"
+            "| Do managers think and act like owners? | Strong | Capital returns were disciplined. |\n\n"
+            "## Most Impressive Accomplishments\n"
+            "- **HBM ramp (2025)**: Improved mix and margins. source-1\n\n"
+            "## Biggest Setbacks and Responses\n"
+            "- **Inventory correction (2023)**: Demand fell. **Response**: Mixed - Reset guidance.\n\n"
+            "## Chronology / Detail\n"
+            "### 2025\n"
+            "- **Said**: Improve mix.\n"
+            "- **Did**: Grew HBM.\n"
+            "- **Assessment**: Good follow-through.\n\n"
+            "## Evidence Notes\n"
+            "- source-1\n"
+        )
+
+    monkeypatch.setattr(management_quality_router, "_call_llm_management_quality_pdf", fail_pdf_call)
+    monkeypatch.setattr(management_quality_router, "_call_llm_management_quality_markdown", fake_markdown_call)
+
+    resp = auth_client.post(
+        "/api/v1/management-quality/generate",
+        data={"ticker": "mu"},
+        files={
+            "file": (
+                "management.md",
+                b"# Notes\n\nOwner mindset evidence\n",
+                "text/markdown",
+            )
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "pending_approval_created"
+    assert payload["ticker"] == "MU"
+    assert payload["proposed_change"]["content"].startswith("# MU Management Quality")
+    assert not (mgmt_dir / "MU.md").exists()
+
+    approved = auth_client.post(
+        f"/api/v1/approvals/{payload['approval_id']}/approve", json={"note": "Apply assessment"}
+    )
+    assert approved.status_code == 200
+    assert (mgmt_dir / "MU.md").read_text(encoding="utf-8") == payload["proposed_change"]["content"]
+    assert indexed[0]["doc_type"] == "management_quality"
+    assert indexed[0]["doc_id"] == "management_quality-MU"
+
+    dossier = auth_client.get("/api/v1/dossier/MU")
+    assert dossier.status_code == 200
+    dossier_payload = dossier.json()
+    assert dossier_payload["management_quality"]["content"].startswith("# MU Management Quality")
+    assert dossier_payload["management_quality"]["parsed"]["summary"]["overall_rating"] == "Strong"
+
+
+def test_save_management_quality_can_apply_immediately(auth_client, monkeypatch, tmp_path, temp_core_db):
+    mgmt_dir = tmp_path / "investment_management_quality"
+    mgmt_dir.mkdir()
+
+    import portfolio.management_quality_content as management_quality_content
+
+    monkeypatch.setattr(management_quality_content, "MANAGEMENT_QUALITY_DIR", mgmt_dir)
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: None)
+
+    resp = auth_client.put(
+        "/api/v1/management-quality/MU",
+        json={
+            "content": "# Old\n\n## Executive Summary\n- **Overall Rating**: Mixed",
+            "apply": True,
+            "approval_note": "Apply management assessment",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "applied"
+    content = (mgmt_dir / "MU.md").read_text(encoding="utf-8")
+    assert content.startswith("# MU Management Quality")
+    assert "## Management Scorecard" in content
+
+
+def test_thesis_overview_and_management_uploads_reject_endpoint_oversized_files(auth_client, monkeypatch):
     monkeypatch.setattr(thesis_router, "MAX_UPLOAD_SIZE_BYTES", 4)
     monkeypatch.setattr(overview_router, "MAX_UPLOAD_SIZE_BYTES", 4)
+    monkeypatch.setattr(management_quality_router, "MAX_UPLOAD_SIZE_BYTES", 4)
 
     thesis = auth_client.post(
         "/api/v1/thesis/generate",
@@ -294,9 +405,15 @@ def test_thesis_and_overview_uploads_reject_endpoint_oversized_files(auth_client
         data={"ticker": "mu"},
         files={"file": ("overview.md", b"12345", "text/markdown")},
     )
+    management_quality = auth_client.post(
+        "/api/v1/management-quality/generate",
+        data={"ticker": "mu"},
+        files={"file": ("management.md", b"12345", "text/markdown")},
+    )
 
     assert thesis.status_code == 413
     assert overview.status_code == 413
+    assert management_quality.status_code == 413
 
 
 def test_direct_markdown_save_models_have_pydantic_size_limits():
@@ -310,9 +427,18 @@ def test_direct_markdown_save_models_have_pydantic_size_limits():
         if hasattr(overview_router.SaveOverviewRequest, "model_json_schema")
         else overview_router.SaveOverviewRequest.schema()
     )
+    management_quality_schema = (
+        management_quality_router.SaveManagementQualityRequest.model_json_schema()
+        if hasattr(management_quality_router.SaveManagementQualityRequest, "model_json_schema")
+        else management_quality_router.SaveManagementQualityRequest.schema()
+    )
 
     assert thesis_schema["properties"]["content"]["maxLength"] == thesis_router.MAX_UPLOAD_SIZE_BYTES
     assert overview_schema["properties"]["content"]["maxLength"] == overview_router.MAX_UPLOAD_SIZE_BYTES
+    assert (
+        management_quality_schema["properties"]["content"]["maxLength"]
+        == management_quality_router.MAX_UPLOAD_SIZE_BYTES
+    )
 
 
 def test_thesis_claim_api_accepts_typed_sources_and_writes_markdown(auth_client, monkeypatch, tmp_path, temp_core_db):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -20,6 +21,9 @@ router = APIRouter()
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "auto_report" / "prompts"
 IDEA_EVALUATION_VERSION = "v1"
 IDEA_ACTIONS = {"buy", "watch", "avoid", "do_nothing"}
+type IdeaComparisonStatus = Literal["watching", "researching", "ready_for_review"]
+type IdeaStatus = Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"]
+ACTIONABLE_IDEA_STATUSES: tuple[IdeaComparisonStatus, ...] = ("watching", "researching", "ready_for_review")
 CRITICAL_MISSING_SEVERITIES = {"critical", "block"}
 RECOMMENDATION_STATUSES = {"clear", "review_required", "blocked", "error"}
 SOURCE_QUALITY_VALUES = {"ok", "degraded", "stale", "failed"}
@@ -31,7 +35,7 @@ class IdeaCreateRequest(BaseModel):
     company_name: str | None = None
     user_notes: str | None = None
     tags: list[str] = Field(default_factory=list)
-    status: Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"] = "watching"
+    status: IdeaStatus = "watching"
 
     @field_validator("ticker")
     @classmethod
@@ -47,7 +51,7 @@ class IdeaUpdateRequest(BaseModel):
     company_name: str | None = None
     user_notes: str | None = None
     tags: list[str] | None = None
-    status: Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"] | None = None
+    status: IdeaStatus | None = None
 
     @field_validator("ticker")
     @classmethod
@@ -63,6 +67,23 @@ class IdeaUpdateRequest(BaseModel):
 class IdeaEvaluationRequest(BaseModel):
     idea_id: int
     force_refresh: bool = False
+
+
+class IdeaComparisonEvaluationRequest(BaseModel):
+    scope_statuses: list[IdeaComparisonStatus] = Field(default_factory=lambda: list(ACTIONABLE_IDEA_STATUSES))
+
+    @field_validator("scope_statuses")
+    @classmethod
+    def _normalize_scope_statuses(cls, value: list[str]) -> list[IdeaComparisonStatus]:
+        statuses: list[IdeaComparisonStatus] = []
+        for status in value or []:
+            normalized = str(status).strip().lower()
+            if normalized not in ACTIONABLE_IDEA_STATUSES:
+                raise ValueError(f"Unsupported idea comparison status: {status}")
+            normalized_status = cast(IdeaComparisonStatus, normalized)
+            if normalized_status not in statuses:
+                statuses.append(normalized_status)
+        return statuses or list(ACTIONABLE_IDEA_STATUSES)
 
 
 class IdeaAcceptRequest(BaseModel):
@@ -117,7 +138,9 @@ def _normalize_missing_rows(value: Any) -> list[dict[str, Any]]:
 
 
 def _has_critical_missing(rows: list[dict[str, Any]]) -> bool:
-    return any(str(row.get("severity") or "").lower() in CRITICAL_MISSING_SEVERITIES for row in rows)
+    return any(
+        isinstance(row, dict) and str(row.get("severity") or "").lower() in CRITICAL_MISSING_SEVERITIES for row in rows
+    )
 
 
 def _source_quality_from_missing(rows: list[dict[str, Any]], tool_errors: list[str]) -> dict[str, Any]:
@@ -163,10 +186,15 @@ def _read_state_text(folder: str, ticker: str) -> tuple[str | None, str | None]:
         from paths import PROJECT_ROOT
 
         local_path = PROJECT_ROOT / folder / f"{ticker}.md"
-        gcs_key = f"live/{'overviews' if folder == 'investment_overviews' else 'theses'}/{ticker}.md"
+        gcs_prefixes = {
+            "investment_overviews": "live/overviews",
+            "investment_theses": "live/theses",
+            "investment_management_quality": "live/management_quality",
+        }
+        gcs_key = f"{gcs_prefixes.get(folder, folder)}/{ticker}.md"
         if not exists_text(local_path, gcs_key):
             return None, None
-        return read_text(local_path, gcs_key, encoding="utf-8"), str(local_path)
+        return read_text(local_path, gcs_key, encoding="utf-8"), None
     except Exception as exc:
         return None, f"{folder}: {exc}"
 
@@ -190,6 +218,7 @@ def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
     ticker = str(idea["ticker"]).upper()
     overview, overview_error = _read_state_text("investment_overviews", ticker)
     thesis, thesis_error = _read_state_text("investment_theses", ticker)
+    management_quality, management_quality_error = _read_state_text("investment_management_quality", ticker)
 
     portfolio = _safe_tool("get_portfolio", {"include_hedges": True})
     signal_aggregator = _safe_tool("get_signal_aggregator", {"include_history": False, "lookback_weeks": 156})
@@ -210,12 +239,15 @@ def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
         tool_errors.append(overview_error)
     if thesis_error:
         tool_errors.append(thesis_error)
+    if management_quality_error:
+        tool_errors.append(management_quality_error)
 
     return {
         "idea": idea,
         "ticker": ticker,
         "overview_content": _safe_text(overview),
         "thesis_content": _safe_text(thesis),
+        "management_quality_content": _safe_text(management_quality),
         "portfolio": portfolio,
         "signal_aggregator": signal_aggregator,
         "industry_monitor": industry_monitor,
@@ -240,6 +272,7 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
     notes = str(idea.get("user_notes") or "").strip()
     overview = str(context.get("overview_content") or "").strip()
     thesis = str(context.get("thesis_content") or "").strip()
+    management_quality = str(context.get("management_quality_content") or "").strip()
     tool_errors = list(context.get("tool_errors") or [])
 
     missing: list[dict[str, Any]] = []
@@ -265,6 +298,14 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
                 "field": "thesis",
                 "severity": "medium",
                 "reason": "No full thesis file is available for this non-position idea.",
+            }
+        )
+    if not management_quality:
+        missing.append(
+            {
+                "field": "management_quality",
+                "severity": "medium",
+                "reason": "No explicit management-quality assessment is available for this idea.",
             }
         )
     if context.get("industry_monitor", {}).get("ok") is not True:
@@ -305,9 +346,13 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
             "Business quality is not fully scoreable without a complete overview and thesis.",
         ),
         "management_quality": _factor(
-            45 if not overview else 55,
-            "incomplete",
-            "Management quality requires explicit track record, capital allocation, and transcript evidence.",
+            62 if management_quality else 45,
+            "reviewable" if management_quality else "incomplete",
+            (
+                "Management quality is supported by the uploaded management-quality assessment."
+                if management_quality
+                else "Management quality requires explicit track record, capital allocation, and transcript evidence."
+            ),
         ),
         "valuation_asymmetry": _factor(
             45,
@@ -580,6 +625,193 @@ def _cache_key(req: IdeaEvaluationRequest) -> str:
     return f"idea_evaluation:{IDEA_EVALUATION_VERSION}:{_stable_hash(token)}"
 
 
+def _confidence_level(confidence: float | None) -> str:
+    value = float(confidence or 0)
+    if value >= 0.75:
+        return "high"
+    if value >= 0.50:
+        return "medium"
+    return "low"
+
+
+def _ranking_confidence(evaluation: dict[str, Any], value: Any | None = None) -> float:
+    missing = evaluation.get("missing_information") if isinstance(evaluation.get("missing_information"), list) else []
+    confidence = _numeric_or_none(value, minimum=0, maximum=1)
+    if confidence is None:
+        confidence = _numeric_or_none(evaluation.get("confidence"), minimum=0, maximum=1)
+    if confidence is None:
+        confidence = 0.35 if missing else 0.55
+    if _has_critical_missing(cast(list[dict[str, Any]], missing)):
+        confidence = min(confidence, 0.35)
+    elif missing:
+        confidence = min(confidence, 0.49)
+    return round(float(confidence), 4)
+
+
+def _action_priority(action: Any) -> int:
+    return {"buy": 3, "watch": 2, "do_nothing": 1, "avoid": 0}.get(str(action or "").lower(), 1)
+
+
+def _comparison_sort_key(evaluation: dict[str, Any]) -> tuple[int, float, float, str]:
+    score = _numeric_or_none(evaluation.get("score"), minimum=0, maximum=100)
+    confidence = _ranking_confidence(evaluation)
+    return (
+        -_action_priority(evaluation.get("action")),
+        -(score if score is not None else -1),
+        -confidence,
+        str(evaluation.get("ticker") or ""),
+    )
+
+
+def _comparison_row_from_evaluation(
+    evaluation: dict[str, Any], *, rank: int, rationale: str | None = None
+) -> dict[str, Any]:
+    confidence = _ranking_confidence(evaluation)
+    return {
+        "idea_id": int(evaluation["idea_id"]),
+        "evaluation_id": int(evaluation["id"]),
+        "ticker": str(evaluation.get("ticker") or "").upper(),
+        "rank": rank,
+        "action": str(evaluation.get("action") or "watch").lower(),
+        "score": _numeric_or_none(evaluation.get("score"), minimum=0, maximum=100),
+        "confidence": confidence,
+        "confidence_level": _confidence_level(confidence),
+        "rationale": rationale or str(evaluation.get("rationale") or "Ranked from the fresh idea evaluation."),
+    }
+
+
+def _deterministic_comparison_result(evaluations: list[dict[str, Any]], *, reason: str | None = None) -> dict[str, Any]:
+    ranked = sorted(evaluations, key=_comparison_sort_key)
+    rows = [_comparison_row_from_evaluation(evaluation, rank=index) for index, evaluation in enumerate(ranked, start=1)]
+    summary = f"Ranked {len(rows)} actionable ideas by action, score, and evidence-adjusted confidence."
+    if reason:
+        summary = f"{summary} Ranking fallback reason: {reason}"
+    return {"summary": summary, "rankings": rows}
+
+
+def _normalize_comparison_result(evaluations: list[dict[str, Any]], parsed: Any) -> dict[str, Any]:
+    if not isinstance(parsed, dict):
+        return _deterministic_comparison_result(evaluations, reason="model did not return JSON")
+
+    by_idea = {int(evaluation["idea_id"]): evaluation for evaluation in evaluations}
+    by_ticker = {str(evaluation.get("ticker") or "").upper(): evaluation for evaluation in evaluations}
+    rankings = parsed.get("rankings")
+    raw_rows: list[Any] = rankings if isinstance(rankings, list) else []
+    ordered: list[tuple[int, dict[str, Any]]] = []
+    seen: set[int] = set()
+
+    for fallback_rank, row in enumerate(raw_rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        row = cast(dict[str, Any], row)
+        idea_id = None
+        try:
+            raw_idea_id = row.get("idea_id")
+            if raw_idea_id is None:
+                raise TypeError("missing idea_id")
+            idea_id = int(raw_idea_id)
+        except (TypeError, ValueError):
+            ticker = str(row.get("ticker") or "").upper()
+            if ticker and ticker in by_ticker:
+                idea_id = int(by_ticker[ticker]["idea_id"])
+        if idea_id is None or idea_id in seen or idea_id not in by_idea:
+            continue
+        evaluation = by_idea[idea_id]
+        try:
+            rank = int(row.get("rank") or fallback_rank)
+        except (TypeError, ValueError):
+            rank = fallback_rank
+        confidence = _ranking_confidence(evaluation, row.get("confidence"))
+        ordered.append(
+            (
+                rank,
+                {
+                    "idea_id": int(evaluation["idea_id"]),
+                    "evaluation_id": int(evaluation["id"]),
+                    "ticker": str(evaluation.get("ticker") or "").upper(),
+                    "rank": rank,
+                    "action": str(evaluation.get("action") or "watch").lower(),
+                    "score": _numeric_or_none(evaluation.get("score"), minimum=0, maximum=100),
+                    "confidence": confidence,
+                    "confidence_level": _confidence_level(confidence),
+                    "rationale": str(row.get("rationale") or evaluation.get("rationale") or ""),
+                },
+            )
+        )
+        seen.add(idea_id)
+
+    ordered.sort(key=lambda item: item[0])
+    rows = [row for _rank, row in ordered]
+    missing = [evaluation for evaluation in evaluations if int(evaluation["idea_id"]) not in seen]
+    rows.extend(
+        _comparison_row_from_evaluation(evaluation, rank=len(rows) + index)
+        for index, evaluation in enumerate(sorted(missing, key=_comparison_sort_key), start=1)
+    )
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+
+    summary = str(parsed.get("summary") or "").strip()
+    if not summary:
+        summary = f"Ranked {len(rows)} actionable ideas after fresh evaluations."
+    return {"summary": summary, "rankings": rows}
+
+
+def _call_llm_comparison_ranker(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
+    from llm_utils import MODEL_HIGH, call_llm_text, has_llm_api_key, parse_json_text
+
+    if not evaluations:
+        return _deterministic_comparison_result(evaluations)
+    if not has_llm_api_key():
+        return _deterministic_comparison_result(evaluations, reason="no configured LLM API key")
+
+    system = "\n\n---\n\n".join(
+        [
+            _read_prompt("system.md"),
+            _read_prompt("agent_system.md"),
+            _read_prompt("recommendations_system.md"),
+            (
+                "You are ranking freshly evaluated watchlist ideas against one another. "
+                "Return only valid JSON. Do not change the individual idea action or score."
+            ),
+        ]
+    )
+    compact = [
+        {
+            "idea_id": evaluation.get("idea_id"),
+            "evaluation_id": evaluation.get("id"),
+            "ticker": evaluation.get("ticker"),
+            "action": evaluation.get("action"),
+            "score": evaluation.get("score"),
+            "confidence": evaluation.get("confidence"),
+            "missing_information": evaluation.get("missing_information"),
+            "thesis_statement": evaluation.get("thesis_statement"),
+            "rationale": evaluation.get("rationale"),
+            "factor_scores": evaluation.get("factor_scores"),
+            "portfolio_fit": evaluation.get("portfolio_fit"),
+        }
+        for evaluation in evaluations
+    ]
+    prompt = (
+        "Rank these freshly evaluated actionable watchlist ideas relative to one another. "
+        "Use the existing actions, scores, missing information, factor scores, and portfolio fit. "
+        "Return JSON with keys: summary and rankings. rankings must be a list of objects with "
+        "idea_id, rank, confidence, and rationale. confidence must be 0 to 1 and should reflect confidence "
+        "in the comparative rank, not position sizing or trade execution certainty.\n\n"
+        f"Fresh evaluations JSON:\n{json.dumps(compact, default=str, sort_keys=True)}"
+    )
+    try:
+        text, _citations, _response = call_llm_text(
+            prompt=prompt,
+            model=MODEL_HIGH,
+            max_tokens=2000,
+            system=system,
+            max_web_search_uses=0,
+        )
+        return _normalize_comparison_result(evaluations, parse_json_text(text))
+    except Exception as exc:
+        return _deterministic_comparison_result(evaluations, reason=str(exc))
+
+
 def _compute_idea_evaluation_result(
     req: IdeaEvaluationRequest,
     *,
@@ -605,6 +837,63 @@ def _compute_idea_evaluation_result(
     return {"idea": idea, "evaluation": evaluation, "result": result, "final_count": 4}
 
 
+def _actionable_ideas(scope_statuses: Sequence[str]) -> list[dict[str, Any]]:
+    from portfolio import core_db
+
+    wanted = {str(status).lower() for status in scope_statuses} or set(ACTIONABLE_IDEA_STATUSES)
+    return [
+        idea
+        for idea in core_db.list_investment_ideas(include_archived=False, limit=500)
+        if str(idea.get("status") or "").lower() in wanted
+    ]
+
+
+def _compute_idea_comparison_evaluation_result(
+    req: IdeaComparisonEvaluationRequest,
+    *,
+    job_id: str | None = None,
+    progress_callback: Any | None = None,
+) -> dict[str, Any]:
+    from portfolio import core_db
+
+    scope_statuses = req.scope_statuses or list(ACTIONABLE_IDEA_STATUSES)
+    ideas = _actionable_ideas(scope_statuses)
+    total = max(len(ideas) + 2, 1)
+    if callable(progress_callback):
+        progress_callback("selecting", 0, total)
+
+    evaluations: list[dict[str, Any]] = []
+    for index, idea in enumerate(ideas, start=1):
+        if callable(progress_callback):
+            progress_callback("evaluating", index, total)
+        context = _build_context(idea)
+        result = _call_llm_evaluator(context)
+        result["job_id"] = job_id
+        evaluations.append(core_db.create_idea_evaluation(int(idea["id"]), result, job_id=job_id))
+
+    if callable(progress_callback):
+        progress_callback("ranking", len(ideas) + 1, total)
+    comparison = _call_llm_comparison_ranker(evaluations)
+
+    if callable(progress_callback):
+        progress_callback("persisting", len(ideas) + 2, total)
+    run = core_db.create_idea_comparison_run(
+        job_id=job_id,
+        scope_statuses=list(scope_statuses),
+        summary=str(comparison.get("summary") or ""),
+        rankings=cast(
+            list[dict[str, Any]], comparison.get("rankings") if isinstance(comparison.get("rankings"), list) else []
+        ),
+        raw_result=comparison,
+    )
+    return {
+        "run": run,
+        "rankings": run.get("rankings", []),
+        "evaluations": evaluations,
+        "final_count": total,
+    }
+
+
 def _idea_detail(idea_id: int) -> dict[str, Any]:
     from portfolio import core_db
 
@@ -613,6 +902,9 @@ def _idea_detail(idea_id: int) -> dict[str, Any]:
         raise NotFoundError("Investment idea", str(idea_id))
     overview, overview_error = _read_state_text("investment_overviews", str(idea["ticker"]).upper())
     thesis, thesis_error = _read_state_text("investment_theses", str(idea["ticker"]).upper())
+    management_quality, management_quality_error = _read_state_text(
+        "investment_management_quality", str(idea["ticker"]).upper()
+    )
     overview_parsed = None
     if overview:
         try:
@@ -621,6 +913,14 @@ def _idea_detail(idea_id: int) -> dict[str, Any]:
             overview_parsed = parse_overview_markdown(overview)
         except Exception:
             overview_parsed = None
+    management_quality_parsed = None
+    if management_quality:
+        try:
+            from api.routers.management_quality import parse_management_quality_markdown
+
+            management_quality_parsed = parse_management_quality_markdown(management_quality)
+        except Exception:
+            management_quality_parsed = None
     return {
         "idea": idea,
         "evaluations": core_db.get_idea_evaluations(idea_id, limit=20),
@@ -632,6 +932,10 @@ def _idea_detail(idea_id: int) -> dict[str, Any]:
             "thesis_present": bool(thesis),
             "thesis_content": _safe_text(thesis, max_len=120_000),
             "thesis_error": thesis_error,
+            "management_quality_present": bool(management_quality),
+            "management_quality_content": _safe_text(management_quality, max_len=120_000),
+            "management_quality_parsed": management_quality_parsed,
+            "management_quality_error": management_quality_error,
         },
     }
 
@@ -656,6 +960,52 @@ def create_idea(body: IdeaCreateRequest):
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
     return _idea_detail(int(idea["id"]))
+
+
+@router.post("/ideas/evaluate-all/async")
+def start_idea_comparison_evaluation(body: dict[str, Any] | None = OPTIONAL_JSON_BODY):
+    try:
+        req = IdeaComparisonEvaluationRequest.model_validate(body or {})
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+    ideas = _actionable_ideas(req.scope_statuses)
+    if not ideas:
+        raise ValidationError("No actionable ideas to evaluate.")
+
+    row, _disposition = enqueue_registered_job(
+        "idea_comparison_evaluation",
+        req.model_dump(),
+        cache_key=None,
+        reuse_completed=False,
+    )
+    return enqueue_response(row, "/api/v1/ideas/evaluate-all/async/{job_id}")
+
+
+@router.get("/ideas/evaluate-all/async/{job_id}")
+def get_idea_comparison_evaluation_job(job_id: str):
+    try:
+        return poll_registered_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job_id") from None
+
+
+@router.get("/ideas/comparison-runs")
+def list_idea_comparison_runs(limit: int = 20):
+    from portfolio import core_db
+
+    runs = core_db.list_idea_comparison_runs(limit=limit)
+    return {"runs": runs, "count": len(runs)}
+
+
+@router.get("/ideas/comparison-runs/{run_id}")
+def get_idea_comparison_run(run_id: str):
+    from portfolio import core_db
+
+    run = core_db.get_idea_comparison_run(run_id)
+    if not run:
+        raise NotFoundError("Idea comparison run", run_id)
+    return run
 
 
 @router.get("/ideas/{idea_id}")

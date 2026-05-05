@@ -179,6 +179,69 @@ class _FakeRepo:
         return {"nodes": [{"id": "position:MU"}], "edges": []}
 
 
+class _FakeReadModelRepo:
+    def __init__(self):
+        self.query_calls: list[dict] = []
+        self.rows = [
+            {
+                "position_id": "position:MU",
+                "position_label": "MU",
+                "position_props": {
+                    "ticker": "MU",
+                    "asset": "equity",
+                    "direction": "long",
+                    "risk_score": 0.72,
+                    "risk_level": "medium",
+                },
+                "position_version_id": "11111111-1111-1111-1111-111111111111",
+                "position_valid_from": "2026-03-09T00:00:00+00:00",
+                "position_valid_to": None,
+                "position_tx_from": "2026-03-09T00:01:00+00:00",
+                "position_tx_to": None,
+                "position_temporal_confidence": "native",
+                "sector_props": {"name": "Information Technology"},
+            }
+        ]
+
+    def source_status_summary(self):
+        return {"portfolio": {"status": "ok"}}, ["portfolio"]
+
+    def query_positions_page(self, *, filters, page, page_size, as_of=None, tx_as_of=None, include_history=False):
+        self.query_calls.append(
+            {
+                "filters": filters,
+                "page": page,
+                "page_size": page_size,
+                "as_of": as_of,
+                "tx_as_of": tx_as_of,
+                "include_history": include_history,
+            }
+        )
+        return {"rows": list(self.rows), "total_results": len(self.rows), "page": page, "page_size": page_size}
+
+    def aggregate_positions(self, *, filters, as_of=None, tx_as_of=None, include_history=False):
+        return {
+            "position_count": 1,
+            "risk_buckets": {"high": 0, "medium": 1, "low": 0},
+            "asset_exposure_counts": {"equity": 1},
+            "average_risk_score": 0.72,
+        }
+
+    def fetch_position_signal_evidence_batch(self, position_ids, *, as_of=None, tx_as_of=None, include_history=False):
+        return {
+            "position:MU": [
+                {
+                    "signal_id": "signal:test",
+                    "signal_props": {"name": "signal"},
+                    "edge_props": {"name": "signal", "contribution": 0.2},
+                }
+            ]
+        }
+
+    def fetch_position_thesis_context_batch(self, position_ids, *, as_of=None, tx_as_of=None, include_history=False):
+        return {position_id: {} for position_id in position_ids}
+
+
 def _stub_parse(*_args, **_kwargs):
     return InterpretedQuery(
         intent="portfolio_risk_exposure",
@@ -220,6 +283,51 @@ def test_query_without_run_id_ingests_and_returns_run(monkeypatch):
     assert resp["as_of"] == "2026-03-09T00:00:00Z"
     assert len(resp["results"]) == 1
     assert repo.run_requests == []
+
+
+def test_query_uses_temporal_read_model_when_enabled(monkeypatch):
+    repo = _FakeRepo()
+    read_model = _FakeReadModelRepo()
+    service = OntologyQueryService(repository=repo, read_model_repository=read_model)
+
+    monkeypatch.setenv("ONTOLOGY_READ_MODEL", "true")
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+
+    resp = service.query(
+        query="show risk",
+        intent=None,
+        filters={},
+        timeframe="Daily",
+        include_graph=False,
+        run_id=None,
+        as_of="2026-03-09T00:00:00Z",
+        tx_as_of="2026-03-09T00:05:00Z",
+    )
+
+    assert resp["run_id"] == "temporal:read_model"
+    assert resp["_meta"]["temporal"]["mode"] == "temporal_read_model"
+    assert resp["results"][0]["_meta"]["temporal"]["version_id"] == "11111111-1111-1111-1111-111111111111"
+    assert read_model.query_calls[0]["as_of"] == "2026-03-09T00:00:00Z"
+    assert read_model.query_calls[0]["tx_as_of"] == "2026-03-09T00:05:00Z"
+    assert repo.latest_run_requests == 0
+
+
+def test_temporal_read_model_rejects_refresh_snapshot_without_run_id(monkeypatch):
+    service = OntologyQueryService(repository=_FakeRepo(), read_model_repository=_FakeReadModelRepo())
+
+    monkeypatch.setenv("ONTOLOGY_READ_MODEL", "true")
+    monkeypatch.setattr(svc, "parse_hybrid_query", _stub_parse)
+
+    with pytest.raises(ValueError, match="refresh_snapshot is deprecated"):
+        service.query(
+            query="show risk",
+            intent=None,
+            filters={},
+            timeframe="Daily",
+            include_graph=False,
+            run_id=None,
+            refresh_snapshot=True,
+        )
 
 
 def test_query_without_run_id_reuses_fresh_latest_snapshot(monkeypatch):

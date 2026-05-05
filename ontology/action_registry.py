@@ -637,6 +637,19 @@ class SaveThesisContentInput(TickerMixin):
         return text
 
 
+class SaveManagementQualityContentInput(TickerMixin):
+    content: str
+    preserve_exact_content: bool = False
+
+    @field_validator("content")
+    @classmethod
+    def _validate_content(cls, value: str) -> str:
+        text = str(value or "")
+        if not text.strip():
+            raise ValueError("Management quality content cannot be empty.")
+        return text
+
+
 class SaveEvaluationInput(TickerMixin):
     evaluated_at: str | None = None
     thesis_status: str
@@ -857,6 +870,20 @@ def _hash_current_thesis(model: BaseModel) -> dict[str, Any]:
         result["meta"] = get_thesis_meta(ticker)
     except Exception:
         result["meta"] = None
+    return result
+
+
+def _hash_current_management_quality(model: BaseModel) -> dict[str, Any]:
+    ticker = str(getattr(model, "ticker", "") or "").strip().upper()
+    result: dict[str, Any] = {"ticker": ticker}
+    if not ticker:
+        return result
+    try:
+        from portfolio import management_quality_content
+
+        result["content_hash"] = _stable_hash({"content": management_quality_content.read_management_quality(ticker)})
+    except Exception:
+        result["content_hash"] = None
     return result
 
 
@@ -1444,6 +1471,9 @@ def _action_result_refs(
     elif action_id in {"change_thesis_status", "save_thesis_content"}:
         if ticker := _ticker():
             refs.append(("thesis", ticker, updated))
+    elif action_id == "save_management_quality_content":
+        if ticker := _ticker():
+            refs.append(("management_quality", ticker, updated))
     elif action_id == "save_evaluation":
         if ticker := _ticker():
             evaluated_at = _id("evaluated_at") or "latest"
@@ -2148,6 +2178,21 @@ def _index_thesis_callback(ticker: str, content: str, source_path: str) -> Actio
     return ActionCallback("index_thesis", _index)
 
 
+def _index_management_quality_callback(ticker: str, content: str, source_path: str) -> ActionCallback:
+    def _index() -> None:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="management_quality",
+            content=content,
+            ticker=ticker,
+            source_path=source_path,
+            doc_id=f"management_quality-{ticker}",
+        )
+
+    return ActionCallback("index_management_quality", _index)
+
+
 def _raise_not_found_or_validation(exc: ValueError, resource: str, identifier: int | str) -> None:
     message = str(exc)
     if message.lower().startswith(f"no {resource.lower()}"):
@@ -2361,6 +2406,21 @@ def _save_thesis_content(input_model: BaseModel, _context: ActionContext) -> Act
             _index_thesis_callback(typed.ticker, saved.index_content, saved.source_path),
             _sync_entities_from_markdown_callback(typed.ticker),
         ),
+    )
+
+
+def _save_management_quality_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(SaveManagementQualityContentInput, input_model)
+    from portfolio.management_quality_content import save_management_quality_content
+
+    saved = save_management_quality_content(
+        typed.ticker,
+        typed.content,
+        preserve_exact_content=typed.preserve_exact_content,
+    )
+    return ActionResult(
+        saved.output,
+        (_index_management_quality_callback(typed.ticker, saved.index_content, saved.source_path),),
     )
 
 
@@ -2671,6 +2731,17 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         effect_kind="approval_gated",
         precondition_builder=_hash_current_thesis,
         base_state_hash_fields=("ticker", "content_hash", "meta"),
+    ),
+    "save_management_quality_content": DomainAction(
+        action_id="save_management_quality_content",
+        input_model=SaveManagementQualityContentInput,
+        handler=_save_management_quality_content,
+        approval_entity_type="management_quality_content",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+        effect_kind="approval_gated",
+        precondition_builder=_hash_current_management_quality,
+        base_state_hash_fields=("ticker", "content_hash"),
     ),
     "save_evaluation": DomainAction(
         action_id="save_evaluation",

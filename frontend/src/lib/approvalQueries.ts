@@ -9,6 +9,7 @@ export const STALE_APPROVAL_MESSAGE =
 const THESIS_FACING_ACTIONS = new Set([
   "change_thesis_status",
   "save_thesis_content",
+  "save_management_quality_content",
   "save_evaluation",
   "create_catalyst",
   "update_catalyst_status",
