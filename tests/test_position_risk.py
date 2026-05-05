@@ -17,6 +17,14 @@ def _position_risk_state(tmp_path, monkeypatch):
         portfolio_db._conn.close()
     monkeypatch.setattr(portfolio_db, "DB_PATH", tmp_path / "portfolio.db")
     monkeypatch.setattr(portfolio_db, "_conn", None)
+    monkeypatch.setattr(
+        "ontology.sources.macro.EconomicGrowthAdapter.fetch",
+        lambda self: _economic_growth_payload("2099-01-01"),
+    )
+    monkeypatch.setattr(
+        "ontology.sources.macro.LaborMarketAdapter.fetch",
+        lambda self: _labor_market_payload("2099-01-01"),
+    )
     portfolio_db.save_positions(
         [
             {
@@ -164,6 +172,60 @@ def test_optional_module_missing_reduces_confidence_without_blocking(monkeypatch
     assert snapshot["source_status"]["sentiment"]["status"] == "missing"
     assert snapshot["confidence"] < 1
     assert any(item["module"] == "sentiment" and not item["required"] for item in snapshot["degraded_modules"])
+
+
+def test_missing_required_economic_growth_snapshot_is_refreshed(monkeypatch):
+    from api import position_risk as pr
+
+    calls = {"count": 0}
+
+    def fetch_growth(self):
+        calls["count"] += 1
+        return _economic_growth_payload("2099-01-01")
+
+    _seed_required_snapshots(as_of="2099-01-01")
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
+    )
+    monkeypatch.setattr("ontology.sources.macro.EconomicGrowthAdapter.fetch", fetch_growth)
+
+    snapshot = pr.refresh_position_risk("MU")
+
+    state = snapshot["source_status"]["economic_growth"]
+    assert calls["count"] == 1
+    assert state["status"] == "ok"
+    assert state["required"] is True
+    assert state["accepted"] is True
+    assert state["used"] is True
+    assert state["refreshed"] is True
+    assert not any(item["module"] == "economic_growth" for item in snapshot["degraded_modules"])
+
+
+def test_missing_labor_market_optional_snapshot_is_refreshed(monkeypatch):
+    from api import position_risk as pr
+
+    calls = {"count": 0}
+
+    def fetch_labor(self):
+        calls["count"] += 1
+        return _labor_market_payload("2099-01-01")
+
+    _seed_required_snapshots(as_of="2099-01-01")
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
+    )
+    monkeypatch.setattr("ontology.sources.macro.LaborMarketAdapter.fetch", fetch_labor)
+
+    snapshot = pr.refresh_position_risk("MU")
+
+    state = snapshot["source_status"]["labor_market"]
+    assert calls["count"] == 1
+    assert state["status"] == "ok"
+    assert state["required"] is False
+    assert state["accepted"] is True
+    assert state["used"] is True
+    assert state["refreshed"] is True
+    assert not any(item["module"] == "labor_market" for item in snapshot["degraded_modules"])
 
 
 def test_position_risk_refresh_endpoint_does_not_enqueue_ontology_job(auth_client, monkeypatch):
@@ -392,3 +454,37 @@ def _write_liquidity(payload: dict, *, as_of: str) -> None:
     from api.snapshot_store import write_snapshot_success
 
     write_snapshot_success(SNAPSHOT_LIQUIDITY, payload, as_of_date=as_of)
+
+
+def _economic_growth_payload(as_of: str) -> dict:
+    periods = {"1-mo": 1.2, "3-mo": 2.4, "6-mo": 4.8, "1-yr": 8.0}
+    return {
+        "timestamp": f"{as_of}T21:00:00+00:00",
+        "commodities": {
+            "Copper": dict(periods),
+            "GS Commodity Index": dict(periods),
+        },
+        "equities": {
+            "S&P 500": dict(periods),
+            "Russell 2000": dict(periods),
+        },
+        "equity_relative_returns": {},
+        "currencies": {
+            "AUD/JPY": dict(periods),
+            "CAD/JPY": dict(periods),
+        },
+    }
+
+
+def _labor_market_payload(as_of: str) -> dict:
+    return {
+        "timestamp": f"{as_of}T21:00:00+00:00",
+        "series": {
+            "initial_claims": {"label": "Initial Claims", "unit": "thousands"},
+            "continuing_claims": {"label": "Continuing Claims", "unit": "thousands"},
+        },
+        "latest": {
+            "initial_claims": {"value": 230, "date": as_of, "change": 2.5},
+            "continuing_claims": {"value": 1800, "date": as_of, "change": -4.0},
+        },
+    }

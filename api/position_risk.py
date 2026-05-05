@@ -59,11 +59,11 @@ REQUIRED_MODULES = (
     "vix_term_structure",
     "sector_metrics",
     "liquidity",
+    "economic_growth",
 )
 OPTIONAL_MODULES = (
     "sentiment",
     "positioning_summary",
-    "economic_growth",
     "labor_market",
 )
 _EASTERN = ZoneInfo("America/New_York")
@@ -76,6 +76,7 @@ class ModuleConfig:
     snapshot_key: str
     required: bool
     adapter_factory: Callable[[], SourceAdapter[Any]]
+    refresh_when_unavailable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +99,20 @@ _MODULES: dict[str, ModuleConfig] = {
     "liquidity": ModuleConfig("liquidity", SNAPSHOT_LIQUIDITY, True, LiquidityAdapter),
     "sentiment": ModuleConfig("sentiment", SNAPSHOT_SENTIMENT, False, SentimentAdapter),
     "positioning_summary": ModuleConfig("positioning_summary", SNAPSHOT_POSITIONING_SUMMARY, False, PositioningAdapter),
-    "economic_growth": ModuleConfig("economic_growth", SNAPSHOT_ECONOMIC_GROWTH, False, EconomicGrowthAdapter),
-    "labor_market": ModuleConfig("labor_market", SNAPSHOT_LABOR_MARKET, False, LaborMarketAdapter),
+    "economic_growth": ModuleConfig(
+        "economic_growth",
+        SNAPSHOT_ECONOMIC_GROWTH,
+        True,
+        EconomicGrowthAdapter,
+        refresh_when_unavailable=True,
+    ),
+    "labor_market": ModuleConfig(
+        "labor_market",
+        SNAPSHOT_LABOR_MARKET,
+        False,
+        LaborMarketAdapter,
+        refresh_when_unavailable=True,
+    ),
 }
 
 
@@ -418,6 +431,27 @@ def _load_module(config: ModuleConfig, *, now: datetime) -> tuple[dict[str, Any]
         return cached_state, cached_data
 
     if not config.required:
+        if config.refresh_when_unavailable:
+            refreshed_state, refreshed_data = _refresh_module(config, now=now)
+            if refreshed_state.get("accepted"):
+                refreshed_state["refreshed"] = True
+                return refreshed_state, refreshed_data
+
+            state = dict(refreshed_state)
+            state["required"] = config.required
+            state["used"] = False
+            state["accepted"] = False
+            if cached_data is not None and cached_state.get("scoring_fields_valid"):
+                state["prior_snapshot"] = {
+                    "status": cached_state.get("status"),
+                    "quality": cached_state.get("quality"),
+                    "as_of": cached_state.get("as_of"),
+                    "fetched_at": cached_state.get("fetched_at"),
+                    "freshness": cached_state.get("freshness"),
+                    "payload_hash": cached_state.get("payload_hash"),
+                }
+            return state, None
+
         cached_state["used"] = False
         return cached_state, None
 
@@ -772,6 +806,10 @@ def _valid_for_scoring(module_name: str, payload: Any, data: Any) -> tuple[bool,
         if isinstance(payload, dict) and payload.get("regime") is None:
             return False, "liquidity regime is missing"
         return bool(str(_get_attr(data, "regime") or "").strip()), "liquidity regime is missing"
+    if module_name == "economic_growth":
+        return _has_growth_return_values(data), "economic growth return fields are missing"
+    if module_name == "labor_market":
+        return _has_labor_claims_change(data), "labor market claims change is missing"
     return True, None
 
 
@@ -905,6 +943,30 @@ def _market_snapshot_as_of(source_status: dict[str, dict[str, Any]]) -> str | No
 
 def _has_attr_values(value: Any, fields: tuple[str, ...]) -> bool:
     return any(_get_attr(value, field) is not None for field in fields)
+
+
+def _has_growth_return_values(value: Any) -> bool:
+    period_keys = ("1M", "3M", "6M", "1-mo", "3-mo", "6-mo")
+    for category in ("commodities", "equities", "currencies"):
+        bucket = _get_attr(value, category)
+        if not isinstance(bucket, dict):
+            continue
+        for periods in bucket.values():
+            if not isinstance(periods, dict):
+                continue
+            if any(_float_or_none(periods.get(period)) is not None for period in period_keys):
+                return True
+    return False
+
+
+def _has_labor_claims_change(value: Any) -> bool:
+    if _float_or_none(_get_attr(value, "initial_claims_change")) is not None:
+        return True
+    latest = _get_attr(value, "latest")
+    if not isinstance(latest, dict):
+        return False
+    claims = latest.get("initial_claims")
+    return _float_or_none(_get_attr(claims, "change")) is not None
 
 
 def _get_attr(value: Any, field: str) -> Any:
