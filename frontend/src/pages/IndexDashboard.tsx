@@ -17,7 +17,17 @@ const TIMEFRAME_OPTIONS = TIMEFRAMES.map(tf => ({
   label: tf === "This Week" ? "Past Week" : tf,
 }))
 type Timeframe = typeof TIMEFRAMES[number]
-const DEFAULT_INDEX_ORDER = ["S&P 500", "NASDAQ", "Russell 2000", "STOXX 600", "DAX", "Nikkei 225"]
+const DEFAULT_INDEX_ORDER = [
+  "S&P 500",
+  "NASDAQ",
+  "Russell 2000",
+  "STOXX 600",
+  "FTSE London",
+  "DAX",
+  "CAC 40",
+  "Nikkei 225",
+  "KOSPI",
+]
 
 function timeframeLabel(timeframe: Timeframe): string {
   return timeframe === "This Week" ? "Past Week" : timeframe

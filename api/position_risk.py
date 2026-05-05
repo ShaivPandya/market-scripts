@@ -97,8 +97,20 @@ _MODULES: dict[str, ModuleConfig] = {
     ),
     "sector_metrics": ModuleConfig("sector_metrics", SNAPSHOT_SECTOR_METRICS, True, SectorMetricsAdapter),
     "liquidity": ModuleConfig("liquidity", SNAPSHOT_LIQUIDITY, True, LiquidityAdapter),
-    "sentiment": ModuleConfig("sentiment", SNAPSHOT_SENTIMENT, False, SentimentAdapter),
-    "positioning_summary": ModuleConfig("positioning_summary", SNAPSHOT_POSITIONING_SUMMARY, False, PositioningAdapter),
+    "sentiment": ModuleConfig(
+        "sentiment",
+        SNAPSHOT_SENTIMENT,
+        False,
+        SentimentAdapter,
+        refresh_when_unavailable=True,
+    ),
+    "positioning_summary": ModuleConfig(
+        "positioning_summary",
+        SNAPSHOT_POSITIONING_SUMMARY,
+        False,
+        PositioningAdapter,
+        refresh_when_unavailable=True,
+    ),
     "economic_growth": ModuleConfig(
         "economic_growth",
         SNAPSHOT_ECONOMIC_GROWTH,

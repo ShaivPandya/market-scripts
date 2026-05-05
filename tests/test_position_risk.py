@@ -25,6 +25,14 @@ def _position_risk_state(tmp_path, monkeypatch):
         "ontology.sources.macro.LaborMarketAdapter.fetch",
         lambda self: _labor_market_payload("2099-01-01"),
     )
+    monkeypatch.setattr(
+        "ontology.sources.macro.SentimentAdapter.fetch",
+        lambda self: _sentiment_payload("2099-01-01"),
+    )
+    monkeypatch.setattr(
+        "ontology.sources.macro.PositioningAdapter.fetch",
+        lambda self: _positioning_payload("2099-01-01"),
+    )
     portfolio_db.save_positions(
         [
             {
@@ -158,18 +166,22 @@ def test_invalid_liquidity_cache_is_not_used_as_fallback(monkeypatch):
     assert "liquidity" in snapshot["missing_modules"]
 
 
-def test_optional_module_missing_reduces_confidence_without_blocking(monkeypatch):
+def test_optional_module_failed_refresh_reduces_confidence_without_blocking(monkeypatch):
     from api import position_risk as pr
 
     _seed_required_snapshots(as_of="2099-01-01")
     monkeypatch.setattr(
         pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
     )
+    monkeypatch.setattr(
+        "ontology.sources.macro.SentimentAdapter.fetch",
+        lambda self: (_ for _ in ()).throw(RuntimeError("sentiment unavailable")),
+    )
 
     snapshot = pr.refresh_position_risk("MU")
 
     assert snapshot["risk_score"] is not None
-    assert snapshot["source_status"]["sentiment"]["status"] == "missing"
+    assert snapshot["source_status"]["sentiment"]["status"] == "error"
     assert snapshot["confidence"] < 1
     assert any(item["module"] == "sentiment" and not item["required"] for item in snapshot["degraded_modules"])
 
@@ -226,6 +238,60 @@ def test_missing_labor_market_optional_snapshot_is_refreshed(monkeypatch):
     assert state["used"] is True
     assert state["refreshed"] is True
     assert not any(item["module"] == "labor_market" for item in snapshot["degraded_modules"])
+
+
+def test_missing_sentiment_optional_snapshot_is_refreshed(monkeypatch):
+    from api import position_risk as pr
+
+    calls = {"count": 0}
+
+    def fetch_sentiment(self):
+        calls["count"] += 1
+        return _sentiment_payload("2099-01-01")
+
+    _seed_required_snapshots(as_of="2099-01-01")
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
+    )
+    monkeypatch.setattr("ontology.sources.macro.SentimentAdapter.fetch", fetch_sentiment)
+
+    snapshot = pr.refresh_position_risk("MU")
+
+    state = snapshot["source_status"]["sentiment"]
+    assert calls["count"] == 1
+    assert state["status"] == "ok"
+    assert state["required"] is False
+    assert state["accepted"] is True
+    assert state["used"] is True
+    assert state["refreshed"] is True
+    assert not any(item["module"] == "sentiment" for item in snapshot["degraded_modules"])
+
+
+def test_missing_positioning_optional_snapshot_is_refreshed(monkeypatch):
+    from api import position_risk as pr
+
+    calls = {"count": 0}
+
+    def fetch_positioning(self):
+        calls["count"] += 1
+        return _positioning_payload("2099-01-01")
+
+    _seed_required_snapshots(as_of="2099-01-01")
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
+    )
+    monkeypatch.setattr("ontology.sources.macro.PositioningAdapter.fetch", fetch_positioning)
+
+    snapshot = pr.refresh_position_risk("MU")
+
+    state = snapshot["source_status"]["positioning_summary"]
+    assert calls["count"] == 1
+    assert state["status"] == "ok"
+    assert state["required"] is False
+    assert state["accepted"] is True
+    assert state["used"] is True
+    assert state["refreshed"] is True
+    assert not any(item["module"] == "positioning_summary" for item in snapshot["degraded_modules"])
 
 
 def test_position_risk_refresh_endpoint_does_not_enqueue_ontology_job(auth_client, monkeypatch):
@@ -488,3 +554,25 @@ def _labor_market_payload(as_of: str) -> dict:
             "continuing_claims": {"value": 1800, "date": as_of, "change": -4.0},
         },
     }
+
+
+def _sentiment_payload(as_of: str) -> dict:
+    return {
+        "put_call": {},
+        "surveys": {"aaii": [], "naaim": [], "errors": {}},
+        "volatility": [{"date": as_of, "vvix": 95.0}],
+    }
+
+
+def _positioning_payload(as_of: str) -> list[dict]:
+    return [
+        {
+            "instrument": "SP500",
+            "report_date": as_of,
+            "lf_net": 1200,
+            "lf_net_pct_oi": 4.2,
+            "lf_z": 0.4,
+            "lf_deleveraging_z": 0.1,
+            "lf_forced": "",
+        }
+    ]
