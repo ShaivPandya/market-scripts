@@ -13,6 +13,7 @@ import {
 
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
 import { ErrorMessage, LoadingSpinner } from "@/components/shared/LoadingSpinner"
+import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { useApiQuery } from "@/hooks/useApiQuery"
@@ -26,6 +27,7 @@ import {
   rejectIdea,
   startIdeaEvaluationJob,
   updateIdea,
+  uploadManagementQualityDocument,
   uploadOverviewDocument,
   type IdeaAction,
   type IdeaDetailResponse,
@@ -37,6 +39,7 @@ import {
   type InvestmentIdea,
 } from "@/lib/api"
 import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
+import type { ParsedManagementQuality } from "@/lib/managementQualityTypes"
 import { cn } from "@/lib/utils"
 
 const ACTIVE_JOBS_KEY = "idea-watchlist-active-jobs-v1"
@@ -146,6 +149,83 @@ function MissingRows({ rows }: { rows: IdeaMissingInformation[] }) {
           {row.reason && <p className="mt-2 text-sm leading-6 text-muted">{row.reason}</p>}
         </div>
       ))}
+    </div>
+  )
+}
+
+function ManagementRatingBadge({ value }: { value?: string | null }) {
+  const rating = String(value || "Insufficient evidence")
+  const normalized = rating.toLowerCase()
+  const className = normalized.includes("strong")
+    ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
+    : normalized.includes("weak") || normalized.includes("poor")
+      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+      : normalized.includes("mixed") || normalized.includes("too early")
+        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+        : "border-app bg-card-muted text-muted"
+
+  return <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", className)}>{rating}</span>
+}
+
+function ManagementQualityPreview({ parsed, content }: { parsed?: ParsedManagementQuality | null; content: string }) {
+  const summary = parsed?.summary ?? null
+  const scorecard = parsed?.scorecard ?? []
+  const hasStructured = Boolean(summary || scorecard.length)
+
+  return (
+    <div className="space-y-4">
+      {summary && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="border-l border-app pl-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h4 className="section-title text-xs">Overall</h4>
+              <ManagementRatingBadge value={summary.overall_rating} />
+            </div>
+            {summary.bottom_line && <p className="text-sm leading-6 text-muted">{summary.bottom_line}</p>}
+          </div>
+          {[
+            ["Owner Mindset", summary.owner_mindset],
+            ["Business Value", summary.business_value_understanding],
+            ["Follow-through", summary.follow_through],
+          ].map(([label, item]) => {
+            const row = item as { rating?: string | null; text?: string | null } | undefined
+            return (
+              <div key={String(label)} className="border-l border-app pl-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="section-title text-xs">{String(label)}</h4>
+                  <ManagementRatingBadge value={row?.rating} />
+                </div>
+                {row?.text && <p className="text-sm leading-6 text-muted">{row.text}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {scorecard.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-app">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-app text-xs uppercase text-subtle">
+              <tr>
+                <th className="px-3 py-2 font-semibold">Question</th>
+                <th className="px-3 py-2 font-semibold">Rating</th>
+                <th className="px-3 py-2 font-semibold">Evidence</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[hsl(var(--border))]">
+              {scorecard.map(row => (
+                <tr key={row.question}>
+                  <td className="px-3 py-2 text-app">{row.question}</td>
+                  <td className="px-3 py-2"><ManagementRatingBadge value={row.rating} /></td>
+                  <td className="px-3 py-2 text-muted">{row.evidence}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className={cn("prose prose-sm dark:prose-invert max-w-none", hasStructured && "border-t border-app pt-3")}>
+        <MarkdownRenderer content={content} />
+      </div>
     </div>
   )
 }
@@ -272,6 +352,7 @@ export function IdeaWatchlist() {
   const [editTags, setEditTags] = useState("")
   const [editStatus, setEditStatus] = useState<IdeaStatus>("watching")
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
+  const [managementUploadMessage, setManagementUploadMessage] = useState<string | null>(null)
   const [acceptMessage, setAcceptMessage] = useState<string | null>(null)
 
   const ideasQuery = useApiQuery(["ideas"], () => fetchIdeas({ include_archived: false, limit: 300 }), 30_000)
@@ -409,6 +490,21 @@ export function IdeaWatchlist() {
       if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
     },
     onError: err => setUploadMessage(err instanceof Error ? err.message : "Upload failed."),
+  })
+
+  const managementUploadMutation = useMutation({
+    mutationFn: ({ idea, file }: { idea: InvestmentIdea; file: File }) =>
+      uploadManagementQualityDocument(idea.ticker, file),
+    onSuccess: result => {
+      setManagementUploadMessage(
+        result.approval_id
+          ? `Management quality proposal #${result.approval_id} staged.`
+          : "Management quality proposal staged.",
+      )
+      if (selectedIdea) void qc.invalidateQueries({ queryKey: ["idea", selectedIdea.id] })
+      void invalidateApprovalSummaries(qc)
+    },
+    onError: err => setManagementUploadMessage(err instanceof Error ? err.message : "Upload failed."),
   })
 
   const acceptMutation = useMutation({
@@ -630,6 +726,7 @@ export function IdeaWatchlist() {
                     <p className="mt-1 text-xs text-subtle">
                       {detail?.documents?.overview_present ? "Stored" : "Missing"}
                       {detail?.documents?.thesis_present ? " / thesis stored" : ""}
+                      {detail?.documents?.management_quality_present ? " / management stored" : ""}
                     </p>
                   </div>
                   <label className="theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm">
@@ -663,6 +760,53 @@ export function IdeaWatchlist() {
                   </div>
                 ) : (
                   <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">No overview stored.</p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-app bg-card-muted p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="section-title text-sm">Management Quality</h3>
+                    <p className="mt-1 text-xs text-subtle">
+                      {detail?.documents?.management_quality_present ? "Stored" : "Missing"}
+                    </p>
+                  </div>
+                  <label className={cn(
+                    "theme-button-base theme-button-secondary min-h-10 cursor-pointer px-4 text-sm",
+                    managementUploadMutation.isPending && "pointer-events-none opacity-60",
+                  )}>
+                    <FileUp size={16} aria-hidden="true" />
+                    {managementUploadMutation.isPending ? "Uploading" : "Upload"}
+                    <input
+                      type="file"
+                      accept=".md,.markdown,.pdf,text/markdown,application/pdf"
+                      className="hidden"
+                      disabled={managementUploadMutation.isPending}
+                      onChange={event => {
+                        const file = event.target.files?.[0]
+                        event.currentTarget.value = ""
+                        if (file) managementUploadMutation.mutate({ idea: selectedIdea, file })
+                      }}
+                    />
+                  </label>
+                </div>
+                {managementUploadMessage && <p className="mt-2 text-xs text-subtle">{managementUploadMessage}</p>}
+                {detail?.documents?.management_quality_error && (
+                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    {detail.documents.management_quality_error}
+                  </p>
+                )}
+                {detail?.documents?.management_quality_content ? (
+                  <div className="mt-4 max-h-[46rem] overflow-y-auto pr-1">
+                    <ManagementQualityPreview
+                      content={detail.documents.management_quality_content}
+                      parsed={detail.documents.management_quality_parsed ?? null}
+                    />
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-app bg-card px-3 py-4 text-sm text-muted">
+                    No management quality assessment stored.
+                  </p>
                 )}
               </section>
 

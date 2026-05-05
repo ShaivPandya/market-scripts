@@ -286,6 +286,10 @@ export interface IdeaDetailResponse {
     thesis_present?: boolean
     thesis_content?: string | null
     thesis_error?: string | null
+    management_quality_present?: boolean
+    management_quality_content?: string | null
+    management_quality_parsed?: ParsedManagementQuality | null
+    management_quality_error?: string | null
   }
 }
 
