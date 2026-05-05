@@ -39,6 +39,8 @@ interface TimeSeriesChartProps {
   yFormatter?: (v: number) => string
   /** Format tooltip values */
   tooltipFormatter?: (v: number) => string
+  /** Sort tooltip rows from highest to lowest numeric value at the hovered point */
+  tooltipSortByValueDesc?: boolean
   /** Timeframe string — drives x-axis tick deduplication and formatting */
   timeframe?: string
   /** For multi-series charts: rows with 'date' + one key per series */
@@ -84,6 +86,9 @@ function shortYear(isoDate: string): string {
 }
 
 type ChartRow = DataPoint | Record<string, unknown>
+type TooltipValuePayload = {
+  value?: number | string | ReadonlyArray<number | string>
+}
 interface LegendVisibilityState {
   seriesSignature: string
   hiddenKeys: Set<string>
@@ -108,6 +113,11 @@ function getThisWeekTicks(data: ChartRow[]): string[] {
     }
   }
   return ticks
+}
+
+function tooltipValueDescSorter(item: TooltipValuePayload): number {
+  const value = Array.isArray(item.value) ? Number(item.value[0]) : Number(item.value)
+  return Number.isFinite(value) ? -value : Number.POSITIVE_INFINITY
 }
 
 export function calcReturn(data: DataPoint[]): number | null {
@@ -154,6 +164,7 @@ export function TimeSeriesChart({
   zeroLine = false,
   yFormatter,
   tooltipFormatter,
+  tooltipSortByValueDesc = false,
   timeframe,
   multiData,
   series,
@@ -260,6 +271,7 @@ export function TimeSeriesChart({
             labelStyle={{ color: "hsl(var(--foreground))" }}
             itemStyle={{ color: "hsl(var(--foreground))" }}
             labelFormatter={(l: unknown) => new Date(String(l)).toLocaleDateString()}
+            itemSorter={tooltipSortByValueDesc ? tooltipValueDescSorter : undefined}
             formatter={(v: unknown) => {
               const n = v as number | undefined
               return tooltipFormatter && n != null ? tooltipFormatter(n) : n?.toFixed(2) ?? ""

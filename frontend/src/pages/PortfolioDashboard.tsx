@@ -301,6 +301,7 @@ export function PortfolioDashboard() {
               zeroLine
               yFormatter={formatPercent}
               tooltipFormatter={formatPercent}
+              tooltipSortByValueDesc
               yAxisOrientation="right"
               toggleableLegend
             />

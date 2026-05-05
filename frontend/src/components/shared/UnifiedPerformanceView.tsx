@@ -178,6 +178,7 @@ export function UnifiedPerformanceView({
           zeroLine
           yFormatter={formatPercent}
           tooltipFormatter={formatPercent}
+          tooltipSortByValueDesc
           yAxisOrientation="right"
           toggleableLegend
         />
