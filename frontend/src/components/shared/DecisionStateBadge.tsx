@@ -39,7 +39,6 @@ export function DecisionStateBadge({ state, className }: DecisionStateBadgeProps
       className={cn("theme-badge theme-tooltip", toneClass(tone), className)}
       aria-label={`Decision state: ${label}. ${tooltip}`}
       data-tooltip={tooltip}
-      title={tooltip}
     >
       <Icon size={12} aria-hidden="true" />
       {label}

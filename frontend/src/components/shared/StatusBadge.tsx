@@ -32,7 +32,6 @@ export function StatusBadge({ tone = "neutral", children, className, tooltip }: 
     <span
       className={cn("theme-badge", TONE_CLASSES[tone], tooltip && "theme-tooltip", className)}
       data-tooltip={tooltip}
-      title={tooltip}
     >
       <Icon size={12} aria-hidden="true" />
       {children}
