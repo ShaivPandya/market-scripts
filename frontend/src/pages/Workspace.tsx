@@ -556,12 +556,12 @@ export function Workspace() {
 
         {/* Thesis Pressure */}
         {data.thesis_pressure.length > 0 && (
-          <section className="theme-surface rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <AlertTriangle size={14} className="text-amber-500" />
               Positions Under Pressure
             </h2>
-            <div className="space-y-2">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {data.thesis_pressure.map(tp => (
                 <Link
                   key={tp.ticker}
@@ -594,7 +594,7 @@ export function Workspace() {
 
         {/* Pending Approvals */}
         {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
-          <section className="theme-surface flex min-h-0 flex-col rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 max-h-[min(56rem,calc(100dvh-8rem))] flex-col overflow-hidden rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
