@@ -159,14 +159,22 @@ COUNTRIES: dict[str, dict[str, Any]] = {
         "unemployment": [
             {
                 "source": "eurostat",
-                "id": f"Eurostat {EUROSTAT_UNEMPLOYMENT_DATASET}",
+                "id": f"Eurostat {EUROSTAT_UNEMPLOYMENT_DATASET} EA21",
+                "dataset": EUROSTAT_UNEMPLOYMENT_DATASET,
+                "geo": "EA21",
+                "query_params": {"unit": "PC_ACT", "sex": "T", "age": "TOTAL", "s_adj": "SA"},
+                "freq": "monthly",
+                "transform": "none",
+            },
+            {
+                "source": "eurostat",
+                "id": f"Eurostat {EUROSTAT_UNEMPLOYMENT_DATASET} EA20",
                 "dataset": EUROSTAT_UNEMPLOYMENT_DATASET,
                 "geo": "EA20",
                 "query_params": {"unit": "PC_ACT", "sex": "T", "age": "TOTAL", "s_adj": "SA"},
                 "freq": "monthly",
                 "transform": "none",
             },
-            {"id": "LRUNTTTTEZM156S"},
         ],
         "gdp": [
             # FRED/Eurostat: Real GDP, EU27 (2020 composition), chain-linked volumes, SA — compute YoY.
@@ -263,7 +271,6 @@ COUNTRIES: dict[str, dict[str, Any]] = {
                 "dim_sel": "D0(S1)",
                 "transform": "none",
             },
-            {"id": "LRUNTTTTCHM156S", "transform": "none"},
         ],
         "gdp": [
             # Real Gross Domestic Product, Switzerland, SA; compute YoY growth.
@@ -655,9 +662,24 @@ def _fetch_snb_series(
     resp = requests_get(url, timeout=timeout)
     resp.raise_for_status()
 
-    lines = resp.text.strip().splitlines()
-    data_lines = [l for l in lines if not l.startswith('"CubeId"') and not l.startswith('"PublishingDate"')]  # noqa: E741
+    lines = resp.text.splitlines()
+    header_idx = next(
+        (
+            idx
+            for idx, line in enumerate(lines)
+            if line.lstrip("\ufeff").startswith('"Date";') or line.lstrip("\ufeff").startswith("Date;")
+        ),
+        None,
+    )
+    if header_idx is None:
+        raise RuntimeError(f"SNB {cube} {dim_sel}: CSV response did not include a Date/Value header")
+
+    data_lines = [line.lstrip("\ufeff") for line in lines[header_idx:] if line.strip()]  # noqa: E741
     df = pd.read_csv(io.StringIO("\n".join(data_lines)), sep=";", quotechar='"')
+    df.columns = [str(col).lstrip("\ufeff").strip() for col in df.columns]
+    if "Date" not in df.columns or "Value" not in df.columns:
+        raise RuntimeError(f"SNB {cube} {dim_sel}: expected Date/Value columns, got {list(df.columns)}")
+
     df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
     df = df.dropna(subset=["Value"])
 
