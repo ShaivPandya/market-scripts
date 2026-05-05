@@ -221,6 +221,33 @@ def test_agent_chat_warm_worker_dispatch_leaves_job_queued(monkeypatch):
     assert persisted["queue_name"] == "agent"
 
 
+def test_sizer_warm_worker_dispatch_leaves_job_queued(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "warm_worker")
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+    )
+
+    row, disposition = async_job_runner.enqueue_registered_job(
+        "sizer",
+        {"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
+        cache_key="sizer-warm-worker",
+    )
+
+    assert disposition == "created"
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "queued"
+    assert persisted["queue_name"] == "sizer"
+
+
 def test_claim_queued_agent_job_is_exclusive(monkeypatch):
     from api import cache
     from api.job_queue import claim_queued_job, create_or_reuse_job, get_job
@@ -271,6 +298,43 @@ def test_agent_worker_loop_claims_and_completes_one_job(monkeypatch):
     persisted = get_job(row["job_id"])
     assert persisted is not None
     assert persisted["status"] == "completed"
+
+
+def test_generic_worker_loop_claims_and_completes_sizer_job(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import get_job
+    from api.job_worker_loop import run_once
+    from api.routers import sizer
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "warm_worker")
+    monkeypatch.setattr(sizer, "_compute_sizer_result", lambda req: {"ok": req.positions[0].ticker})
+
+    row, _disposition = async_job_runner.enqueue_registered_job(
+        "sizer",
+        {"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
+        cache_key="sizer-worker-loop",
+    )
+
+    assert run_once(job_type="sizer", queue_name="sizer") is True
+    persisted = get_job(row["job_id"])
+    assert persisted is not None
+    assert persisted["status"] == "completed"
+    assert persisted["result_json"] == {"ok": "AAA"}
+
+
+def test_generic_worker_loop_parser_reads_job_defaults_from_env(monkeypatch):
+    from api.job_worker_loop import _parser
+
+    monkeypatch.setenv("JOB_WORKER_JOB_TYPE", "sizer")
+    monkeypatch.setenv("JOB_WORKER_QUEUE", "sizer")
+
+    args = _parser().parse_args(["run"])
+
+    assert args.job_type == "sizer"
+    assert args.queue_name == "sizer"
 
 
 def test_cloud_run_dedupe_reuses_active_and_completed_jobs(monkeypatch):
@@ -623,6 +687,36 @@ def test_core_async_endpoints_use_persisted_job_contract(auth_client, monkeypatc
             time.sleep(0.05)
         else:
             raise AssertionError(f"{path} did not complete")
+
+
+def test_sizer_async_endpoint_can_complete_via_warm_worker(auth_client, monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_worker_loop import run_once
+    from api.routers import sizer
+
+    cache.invalidate_all()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "cloud_run_jobs")
+    monkeypatch.setenv("ASYNC_DISPATCH_BACKEND_SIZER", "warm_worker")
+    monkeypatch.setattr(
+        async_job_runner,
+        "_enqueue_cloud_run_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no Cloud Run dispatch")),
+    )
+    monkeypatch.setattr(sizer, "_compute_sizer_result", lambda req: {"ok": req.positions[0].ticker})
+
+    started = auth_client.post(
+        "/api/v1/portfolio-sizer/async",
+        json={"book": 100000, "target_leverage": 2.0, "positions": [{"ticker": "AAA", "conviction": 3}]},
+    )
+
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    assert run_once(job_type="sizer", queue_name="sizer") is True
+
+    done = auth_client.get(f"/api/v1/portfolio-sizer/async/{job_id}").json()
+    assert done["status"] == "done"
+    assert done["result"] == {"ok": "AAA"}
 
 
 def test_fundamental_momentum_dispatch_error_returns_structured_503(auth_client, monkeypatch):

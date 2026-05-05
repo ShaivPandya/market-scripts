@@ -27,6 +27,8 @@ export API_SERVICE="talisman-api"      # must match firebase.json rewrite
 export ASYNC_JOB_RUNNER_JOB="talisman-async-job"
 export AGENT_WORKER_POOL="talisman-agent-worker"
 export AGENT_WORKER_INSTANCES="1"      # fixed Cloud Run worker-pool capacity
+export SIZER_WORKER_POOL="talisman-sizer-worker"
+export SIZER_WORKER_INSTANCES="1"      # fixed Cloud Run worker-pool capacity
 export MIGRATION_JOB="talisman-migrate"
 export TOP50_REFRESH_JOB="talisman-top50-refresh"
 

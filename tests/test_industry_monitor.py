@@ -15,8 +15,35 @@ from api.exceptions import DataFetchError
 from api.routers import industry as industry_router
 from macro.industry import industry_monitor as im
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SAMPLE_PDF = REPO_ROOT / "macro" / "industry" / "files" / "housing" / "DHI.pdf"
+
+def _make_text_pdf(text: str) -> bytes:
+    escaped_text = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    content = f"BT /F1 12 Tf 72 720 Td ({escaped_text}) Tj ET".encode("ascii")
+    objects = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n"
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        b"5 0 obj\n<< /Length "
+        + str(len(content)).encode("ascii")
+        + b" >>\nstream\n"
+        + content
+        + b"\nendstream\nendobj\n",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(pdf))
+        pdf.extend(obj)
+    xref_start = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n".encode("ascii"))
+    return bytes(pdf)
 
 
 def test_get_pdf_locator_applies_filename_map():
@@ -31,9 +58,9 @@ def test_get_pdf_locator_normalizes_sector_with_space():
     assert "/capital_goods/CAT.pdf" in gcs_key
 
 
-@pytest.mark.skipif(not SAMPLE_PDF.is_file(), reason="sample PDF not available locally")
 def test_extract_text_from_bytes_roundtrip():
-    text = im._extract_text_from_bytes(SAMPLE_PDF.read_bytes())
+    pdf_bytes = _make_text_pdf("D.R. Horton Q3 2024 earnings")
+    text = im._extract_text_from_bytes(pdf_bytes)
     assert text and text.strip()
     assert any(token in text for token in ("D.R. Horton", "Horton", "earnings"))
 

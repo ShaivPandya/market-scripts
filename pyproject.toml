@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+filterwarnings = [
+    "ignore:`resume_download` is deprecated and will be removed in version 1\\.0\\.0\\.:FutureWarning:huggingface_hub\\.file_download",
+]
 
 [tool.ruff]
 target-version = "py312"

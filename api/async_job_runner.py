@@ -112,6 +112,10 @@ def _agent_chat_dispatch_backend() -> str | None:
     value = _normalize_backend(os.getenv("AGENT_CHAT_DISPATCH_BACKEND") or "")
     if not value:
         return None
+    return _normalize_dispatch_backend(value)
+
+
+def _normalize_dispatch_backend(value: str) -> str:
     if value in {"warm_worker", "warm_workers", "postgres_poll", "postgres_poller"}:
         return "warm_worker"
     if value in {"cloud_run_jobs", "cloudrunjobs", "rq"}:
@@ -121,7 +125,17 @@ def _agent_chat_dispatch_backend() -> str | None:
     return value
 
 
+def _job_dispatch_backend(job_type: str) -> str | None:
+    env_key = f"ASYNC_DISPATCH_BACKEND_{job_type.upper().replace('-', '_')}"
+    value = _normalize_backend(os.getenv(env_key) or "")
+    if not value:
+        return None
+    return _normalize_dispatch_backend(value)
+
+
 def _dispatch_backend_for_job(job_type: str) -> str:
+    if override := _job_dispatch_backend(job_type):
+        return override
     if job_type == "agent_chat_turn":
         return _agent_chat_dispatch_backend() or _env_backend()
     return _env_backend()

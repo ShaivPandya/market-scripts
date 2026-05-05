@@ -19,6 +19,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite). Tunables: `API_CPU`, `API_MEMORY`, `API_CONCURRENCY`, `API_MIN_INSTANCES`, `API_MAX_INSTANCES`, `API_TIMEOUT`. Defaults are `1` vCPU, `1Gi`, and concurrency `20` because long-running analysis is offloaded to Cloud Run Jobs; raise these if synchronous endpoints show memory pressure or CPU saturation.
 - `deploy-async-job.sh` — generic Cloud Run Job running `python -m api.async_job_runner run`. Tunables: `ASYNC_JOB_CPU`, `ASYNC_JOB_MEMORY`, `ASYNC_JOB_TIMEOUT`, `ASYNC_JOB_MAX_RETRIES`.
 - `deploy-agent-worker.sh` — warm Cloud Run worker pool running `python -m api.agent_worker_loop run` for durable agent workflow turns.
+- `deploy-sizer-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with sizer job/queue defaults from env for low-latency portfolio sizer jobs.
 - `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
@@ -56,11 +57,13 @@ Routine deploys:
 # or roll a single component:
 ./infra/gcp/deploy-api.sh
 ./infra/gcp/deploy-async-job.sh
+./infra/gcp/deploy-agent-worker.sh
+./infra/gcp/deploy-sizer-worker.sh
 ```
 
 Routine backend deploys are optimized for the common code-rollout path:
 
-- `deploy-backend.sh` deploys the migration job first, starts the non-migration Cloud Run Job updates in parallel, runs Alembic migrations, then deploys the API service.
+- `deploy-backend.sh` deploys the migration job first, starts the non-migration Cloud Run Job and warm worker updates in parallel, runs Alembic migrations, then deploys the API service.
 - IAM, Scheduler, and monitoring syncs are intentionally skipped by default because those resources rarely change and each sync performs multiple GCP control-plane calls.
 - Run `FULL_SYNC=1 ./infra/gcp/deploy-backend.sh` when service accounts, Scheduler definitions, monitoring policy files, or other infra config changed.
 - Set `PARALLEL_JOB_DEPLOYS=0` if you need the older sequential Cloud Run Job deploy behavior for debugging.
@@ -86,22 +89,23 @@ Cloud Run services and jobs must include:
 
 Production async work uses the `async_jobs` Postgres table for durable status,
 progress, results, and dedupe. Batch jobs run through the generic Cloud Run Job;
-agent chat workflow turns run through a warm Cloud Run worker pool so they do
-not pay per-turn Cloud Run Job startup latency.
+agent chat workflow turns and portfolio sizer jobs run through warm Cloud Run
+worker pools so they do not pay per-request Cloud Run Job startup latency.
 
 Required services:
 
 - Cloud Run service `api`: `uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8080}`
 - Cloud Run Job `talisman-async-job`: `python -m api.async_job_runner run`
 - Cloud Run worker pool `talisman-agent-worker`: `python -m api.agent_worker_loop run`
+- Cloud Run worker pool `talisman-sizer-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=sizer` and `JOB_WORKER_QUEUE=sizer`
 - Cloud Scheduler jobs:
   - hourly: `POST /api/v1/admin/jobs/enqueue-async-job-sweep`
   - weekdays at 23:00 UTC: run `${TOP50_REFRESH_JOB}`
   - weekdays at 23:15 UTC: `POST /api/v1/admin/jobs/enqueue-market-snapshot-refresh`
 
 Cloud Run worker pools run a fixed number of instances, not min/max autoscaling.
-Set `AGENT_WORKER_INSTANCES` in `infra/gcp/config.sh` to control warm agent
-worker capacity.
+Set `AGENT_WORKER_INSTANCES` and `SIZER_WORKER_INSTANCES` in
+`infra/gcp/config.sh` to control warm worker capacity.
 
 Scheduled cache warming is disabled by default. The cache-warm endpoint remains
 available for manual/admin use, and can be scheduled with
@@ -129,6 +133,8 @@ Required async env/secrets:
 ```bash
 ASYNC_JOB_BACKEND="cloud_run_jobs"
 AGENT_CHAT_DISPATCH_BACKEND="warm_worker"
+ASYNC_DISPATCH_BACKEND_SIZER="warm_worker"
+ASYNC_QUEUE_SIZER="sizer"
 ASYNC_CLOUD_RUN_JOB="talisman-async-job"
 ASYNC_JOB_COMPLETED_TTL_SECONDS="86400"
 ASYNC_JOB_FAILED_TTL_SECONDS="604800"
