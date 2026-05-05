@@ -3,6 +3,7 @@
 
 # Dependencies
 node_modules/
+.pip-cache/
 
 # Node logs and package-manager noise
 logs/
@@ -47,6 +48,7 @@ env/
 tmp/
 data_cache/
 **/data_cache/
+backtest/cache/
 outputs/
 **/outputs/
 results/aluminum/
@@ -72,7 +74,12 @@ macro/industry/files/**/*.pdf
 
 # Firebase and GCP local tooling
 .firebase/
+.playwright-cli/
 cloud-sql-proxy
 
 # Local deploy config (copy of infra/gcp/config.example.sh)
 infra/gcp/config.sh
+
+# Local editor/agent config
+.claude/settings.local.json
+.vscode/
