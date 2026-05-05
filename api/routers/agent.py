@@ -50,6 +50,7 @@ from llm_utils import (
     PROVIDER_OPENAI,
     api_key_env,
     apply_reasoning_config,
+    extract_text,
     get_llm_client,
     reasoning_effort_for_tier,
     resolve_model,
@@ -446,7 +447,7 @@ class _LazyProviderToolDefinitions:
 ANTHROPIC_TOOL_DEFINITIONS = _LazyProviderToolDefinitions(PROVIDER_ANTHROPIC)
 OPENAI_TOOL_DEFINITIONS = _LazyProviderToolDefinitions(PROVIDER_OPENAI)
 _HIGH_COST_TOOLS = {"get_sector_metrics", "query_ontology", "get_signal_aggregator"}
-PORTFOLIO_SUMMARY_MAX_TOKENS = 900
+PORTFOLIO_SUMMARY_MAX_TOKENS = 2_048
 _CASUAL_RX = re.compile(
     r"^\s*(hi|hello|hey|yo|thanks|thank you|cool|ok|okay|who are you|what can you do)[\s!.?]*$",
     flags=re.IGNORECASE,
@@ -603,6 +604,84 @@ def _build_portfolio_summary_prompt(user_text: str, portfolio_result: str) -> st
         f"User request:\n{user_text.strip()}\n\n"
         f"Portfolio tool JSON:\n{portfolio_result}"
     )
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_pct(value: Any) -> str | None:
+    number = _as_float(value)
+    if number is None:
+        return None
+    return f"{number:+.1f}%"
+
+
+def _portfolio_summary_fallback(portfolio_result: str) -> str:
+    """Deterministic fallback so a successful portfolio read never renders blank."""
+
+    try:
+        payload = json.loads(portfolio_result)
+    except json.JSONDecodeError:
+        return "I pulled the portfolio data, but could not synthesize a readable summary from the tool output."
+
+    if not isinstance(payload, dict):
+        return "I pulled the portfolio data, but could not synthesize a readable summary from the tool output."
+    error = payload.get("error")
+    if isinstance(error, str) and error.strip():
+        return f"I tried to read the portfolio, but the portfolio tool returned an error: {error.strip()}"
+
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+    position_count = summary.get("position_count", len(positions))
+    long_count = summary.get("long_count")
+    short_count = summary.get("short_count")
+
+    book_bits = [f"{position_count} positions"]
+    if long_count is not None or short_count is not None:
+        book_bits.append(f"{long_count or 0} long / {short_count or 0} short")
+
+    perf_bits: list[str] = []
+    for label, key in (
+        ("weekly", "weekly_portfolio_return_pct"),
+        ("monthly", "monthly_portfolio_return_pct"),
+        ("average directional", "average_directional_return_pct"),
+    ):
+        formatted = _format_pct(summary.get(key))
+        if formatted:
+            perf_bits.append(f"{label} {formatted}")
+
+    ranked: list[tuple[float, str, str]] = []
+    for item in positions:
+        if not isinstance(item, dict):
+            continue
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        for key in ("monthly_contribution_pct", "weekly_contribution_pct", "unrealized_pnl_pct"):
+            value = _as_float(item.get(key))
+            if value is not None:
+                ranked.append((value, ticker, key))
+                break
+
+    lines = [f"Portfolio read complete: {', '.join(book_bits)}."]
+    if perf_bits:
+        lines.append(f"Available aggregate performance: {', '.join(perf_bits)}.")
+    if ranked:
+        ranked.sort(key=lambda row: row[0], reverse=True)
+        best = ", ".join(f"{ticker} {_format_pct(value)}" for value, ticker, _key in ranked[:3])
+        weakest_rows = list(reversed(ranked[-3:]))
+        weakest = ", ".join(f"{ticker} {_format_pct(value)}" for value, ticker, _key in weakest_rows)
+        lines.append(f"Top available contributors: {best}.")
+        lines.append(f"Weakest available contributors: {weakest}.")
+    return " ".join(lines)
 
 
 def _select_tool_names(user_text: str) -> list[str]:
@@ -1229,6 +1308,16 @@ def _stream_llm_response(
         if turn_timings is not None and turn_started is not None and turn_timings.get("first_token_ms") is None:
             turn_timings["first_token_ms"] = _elapsed_ms(turn_started)
 
+    def emit_final_text_if_missing(final_message: object | None):
+        if text_parts is None or any(part.strip() for part in text_parts):
+            return
+        final_text = extract_text(final_message).strip()
+        if not final_text:
+            return
+        record_first_token()
+        text_parts.append(final_text)
+        yield _sse("delta", {"text": final_text})
+
     if provider == PROVIDER_ANTHROPIC:
         with client.messages.stream(**stream_kwargs) as stream:
             for event in stream:
@@ -1245,7 +1334,9 @@ def _stream_llm_response(
                             "id": event.content_block.id,
                         },
                     )
-            return stream.get_final_message()
+            final_message = stream.get_final_message()
+            yield from emit_final_text_if_missing(final_message)
+            return final_message
 
     emitted_call_ids: set[str] = set()
     with client.responses.stream(**stream_kwargs) as stream:
@@ -1268,10 +1359,14 @@ def _stream_llm_response(
                         yield _sse("tool_call", {"name": name, "id": call_id})
         get_final = getattr(stream, "get_final_response", None)
         if callable(get_final):
-            return get_final()
+            final_response = get_final()
+            yield from emit_final_text_if_missing(final_response)
+            return final_response
         get_final = getattr(stream, "get_final_message", None)
         if callable(get_final):
-            return get_final()
+            final_message = get_final()
+            yield from emit_final_text_if_missing(final_message)
+            return final_message
         return None
 
 
@@ -2294,6 +2389,10 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                     raise
 
             synthesis_text = "".join(synthesis_chunks)
+            if not synthesis_text.strip():
+                logger.warning("Portfolio summary synthesis returned empty text; using deterministic fallback")
+                synthesis_text = _portfolio_summary_fallback(portfolio_result)
+                yield _sse("delta", {"text": synthesis_text})
             turn_meta = {"client_turn_id": req.client_turn_id} if req.client_turn_id else {}
             user_msg = {"role": "user", "content": req.message, "timestamp": time.time(), **turn_meta}
             assistant_msg = {"role": "assistant", "content": synthesis_text, "timestamp": time.time(), **turn_meta}

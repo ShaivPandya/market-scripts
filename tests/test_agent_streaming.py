@@ -714,6 +714,126 @@ def test_agent_chat_v2_fast_paths_simple_portfolio_summary(auth_client, monkeypa
     assert finalized[0]["content"] == "Portfolio summary"
 
 
+def test_agent_chat_v2_portfolio_summary_openai_backfills_final_text(auth_client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-portfolio-openai",
+        ),
+    )
+    finalized: list[dict] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+
+    streams = [
+        (
+            [],
+            SimpleNamespace(
+                output=[{"type": "message", "content": [{"type": "output_text", "text": "Portfolio summary"}]}],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+            ),
+        ),
+    ]
+    fake_client = _install_fake_openai(monkeypatch, streams)
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda _name, _args, **_kwargs: json.dumps(
+            {
+                "summary": {"position_count": 1, "long_count": 1, "short_count": 0},
+                "positions": [{"ticker": "MU", "monthly_contribution_pct": 1.2}],
+                "_meta": {"duration_ms": 10.0, "cache": "hit", "status": "ok"},
+            }
+        ),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={
+            "message": "Summarize my portfolio's performance",
+            "response_preferences": {"thinking_enabled": True},
+        },
+    )
+
+    assert resp.status_code == 200
+    kwargs = fake_client.responses.kwargs_history[0]
+    assert kwargs["max_output_tokens"] == agent_router.PORTFOLIO_SUMMARY_MAX_TOKENS
+    assert kwargs["max_output_tokens"] >= 2048
+    assert "reasoning" in kwargs
+    parsed = _parse_sse(resp.text)
+    assert any(e == "delta" and p.get("text") == "Portfolio summary" for e, p in parsed)
+    assert finalized[0]["content"] == "Portfolio summary"
+
+
+def test_agent_chat_v2_portfolio_summary_never_finalizes_blank(auth_client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
+    monkeypatch.setattr(
+        "api.memory_manager.build_conversation_context",
+        lambda _session_id, new_user_message, **_kwargs: (
+            [{"role": "user", "content": new_user_message}],
+            "session-portfolio-fallback",
+        ),
+    )
+    finalized: list[dict] = []
+    monkeypatch.setattr(
+        "api.memory_manager.finalize_turn_async",
+        lambda _sid, _user_msg, assistant_msg: finalized.append(assistant_msg),
+    )
+
+    streams = [
+        (
+            [],
+            SimpleNamespace(
+                content=[],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=10, output_tokens=0),
+            ),
+        ),
+    ]
+    _install_fake_anthropic(monkeypatch, streams)
+    monkeypatch.setattr(
+        agent_router,
+        "execute_tool",
+        lambda _name, _args, **_kwargs: json.dumps(
+            {
+                "summary": {
+                    "position_count": 2,
+                    "long_count": 1,
+                    "short_count": 1,
+                    "monthly_portfolio_return_pct": 2.3,
+                },
+                "positions": [
+                    {"ticker": "MU", "monthly_contribution_pct": 1.2},
+                    {"ticker": "OKLO", "monthly_contribution_pct": -0.4},
+                ],
+                "_meta": {"duration_ms": 10.0, "cache": "hit", "status": "ok"},
+            }
+        ),
+    )
+
+    resp = auth_client.post(
+        "/api/v1/agent/chat/v2",
+        json={"message": "Summarize my portfolio's performance"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    fallback_delta = [
+        p.get("text")
+        for e, p in parsed
+        if e == "delta" and isinstance(p.get("text"), str) and "Portfolio read complete" in p.get("text", "")
+    ]
+    assert fallback_delta
+    assert finalized[0]["content"] == fallback_delta[-1]
+
+
 def test_agent_chat_v2_portfolio_risk_uses_normal_agent_loop(auth_client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(agent_router, "_build_agent_instructions", lambda screen_context=None: "agent instructions")
