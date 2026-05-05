@@ -35,9 +35,7 @@ def test_refresh_uses_security_definer_function():
 
 
 def test_temporal_read_model_migration_grants_runtime_roles():
-    migration = Path("migrations/versions/20260505_0006_ontology_temporal_read_models.py").read_text(
-        encoding="utf-8"
-    )
+    migration = Path("migrations/versions/20260505_0006_ontology_temporal_read_models.py").read_text(encoding="utf-8")
 
     for view_name in (
         "ontology_current_position_risk_read_model",
