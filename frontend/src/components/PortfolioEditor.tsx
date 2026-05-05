@@ -18,13 +18,16 @@ import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 interface EditorRow extends PortfolioPosition {
   _id: string
   _isNew: boolean
+  _contractMultiplierTouched: boolean
 }
 
 interface HedgeEditorRow extends HedgePosition {
   _id: string
+  _contractMultiplierTouched: boolean
 }
 
 type EditorTab = "Positions" | "Hedges"
+type InstrumentType = NonNullable<PortfolioPosition["instrument_type"]>
 
 const ASSET_OPTIONS = [
   { value: "equity", label: "Equity" },
@@ -55,9 +58,40 @@ function makeId() {
   return Math.random().toString(36).slice(2, 10)
 }
 
-function inferInstrumentType(ticker: string, instrumentType?: PortfolioPosition["instrument_type"] | null) {
+function inferInstrumentType(ticker: string, instrumentType?: PortfolioPosition["instrument_type"] | null): InstrumentType {
   if (ticker.trim().toUpperCase().endsWith("=F")) return "future"
   return instrumentType ?? "security"
+}
+
+function normalizedSymbol(value?: string | null) {
+  return (value ?? "").trim().toUpperCase()
+}
+
+function effectivePriceSymbol(row: { ticker: string; price_symbol?: string | null }) {
+  return normalizedSymbol(row.price_symbol) || normalizedSymbol(row.ticker)
+}
+
+function nextContractMultiplier(
+  row: {
+    ticker: string
+    price_symbol?: string | null
+    instrument_type?: PortfolioPosition["instrument_type"] | null
+    contract_multiplier?: number | null
+    _contractMultiplierTouched: boolean
+  },
+  nextInstrumentType: InstrumentType,
+  nextPriceSymbol = effectivePriceSymbol(row),
+) {
+  if (nextInstrumentType === "security") return 1
+  if (row._contractMultiplierTouched) return row.contract_multiplier ?? null
+
+  const currentInstrumentType = inferInstrumentType(row.ticker, row.instrument_type)
+  const currentPriceSymbol = effectivePriceSymbol(row)
+  const futureSymbolChanged = currentInstrumentType === "future" && nextPriceSymbol !== currentPriceSymbol
+  if (currentInstrumentType !== "future" || futureSymbolChanged || row.contract_multiplier === 1) {
+    return null
+  }
+  return row.contract_multiplier ?? null
 }
 
 function rowQuantity(row: { quantity?: number | null; shares?: number | null }) {
@@ -97,6 +131,7 @@ function positionToRow(p: PortfolioPosition): EditorRow {
     ...p,
     _id: makeId(),
     _isNew: false,
+    _contractMultiplierTouched: false,
     quantity,
     shares: quantity,
     instrument_type: instrumentType,
@@ -119,7 +154,8 @@ function newRow(): EditorRow {
     quantity: null,
     instrument_type: "security",
     price_symbol: "",
-    contract_multiplier: 1,
+    contract_multiplier: null,
+    _contractMultiplierTouched: false,
   }
 }
 
@@ -129,6 +165,7 @@ function hedgeToRow(p: HedgePosition): HedgeEditorRow {
   return {
     ...p,
     _id: makeId(),
+    _contractMultiplierTouched: false,
     ticker: p.ticker,
     asset: p.asset ?? "equity",
     direction: p.direction,
@@ -152,7 +189,8 @@ function newHedgeRow(): HedgeEditorRow {
     quantity: null,
     instrument_type: "security",
     price_symbol: "",
-    contract_multiplier: 1,
+    contract_multiplier: null,
+    _contractMultiplierTouched: false,
   }
 }
 
@@ -395,12 +433,15 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         onChange={e => {
                           const nextTicker = e.target.value.toUpperCase()
                           const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
+                          const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
+                            ? nextTicker
+                            : row.price_symbol
+                          const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
                           updatePositionRow(row._id, {
                             ticker: nextTicker,
-                            price_symbol: !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
-                              ? nextTicker
-                              : row.price_symbol,
-                            instrument_type: inferInstrumentType(nextTicker, row.instrument_type),
+                            price_symbol: nextPriceSymbol,
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
                           })
                         }}
                         placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "AAPL"}
@@ -411,10 +452,16 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     <div className="col-span-2">
                       <SelectInput
                         value={inferInstrumentType(row.ticker, row.instrument_type)}
-                        onChange={v => updatePositionRow(row._id, {
-                          instrument_type: v as PortfolioPosition["instrument_type"],
-                          contract_multiplier: v === "security" ? 1 : row.contract_multiplier,
-                        })}
+                        onChange={v => {
+                          const nextInstrumentType = v as InstrumentType
+                          updatePositionRow(row._id, {
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType),
+                            _contractMultiplierTouched: nextInstrumentType === "security"
+                              ? false
+                              : row._contractMultiplierTouched,
+                          })
+                        }}
                         options={INSTRUMENT_TYPE_OPTIONS}
                       />
                     </div>
@@ -509,7 +556,10 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? row.contract_multiplier ?? "" : 1}
                         onChange={e => {
                           const v = e.target.value
-                          updatePositionRow(row._id, { contract_multiplier: v === "" ? null : Number(v) })
+                          updatePositionRow(row._id, {
+                            contract_multiplier: v === "" ? null : Number(v),
+                            _contractMultiplierTouched: true,
+                          })
                         }}
                         placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Auto" : "1"}
                         className="theme-input w-full text-sm"
@@ -587,12 +637,15 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         onChange={e => {
                           const nextTicker = e.target.value.toUpperCase()
                           const currentPriceSymbol = row.price_symbol?.trim().toUpperCase()
+                          const nextPriceSymbol = !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
+                            ? nextTicker
+                            : row.price_symbol
+                          const nextInstrumentType = inferInstrumentType(nextTicker, row.instrument_type)
                           updateHedgeRow(row._id, {
                             ticker: nextTicker,
-                            price_symbol: !currentPriceSymbol || currentPriceSymbol === row.ticker.toUpperCase()
-                              ? nextTicker
-                              : row.price_symbol,
-                            instrument_type: inferInstrumentType(nextTicker, row.instrument_type),
+                            price_symbol: nextPriceSymbol,
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType, normalizedSymbol(nextPriceSymbol)),
                           })
                         }}
                         placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "ES=F" : "SPY"}
@@ -603,10 +656,16 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                     <div className="col-span-2">
                       <SelectInput
                         value={inferInstrumentType(row.ticker, row.instrument_type)}
-                        onChange={v => updateHedgeRow(row._id, {
-                          instrument_type: v as HedgePosition["instrument_type"],
-                          contract_multiplier: v === "security" ? 1 : row.contract_multiplier,
-                        })}
+                        onChange={v => {
+                          const nextInstrumentType = v as InstrumentType
+                          updateHedgeRow(row._id, {
+                            instrument_type: nextInstrumentType,
+                            contract_multiplier: nextContractMultiplier(row, nextInstrumentType),
+                            _contractMultiplierTouched: nextInstrumentType === "security"
+                              ? false
+                              : row._contractMultiplierTouched,
+                          })
+                        }}
                         options={INSTRUMENT_TYPE_OPTIONS}
                       />
                     </div>
@@ -663,7 +722,10 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         value={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? row.contract_multiplier ?? "" : 1}
                         onChange={e => {
                           const v = e.target.value
-                          updateHedgeRow(row._id, { contract_multiplier: v === "" ? null : Number(v) })
+                          updateHedgeRow(row._id, {
+                            contract_multiplier: v === "" ? null : Number(v),
+                            _contractMultiplierTouched: true,
+                          })
                         }}
                         placeholder={inferInstrumentType(row.ticker, row.instrument_type) === "future" ? "Auto" : "1"}
                         className="theme-input w-full text-sm"

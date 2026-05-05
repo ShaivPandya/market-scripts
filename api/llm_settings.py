@@ -39,17 +39,23 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
+def _close_conn() -> None:
     global _conn
     if _conn is not None:
         try:
+            _conn.close()
+        except Exception:
+            pass
+        _conn = None
+
+
+def _get_conn(*, probe: bool = True) -> sqlite3.Connection | PostgresCompatConnection:
+    global _conn
+    if probe and _conn is not None:
+        try:
             _conn.execute("SELECT 1")
         except Exception:
-            try:
-                _conn.close()
-            except Exception:
-                pass
-            _conn = None
+            _close_conn()
     if _conn is None:
         with _lock:
             if _conn is None:
@@ -80,6 +86,32 @@ def get_setting(key: str) -> dict[str, Any] | None:
     with _lock:
         row = conn.execute("SELECT key, value, updated_at FROM app_settings WHERE key = ?", (key,)).fetchone()
     return _row_to_dict(row) if row else None
+
+
+def get_settings(keys: list[str] | tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    unique_keys = list(dict.fromkeys(keys))
+    if not unique_keys:
+        return {}
+    if not use_postgres_state() and not DB_PATH.exists():
+        return {}
+
+    placeholders = ", ".join("?" for _ in unique_keys)
+    sql = f"SELECT key, value, updated_at FROM app_settings WHERE key IN ({placeholders})"
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        conn = _get_conn(probe=False)
+        try:
+            with _lock:
+                rows = conn.execute(sql, tuple(unique_keys)).fetchall()
+            return {str(row["key"]): _row_to_dict(row) for row in rows}
+        except Exception as exc:
+            last_exc = exc
+            _close_conn()
+            if attempt == 1:
+                raise
+    if last_exc is not None:
+        raise last_exc
+    return {}
 
 
 def set_setting(key: str, value: str) -> dict[str, Any]:
