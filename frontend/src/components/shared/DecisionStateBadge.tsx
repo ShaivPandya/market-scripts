@@ -1,5 +1,6 @@
 import { Activity, AlertTriangle, CheckCircle2, Clock, FileText, GitPullRequest, ShieldCheck, XCircle } from "lucide-react"
 
+import { BoundedTooltip } from "@/components/shared/BoundedTooltip"
 import { StatusBadge, type StatusTone } from "@/components/shared/StatusBadge"
 import {
   decisionStateLabel,
@@ -35,14 +36,14 @@ export function DecisionStateBadge({ state, className }: DecisionStateBadgeProps
   const tone = decisionStateTone(normalized)
   const tooltip = decisionStateDescription(normalized)
   return (
-    <span
-      className={cn("theme-badge theme-tooltip", toneClass(tone), className)}
-      aria-label={`Decision state: ${label}. ${tooltip}`}
-      data-tooltip={tooltip}
+    <BoundedTooltip
+      className={cn("theme-badge", toneClass(tone), className)}
+      ariaLabel={`Decision state: ${label}. ${tooltip}`}
+      tooltip={tooltip}
     >
       <Icon size={12} aria-hidden="true" />
       {label}
-    </span>
+    </BoundedTooltip>
   )
 }
 

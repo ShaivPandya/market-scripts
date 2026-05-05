@@ -1,4 +1,6 @@
 import { AlertTriangle, CheckCircle2, Dot, Info, XCircle } from "lucide-react"
+
+import { BoundedTooltip } from "@/components/shared/BoundedTooltip"
 import { cn } from "@/lib/utils"
 
 export type StatusTone = "neutral" | "info" | "success" | "warning" | "error"
@@ -29,12 +31,9 @@ interface StatusBadgeProps {
 export function StatusBadge({ tone = "neutral", children, className, tooltip }: StatusBadgeProps) {
   const Icon = ICONS[tone]
   return (
-    <span
-      className={cn("theme-badge", TONE_CLASSES[tone], tooltip && "theme-tooltip", className)}
-      data-tooltip={tooltip}
-    >
+    <BoundedTooltip className={cn("theme-badge", TONE_CLASSES[tone], className)} tooltip={tooltip}>
       <Icon size={12} aria-hidden="true" />
       {children}
-    </span>
+    </BoundedTooltip>
   )
 }
