@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date
 from typing import Any
 
@@ -66,7 +66,7 @@ _SUFFIX_METADATA: tuple[tuple[str, dict[str, str]], ...] = (
 
 
 def enrich_position_valuations(
-    positions: list[Mapping[str, Any]],
+    positions: Sequence[Mapping[str, Any]],
     *,
     base_currency: str = DEFAULT_BASE_CURRENCY,
     preserve_existing: bool = False,
@@ -313,7 +313,7 @@ def _latest_as_of(prices: pd.DataFrame, symbol: str) -> str | None:
         dt = value.to_pydatetime()
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
-        return dt.isoformat()
+        return str(dt.isoformat())
     return str(value)
 
 

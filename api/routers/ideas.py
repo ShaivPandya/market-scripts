@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -386,7 +386,8 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
         action = "watch"
     missing = _normalize_missing_rows(parsed.get("missing_information"))
     tool_errors = list(context.get("tool_errors") or [])
-    data_quality = parsed.get("data_quality") if isinstance(parsed.get("data_quality"), dict) else {}
+    data_quality_raw = parsed.get("data_quality")
+    data_quality: dict[str, Any] = cast(dict[str, Any], data_quality_raw) if isinstance(data_quality_raw, dict) else {}
     data_quality = {**_source_quality_from_missing(missing, tool_errors), **data_quality}
     data_quality["critical_data_quality"] = _quality_value(
         data_quality.get("critical_data_quality"), fallback="degraded" if missing else "ok"
@@ -398,10 +399,13 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
     if _has_critical_missing(missing) and action == "buy":
         action = "watch"
 
-    factor_scores = parsed.get("factor_scores") if isinstance(parsed.get("factor_scores"), dict) else {}
+    factor_scores_raw = parsed.get("factor_scores")
+    factor_scores: dict[str, Any] = (
+        cast(dict[str, Any], factor_scores_raw) if isinstance(factor_scores_raw, dict) else {}
+    )
     score = _numeric_or_none(parsed.get("score"), minimum=0, maximum=100)
     confidence = _numeric_or_none(parsed.get("confidence"), minimum=0, maximum=1)
-    result = {
+    result: dict[str, Any] = {
         "idea_id": idea["id"],
         "ticker": ticker,
         "evaluated_at": str(parsed.get("evaluated_at") or context["evaluated_at"]),
@@ -426,11 +430,13 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
         "portfolio_fit": parsed.get("portfolio_fit") if isinstance(parsed.get("portfolio_fit"), dict) else {},
     }
     if result["score"] is None and factor_scores:
-        scores = [
-            float(row.get("score"))
-            for row in factor_scores.values()
-            if isinstance(row, dict) and isinstance(row.get("score"), int | float)
-        ]
+        scores = []
+        for row in factor_scores.values():
+            if not isinstance(row, dict):
+                continue
+            row_score = row.get("score")
+            if isinstance(row_score, int | float):
+                scores.append(float(row_score))
         result["score"] = round(sum(scores) / len(scores), 1) if scores else None
     if not result["rationale"]:
         result["rationale"] = "No rationale returned; review the factor scores and missing information before acting."
@@ -496,8 +502,10 @@ def _recommendation_record_from_result(idea: dict[str, Any], result: dict[str, A
     action = str(result.get("action") or "watch").lower()
     now = str(result.get("evaluated_at") or _now())
     ticker = str(idea.get("ticker") or result.get("ticker") or "").upper()
-    data_quality = result.get("data_quality") if isinstance(result.get("data_quality"), dict) else {}
-    missing = result.get("missing_information") if isinstance(result.get("missing_information"), list) else []
+    data_quality_raw = result.get("data_quality")
+    data_quality: dict[str, Any] = cast(dict[str, Any], data_quality_raw) if isinstance(data_quality_raw, dict) else {}
+    missing_raw = result.get("missing_information")
+    missing: list[Any] = missing_raw if isinstance(missing_raw, list) else []
     blocked_reasons = [
         str(row.get("reason") or row.get("field") or "Missing evidence")
         for row in missing

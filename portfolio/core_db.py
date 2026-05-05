@@ -4201,8 +4201,8 @@ def create_investment_idea(
             ),
         )
         conn.commit()
-        row = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return _parse_investment_idea_json_fields(_require_row_dict(row))
+        inserted = conn.execute("SELECT * FROM investment_ideas WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _parse_investment_idea_json_fields(_require_row_dict(inserted))
 
 
 def update_investment_idea(
