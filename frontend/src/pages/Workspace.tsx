@@ -4,6 +4,7 @@ import { CheckCircle, AlertTriangle, Eye, Play, Clock, GitBranch } from "lucide-
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchWorkspace,
+  fetchApprovalSummary,
   approveItem,
   rejectItem,
   completeAction,
@@ -15,6 +16,13 @@ import {
   type ProvenanceSelector,
   type RecommendationRecord,
 } from "@/lib/api"
+import {
+  approvalSummaryQueryKey,
+  invalidateAfterApprovalResolution,
+  invalidateApprovalSummaries,
+  patchResolvedApprovalSummaries,
+  shouldRefetchApprovalSummariesAfterError,
+} from "@/lib/approvalQueries"
 import { MetricCard } from "@/components/shared/MetricCard"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -270,6 +278,11 @@ export function Workspace() {
     fetchWorkspace,
     60_000,
   )
+  const approvalSummary = useApiQuery(
+    approvalSummaryQueryKey({ status: "pending", limit: 5 }),
+    () => fetchApprovalSummary({ status: "pending", limit: 5 }),
+    30_000,
+  )
 
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -294,30 +307,32 @@ export function Workspace() {
     setApprovalError(null)
   }
 
-  async function handleApproval(id: number, action: "approve" | "reject", note?: string) {
-    setProcessingIds(prev => new Set(prev).add(id))
+  async function handleApproval(approval: ApprovalRecord, action: "approve" | "reject", note?: string) {
+    setProcessingIds(prev => new Set(prev).add(approval.id))
     setApprovalError(null)
     try {
+      let resolved: ApprovalRecord
       if (action === "approve") {
         const trimmed = String(note || "").trim()
         if (!trimmed) {
           setApprovalError("Approval note is required before applying an internal state change.")
           return
         }
-        await approveItem(id, trimmed)
+        resolved = await approveItem(approval.id, trimmed)
       } else {
-        await rejectItem(id, note?.trim() || undefined)
+        resolved = await rejectItem(approval.id, note?.trim() || undefined)
       }
-      qc.invalidateQueries({ queryKey: ["workspace"] })
-      qc.invalidateQueries({ queryKey: ["portfolio", "all_timeframes"] })
+      patchResolvedApprovalSummaries(qc, resolved, approval)
       setApprovalReview(null)
       setApprovalNote("")
+      invalidateAfterApprovalResolution(qc, approval)
     } catch (err) {
       setApprovalError(err instanceof Error ? err.message : String(err))
+      if (shouldRefetchApprovalSummariesAfterError(err)) void invalidateApprovalSummaries(qc)
     } finally {
       setProcessingIds(prev => {
         const next = new Set(prev)
-        next.delete(id)
+        next.delete(approval.id)
         return next
       })
     }
@@ -328,7 +343,7 @@ export function Workspace() {
     try {
       if (action === "complete") await completeAction(id)
       else await dismissAction(id)
-      qc.invalidateQueries({ queryKey: ["workspace"] })
+      void invalidateApprovalSummaries(qc)
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
     }
@@ -338,6 +353,13 @@ export function Workspace() {
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
+  const approvalSummaryData = approvalSummary.data
+  const approvalCount = approvalSummaryData?.count ?? 0
+  const approvalItems = approvalSummaryData?.items ?? []
+  const approvalRecommendationCount =
+    approvalSummaryData?.recommendation_approval_count ?? data.recommendations.pending_approval_count
+  const approvalSummaryInitialLoading = approvalSummary.isPending && !approvalSummaryData
+  const approvalSummaryError = approvalSummary.error
   const regime = data.regime
   const portfolioRisk = data.portfolio?.risk
   const regimeInfo = regime?.signal ? REGIME_SIGNAL_MAP[regime.signal.toLowerCase()] : null
@@ -385,14 +407,14 @@ export function Workspace() {
         />
         <MetricCard
           title="Pending Approvals"
-          value={data.pending_approvals.count}
-          signal={data.pending_approvals.count > 0 ? "warning" : null}
-          signalLabel={data.pending_approvals.count > 0 ? "Needs Review" : undefined}
+          value={approvalSummaryInitialLoading ? "--" : approvalCount}
+          signal={approvalCount > 0 ? "warning" : null}
+          signalLabel={approvalCount > 0 ? "Needs Review" : undefined}
         />
         <MetricCard
           title="Recommendations"
           value={data.recommendations.pending_actionable.count}
-          subtitle={`${data.recommendations.pending_approval_count} approval${data.recommendations.pending_approval_count !== 1 ? "s" : ""}`}
+          subtitle={`${approvalRecommendationCount} approval${approvalRecommendationCount !== 1 ? "s" : ""}`}
           signal={data.recommendations.blocked_warnings.length > 0 ? "warning" : null}
           signalLabel={data.recommendations.blocked_warnings.length > 0 ? "Blocked" : undefined}
         />
@@ -546,15 +568,25 @@ export function Workspace() {
         )}
 
         {/* Pending Approvals */}
-        {data.pending_approvals.count > 0 && (
+        {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
           <section className="theme-surface rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
-              <span className="ml-auto text-xs text-subtle">{data.pending_approvals.count} total</span>
+              <span className="ml-auto text-xs text-subtle">{approvalSummaryInitialLoading ? "loading" : `${approvalCount} total`}</span>
             </h2>
             <div className="space-y-2 max-h-[400px] overflow-y-auto">
-              {data.pending_approvals.items.map(a => {
+              {approvalSummaryInitialLoading && (
+                <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
+                  Loading approvals...
+                </div>
+              )}
+              {approvalSummaryError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  Failed to load approvals: {String(approvalSummaryError)}
+                </div>
+              )}
+              {!approvalSummaryInitialLoading && !approvalSummaryError && approvalItems.map(a => {
                 const key = `approval-${a.id}`
                 const expanded = expandedIds.has(key)
                 const gate = policyGateFromApproval(a)
@@ -770,7 +802,9 @@ export function Workspace() {
         !data.recommendations.latest_weekly &&
         !data.recommendations.pending_actionable.count &&
         !data.recommendations.blocked_warnings.length &&
-        !data.pending_approvals.count &&
+        !approvalSummaryInitialLoading &&
+        !approvalSummaryError &&
+        !approvalCount &&
         !data.open_actions.count &&
         !data.active_triggers.count &&
         !data.recent_workflow_runs.length && (
@@ -853,7 +887,7 @@ export function Workspace() {
                 Cancel
               </button>
               <ActionButton
-                onClick={() => handleApproval(approvalReview.approval.id, approvalReview.action, approvalNote)}
+                onClick={() => handleApproval(approvalReview.approval, approvalReview.action, approvalNote)}
                 loading={processingIds.has(approvalReview.approval.id)}
                 loadingText={approvalReview.action === "approve" ? "Applying..." : "Rejecting..."}
                 disabled={approvalReview.action === "approve" && !approvalNote.trim()}

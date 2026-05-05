@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from api.action_execution import execute_api_action
@@ -38,6 +38,48 @@ def list_approvals(
     except ValueError as e:
         raise ValidationError(str(e)) from e
     return {"approvals": [normalize_approval(a) for a in approvals], "count": len(approvals)}
+
+
+@router.get("/approvals/summary")
+def approval_summary(
+    status: str | None = "pending",
+    ticker: str | None = None,
+    application_status: str | None = None,
+    limit: int = Query(default=5, ge=1, le=50),
+):
+    from portfolio.core_db import get_pending_approvals
+
+    normalized_status = None if status == "all" else status
+    normalized_application_status = None if application_status == "all" else application_status
+    normalized_ticker = ticker.strip().upper() if ticker and ticker.strip() else None
+    try:
+        approvals = get_pending_approvals(
+            status=normalized_status,
+            ticker=normalized_ticker,
+            application_status=normalized_application_status,
+        )
+    except ValueError as e:
+        raise ValidationError(str(e)) from e
+    normalized = [normalize_approval(a) for a in approvals]
+    recommendation_approval_count = len(
+        [
+            approval
+            for approval in normalized
+            if isinstance(approval.get("proposed_change"), dict)
+            and approval["proposed_change"].get("recommendation_id") is not None
+        ]
+    )
+    items = normalized[:limit]
+    return {
+        "count": len(normalized),
+        "items": items,
+        "recommendation_approval_count": recommendation_approval_count,
+        "has_more": len(normalized) > len(items),
+        "status": normalized_status,
+        "ticker": normalized_ticker,
+        "application_status": normalized_application_status,
+        "limit": limit,
+    }
 
 
 @router.get("/approvals/{approval_id}")

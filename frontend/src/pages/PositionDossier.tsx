@@ -4,6 +4,7 @@ import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query"
 import { useApiQuery } from "@/hooks/useApiQuery"
 import {
   fetchDossier,
+  fetchApprovalSummary,
   approveItem,
   rejectItem,
   updateThesisStatus,
@@ -29,6 +30,13 @@ import {
   type ThesisStatus,
   type ThesisStatusValue,
 } from "@/lib/api"
+import {
+  approvalSummaryQueryKey,
+  invalidateAfterApprovalResolution,
+  invalidateApprovalSummaries,
+  patchResolvedApprovalSummaries,
+  shouldRefetchApprovalSummariesAfterError,
+} from "@/lib/approvalQueries"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
 import { MarkdownRenderer } from "@/components/shared/MarkdownRenderer"
@@ -183,6 +191,11 @@ export function PositionDossier() {
     () => fetchDossier(ticker!),
     60_000,
   )
+  const approvalSummary = useApiQuery(
+    approvalSummaryQueryKey({ status: "pending", ticker, limit: 50 }),
+    () => fetchApprovalSummary({ status: "pending", ticker, limit: 50 }),
+    30_000,
+  )
 
   const { data: thesisStatus } = useApiQuery<Record<string, string>>(
     ["thesis", "status"],
@@ -193,6 +206,7 @@ export function PositionDossier() {
     mutationFn: () => updateThesisStatus(ticker!, newStatus, statusReason),
     onSuccess: result => {
       setLastProposal(result as StagedMutationResponse)
+      void invalidateApprovalSummaries(qc)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       qc.invalidateQueries({ queryKey: ["thesis"] })
       setStatusDialogOpen(false)
@@ -215,27 +229,30 @@ export function PositionDossier() {
     setApprovalError(null)
   }
 
-  async function handleApproval(id: number, action: "approve" | "reject", note?: string) {
-    setProcessingIds(prev => new Set(prev).add(id))
+  async function handleApproval(approval: ApprovalRecord, action: "approve" | "reject", note?: string) {
+    setProcessingIds(prev => new Set(prev).add(approval.id))
     setApprovalError(null)
     try {
+      let resolved: ApprovalRecord
       if (action === "approve") {
         const trimmed = String(note || "").trim()
         if (!trimmed) {
           setApprovalError("Approval note is required before applying an internal state change.")
           return
         }
-        await approveItem(id, trimmed)
+        resolved = await approveItem(approval.id, trimmed)
       } else {
-        await rejectItem(id, note?.trim() || undefined)
+        resolved = await rejectItem(approval.id, note?.trim() || undefined)
       }
-      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      patchResolvedApprovalSummaries(qc, resolved, approval)
       setApprovalReview(null)
       setApprovalNote("")
+      invalidateAfterApprovalResolution(qc, approval)
     } catch (err) {
       setApprovalError(err instanceof Error ? err.message : String(err))
+      if (shouldRefetchApprovalSummariesAfterError(err)) void invalidateApprovalSummaries(qc)
     } finally {
-      setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
+      setProcessingIds(prev => { const n = new Set(prev); n.delete(approval.id); return n })
     }
   }
 
@@ -244,7 +261,7 @@ export function PositionDossier() {
     try {
       if (action === "complete") await completeAction(id)
       else await dismissAction(id)
-      qc.invalidateQueries({ queryKey: ["dossier", ticker] })
+      void invalidateApprovalSummaries(qc)
     } finally {
       setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n })
     }
@@ -255,6 +272,11 @@ export function PositionDossier() {
   if (error) return <ErrorMessage message={String(error)} />
   if (!data) return null
 
+  const approvalSummaryData = approvalSummary.data
+  const approvalCount = approvalSummaryData?.count ?? 0
+  const approvalItems = approvalSummaryData?.items ?? []
+  const approvalSummaryInitialLoading = approvalSummary.isPending && !approvalSummaryData
+  const approvalSummaryError = approvalSummary.error
   const isEquity = String(data.position?.asset ?? "") === "equity"
   const visibleTabs: Tab[] = isEquity ? ["Overview", ...BASE_TABS] : [...BASE_TABS]
   const activeTab: Tab = tab === "Overview" && !isEquity ? "Thesis" : tab
@@ -364,13 +386,23 @@ export function PositionDossier() {
       </div>
 
       {/* Pending Approvals for this ticker */}
-      {data.pending_approvals.length > 0 && (
+      {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
         <section className="mt-6 theme-surface rounded-xl p-4">
           <h2 className="text-sm font-semibold text-app mb-3">
-            Pending Approvals ({data.pending_approvals.length})
+            Pending Approvals ({approvalSummaryInitialLoading ? "loading" : approvalCount})
           </h2>
           <div className="space-y-2 max-h-[400px] overflow-y-auto">
-            {data.pending_approvals.map(a => {
+            {approvalSummaryInitialLoading && (
+              <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
+                Loading approvals...
+              </div>
+            )}
+            {approvalSummaryError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                Failed to load approvals: {String(approvalSummaryError)}
+              </div>
+            )}
+            {!approvalSummaryInitialLoading && !approvalSummaryError && approvalItems.map(a => {
               const key = `approval-${a.id}`
               const expanded = expandedIds.has(key)
               return (
@@ -547,7 +579,7 @@ export function PositionDossier() {
                 Cancel
               </button>
               <ActionButton
-                onClick={() => handleApproval(approvalReview.approval.id, approvalReview.action, approvalNote)}
+                onClick={() => handleApproval(approvalReview.approval, approvalReview.action, approvalNote)}
                 loading={processingIds.has(approvalReview.approval.id)}
                 loadingText={approvalReview.action === "approve" ? "Applying..." : "Rejecting..."}
                 disabled={approvalReview.action === "approve" && !approvalNote.trim()}
@@ -951,6 +983,7 @@ function ThesisTab({ thesis, ticker, position }: { thesis: DossierData["thesis"]
     mutationFn: () => saveThesisContent(ticker, draft),
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
+      void invalidateApprovalSummaries(qc)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       qc.invalidateQueries({ queryKey: ["thesis"] })
       setEditing(false)
@@ -1144,6 +1177,7 @@ function ClaimsTab({
     },
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
+      void invalidateApprovalSummaries(qc)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       qc.invalidateQueries({ queryKey: ["thesis"] })
       setDraft(null)
@@ -1398,6 +1432,7 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
     mutationFn: ({ id, status }: { id: number; status: string }) => updateCatalystStatus(id, status),
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
+      void invalidateApprovalSummaries(qc)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       setOpenMenuId(null)
     },
@@ -1454,6 +1489,7 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
     mutationFn: ({ id, status }: { id: number; status: string }) => updateKillConditionStatus(id, status),
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
+      void invalidateApprovalSummaries(qc)
       qc.invalidateQueries({ queryKey: ["dossier", ticker] })
       setOpenMenuId(null)
     },

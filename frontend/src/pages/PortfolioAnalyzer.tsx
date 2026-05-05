@@ -29,6 +29,7 @@ import {
   type OptimizationRun,
   type StagedMutationResponse,
 } from "@/lib/api"
+import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 
 interface AnalyzerResponse {
   weights_df?: Record<string, unknown>[]
@@ -955,7 +956,7 @@ export function PortfolioAnalyzer() {
     mutationFn: (action: AnalyzerCourseAction) => createAction(toWorkspaceActionRequest(action)),
     onSuccess: (response, action) => {
       setWorkspaceProposal({ ticker: action.ticker, response })
-      void queryClient.invalidateQueries({ queryKey: ["workspace"] })
+      void invalidateApprovalSummaries(queryClient)
       void queryClient.invalidateQueries({ queryKey: ["actions"] })
     },
   })

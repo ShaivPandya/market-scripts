@@ -144,6 +144,24 @@ export interface ApprovalRecord extends DecisionStateFields {
   review_route?: string | null
 }
 
+export interface ApprovalSummaryResponse {
+  count: number
+  items: ApprovalRecord[]
+  recommendation_approval_count: number
+  has_more: boolean
+  status: string | null
+  ticker: string | null
+  application_status: string | null
+  limit: number
+}
+
+export interface ApprovalSummaryParams {
+  status?: string
+  ticker?: string
+  application_status?: string
+  limit?: number
+}
+
 export interface RecommendationRecord extends DecisionStateFields {
   id: number
   report_type: string
@@ -1738,10 +1756,12 @@ export const fetchDossier = (ticker: string) =>
 // Approvals
 export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
+export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
+  client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
 export const approveItem = (id: number, note: string) =>
-  client.post(`/approvals/${id}/approve`, { note }).then(r => r.data)
+  client.post(`/approvals/${id}/approve`, { note }).then(r => r.data as ApprovalRecord)
 export const rejectItem = (id: number, note?: string) =>
-  client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data)
+  client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
 export const bulkApprove = (ids: number[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
 export const bulkReject = (ids: number[], note?: string) =>

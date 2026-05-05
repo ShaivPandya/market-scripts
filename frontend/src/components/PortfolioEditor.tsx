@@ -13,6 +13,7 @@ import {
   type PortfolioPosition,
   type StagedMutationResponse,
 } from "@/lib/api"
+import { invalidateApprovalSummaries } from "@/lib/approvalQueries"
 
 interface EditorRow extends PortfolioPosition {
   _id: string
@@ -124,8 +125,7 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
   function handleSaved(result: StagedMutationResponse) {
     setLastProposal(result)
-    queryClient.invalidateQueries({ queryKey: ["workspace"] })
-    queryClient.invalidateQueries({ queryKey: ["approvals"] })
+    void invalidateApprovalSummaries(queryClient)
   }
 
   const positionMutation = useMutation({
