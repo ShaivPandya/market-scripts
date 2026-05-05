@@ -253,6 +253,15 @@ class PortfolioPositionInput(BaseModel):
     instrument_type: Literal["security", "future"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
+    base_currency: str | None = None
+    fx_rate_to_base: float | None = None
+    fx_rate_as_of: str | None = None
+    cost_basis_base: float | None = None
+    notional_base: float | None = None
+    valuation_status: str | None = None
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> PortfolioPositionInput:
@@ -329,6 +338,15 @@ class HedgePositionInput(BaseModel):
     instrument_type: Literal["security", "future"] | None = None
     price_symbol: str | None = None
     contract_multiplier: float | None = None
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
+    base_currency: str | None = None
+    fx_rate_to_base: float | None = None
+    fx_rate_as_of: str | None = None
+    cost_basis_base: float | None = None
+    notional_base: float | None = None
+    valuation_status: str | None = None
 
     @model_validator(mode="after")
     def _normalize_instrument(self) -> HedgePositionInput:
@@ -785,13 +803,29 @@ def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
     before_rows = get_positions(include_hedges=False)
     after_rows = _position_rows(typed)
     return {
-        "positions": [position.model_dump() for position in typed.positions],
+        "positions": after_rows,
         "position_changes": _portfolio_position_changes(before_rows, after_rows),
         "position_change_summary": {
             "before_count": len(before_rows),
             "after_count": len(after_rows),
         },
+        "critical_data_quality": _valuation_quality(after_rows),
     }
+
+
+def _hedge_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
+    typed = cast(UpdateHedgePositionsInput, model)
+    rows = _hedge_rows(typed)
+    return {"positions": rows, "critical_data_quality": _valuation_quality(rows)}
+
+
+def _valuation_quality(rows: Sequence[Mapping[str, Any]]) -> str:
+    statuses = {str(row.get("valuation_status") or "").strip() for row in rows}
+    if statuses & {"missing_currency", "missing_fx_rate"}:
+        return "missing"
+    if any(status and status != "ok" for status in statuses):
+        return "degraded"
+    return "ok"
 
 
 def _hash_current_portfolio_book(_model: BaseModel) -> dict[str, Any]:
@@ -1881,8 +1915,14 @@ def _validate_and_upgrade_action_input(
     return action.input_model.model_validate(payload)
 
 
-def _position_rows(input_model: UpdatePortfolioPositionsInput) -> list[dict[str, Any]]:
-    return [
+def _position_rows(
+    input_model: UpdatePortfolioPositionsInput,
+    *,
+    preserve_existing_valuation: bool = False,
+) -> list[dict[str, Any]]:
+    from portfolio.valuation import enrich_position_valuations
+
+    rows = [
         {
             "ticker": pos.ticker,
             "asset": pos.asset,
@@ -1895,13 +1935,29 @@ def _position_rows(input_model: UpdatePortfolioPositionsInput) -> list[dict[str,
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "currency": pos.currency,
+            "country": pos.country,
+            "exchange": pos.exchange,
+            "base_currency": pos.base_currency,
+            "fx_rate_to_base": pos.fx_rate_to_base,
+            "fx_rate_as_of": pos.fx_rate_as_of,
+            "cost_basis_base": pos.cost_basis_base,
+            "notional_base": pos.notional_base,
+            "valuation_status": pos.valuation_status,
         }
         for pos in input_model.positions
     ]
+    return enrich_position_valuations(rows, preserve_existing=preserve_existing_valuation)
 
 
-def _hedge_rows(input_model: UpdateHedgePositionsInput) -> list[dict[str, Any]]:
-    return [
+def _hedge_rows(
+    input_model: UpdateHedgePositionsInput,
+    *,
+    preserve_existing_valuation: bool = False,
+) -> list[dict[str, Any]]:
+    from portfolio.valuation import enrich_position_valuations
+
+    rows = [
         {
             "ticker": pos.ticker,
             "asset": pos.asset or "equity",
@@ -1914,9 +1970,19 @@ def _hedge_rows(input_model: UpdateHedgePositionsInput) -> list[dict[str, Any]]:
             "instrument_type": pos.instrument_type,
             "price_symbol": pos.price_symbol,
             "contract_multiplier": pos.contract_multiplier,
+            "currency": pos.currency,
+            "country": pos.country,
+            "exchange": pos.exchange,
+            "base_currency": pos.base_currency,
+            "fx_rate_to_base": pos.fx_rate_to_base,
+            "fx_rate_as_of": pos.fx_rate_as_of,
+            "cost_basis_base": pos.cost_basis_base,
+            "notional_base": pos.notional_base,
+            "valuation_status": pos.valuation_status,
         }
         for pos in input_model.positions
     ]
+    return enrich_position_valuations(rows, preserve_existing=preserve_existing_valuation)
 
 
 def _portfolio_callbacks() -> tuple[ActionCallback, ...]:
@@ -1962,9 +2028,10 @@ def _update_portfolio_positions(input_model: BaseModel, context: ActionContext) 
     from portfolio.portfolio_db import get_positions, save_positions
 
     previous = get_positions(include_hedges=False)
-    rows = _position_rows(typed)
+    preserve_existing_valuation = context.actor_type == "approval_apply"
+    rows = _position_rows(typed, preserve_existing_valuation=preserve_existing_valuation)
     try:
-        save_positions(rows, role="position")
+        save_positions(rows, role="position", preserve_existing_valuation=preserve_existing_valuation)
         updated = get_positions(include_hedges=False)
         if len(updated) != len(rows):
             raise RuntimeError("Portfolio position postcondition failed: saved row count mismatch")
@@ -1980,7 +2047,8 @@ def _update_hedge_positions(input_model: BaseModel, context: ActionContext) -> A
 
     from portfolio.portfolio_db import get_positions, save_positions
 
-    rows = _hedge_rows(typed)
+    preserve_existing_valuation = context.actor_type == "approval_apply"
+    rows = _hedge_rows(typed, preserve_existing_valuation=preserve_existing_valuation)
     tickers = {row["ticker"] for row in rows}
     existing_position_tickers = {p["ticker"] for p in get_positions(include_hedges=False)}
     collisions = tickers & existing_position_tickers
@@ -1993,7 +2061,7 @@ def _update_hedge_positions(input_model: BaseModel, context: ActionContext) -> A
     previous = get_positions(include_hedges=True)
     previous_hedges = [row for row in previous if row.get("role") == "hedge"]
     try:
-        save_positions(rows, role="hedge")
+        save_positions(rows, role="hedge", preserve_existing_valuation=preserve_existing_valuation)
         updated = get_positions(include_hedges=True)
         hedge_count = len([row for row in updated if row.get("role") == "hedge"])
         if hedge_count != len(rows):
@@ -2462,7 +2530,7 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         handler=_update_hedge_positions,
         schema_version=2,
         approval_entity_type="hedge_positions",
-        approval_payload=_model_payload,
+        approval_payload=_hedge_positions_approval_payload,
         precondition_builder=_hash_current_hedge_book,
         base_state_hash_fields=("positions",),
     ),

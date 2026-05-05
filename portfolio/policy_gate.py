@@ -20,6 +20,7 @@ FINANCIAL_ACTION_ITEM_TYPES = {"enter", "exit", "resize", "hedge"}
 FINANCIAL_ACTION_IDS = {"create_recommendation", "update_portfolio_positions", "update_hedge_positions"}
 
 FAILURE_REASON_CODES = {
+    "data_missing",
     "missing_constraint",
     "mandate_violation",
     "suitability_warning",
@@ -543,8 +544,30 @@ def _portfolio_constraint_checks(
         return checks
 
     exposures = _position_exposures(positions)
-    total_abs = sum(abs(row["notional"]) for row in exposures) or 0.0
-    total_net = sum(row["notional"] for row in exposures)
+    for row in exposures:
+        if row["notional"] is not None:
+            continue
+        status = str(row.get("valuation_status") or "missing_position_inputs")
+        is_fx_missing = status in {"missing_currency", "missing_fx_rate"}
+        checks.append(
+            _check(
+                "portfolio.valuation.fx_missing" if is_fx_missing else "portfolio.valuation.inputs_missing",
+                "fail" if is_fx_missing else "warn",
+                "data_missing",
+                f"{row['ticker']} cannot be valued in base currency: {status.replace('_', ' ')}.",
+                severity="fail" if is_fx_missing else "warn",
+                observed={
+                    "ticker": row["ticker"],
+                    "currency": row.get("currency"),
+                    "base_currency": row.get("base_currency"),
+                    "valuation_status": status,
+                },
+            )
+        )
+
+    valued_exposures = [row for row in exposures if row["notional"] is not None]
+    total_abs = sum(abs(row["notional"]) for row in valued_exposures) or 0.0
+    total_net = sum(row["notional"] for row in valued_exposures)
     if total_abs <= 0:
         checks.append(
             _check(
@@ -558,7 +581,7 @@ def _portfolio_constraint_checks(
         return checks
 
     max_position = float(_deep_get(policy, ("policy", "max_position_weight_pct")) or 0)
-    for row in exposures:
+    for row in valued_exposures:
         weight = abs(row["notional"]) / total_abs
         if max_position and weight > max_position:
             checks.append(
@@ -575,7 +598,7 @@ def _portfolio_constraint_checks(
 
     max_asset_class = float(_deep_get(policy, ("policy", "max_asset_class_weight_pct")) or 0)
     by_asset: dict[str, float] = {}
-    for row in exposures:
+    for row in valued_exposures:
         by_asset[row["asset"]] = by_asset.get(row["asset"], 0.0) + abs(row["notional"])
     for asset, notional in by_asset.items():
         weight = notional / total_abs
@@ -781,15 +804,50 @@ def _position_exposures(positions: list[Mapping[str, Any]]) -> list[dict[str, An
         ticker = str(raw.get("ticker") or "").upper()
         asset = str(raw.get("asset") or "equity").lower()
         direction = str(raw.get("direction") or "long").lower()
-        cost_basis = _to_float(raw.get("cost_basis"))
-        quantity = _to_float(raw.get("quantity") if raw.get("quantity") is not None else raw.get("shares"))
-        multiplier = _to_float(raw.get("contract_multiplier")) or 1.0
-        conviction = _to_float(raw.get("conviction")) or 1.0
-        notional = cost_basis * quantity * multiplier if cost_basis is not None and quantity is not None else conviction
-        if direction == "short":
+        currency = str(raw.get("currency") or "").strip() or None
+        base_currency = str(raw.get("base_currency") or "USD").strip().upper() or "USD"
+        valuation_status = str(raw.get("valuation_status") or "").strip()
+        notional = _to_float(raw.get("notional_base"))
+        if notional is None:
+            if valuation_status in {"missing_currency", "missing_fx_rate"}:
+                pass
+            elif _position_needs_fx_conversion(ticker, currency, base_currency):
+                valuation_status = "missing_fx_rate" if currency else "missing_currency"
+            else:
+                cost_basis = _to_float(raw.get("cost_basis"))
+                quantity = _to_float(raw.get("quantity") if raw.get("quantity") is not None else raw.get("shares"))
+                multiplier = _to_float(raw.get("contract_multiplier")) or 1.0
+                if cost_basis is not None and quantity is not None and multiplier > 0:
+                    notional = abs(cost_basis * quantity * multiplier)
+                    valuation_status = "ok"
+                elif not valuation_status:
+                    valuation_status = "missing_position_inputs"
+        if notional is not None and direction == "short":
             notional *= -1
-        exposures.append({"ticker": ticker or "UNKNOWN", "asset": asset, "direction": direction, "notional": notional})
+        exposures.append(
+            {
+                "ticker": ticker or "UNKNOWN",
+                "asset": asset,
+                "direction": direction,
+                "notional": notional,
+                "currency": currency,
+                "base_currency": base_currency,
+                "valuation_status": valuation_status or ("ok" if notional is not None else "missing_position_inputs"),
+            }
+        )
     return exposures
+
+
+def _position_needs_fx_conversion(ticker: str, currency: str | None, base_currency: str) -> bool:
+    if currency:
+        return currency.upper() != base_currency.upper()
+    try:
+        from portfolio.valuation import fallback_market_metadata
+
+        fallback_currency = str(fallback_market_metadata(ticker).get("currency") or "").strip().upper()
+    except Exception:
+        fallback_currency = ""
+    return bool(fallback_currency and fallback_currency != base_currency.upper())
 
 
 def _recommendation_record(payload: Mapping[str, Any] | None) -> dict[str, Any]:

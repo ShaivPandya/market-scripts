@@ -159,7 +159,7 @@ def compute_analytics(
         current_prices[ticker] = cp
         quantity = pos.get("quantity", pos.get("shares"))
         contract_multiplier = pos.get("contract_multiplier") or 1.0
-        current_notional = notional_value(quantity, cp, contract_multiplier)
+        current_notional = _float_or_none(pos.get("notional_base")) or notional_value(quantity, cp, contract_multiplier)
         if current_notional is not None:
             notionals[ticker] = current_notional
 
@@ -192,8 +192,10 @@ def compute_analytics(
             if cp is not None
             else (None, None, None)
         )
-        current_notional = notional_value(quantity, cp, contract_multiplier)
-        cost_notional = notional_value(quantity, cost_basis, contract_multiplier)
+        notional_base = _float_or_none(pos.get("notional_base"))
+        cost_basis_base = _float_or_none(pos.get("cost_basis_base"))
+        current_notional = notional_base or notional_value(quantity, cp, contract_multiplier)
+        cost_notional = notional_base or notional_value(quantity, cost_basis, contract_multiplier)
         high_52w, dd_pct = _drawdown_52w(series, direction) if series is not None else (None, None)
         weekly_ret = _period_return(series, 7, direction) if series is not None else None
         monthly_ret = _period_return(series, 30, direction) if series is not None else None
@@ -211,6 +213,11 @@ def compute_analytics(
             "contract_multiplier": contract_multiplier,
             "current_notional": round(current_notional, 2) if current_notional is not None else None,
             "cost_notional": round(cost_notional, 2) if cost_notional is not None else None,
+            "notional_base": round(notional_base, 2) if notional_base is not None else None,
+            "cost_basis_base": round(cost_basis_base, 4) if cost_basis_base is not None else None,
+            "currency": pos.get("currency"),
+            "base_currency": pos.get("base_currency"),
+            "valuation_status": pos.get("valuation_status"),
             "direction": direction,
             "unrealized_pnl_pct": pnl_pct,
             "unrealized_pnl_dollar": pnl_dollar,
@@ -226,3 +233,11 @@ def compute_analytics(
 
     portfolio = _portfolio_summary(per_position)
     return {"per_position": per_position, "portfolio": portfolio}
+
+
+def _float_or_none(value) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if pd.notna(out) else None

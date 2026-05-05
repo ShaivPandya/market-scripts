@@ -99,6 +99,104 @@ def test_concentration_failure_requires_review_but_is_reviewable():
     assert any(reason["code"] == "concentration_limit" for reason in gate["failure_reasons"])
 
 
+def test_policy_gate_uses_base_currency_notional_for_foreign_position():
+    positions = [
+        {
+            "ticker": "SPY",
+            "asset": "equity",
+            "direction": "long",
+            "cost_basis": 100,
+            "shares": 1000,
+            "notional_base": 100_000,
+            "valuation_status": "ok",
+        },
+        {
+            "ticker": "GLD",
+            "asset": "commodity",
+            "direction": "long",
+            "cost_basis": 100,
+            "shares": 250,
+            "notional_base": 25_000,
+            "valuation_status": "ok",
+        },
+        {
+            "ticker": "8001.T",
+            "asset": "equity",
+            "direction": "long",
+            "cost_basis": 8001,
+            "shares": 100,
+            "currency": "JPY",
+            "base_currency": "USD",
+            "fx_rate_to_base": 1 / 155,
+            "cost_basis_base": 8001 / 155,
+            "notional_base": 8001 * 100 / 155,
+            "valuation_status": "ok",
+        },
+    ]
+
+    gate = evaluate_policy_gate("update_portfolio_positions", {"positions": positions})
+
+    concentration_failures = [reason for reason in gate["failure_reasons"] if reason["code"] == "concentration_limit"]
+    assert not any(reason["message"].startswith("8001.T ") for reason in concentration_failures)
+
+
+def test_policy_gate_requires_review_when_foreign_fx_valuation_missing():
+    gate = evaluate_policy_gate(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "8001.T",
+                    "asset": "equity",
+                    "direction": "long",
+                    "cost_basis": 8001,
+                    "shares": 100,
+                    "currency": "JPY",
+                    "base_currency": "USD",
+                    "valuation_status": "missing_fx_rate",
+                },
+                {
+                    "ticker": "GLD",
+                    "asset": "commodity",
+                    "direction": "long",
+                    "cost_basis": 100,
+                    "shares": 100,
+                    "notional_base": 10_000,
+                    "valuation_status": "ok",
+                },
+            ]
+        },
+    )
+
+    assert gate["decision"] == "review_required"
+    assert any(reason["check"] == "portfolio.valuation.fx_missing" for reason in gate["failure_reasons"])
+    assert not any(
+        "8001.T exceeds max position concentration" in reason["message"] for reason in gate["failure_reasons"]
+    )
+
+
+def test_policy_gate_falls_back_for_legacy_usd_rows_without_base_notional():
+    gate = evaluate_policy_gate(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "asset": "equity",
+                    "direction": "long",
+                    "cost_basis": 100,
+                    "shares": 100,
+                    "base_currency": "USD",
+                    "valuation_status": "missing_position_inputs",
+                }
+            ]
+        },
+    )
+
+    assert any(reason["code"] == "concentration_limit" for reason in gate["failure_reasons"])
+    assert not any(reason["check"] == "portfolio.valuation.inputs_missing" for reason in gate["warnings"])
+
+
 def test_persisted_recommendation_stores_policy_gate_result(tmp_path, monkeypatch):
     monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "policy_gate.db")
     monkeypatch.setattr(core_db, "_conn", None)

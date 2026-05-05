@@ -9,6 +9,7 @@ import portfolio.core_db as core_db
 import portfolio.news_digests as digests
 import portfolio.portfolio_db as portfolio_db
 import portfolio.thesis_db as thesis_db
+import portfolio.valuation as valuation
 from portfolio.action_registry import (
     ActionAuthorizationError,
     ActionContext,
@@ -53,6 +54,16 @@ def _temp_action_state(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cache, "invalidate_all", lambda: None)
     monkeypatch.setattr(dashboard, "reload_portfolio", lambda: None)
+    monkeypatch.setattr(
+        valuation,
+        "_cached_yfinance_metadata",
+        lambda symbol: {"currency": "USD", "country": "United States", "exchange": None},
+    )
+    monkeypatch.setattr(
+        valuation,
+        "fx_rate_to_base",
+        lambda currency, base_currency="USD": {"rate": 1.0, "as_of": "2026-05-05"},
+    )
     base = tmp_path / "news_digests"
     monkeypatch.setattr(digests, "DIGESTS_DIR", base)
     monkeypatch.setattr(digests, "MANIFEST_PATH", base / "manifest.json")
@@ -107,6 +118,15 @@ def test_user_direct_portfolio_action_is_denied_and_approval_apply_writes_positi
             "instrument_type": "security",
             "price_symbol": "MU",
             "contract_multiplier": 1.0,
+            "currency": "USD",
+            "country": "United States",
+            "exchange": None,
+            "base_currency": "USD",
+            "fx_rate_to_base": 1.0,
+            "fx_rate_as_of": "2026-05-05",
+            "cost_basis_base": 100.0,
+            "notional_base": 1200.0,
+            "valuation_status": "ok",
             "role": "position",
         }
     ]

@@ -64,6 +64,32 @@ function rowQuantity(row: { quantity?: number | null; shares?: number | null }) 
   return row.quantity ?? row.shares ?? null
 }
 
+function formatBaseCurrency(value: number, currency?: string | null) {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      maximumFractionDigits: 0,
+    }).format(value)
+  } catch {
+    return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)
+  }
+}
+
+function valuationSummary(row: PortfolioPosition | HedgePosition) {
+  const parts: string[] = []
+  const market = [row.country, row.exchange].filter(Boolean).join(" / ")
+  if (market) parts.push(market)
+  if (row.currency) parts.push(`${row.currency}${row.base_currency ? ` to ${row.base_currency}` : ""}`)
+  if (typeof row.notional_base === "number" && Number.isFinite(row.notional_base)) {
+    parts.push(`${formatBaseCurrency(row.notional_base, row.base_currency)} base notional`)
+  }
+  if (row.valuation_status && row.valuation_status !== "ok") {
+    parts.push(row.valuation_status.replace(/_/g, " "))
+  }
+  return parts.join(" - ")
+}
+
 function positionToRow(p: PortfolioPosition): EditorRow {
   const instrumentType = inferInstrumentType(p.ticker, p.instrument_type)
   const quantity = rowQuantity(p)
@@ -101,6 +127,7 @@ function hedgeToRow(p: HedgePosition): HedgeEditorRow {
   const instrumentType = inferInstrumentType(p.ticker, p.instrument_type)
   const quantity = rowQuantity(p)
   return {
+    ...p,
     _id: makeId(),
     ticker: p.ticker,
     asset: p.asset ?? "equity",
@@ -235,6 +262,15 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
         instrument_type: instrumentType,
         price_symbol: (r.price_symbol?.trim() || r.ticker).toUpperCase(),
         contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
+        currency: r.currency ?? null,
+        country: r.country ?? null,
+        exchange: r.exchange ?? null,
+        base_currency: r.base_currency ?? null,
+        fx_rate_to_base: r.fx_rate_to_base ?? null,
+        fx_rate_as_of: r.fx_rate_as_of ?? null,
+        cost_basis_base: r.cost_basis_base ?? null,
+        notional_base: r.notional_base ?? null,
+        valuation_status: r.valuation_status ?? null,
       }
     })
 
@@ -267,6 +303,15 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
         instrument_type: instrumentType,
         price_symbol: (r.price_symbol?.trim() || r.ticker).toUpperCase(),
         contract_multiplier: instrumentType === "future" ? r.contract_multiplier ?? null : 1,
+        currency: r.currency ?? null,
+        country: r.country ?? null,
+        exchange: r.exchange ?? null,
+        base_currency: r.base_currency ?? null,
+        fx_rate_to_base: r.fx_rate_to_base ?? null,
+        fx_rate_as_of: r.fx_rate_as_of ?? null,
+        cost_basis_base: r.cost_basis_base ?? null,
+        notional_base: r.notional_base ?? null,
+        valuation_status: r.valuation_status ?? null,
       }
     })
 
@@ -500,6 +545,12 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         <Trash2 size={14} />
                       </button>
                     </div>
+
+                    {valuationSummary(row) && (
+                      <div className="-mt-1 text-[11px] text-muted" style={{ gridColumn: "1 / -1" }}>
+                        {valuationSummary(row)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -632,6 +683,12 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                         <Trash2 size={14} />
                       </button>
                     </div>
+
+                    {valuationSummary(row) && (
+                      <div className="-mt-1 text-[11px] text-muted" style={{ gridColumn: "1 / -1" }}>
+                        {valuationSummary(row)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

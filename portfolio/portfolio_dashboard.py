@@ -43,6 +43,15 @@ def _build_globals(df: pd.DataFrame) -> tuple[dict, list, dict]:
             "quantity": getattr(row, "quantity", getattr(row, "shares", None)),
             "shares": getattr(row, "quantity", getattr(row, "shares", None)),
             "contract_multiplier": getattr(row, "contract_multiplier", 1.0),
+            "currency": getattr(row, "currency", None),
+            "country": getattr(row, "country", None),
+            "exchange": getattr(row, "exchange", None),
+            "base_currency": getattr(row, "base_currency", "USD"),
+            "fx_rate_to_base": getattr(row, "fx_rate_to_base", None),
+            "fx_rate_as_of": getattr(row, "fx_rate_as_of", None),
+            "cost_basis_base": getattr(row, "cost_basis_base", None),
+            "notional_base": getattr(row, "notional_base", None),
+            "valuation_status": getattr(row, "valuation_status", None),
             "role": getattr(row, "role", "position"),
         }
         for row in df.itertuples()

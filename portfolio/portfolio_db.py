@@ -315,7 +315,12 @@ def get_positions_df(include_hedges: bool = False, fallback_to_csv: bool = False
     return df
 
 
-def save_positions(positions: list[dict], role: str = "position") -> None:
+def save_positions(
+    positions: list[dict],
+    role: str = "position",
+    *,
+    preserve_existing_valuation: bool = False,
+) -> None:
     """Replace all positions of the given *role* in a single atomic transaction.
 
     When ``role='position'`` (default) only regular position rows are deleted
@@ -326,7 +331,7 @@ def save_positions(positions: list[dict], role: str = "position") -> None:
     assert_legacy_domain_write_allowed(f"portfolio_db.save_positions:{role}")
     if role not in ("position", "hedge"):
         raise ValueError(f"Invalid role: {role!r}")
-    rows = _normalize_position_rows(positions, role)
+    rows = _normalize_position_rows(positions, role, preserve_existing_valuation=preserve_existing_valuation)
     if use_postgres_state():
         _pg_save_position_rows(rows, role=role)
         return
@@ -345,12 +350,17 @@ def save_positions(positions: list[dict], role: str = "position") -> None:
         conn.commit()
 
 
-def _normalize_position_rows(positions: list[dict], role: str) -> list[tuple]:
+def _normalize_position_rows(
+    positions: list[dict],
+    role: str,
+    *,
+    preserve_existing_valuation: bool = False,
+) -> list[tuple]:
     rows = []
     from portfolio.valuation import enrich_position_valuation
 
     for raw in positions:
-        p = enrich_position_valuation(raw)
+        p = enrich_position_valuation(raw, preserve_existing=preserve_existing_valuation)
         ticker = normalize_symbol(p.get("ticker", ""))
         price_symbol = normalize_symbol(p.get("price_symbol") or ticker, field_name="price_symbol")
         instrument_type = normalize_instrument_type(p.get("instrument_type"), ticker=ticker, price_symbol=price_symbol)

@@ -41,6 +41,18 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value)
 }
 
+function formatMoney(value: number, currency?: unknown): string {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: typeof currency === "string" && currency ? currency : "USD",
+      maximumFractionDigits: 0,
+    }).format(value)
+  } catch {
+    return formatNumber(value)
+  }
+}
+
 function formatValue(value: unknown): string {
   if (value == null || value === "") return "-"
   if (typeof value === "boolean") return value ? "Yes" : "No"
@@ -121,6 +133,16 @@ function positionDescriptor(value: unknown): string {
     bits.push(`multiplier ${formatValue(record.contract_multiplier)}`)
   }
   if (record.cost_basis != null) bits.push(`cost basis ${formatValue(record.cost_basis)}`)
+  if (record.currency) bits.push(`currency ${formatValue(record.currency)}`)
+  if (record.country || record.exchange) {
+    bits.push([record.country, record.exchange].filter(Boolean).map(formatValue).join(" / "))
+  }
+  if (typeof record.notional_base === "number" && Number.isFinite(record.notional_base)) {
+    bits.push(`${formatMoney(record.notional_base, record.base_currency)} base notional`)
+  }
+  if (record.valuation_status && record.valuation_status !== "ok") {
+    bits.push(`valuation ${formatValue(record.valuation_status)}`)
+  }
   if (record.conviction != null) bits.push(`conviction ${formatValue(record.conviction)}`)
   if (record.contrarian === true) bits.push("contrarian")
   return bits.filter(Boolean).join(", ") || "-"
