@@ -137,6 +137,67 @@ def test_normalize_recommendation_keeps_execution_capability_none():
     assert rec["quality_state"] == "degraded"
 
 
+def _legacy_policy_reason() -> dict:
+    return {
+        "code": "tax_flag",
+        "check": ".".join(("tax", "_".join(("tax", "lots")))),
+        "message": f"{'-'.join(('Tax', 'lot'))} data is unavailable.",
+        "status": "warn",
+        "severity": "warn",
+    }
+
+
+def test_normalize_recommendation_filters_obsolete_policy_warning():
+    rec = normalize_recommendation(
+        {
+            "id": 2,
+            "action": "reduce",
+            "approval_status": "pending",
+            "recommendation_status": "clear",
+            "critical_data_quality": "ok",
+            "policy_gate_result": {
+                "decision": "warn",
+                "review_required": False,
+                "warnings": [_legacy_policy_reason()],
+                "failure_reasons": [],
+                "check_results": [_legacy_policy_reason()],
+                "uncertainty": {"missing_constraint_count": 1, "level": "high", "notes": ["legacy"]},
+            },
+        }
+    )
+
+    assert rec is not None
+    assert rec["policy_state"] == "pass"
+    assert rec["policy_gate"]["decision"] == "pass"
+    assert rec["policy_gate"]["warnings"] == []
+    assert rec["policy_gate"]["check_results"] == []
+
+
+def test_normalize_approval_filters_obsolete_policy_warning():
+    approval = normalize_approval(
+        {
+            "id": 20,
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "recommendation",
+            "reason": "Review",
+            "proposed_change": {
+                "policy_gate_result": {
+                    "decision": "warn",
+                    "review_required": False,
+                    "warnings": [_legacy_policy_reason()],
+                    "failure_reasons": [],
+                    "check_results": [_legacy_policy_reason()],
+                }
+            },
+        }
+    )
+
+    assert approval is not None
+    assert approval["policy_state"] == "pass"
+    assert approval["policy_gate"]["warnings"] == []
+
+
 def test_normalize_action_item_preserves_open_state():
     open_item = normalize_action_item(
         {

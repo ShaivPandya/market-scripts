@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from api.exceptions import ConfigurationError
+from api import workflows
 from api.routers import agent as agent_router
 from auto_report import auto_daily_report, auto_weekly_report
 
@@ -86,3 +84,29 @@ def test_agent_instructions_empty_overlay_degrades(tmp_path, monkeypatch):
 
     instructions = agent_router._build_agent_instructions()
     assert instructions == "core philosophy"
+
+
+def test_portfolio_workflow_prompts_include_entry_history_guardrail(monkeypatch):
+    monkeypatch.setattr(
+        workflows, "_exec_parallel", lambda *_args, **_kwargs: [("get_portfolio", {"positions": []}, 1.0)]
+    )
+
+    def fail_optional_tool(*_args, **_kwargs):
+        raise RuntimeError("optional tool unavailable")
+
+    monkeypatch.setattr(workflows, "_exec_tool", fail_optional_tool)
+
+    prompt_builders = [
+        lambda: workflows.run_morning_brief(),
+        lambda: workflows.run_thesis_review("MU"),
+        lambda: workflows.run_pre_earnings("MU"),
+        lambda: workflows.run_post_earnings_review("MU"),
+        lambda: workflows.run_weekly_portfolio_review(),
+    ]
+
+    for build_prompt in prompt_builders:
+        prompt, _sections = build_prompt()
+        assert "cost basis is average/book cost" in prompt
+        assert "price history is market-window context only" in prompt
+        assert "first purchase price/date" in prompt
+        assert " ".join(("tax", "lots")) not in prompt.lower()

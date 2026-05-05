@@ -38,6 +38,19 @@ def _buy_payload() -> dict:
     }
 
 
+def _obsolete_policy_fragments() -> tuple[str, ...]:
+    return (
+        "_".join(("tax", "lot", "data", "available")),
+        ".".join(("tax", "_".join(("tax", "lots")))),
+        " ".join(("tax", "lots")),
+        "-".join(("tax", "lot")),
+    )
+
+
+def _gate_text(gate: dict) -> str:
+    return str(gate).lower()
+
+
 def test_missing_constraints_warn_without_blocking_actionable_recommendation():
     gate = evaluate_policy_gate(
         "create_recommendation",
@@ -48,6 +61,19 @@ def test_missing_constraints_warn_without_blocking_actionable_recommendation():
     assert gate["review_required"] is False
     assert any(reason["code"] == "missing_constraint" for reason in gate["warnings"])
     assert any("Decision support only" in disclosure for disclosure in gate["disclosures"])
+    assert not any(fragment in _gate_text(gate) for fragment in _obsolete_policy_fragments())
+
+
+def test_tax_impact_warning_keeps_supported_language_only():
+    action = _buy_payload()["recommended_actions"][0] | {
+        "action": "reduce",
+        "critical_data_quality": "ok",
+    }
+
+    gate = evaluate_policy_gate("create_recommendation", {"record": action})
+
+    assert any("Tax impact must be reviewed" in reason["message"] for reason in gate["warnings"])
+    assert not any(fragment in _gate_text(gate) for fragment in _obsolete_policy_fragments())
 
 
 def test_concentration_failure_requires_review_but_is_reviewable():

@@ -142,7 +142,6 @@ class AccountV1(OntologySchemaBase):
     investor_id: NonBlankStr
     account_type: str | None = None
     tax_status: NonBlankStr = "unknown"
-    tax_lot_data_available: bool | None = None
     ontology_run_id: NonBlankStr = "operational"
 
     @field_validator("account_id", "investor_id", mode="before")
