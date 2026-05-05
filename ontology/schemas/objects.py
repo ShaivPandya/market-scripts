@@ -142,8 +142,15 @@ class AccountV1(OntologySchemaBase):
     investor_id: NonBlankStr
     account_type: str | None = None
     tax_status: NonBlankStr = "unknown"
-    tax_lot_data_available: bool | None = None
     ontology_run_id: NonBlankStr = "operational"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_deprecated_fields(cls, value: object) -> object:
+        if isinstance(value, dict) and "tax_lot_data_available" in value:
+            value = dict(value)
+            value.pop("tax_lot_data_available", None)
+        return value
 
     @field_validator("account_id", "investor_id", mode="before")
     @classmethod

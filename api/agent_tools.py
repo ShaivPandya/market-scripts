@@ -203,8 +203,10 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
         "description": (
             "Fetch the user's portfolio dashboard. Returns current positions with their "
             "direction, cost basis, share quantity, conviction, P&L, contribution, and "
-            "price data. Portfolio performance fields are direction-adjusted: price declines "
-            "are favorable for short positions. Never judge a position from raw price moves "
+            "current price data. Cost basis is average/book cost, not first entry price, "
+            "and the payload does not contain entry date, first purchase price, holding-period, "
+            "or averaging-up/down history. Portfolio performance fields are direction-adjusted: "
+            "price declines are favorable for short positions. Never judge a position from raw price moves "
             "alone; combine direction, quantity, cost basis, conviction, and P&L/return fields. "
             "Use this when the user asks about their portfolio, holdings, performance, "
             "or any specific position. Pair with get_thesis for investment reasoning context."
@@ -1585,16 +1587,6 @@ def _compact_portfolio_payload(payload: Any) -> Any:
         if ticker not in metadata:
             tickers.append(ticker)
 
-    def _first_valid_point(series_rows: list[dict]) -> dict | None:
-        for row in series_rows:
-            if not isinstance(row, dict):
-                continue
-            value = _to_float(row.get("value"))
-            if value is None:
-                continue
-            return {"date": row.get("date"), "value": value}
-        return None
-
     def _last_valid_point(series_rows: list[dict]) -> dict | None:
         for row in reversed(series_rows):
             if not isinstance(row, dict):
@@ -1611,57 +1603,37 @@ def _compact_portfolio_payload(payload: Any) -> Any:
         meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
         series = positions.get(ticker)
         series_rows = series if isinstance(series, list) else []
-        first = _first_valid_point(series_rows)
         last = _last_valid_point(series_rows)
-        first_val = _to_float(first.get("value")) if isinstance(first, dict) else None
         last_val = _to_float(last.get("value")) if isinstance(last, dict) else None
-
-        price_change = None
-        price_return_pct = None
-        if first_val is not None and last_val is not None and first_val != 0:
-            price_change = round(last_val - first_val, 6)
-            price_return_pct = round(((last_val - first_val) / first_val) * 100.0, 4)
-
-        direction = str(meta.get("direction") or "").strip().lower()
-        directional_return_pct = None
-        if price_return_pct is not None:
-            directional_return_pct = -price_return_pct if direction == "short" else price_return_pct
 
         compact_rows.append(
             {
                 "ticker": ticker,
                 "asset": meta.get("asset"),
                 "direction": meta.get("direction"),
-                "first_date": first.get("date") if isinstance(first, dict) else None,
-                "first_price": first_val,
-                "last_date": last.get("date") if isinstance(last, dict) else None,
-                "last_price": last_val,
-                "price_change": price_change,
-                "price_return_pct": price_return_pct,
-                "directional_return_pct": directional_return_pct,
+                "price_as_of": last.get("date") if isinstance(last, dict) else None,
+                "current_price": last_val,
                 "data_points": len(series_rows),
             }
         )
 
     long_count = sum(1 for row in compact_rows if str(row.get("direction") or "").lower() == "long")
     short_count = sum(1 for row in compact_rows if str(row.get("direction") or "").lower() == "short")
-    directional_returns = [
-        r for r in (row.get("directional_return_pct") for row in compact_rows) if isinstance(r, (int, float))
-    ]
-    avg_directional_return_pct = (
-        round(sum(float(r) for r in directional_returns) / len(directional_returns), 4) if directional_returns else None
-    )
 
     compact_rows.sort(key=lambda row: str(row.get("ticker") or ""))
     extras = {k: v for k, v in payload.items() if k not in {"positions", "metadata", "timeframe", "timestamp"}}
     out: dict[str, Any] = {
         "timeframe": payload.get("timeframe"),
         "timestamp": payload.get("timestamp"),
+        "semantics": {
+            "entry_history_available": False,
+            "cost_basis": "average/book cost, not first entry price",
+            "price_history": "market-window price data only; do not infer entry date, first purchase price, holding period, or averaging up/down",
+        },
         "summary": {
             "position_count": len(compact_rows),
             "long_count": long_count,
             "short_count": short_count,
-            "average_directional_return_pct": avg_directional_return_pct,
         },
         "positions": compact_rows,
     }
@@ -1722,19 +1694,13 @@ def _build_agent_portfolio_payload(
             continue
         perf = per_position.get(ticker)
         perf = perf if isinstance(perf, dict) else {}
-        first = _series_edge_point(raw_positions.get(ticker), first=True)
         last = _series_edge_point(raw_positions.get(ticker), first=False)
-        first_price = _to_float(first.get("value")) if isinstance(first, dict) else None
         current_price = _to_float(perf.get("current_price"))
         last_price = (
             current_price
             if current_price is not None
             else (_to_float(last.get("value")) if isinstance(last, dict) else None)
         )
-
-        raw_price_return_pct = None
-        if first_price is not None and last_price is not None and first_price != 0:
-            raw_price_return_pct = round(((last_price - first_price) / first_price) * 100.0, 4)
 
         shares = holding.get("shares")
         row = {
@@ -1748,10 +1714,7 @@ def _build_agent_portfolio_payload(
             "contrarian": bool(holding.get("contrarian")),
             "role": holding.get("role") or "position",
             "current_price": last_price,
-            "first_date": first.get("date") if isinstance(first, dict) else None,
-            "first_price": first_price,
-            "last_date": last.get("date") if isinstance(last, dict) else None,
-            "raw_price_return_pct": raw_price_return_pct,
+            "price_as_of": last.get("date") if isinstance(last, dict) else None,
             "unrealized_pnl_pct": perf.get("unrealized_pnl_pct"),
             "unrealized_pnl_dollar": perf.get("unrealized_pnl_dollar"),
             "weekly_return_pct": perf.get("weekly_return_pct"),
@@ -1773,7 +1736,9 @@ def _build_agent_portfolio_payload(
             "context_scope": "positions_and_hedges" if include_hedges else "positions_only",
             "semantics": {
                 "performance_fields": "direction_adjusted",
-                "raw_price_return_pct": "not direction-adjusted; do not use alone for P&L judgment",
+                "entry_history_available": False,
+                "cost_basis": "average/book cost, not first entry price",
+                "price_history": "market-window price data only; do not infer entry date, first purchase price, holding period, or averaging up/down",
                 "short_price_declines_are_favorable": True,
                 "quantity_field": "shares",
             },
@@ -2826,7 +2791,7 @@ def _dispatch(
     if name == "get_portfolio":
         timeframe = args.get("timeframe", "Daily")
         include_hedges = bool(args.get("include_hedges", False))
-        key = f"portfolio:{timeframe}:hedges={include_hedges}"
+        key = f"portfolio:v2:{timeframe}:hedges={include_hedges}"
 
         def _load():
             from portfolio.portfolio_dashboard import get_data

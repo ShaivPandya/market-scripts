@@ -24,6 +24,12 @@ from ontology.policy import Actor, admin_actor
 
 logger = logging.getLogger("api.workflows")
 
+_PORTFOLIO_CONTEXT_GUARDRAIL = (
+    "Portfolio context guardrail: cost basis is average/book cost, not first entry price; "
+    "price history is market-window context only. Do not infer or state first purchase price/date, "
+    "holding period, or averaging up/down unless explicit entry-history fields are provided."
+)
+
 # ---------------------------------------------------------------------------
 # Workflow definitions
 # ---------------------------------------------------------------------------
@@ -264,7 +270,7 @@ def run_morning_brief(
         logger.info("workflow=morning_brief tool=%s duration_ms=%.1f", name, elapsed)
 
     sections, data_block = _build_sections(results)
-    synthesis_prompt = f"{_MORNING_BRIEF_SYNTHESIS}\n\n---\n\n{data_block}"
+    synthesis_prompt = f"{_MORNING_BRIEF_SYNTHESIS}\n\n{_PORTFOLIO_CONTEXT_GUARDRAIL}\n\n---\n\n{data_block}"
 
     return synthesis_prompt, sections
 
@@ -335,7 +341,9 @@ def run_thesis_review(
         logger.info("workflow=thesis_review ticker=%s tool=%s duration_ms=%.1f", ticker, name, elapsed)
 
     sections, data_block = _build_sections(results)
-    synthesis_prompt = _THESIS_REVIEW_SYNTHESIS.format(ticker=ticker) + f"\n\n---\n\n{data_block}"
+    synthesis_prompt = (
+        _THESIS_REVIEW_SYNTHESIS.format(ticker=ticker) + f"\n\n{_PORTFOLIO_CONTEXT_GUARDRAIL}\n\n---\n\n{data_block}"
+    )
 
     return synthesis_prompt, sections
 
@@ -407,7 +415,9 @@ def run_pre_earnings(
         pass
 
     sections, data_block = _build_sections(results)
-    synthesis_prompt = _PRE_EARNINGS_SYNTHESIS.format(ticker=ticker) + f"\n\n---\n\n{data_block}"
+    synthesis_prompt = (
+        _PRE_EARNINGS_SYNTHESIS.format(ticker=ticker) + f"\n\n{_PORTFOLIO_CONTEXT_GUARDRAIL}\n\n---\n\n{data_block}"
+    )
 
     return synthesis_prompt, sections
 
@@ -478,7 +488,9 @@ def run_post_earnings_review(
         logger.info("workflow=post_earnings_review ticker=%s tool=%s duration_ms=%.1f", ticker, name, elapsed)
 
     sections, data_block = _build_sections(results)
-    synthesis_prompt = _POST_EARNINGS_SYNTHESIS.format(ticker=ticker) + f"\n\n---\n\n{data_block}"
+    synthesis_prompt = (
+        _POST_EARNINGS_SYNTHESIS.format(ticker=ticker) + f"\n\n{_PORTFOLIO_CONTEXT_GUARDRAIL}\n\n---\n\n{data_block}"
+    )
     return synthesis_prompt, sections
 
 
@@ -551,7 +563,7 @@ def run_weekly_portfolio_review(
         pass
 
     sections, data_block = _build_sections(results)
-    synthesis_prompt = _WEEKLY_PORTFOLIO_SYNTHESIS + f"\n\n---\n\n{data_block}"
+    synthesis_prompt = _WEEKLY_PORTFOLIO_SYNTHESIS + f"\n\n{_PORTFOLIO_CONTEXT_GUARDRAIL}\n\n---\n\n{data_block}"
     return synthesis_prompt, sections
 
 

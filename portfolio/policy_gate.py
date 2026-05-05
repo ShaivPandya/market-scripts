@@ -49,7 +49,6 @@ DEFAULT_POLICY: dict[str, Any] = {
         "account_id": "default-account",
         "account_type": "unspecified",
         "tax_status": "unknown",
-        "tax_lot_data_available": None,
     },
     "portfolio": {
         "portfolio_id": "default-portfolio",
@@ -86,7 +85,6 @@ MISSING_CONSTRAINT_PATHS: tuple[tuple[str, ...], ...] = (
     ("investor", "suitability_profile"),
     ("account", "account_type"),
     ("account", "tax_status"),
-    ("account", "tax_lot_data_available"),
     ("mandate", "time_horizon_days_min"),
     ("mandate", "time_horizon_days_max"),
     ("mandate", "liquidity_needs"),
@@ -712,16 +710,6 @@ def _tax_checks(payload: Mapping[str, Any], policy: Mapping[str, Any]) -> list[d
                 observed=tax_status,
             )
         )
-    if account.get("tax_lot_data_available") is False:
-        checks.append(
-            _check(
-                "tax.tax_lots",
-                "warn",
-                "tax_flag",
-                "Tax-lot data is unavailable.",
-                severity="warn",
-            )
-        )
     return checks
 
 
@@ -989,7 +977,7 @@ def _metrics_from_checks(checks: list[dict[str, Any]]) -> dict[str, Any]:
 def _assumptions(policy: Mapping[str, Any]) -> list[str]:
     return [
         f"Default account {policy['account']['account_id']} governs v1 recommendations.",
-        "Current prices, tax lots, account cash, and liquidity needs may be incomplete unless supplied by the caller.",
+        "Current prices, account cash, and liquidity needs may be incomplete unless supplied by the caller.",
     ]
 
 

@@ -564,7 +564,7 @@ def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(m
     raw = {
         "positions": {
             "OKLO": pd.Series([10.0, 9.0], index=dates),
-            "CRWD": pd.Series([300.0, 315.0], index=dates),
+            "CRWD": pd.Series([400.0, 315.0], index=dates),
         },
         "analytics": {
             "per_position": {
@@ -641,9 +641,20 @@ def test_get_portfolio_tool_includes_full_position_context_and_short_semantics(m
     assert oklo["asset"] == "equity"
     assert oklo["contrarian"] is True
     assert oklo["role"] == "position"
-    assert oklo["raw_price_return_pct"] == -10.0
+    assert "first_date" not in oklo
+    assert "first_price" not in oklo
+    assert "raw_price_return_pct" not in oklo
     assert oklo["weekly_return_pct"] == 10.0
+    assert payload["semantics"]["entry_history_available"] is False
+    assert "not first entry price" in payload["semantics"]["cost_basis"]
     assert payload["semantics"]["short_price_declines_are_favorable"] is True
+
+    crwd = rows["CRWD"]
+    assert crwd["cost_basis"] == 300.0
+    assert crwd["current_price"] == 315.0
+    assert "first_date" not in crwd
+    assert "first_price" not in crwd
+    assert "raw_price_return_pct" not in crwd
 
 
 def test_sentiment_snapshot_picks_latest_by_date():

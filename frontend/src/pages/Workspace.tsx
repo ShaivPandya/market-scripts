@@ -445,7 +445,7 @@ export function Workspace() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {portfolioRisk && (
           <section className="theme-surface rounded-xl p-4 lg:col-span-2">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
@@ -594,13 +594,13 @@ export function Workspace() {
 
         {/* Pending Approvals */}
         {(approvalSummaryInitialLoading || approvalSummaryError || approvalCount > 0) && (
-          <section className="theme-surface rounded-xl p-4">
+          <section className="theme-surface flex min-h-0 flex-col rounded-xl p-4">
             <h2 className="text-sm font-semibold text-app mb-3 flex items-center gap-2">
               <CheckCircle size={14} className="text-blue-500" />
               Pending Approvals
               <span className="ml-auto text-xs text-subtle">{approvalSummaryInitialLoading ? "loading" : `${approvalCount} total`}</span>
             </h2>
-            <div className="max-h-[400px] space-y-3 overflow-y-auto pr-1">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {approvalSummaryInitialLoading && (
                 <div className="rounded-lg border border-app px-3 py-2 text-sm text-muted">
                   Loading approvals...
