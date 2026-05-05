@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -20,7 +21,9 @@ router = APIRouter()
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "auto_report" / "prompts"
 IDEA_EVALUATION_VERSION = "v1"
 IDEA_ACTIONS = {"buy", "watch", "avoid", "do_nothing"}
-ACTIONABLE_IDEA_STATUSES = ("watching", "researching", "ready_for_review")
+type IdeaComparisonStatus = Literal["watching", "researching", "ready_for_review"]
+type IdeaStatus = Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"]
+ACTIONABLE_IDEA_STATUSES: tuple[IdeaComparisonStatus, ...] = ("watching", "researching", "ready_for_review")
 CRITICAL_MISSING_SEVERITIES = {"critical", "block"}
 RECOMMENDATION_STATUSES = {"clear", "review_required", "blocked", "error"}
 SOURCE_QUALITY_VALUES = {"ok", "degraded", "stale", "failed"}
@@ -32,7 +35,7 @@ class IdeaCreateRequest(BaseModel):
     company_name: str | None = None
     user_notes: str | None = None
     tags: list[str] = Field(default_factory=list)
-    status: Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"] = "watching"
+    status: IdeaStatus = "watching"
 
     @field_validator("ticker")
     @classmethod
@@ -48,7 +51,7 @@ class IdeaUpdateRequest(BaseModel):
     company_name: str | None = None
     user_notes: str | None = None
     tags: list[str] | None = None
-    status: Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"] | None = None
+    status: IdeaStatus | None = None
 
     @field_validator("ticker")
     @classmethod
@@ -67,20 +70,19 @@ class IdeaEvaluationRequest(BaseModel):
 
 
 class IdeaComparisonEvaluationRequest(BaseModel):
-    scope_statuses: list[Literal["watching", "researching", "ready_for_review"]] = Field(
-        default_factory=lambda: list(ACTIONABLE_IDEA_STATUSES)
-    )
+    scope_statuses: list[IdeaComparisonStatus] = Field(default_factory=lambda: list(ACTIONABLE_IDEA_STATUSES))
 
     @field_validator("scope_statuses")
     @classmethod
-    def _normalize_scope_statuses(cls, value: list[str]) -> list[str]:
-        statuses = []
+    def _normalize_scope_statuses(cls, value: list[str]) -> list[IdeaComparisonStatus]:
+        statuses: list[IdeaComparisonStatus] = []
         for status in value or []:
             normalized = str(status).strip().lower()
             if normalized not in ACTIONABLE_IDEA_STATUSES:
                 raise ValueError(f"Unsupported idea comparison status: {status}")
-            if normalized not in statuses:
-                statuses.append(normalized)
+            normalized_status = cast(IdeaComparisonStatus, normalized)
+            if normalized_status not in statuses:
+                statuses.append(normalized_status)
         return statuses or list(ACTIONABLE_IDEA_STATUSES)
 
 
@@ -693,16 +695,21 @@ def _normalize_comparison_result(evaluations: list[dict[str, Any]], parsed: Any)
 
     by_idea = {int(evaluation["idea_id"]): evaluation for evaluation in evaluations}
     by_ticker = {str(evaluation.get("ticker") or "").upper(): evaluation for evaluation in evaluations}
-    raw_rows = parsed.get("rankings") if isinstance(parsed.get("rankings"), list) else []
+    rankings = parsed.get("rankings")
+    raw_rows: list[Any] = rankings if isinstance(rankings, list) else []
     ordered: list[tuple[int, dict[str, Any]]] = []
     seen: set[int] = set()
 
     for fallback_rank, row in enumerate(raw_rows, start=1):
         if not isinstance(row, dict):
             continue
+        row = cast(dict[str, Any], row)
         idea_id = None
         try:
-            idea_id = int(row.get("idea_id"))
+            raw_idea_id = row.get("idea_id")
+            if raw_idea_id is None:
+                raise TypeError("missing idea_id")
+            idea_id = int(raw_idea_id)
         except (TypeError, ValueError):
             ticker = str(row.get("ticker") or "").upper()
             if ticker and ticker in by_ticker:
@@ -830,7 +837,7 @@ def _compute_idea_evaluation_result(
     return {"idea": idea, "evaluation": evaluation, "result": result, "final_count": 4}
 
 
-def _actionable_ideas(scope_statuses: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
+def _actionable_ideas(scope_statuses: Sequence[str]) -> list[dict[str, Any]]:
     from portfolio import core_db
 
     wanted = {str(status).lower() for status in scope_statuses} or set(ACTIONABLE_IDEA_STATUSES)

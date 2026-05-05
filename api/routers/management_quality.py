@@ -134,9 +134,9 @@ def _llm_error_message(exc: Exception) -> str:
     if isinstance(body, dict):
         error = body.get("error")
         if isinstance(error, dict) and isinstance(error.get("message"), str):
-            return error["message"]
+            return str(error["message"])
         if isinstance(body.get("message"), str):
-            return body["message"]
+            return str(body["message"])
     response = getattr(exc, "response", None)
     if response is not None:
         try:
@@ -146,9 +146,9 @@ def _llm_error_message(exc: Exception) -> str:
         if isinstance(data, dict):
             error = data.get("error")
             if isinstance(error, dict) and isinstance(error.get("message"), str):
-                return error["message"]
+                return str(error["message"])
             if isinstance(data.get("message"), str):
-                return data["message"]
+                return str(data["message"])
     return str(exc)
 
 
