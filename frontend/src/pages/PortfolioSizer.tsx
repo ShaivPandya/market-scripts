@@ -52,6 +52,9 @@ interface SizerResponse {
   net_beta_iwm?: number
   post_hedge_beta_spy?: number
   post_hedge_beta_iwm?: number
+  beta_scope?: string
+  beta_asset_classes?: string[]
+  beta_tickers?: string[]
   exposures?: SizerExposures
   constraints?: Record<string, SizerConstraint>
   weights_df?: Record<string, unknown>[]
@@ -71,7 +74,7 @@ interface SizerRow {
   conviction: number
 }
 
-const SIZER_STATE_KEY = ["portfolio-sizer", "state"] as const
+const SIZER_STATE_KEY = ["portfolio-sizer", "state", "equity-beta-v2"] as const
 const MIN_BOOK_SIZE = 50_000
 const MAX_BOOK_SIZE = 150_000
 const SIZER_POLL_INTERVAL_MS = 2_000
@@ -132,8 +135,8 @@ const COLUMN_LABELS: Record<string, string> = {
   conviction: "Conviction",
   drawdown_52w: "Drawdown 52W",
   stabilized_10d: "Stabilized",
-  beta_spy: "Beta SPY",
-  beta_iwm: "Beta IWM",
+  beta_spy: "Equity Beta SPY",
+  beta_iwm: "Equity Beta IWM",
   realized_vol: "Vol",
   weight: "Weight",
   dollar_weight: "Dollar",
@@ -523,7 +526,7 @@ export function PortfolioSizer() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Sizer</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Conviction-based portfolio sizing with constraint optimization and beta hedging</p>
+        <p className="text-sm text-gray-400 mt-0.5">Conviction-based portfolio sizing with constraint optimization and equity beta hedging</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <DecisionStateBadge state={String(data?.decision_state ?? "analysis")} />
           <EffectScopeBadge scope={String(data?.effect_scope ?? "read_only")} />
@@ -670,10 +673,10 @@ export function PortfolioSizer() {
               {volDaily != null && <MetricCard title="Daily Volatility" value={`${(volDaily * 100).toFixed(2)}%`} />}
               {grossLeverage != null && <MetricCard title="Gross Leverage (incl. hedges)" value={`${grossLeverage.toFixed(2)}x`} />}
               {equityNet != null && <MetricCard title="Equity Net" value={formatRatioPercent(equityNet, true, 1)} />}
-              {netBetaSpy != null && <MetricCard title="Net Beta SPY (pre-hedge)" value={netBetaSpy.toFixed(3)} />}
-              {netBetaIwm != null && <MetricCard title="Net Beta IWM (pre-hedge)" value={netBetaIwm.toFixed(3)} />}
-              {postHedgeBetaSpy != null && <MetricCard title="Net Beta SPY (post-hedge)" value={postHedgeBetaSpy.toFixed(3)} />}
-              {postHedgeBetaIwm != null && <MetricCard title="Net Beta IWM (post-hedge)" value={postHedgeBetaIwm.toFixed(3)} />}
+              {netBetaSpy != null && <MetricCard title="Equity Beta SPY (pre-hedge)" value={netBetaSpy.toFixed(3)} />}
+              {netBetaIwm != null && <MetricCard title="Equity Beta IWM (pre-hedge)" value={netBetaIwm.toFixed(3)} />}
+              {postHedgeBetaSpy != null && <MetricCard title="Equity Beta SPY (post-hedge)" value={postHedgeBetaSpy.toFixed(3)} />}
+              {postHedgeBetaIwm != null && <MetricCard title="Equity Beta IWM (post-hedge)" value={postHedgeBetaIwm.toFixed(3)} />}
             </div>
           )}
 

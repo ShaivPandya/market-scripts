@@ -42,7 +42,7 @@ def _canonical_positions(req: SizerRequest) -> list[tuple[str, int]]:
 
 
 def _cache_key(req: SizerRequest) -> str:
-    strategy_version = "v1_conviction_sizing"
+    strategy_version = "v2_conviction_sizing_equity_beta"
     canonical = _canonical_positions(req)
     token = "|".join(f"{ticker}:{conviction}" for ticker, conviction in canonical) or "none"
     return f"portfolio_sizer:{strategy_version}:book={float(req.book):.4f}:lev={float(req.target_leverage):.4f}:positions={token}"

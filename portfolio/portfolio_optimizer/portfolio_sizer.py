@@ -125,6 +125,40 @@ def _build_conviction_weights(
     return w_raw
 
 
+def _compute_equity_beta_inputs(
+    rets: pd.DataFrame,
+    tickers: Sequence[str],
+    market_tickers: Sequence[str],
+    eq_mask: np.ndarray,
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, list[str]]:
+    """
+    Compute beta regressions only for equity holdings.
+
+    The hedge helper expects beta series aligned to the full portfolio ticker list,
+    so non-equity holdings receive numeric zeroes for hedge math and NaN display
+    values for the weights table.
+    """
+    equity_tickers = [ticker for ticker, is_equity in zip(tickers, eq_mask, strict=False) if bool(is_equity)]
+    beta_columns = list(dict.fromkeys([*equity_tickers, *market_tickers]))
+    beta_rets = rets[[col for col in beta_columns if col in rets.columns]]
+
+    beta_frame, betas_all_spy, betas_all_iwm = compute_beta_frame(beta_rets, equity_tickers)
+    beta_display_spy = beta_frame["beta_spy"].reindex(tickers)
+    beta_display_iwm = beta_frame["beta_iwm"].reindex(tickers)
+    betas_spy = beta_display_spy.fillna(0.0)
+    betas_iwm = beta_display_iwm.fillna(0.0)
+
+    return (
+        betas_spy,
+        betas_iwm,
+        beta_display_spy,
+        beta_display_iwm,
+        betas_all_spy,
+        betas_all_iwm,
+        equity_tickers,
+    )
+
+
 def size_portfolio(
     positions: Sequence[Mapping[str, Any]],
     book: float | None = 100_000.0,
@@ -227,11 +261,6 @@ def size_portfolio(
         Sigma = ensure_psd(Sigma, eps=1e-10)
         L = np.linalg.cholesky(Sigma)
 
-        # Betas
-        beta_frame, betas_all_spy, betas_all_iwm = compute_beta_frame(rets, tickers)
-        betas_spy = beta_frame["beta_spy"]
-        betas_iwm = beta_frame["beta_iwm"]
-
         # Build conviction-driven raw weights
         w_raw = _build_conviction_weights(meta, convictions).reindex(tickers).fillna(0.0)
 
@@ -248,6 +277,17 @@ def size_portfolio(
         fx_mask = asset.eq("fx").values
         cmdty_mask = asset.eq("commodity").values
         bond_mask = asset.eq("bond").values
+
+        # Betas: restrict regressions to equities plus benchmark tickers.
+        (
+            betas_spy,
+            betas_iwm,
+            beta_display_spy,
+            beta_display_iwm,
+            betas_all_spy,
+            betas_all_iwm,
+            equity_beta_tickers,
+        ) = _compute_equity_beta_inputs(rets, tickers, market_tickers, eq_mask)
 
         n = len(tickers)
         w = cp.Variable(n)
@@ -409,8 +449,8 @@ def size_portfolio(
                 "direction": meta["direction"].values,
                 "contrarian": meta["contrarian"].values if "contrarian" in meta.columns else False,
                 "conviction": [convictions.get(t, 0) for t in tickers],
-                "beta_spy": betas_spy.values,
-                "beta_iwm": betas_iwm.values,
+                "beta_spy": beta_display_spy.values,
+                "beta_iwm": beta_display_iwm.values,
                 "realized_vol": meta["realized_vol"].values,
                 "weight": w_final.values,
                 "price": latest_prices.values,
@@ -514,6 +554,9 @@ def size_portfolio(
             "hedge_iwm_weight": hedge_iwm_weight,
             "hedge_direction_warning": hedge_direction_warning,
             "hedge_direction_issues": hedge_direction_issues,
+            "beta_scope": "equity_only",
+            "beta_asset_classes": ["equity"],
+            "beta_tickers": equity_beta_tickers,
             "beta_method": BETA_METHOD,
             "beta_halflife_days": BETA_EWMA_HALFLIFE_DAYS,
             "beta_min_obs": BETA_MIN_OBS,
