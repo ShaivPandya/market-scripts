@@ -325,6 +325,18 @@ def test_generic_worker_loop_claims_and_completes_sizer_job(monkeypatch):
     assert persisted["result_json"] == {"ok": "AAA"}
 
 
+def test_generic_worker_loop_parser_reads_job_defaults_from_env(monkeypatch):
+    from api.job_worker_loop import _parser
+
+    monkeypatch.setenv("JOB_WORKER_JOB_TYPE", "sizer")
+    monkeypatch.setenv("JOB_WORKER_QUEUE", "sizer")
+
+    args = _parser().parse_args(["run"])
+
+    assert args.job_type == "sizer"
+    assert args.queue_name == "sizer"
+
+
 def test_cloud_run_dedupe_reuses_active_and_completed_jobs(monkeypatch):
     from api import async_job_runner, cache
     from api.job_queue import complete_job

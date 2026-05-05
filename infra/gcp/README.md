@@ -19,7 +19,7 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite). Tunables: `API_CPU`, `API_MEMORY`, `API_CONCURRENCY`, `API_MIN_INSTANCES`, `API_MAX_INSTANCES`, `API_TIMEOUT`. Defaults are `1` vCPU, `1Gi`, and concurrency `20` because long-running analysis is offloaded to Cloud Run Jobs; raise these if synchronous endpoints show memory pressure or CPU saturation.
 - `deploy-async-job.sh` — generic Cloud Run Job running `python -m api.async_job_runner run`. Tunables: `ASYNC_JOB_CPU`, `ASYNC_JOB_MEMORY`, `ASYNC_JOB_TIMEOUT`, `ASYNC_JOB_MAX_RETRIES`.
 - `deploy-agent-worker.sh` — warm Cloud Run worker pool running `python -m api.agent_worker_loop run` for durable agent workflow turns.
-- `deploy-sizer-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run --job-type sizer --queue sizer` for low-latency portfolio sizer jobs.
+- `deploy-sizer-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with sizer job/queue defaults from env for low-latency portfolio sizer jobs.
 - `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
@@ -97,7 +97,7 @@ Required services:
 - Cloud Run service `api`: `uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8080}`
 - Cloud Run Job `talisman-async-job`: `python -m api.async_job_runner run`
 - Cloud Run worker pool `talisman-agent-worker`: `python -m api.agent_worker_loop run`
-- Cloud Run worker pool `talisman-sizer-worker`: `python -m api.job_worker_loop run --job-type sizer --queue sizer`
+- Cloud Run worker pool `talisman-sizer-worker`: `python -m api.job_worker_loop run` with `JOB_WORKER_JOB_TYPE=sizer` and `JOB_WORKER_QUEUE=sizer`
 - Cloud Scheduler jobs:
   - hourly: `POST /api/v1/admin/jobs/enqueue-async-job-sweep`
   - weekdays at 23:00 UTC: run `${TOP50_REFRESH_JOB}`

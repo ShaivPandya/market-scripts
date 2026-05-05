@@ -34,6 +34,8 @@ SIZER_WORKER_ENV_VARS=(
   "ASYNC_JOB_BACKEND=cloud_run_jobs"
   "ASYNC_DISPATCH_BACKEND_SIZER=warm_worker"
   "ASYNC_QUEUE_SIZER=sizer"
+  "JOB_WORKER_JOB_TYPE=sizer"
+  "JOB_WORKER_QUEUE=sizer"
   "ASYNC_JOB_COMPLETED_TTL_SECONDS=86400"
   "ASYNC_JOB_FAILED_TTL_SECONDS=604800"
   "POSTGRES_POOL_MAX_SIZE=${POSTGRES_POOL_MAX_SIZE:-2}"
@@ -48,7 +50,7 @@ gcloud run worker-pools deploy "${SIZER_WORKER_POOL}" \
   --service-account="${WORKER_SA}" \
   --set-cloudsql-instances="${CLOUDSQL_INSTANCE}" \
   --command=python \
-  --args=-m,api.job_worker_loop,run,--job-type,sizer,--queue,sizer \
+  --args=-m,api.job_worker_loop,run \
   --set-env-vars="$(join_kv "${SIZER_WORKER_ENV_VARS[@]}")" \
   --set-secrets="$(join_kv "${WORKER_SECRETS[@]}")" \
   --cpu="${SIZER_WORKER_CPU:-2}" \
