@@ -114,9 +114,9 @@ class DefaultOntologyPolicy:
         if actor.actor_type == "system":
             return True
         if actor.actor_type == "agent":
-            return bool(actor.parent_actor_id == self._owner_actor_id() and ({"owner", "admin"} & roles))
-        return (
-            actor.actor_type == "user" and actor.actor_id == self._owner_actor_id() and bool({"owner", "admin"} & roles)
+            return "owner" in roles or bool(actor.parent_actor_id == self._owner_actor_id() and "admin" in roles)
+        return actor.actor_type == "user" and (
+            "owner" in roles or (actor.actor_id == self._owner_actor_id() and "admin" in roles)
         )
 
     def _scope_allows(self, actor: Actor | None, properties: dict[str, Any]) -> bool:

@@ -6,8 +6,7 @@ import hashlib
 from typing import Any
 
 from auto_report.recommendations import persist_recommendations, stable_hash, validate_recommendations_payload
-from ontology.command_service import OntologyCommandContext, OntologyCommandService
-from ontology.object_service import OntologyObjectService
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.policy import actor_to_dict, system_actor
 
 
@@ -30,15 +29,32 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 
 def _propose_report_action(action_id: str, payload: dict[str, Any], *, source_id: str, reason: str) -> dict[str, Any]:
-    return OntologyCommandService().propose_action(
+    if ontology_primary_writes_enabled():
+        from ontology.command_service import OntologyCommandContext, OntologyCommandService
+
+        return OntologyCommandService().propose_action(
+            action_id,
+            payload,
+            OntologyCommandContext(
+                actor=system_actor("report_sync"),
+                source_type="workflow",
+                source_id=source_id,
+            ),
+            reason=reason,
+        )
+    from ontology.action_registry import ActionContext, propose_action
+
+    return propose_action(
         action_id,
         payload,
-        OntologyCommandContext(
-            actor=system_actor("report_sync"),
+        ActionContext(
+            actor_type="workflow",
+            actor_id="report_sync",
             source_type="workflow",
             source_id=source_id,
         ),
         reason=reason,
+        once=True,
     )
 
 
@@ -225,7 +241,6 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
         or stable_hash({"summary": summary, "bundle": bundle, "recommendations": recommendations_payload})
     )
 
-    report_actor = system_actor("report_sync")
     report_run_payload = {
         "report_id": report_id,
         "report_type": report_type,
@@ -241,16 +256,34 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
         "issue_url": metadata.get("issue_url"),
         "ontology_run_id": "operational",
     }
-    report_row = OntologyObjectService().write_object(
-        "ReportRun",
-        report_id,
-        report_run_payload,
-        as_of,
-        actor=actor_to_dict(report_actor),
-        provenance=f"pv:report_sync:{report_id}",
-        input_hash=input_hash,
-    )
-    report_run = {**report_run_payload, "id": report_row.get("object_uid"), "object_uid": report_row.get("object_uid")}
+    if ontology_primary_writes_enabled():
+        from ontology.object_service import OntologyObjectService
+
+        report_actor = system_actor("report_sync")
+        report_row = OntologyObjectService().write_object(
+            "ReportRun",
+            report_id,
+            report_run_payload,
+            as_of,
+            actor=actor_to_dict(report_actor),
+            provenance=f"pv:report_sync:{report_id}",
+            input_hash=input_hash,
+        )
+        report_run = {
+            **report_run_payload,
+            "id": report_row.get("object_uid"),
+            "object_uid": report_row.get("object_uid"),
+        }
+    else:
+        from portfolio import core_db
+
+        report_row = core_db.upsert_report_run(report_run_payload)
+        report_run = {
+            **report_run_payload,
+            **report_row,
+            "id": report_row.get("report_id") or report_id,
+            "object_uid": f"report_run:{report_row.get('report_id') or report_id}",
+        }
 
     persisted_recommendations = persist_recommendations(
         recommendations_payload,
@@ -277,8 +310,6 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
             provenance=f"pv:report_sync:{report_id}",
         )
     except Exception:
-        from ontology.domain_write_service import ontology_primary_writes_enabled
-
         if ontology_primary_writes_enabled():
             raise
 

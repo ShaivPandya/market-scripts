@@ -74,7 +74,12 @@ _ARTIFACT_BINDINGS: dict[str, ArtifactBinding] = {
         multiple=True,
         required_keys=("title", "content"),
     ),
-    "news_digest_deletes": ArtifactBinding(None, "Workflow-suggested news digest delete", multiple=True),
+    "news_digest_deletes": ArtifactBinding(
+        "delete_portfolio_news_digest",
+        "Workflow-suggested news digest delete",
+        multiple=True,
+        required_keys=("digest_id",),
+    ),
 }
 
 
@@ -151,6 +156,22 @@ def persist_artifacts(
 
     Returns the number of approvals created.
     """
+    from ontology.domain_write_service import ontology_primary_writes_enabled
+
+    if not ontology_primary_writes_enabled():
+        from ontology.action_registry import propose_workflow_artifact
+
+        count = 0
+        for artifact_key in _ARTIFACT_BINDINGS:
+            count += propose_workflow_artifact(
+                artifact_key,
+                artifacts.get(artifact_key),
+                run_id=run_id,
+                ticker=ticker,
+            )
+        _emit_persisted_audit(run_id, ticker, artifacts, count)
+        return count
+
     actor = system_actor("workflow_artifacts")
     context = OntologyCommandContext(actor=actor, source_type="workflow", source_id=run_id)
     command_service = OntologyCommandService()
@@ -171,14 +192,18 @@ def persist_artifacts(
                 artifact_uid,
                 {
                     "artifact_id": artifact_uid,
+                    "workflow_run_id": run_id,
                     "artifact_key": artifact_key,
                     "artifact_index": item_index,
                     "artifact_value": item,
-                    "payload": payload,
-                    "ticker": ticker,
-                    "run_id": run_id,
-                    "status": "staged",
-                    "created_at": now,
+                    "artifact_hash": hashlib.sha256(
+                        json.dumps(item, sort_keys=True, default=str).encode("utf-8")
+                    ).hexdigest(),
+                    "state": "proposed" if binding.action_id else "extracted",
+                    "action_id": binding.action_id,
+                    "provenance_event_id": provenance_id,
+                    "metadata": {"ticker": ticker, "payload": payload},
+                    "ontology_run_id": "operational",
                 },
                 now,
                 actor=actor,
@@ -207,6 +232,11 @@ def persist_artifacts(
     if count:
         logger.info("Persisted %d artifacts as pending approvals (run_id=%s)", count, run_id)
 
+    _emit_persisted_audit(run_id, ticker, artifacts, count)
+    return count
+
+
+def _emit_persisted_audit(run_id: str, ticker: str | None, artifacts: dict, count: int) -> None:
     emit_audit_event(
         "workflow.artifacts.persisted",
         "workflow",
@@ -220,7 +250,6 @@ def persist_artifacts(
         },
         source_lineage={"run_id": run_id, "ticker": ticker},
     )
-    return count
 
 
 def _artifact_items(value: Any, *, multiple: bool) -> list[dict[str, Any]]:

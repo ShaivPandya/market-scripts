@@ -1062,6 +1062,7 @@ def persist_recommendations(
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
     from ontology.command_service import OntologyCommandContext, OntologyCommandService
+    from ontology.domain_write_service import ontology_primary_writes_enabled
     from ontology.object_service import OntologyObjectService
     from ontology.policy import actor_to_dict, system_actor
     from ontology.schemas.identity import policy_gate_result_id
@@ -1076,8 +1077,10 @@ def persist_recommendations(
         source_type="workflow",
         source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
     )
-    command_service = OntologyCommandService()
-    object_service = OntologyObjectService()
+    ontology_primary = ontology_primary_writes_enabled()
+    command_service = OntologyCommandService() if ontology_primary else None
+    object_service = OntologyObjectService() if ontology_primary else None
+    active_idempotency_keys: list[str] = []
     for action in payload.get("recommended_actions", []):
         action_hash = stable_hash(
             {
@@ -1092,6 +1095,8 @@ def persist_recommendations(
             }
         )
         idempotency_key = f"{payload['report_type']}:{payload['as_of']}:{action_hash}" if report_id else None
+        if idempotency_key:
+            active_idempotency_keys.append(idempotency_key)
         record = {
             **action,
             "report_type": payload["report_type"],
@@ -1126,6 +1131,9 @@ def persist_recommendations(
             },
             context={"report_type": payload["report_type"], "as_of": payload["as_of"], "report_id": report_id},
         )
+        if gate:
+            gate = {**gate, "evaluated_at": payload["as_of"]}
+            record["policy_gate_result"] = gate
         if gate and gate.get("decision") == "review_required" and record.get("recommendation_status") == "clear":
             record["recommendation_status"] = "review_required"
             record["status"] = "open"
@@ -1137,26 +1145,28 @@ def persist_recommendations(
                 record["blocked_reasons"] = [*record.get("blocked_reasons", []), policy_reason]
         if gate and not record.get("policy_gate_result_id"):
             gate_target_id = idempotency_key or action_hash
-            gate_uid = policy_gate_result_id(f"create_recommendation:{gate_target_id}")
-            object_service.write_object(
-                "PolicyGateResult",
-                gate_uid,
-                {
-                    "gate_result_id": gate_uid,
-                    "decision": gate.get("decision") or "review_required",
-                    "review_required": bool(gate.get("review_required")),
-                    "failure_reasons": gate.get("failure_reasons", []),
-                    "warnings": gate.get("warnings", []),
-                    "evaluated_at": payload["as_of"],
-                    "ontology_run_id": "operational",
-                },
-                payload["as_of"],
-                actor=actor_to_dict(actor),
-                provenance=f"pv:recommendation_policy_gate:{gate_target_id}",
-                input_hash=stable_hash({"gate": gate, "record": record}),
-            )
-            gate["policy_gate_result_id"] = gate_uid
-            record["policy_gate_result_id"] = gate_uid
+            gate_key = f"create_recommendation:{gate_target_id}"
+            gate_uid = policy_gate_result_id(gate_key)
+            if object_service is not None:
+                object_service.write_object(
+                    "PolicyGateResult",
+                    gate_uid,
+                    {
+                        "gate_result_id": gate_key,
+                        "decision": gate.get("decision") or "review_required",
+                        "review_required": bool(gate.get("review_required")),
+                        "failure_reasons": gate.get("failure_reasons", []),
+                        "warnings": gate.get("warnings", []),
+                        "evaluated_at": payload["as_of"],
+                        "ontology_run_id": "operational",
+                    },
+                    payload["as_of"],
+                    actor=actor_to_dict(actor),
+                    provenance=f"pv:recommendation_policy_gate:{gate_target_id}",
+                    input_hash=stable_hash({"gate": gate, "record": record}),
+                )
+                gate["policy_gate_result_id"] = gate_uid
+                record["policy_gate_result_id"] = gate_uid
             record["policy_gate_result"] = gate
             record["policy_gate_status"] = gate.get("decision")
             record["policy_gate_decision"] = gate.get("decision")
@@ -1164,13 +1174,36 @@ def persist_recommendations(
             record["policy_gate_failures"] = gate.get("failure_reasons", [])
             record["policy_gate_warnings"] = gate.get("warnings", [])
             record["policy_gate_disclosures"] = gate.get("disclosures", [])
-        approval = command_service.propose_action(
-            "create_recommendation",
-            {"record": record},
-            context,
-            reason=f"{payload['report_type'].title()} recommendation for {action.get('instrument') or action.get('ticker') or 'portfolio'}",
+        reason = (
+            f"{payload['report_type'].title()} recommendation for "
+            f"{action.get('instrument') or action.get('ticker') or 'portfolio'}"
         )
+        if command_service is not None:
+            approval = command_service.propose_action(
+                "create_recommendation",
+                {"record": record},
+                context,
+                reason=reason,
+            )
+        else:
+            from portfolio.action_registry import ActionContext, propose_action
+
+            approval = propose_action(
+                "create_recommendation",
+                {"record": record},
+                ActionContext(
+                    actor_type="workflow",
+                    source_type=context.source_type,
+                    source_id=context.source_id,
+                ),
+                reason=reason,
+                once=True,
+            )
         persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
+    if report_id and not ontology_primary:
+        from portfolio import core_db
+
+        core_db.supersede_report_recommendations(str(report_id), active_idempotency_keys)
     return persisted
 
 
@@ -1280,29 +1313,72 @@ def _thesis_and_kill_context(ticker: str | None) -> dict[str, Any]:
 
 
 def evaluate_due_recommendations(limit: int = 50) -> dict:
-    from ontology.object_service import OntologyObjectService
-    from ontology.policy import actor_to_dict, system_actor
+    from ontology.domain_write_service import ontology_primary_writes_enabled
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
     today = datetime.now(UTC).date()
     reads = OntologyRuntimeReadService()
-    objects = OntologyObjectService()
-    actor = system_actor("recommendation_evaluator")
+    primary_writes = ontology_primary_writes_enabled()
+    objects = None
+    actor = None
+    if primary_writes:
+        from ontology.object_service import OntologyObjectService
+        from ontology.policy import system_actor
+
+        objects = OntologyObjectService()
+        actor = system_actor("recommendation_evaluator")
 
     def update_recommendation_outcome(rec: dict[str, Any], status: str, outcome: dict[str, Any]) -> None:
+        if not primary_writes:
+            from portfolio import core_db
+
+            core_db.update_recommendation_outcome(int(rec["id"]), status, outcome)
+            return
+
+        from ontology.policy import actor_to_dict
+
+        assert objects is not None
+        assert actor is not None
         rec_uid = str(rec.get("object_uid") or rec.get("id") or rec.get("recommendation_id") or "")
         payload = dict(rec.get("payload") or {})
         payload["outcome"] = outcome
+        legacy_id = rec.get("legacy_id")
+        if legacy_id is None:
+            try:
+                legacy_id = int(str(rec.get("id") or "").rsplit(":", 1)[-1])
+            except (TypeError, ValueError):
+                legacy_id = None
         props = {
-            **rec,
             "recommendation_id": rec.get("recommendation_id") or rec_uid,
+            "legacy_id": legacy_id,
+            "idempotency_key": rec.get("idempotency_key"),
+            "source_kind": rec.get("source_kind") or "report",
+            "report_type": rec.get("report_type"),
+            "as_of": rec.get("as_of"),
+            "action": rec.get("action") or "watch",
+            "ticker": rec.get("ticker"),
+            "instrument": rec.get("instrument") or rec.get("ticker") or "portfolio",
+            "decision_state": rec.get("decision_state") or "generated",
+            "status": rec.get("status"),
+            "approval_id": str(rec.get("approval_id")) if rec.get("approval_id") is not None else None,
+            "approval_required": bool(rec.get("approval_required")),
+            "approval_status": rec.get("approval_status"),
             "outcome_status": status,
+            "supersedes_recommendation_id": rec.get("supersedes_recommendation_id"),
+            "account_id": rec.get("account_id"),
+            "portfolio_id": rec.get("portfolio_id"),
+            "policy_id": rec.get("policy_id"),
+            "policy_gate_result_id": rec.get("policy_gate_result_id"),
+            "policy_gate_decision": rec.get("policy_gate_decision") or rec.get("policy_gate_status"),
+            "policy_gate_review_required": bool(rec.get("policy_gate_review_required")),
+            "confidence": _as_float(rec.get("confidence"), 0.0),
+            "horizon": rec.get("horizon"),
+            "rationale_summary": str(rec.get("rationale") or "")[:500] or None,
+            "rationale_hash": stable_hash(str(rec.get("rationale") or "")) if rec.get("rationale") else None,
+            "source_quality": rec.get("source_quality"),
             "payload": payload,
             "ontology_run_id": "operational",
         }
-        props.pop("_meta", None)
-        props.pop("id", None)
-        props.pop("object_uid", None)
         objects.write_object(
             "Recommendation",
             rec_uid,

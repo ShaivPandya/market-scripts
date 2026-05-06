@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.action_execution import stage_api_action
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.exceptions import NotFoundError, ValidationError
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.object_service import OntologyObjectService
 from ontology.policy import actor_to_dict, admin_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -134,6 +135,8 @@ def _comparison_uid(value: Any) -> str:
 def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> dict[str, Any]:
     now = _now()
     payload = {**props, "ontology_run_id": "operational"}
+    if not ontology_primary_writes_enabled():
+        return _write_legacy_runtime_object(object_type, uid, payload)
     row = OntologyObjectService().write_object(
         object_type,
         uid,
@@ -144,6 +147,99 @@ def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> 
         input_hash=_stable_hash(payload),
     )
     return _object_props(row) or payload
+
+
+def _write_legacy_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> dict[str, Any]:
+    from portfolio import core_db
+
+    if object_type == "InvestmentIdea":
+        idea_id = _legacy_numeric_id(uid)
+        if idea_id is None:
+            return core_db.create_investment_idea(
+                str(props.get("ticker") or ""),
+                company_name=props.get("company_name"),
+                user_notes=props.get("user_notes"),
+                tags=cast(list[str] | None, props.get("tags") if isinstance(props.get("tags"), list) else None),
+                status=str(props.get("status") or "watching"),
+                source_type=str(props.get("source_type") or "user"),
+                source_id=props.get("source_id"),
+                metadata=cast(
+                    dict[str, Any] | None, props.get("metadata") if isinstance(props.get("metadata"), dict) else None
+                ),
+            )
+        return core_db.update_investment_idea(
+            idea_id,
+            ticker=props.get("ticker"),
+            company_name=props.get("company_name"),
+            status=props.get("status"),
+            user_notes=props.get("user_notes"),
+            tags=cast(list[str], props.get("tags") if isinstance(props.get("tags"), list) else []),
+            latest_job_id=props.get("latest_job_id"),
+            latest_evaluation_id=_legacy_numeric_id(props.get("latest_evaluation_id")),
+            accepted_recommendation_id=_legacy_numeric_id(props.get("accepted_recommendation_id")),
+            metadata=cast(dict[str, Any], props.get("metadata") if isinstance(props.get("metadata"), dict) else {}),
+        )
+    if object_type == "IdeaEvaluation":
+        evaluation_id = _legacy_numeric_id(uid)
+        if evaluation_id is not None and props.get("accepted_at"):
+            return core_db.mark_idea_evaluation_accepted(
+                evaluation_id,
+                recommendation_id=_required_legacy_numeric_id(props.get("recommendation_id")),
+                action_approval_id=_legacy_numeric_id(props.get("action_approval_id")),
+                accepted_by=str(props.get("accepted_by") or "user"),
+            )
+        return core_db.create_idea_evaluation(
+            _required_legacy_numeric_id(props.get("idea_id")),
+            props,
+            job_id=props.get("job_id"),
+        )
+    if object_type == "IdeaComparisonRun":
+        rankings = []
+        for row in props.get("rankings") if isinstance(props.get("rankings"), list) else []:
+            if not isinstance(row, dict):
+                continue
+            rankings.append(
+                {
+                    **row,
+                    "idea_id": _required_legacy_numeric_id(row.get("idea_id")),
+                    "evaluation_id": _required_legacy_numeric_id(row.get("evaluation_id")),
+                }
+            )
+        return core_db.create_idea_comparison_run(
+            job_id=props.get("job_id"),
+            scope_statuses=cast(
+                list[str] | None, props.get("scope_statuses") if isinstance(props.get("scope_statuses"), list) else None
+            ),
+            summary=str(props.get("summary") or ""),
+            rankings=rankings,
+            raw_result=cast(
+                dict[str, Any] | None, props.get("raw_result") if isinstance(props.get("raw_result"), dict) else None
+            ),
+            run_id=_legacy_text_id(uid),
+        )
+    raise ValueError(f"Unsupported legacy idea runtime object type: {object_type}")
+
+
+def _legacy_text_id(value: Any) -> str:
+    text = str(value or "").strip()
+    return text.split(":", 1)[1] if ":" in text else text
+
+
+def _legacy_numeric_id(value: Any) -> int | None:
+    text = _legacy_text_id(value)
+    if not text:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _required_legacy_numeric_id(value: Any) -> int:
+    numeric = _legacy_numeric_id(value)
+    if numeric is None:
+        raise ValueError(f"Expected numeric legacy id, got {value!r}")
+    return numeric
 
 
 def _get_idea(idea_id: Any) -> dict[str, Any] | None:
@@ -1135,8 +1231,6 @@ def get_idea_evaluation_job(job_id: str):
 
 @router.post("/ideas/{idea_id}/evaluations/{evaluation_id}/accept")
 def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptRequest | None = None):
-    from ontology.command_service import OntologyCommandContext, OntologyCommandService
-
     idea = _get_idea(idea_id)
     evaluation = _get_idea_evaluation(evaluation_id)
     if not idea:
@@ -1149,17 +1243,30 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
     )
     if not record:
         record = _recommendation_record_from_result(idea, evaluation)
-    context = OntologyCommandContext(
-        actor=admin_actor(source="ideas"),
-        source_type="user",
-        source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
-    )
-    recommendation = OntologyCommandService().propose_action(
-        "create_recommendation",
-        {"record": record},
-        context,
-        reason=(body.note if body else None) or f"Accept idea evaluator recommendation for {idea.get('ticker')}",
-    )
+    if ontology_primary_writes_enabled():
+        from ontology.command_service import OntologyCommandContext, OntologyCommandService
+
+        context = OntologyCommandContext(
+            actor=admin_actor(source="ideas"),
+            source_type="user",
+            source_id=f"ideas.accept:{idea_id}:{evaluation_id}",
+        )
+        recommendation = OntologyCommandService().propose_action(
+            "create_recommendation",
+            {"record": record},
+            context,
+            reason=(body.note if body else None) or f"Accept idea evaluator recommendation for {idea.get('ticker')}",
+        )
+        recommendation_id = recommendation["id"]
+    else:
+        from portfolio import core_db
+
+        recommendation = (
+            core_db.upsert_recommendation(record)
+            if record.get("idempotency_key")
+            else core_db.create_recommendation(record)
+        )
+        recommendation_id = recommendation["id"]
 
     action_proposal = None
     action_error = None
@@ -1168,7 +1275,7 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
         action_type = "enter" if action == "buy" else "research"
         description = (
             f"{'Evaluate initial entry' if action == 'buy' else 'Research remaining evidence'} for "
-            f"{idea['ticker']} from idea evaluator recommendation approval {recommendation['id']}."
+            f"{idea['ticker']} from idea evaluator recommendation approval {recommendation_id}."
         )
         missing = (
             evaluation.get("missing_information") if isinstance(evaluation.get("missing_information"), list) else []
@@ -1181,7 +1288,7 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
             action_proposal = stage_api_action(
                 "create_action_item",
                 {
-                    "recommendation_id": recommendation["id"],
+                    "recommendation_id": recommendation_id,
                     "ticker": idea.get("ticker"),
                     "description": description,
                     "action_type": action_type,
@@ -1199,7 +1306,8 @@ def accept_idea_evaluation(idea_id: str, evaluation_id: str, body: IdeaAcceptReq
         "accepted": True,
         "accepted_by": "user",
         "accepted_at": _now(),
-        "recommendation_approval_id": recommendation["id"],
+        "recommendation_id": recommendation_id if not ontology_primary_writes_enabled() else None,
+        "recommendation_approval_id": recommendation_id,
         "action_approval_id": action_proposal["approval_id"] if action_proposal else None,
     }
     accepted_payload.pop("_meta", None)

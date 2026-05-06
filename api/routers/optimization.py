@@ -34,10 +34,15 @@ def list_optimization_missions(status: str | None = None):
 
 @router.post("/optimization/missions/{mission_id}/run")
 def run_optimization_mission(mission_id: str, req: OptimizationRunRequest | None = None):
-    if not _get_optimization_object("OptimizationMission", mission_id):
+    mission = _get_optimization_object("OptimizationMission", mission_id)
+    if not mission:
         raise HTTPException(status_code=404, detail="Unknown optimization mission")
     body = req or OptimizationRunRequest()
-    payload: dict[str, Any] = {"mission_id": mission_id, "source": body.source or "manual", "force": body.force}
+    payload: dict[str, Any] = {
+        "mission_id": mission.get("id") or mission_id,
+        "source": body.source or "manual",
+        "force": body.force,
+    }
     row, _disposition = enqueue_registered_job(
         "continuous_optimizer",
         payload,

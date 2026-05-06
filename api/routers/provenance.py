@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from api.exceptions import ValidationError
 from api.routers.auth import require_actor
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.policy import Actor, PolicyDenied
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
@@ -80,6 +81,7 @@ def get_provenance_trace(
         event_id=event_id,
         ref_type=ref_type,
         ref_id=ref_id,
+        max_depth=max_depth,
     )
 
 
@@ -91,7 +93,7 @@ def get_entity_provenance(ref_type: str, ref_id: str, actor: ActorDep, max_depth
     if max_depth < 1 or max_depth > 8:
         raise ValidationError("max_depth must be between 1 and 8.")
 
-    return _ontology_trace(ref_type=ref_type, ref_id=ref_id)
+    return _ontology_trace(ref_type=ref_type, ref_id=ref_id, max_depth=max_depth)
 
 
 @router.get("/governance/lineage")
@@ -112,6 +114,19 @@ def get_governance_lineage_report(
     if sum(value is not None for value in selectors) != 1:
         raise ValidationError("Provide exactly one governance lineage selector.")
 
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.get_decision_lineage_report(
+            recommendation_id=_legacy_numeric_id(recommendation_id),
+            approval_id=_legacy_numeric_id(approval_id),
+            action_run_id=_legacy_numeric_id(action_run_id),
+            workflow_run_id=workflow_run_id,
+            object_version_id=object_version_id,
+            relation_version_id=relation_version_id,
+            max_depth=max_depth,
+        )
+
     return _ontology_trace(
         recommendation_id=recommendation_id,
         approval_id=approval_id,
@@ -119,11 +134,35 @@ def get_governance_lineage_report(
         workflow_run_id=workflow_run_id,
         object_version_id=object_version_id,
         relation_version_id=relation_version_id,
+        max_depth=max_depth,
     )
 
 
-def _ontology_trace(**selector: str | None) -> dict:
+def _legacy_numeric_id(value: str | None) -> int | str | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _ontology_trace(max_depth: int = 3, **selector: str | None) -> dict:
     clean_selector = {key: value for key, value in selector.items() if value is not None}
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.get_provenance_trace(
+            workflow_run_id=clean_selector.get("workflow_run_id"),
+            ontology_run_id=clean_selector.get("ontology_run_id"),
+            approval_id=_legacy_numeric_id(clean_selector.get("approval_id")),
+            action_run_id=_legacy_numeric_id(clean_selector.get("action_run_id")),
+            agent_session_id=clean_selector.get("agent_session_id"),
+            event_id=clean_selector.get("event_id"),
+            ref_type=clean_selector.get("ref_type"),
+            ref_id=clean_selector.get("ref_id"),
+            max_depth=max_depth,
+        )
     reads = OntologyRuntimeReadService()
     events = reads.list_objects("ProvenanceEvent", limit=500)
     links = reads.list_objects("ProvenanceLink", limit=500)

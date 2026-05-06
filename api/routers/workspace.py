@@ -184,7 +184,7 @@ def get_workspace():
     open_actions = [normalize_action_item(a) for a in reads.action_items(status="open")]
 
     # Continuous optimization alerts
-    optimizer_alerts = []
+    optimizer_alerts = reads.list_objects("OptimizationAlert", filters={"status": "open"}, limit=5)
 
     # Active watch triggers
     active_triggers = reads.watch_triggers(status="active")

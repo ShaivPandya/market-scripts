@@ -20,7 +20,7 @@ from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.read_model import TemporalReadModelRepository
-from ontology.schemas.identity import action_run_id, object_version_ref_id, thesis_id
+from ontology.schemas.identity import action_run_id, object_version_ref_id, policy_gate_result_id, thesis_id
 
 logger = logging.getLogger(__name__)
 
@@ -522,10 +522,12 @@ def action_mutations(
             gate_id = str(
                 row.get("policy_gate_result_id") or gate.get("id") or gate.get("evaluated_at") or _stable_hash(gate)
             )
+            if gate_id.startswith("policy_gate_result:"):
+                gate_id = gate_id.split(":", 1)[1]
             mutations.append(
                 OntologyMutation(
                     "PolicyGateResult",
-                    gate_id,
+                    policy_gate_result_id(gate_id),
                     _policy_gate_result_properties(gate, gate_result_id=gate_id),
                     str(gate.get("evaluated_at") or now),
                 )

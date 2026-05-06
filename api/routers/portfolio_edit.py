@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from api.action_execution import stage_api_action
 from api.exceptions import AppError, DataFetchError
-from ontology.object_service import OntologyObjectService
+from ontology.runtime_read_service import OntologyRuntimeReadService
 from portfolio.instruments import (
     default_contract_multiplier,
     is_continuous_future_symbol,
@@ -77,11 +77,7 @@ class PortfolioUpdateRequest(BaseModel):
 @router.get("/portfolio-positions")
 def get_portfolio_positions(include_hedges: bool = False):
     try:
-        service = OntologyObjectService()
-        rows = [_flatten_object(row) for row in service.query_objects("Position", limit=1000)]
-        if include_hedges:
-            rows.extend(_flatten_object(row) for row in service.query_objects("HedgePosition", limit=1000))
-        return {"positions": rows}
+        return {"positions": OntologyRuntimeReadService().positions(include_hedges=include_hedges)}
     except Exception as e:
         raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
 
@@ -170,7 +166,7 @@ class HedgeUpdateRequest(BaseModel):
 @router.get("/hedge-positions")
 def get_hedge_positions_endpoint():
     try:
-        rows = [_flatten_object(row) for row in OntologyObjectService().query_objects("HedgePosition", limit=1000)]
+        rows = OntologyRuntimeReadService().list_objects("HedgePosition", limit=1000)
         return {"positions": rows}
     except Exception as e:
         raise DataFetchError(source="hedge_positions", detail=str(e)) from e

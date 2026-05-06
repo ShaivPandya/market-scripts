@@ -381,12 +381,13 @@ def _require_temporal_read(actor: Actor) -> None:
 def _preflight_job_read(job_id: str, actor: Actor) -> dict[str, Any]:
     policy = getattr(_service, "policy", None)
     try:
-        if policy is not None:
-            require_allowed(policy.check_action(actor, OntologyAction.JOB_READ, {"job_id": job_id}))
-
         row = get_job(job_id)
         if row is None:
             raise KeyError(job_id)
+
+        if policy is not None:
+            require_allowed(policy.check_action(actor, OntologyAction.JOB_READ, {"job_id": job_id}))
+
         payload = row.get("payload_json")
         payload_actor = actor_from_dict(payload.get("actor") if isinstance(payload, dict) else None)
         roles = {role.lower() for role in actor.roles}

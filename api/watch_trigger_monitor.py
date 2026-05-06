@@ -703,23 +703,47 @@ def _research_note_content(trigger: dict[str, Any], result: dict[str, Any]) -> s
 
 
 def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from ontology.command_service import OntologyCommandContext, OntologyCommandService
-    from ontology.policy import system_actor
+    from ontology.domain_write_service import ontology_primary_writes_enabled
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    command_service = OntologyCommandService()
+    primary_writes = ontology_primary_writes_enabled()
+    command_service = None
+    if primary_writes:
+        from ontology.command_service import OntologyCommandService
+
+        command_service = OntologyCommandService()
     reads = OntologyRuntimeReadService()
 
     def propose_action(action_id: str, payload: dict[str, Any], *, source_id: str, reason: str) -> dict[str, Any]:
-        return command_service.propose_action(
+        if primary_writes:
+            from ontology.command_service import OntologyCommandContext
+            from ontology.policy import system_actor
+
+            assert command_service is not None
+            return command_service.propose_action(
+                action_id,
+                payload,
+                OntologyCommandContext(
+                    actor=system_actor("watch_trigger_monitor"),
+                    source_type="workflow",
+                    source_id=source_id,
+                ),
+                reason=reason,
+            )
+        from ontology.action_registry import ActionContext
+        from ontology.action_registry import propose_action as propose_legacy_action
+
+        return propose_legacy_action(
             action_id,
             payload,
-            OntologyCommandContext(
-                actor=system_actor("watch_trigger_monitor"),
+            ActionContext(
+                actor_type="workflow",
+                actor_id="watch_trigger_monitor",
                 source_type="workflow",
                 source_id=source_id,
             ),
             reason=reason,
+            once=True,
         )
 
     checked = 0

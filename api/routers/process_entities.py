@@ -129,8 +129,8 @@ class CreateThesisClaimRequest(BaseModel):
     cadence: str | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     status: str = "active"
-    linked_catalyst_ids: list[str] = Field(default_factory=list)
-    linked_kill_condition_ids: list[str] = Field(default_factory=list)
+    linked_catalyst_ids: list[int] = Field(default_factory=list)
+    linked_kill_condition_ids: list[int] = Field(default_factory=list)
     reason: str | None = None
     apply: bool = False
     approval_note: str | None = None
@@ -144,8 +144,8 @@ class UpdateThesisClaimRequest(BaseModel):
     cadence: str | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     status: str | None = None
-    linked_catalyst_ids: list[str] | None = None
-    linked_kill_condition_ids: list[str] | None = None
+    linked_catalyst_ids: list[int] | None = None
+    linked_kill_condition_ids: list[int] | None = None
     reason: str | None = None
     apply: bool = False
     approval_note: str | None = None

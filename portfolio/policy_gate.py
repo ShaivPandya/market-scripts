@@ -135,7 +135,8 @@ def ensure_policy_gate_for_action(
     from ontology.schemas.identity import policy_gate_result_id
 
     target_id = stable_hash({"action_id": action_id, "payload": mutable})
-    gate_uid = policy_gate_result_id(f"{action_id}:action_payload:{target_id}")
+    gate_key = f"{action_id}:action_payload:{target_id}"
+    gate_uid = policy_gate_result_id(gate_key)
     if object_service is not None or ontology_primary_writes_enabled():
         from ontology.object_service import OntologyObjectService
         from ontology.policy import actor_to_dict, system_actor
@@ -146,7 +147,7 @@ def ensure_policy_gate_for_action(
             "PolicyGateResult",
             gate_uid,
             {
-                "gate_result_id": gate_uid,
+                "gate_result_id": gate_key,
                 "decision": gate.get("decision") or "review_required",
                 "review_required": bool(gate.get("review_required")),
                 "failure_reasons": gate.get("failure_reasons", []),

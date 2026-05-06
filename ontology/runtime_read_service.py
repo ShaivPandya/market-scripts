@@ -82,7 +82,7 @@ class OntologyRuntimeReadService:
         if not _ontology_primary_writes_enabled():
             portfolio_db = importlib.import_module("portfolio.portfolio_db")
 
-            return portfolio_db.get_positions(include_hedges=include_hedges)[:limit]
+            return _legacy_positions(portfolio_db, include_hedges=include_hedges)[:limit]
         rows = self.list_objects("Position", limit=limit)
         if include_hedges:
             rows.extend(self.list_objects("HedgePosition", limit=limit))
@@ -248,6 +248,34 @@ def _legacy_get(object_uid: str) -> dict[str, Any] | None:
             return None
     if prefix == "workflow_run":
         return core_db.get_workflow_run(raw_id)
+    if prefix == "thesis":
+        thesis_db = importlib.import_module("portfolio.thesis_db")
+
+        return thesis_db.get_thesis_meta(raw_id)
+    if prefix == "investment_idea":
+        try:
+            return core_db.get_investment_idea(int(raw_id))
+        except (TypeError, ValueError):
+            return None
+    if prefix == "idea_evaluation":
+        try:
+            return core_db.get_idea_evaluation(int(raw_id))
+        except (TypeError, ValueError):
+            return None
+    if prefix == "idea_comparison_run":
+        return core_db.get_idea_comparison_run(raw_id)
+    if prefix in {"optimizationmission", "optimization_mission"}:
+        return core_db.get_optimization_mission(_optional_int(raw_id))
+    if prefix in {"optimizationrun", "optimization_run"}:
+        return core_db.get_optimization_run(raw_id)
+    if prefix in {"optimizationalert", "optimization_alert"}:
+        alert_id = _optional_int(raw_id)
+        if alert_id is None:
+            return None
+        for alert in core_db.get_optimization_alerts(status=None, limit=200):
+            if _optional_int(alert.get("id")) == alert_id:
+                return alert
+        return None
     if prefix == "recommendation":
         try:
             return core_db.get_recommendation(int(raw_id))
@@ -282,9 +310,26 @@ def _legacy_list_objects(
     portfolio_db = importlib.import_module("portfolio.portfolio_db")
 
     if object_type == "Position":
-        return portfolio_db.get_positions(include_hedges=False)[:limit]
+        return _legacy_positions(portfolio_db, include_hedges=False)[:limit]
     if object_type == "HedgePosition":
         return portfolio_db.get_hedge_positions()[:limit]
+    if object_type == "Thesis":
+        thesis_db = importlib.import_module("portfolio.thesis_db")
+        rows = thesis_db.get_all_thesis_meta()
+        ticker = filters.get("ticker")
+        status = filters.get("status")
+        return [
+            row
+            for row in rows
+            if (not ticker or str(row.get("ticker") or "").upper() == str(ticker).upper())
+            and (not status or row.get("status") == status)
+        ][:limit]
+    if object_type == "Evaluation":
+        thesis_db = importlib.import_module("portfolio.thesis_db")
+        ticker = filters.get("ticker")
+        if ticker:
+            return thesis_db.get_evaluations(str(ticker).upper(), limit=limit)
+        return thesis_db.get_latest_evaluations()[:limit]
     if object_type == "ActionItem":
         return core_db.get_action_items(status=filters.get("status"), ticker=filters.get("ticker"))[:limit]
     if object_type == "WatchTrigger":
@@ -337,6 +382,22 @@ def _legacy_list_objects(
             except FileNotFoundError:
                 return []
         return [_digest_artifact(item) for item in news_digests.list_digests().get("items", [])][:limit]
+    if object_type == "InvestmentIdea":
+        return core_db.list_investment_ideas(
+            status=filters.get("status"),
+            include_archived=True,
+            limit=limit,
+        )
+    if object_type == "IdeaEvaluation":
+        idea_id = _optional_int(filters.get("idea_id"))
+        if idea_id is not None:
+            return core_db.get_idea_evaluations(idea_id, limit=limit)
+        rows: list[dict[str, Any]] = []
+        for idea in core_db.list_investment_ideas(include_archived=True, limit=500):
+            rows.extend(core_db.get_idea_evaluations(int(idea["id"]), limit=limit))
+        return sorted(rows, key=lambda row: str(row.get("evaluated_at") or ""), reverse=True)[:limit]
+    if object_type == "IdeaComparisonRun":
+        return core_db.list_idea_comparison_runs(limit=limit)
     if object_type == "OptimizationMission":
         status = filters.get("status")
         return core_db.get_optimization_missions(status=status)[:limit]
@@ -359,6 +420,15 @@ def _legacy_list_objects(
     return []
 
 
+def _legacy_positions(portfolio_db: Any, *, include_hedges: bool) -> list[dict[str, Any]]:
+    try:
+        return portfolio_db.get_positions(include_hedges=include_hedges)
+    except TypeError as exc:
+        if "include_hedges" not in str(exc):
+            raise
+        return portfolio_db.get_positions()
+
+
 def _find_by_id(rows: list[dict[str, Any]], raw_id: str) -> dict[str, Any] | None:
     for row in rows:
         if str(row.get("id")) == str(raw_id):
@@ -369,8 +439,11 @@ def _find_by_id(rows: list[dict[str, Any]], raw_id: str) -> dict[str, Any] | Non
 def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
+    text = str(value).strip()
+    if ":" in text:
+        text = text.rsplit(":", 1)[-1]
     try:
-        return int(value)
+        return int(text)
     except (TypeError, ValueError):
         return None
 

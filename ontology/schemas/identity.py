@@ -82,7 +82,10 @@ def scenario_id(identifier: object) -> str:
 
 
 def policy_gate_result_id(identifier: object) -> str:
-    return f"policy_gate_result:{slug(identifier)}"
+    text = str(identifier or "").strip()
+    if text.startswith("policy_gate_result:"):
+        text = text.split(":", 1)[1]
+    return f"policy_gate_result:{slug(text)}"
 
 
 def trade_proposal_id(identifier: object) -> str:

@@ -2603,6 +2603,18 @@ def _command_agent_context(actor: Actor, provenance_event_id: str | None = None)
     )
 
 
+def _source_provenance_event_id(source_id: str | None) -> str | None:
+    if not source_id:
+        return None
+    text = str(source_id)
+    if text.startswith("pv:"):
+        return text
+    marker = ":pv:"
+    if marker not in text:
+        return None
+    return "pv:" + text.split(marker, 1)[1]
+
+
 def propose_action_from_tool(
     tool_name: str,
     raw_input: dict[str, Any],
@@ -2633,6 +2645,7 @@ def propose_action_from_tool(
                 actor_id=context.actor.actor_id,
                 source_type=context.source_type,
                 source_id=context.source_id,
+                provenance_event_id=_source_provenance_event_id(context.source_id),
             ),
             reason=reason,
             entity_id=_legacy_entity_id(entity_id),
