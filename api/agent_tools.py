@@ -37,14 +37,17 @@ from api.agent_governance import (
 from api.cache import _get_or_set_cached_with_status, get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
 from ontology.action_registry import (
+    ActionContext,
     ActionValidationError,
     get_action,
     get_tool_exposure,
     is_agent_tool_exposed,
     iter_tool_exposures,
+    propose_action,
     validate_tool_input,
 )
 from ontology.command_service import OntologyCommandContext, OntologyCommandService
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor, agent_actor
 
 logger = logging.getLogger("api.agent")
@@ -2621,6 +2624,19 @@ def propose_action_from_tool(
         raise ActionValidationError(str(exc)) from exc
     reason = exposure.reason_builder(typed_input) if exposure.reason_builder else None
     entity_id = exposure.entity_id_builder(typed_input) if exposure.entity_id_builder else None
+    if not ontology_primary_writes_enabled():
+        return propose_action(
+            exposure.action_id,
+            action_input,
+            ActionContext(
+                actor_type="agent",
+                actor_id=context.actor.actor_id,
+                source_type=context.source_type,
+                source_id=context.source_id,
+            ),
+            reason=reason,
+            entity_id=_legacy_entity_id(entity_id),
+        )
     return OntologyCommandService().propose_action(
         exposure.action_id,
         action_input,
@@ -2628,6 +2644,15 @@ def propose_action_from_tool(
         reason=reason,
         entity_id=str(entity_id) if entity_id is not None else None,
     )
+
+
+def _legacy_entity_id(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _dispatch(
@@ -2851,9 +2876,19 @@ def _dispatch(
         key = f"portfolio:v2:{timeframe}:hedges={include_hedges}"
 
         def _load():
+            import importlib
+
             from ontology.runtime_read_service import OntologyRuntimeReadService
 
             raw = {"timeframe": timeframe}
+            try:
+                dashboard = importlib.import_module("portfolio.portfolio_dashboard")
+                dashboard_payload = serialize_value(dashboard.get_data(timeframe=timeframe))
+                if isinstance(dashboard_payload, dict):
+                    raw = dashboard_payload
+                    raw.setdefault("timeframe", timeframe)
+            except Exception:
+                raw = {"timeframe": timeframe}
             holdings = OntologyRuntimeReadService().positions(include_hedges=include_hedges)
             return _build_agent_portfolio_payload(raw, holdings, include_hedges=include_hedges)
 

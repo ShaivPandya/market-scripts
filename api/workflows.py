@@ -22,6 +22,7 @@ from typing import Any
 from api.agent_tools import execute_tool
 from api.audit import emit_audit_event
 from ontology.action_registry import get_tool_exposure
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.object_service import OntologyObjectService
 from ontology.policy import Actor, admin_actor
 
@@ -825,6 +826,11 @@ def create_workflow_run(
     *,
     actor: Actor | None = None,
 ) -> dict[str, Any]:
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.create_workflow_run(workflow_name, ticker=ticker)
+
     now = datetime.now(UTC).isoformat()
     run_id = f"workflow:{workflow_name}:{uuid.uuid4().hex}"
     OntologyObjectService().write_object(
@@ -853,6 +859,11 @@ def complete_workflow_run(
     *,
     actor: Actor | None = None,
 ) -> dict[str, Any]:
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.complete_workflow_run(run_id, synthesis, artifacts=artifacts, tool_sections=sections)
+
     now = datetime.now(UTC).isoformat()
     existing = OntologyObjectService().get_object(run_id) or {}
     props = dict(existing.get("properties") or existing.get("properties_json") or {})
@@ -880,6 +891,11 @@ def complete_workflow_run(
 
 
 def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) -> dict[str, Any]:
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.fail_workflow_run(run_id, error)
+
     now = datetime.now(UTC).isoformat()
     existing = OntologyObjectService().get_object(run_id) or {}
     props = dict(existing.get("properties") or existing.get("properties_json") or {})

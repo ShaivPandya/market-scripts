@@ -20,6 +20,8 @@ import sys
 
 import requests
 
+from ontology.domain_write_service import ontology_primary_writes_enabled
+
 
 def _build_headers() -> dict[str, str]:
     headers: dict[str, str] = {}
@@ -80,6 +82,12 @@ def fetch_and_seed() -> int:
 
     total = len(positions) + len(hedges)
     print(f"Fetched {len(positions)} position(s) and {len(hedges)} hedge(s) from ontology runtime.")
+
+    if not ontology_primary_writes_enabled():
+        from portfolio.portfolio_db import save_positions
+
+        save_positions(positions, role="position")
+        save_positions(hedges, role="hedge")
 
     if total == 0:
         print("WARNING: No positions returned from API; report generation will still block.", file=sys.stderr)

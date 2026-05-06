@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -67,6 +68,8 @@ def _business_key(prefix: str, *parts: Any) -> str:
 def _write_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
     props = dict(properties)
     props.setdefault("updated_at", _now_iso())
+    if not ontology_primary_writes_enabled():
+        return _write_legacy_runtime_object(object_type, business_key, props)
     row = OntologyObjectService().write_object(
         object_type,
         business_key,
@@ -80,6 +83,57 @@ def _write_runtime_object(object_type: str, business_key: str, properties: dict[
     payload["id"] = object_uid
     payload["object_uid"] = object_uid
     return payload
+
+
+def _write_legacy_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
+    from portfolio import core_db
+
+    props = dict(properties)
+    if object_type == "OptimizationRun":
+        status = str(props.get("status") or "running")
+        run_id = str(props.get("run_id") or business_key)
+        if status in {"succeeded", "completed"}:
+            return core_db.complete_optimization_run(
+                run_id,
+                summary=_as_dict(props.get("summary")),
+                source_freshness=_as_dict(props.get("source_freshness")),
+                input_hash=props.get("input_hash"),
+                output_hash=props.get("output_hash"),
+            )
+        if status == "failed":
+            return core_db.fail_optimization_run(
+                run_id,
+                str(props.get("error") or "Continuous optimizer failed."),
+                summary=_as_dict(props.get("summary")),
+                source_freshness=_as_dict(props.get("source_freshness")),
+            )
+        return core_db.create_optimization_run(
+            {"id": int(props["mission_id"]), "name": props.get("mission_name")},
+            run_id=run_id,
+            input_hash=props.get("input_hash"),
+        )
+    if object_type == "OptimizationActionSnapshot":
+        return core_db.create_optimization_action_snapshot(props)
+    if object_type == "OptimizationAlert":
+        alert_id = props.get("id")
+        if isinstance(alert_id, int) or (isinstance(alert_id, str) and alert_id.isdigit()):
+            return core_db.update_optimization_alert_links(
+                int(alert_id),
+                approval_id=_optional_int(props.get("approval_id")),
+                action_item_approval_id=_optional_int(props.get("action_item_approval_id")),
+                recommendation_id=_optional_int(props.get("recommendation_id")),
+            )
+        return core_db.create_optimization_alert(props)
+    raise ValueError(f"Unsupported legacy optimizer object type: {object_type}")
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return int(text)
 
 
 def _action_is_hold(action: str) -> bool:
@@ -312,8 +366,6 @@ def _is_material_change(previous: dict[str, Any] | None, current: dict[str, Any]
 
 
 def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str | None:
-    from ontology.command_service import OntologyCommandContext, OntologyCommandService
-
     ticker = str(snapshot.get("ticker") or "").upper() or None
     action = str(snapshot.get("action") or "Review")
     severity = str(alert.get("severity") or "normal")
@@ -328,6 +380,28 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str |
     description = f"Continuous optimizer: {alert['change_summary']}"
     if rationale:
         description = f"{description}\n\nEvidence: {rationale}"
+    if not ontology_primary_writes_enabled():
+        from portfolio.action_registry import ActionContext, propose_action
+
+        approval = propose_action(
+            "create_action_item",
+            {
+                "ticker": ticker,
+                "action_type": action_type,
+                "description": description,
+                "urgency": urgency,
+            },
+            ActionContext(
+                actor_type="workflow",
+                source_type="workflow",
+                source_id=str(alert.get("run_id")),
+            ),
+            reason=f"Review continuous optimizer alert {alert['id']}",
+        )
+        return str(approval["id"]) if approval and approval.get("id") is not None else None
+
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+
     approval = OntologyCommandService().propose_action(
         "create_action_item",
         {

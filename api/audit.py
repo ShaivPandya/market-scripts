@@ -59,6 +59,15 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _ontology_primary_writes_enabled() -> bool:
+    try:
+        from ontology.domain_write_service import ontology_primary_writes_enabled
+
+        return ontology_primary_writes_enabled()
+    except Exception:
+        return False
+
+
 def _is_sensitive_key(key: Any) -> bool:
     lowered = str(key or "").strip().lower()
     if lowered.endswith("_hash") or lowered.endswith("_fingerprint") or lowered in {"hash", "sha256"}:
@@ -187,6 +196,39 @@ def emit_audit_event(
     actor_id, actor_type, parent_actor_id = _actor_fields(actor)
     refs = _normalize_object_refs(object_refs)
     rid = request_id if request_id is not None else request_id_var.get("")
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
+
+            return core_db.record_audit_event(
+                action_name=action_name,
+                action_category=action_category,
+                status=status,
+                request_id=rid or None,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                parent_actor_id=parent_actor_id,
+                object_refs=refs,
+                before_summary=summarize_for_audit(before_summary),
+                after_summary=summarize_for_audit(after_summary),
+                source_lineage=summarize_for_audit(source_lineage),
+                metadata=summarize_for_audit(metadata),
+                error=error,
+                schema_version=schema_version,
+                criticality=criticality,
+                lineage_root_id=lineage_root_id,
+                idempotency_key=idempotency_key,
+                producer_name=producer_name,
+                producer_version=producer_version,
+                redaction_policy=redaction_policy,
+                retention_class=retention_class,
+            )
+        except Exception as exc:
+            logger.warning("Failed to write audit event action=%s status=%s", action_name, status, exc_info=True)
+            if fail_closed:
+                raise AuditWriteError(f"Failed to write mandatory audit event {action_name}:{status}") from exc
+            return None
+
     try:
         now = datetime.now(UTC).isoformat()
         event_key = idempotency_key or f"{action_name}:{status}:{rid}:{_stable_hash(object_refs)}:{now}"
