@@ -34,6 +34,75 @@ def test_audit_helper_can_fail_closed(monkeypatch):
         emit_audit_event("test.critical", "test", "failed", fail_closed=True)
 
 
+def test_record_now_normalizes_governance_link_verbs(monkeypatch):
+    calls: list[dict] = []
+
+    class _FakeObjects:
+        pass
+
+    def _capture_link(**kwargs):
+        calls.append(kwargs)
+        return {"relation_uid": "provenance:test"}
+
+    monkeypatch.setattr(governance, "OntologyObjectService", _FakeObjects)
+    monkeypatch.setattr(governance, "write_provenance_relation", _capture_link)
+
+    root = governance.lineage_root(governance.REF_RECOMMENDATION, 42)
+    bundle = governance.event_bundle(
+        lineage_root_id=root,
+        provenance_links=[
+            governance.provenance_link(
+                event_id="pv:gated",
+                source_ref_type=governance.REF_POLICY_GATE_RESULT,
+                source_ref_id=7,
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=42,
+                link_type=governance.LINK_GATED,
+                lineage_root_id=root,
+            ),
+            governance.provenance_link(
+                event_id="pv:applied",
+                source_ref_type=governance.REF_APPROVAL,
+                source_ref_id=9,
+                target_ref_type=governance.REF_ACTION_RUN,
+                target_ref_id=10,
+                link_type=governance.LINK_APPLIED_BY,
+                lineage_root_id=root,
+                metadata={"note": "apply"},
+            ),
+            governance.provenance_link(
+                event_id="pv:evaluated",
+                source_ref_type=governance.REF_POLICY_GATE_RESULT,
+                source_ref_id=7,
+                target_ref_type=governance.REF_RECOMMENDATION,
+                target_ref_id=42,
+                link_type=governance.LINK_EVALUATED,
+                lineage_root_id=root,
+                metadata="legacy metadata",
+            ),
+        ],
+    )
+
+    result = governance.record_now_tx(None, bundle)
+
+    assert result["provenance_links"] == 3
+    assert [call["link_type"] for call in calls] == [
+        governance.LINK_USED,
+        governance.LINK_APPROVED_EXECUTION,
+        governance.LINK_USED,
+    ]
+    assert all(call["fail_closed"] is True for call in calls)
+    assert calls[0]["metadata"] == {"governance_link_type": governance.LINK_GATED}
+    assert calls[1]["metadata"]["note"] == "apply"
+    assert calls[1]["metadata"]["field_names"] == ["note"]
+    assert calls[1]["metadata"]["governance_link_type"] == governance.LINK_APPLIED_BY
+    assert calls[2]["metadata"] == {
+        "metadata": "legacy metadata",
+        "governance_link_type": governance.LINK_EVALUATED,
+    }
+    assert bundle["provenance_links"][1]["metadata"] == {"field_names": ["note"], "note": "apply"}
+
+
 def test_governance_outbox_replays_idempotently_and_redacts():
     root = governance.lineage_root(governance.REF_RECOMMENDATION, 42)
     event_id = governance.deterministic_id("pv:recommendation", 42, "generated")
