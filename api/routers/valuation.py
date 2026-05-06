@@ -28,7 +28,7 @@ class ValuationValueRangeRequest(BaseModel):
 
 def valuation_cache_key(ticker: str, profile_override: str | None = None) -> str:
     profile = profile_override or "auto"
-    return f"position_valuation:v2:{ticker.strip().upper()}:profile={profile}"
+    return f"position_valuation:v3:{ticker.strip().upper()}:profile={profile}"
 
 
 def delete_valuation_cache_variants(ticker: str, profile_overrides: list[str | None]) -> None:

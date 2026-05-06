@@ -1936,16 +1936,6 @@ export interface PositionValuation {
       q3?: number | null
     }>
   }
-  historical_bands: Record<string, {
-    status: string
-    periods?: number
-    median?: number | null
-    q1?: number | null
-    q3?: number | null
-    min?: number | null
-    max?: number | null
-    percentile?: number | null
-  }>
   composite_score: { value: number | null; status: string; components: Record<string, unknown> }
   data_quality: { status: string; usable_metric_count: number; warnings: string[]; metric_statuses: Record<string, string> }
   value_range?: PositionValueRange | null

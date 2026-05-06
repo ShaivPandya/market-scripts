@@ -20,7 +20,6 @@ def test_get_position_valuation_endpoint(auth_client, monkeypatch):
             },
             "metrics": {},
             "peer_context": {"source": "mock", "peer_count": 0, "peers": [], "metric_stats": {}},
-            "historical_bands": {},
             "composite_score": {"value": None, "status": "missing", "components": {}},
             "data_quality": {"status": "ok", "usable_metric_count": 0, "warnings": [], "metric_statuses": {}},
             "value_range": {

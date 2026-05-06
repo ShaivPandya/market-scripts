@@ -17,11 +17,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from utils.retry import yf_download, yf_ticker_info
+from utils.retry import yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
 
@@ -468,7 +467,7 @@ def _write_value_ranges(ranges: Mapping[str, Mapping[str, Any]]) -> None:
     )
 
 
-def get_position_valuation(ticker: str, *, include_peers: bool = True, include_history: bool = True) -> dict[str, Any]:
+def get_position_valuation(ticker: str, *, include_peers: bool = True) -> dict[str, Any]:
     normalized = _clean_ticker(ticker)
     if not normalized:
         raise ValueError("Ticker is required")
@@ -484,13 +483,11 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True, include_h
     profile = resolve_profile(info, override)
     effective_weights = effective_profile_weights(profile["weights"], current["metrics"])
     peers = peer_context(normalized, info, current["metrics"]) if include_peers else _empty_peer_context()
-    history = historical_bands(normalized, current["metrics"]) if include_history else {}
     composite_score = composite_valuation_score(current["metrics"], peers, effective_weights)
     value_range = value_range_payload(
         saved_assumption=read_value_range_assumption(normalized),
         metrics=current["metrics"],
         peers=peers,
-        history=history,
         effective_weights=effective_weights,
         market_data={
             "market_cap": market_cap,
@@ -525,7 +522,6 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True, include_h
         },
         "metrics": current["metrics"],
         "peer_context": peers,
-        "historical_bands": history,
         "composite_score": composite_score,
         "data_quality": valuation_data_quality(current["metrics"], peers),
         "value_range": value_range,
@@ -537,7 +533,6 @@ def value_range_payload(
     saved_assumption: Mapping[str, Any] | None,
     metrics: Mapping[str, Mapping[str, Any]],
     peers: Mapping[str, Any],
-    history: Mapping[str, Any],
     effective_weights: Mapping[str, Any],
     market_data: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -545,7 +540,7 @@ def value_range_payload(
     assumption = (
         _normalize_value_range_payload(saved_assumption, require_complete=True)
         if saved_assumption is not None
-        else default_value_range_assumption(metrics, peers=peers, history=history, effective_weights=effective_weights)
+        else default_value_range_assumption(metrics, peers=peers, effective_weights=effective_weights)
     )
     metric = normalize_value_range_metric(assumption.get("metric"))
     scenarios = {
@@ -591,12 +586,11 @@ def default_value_range_assumption(
     metrics: Mapping[str, Mapping[str, Any]],
     *,
     peers: Mapping[str, Any],
-    history: Mapping[str, Any],
     effective_weights: Mapping[str, Any],
 ) -> dict[str, Any]:
     metric = _default_value_range_metric(metrics, effective_weights)
     denominator = _positive_float((metrics.get(metric) or {}).get("denominator"))
-    bear, base, bull = _default_value_range_multiples(metric, metrics, peers=peers, history=history)
+    bear, base, bull = _default_value_range_multiples(metric, metrics, peers=peers)
     return {
         "metric": metric,
         "scenarios": {
@@ -693,18 +687,7 @@ def _default_value_range_multiples(
     metrics: Mapping[str, Mapping[str, Any]],
     *,
     peers: Mapping[str, Any],
-    history: Mapping[str, Any],
 ) -> tuple[float | None, float | None, float | None]:
-    historical = history.get(metric) if isinstance(history, Mapping) else None
-    if isinstance(historical, Mapping) and historical.get("status") == "ok":
-        values = (
-            _positive_float(historical.get("q1")),
-            _positive_float(historical.get("median")),
-            _positive_float(historical.get("q3")),
-        )
-        if all(value is not None for value in values):
-            return values
-
     peer_stats = peers.get("metric_stats") if isinstance(peers, Mapping) else None
     peer = peer_stats.get(metric) if isinstance(peer_stats, Mapping) else None
     if isinstance(peer, Mapping) and peer.get("status") == "ok":
@@ -1049,105 +1032,6 @@ def resolve_peer_universe(
         return [], "unavailable"
 
 
-def historical_bands(ticker: str, metrics: Mapping[str, Mapping[str, Any]], *, min_periods: int = 6) -> dict[str, Any]:
-    normalized = _clean_ticker(ticker)
-    try:
-        ticker_obj = yf.Ticker(normalized)
-        info = _fetch_info(normalized)
-        shares = _positive_float(info.get("sharesOutstanding"))
-        if shares is None:
-            return {}
-        prices = yf_download(normalized, period="6y", interval="1d", progress=False)
-        price_series = _close_series(prices, normalized)
-        if price_series is None or price_series.dropna().empty:
-            return {}
-        quarterly_income = _get_yf_statement(ticker_obj, ("quarterly_income_stmt", "quarterly_financials"))
-        quarterly_cashflow = _get_yf_statement(ticker_obj, ("quarterly_cashflow", "quarterly_cash_flow"))
-        quarterly_balance = _get_yf_statement(ticker_obj, ("quarterly_balance_sheet", "quarterly_balancesheet"))
-        return _historical_bands_from_statements(
-            metrics,
-            prices=price_series,
-            shares=shares,
-            quarterly_income=quarterly_income,
-            quarterly_cashflow=quarterly_cashflow,
-            quarterly_balance=quarterly_balance,
-            min_periods=min_periods,
-        )
-    except Exception:
-        LOGGER.debug("%s: failed to compute valuation historical bands", normalized, exc_info=True)
-        return {}
-
-
-def _historical_bands_from_statements(
-    current_metrics: Mapping[str, Mapping[str, Any]],
-    *,
-    prices: pd.Series,
-    shares: float,
-    quarterly_income: pd.DataFrame | None,
-    quarterly_cashflow: pd.DataFrame | None,
-    quarterly_balance: pd.DataFrame | None,
-    min_periods: int,
-) -> dict[str, Any]:
-    dates = _statement_dates(quarterly_income)
-    if len(dates) < 4:
-        return {}
-
-    series_by_metric: dict[str, list[float]] = {key: [] for key in VALUATION_COLUMNS}
-    for idx, period_date in enumerate(dates):
-        if idx + 4 > len(dates):
-            continue
-        px = _price_on_or_before(prices, period_date)
-        if px is None or px <= 0:
-            continue
-        market_cap = px * shares
-        revenue = _rolling_statement_sum(quarterly_income, REVENUE_KEYS, idx, 4)
-        operating_income = _rolling_statement_sum(quarterly_income, OPERATING_INCOME_KEYS, idx, 4)
-        net_income = _rolling_statement_sum(quarterly_income, NET_INCOME_KEYS, idx, 4)
-        ocf = _rolling_statement_sum(quarterly_cashflow, OPERATING_CASH_FLOW_KEYS, idx, 4)
-        capex = _rolling_statement_sum(quarterly_cashflow, CAPEX_KEYS, idx, 4)
-        fcf = _free_cash_flow(ocf, capex)
-        book = _statement_value_at(quarterly_balance, BOOK_VALUE_KEYS, idx)
-        debt = _non_negative_float(_statement_value_at(quarterly_balance, TOTAL_DEBT_KEYS, idx))
-        cash = _non_negative_float(_statement_value_at(quarterly_balance, CASH_KEYS, idx))
-        enterprise_value = _enterprise_value_from_parts(market_cap, debt, cash) or market_cap
-        denominators = {
-            "price_sales": revenue,
-            "price_operating_income": operating_income,
-            "price_fcf": fcf,
-            "price_earnings": net_income,
-            "price_book": book,
-        }
-        for key, denominator in denominators.items():
-            numerator = enterprise_value if key in ENTERPRISE_VALUE_METRICS else market_cap
-            multiple = _multiple(numerator, denominator)
-            if multiple is not None:
-                series_by_metric[key].append(multiple)
-
-    out: dict[str, Any] = {}
-    for key, values in series_by_metric.items():
-        clean = pd.Series([value for value in values if value > 0], dtype="float64")
-        current = _safe_float((current_metrics.get(key) or {}).get("value"))
-        if len(clean) < min_periods:
-            out[key] = {"status": "insufficient_history", "periods": int(len(clean))}
-            continue
-        percentile = None
-        if current is not None and current > 0:
-            rank = int((clean.sort_values() < current).sum()) + 1
-            percentile = 100.0 * (1.0 - ((rank - 1) / max(len(clean) - 1, 1)))
-        out[key] = {
-            "status": "ok",
-            "periods": int(len(clean)),
-            "median": _round_float(clean.median()),
-            "q1": _round_float(clean.quantile(0.25)),
-            "q3": _round_float(clean.quantile(0.75)),
-            "min": _round_float(clean.min()),
-            "max": _round_float(clean.max()),
-            "percentile": round(percentile, 1) if percentile is not None else None,
-            "source": "yfinance_quarterly",
-        }
-    return out
-
-
 def composite_valuation_score(
     metrics: Mapping[str, Mapping[str, Any]],
     peer_context_payload: Mapping[str, Any],
@@ -1401,43 +1285,11 @@ def _series_newest_first(row: pd.Series) -> pd.Series:
     try:
         parsed = pd.to_datetime(row.index, errors="coerce")
         if parsed.notna().any():
-            order = np.argsort(parsed.to_numpy())[::-1]
-            return row.iloc[order]
+            date_index = pd.Series(parsed, index=row.index).dropna().sort_values(ascending=False).index
+            return row.loc[date_index]
     except Exception:
         pass
     return row
-
-
-def _statement_dates(stmt: pd.DataFrame | None) -> list[pd.Timestamp]:
-    if stmt is None or stmt.empty:
-        return []
-    parsed = pd.to_datetime(stmt.columns, errors="coerce")
-    dates = [pd.Timestamp(date) for date in parsed if pd.notna(date)]
-    return sorted(dates, reverse=True)
-
-
-def _rolling_statement_sum(
-    stmt: pd.DataFrame | None, keys: tuple[str, ...], start_idx: int, periods: int
-) -> float | None:
-    row = _statement_row(stmt, keys)
-    if row is None:
-        return None
-    values = row.dropna().iloc[start_idx : start_idx + periods]
-    if len(values) < periods:
-        return None
-    value = float(values.sum())
-    return value if math.isfinite(value) else None
-
-
-def _statement_value_at(stmt: pd.DataFrame | None, keys: tuple[str, ...], idx: int) -> float | None:
-    row = _statement_row(stmt, keys)
-    if row is None:
-        return None
-    values = row.dropna()
-    if idx >= len(values):
-        return None
-    value = float(values.iloc[idx])
-    return value if math.isfinite(value) else None
 
 
 def _free_cash_flow(operating_cash_flow: float | None, capex: float | None) -> float | None:
@@ -1457,42 +1309,6 @@ def _multiple(numerator: float | None, denominator: float | None) -> float | Non
 
 def _price_multiple(market_cap: float | None, denominator: float | None) -> float | None:
     return _multiple(market_cap, denominator)
-
-
-def _close_series(prices: pd.DataFrame | pd.Series, symbol: str) -> pd.Series | None:
-    if isinstance(prices, pd.Series):
-        return prices
-    if prices is None or prices.empty:
-        return None
-    columns = prices.columns
-    if isinstance(columns, pd.MultiIndex):
-        level0 = set(str(item) for item in columns.get_level_values(0))
-        level1 = set(str(item) for item in columns.get_level_values(1))
-        if "Close" in level0 and symbol in level1:
-            return prices["Close"][symbol]
-        if symbol in level0 and "Close" in level1:
-            return prices[symbol]["Close"]
-        if "Close" in level0:
-            close_df = prices["Close"]
-            return close_df.iloc[:, 0] if isinstance(close_df, pd.DataFrame) and not close_df.empty else None
-        return None
-    if symbol in columns:
-        return prices[symbol]
-    if "Close" in columns:
-        return prices["Close"]
-    return prices.iloc[:, 0] if len(prices.columns) else None
-
-
-def _price_on_or_before(prices: pd.Series, period_date: pd.Timestamp) -> float | None:
-    clean = pd.to_numeric(prices, errors="coerce").dropna()
-    if clean.empty:
-        return None
-    idx = pd.to_datetime(clean.index, errors="coerce")
-    series = pd.Series(clean.to_numpy(), index=idx).dropna()
-    series = series[series.index <= period_date]
-    if series.empty:
-        return None
-    return _safe_float(series.iloc[-1])
 
 
 def _positive_float(value: Any) -> float | None:

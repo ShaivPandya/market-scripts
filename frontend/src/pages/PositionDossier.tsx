@@ -1177,11 +1177,6 @@ function valueRangeDefaultMetric(data: PositionValuation): ValuationMetricKey {
 }
 
 function valueRangeDefaultMultiples(data: PositionValuation, metric: ValuationMetricKey): Record<ValueRangeScenarioKey, number | null> {
-  const history = data.historical_bands[metric]
-  if (history?.status === "ok" && positiveNumber(history.q1) != null && positiveNumber(history.median) != null && positiveNumber(history.q3) != null) {
-    return { bear: positiveNumber(history.q1), base: positiveNumber(history.median), bull: positiveNumber(history.q3) }
-  }
-
   const peer = data.peer_context.metric_stats[metric]
   if (peer?.status === "ok" && positiveNumber(peer.q1) != null && positiveNumber(peer.median) != null && positiveNumber(peer.q3) != null) {
     return { bear: positiveNumber(peer.q1), base: positiveNumber(peer.median), bull: positiveNumber(peer.q3) }
@@ -1286,11 +1281,6 @@ function ValueRangePanel({
 }) {
   const [draft, setDraft] = useState<ValueRangeDraft>(() => valueRangeDraftFromData(valuation))
   const [validationError, setValidationError] = useState<string | null>(null)
-
-  useEffect(() => {
-    setDraft(valueRangeDraftFromData(valuation))
-    setValidationError(null)
-  }, [valuation])
 
   function updateScenario(scenario: ValueRangeScenarioKey, patch: Partial<ValueRangeDraft["scenarios"][ValueRangeScenarioKey]>) {
     setValidationError(null)
@@ -1475,6 +1465,7 @@ function ValuationTab({ ticker }: { ticker: string }) {
       )}
 
       <ValueRangePanel
+        key={`${data.ticker}-${data.as_of}-${data.profile.override_profile_id ?? "auto"}-${data.value_range?.source ?? "default"}`}
         valuation={data}
         isSaving={valueRangeMutation.isPending}
         saveError={valueRangeMutation.error}
@@ -1505,7 +1496,6 @@ function ValuationTab({ ticker }: { ticker: string }) {
               <th className="px-3 py-2 font-semibold">Denominator</th>
               <th className="px-3 py-2 font-semibold">Peer Percentile</th>
               <th className="px-3 py-2 font-semibold">Peer Median</th>
-              <th className="px-3 py-2 font-semibold">History</th>
               <th className="px-3 py-2 font-semibold">Status</th>
             </tr>
           </thead>
@@ -1513,7 +1503,6 @@ function ValuationTab({ ticker }: { ticker: string }) {
             {VALUATION_METRIC_ORDER.map(key => {
               const metric = data.metrics[key]
               const peer = data.peer_context.metric_stats[key]
-              const history = data.historical_bands[key]
               return (
                 <tr key={key}>
                   <td className="px-3 py-2">
@@ -1527,11 +1516,6 @@ function ValuationTab({ ticker }: { ticker: string }) {
                   </td>
                   <td className="px-3 py-2 text-app">{formatValuationPct(peer?.percentile)}</td>
                   <td className="px-3 py-2 text-app">{formatMultipleValue(peer?.median)}</td>
-                  <td className="px-3 py-2 text-app">
-                    {history?.status === "ok"
-                      ? `${formatMultipleValue(history.q1)} / ${formatMultipleValue(history.median)} / ${formatMultipleValue(history.q3)}`
-                      : "N/A"}
-                  </td>
                   <td className="px-3 py-2">
                     <span className={cn("inline-flex rounded border px-2 py-0.5 text-xs font-semibold", valuationStatusClass(metric?.status))}>
                       {(metric?.status ?? "missing").replace(/_/g, " ")}
