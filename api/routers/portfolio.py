@@ -2,9 +2,9 @@ import hashlib
 import json
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
-from api.cache import get_or_set_cached, short_cache
+from api.cache import get_or_set_cached, long_cache, short_cache
 from api.exceptions import DataFetchError
 from api.serializers import serialize_value
 from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -13,6 +13,7 @@ router = APIRouter()
 
 VALID_TIMEFRAMES = {"This Week", "Daily", "Weekly", "Monthly"}
 CACHE_VERSION = "v3"
+PORTFOLIO_REPLACEMENT_ENDPOINT = "/api/v1/portfolio?timeframe={timeframe}"
 
 
 def _current_holdings() -> list[Any]:
@@ -31,17 +32,26 @@ def _holdings_cache_token(holdings: list[Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
+def _cache_for_timeframe(timeframe: str, *, all_timeframes: bool):
+    if all_timeframes or timeframe == "This Week":
+        return short_cache
+    return long_cache
+
+
 @router.get("/portfolio")
-def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
+def get_portfolio(response: Response, timeframe: str = "Daily", all_timeframes: bool = False):
     holdings = _current_holdings()
     holdings_token = _holdings_cache_token(holdings)
 
     if all_timeframes:
         key = f"portfolio:all_timeframes:{CACHE_VERSION}:{holdings_token}"
+        cache = _cache_for_timeframe(timeframe, all_timeframes=True)
+        response.headers["Deprecation"] = "true"
     else:
         if timeframe not in VALID_TIMEFRAMES:
             timeframe = "Daily"
         key = f"portfolio:{CACHE_VERSION}:{timeframe}:{holdings_token}"
+        cache = _cache_for_timeframe(timeframe, all_timeframes=False)
 
     def loader():
         try:
@@ -58,7 +68,15 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
 
         if isinstance(result, dict) and holdings:
             result["holdings"] = holdings
+        if isinstance(result, dict) and all_timeframes:
+            raw_meta = result.get("_meta")
+            meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
+            result["_meta"] = {
+                **meta,
+                "deprecated_endpoint": True,
+                "replacement": PORTFOLIO_REPLACEMENT_ENDPOINT,
+            }
 
         return result
 
-    return get_or_set_cached(short_cache, key, loader)
+    return get_or_set_cached(cache, key, loader)

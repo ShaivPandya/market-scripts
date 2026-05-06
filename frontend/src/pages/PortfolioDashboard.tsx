@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { useRegisterScreenContext } from "@/contexts/ScreenContext"
 import { useApiQuery } from "@/hooks/useApiQuery"
-import { fetchPortfolioAllTimeframes } from "@/lib/api"
+import { fetchPortfolio } from "@/lib/api"
 import { TimeSeriesChart, calcReturn, type DataPoint, type SeriesDef } from "@/components/shared/TimeSeriesChart"
 import { LoadingSpinner, ErrorMessage } from "@/components/shared/LoadingSpinner"
 import { RefreshButton } from "@/components/shared/RefreshButton"
@@ -39,10 +40,8 @@ type TimeframePayload = {
   position_order?: string[]
   warning?: string
 }
-type PortfolioAllTimeframesResponse = {
-  timeframes?: Partial<Record<Timeframe, TimeframePayload>>
+type PortfolioTimeframeResponse = TimeframePayload & {
   holdings?: Array<{ ticker?: string | null; role?: string | null }>
-  warning?: string
 }
 
 interface UnifiedPositionSummary {
@@ -61,6 +60,10 @@ interface UnifiedPerformance {
 
 function timeframeLabel(timeframe: Timeframe): string {
   return timeframe === "This Week" ? "Past Week" : timeframe
+}
+
+function portfolioStaleTime(timeframe: Timeframe): number {
+  return timeframe === "This Week" ? 5 * 60 * 1000 : 60 * 60 * 1000
 }
 
 function isFiniteNumber(value: number | null | undefined): value is number {
@@ -134,34 +137,86 @@ function buildUnifiedPerformance(
 }
 
 export function PortfolioDashboard() {
+  const queryClient = useQueryClient()
   const [timeframe, setTimeframe] = useState<Timeframe>("This Week")
   const [viewMode, setViewMode] = useState<ViewMode>("Grid")
   const [editOpen, setEditOpen] = useState(false)
 
-  const { data, isLoading, error } = useApiQuery<PortfolioAllTimeframesResponse>(
-    ["portfolio", "all_timeframes"],
-    fetchPortfolioAllTimeframes,
+  const {
+    data: timeframeData,
+    isLoading,
+    error,
+    isSuccess,
+  } = useApiQuery<PortfolioTimeframeResponse>(
+    ["portfolio", timeframe],
+    () => fetchPortfolio(timeframe),
+    portfolioStaleTime(timeframe),
   )
-  const timeframeData = data?.timeframes?.[timeframe]
+
+  useEffect(() => {
+    if (!isSuccess) return
+
+    let cancelled = false
+    let timeoutId: number | null = null
+    let idleId: number | null = null
+
+    const prefetchRemainingTimeframes = async () => {
+      for (const nextTimeframe of TIMEFRAMES) {
+        if (cancelled || nextTimeframe === timeframe) continue
+        try {
+          await queryClient.prefetchQuery({
+            queryKey: ["portfolio", nextTimeframe],
+            queryFn: () => fetchPortfolio(nextTimeframe),
+            staleTime: portfolioStaleTime(nextTimeframe),
+          })
+        } catch {
+          // Background prefetch is opportunistic; the active query will surface errors when selected.
+        }
+      }
+    }
+
+    const startPrefetch = () => {
+      void prefetchRemainingTimeframes()
+    }
+
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(startPrefetch)
+    } else {
+      timeoutId = window.setTimeout(startPrefetch, 1000)
+    }
+
+    return () => {
+      cancelled = true
+      if (idleId !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId)
+      }
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+    }
+  }, [isSuccess, queryClient, timeframe])
+
+  const refreshQueryKeys = useMemo(() => [["portfolio", timeframe], ["thesis", "status"]], [timeframe])
+  const invalidatePortfolioQueries = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["portfolio"], refetchType: "none" })
+  }
+
   const loadError = error
     ? String(error)
-    : !data
-    ? "Failed to load portfolio data."
     : !timeframeData
-    ? `No ${timeframeLabel(timeframe)} portfolio data returned.`
+    ? "Failed to load portfolio data."
     : null
+  const holdings = timeframeData?.holdings
   const activePortfolioTickers = useMemo(() => {
-    if (!Array.isArray(data?.holdings)) return null
+    if (!Array.isArray(holdings)) return null
 
     const tickers = new Set(
-      data.holdings
+      holdings
         .filter(holding => String(holding.role ?? "position").toLowerCase() !== "hedge")
         .map(holding => String(holding.ticker ?? "").trim().toUpperCase())
         .filter(Boolean),
     )
 
     return tickers.size > 0 ? tickers : null
-  }, [data?.holdings])
+  }, [holdings])
   const positions: Record<string, DataPoint[]> = useMemo(
     () => {
       const rawPositions = timeframeData?.positions ?? {}
@@ -181,7 +236,7 @@ export function PortfolioDashboard() {
     },
     [activePortfolioTickers, positions, timeframeData?.position_order],
   )
-  const warning = timeframeData?.warning ?? data?.warning
+  const warning = timeframeData?.warning
   const hasSeries = order.some(ticker => {
     const series = positions[ticker]
     return Array.isArray(series) && series.length > 0
@@ -232,7 +287,10 @@ export function PortfolioDashboard() {
             >
               Edit Portfolio
             </button>
-            <RefreshButton queryKeys={[["portfolio", "all_timeframes"], ["thesis", "status"]]} />
+            <RefreshButton
+              queryKeys={refreshQueryKeys}
+              beforeRefetch={invalidatePortfolioQueries}
+            />
           </>
         )}
       />
