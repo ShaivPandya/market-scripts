@@ -32,11 +32,12 @@ VALUATION_COLUMNS = (
     "price_earnings",
     "price_book",
 )
+ENTERPRISE_VALUE_METRICS = {"price_sales", "price_operating_income", "price_fcf"}
 
 VALUATION_LABELS = {
-    "price_sales": "P/S",
-    "price_operating_income": "P/Operating Income",
-    "price_fcf": "P/FCF",
+    "price_sales": "EV/S",
+    "price_operating_income": "EV/EBIT",
+    "price_fcf": "EV/FCF",
     "price_earnings": "P/E",
     "price_book": "P/B",
 }
@@ -51,10 +52,17 @@ VALUATION_PERIODS = {
 
 DENOMINATOR_LABELS = {
     "price_sales": "TTM revenue",
-    "price_operating_income": "TTM operating income",
+    "price_operating_income": "TTM EBIT",
     "price_fcf": "TTM free cash flow",
     "price_earnings": "TTM net income",
     "price_book": "latest book value",
+}
+NUMERATOR_LABELS = {
+    "price_sales": "enterprise value",
+    "price_operating_income": "enterprise value",
+    "price_fcf": "enterprise value",
+    "price_earnings": "market capitalization",
+    "price_book": "market capitalization",
 }
 
 DEFAULT_PROFILE_ID = "general_equity"
@@ -175,13 +183,13 @@ REVENUE_KEYS = (
     "Revenues",
 )
 OPERATING_INCOME_KEYS = (
+    "EBIT",
     "Operating Income",
     "OperatingIncome",
     "Operating Income Loss",
     "OperatingIncomeLoss",
     "Income From Operations",
     "IncomeLossFromOperations",
-    "EBIT",
 )
 NET_INCOME_KEYS = (
     "Net Income",
@@ -211,6 +219,22 @@ BOOK_VALUE_KEYS = (
     "Total Equity Gross Minority Interest",
     "Common Stock Equity",
     "CommonStocksIncludingAdditionalPaidInCapital",
+)
+TOTAL_DEBT_KEYS = (
+    "Total Debt",
+    "TotalDebt",
+    "Long Term Debt And Capital Lease Obligation",
+    "LongTermDebtAndCapitalLeaseObligation",
+    "Long Term Debt",
+    "LongTermDebt",
+)
+CASH_KEYS = (
+    "Cash And Cash Equivalents",
+    "CashAndCashEquivalents",
+    "Cash Cash Equivalents And Short Term Investments",
+    "CashCashEquivalentsAndShortTermInvestments",
+    "Cash Financial",
+    "Cash",
 )
 
 
@@ -358,6 +382,8 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True, include_h
         "source_policy": "free_providers",
         "market_data": {
             "market_cap": current.get("market_cap"),
+            "enterprise_value": current.get("enterprise_value"),
+            "net_debt": current.get("net_debt"),
             "currency": info.get("currency"),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
@@ -411,6 +437,13 @@ def compute_current_multiples_from_statements(
     annual_balance: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     market_cap = _market_cap(info)
+    enterprise_value_payload = _enterprise_value(
+        info,
+        market_cap=market_cap,
+        quarterly_balance=quarterly_balance,
+        annual_balance=annual_balance,
+    )
+    enterprise_value = enterprise_value_payload["value"]
     revenue_ttm = _ttm_or_latest(quarterly_income, annual_income, REVENUE_KEYS)
     operating_income_ttm = _ttm_or_latest(quarterly_income, annual_income, OPERATING_INCOME_KEYS)
     net_income_ttm = _ttm_or_latest(quarterly_income, annual_income, NET_INCOME_KEYS)
@@ -422,19 +455,39 @@ def compute_current_multiples_from_statements(
         book_value = _latest_statement_value(annual_balance, BOOK_VALUE_KEYS)
 
     metrics = {
-        "price_sales": _metric_payload("price_sales", market_cap, revenue_ttm, source="yfinance_statements"),
+        "price_sales": _metric_payload(
+            "price_sales",
+            enterprise_value,
+            revenue_ttm,
+            source="yfinance_statements",
+            numerator_source=enterprise_value_payload["source"],
+            numerator_degraded=enterprise_value_payload["degraded"],
+            numerator_reason=enterprise_value_payload["reason"],
+        ),
         "price_operating_income": _metric_payload(
             "price_operating_income",
-            market_cap,
+            enterprise_value,
             operating_income_ttm,
             source="yfinance_statements",
+            numerator_source=enterprise_value_payload["source"],
+            numerator_degraded=enterprise_value_payload["degraded"],
+            numerator_reason=enterprise_value_payload["reason"],
         ),
-        "price_fcf": _metric_payload("price_fcf", market_cap, fcf_ttm, source="yfinance_statements"),
+        "price_fcf": _metric_payload(
+            "price_fcf",
+            enterprise_value,
+            fcf_ttm,
+            source="yfinance_statements",
+            numerator_source=enterprise_value_payload["source"],
+            numerator_degraded=enterprise_value_payload["degraded"],
+            numerator_reason=enterprise_value_payload["reason"],
+        ),
         "price_earnings": _metric_payload(
             "price_earnings",
             market_cap,
             net_income_ttm,
             source="yfinance_statements",
+            numerator_source="market_cap",
             fallback_value=_positive_float(info.get("trailingPE")),
             fallback_source="yfinance_info.trailingPE",
         ),
@@ -443,35 +496,47 @@ def compute_current_multiples_from_statements(
             market_cap,
             book_value,
             source="yfinance_balance_sheet",
+            numerator_source="market_cap",
             fallback_value=_positive_float(info.get("priceToBook")),
             fallback_source="yfinance_info.priceToBook",
         ),
     }
-    return {"market_cap": market_cap, "metrics": metrics}
+    return {
+        "market_cap": market_cap,
+        "enterprise_value": enterprise_value,
+        "net_debt": enterprise_value_payload["net_debt"],
+        "metrics": metrics,
+    }
 
 
 def _metric_payload(
     key: str,
-    market_cap: float | None,
+    numerator: float | None,
     denominator: float | None,
     *,
     source: str,
+    numerator_source: str | None = None,
+    numerator_degraded: bool = False,
+    numerator_reason: str | None = None,
     fallback_value: float | None = None,
     fallback_source: str | None = None,
 ) -> dict[str, Any]:
-    value = _price_multiple(market_cap, denominator)
+    value = _multiple(numerator, denominator)
     status = "ok" if value is not None else "missing"
     reason = None
 
-    if market_cap is None or market_cap <= 0:
+    if numerator is None or numerator <= 0:
         status = "missing"
-        reason = "missing_market_cap"
+        reason = "missing_enterprise_value" if key in ENTERPRISE_VALUE_METRICS else "missing_market_cap"
     elif denominator is None:
         status = "missing"
         reason = "missing_denominator"
     elif denominator <= 0:
         status = "not_meaningful"
         reason = "non_positive_denominator"
+    elif numerator_degraded:
+        status = "degraded"
+        reason = numerator_reason or "using_degraded_numerator"
 
     if value is None and fallback_value is not None and fallback_value > 0:
         value = fallback_value
@@ -484,6 +549,9 @@ def _metric_payload(
         "label": VALUATION_LABELS[key],
         "value": value,
         "period": VALUATION_PERIODS[key],
+        "numerator": numerator,
+        "numerator_label": NUMERATOR_LABELS[key],
+        "numerator_source": numerator_source,
         "denominator": denominator,
         "denominator_label": DENOMINATOR_LABELS[key],
         "status": status,
@@ -720,6 +788,9 @@ def _historical_bands_from_statements(
         capex = _rolling_statement_sum(quarterly_cashflow, CAPEX_KEYS, idx, 4)
         fcf = _free_cash_flow(ocf, capex)
         book = _statement_value_at(quarterly_balance, BOOK_VALUE_KEYS, idx)
+        debt = _non_negative_float(_statement_value_at(quarterly_balance, TOTAL_DEBT_KEYS, idx))
+        cash = _non_negative_float(_statement_value_at(quarterly_balance, CASH_KEYS, idx))
+        enterprise_value = _enterprise_value_from_parts(market_cap, debt, cash) or market_cap
         denominators = {
             "price_sales": revenue,
             "price_operating_income": operating_income,
@@ -728,7 +799,8 @@ def _historical_bands_from_statements(
             "price_book": book,
         }
         for key, denominator in denominators.items():
-            multiple = _price_multiple(market_cap, denominator)
+            numerator = enterprise_value if key in ENTERPRISE_VALUE_METRICS else market_cap
+            multiple = _multiple(numerator, denominator)
             if multiple is not None:
                 series_by_metric[key].append(multiple)
 
@@ -801,7 +873,7 @@ def valuation_data_quality(
     if not any(isinstance(row, Mapping) and row.get("status") == "ok" for row in (peer_stats or {}).values()):
         warnings.append("Peer-relative valuation context is unavailable or thin.")
     if any(status == "degraded" for status in metric_statuses.values()):
-        warnings.append("Some multiples use provider-ratio fallbacks.")
+        warnings.append("Some multiples rely on fallback or partial provider data.")
     return {
         "status": "ok" if not warnings else "degraded",
         "usable_metric_count": len(usable),
@@ -855,6 +927,80 @@ def _market_cap(info: Mapping[str, Any]) -> float | None:
     if price is None or shares is None:
         return None
     return price * shares
+
+
+def _enterprise_value(
+    info: Mapping[str, Any],
+    *,
+    market_cap: float | None,
+    quarterly_balance: pd.DataFrame | None,
+    annual_balance: pd.DataFrame | None,
+) -> dict[str, Any]:
+    debt = _first_not_none(
+        _non_negative_float(info.get("totalDebt")),
+        _non_negative_float(_latest_statement_value(quarterly_balance, TOTAL_DEBT_KEYS)),
+        _non_negative_float(_latest_statement_value(annual_balance, TOTAL_DEBT_KEYS)),
+    )
+    cash = _first_not_none(
+        _non_negative_float(info.get("totalCash")),
+        _non_negative_float(_latest_statement_value(quarterly_balance, CASH_KEYS)),
+        _non_negative_float(_latest_statement_value(annual_balance, CASH_KEYS)),
+    )
+    net_debt = debt - cash if debt is not None and cash is not None else None
+
+    provider_ev = _positive_float(info.get("enterpriseValue"))
+    if provider_ev is not None:
+        return {
+            "value": provider_ev,
+            "source": "yfinance_info.enterpriseValue",
+            "degraded": False,
+            "reason": None,
+            "net_debt": net_debt,
+        }
+
+    from_parts = _enterprise_value_from_parts(market_cap, debt, cash)
+    if from_parts is not None:
+        complete = debt is not None and cash is not None
+        return {
+            "value": from_parts,
+            "source": "yfinance_balance_sheet" if complete else "yfinance_balance_sheet_partial",
+            "degraded": not complete,
+            "reason": None if complete else "partial_enterprise_value_inputs",
+            "net_debt": net_debt,
+        }
+
+    if market_cap is not None and market_cap > 0:
+        return {
+            "value": market_cap,
+            "source": "market_cap_proxy",
+            "degraded": True,
+            "reason": "using_market_cap_enterprise_value_proxy",
+            "net_debt": net_debt,
+        }
+
+    return {
+        "value": None,
+        "source": None,
+        "degraded": False,
+        "reason": "missing_enterprise_value",
+        "net_debt": net_debt,
+    }
+
+
+def _enterprise_value_from_parts(market_cap: float | None, debt: float | None, cash: float | None) -> float | None:
+    if market_cap is None or market_cap <= 0:
+        return None
+    if debt is None and cash is None:
+        return None
+    value = market_cap + (debt or 0.0) - (cash or 0.0)
+    return float(value) if math.isfinite(value) and value > 0 else None
+
+
+def _first_not_none(*values: float | None) -> float | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 def _ttm_or_latest(
@@ -952,13 +1098,17 @@ def _free_cash_flow(operating_cash_flow: float | None, capex: float | None) -> f
     return operating_cash_flow + capex if capex < 0 else operating_cash_flow - capex
 
 
-def _price_multiple(market_cap: float | None, denominator: float | None) -> float | None:
-    if market_cap is None or market_cap <= 0:
+def _multiple(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or numerator <= 0:
         return None
     if denominator is None or denominator <= 0:
         return None
-    value = market_cap / denominator
+    value = numerator / denominator
     return float(value) if math.isfinite(value) else None
+
+
+def _price_multiple(market_cap: float | None, denominator: float | None) -> float | None:
+    return _multiple(market_cap, denominator)
 
 
 def _close_series(prices: pd.DataFrame | pd.Series, symbol: str) -> pd.Series | None:
@@ -1000,6 +1150,11 @@ def _price_on_or_before(prices: pd.Series, period_date: pd.Timestamp) -> float |
 def _positive_float(value: Any) -> float | None:
     out = _safe_float(value)
     return out if out is not None and out > 0 else None
+
+
+def _non_negative_float(value: Any) -> float | None:
+    out = _safe_float(value)
+    return out if out is not None and out >= 0 else None
 
 
 def _safe_float(value: Any) -> float | None:

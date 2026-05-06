@@ -14,6 +14,7 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
     income = _stmt(
         {
             "Total Revenue": [100, 90, 80, 70],
+            "EBIT": [25, 25, 25, 25],
             "Operating Income": [20, 20, 20, 20],
             "Net Income": [10, 10, 10, 10],
         }
@@ -24,7 +25,13 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
             "Capital Expenditure": [-5, -5, -5, -5],
         }
     )
-    balance = _stmt({"Stockholders Equity": [500, 480, 460, 440]})
+    balance = _stmt(
+        {
+            "Stockholders Equity": [500, 480, 460, 440],
+            "Total Debt": [200, 190, 180, 170],
+            "Cash And Cash Equivalents": [50, 45, 40, 35],
+        }
+    )
 
     result = multiples.compute_current_multiples_from_statements(
         {"marketCap": 1000},
@@ -34,11 +41,16 @@ def test_compute_current_multiples_uses_ttm_and_latest_book_value():
     )
 
     metrics = result["metrics"]
-    assert math.isclose(metrics["price_sales"]["value"], 1000 / 340)
-    assert math.isclose(metrics["price_operating_income"]["value"], 1000 / 80)
-    assert math.isclose(metrics["price_fcf"]["value"], 1000 / 40)
+    assert result["enterprise_value"] == 1150
+    assert math.isclose(metrics["price_sales"]["value"], 1150 / 340)
+    assert math.isclose(metrics["price_operating_income"]["value"], 1150 / 100)
+    assert math.isclose(metrics["price_fcf"]["value"], 1150 / 40)
     assert math.isclose(metrics["price_earnings"]["value"], 1000 / 40)
     assert math.isclose(metrics["price_book"]["value"], 2.0)
+    assert metrics["price_sales"]["label"] == "EV/S"
+    assert metrics["price_operating_income"]["label"] == "EV/EBIT"
+    assert metrics["price_operating_income"]["denominator_label"] == "TTM EBIT"
+    assert metrics["price_fcf"]["label"] == "EV/FCF"
     assert metrics["price_book"]["period"] == "MRQ/latest"
 
 
@@ -47,7 +59,8 @@ def test_compute_current_multiples_marks_non_positive_denominators_not_meaningfu
 
     result = multiples.compute_current_multiples_from_statements({"marketCap": 1000}, quarterly_income=income)
 
-    assert result["metrics"]["price_sales"]["status"] == "ok"
+    assert result["metrics"]["price_sales"]["status"] == "degraded"
+    assert result["metrics"]["price_sales"]["reason"] == "using_market_cap_enterprise_value_proxy"
     assert result["metrics"]["price_earnings"]["status"] == "not_meaningful"
     assert result["metrics"]["price_earnings"]["reason"] == "non_positive_denominator"
     assert result["metrics"]["price_earnings"]["value"] is None

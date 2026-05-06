@@ -191,9 +191,9 @@ const COLUMN_LABELS: Record<string, string> = {
   price_mom_signal: "Price Momentum",
   fundamental_momentum_signal: "Fundamental Momentum",
   valuation_signal: "Valuation",
-  price_sales: "P/S",
-  price_operating_income: "P/OI",
-  price_fcf: "P/FCF",
+  price_sales: "EV/S",
+  price_operating_income: "EV/EBIT",
+  price_fcf: "EV/FCF",
   price_earnings: "P/E",
   price_book: "P/B",
 }
@@ -1133,9 +1133,9 @@ export function PortfolioAnalyzer() {
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Valuation</h3>
-              <SliderInput label="P/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="P/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="P/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="EV/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="EV/EBIT" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="EV/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
               <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
               <SliderInput label="P/B" value={scenario.metric_scores.price_book} onChange={v => setMetricScore("price_book", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>

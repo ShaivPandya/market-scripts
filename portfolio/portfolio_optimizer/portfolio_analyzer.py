@@ -262,9 +262,9 @@ VALUATION_COLUMNS = (
     "price_book",
 )
 VALUATION_LABELS = {
-    "price_sales": "P/S",
-    "price_operating_income": "P/Operating Income",
-    "price_fcf": "P/FCF",
+    "price_sales": "EV/S",
+    "price_operating_income": "EV/EBIT",
+    "price_fcf": "EV/FCF",
     "price_earnings": "P/E",
     "price_book": "P/B",
 }

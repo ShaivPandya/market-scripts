@@ -1185,6 +1185,8 @@ function ValuationTab({ ticker }: { ticker: string }) {
         <div className="rounded-lg border border-app px-3 py-2">
           <h3 className="text-sm font-semibold text-app">Market Data</h3>
           <p className="mt-1 text-sm text-muted">
+            EV {formatValuationMoney(data.market_data?.enterprise_value)}
+            {" - "}
             Market cap {formatValuationMoney(data.market_data?.market_cap)}
             {data.market_data?.current_price ? ` - Price ${formatValuationMoney(data.market_data.current_price)}` : ""}
             {data.market_data?.currency ? ` - ${data.market_data.currency}` : ""}

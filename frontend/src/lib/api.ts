@@ -1886,6 +1886,9 @@ export interface ValuationMetric {
   label: string
   value: number | null
   period: string
+  numerator?: number | null
+  numerator_label?: string | null
+  numerator_source?: string | null
   denominator: number | null
   denominator_label: string
   status: "ok" | "missing" | "not_meaningful" | "degraded" | string
@@ -1900,6 +1903,8 @@ export interface PositionValuation {
   source_policy?: string
   market_data: {
     market_cap?: number | null
+    enterprise_value?: number | null
+    net_debt?: number | null
     currency?: string | null
     sector?: string | null
     industry?: string | null

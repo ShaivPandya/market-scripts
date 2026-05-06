@@ -4,6 +4,7 @@ import json
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, cast
+from urllib.parse import unquote
 
 from fastapi import Request
 from fastapi.routing import APIRoute
@@ -123,8 +124,12 @@ async def validate_and_upgrade_request_schema(
             supplied_name=supplied_name,
             supplied_version=supplied_version_raw,
         )
-    supplied_alias = f"{request.method.lower()}:{request.url.path}"
-    if supplied_name not in {expected.schema_name, supplied_alias}:
+    if not _schema_name_matches_endpoint(
+        supplied_name,
+        expected=expected,
+        method=request.method,
+        actual_path=request.url.path,
+    ):
         return _bad_schema_response(
             "Request schema name does not match this endpoint.",
             expected=expected,
@@ -156,6 +161,31 @@ def _match_route(app: Any, method: str, path: str) -> APIRoute | None:
         if matches == Match.FULL and isinstance(route, APIRoute):
             return route
     return None
+
+
+def _schema_name_matches_endpoint(
+    supplied_name: str,
+    *,
+    expected: ApiRequestSchema,
+    method: str,
+    actual_path: str,
+) -> bool:
+    if supplied_name == expected.schema_name:
+        return True
+
+    prefix = f"{method.lower()}:"
+    if not supplied_name.startswith(prefix):
+        return False
+
+    supplied_path = supplied_name[len(prefix) :]
+    if supplied_path == actual_path:
+        return True
+
+    # Browser clients build concrete schema aliases from URL-encoded paths
+    # (for example approval%3A...), while Starlette exposes request.url.path
+    # decoded. Compare the decoded alias so path-parameter IDs with reserved
+    # characters still bind to the matched endpoint.
+    return unquote(supplied_path) == actual_path
 
 
 def _body_field_schema(route: APIRoute) -> dict[str, Any]:
