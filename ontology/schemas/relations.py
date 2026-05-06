@@ -67,6 +67,7 @@ POLICY_GATE_EVALUATES_RECOMMENDATION: RelationType = "policy_gate_evaluates_reco
 POLICY_GATE_EVALUATES_TRADE_PROPOSAL: RelationType = "policy_gate_evaluates_trade_proposal"
 POLICY_GATE_USES_RISK_METRIC: RelationType = "policy_gate_uses_risk_metric"
 POLICY_GATE_USES_SCENARIO: RelationType = "policy_gate_uses_scenario"
+PROVENANCE_EVENT_RECORDS_LINK: RelationType = "provenance_event_records_link"
 
 
 class RelationCardinality(StrEnum):
@@ -540,6 +541,14 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
+    PROVENANCE_EVENT_RECORDS_LINK: RelationDefinition(
+        name=PROVENANCE_EVENT_RECORDS_LINK,
+        source_type="ProvenanceEvent",
+        target_type="ProvenanceLink",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "link_type"}),
+        optional=True,
+    ),
 }
 
 ALLOWED_RELATIONS: dict[str, tuple[EntityType, EntityType]] = {
@@ -562,6 +571,11 @@ class RelationPropertiesV1(OntologySchemaBase):
     approval_id: str | None = None
     artifact_key: str | None = None
     relation_role: str | None = None
+    link_type: str | None = None
+    source_ref_type: str | None = None
+    source_ref_id: str | None = None
+    target_ref_type: str | None = None
+    target_ref_id: str | None = None
 
     @field_validator("ontology_run_id", mode="before")
     @classmethod
@@ -580,6 +594,11 @@ class RelationPropertiesV1(OntologySchemaBase):
         "approval_id",
         "artifact_key",
         "relation_role",
+        "link_type",
+        "source_ref_type",
+        "source_ref_id",
+        "target_ref_type",
+        "target_ref_id",
         mode="before",
     )
     @classmethod

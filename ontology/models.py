@@ -40,11 +40,20 @@ EntityType = Literal[
     "Approval",
     "ActionRun",
     "ActionEvent",
+    "ProvenanceEvent",
+    "ProvenanceLink",
     "WorkflowRun",
     "WorkflowArtifact",
     "Recommendation",
     "ReportRun",
     "DocumentArtifact",
+    "InvestmentIdea",
+    "IdeaEvaluation",
+    "IdeaComparisonRun",
+    "OptimizationMission",
+    "OptimizationRun",
+    "OptimizationActionSnapshot",
+    "OptimizationAlert",
 ]
 RelationType = Literal[
     "references_asset",
@@ -104,6 +113,7 @@ RelationType = Literal[
     "policy_gate_evaluates_trade_proposal",
     "policy_gate_uses_risk_metric",
     "policy_gate_uses_scenario",
+    "provenance_event_records_link",
 ]
 ParserSource = Literal["structured", "llm", "deterministic_fallback"]
 

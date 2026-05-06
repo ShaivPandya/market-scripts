@@ -180,6 +180,20 @@ def action_event_id(identifier: object) -> str:
     return f"action_event:{slug(identifier)}"
 
 
+def provenance_event_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("provenance_event:"):
+        text = text.split(":", 1)[1]
+    return f"provenance_event:{slug(text)}"
+
+
+def provenance_link_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("provenance_link:"):
+        text = text.split(":", 1)[1]
+    return f"provenance_link:{slug(text)}"
+
+
 def workflow_run_id(identifier: object) -> str:
     return f"workflow_run:{slug(identifier)}"
 
@@ -198,3 +212,52 @@ def report_run_id(identifier: object) -> str:
 
 def document_artifact_id(kind: object, identifier: object) -> str:
     return f"document_artifact:{slug(kind)}:{slug(identifier)}"
+
+
+def investment_idea_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("investment_idea:"):
+        text = text.split(":", 1)[1]
+    return f"investment_idea:{slug(text)}"
+
+
+def idea_evaluation_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("idea_evaluation:"):
+        text = text.split(":", 1)[1]
+    return f"idea_evaluation:{slug(text)}"
+
+
+def idea_comparison_run_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("idea_comparison_run:"):
+        text = text.split(":", 1)[1]
+    return f"idea_comparison_run:{slug(text)}"
+
+
+def optimization_mission_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_mission:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_mission:{slug(text)}"
+
+
+def optimization_run_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_run:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_run:{slug(text)}"
+
+
+def optimization_action_snapshot_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_action_snapshot:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_action_snapshot:{slug(text)}"
+
+
+def optimization_alert_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_alert:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_alert:{slug(text)}"

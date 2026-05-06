@@ -8,6 +8,7 @@ from typing import Any
 from api.audit import summarize_for_audit
 from api.provenance import deterministic_id, stable_hash
 from ontology.object_service import OntologyObjectService
+from ontology.schemas.identity import provenance_event_id, provenance_link_id
 
 SCHEMA_VERSION = 1
 CRITICAL_FINANCIAL = "financial_critical"
@@ -527,6 +528,21 @@ def record_now_tx(conn: Any, event_bundle: dict[str, Any]) -> dict[str, int]:
                 "ProvenanceLink",
                 link_id,
                 {**link, "link_id": link_id},
+                now,
+                provenance=link.get("lineage_root_id") or link.get("event_id") or link_id,
+            )
+            objects.write_relation(
+                provenance_event_id(link.get("event_id") or link_id),
+                provenance_link_id(link_id),
+                "provenance_event_records_link",
+                {
+                    "ontology_run_id": OPERATIONAL,
+                    "link_type": link.get("link_type"),
+                    "source_ref_type": link.get("source_ref_type"),
+                    "source_ref_id": link.get("source_ref_id"),
+                    "target_ref_type": link.get("target_ref_type"),
+                    "target_ref_id": link.get("target_ref_id"),
+                },
                 now,
                 provenance=link.get("lineage_root_id") or link.get("event_id") or link_id,
             )

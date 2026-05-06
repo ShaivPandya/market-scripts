@@ -44,7 +44,7 @@ def ontology_read_model_enabled() -> bool:
 
 
 def legacy_write_guard_enabled() -> bool:
-    return _env_flag("LEGACY_WRITE_GUARD") or _is_production()
+    return _env_flag("LEGACY_WRITE_GUARD") or ontology_primary_writes_enabled()
 
 
 def approved_domain_write_scope() -> dict[str, Any] | None:

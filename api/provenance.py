@@ -20,6 +20,7 @@ from typing import Any
 from api.audit import summarize_for_audit
 from api.logging_config import request_id_var
 from ontology.object_service import OntologyObjectService
+from ontology.schemas.identity import provenance_event_id, provenance_link_id
 
 logger = logging.getLogger("api.provenance")
 
@@ -401,7 +402,7 @@ def finish_event(
     try:
         completed = _now()
         objects = OntologyObjectService()
-        existing = objects.get_object(event_id) or {}
+        existing = objects.get_object(event_id) or objects.get_object(provenance_event_id(event_id)) or {}
         existing_props = dict(existing.get("properties") or existing.get("properties_json") or {})
         row = objects.write_object(
             "ProvenanceEvent",
@@ -509,7 +510,8 @@ def link_refs(
             link_type,
         )
         now = _now()
-        row = OntologyObjectService().write_object(
+        objects = OntologyObjectService()
+        row = objects.write_object(
             "ProvenanceLink",
             uid,
             {
@@ -524,6 +526,21 @@ def link_refs(
                 "link_type": link_type,
                 "metadata": redacted_summary(metadata),
                 "lineage_root_id": lineage_root_id,
+            },
+            now,
+            provenance=lineage_root_id or event_id,
+        )
+        objects.write_relation(
+            provenance_event_id(event_id),
+            provenance_link_id(uid),
+            "provenance_event_records_link",
+            {
+                "ontology_run_id": "operational",
+                "link_type": link_type,
+                "source_ref_type": source_ref_type,
+                "source_ref_id": str(source_ref_id),
+                "target_ref_type": target_ref_type,
+                "target_ref_id": str(target_ref_id),
             },
             now,
             provenance=lineage_root_id or event_id,

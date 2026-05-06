@@ -94,7 +94,14 @@ def dismiss_optimization_alert(alert_id: str, req: DismissOptimizationAlertReque
         props.get("created_at") or props.get("as_of") or datetime.now(UTC).isoformat(),
         provenance=f"pv:optimization_alert:{alert_id}:dismiss",
     )
-    return dict(row.get("properties") or props)
+    payload = dict(row.get("properties") or props)
+    object_uid = str(row.get("object_uid") or payload.get("id") or alert_id)
+    payload["id"] = object_uid
+    payload["object_uid"] = object_uid
+    meta = row.get("_meta")
+    if isinstance(meta, dict):
+        payload["_meta"] = meta
+    return payload
 
 
 def _get_optimization_object(object_type: str, object_id: str) -> dict[str, Any] | None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 from collections.abc import Mapping
 from datetime import datetime
@@ -25,7 +27,10 @@ from ontology.schemas.identity import (
     executed_action_id,
     executed_decision_record_id,
     hedge_position_id,
+    idea_comparison_run_id,
+    idea_evaluation_id,
     instrument_id,
+    investment_idea_id,
     investment_policy_id,
     investor_id,
     issuer_id,
@@ -33,9 +38,15 @@ from ontology.schemas.identity import (
     macro_indicator_id,
     mandate_id,
     object_version_ref_id,
+    optimization_action_snapshot_id,
+    optimization_alert_id,
+    optimization_mission_id,
+    optimization_run_id,
     policy_gate_result_id,
     portfolio_id,
     position_id,
+    provenance_event_id,
+    provenance_link_id,
     recommendation_id,
     report_run_id,
     research_note_id,
@@ -60,6 +71,8 @@ from ontology.temporal_repository import (
     TemporalActor,
     TemporalOntologyRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 _GOVERNED_OBJECT_TYPES = {
     "ActionRun",
@@ -101,6 +114,10 @@ _GOVERNED_RELATION_TYPES = {
     "executed_decision_records_action_run",
     "trade_proposal_requires_approval",
 }
+
+
+class OntologyWriteContractError(ValueError):
+    """Raised when an ontology write violates the authoritative write contract."""
 
 
 class OntologyObjectService:
@@ -157,8 +174,10 @@ class OntologyObjectService:
         input_hash: str | None = None,
         temporal_confidence: str = "native",
     ) -> dict[str, Any]:
+        _check_registered_object_type(object_type)
         actor_fields = _actor_fields(actor)
         provenance_event_id = _provenance_event_id(provenance)
+        _require_write_provenance("object", object_type, provenance_event_id)
         _require_governed_lineage(
             "object",
             object_type,
@@ -208,8 +227,10 @@ class OntologyObjectService:
         input_hash: str | None = None,
         temporal_confidence: str = "native",
     ) -> dict[str, Any]:
+        _check_registered_relation_type(relation_type)
         actor_fields = _actor_fields(actor)
         provenance_event_id = _provenance_event_id(provenance)
+        _require_write_provenance("relation", relation_type, provenance_event_id)
         _require_governed_lineage(
             "relation",
             relation_type,
@@ -275,11 +296,13 @@ class OntologyObjectService:
         provenance: Mapping[str, Any] | str | None = None,
         input_hash: str | None = None,
     ) -> dict[str, Any]:
+        provenance_event_id = _provenance_event_id(provenance)
+        _require_write_provenance("object correction", version_id, provenance_event_id)
         row = self.repo.correct_object_version(
             version_id,
             properties=dict(properties),
             actor=_actor_fields(actor),
-            provenance_event_id=_provenance_event_id(provenance),
+            provenance_event_id=provenance_event_id,
             input_hash=input_hash,
         )
         return with_temporal_meta(row)
@@ -313,6 +336,7 @@ def normalize_object_payload(
 ) -> dict[str, Any]:
     props = dict(properties or {})
     if object_type in NODE_SCHEMAS:
+        props = _with_object_identity_fields(object_type, business_key, props)
         node = normalize_node(
             OntologyNode(
                 id=object_uid,
@@ -551,6 +575,24 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("document_artifact:"):
             return key
         return document_artifact_id(props.get("document_type") or "document", props.get("document_id") or key)
+    if object_type == "ProvenanceEvent":
+        return provenance_event_id(props.get("event_id") or props.get("id") or key)
+    if object_type == "ProvenanceLink":
+        return provenance_link_id(props.get("link_id") or props.get("id") or key)
+    if object_type == "InvestmentIdea":
+        return investment_idea_id(props.get("idea_id") or props.get("id") or key)
+    if object_type == "IdeaEvaluation":
+        return idea_evaluation_id(props.get("evaluation_id") or props.get("id") or key)
+    if object_type == "IdeaComparisonRun":
+        return idea_comparison_run_id(props.get("comparison_run_id") or props.get("run_id") or props.get("id") or key)
+    if object_type == "OptimizationMission":
+        return optimization_mission_id(props.get("mission_id") or props.get("id") or key)
+    if object_type == "OptimizationRun":
+        return optimization_run_id(props.get("run_id") or props.get("id") or key)
+    if object_type == "OptimizationActionSnapshot":
+        return optimization_action_snapshot_id(props.get("snapshot_id") or props.get("id") or key)
+    if object_type == "OptimizationAlert":
+        return optimization_alert_id(props.get("alert_id") or props.get("id") or key)
     if ":" in key and key.split(":", 1)[0]:
         return key
     return f"{_slug(object_type)}:{_slug(key)}"
@@ -624,6 +666,61 @@ def _require_governed_lineage(
     if provenance_event_id or action_run_id is not None or approval_id is not None or source_record_id:
         return
     raise ValueError(f"Governed ontology {surface} write '{name}' requires provenance or action lineage")
+
+
+def _strict_write_contract_enabled() -> bool:
+    if (os.getenv("ONTOLOGY_PRIMARY_WRITES") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return (os.getenv("ENVIRONMENT") or "").strip().lower() == "production"
+
+
+def _check_registered_object_type(object_type: str) -> None:
+    if object_type in NODE_SCHEMAS:
+        return
+    message = f"Unregistered ontology object type: {object_type}"
+    if _strict_write_contract_enabled():
+        raise OntologyWriteContractError(message)
+    logger.warning("%s; local non-primary write will use compatibility fallback", message)
+
+
+def _check_registered_relation_type(relation_type: str) -> None:
+    if relation_type in RELATION_REGISTRY:
+        return
+    message = f"Unregistered ontology relation type: {relation_type}"
+    if _strict_write_contract_enabled():
+        raise OntologyWriteContractError(message)
+    logger.warning("%s; local non-primary write will use compatibility fallback", message)
+
+
+def _require_write_provenance(surface: str, name: str, provenance_event_id: str | None) -> None:
+    if provenance_event_id:
+        return
+    raise OntologyWriteContractError(f"Ontology {surface} write '{name}' requires provenance")
+
+
+def _with_object_identity_fields(object_type: str, business_key: str, props: dict[str, Any]) -> dict[str, Any]:
+    out = dict(props)
+    key = str(business_key or "").strip()
+    if object_type == "ProvenanceEvent":
+        out.setdefault("event_id", out.get("id") or key)
+    elif object_type == "ProvenanceLink":
+        out.setdefault("link_id", out.get("id") or key)
+    elif object_type == "InvestmentIdea":
+        out.setdefault("idea_id", out.get("id") or key)
+    elif object_type == "IdeaEvaluation":
+        out.setdefault("evaluation_id", out.get("id") or key)
+    elif object_type == "IdeaComparisonRun":
+        out.setdefault("comparison_run_id", out.get("run_id") or out.get("id") or key)
+        out.setdefault("run_id", out.get("comparison_run_id"))
+    elif object_type == "OptimizationMission":
+        out.setdefault("mission_id", out.get("id") or key)
+    elif object_type == "OptimizationRun":
+        out.setdefault("run_id", out.get("id") or key)
+    elif object_type == "OptimizationActionSnapshot":
+        out.setdefault("snapshot_id", out.get("id") or key)
+    elif object_type == "OptimizationAlert":
+        out.setdefault("alert_id", out.get("id") or key)
+    return out
 
 
 def _slug(value: str) -> str:

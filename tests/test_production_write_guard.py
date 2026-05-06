@@ -35,3 +35,12 @@ def test_project_root_sqlite_connect_raises_in_production(monkeypatch):
         sqlite3.connect(target)
 
     assert not target.exists()
+
+
+def test_legacy_domain_write_guard_is_enabled_in_ontology_primary_runtime(monkeypatch):
+    from ontology.domain_write_service import legacy_write_guard_enabled
+
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ONTOLOGY_PRIMARY_WRITES", "true")
+
+    assert legacy_write_guard_enabled() is True

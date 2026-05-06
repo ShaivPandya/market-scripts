@@ -82,6 +82,9 @@ def _write_runtime_object(object_type: str, business_key: str, properties: dict[
     object_uid = str(row.get("object_uid") or business_key)
     payload["id"] = object_uid
     payload["object_uid"] = object_uid
+    meta = row.get("_meta")
+    if isinstance(meta, dict):
+        payload["_meta"] = meta
     return payload
 
 

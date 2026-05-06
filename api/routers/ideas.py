@@ -114,6 +114,9 @@ def _object_props(row: dict[str, Any] | None) -> dict[str, Any] | None:
     uid = str(row.get("object_uid") or props.get("id") or "")
     props["id"] = uid
     props["object_uid"] = uid
+    meta = row.get("_meta")
+    if isinstance(meta, dict):
+        props["_meta"] = meta
     return props
 
 

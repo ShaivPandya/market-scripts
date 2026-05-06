@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import ast
+import subprocess
+from pathlib import Path
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
-from ontology.models import OntologyEdge, OntologyNode
+from ontology.models import EntityType, OntologyEdge, OntologyNode
+from ontology.schema_definitions import SCHEMA_KIND_ONTOLOGY_OBJECT, ontology_schema_definitions
 from ontology.schemas.identity import action_item_id, evaluation_id, hedge_position_id, signal_id
-from ontology.schemas.objects import ActionItemV1, HedgePositionV1, PositionV1
-from ontology.schemas.registry import OntologySchemaValidationError, normalize_graph, normalize_node
+from ontology.schemas.objects import ActionItemV1, HedgePositionV1, InvestmentIdeaV1, PositionV1
+from ontology.schemas.registry import NODE_SCHEMAS, OntologySchemaValidationError, normalize_graph, normalize_node
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_position_schema_normalizes_and_checks_risk_level():
@@ -100,6 +108,67 @@ def test_account_schema_drops_deprecated_tax_lot_field():
     assert account.schema_version == 1
     assert account.properties["account_id"] == "default_account"
     assert "tax_lot_data_available" not in account.properties
+
+
+def test_runtime_migration_schema_rejects_unregistered_fields():
+    with pytest.raises(ValidationError):
+        InvestmentIdeaV1(
+            idea_id="investment_idea:MU",
+            ticker="MU",
+            status="watching",
+            unregistered_field=True,
+        )
+
+
+def test_every_entity_type_has_pydantic_schema_and_definition():
+    entity_types = set(get_args(EntityType))
+    definitions = {
+        definition.schema_name
+        for definition in ontology_schema_definitions()
+        if definition.schema_kind == SCHEMA_KIND_ONTOLOGY_OBJECT and definition.schema_version == 1
+    }
+
+    assert entity_types <= set(NODE_SCHEMAS)
+    assert entity_types <= definitions
+
+
+def test_literal_write_object_calls_use_registered_object_types():
+    registered = set(NODE_SCHEMAS)
+    offenders: list[str] = []
+    files = subprocess.check_output(
+        [
+            "rg",
+            "--files",
+            "-g",
+            "*.py",
+            "-g",
+            "!.venv/**",
+            "-g",
+            "!frontend/node_modules/**",
+            "-g",
+            "!**/__pycache__/**",
+            "-g",
+            "!tests/**",
+        ],
+        cwd=ROOT,
+        text=True,
+    ).splitlines()
+    for rel_path in files:
+        path = ROOT / rel_path
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "write_object"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and node.args[0].value not in registered
+            ):
+                offenders.append(f"{rel_path}:{node.lineno}:{node.args[0].value}")
+
+    assert offenders == []
 
 
 def test_legacy_signal_node_is_canonicalized_to_stable_identity():

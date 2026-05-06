@@ -24,7 +24,10 @@ from ontology.schemas.identity import (
     executed_action_id,
     executed_decision_record_id,
     hedge_position_id,
+    idea_comparison_run_id,
+    idea_evaluation_id,
     instrument_id,
+    investment_idea_id,
     investment_policy_id,
     investor_id,
     issuer_id,
@@ -32,9 +35,15 @@ from ontology.schemas.identity import (
     macro_indicator_id,
     mandate_id,
     object_version_ref_id,
+    optimization_action_snapshot_id,
+    optimization_alert_id,
+    optimization_mission_id,
+    optimization_run_id,
     policy_gate_result_id,
     portfolio_id,
     position_id,
+    provenance_event_id,
+    provenance_link_id,
     recommendation_id,
     report_run_id,
     research_note_id,
@@ -68,7 +77,10 @@ from ontology.schemas.objects import (
     ExecutedActionV1,
     ExecutedDecisionRecordV1,
     HedgePositionV1,
+    IdeaComparisonRunV1,
+    IdeaEvaluationV1,
     InstrumentV1,
+    InvestmentIdeaV1,
     InvestmentPolicyV1,
     InvestorV1,
     IssuerV1,
@@ -77,9 +89,15 @@ from ontology.schemas.objects import (
     MandateV1,
     ObjectVersionRefV1,
     OntologyObjectV1,
+    OptimizationActionSnapshotV1,
+    OptimizationAlertV1,
+    OptimizationMissionV1,
+    OptimizationRunV1,
     PolicyGateResultV1,
     PortfolioV1,
     PositionV1,
+    ProvenanceEventV1,
+    ProvenanceLinkV1,
     RecommendationV1,
     ReportRunV1,
     ResearchNoteV1,
@@ -147,11 +165,20 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Approval": ApprovalV1,
     "ActionRun": ActionRunV1,
     "ActionEvent": ActionEventV1,
+    "ProvenanceEvent": ProvenanceEventV1,
+    "ProvenanceLink": ProvenanceLinkV1,
     "WorkflowRun": WorkflowRunV1,
     "WorkflowArtifact": WorkflowArtifactV1,
     "Recommendation": RecommendationV1,
     "ReportRun": ReportRunV1,
     "DocumentArtifact": DocumentArtifactV1,
+    "InvestmentIdea": InvestmentIdeaV1,
+    "IdeaEvaluation": IdeaEvaluationV1,
+    "IdeaComparisonRun": IdeaComparisonRunV1,
+    "OptimizationMission": OptimizationMissionV1,
+    "OptimizationRun": OptimizationRunV1,
+    "OptimizationActionSnapshot": OptimizationActionSnapshotV1,
+    "OptimizationAlert": OptimizationAlertV1,
 }
 OPTIONAL_NODE_TYPES = {
     "Thesis",
@@ -170,6 +197,15 @@ OPTIONAL_NODE_TYPES = {
     "Recommendation",
     "ReportRun",
     "DocumentArtifact",
+    "ProvenanceEvent",
+    "ProvenanceLink",
+    "InvestmentIdea",
+    "IdeaEvaluation",
+    "IdeaComparisonRun",
+    "OptimizationMission",
+    "OptimizationRun",
+    "OptimizationActionSnapshot",
+    "OptimizationAlert",
     "Investor",
     "Account",
     "Portfolio",
@@ -518,6 +554,10 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return action_run_id(model.legacy_id or f"{model.action_id}:{model.started_at}")
     if isinstance(model, ActionEventV1):
         return action_event_id(model.legacy_id or f"{model.action_run_id}:{model.event_type}:{model.created_at}")
+    if isinstance(model, ProvenanceEventV1):
+        return provenance_event_id(model.event_id)
+    if isinstance(model, ProvenanceLinkV1):
+        return provenance_link_id(model.link_id)
     if isinstance(model, WorkflowRunV1):
         return workflow_run_id(model.run_id)
     if isinstance(model, WorkflowArtifactV1):
@@ -533,6 +573,20 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return report_run_id(model.report_id)
     if isinstance(model, DocumentArtifactV1):
         return document_artifact_id(model.document_type, model.document_id)
+    if isinstance(model, InvestmentIdeaV1):
+        return investment_idea_id(model.idea_id)
+    if isinstance(model, IdeaEvaluationV1):
+        return idea_evaluation_id(model.evaluation_id)
+    if isinstance(model, IdeaComparisonRunV1):
+        return idea_comparison_run_id(model.comparison_run_id)
+    if isinstance(model, OptimizationMissionV1):
+        return optimization_mission_id(model.mission_id)
+    if isinstance(model, OptimizationRunV1):
+        return optimization_run_id(model.run_id)
+    if isinstance(model, OptimizationActionSnapshotV1):
+        return optimization_action_snapshot_id(model.snapshot_id)
+    if isinstance(model, OptimizationAlertV1):
+        return optimization_alert_id(model.alert_id)
     raise OntologySchemaValidationError(f"Unsupported node schema for type {node_type}")
 
 
@@ -734,4 +788,10 @@ def _label_for(node_type: str, label: str, model: OntologyObjectV1) -> str:
         return f"Eval: {model.ticker}"
     if isinstance(model, CatalystV1):
         return model.name
+    if isinstance(model, InvestmentIdeaV1):
+        return model.ticker
+    if isinstance(model, OptimizationMissionV1):
+        return model.name
+    if isinstance(model, OptimizationAlertV1):
+        return model.change_summary
     return label
