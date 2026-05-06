@@ -128,10 +128,11 @@ def get_workspace():
         }
 
     # Positions under thesis pressure
+    ontology_bundle = reads.workspace_bundle()
     thesis_pressure = []
     try:
-        latest_evals = {e["ticker"]: e for e in reads.latest_evaluations()}
-        for meta in reads.theses():
+        latest_evals = {e["ticker"]: e for e in ontology_bundle.get("latest_evaluations", [])}
+        for meta in ontology_bundle.get("theses", []):
             ticker = meta["ticker"]
             ev = latest_evals.get(ticker)
             if not ev:
@@ -153,16 +154,16 @@ def get_workspace():
         pass
 
     # Pending approvals
-    pending_approvals = [normalize_approval(a) for a in reads.approvals(status="pending")]
+    pending_approvals = [normalize_approval(a) for a in ontology_bundle.get("pending_approvals", [])]
     recommendation_approvals = [
         a
         for a in pending_approvals
         if isinstance(a.get("proposed_change"), dict) and a["proposed_change"].get("recommendation_id") is not None
     ]
 
-    latest_daily_recommendation = normalize_recommendation(reads.latest_recommendation("daily"))
-    latest_weekly_recommendation = normalize_recommendation(reads.latest_recommendation("weekly"))
-    pending_actionable_recommendations = reads.recommendations(approval_status="pending", limit=5)
+    latest_daily_recommendation = normalize_recommendation(ontology_bundle.get("latest_daily_recommendation"))
+    latest_weekly_recommendation = normalize_recommendation(ontology_bundle.get("latest_weekly_recommendation"))
+    pending_actionable_recommendations = ontology_bundle.get("pending_actionable_recommendations", [])
     pending_actionable_recommendations = [
         normalize_recommendation(rec) for rec in pending_actionable_recommendations if isinstance(rec, dict)
     ]
@@ -181,21 +182,18 @@ def get_workspace():
             )
 
     # Open action items
-    open_actions = [normalize_action_item(a) for a in reads.action_items(status="open")]
+    open_actions = [normalize_action_item(a) for a in ontology_bundle.get("open_action_items", [])]
 
     # Continuous optimization alerts
-    optimizer_alerts = reads.list_objects("OptimizationAlert", filters={"status": "open"}, limit=5)
+    optimizer_alerts = ontology_bundle.get("optimizer_alerts", [])
 
     # Active watch triggers
-    active_triggers = reads.watch_triggers(status="active")
+    active_triggers = ontology_bundle.get("active_watch_triggers", [])
 
     # Latest workflow run
-    recent_runs = reads.workflow_runs(limit=3)
-    recent_report_runs = reads.report_runs(limit=5)
-    challenged_claims = reads.thesis_claims(status="challenged", limit=5) + reads.thesis_claims(
-        status="disconfirmed",
-        limit=5,
-    )
+    recent_runs = ontology_bundle.get("recent_workflow_runs", [])
+    recent_report_runs = ontology_bundle.get("recent_report_runs", [])
+    challenged_claims = ontology_bundle.get("challenged_claims", []) + ontology_bundle.get("disconfirmed_claims", [])
 
     return {
         "regime": regime_summary,
