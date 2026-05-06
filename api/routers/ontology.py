@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from inspect import Parameter, signature
@@ -45,6 +46,16 @@ def _env_bool(name: str, *, default: bool) -> bool:
 
 def _success_job_read_audit_enabled() -> bool:
     return _env_bool("ONTOLOGY_JOB_SUCCESS_READ_AUDIT_ENABLED", default=False)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 class OntologyFilters(BaseModel):
@@ -285,11 +296,75 @@ def query_ontology(req: OntologyQueryRequest, actor: ActorDep):
 
 def _job_cache_key(req: OntologyQueryRequest | OntologyQueryJobRequest) -> str:
     payload = req.model_dump(exclude_none=True)
+    if not _is_replay_query(req):
+        payload["_freshness_token"] = _current_ontology_cache_token()
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _reuse_completed_job(req: OntologyQueryRequest | OntologyQueryJobRequest) -> bool:
     return not bool(req.refresh_snapshot)
+
+
+def _is_replay_query(req: OntologyQueryRequest | OntologyQueryJobRequest) -> bool:
+    return bool(req.run_id or req.as_of or req.tx_as_of)
+
+
+def _completed_ttl_seconds(req: OntologyQueryRequest | OntologyQueryJobRequest) -> int:
+    if _is_replay_query(req):
+        return _env_int("ASYNC_ONTOLOGY_REPLAY_COMPLETED_TTL_SECONDS", 24 * 60 * 60)
+    return _env_int("ASYNC_ONTOLOGY_CURRENT_COMPLETED_TTL_SECONDS", 60)
+
+
+def _current_ontology_cache_token() -> str:
+    try:
+        if ontology_read_model_enabled():
+            return f"read_model:{_read_model_watermark_token()}"
+        return f"legacy_snapshot:{_legacy_snapshot_watermark_token()}"
+    except Exception as exc:
+        return f"unavailable:{exc.__class__.__name__}"
+
+
+def _read_model_watermark_token() -> str:
+    from api.postgres import connect
+
+    sql = """
+    SELECT
+      (SELECT max(GREATEST(tx_from, COALESCE(tx_to, '-infinity'::timestamptz)))
+         FROM ontology_object_versions) AS object_watermark,
+      (SELECT max(GREATEST(tx_from, COALESCE(tx_to, '-infinity'::timestamptz)))
+         FROM ontology_relation_versions) AS relation_watermark,
+      (SELECT max(GREATEST(tx_from, COALESCE(tx_to, '-infinity'::timestamptz)))
+         FROM computed_snapshot_versions) AS snapshot_watermark,
+      (SELECT max(GREATEST(tx_from, COALESCE(tx_to, '-infinity'::timestamptz)))
+         FROM source_record_versions) AS source_watermark
+    """
+    with connect() as conn:
+        row = conn.execute(sql).fetchone() or {}
+    payload = {
+        "objects": str(row.get("object_watermark") or ""),
+        "relations": str(row.get("relation_watermark") or ""),
+        "snapshots": str(row.get("snapshot_watermark") or ""),
+        "sources": str(row.get("source_watermark") or ""),
+    }
+    return _hash_token(payload)
+
+
+def _legacy_snapshot_watermark_token() -> str:
+    latest = _service.repo.get_latest_run()
+    if not latest:
+        return "none"
+    return _hash_token(
+        {
+            "run_id": latest.get("run_id"),
+            "as_of": latest.get("as_of"),
+            "created_at": latest.get("created_at"),
+        }
+    )
+
+
+def _hash_token(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 @router.post("/ontology/query/async")

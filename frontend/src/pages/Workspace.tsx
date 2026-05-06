@@ -119,12 +119,14 @@ interface Trigger {
 }
 
 interface WorkflowRun {
-  run_id: string
-  workflow_name: string
+  run_id: string | null
+  workflow_name: string | null
   ticker: string | null
-  status: string
-  started_at: string
+  status: string | null
+  started_at: string | null
   completed_at: string | null
+  synthesis?: string | null
+  artifacts?: Record<string, unknown> | null
 }
 
 const REGIME_SIGNAL_MAP: Record<string, { signal: "success" | "warning" | "error"; label: string }> = {
@@ -157,13 +159,62 @@ function formatRiskScore(value: number | null | undefined): string {
   return value.toFixed(2)
 }
 
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-  } catch {
-    return iso
+function formatTime(iso: string | null | undefined): string {
+  const value = String(iso ?? "").trim()
+  if (!value) return "Unknown time"
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+const KNOWN_WORKFLOW_NAMES = [
+  "morning_brief",
+  "thesis_review",
+  "pre_earnings",
+  "post_earnings_review",
+  "weekly_portfolio_review",
+  "thesis_invalidation_check",
+]
+
+function workflowNameFromRunId(runId: string | null | undefined): string | null {
+  const value = String(runId ?? "").trim()
+  if (!value) return null
+  if (value.startsWith("workflow:")) {
+    const [, workflowName] = value.split(":")
+    if (workflowName) return workflowName
   }
+  const slug = value.replace(/_/g, "-").toLowerCase()
+  return KNOWN_WORKFLOW_NAMES.find(name => slug.includes(name.replace(/_/g, "-"))) ?? null
+}
+
+function workflowRunLabel(run: WorkflowRun): string {
+  const raw = String(run.workflow_name ?? "").trim()
+  const workflowName = raw && raw.toLowerCase() !== "unknown"
+    ? raw
+    : workflowNameFromRunId(run.run_id) ?? "workflow run"
+  return workflowName.replace(/_/g, " ")
+}
+
+function workflowRunTicker(run: WorkflowRun): string | null {
+  const ticker = String(run.ticker ?? "").trim().toUpperCase()
+  if (ticker) return ticker
+  const artifactTicker = (run.artifacts?.evaluation_draft as { ticker?: unknown } | undefined)?.ticker
+  const artifactValue = String(artifactTicker ?? "").trim().toUpperCase()
+  if (artifactValue) return artifactValue
+  const titleTicker = String(run.synthesis ?? "").match(/\b([A-Z]{1,6})\s+Thesis Review\b/)?.[1]
+  return titleTicker ?? null
+}
+
+function workflowStatusClass(status: string | null | undefined): string {
+  const value = String(status ?? "").toLowerCase()
+  if (["completed", "succeeded", "success", "ok"].includes(value)) return "bg-green-500"
+  if (["running", "started", "queued"].includes(value)) return "bg-blue-500 animate-pulse"
+  if (["failed", "error"].includes(value)) return "bg-red-500"
+  return "bg-gray-400"
+}
+
+function workflowRunTime(run: WorkflowRun): string {
+  return formatTime(run.started_at ?? run.completed_at)
 }
 
 function policyGateFromRecommendation(rec: RecommendationRecord): PolicyGateResult | null {
@@ -795,36 +846,38 @@ export function Workspace() {
               Recent Workflow Runs
             </h2>
             <div className="space-y-2">
-              {data.recent_workflow_runs.map(run => (
-                <div key={run.run_id} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
-                  <div className="flex items-center gap-3">
-                    <span className={cn(
-                      "h-2 w-2 rounded-full shrink-0",
-                      run.status === "completed" ? "bg-green-500"
-                        : run.status === "running" ? "bg-blue-500 animate-pulse"
-                        : "bg-red-500",
-                    )} />
-                    <span className="font-medium text-app">{run.workflow_name.replace(/_/g, " ")}</span>
-                    {run.ticker && (
-                      <Link to={`/dossier/${encodeURIComponent(run.ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
-                        {run.ticker}
-                      </Link>
-                    )}
+              {data.recent_workflow_runs.map((run, index) => {
+                const ticker = workflowRunTicker(run)
+                const runId = String(run.run_id ?? "").trim()
+                return (
+                  <div key={runId || `workflow-run-${index}`} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm">
+                    <div className="flex items-center gap-3">
+                      <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
+                      <span className="font-medium text-app">{workflowRunLabel(run)}</span>
+                      {ticker && (
+                        <Link to={`/dossier/${encodeURIComponent(ticker)}`} state={{ from: "workspace" }} className="text-blue-600 hover:underline dark:text-blue-400">
+                          {ticker}
+                        </Link>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-subtle">{workflowRunTime(run)}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (runId) setProvenanceSelector({ workflow_run_id: runId })
+                        }}
+                        disabled={!runId}
+                        className="theme-icon-button h-8 w-8 disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label={runId ? `View workflow ${runId} lineage` : "Workflow lineage unavailable"}
+                        title={runId ? "Lineage" : "Lineage unavailable"}
+                      >
+                        <GitBranch size={14} />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-subtle">{formatTime(run.started_at)}</span>
-                    <button
-                      type="button"
-                      onClick={() => setProvenanceSelector({ workflow_run_id: run.run_id })}
-                      className="theme-icon-button h-8 w-8"
-                      aria-label={`View workflow ${run.run_id} lineage`}
-                      title="Lineage"
-                    >
-                      <GitBranch size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </section>
         )}

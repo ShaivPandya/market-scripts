@@ -23,7 +23,7 @@ from api.agent_tools import execute_tool
 from api.audit import emit_audit_event
 from ontology.action_registry import get_tool_exposure
 from ontology.domain_write_service import ontology_primary_writes_enabled
-from ontology.object_service import OntologyObjectService
+from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.policy import Actor, admin_actor
 
 logger = logging.getLogger("api.workflows")
@@ -865,13 +865,16 @@ def complete_workflow_run(
         return core_db.complete_workflow_run(run_id, synthesis, artifacts=artifacts, tool_sections=sections)
 
     now = datetime.now(UTC).isoformat()
-    existing = OntologyObjectService().get_object(run_id) or {}
+    object_service = OntologyObjectService()
+    existing = _get_workflow_run_object(object_service, run_id) or {}
     props = dict(existing.get("properties") or existing.get("properties_json") or {})
     props.update(
         {
             "run_id": run_id,
-            "workflow_name": props.get("workflow_name") or "unknown",
+            "workflow_name": props.get("workflow_name") or _workflow_name_from_run_id(run_id) or "unknown",
+            "ticker": props.get("ticker"),
             "status": "succeeded",
+            "started_at": props.get("started_at") or now,
             "completed_at": now,
             "synthesis": synthesis,
             "artifacts": artifacts or {},
@@ -879,7 +882,7 @@ def complete_workflow_run(
             "ontology_run_id": "operational",
         }
     )
-    row = OntologyObjectService().write_object(
+    row = object_service.write_object(
         "WorkflowRun",
         run_id,
         props,
@@ -897,19 +900,22 @@ def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) ->
         return core_db.fail_workflow_run(run_id, error)
 
     now = datetime.now(UTC).isoformat()
-    existing = OntologyObjectService().get_object(run_id) or {}
+    object_service = OntologyObjectService()
+    existing = _get_workflow_run_object(object_service, run_id) or {}
     props = dict(existing.get("properties") or existing.get("properties_json") or {})
     props.update(
         {
             "run_id": run_id,
-            "workflow_name": props.get("workflow_name") or "unknown",
+            "workflow_name": props.get("workflow_name") or _workflow_name_from_run_id(run_id) or "unknown",
+            "ticker": props.get("ticker"),
             "status": "failed",
+            "started_at": props.get("started_at") or now,
             "completed_at": now,
             "error": error,
             "ontology_run_id": "operational",
         }
     )
-    row = OntologyObjectService().write_object(
+    row = object_service.write_object(
         "WorkflowRun",
         run_id,
         props,
@@ -918,6 +924,17 @@ def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) ->
         provenance=f"pv:workflow_run:{run_id}:failed",
     )
     return dict(row.get("properties") or props)
+
+
+def _get_workflow_run_object(service: OntologyObjectService, run_id: str) -> dict[str, Any] | None:
+    return service.get_object(run_id) or service.get_object(object_uid_for("WorkflowRun", run_id, {"run_id": run_id}))
+
+
+def _workflow_name_from_run_id(run_id: str) -> str | None:
+    parts = str(run_id or "").split(":")
+    if len(parts) >= 3 and parts[0] == "workflow" and parts[1]:
+        return parts[1]
+    return None
 
 
 def _actor_payload(actor: Actor | None) -> dict[str, Any]:

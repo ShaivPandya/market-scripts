@@ -9,6 +9,9 @@ from pathlib import Path
 def test_async_jobs_migration_contract():
     migration = Path("migrations/versions/20260429_0002_async_jobs_rq.py").read_text(encoding="utf-8")
     event_migration = Path("migrations/versions/20260503_0014_async_job_events.py").read_text(encoding="utf-8")
+    freshness_migration = Path("migrations/versions/20260505_0008_async_job_freshness_ttls.py").read_text(
+        encoding="utf-8"
+    )
     queue = Path("api/job_queue.py").read_text(encoding="utf-8")
 
     assert 'down_revision: str | None = "20260429_0001"' in migration
@@ -21,6 +24,14 @@ def test_async_jobs_migration_contract():
     assert "DO NOTHING" in queue
     assert "async_job_events" in event_migration
     assert 'PrimaryKeyConstraint("job_id", "seq")' in event_migration
+    assert "idx_ontology_object_versions_watermark" in freshness_migration
+    assert "idx_ontology_relation_versions_watermark" in freshness_migration
+    assert "idx_computed_snapshot_versions_watermark" in freshness_migration
+    assert "idx_source_record_versions_watermark" in freshness_migration
+    assert "job_type IN ('analyzer', 'sizer', 'hedging')" in freshness_migration
+    assert "payload_json->>'run_id'" in freshness_migration
+    assert "payload_json->>'as_of'" in freshness_migration
+    assert "payload_json->>'tx_as_of'" in freshness_migration
 
 
 def test_idea_evaluation_job_registered_with_progress():
@@ -43,6 +54,54 @@ def test_idea_comparison_evaluation_job_registered_with_progress():
     assert spec.compute_func == "api.routers.ideas._compute_idea_comparison_evaluation_result"
     assert spec.cache_key_func is None
     assert spec.supports_progress is True
+
+
+def test_p0_async_job_completed_ttl_policy_defaults():
+    from api.job_registry import completed_ttl_for_request, get_job_spec
+    from api.routers.ontology import OntologyQueryJobRequest
+
+    assert get_job_spec("analyzer").completed_ttl_s == 300
+    assert get_job_spec("sizer").completed_ttl_s == 300
+    assert get_job_spec("hedging").completed_ttl_s == 300
+
+    ontology_spec = get_job_spec("ontology")
+    current = OntologyQueryJobRequest(schema_mode="upgraded", actor={})
+    replay = OntologyQueryJobRequest(schema_mode="upgraded", actor={}, run_id="historical-run")
+
+    assert completed_ttl_for_request(ontology_spec, current) == 60
+    assert completed_ttl_for_request(ontology_spec, replay) == 24 * 60 * 60
+
+
+def test_p0_async_job_completed_ttl_policy_env_overrides(monkeypatch):
+    import importlib
+
+    import api.job_registry as registry
+    from api.routers.ontology import OntologyQueryJobRequest
+
+    monkeypatch.setenv("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", "11")
+    monkeypatch.setenv("ASYNC_SIZER_COMPLETED_TTL_SECONDS", "22")
+    monkeypatch.setenv("ASYNC_HEDGING_COMPLETED_TTL_SECONDS", "33")
+    monkeypatch.setenv("ASYNC_ONTOLOGY_CURRENT_COMPLETED_TTL_SECONDS", "44")
+    monkeypatch.setenv("ASYNC_ONTOLOGY_REPLAY_COMPLETED_TTL_SECONDS", "55")
+    registry = importlib.reload(registry)
+    try:
+        assert registry.get_job_spec("analyzer").completed_ttl_s == 11
+        assert registry.get_job_spec("sizer").completed_ttl_s == 22
+        assert registry.get_job_spec("hedging").completed_ttl_s == 33
+
+        ontology_spec = registry.get_job_spec("ontology")
+        current = OntologyQueryJobRequest(schema_mode="upgraded", actor={})
+        replay = OntologyQueryJobRequest(schema_mode="upgraded", actor={}, tx_as_of="2026-05-01T00:00:00Z")
+
+        assert registry.completed_ttl_for_request(ontology_spec, current) == 44
+        assert registry.completed_ttl_for_request(ontology_spec, replay) == 55
+    finally:
+        monkeypatch.delenv("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", raising=False)
+        monkeypatch.delenv("ASYNC_SIZER_COMPLETED_TTL_SECONDS", raising=False)
+        monkeypatch.delenv("ASYNC_HEDGING_COMPLETED_TTL_SECONDS", raising=False)
+        monkeypatch.delenv("ASYNC_ONTOLOGY_CURRENT_COMPLETED_TTL_SECONDS", raising=False)
+        monkeypatch.delenv("ASYNC_ONTOLOGY_REPLAY_COMPLETED_TTL_SECONDS", raising=False)
+        importlib.reload(registry)
 
 
 def test_async_job_storage_stays_local_when_backend_is_local(monkeypatch):
@@ -690,6 +749,55 @@ def test_local_async_jobs_dedupe_concurrent_active(monkeypatch):
             return
         time.sleep(0.05)
     raise AssertionError("job did not complete")
+
+
+def test_perform_job_uses_p0_completed_result_ttl(monkeypatch):
+    from api import async_job_runner, cache
+    from api.job_queue import clear_memory_jobs, create_or_reuse_job, get_job
+    from api.routers import analyzer
+
+    cache.invalidate_all()
+    clear_memory_jobs()
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+    monkeypatch.setattr(analyzer, "_compute_analyzer_result", lambda _req: {"ok": True})
+
+    row, disposition = create_or_reuse_job("analyzer", payload={}, cache_key="p0-ttl")
+
+    assert disposition == "created"
+    async_job_runner.perform_job(str(row["job_id"]))
+
+    completed = get_job(str(row["job_id"]))
+    assert completed is not None
+    assert completed["status"] == "completed"
+    delta = completed["result_expires_at"] - completed["completed_at"]
+    assert 299 <= delta.total_seconds() <= 301
+
+
+def test_completed_job_reuse_respects_expiry(monkeypatch):
+    from api import cache
+    from api.job_queue import clear_memory_jobs, complete_job, create_or_reuse_job
+
+    cache.invalidate_all()
+    clear_memory_jobs()
+    monkeypatch.setenv("ASYNC_JOB_BACKEND", "local")
+
+    row, disposition = create_or_reuse_job("analyzer", payload={}, cache_key="reuse-before-expiry")
+    assert disposition == "created"
+    complete_job(str(row["job_id"]), {"ok": True}, result_ttl_seconds=300)
+
+    reused, reused_disposition = create_or_reuse_job("analyzer", payload={}, cache_key="reuse-before-expiry")
+
+    assert reused_disposition == "completed"
+    assert reused["job_id"] == row["job_id"]
+
+    expired, disposition = create_or_reuse_job("analyzer", payload={}, cache_key="reuse-after-expiry")
+    assert disposition == "created"
+    complete_job(str(expired["job_id"]), {"ok": True}, result_ttl_seconds=0)
+
+    fresh, fresh_disposition = create_or_reuse_job("analyzer", payload={}, cache_key="reuse-after-expiry")
+
+    assert fresh_disposition == "created"
+    assert fresh["job_id"] != expired["job_id"]
 
 
 def test_sweep_expired_local_jobs():

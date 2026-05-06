@@ -2422,10 +2422,12 @@ export interface ProvenanceLink {
 
 export interface ProvenanceTrace {
   seed: Record<string, unknown>
-  events: ProvenanceEvent[]
-  links: ProvenanceLink[]
-  source_records: Record<string, unknown>[]
-  workflow_artifacts: Record<string, unknown>[]
+  events?: ProvenanceEvent[]
+  links?: ProvenanceLink[]
+  source_records?: Record<string, unknown>[]
+  workflow_artifacts?: Record<string, unknown>[]
+  references?: Record<string, unknown>[]
+  relations?: Record<string, unknown>[]
   timeline?: Record<string, unknown>[]
 }
 

@@ -18,6 +18,7 @@ class JobSpec:
     queue_name: str = "default"
     timeout_s: int = 180
     completed_ttl_s: int = 24 * 60 * 60
+    completed_ttl_func: str | None = None
     failed_ttl_s: int = 7 * 24 * 60 * 60
     stale_grace_s: int | None = None
     error_message: str = "Job failed"
@@ -66,6 +67,13 @@ def cache_key_for_payload(spec: JobSpec, payload: dict[str, Any]) -> str | None:
     return func(req)
 
 
+def completed_ttl_for_request(spec: JobSpec, req: Any) -> int:
+    if spec.completed_ttl_func is None:
+        return spec.completed_ttl_s
+    func: Callable[[Any], int] = import_string(spec.completed_ttl_func)
+    return int(func(req))
+
+
 JOB_SPECS: dict[str, JobSpec] = {
     "analyzer": JobSpec(
         job_type="analyzer",
@@ -74,7 +82,7 @@ JOB_SPECS: dict[str, JobSpec] = {
         cache_key_func="api.routers.analyzer._cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_ANALYZER", "default"),
         timeout_s=_env_int("ASYNC_TIMEOUT_ANALYZER_SECONDS", 10 * 60),
-        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        completed_ttl_s=_env_int("ASYNC_ANALYZER_COMPLETED_TTL_SECONDS", 300),
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Portfolio analyzer failed",
     ),
@@ -85,7 +93,7 @@ JOB_SPECS: dict[str, JobSpec] = {
         cache_key_func="api.routers.hedging._cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_HEDGING", "default"),
         timeout_s=_env_int("ASYNC_TIMEOUT_HEDGING_SECONDS", 180),
-        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        completed_ttl_s=_env_int("ASYNC_HEDGING_COMPLETED_TTL_SECONDS", 300),
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         error_message="Hedging tool failed",
     ),
@@ -108,7 +116,7 @@ JOB_SPECS: dict[str, JobSpec] = {
         cache_key_func="api.routers.sizer._cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_SIZER", "sizer"),
         timeout_s=_env_int("ASYNC_TIMEOUT_SIZER_SECONDS", 30),
-        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        completed_ttl_s=_env_int("ASYNC_SIZER_COMPLETED_TTL_SECONDS", 300),
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         stale_grace_s=_env_int("ASYNC_STALE_GRACE_SIZER_SECONDS", 15),
         error_message="Portfolio sizer failed",
@@ -148,7 +156,8 @@ JOB_SPECS: dict[str, JobSpec] = {
         cache_key_func="api.routers.ontology._job_cache_key",
         queue_name=_env_queue("ASYNC_QUEUE_ONTOLOGY", "ontology"),
         timeout_s=_env_int("ASYNC_TIMEOUT_ONTOLOGY_SECONDS", 300),
-        completed_ttl_s=DEFAULT_COMPLETED_TTL_S,
+        completed_ttl_s=_env_int("ASYNC_ONTOLOGY_CURRENT_COMPLETED_TTL_SECONDS", 60),
+        completed_ttl_func="api.routers.ontology._completed_ttl_seconds",
         failed_ttl_s=DEFAULT_FAILED_TTL_S,
         stale_grace_s=_env_int("ASYNC_STALE_GRACE_ONTOLOGY_SECONDS", 60),
         error_message="Ontology query failed",

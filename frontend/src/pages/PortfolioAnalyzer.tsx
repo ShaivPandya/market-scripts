@@ -833,8 +833,17 @@ function ActionDetail({
             {workspaceError && <p className="mt-2 text-sm text-negative">{workspaceError}</p>}
             {workspaceProposal && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                Proposal #{workspaceProposal.approval_id} staged for {workspaceProposal.action_id.replace(/_/g, " ")}.{" "}
-                <Link to="/workspace" className="font-semibold underline underline-offset-2">Review in Workspace</Link>.
+                <p className="font-semibold">Proposal staged</p>
+                <p className="mt-1 leading-5">
+                  Action item for <span className="font-semibold">{action.ticker}</span>: {workspaceActionVerb(action).toLowerCase()}.{" "}
+                  <Link
+                    to={workspaceProposal.review_route ?? "/workspace"}
+                    className="font-semibold underline underline-offset-2"
+                  >
+                    Review in Workspace
+                  </Link>
+                  .
+                </p>
               </div>
             )}
           </div>

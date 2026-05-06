@@ -25,7 +25,13 @@ from api.job_queue import (
     mark_job_running,
     update_job_progress,
 )
-from api.job_registry import cache_key_for_payload, get_job_spec, import_string, parse_request
+from api.job_registry import (
+    cache_key_for_payload,
+    completed_ttl_for_request,
+    get_job_spec,
+    import_string,
+    parse_request,
+)
 
 logger = logging.getLogger("api.async_job_runner")
 
@@ -339,6 +345,7 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
             after_summary={"status": "running"},
         )
         req = parse_request(spec, payload)
+        completed_ttl_s = completed_ttl_for_request(spec, req)
 
         if spec.supports_progress:
             update_job_progress(job_id, {"phase": "running", "done": 0, "total": 0})
@@ -366,7 +373,7 @@ def perform_job(job_id: str) -> dict[str, Any] | None:
         if spec.supports_progress:
             final_count = result.get("final_count", 0)
             update_job_progress(job_id, {"phase": "done", "done": final_count, "total": final_count})
-        complete_job(job_id, result, result_ttl_seconds=spec.completed_ttl_s)
+        complete_job(job_id, result, result_ttl_seconds=completed_ttl_s)
         completed_row = get_job(job_id) or row
         if str(completed_row.get("status") or "") == "cancelled":
             _emit_job_audit(

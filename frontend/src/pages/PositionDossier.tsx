@@ -118,7 +118,7 @@ interface Evaluation {
 type EntityId = number | string
 interface Catalyst { id: EntityId; description: string | null; category: string | null; status: string | null; target_date: string | null; evidence: string | null }
 interface KillCondition { id: EntityId; condition: string | null; metric: string | null; threshold: string | null; status: string | null; triggered_at: string | null }
-interface WorkflowRun { run_id: string; workflow_name: string; status: string; started_at: string; completed_at: string | null }
+interface WorkflowRun { run_id: string | null; workflow_name: string | null; status: string | null; started_at: string | null; completed_at: string | null }
 interface ActionItem { id: number; description: string; action_type: string; urgency: string; status: string; created_at: string }
 interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
 
@@ -141,12 +141,48 @@ const STATUS_COLORS: Record<string, string> = {
   superseded: "text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-800",
 }
 
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-  } catch {
-    return iso
+function formatTime(iso: string | null | undefined): string {
+  const value = String(iso ?? "").trim()
+  if (!value) return "Unknown time"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+const KNOWN_WORKFLOW_NAMES = [
+  "morning_brief",
+  "thesis_review",
+  "pre_earnings",
+  "post_earnings_review",
+  "weekly_portfolio_review",
+  "thesis_invalidation_check",
+]
+
+function workflowNameFromRunId(runId: string | null | undefined): string | null {
+  const value = String(runId ?? "").trim()
+  if (!value) return null
+  if (value.startsWith("workflow:")) {
+    const [, workflowName] = value.split(":")
+    if (workflowName) return workflowName
   }
+  const slug = value.replace(/_/g, "-").toLowerCase()
+  return KNOWN_WORKFLOW_NAMES.find(name => slug.includes(name.replace(/_/g, "-"))) ?? null
+}
+
+function workflowRunLabel(run: WorkflowRun): string {
+  const raw = String(run.workflow_name ?? "").trim()
+  const workflowName = raw && raw.toLowerCase() !== "unknown"
+    ? raw
+    : workflowNameFromRunId(run.run_id) ?? "workflow run"
+  return workflowName.replace(/_/g, " ")
+}
+
+function workflowStatusClass(status: string | null | undefined): string {
+  const value = String(status ?? "").toLowerCase()
+  if (["completed", "succeeded", "success", "ok"].includes(value)) return "bg-green-500"
+  if (["running", "started", "queued"].includes(value)) return "bg-blue-500 animate-pulse"
+  if (["failed", "error"].includes(value)) return "bg-red-500"
+  return "bg-gray-400"
 }
 
 function textOrFallback(value: unknown, fallback: string): string {
@@ -2437,17 +2473,14 @@ function WorkflowsTab({ runs }: { runs: WorkflowRun[] }) {
   return (
     <div className="space-y-2">
       {runs.map(run => (
-        <div key={run.run_id} className="flex items-center justify-between rounded-lg border border-app px-4 py-3 text-sm">
+        <div key={run.run_id || `${workflowRunLabel(run)}-${run.started_at ?? run.completed_at ?? "unknown"}`} className="flex items-center justify-between rounded-lg border border-app px-4 py-3 text-sm">
           <div className="flex items-center gap-3">
-            <span className={cn(
-              "h-2 w-2 rounded-full shrink-0",
-              run.status === "completed" ? "bg-green-500" : run.status === "running" ? "bg-blue-500 animate-pulse" : "bg-red-500",
-            )} />
-            <span className="font-medium text-app">{run.workflow_name.replace(/_/g, " ")}</span>
+            <span className={cn("h-2 w-2 shrink-0 rounded-full", workflowStatusClass(run.status))} />
+            <span className="font-medium text-app">{workflowRunLabel(run)}</span>
           </div>
           <div className="flex items-center gap-3 text-xs text-subtle">
-            <span>{run.status}</span>
-            <span>{formatTime(run.started_at)}</span>
+            <span>{run.status ?? "unknown"}</span>
+            <span>{formatTime(run.started_at ?? run.completed_at)}</span>
           </div>
         </div>
       ))}
