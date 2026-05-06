@@ -122,10 +122,45 @@ class NormalizingTemporalRepo:
         return self.objects.get(str(object_uid))
 
     def query_objects(self, object_type=None, filters=None, **kwargs):
-        rows = [row for row in self.objects.values() if object_type is None or row["object_type"] == object_type]
+        include_history = bool(kwargs.get("include_history"))
+        rows = [
+            row
+            for row in self.objects.values()
+            if (object_type is None or row["object_type"] == object_type)
+            and (include_history or row.get("tx_to") is None)
+        ]
         for key, value in (filters or {}).items():
             rows = [row for row in rows if row["properties_json"].get(key) == value]
         return rows
+
+    def query_relations(self, relation_type=None, **kwargs):
+        include_history = bool(kwargs.get("include_history"))
+        source_uid = kwargs.get("source_object_uid")
+        target_uid = kwargs.get("target_object_uid")
+        rows = [
+            row
+            for row in self.relations
+            if (relation_type is None or row["relation_type"] == relation_type)
+            and (include_history or row.get("tx_to") is None)
+            and (not source_uid or row["source_object_uid"] == source_uid)
+            and (not target_uid or row["target_object_uid"] == target_uid)
+        ]
+        return rows
+
+    def expire_object_versions(self, object_uid, **kwargs):
+        row = self.objects.get(str(object_uid))
+        if not row or row.get("tx_to") is not None:
+            return 0
+        row["tx_to"] = kwargs.get("tx_to") or datetime(2026, 5, 6, tzinfo=UTC)
+        return 1
+
+    def expire_relation_versions(self, relation_uid, **kwargs):
+        count = 0
+        for row in self.relations:
+            if row.get("relation_uid") == relation_uid and row.get("tx_to") is None:
+                row["tx_to"] = kwargs.get("tx_to") or datetime(2026, 5, 6, tzinfo=UTC)
+                count += 1
+        return count
 
 
 def test_propose_and_apply_position_update_writes_only_ontology_objects():
@@ -194,6 +229,38 @@ def test_position_update_apply_accepts_reviewed_valuation_fields():
 
     assert applied["application_status"] == "applied"
     assert "position:APO" in repo.objects
+
+
+def test_position_replacement_apply_expires_removed_positions():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    initial = service.propose_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10},
+                {"ticker": "OKLO", "asset": "equity", "direction": "short", "shares": 5},
+            ]
+        },
+        context,
+        reason="initial book",
+    )
+    service.resolve_approval(initial["id"], "approved", "apply", context)
+
+    replacement = service.propose_action(
+        "update_portfolio_positions",
+        {"positions": [{"ticker": "MU", "asset": "equity", "direction": "long", "shares": 10}]},
+        context,
+        reason="remove OKLO",
+    )
+    applied = service.resolve_approval(replacement["id"], "approved", "apply", context)
+
+    active_positions = service.objects.query_objects("Position")
+    assert applied["application_status"] == "applied"
+    assert [row["object_uid"] for row in active_positions] == ["position:MU"]
+    assert repo.objects["position:OKLO"]["tx_to"] is not None
 
 
 def test_hedge_update_apply_accepts_enriched_payload_fields():
