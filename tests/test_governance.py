@@ -187,7 +187,6 @@ def test_policy_gate_and_recommendation_have_complete_lineage():
             "account_id": "acct-1",
             "portfolio_id": "portfolio-1",
             "policy_id": "policy-1",
-            "mandate_id": "mandate-1",
             "evaluated_at": "2026-05-04T12:00:00+00:00",
             "action_id": "create_recommendation",
         },

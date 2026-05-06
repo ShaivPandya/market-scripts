@@ -127,7 +127,7 @@ function positionDescriptor(value: unknown): string {
   if (record.direction || record.asset) bits.push([record.direction, record.asset].filter(Boolean).map(formatValue).join(" "))
   const quantity = record.quantity ?? record.shares
   if (quantity != null) {
-    bits.push(`${formatValue(quantity)} ${record.instrument_type === "future" ? "contracts" : "quantity"}`)
+    bits.push(`${formatValue(quantity)} ${record.instrument_type === "future" ? "contracts" : "shares"}`)
   }
   if (record.contract_multiplier != null && record.instrument_type === "future") {
     bits.push(`multiplier ${formatValue(record.contract_multiplier)}`)
@@ -159,12 +159,20 @@ function positionChangeSummary(change: Record<string, unknown>): { summary: stri
       : ""
 
   if (!changes.length) {
-    const proposedCount = Array.isArray(change.positions) ? change.positions.length : null
+    const proposedRows = asRecordArray(change.positions)
+    const proposedCount = proposedRows.length || (Array.isArray(change.positions) ? change.positions.length : null)
     return {
       summary: proposedCount == null
-        ? "This replaces portfolio positions after approval. No captured position-level changes were provided."
-        : "This replaces portfolio positions after approval. Change details are unavailable for this legacy proposal.",
-      rows: proposedCount == null ? [] : [{ label: "Proposed count", value: formatValue(proposedCount) }],
+        ? "This replaces portfolio positions after approval."
+        : `This replaces the portfolio book with ${formatValue(proposedCount)} proposed positions.`,
+      rows: proposedRows.length
+        ? proposedRows.map((row, index) => ({
+            label: formatValue(row.ticker || `Position ${index + 1}`),
+            value: positionDescriptor(row),
+          }))
+        : proposedCount == null
+          ? []
+          : [{ label: "Proposed count", value: formatValue(proposedCount) }],
     }
   }
 

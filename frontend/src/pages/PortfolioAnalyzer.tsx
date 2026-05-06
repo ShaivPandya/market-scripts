@@ -1278,7 +1278,7 @@ export function PortfolioAnalyzer() {
           <details className="theme-surface p-5">
             <summary className="cursor-pointer list-none">
               <span className="section-title">Diagnostics</span>
-              <span className="ml-3 text-sm text-subtle">Raw scenario metrics and legacy signal table</span>
+              <span className="ml-3 text-sm text-subtle">Raw scenario metrics and signal table</span>
             </summary>
             <div className="mt-4">
               <DataTable

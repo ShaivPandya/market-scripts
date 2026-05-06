@@ -282,3 +282,71 @@ def test_legacy_runtime_backfill_promotes_domain_children_and_management_quality
     assert result["objects"]["ManagementQualityAccomplishment"] == 1
     assert result["objects"]["ManagementQualitySetback"] == 1
     assert result["relations"] >= 20
+
+
+def test_legacy_runtime_backfill_materializes_overview_and_thesis_markdown(monkeypatch, tmp_path):
+    monkeypatch.setenv("TALISMAN_ENABLE_LEGACY_BACKFILL", "true")
+    core_db = tmp_path / "core.db"
+    overview_dir = tmp_path / "investment_overviews"
+    thesis_dir = tmp_path / "investment_theses"
+    overview_dir.mkdir()
+    thesis_dir.mkdir()
+    core_db.touch()
+    (overview_dir / "MU.md").write_text(
+        """# MU Overview
+
+## Financials
+- **3-Year Avg. YoY Revenue Growth**: +12% driven by memory recovery.
+- **3-Year Avg. YoY EPS Growth**: +9% through cycle.
+- **Debt**: manageable ladder.
+| Tranche | Rate | Maturity |
+|---------|------|----------|
+| 2030 notes | 5.0% | 2030 |
+- **Reinvestment Costs**: elevated HBM capex.
+
+## Sensitivity to Extrinsic Factors
+| Factor | Sensitivity | Capacity |
+|--------|-------------|----------|
+| Memory pricing | High | Medium |
+
+## Porter's Five Forces
+- **Supplier Power - Medium**: Equipment suppliers remain important.
+
+## Supply Outlook
+- **HBM capacity**: Supply remains constrained.
+
+## Demand Outlook
+- **AI servers**: Strong demand is visible.
+""",
+        encoding="utf-8",
+    )
+    (thesis_dir / "MU.md").write_text(
+        """# MU Thesis
+
+## Core Thesis
+HBM demand should support earnings.
+
+## Invalidation
+Memory pricing weakens.
+""",
+        encoding="utf-8",
+    )
+
+    result = backfill_runtime_objects(
+        core_db_path=core_db,
+        overview_dir=overview_dir,
+        thesis_content_dir=thesis_dir,
+        dry_run=True,
+    )
+
+    assert result["objects"]["DocumentArtifact"] == 2
+    assert result["objects"]["EquityOverview"] == 1
+    assert result["objects"]["CompanyFinancialProfile"] == 1
+    assert result["objects"]["ExtrinsicSensitivity"] == 1
+    assert result["objects"]["IndustryForceAssessment"] == 1
+    assert result["objects"]["SupplyDemandOutlook"] == 2
+    assert result["objects"]["Thesis"] == 1
+    assert result["objects"]["ThesisDocument"] == 1
+    assert result["objects"]["ThesisSection"] == 3
+    assert result["objects"]["Instrument"] == 2
+    assert result["relations"] >= 13

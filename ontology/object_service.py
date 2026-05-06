@@ -23,17 +23,22 @@ from ontology.schemas.identity import (
     canonical_ticker,
     catalyst_id,
     citation_id,
+    company_financial_profile_id,
     computed_snapshot_ref_id,
     document_artifact_id,
+    equity_overview_id,
     evaluation_id,
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    extrinsic_sensitivity_id,
     factor_score_id,
+    forward_outlook_id,
     hedge_position_id,
     idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
+    industry_force_assessment_id,
     instrument_id,
     investment_idea_id,
     investment_policy_id,
@@ -45,7 +50,7 @@ from ontology.schemas.identity import (
     management_quality_assessment_id,
     management_quality_scorecard_row_id,
     management_quality_setback_id,
-    mandate_id,
+    market_regime_snapshot_id,
     missing_information_requirement_id,
     model_call_ref_id,
     object_version_ref_id,
@@ -56,9 +61,12 @@ from ontology.schemas.identity import (
     optimization_run_id,
     policy_gate_result_id,
     portfolio_id,
+    portfolio_risk_snapshot_id,
     position_id,
+    position_risk_snapshot_id,
     provenance_event_id,
     recommendation_id,
+    regime_episode_id,
     relation_version_ref_id,
     report_run_id,
     risk_limit_id,
@@ -66,11 +74,15 @@ from ontology.schemas.identity import (
     scenario_id,
     schema_definition_ref_id,
     sector_id,
+    signal_factor_score_id,
     signal_id,
     source_freshness_id,
     source_record_object_id,
+    supply_demand_outlook_id,
     thesis_claim_id,
+    thesis_document_id,
     thesis_id,
+    thesis_section_id,
     tool_call_ref_id,
     trade_proposal_id,
     watch_trigger_id,
@@ -107,16 +119,29 @@ _GOVERNED_OBJECT_TYPES = {
     "ManagementQualityAssessment",
     "ManagementQualityScorecardRow",
     "ManagementQualitySetback",
+    "MarketRegimeSnapshot",
     "MissingInformationRequirement",
     "ObjectVersionRef",
     "PolicyGateResult",
+    "PortfolioRiskSnapshot",
     "Position",
+    "PositionRiskSnapshot",
     "Recommendation",
+    "RegimeEpisode",
+    "SignalFactorScore",
+    "ForwardOutlook",
     "Thesis",
     "ThesisClaim",
+    "ThesisDocument",
+    "ThesisSection",
     "TradeProposal",
     "WorkflowArtifact",
     "WatchTrigger",
+    "EquityOverview",
+    "CompanyFinancialProfile",
+    "ExtrinsicSensitivity",
+    "IndustryForceAssessment",
+    "SupplyDemandOutlook",
 }
 _GOVERNED_RELATION_TYPES = {
     "action_run_mutates_object_version",
@@ -129,10 +154,33 @@ _GOVERNED_RELATION_TYPES = {
     "claim_disconfirmed_by_evidence",
     "claim_supported_by_evidence",
     "evidence_has_citation",
+    "evidence_cites_citation",
     "executed_action_mutates_object_version",
     "executed_decision_applies_approval",
     "executed_decision_records_action_run",
+    "recommendation_supported_by_evidence",
+    "recommendation_contradicted_by_evidence",
+    "recommendation_has_policy_gate_result",
+    "recommendation_has_trade_proposal",
+    "recommendation_uses_position_risk_snapshot",
+    "recommendation_uses_portfolio_risk_snapshot",
     "trade_proposal_requires_approval",
+    "document_artifact_materializes_research_object",
+    "equity_overview_covers_issuer",
+    "equity_overview_covers_instrument",
+    "equity_overview_has_financial_profile",
+    "equity_overview_has_extrinsic_sensitivity",
+    "equity_overview_has_industry_force",
+    "equity_overview_has_supply_demand_outlook",
+    "thesis_document_covers_issuer",
+    "thesis_document_covers_instrument",
+    "thesis_document_has_section",
+    "computed_snapshot_materializes_object_version",
+    "market_regime_has_factor_score",
+    "market_regime_has_forward_outlook",
+    "market_regime_has_episode",
+    "factor_score_uses_source_record",
+    "factor_score_uses_computed_snapshot",
 }
 
 
@@ -454,10 +502,6 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("portfolio:"):
             return key
         return portfolio_id(props.get("portfolio_id") or key)
-    if object_type == "Mandate":
-        if key.startswith("mandate:"):
-            return key
-        return mandate_id(props.get("mandate_id") or key)
     if object_type == "InvestmentPolicy":
         if key.startswith("investment_policy:"):
             return key
@@ -518,6 +562,30 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("computed_snapshot_ref:"):
             return key
         return computed_snapshot_ref_id(props.get("snapshot_key") or props.get("snapshot_id") or key)
+    if object_type == "MarketRegimeSnapshot":
+        if key.startswith("market_regime_snapshot:"):
+            return key
+        return market_regime_snapshot_id(props.get("snapshot_id") or key)
+    if object_type == "SignalFactorScore":
+        if key.startswith("signal_factor_score:"):
+            return key
+        return signal_factor_score_id(props.get("factor_score_id") or key)
+    if object_type == "ForwardOutlook":
+        if key.startswith("forward_outlook:"):
+            return key
+        return forward_outlook_id(props.get("outlook_id") or key)
+    if object_type == "RegimeEpisode":
+        if key.startswith("regime_episode:"):
+            return key
+        return regime_episode_id(props.get("episode_id") or key)
+    if object_type == "PositionRiskSnapshot":
+        if key.startswith("position_risk_snapshot:"):
+            return key
+        return position_risk_snapshot_id(props.get("snapshot_id") or key)
+    if object_type == "PortfolioRiskSnapshot":
+        if key.startswith("portfolio_risk_snapshot:"):
+            return key
+        return portfolio_risk_snapshot_id(props.get("snapshot_id") or key)
     if object_type == "ExecutedAction":
         if key.startswith("executed_action:"):
             return key
@@ -621,6 +689,34 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("document_artifact:"):
             return key
         return document_artifact_id(props.get("document_type") or "document", props.get("document_id") or key)
+    if object_type == "EquityOverview":
+        if key.startswith("equity_overview:"):
+            return key
+        return equity_overview_id(props.get("overview_id") or props.get("ticker") or key)
+    if object_type == "CompanyFinancialProfile":
+        if key.startswith("company_financial_profile:"):
+            return key
+        return company_financial_profile_id(props.get("profile_id") or key)
+    if object_type == "ExtrinsicSensitivity":
+        if key.startswith("extrinsic_sensitivity:"):
+            return key
+        return extrinsic_sensitivity_id(props.get("sensitivity_id") or key)
+    if object_type == "IndustryForceAssessment":
+        if key.startswith("industry_force_assessment:"):
+            return key
+        return industry_force_assessment_id(props.get("force_id") or key)
+    if object_type == "SupplyDemandOutlook":
+        if key.startswith("supply_demand_outlook:"):
+            return key
+        return supply_demand_outlook_id(props.get("outlook_id") or key)
+    if object_type == "ThesisDocument":
+        if key.startswith("thesis_document:"):
+            return key
+        return thesis_document_id(props.get("thesis_document_id") or props.get("ticker") or key)
+    if object_type == "ThesisSection":
+        if key.startswith("thesis_section:"):
+            return key
+        return thesis_section_id(props.get("section_id") or key)
     if object_type == "ProvenanceEvent":
         return provenance_event_id(props.get("event_id") or props.get("id") or key)
     if object_type == "InvestmentIdea":
@@ -821,6 +917,32 @@ def _with_object_identity_fields(object_type: str, business_key: str, props: dic
         out.setdefault("call_id", out.get("id") or key)
     elif object_type == "ComputedSnapshotRef":
         out.setdefault("snapshot_key", out.get("snapshot_id") or out.get("id") or key)
+    elif object_type == "MarketRegimeSnapshot":
+        out.setdefault("snapshot_id", out.get("id") or key)
+    elif object_type == "SignalFactorScore":
+        out.setdefault("factor_score_id", out.get("id") or key)
+    elif object_type == "ForwardOutlook":
+        out.setdefault("outlook_id", out.get("id") or key)
+    elif object_type == "RegimeEpisode":
+        out.setdefault("episode_id", out.get("id") or key)
+    elif object_type == "PositionRiskSnapshot":
+        out.setdefault("snapshot_id", out.get("id") or key)
+    elif object_type == "PortfolioRiskSnapshot":
+        out.setdefault("snapshot_id", out.get("id") or key)
+    elif object_type == "EquityOverview":
+        out.setdefault("overview_id", out.get("id") or key)
+    elif object_type == "CompanyFinancialProfile":
+        out.setdefault("profile_id", out.get("id") or key)
+    elif object_type == "ExtrinsicSensitivity":
+        out.setdefault("sensitivity_id", out.get("id") or key)
+    elif object_type == "IndustryForceAssessment":
+        out.setdefault("force_id", out.get("id") or key)
+    elif object_type == "SupplyDemandOutlook":
+        out.setdefault("outlook_id", out.get("id") or key)
+    elif object_type == "ThesisDocument":
+        out.setdefault("thesis_document_id", out.get("id") or key)
+    elif object_type == "ThesisSection":
+        out.setdefault("section_id", out.get("id") or key)
     elif object_type == "InvestmentIdea":
         out.setdefault("idea_id", out.get("id") or key)
     elif object_type == "IdeaEvaluation":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,6 +14,8 @@ from typing import Any
 from api.postgres import use_postgres_state
 from api.snapshot_keys import DEFAULT_SNAPSHOT_MAX_AGE_SECONDS
 from ontology.temporal_repository import SnapshotVersionWrite, TemporalOntologyRepository, payload_hash
+
+logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SQLITE_PATH = _REPO_ROOT / "data_cache" / "computed_snapshots.sqlite3"
@@ -114,6 +117,7 @@ def write_snapshot_success(
                 quality="ok",
             )
         )
+        _materialize_typed_snapshot(row, payload=payload)
         record = _row_to_record(row)
         assert record is not None
         return record
@@ -162,6 +166,8 @@ def write_snapshot_failure(snapshot_key: str, error: str, *, version: int = 1) -
                 error=error,
             )
         )
+        if payload is not None:
+            _materialize_typed_snapshot(row, payload=payload)
         return _row_to_record(row)
 
     with _sqlite_connect() as conn:
@@ -258,6 +264,28 @@ def _row_get(row: Any, key: str, default: Any = None) -> Any:
         return row[key]
     except Exception:
         return default
+
+
+def _materialize_typed_snapshot(row: Any, *, payload: dict[str, Any]) -> None:
+    snapshot_key = str(_row_get(row, "snapshot_key", ""))
+    if snapshot_key != "signal_aggregator:current:v1":
+        return
+    try:
+        from ontology.market_regime_writeback import materialize_signal_aggregator_snapshot
+
+        materialize_signal_aggregator_snapshot(
+            snapshot_key=snapshot_key,
+            snapshot_version_id=_iso_or_none(_row_get(row, "snapshot_id")),
+            payload=payload,
+            as_of_date=_iso_or_none(_row_get(row, "as_of")),
+            fetched_at=_iso_or_none(_row_get(row, "load_time")),
+            status=str(_row_get(row, "status", "ok") or "ok"),
+            quality=str(_row_get(row, "quality", "ok") or "ok"),
+            error=_row_get(row, "error"),
+            provenance_id=_row_get(row, "provenance_event_id"),
+        )
+    except Exception:
+        logger.warning("Failed to materialize typed ontology snapshot %s", snapshot_key, exc_info=True)
 
 
 def _iso_or_none(value: Any) -> str | None:

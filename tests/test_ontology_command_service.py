@@ -152,6 +152,50 @@ def test_propose_and_apply_position_update_writes_only_ontology_objects():
     assert any(rel["relation_type"] == "executed_decision_applies_approval" for rel in service.objects.relations)  # type: ignore[attr-defined]
 
 
+def test_position_update_apply_accepts_reviewed_valuation_fields():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_portfolio_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "APO",
+                    "asset": "equity",
+                    "shares": 25,
+                    "quantity": 25,
+                    "direction": "long",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "cost_basis": None,
+                    "price_symbol": "APO",
+                    "country": None,
+                    "currency": None,
+                    "exchange": None,
+                    "base_currency": None,
+                    "fx_rate_as_of": None,
+                    "notional_base": None,
+                    "cost_basis_base": None,
+                    "fx_rate_to_base": None,
+                    "instrument_type": "security",
+                    "valuation_status": None,
+                    "contract_multiplier": 1,
+                }
+            ]
+        },
+        context,
+        reason="unit",
+    )
+
+    assert approval["proposed_change"]["position_changes"]
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    assert applied["application_status"] == "applied"
+    assert "position:APO" in repo.objects
+
+
 def test_create_recommendation_approval_applies_with_real_schema_normalization():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
@@ -396,3 +440,73 @@ def test_save_management_quality_content_writes_ontology_children_and_markdown(m
     assert any(rel["relation_type"] == "management_quality_assesses_issuer" for rel in fake.relations)
     assert any(rel["relation_type"] == "research_object_uses_document" for rel in fake.relations)
     assert indexed and indexed[0]["doc_type"] == "management_quality"
+
+
+def test_save_overview_content_writes_typed_research_objects_and_chunk_lineage(monkeypatch, tmp_path):
+    import portfolio.overview_content as overview_content
+
+    indexed: list[dict[str, Any]] = []
+    overview_dir = tmp_path / "investment_overviews"
+    overview_dir.mkdir()
+    monkeypatch.setattr(overview_content, "OVERVIEWS_DIR", overview_dir)
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: indexed.append(kwargs))
+
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+    content = """# MU Overview
+
+## Financials
+- **3-Year Avg. YoY Revenue Growth**: +12% driven by memory recovery.
+- **3-Year Avg. YoY EPS Growth**: +9% through cycle.
+- **Debt**: manageable ladder.
+| Tranche | Rate | Maturity |
+|---------|------|----------|
+| 2030 notes | 5.0% | 2030 |
+- **Reinvestment Costs**: elevated HBM capex.
+
+## Sensitivity to Extrinsic Factors
+| Factor | Sensitivity | Capacity |
+|--------|-------------|----------|
+| Memory pricing | High | Medium |
+
+## Porter's Five Forces
+- **Supplier Power - Medium**: Equipment suppliers remain important.
+
+## Supply Outlook
+- **HBM capacity**: Supply remains constrained.
+
+## Demand Outlook
+- **AI servers**: Strong demand is visible.
+"""
+
+    approval = service.propose_action(
+        "save_overview_content", {"ticker": "mu", "content": content}, context, reason="unit"
+    )
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    object_types = {row["object_type"] for row in repo.objects.values()}
+    relation_types = {row["relation_type"] for row in repo.relations}
+    assert applied["application_status"] == "applied"
+    assert (overview_dir / "MU.md").exists()
+    assert {
+        "DocumentArtifact",
+        "EquityOverview",
+        "CompanyFinancialProfile",
+        "ExtrinsicSensitivity",
+        "IndustryForceAssessment",
+        "SupplyDemandOutlook",
+    } <= object_types
+    assert {
+        "document_artifact_materializes_research_object",
+        "equity_overview_covers_issuer",
+        "equity_overview_covers_instrument",
+        "equity_overview_has_financial_profile",
+        "equity_overview_has_extrinsic_sensitivity",
+        "equity_overview_has_industry_force",
+        "equity_overview_has_supply_demand_outlook",
+    } <= relation_types
+    assert indexed
+    assert indexed[0]["doc_type"] == "overview"
+    assert indexed[0]["object_uid"].startswith("equity_overview:")
+    assert indexed[0]["object_version_id"]

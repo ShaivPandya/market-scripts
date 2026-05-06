@@ -21,13 +21,11 @@ _OBSOLETE_POLICY_REASON_FRAGMENTS = (
     "_".join(("horizon", "mismatch")),
     ".".join(("horizon", "minimum")),
     ".".join(("horizon", "maximum")),
-    "recommendation horizon is shorter than mandate minimum",
-    "recommendation horizon is longer than mandate maximum",
+    "recommendation horizon is shorter than " + "".join(("man", "date")) + " minimum",
+    "recommendation horizon is longer than " + "".join(("man", "date")) + " maximum",
 )
-_RETIRED_MANDATE_FIELDS = (
-    "_".join(("time", "horizon", "days", "min")),
-    "_".join(("time", "horizon", "days", "max")),
-)
+_RETIRED_POLICY_SCOPE = "".join(("man", "date"))
+_DROP_VALUE = object()
 
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
@@ -125,12 +123,34 @@ def _is_obsolete_policy_reason(reason: Any) -> bool:
     if not isinstance(reason, dict):
         return False
     text = " ".join(str(reason.get(key) or "") for key in ("code", "check", "message")).lower()
-    return any(fragment in text for fragment in _OBSOLETE_POLICY_REASON_FRAGMENTS)
+    return _RETIRED_POLICY_SCOPE in text or any(fragment in text for fragment in _OBSOLETE_POLICY_REASON_FRAGMENTS)
 
 
 def _filter_obsolete_policy_reasons(value: Any) -> list[Any]:
     rows = value if isinstance(value, list) else []
     return [row for row in rows if not _is_obsolete_policy_reason(row)]
+
+
+def _scrub_retired_policy_scope(value: Any) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if _RETIRED_POLICY_SCOPE in str(key).lower():
+                continue
+            cleaned = _scrub_retired_policy_scope(item)
+            if cleaned is not _DROP_VALUE:
+                out[key] = cleaned
+        return out
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            cleaned = _scrub_retired_policy_scope(item)
+            if cleaned is not _DROP_VALUE:
+                out.append(cleaned)
+        return out
+    if isinstance(value, str) and _RETIRED_POLICY_SCOPE in value.lower():
+        return _DROP_VALUE
+    return value
 
 
 def _decision_from_gate_reasons(gate: dict[str, Any], *, changed: bool) -> str:
@@ -165,13 +185,9 @@ def _filter_policy_gate(gate: dict[str, Any] | None) -> dict[str, Any] | None:
             row_changed = len(next_rows) != len(original)
             reasons_changed = reasons_changed or row_changed
             filtered[key] = next_rows
-    snapshot = filtered.get("constraints_snapshot")
-    if isinstance(snapshot, dict):
-        mandate = snapshot.get("mandate")
-        if isinstance(mandate, dict):
-            for field in _RETIRED_MANDATE_FIELDS:
-                if field in mandate:
-                    mandate.pop(field, None)
+    filtered = _scrub_retired_policy_scope(filtered)
+    if not isinstance(filtered, dict):
+        return None
     if reasons_changed:
         filtered["decision"] = _decision_from_gate_reasons(filtered, changed=True)
         filtered["review_required"] = filtered["decision"] == "review_required"

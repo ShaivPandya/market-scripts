@@ -247,7 +247,7 @@ def _chunk_document(content: str, doc_type: str) -> list[tuple[str | None, str]]
     Markdown docs (thesis, management quality, news digests, reports): split by ## headings, then window large sections.
     Plain text (summaries): window-based chunking.
     """
-    if doc_type in ("thesis", "management_quality", "news_digest", "weekly_report", "daily_report"):
+    if doc_type in ("thesis", "overview", "management_quality", "news_digest", "weekly_report", "daily_report"):
         heading_chunks = _chunk_by_headings(content)
         # Sub-chunk large sections
         max_chars = _MAX_CHUNK_TOKENS * _CHARS_PER_TOKEN

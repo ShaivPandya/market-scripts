@@ -651,7 +651,7 @@ export const uploadThesisDocument = (ticker: string, file: File) =>
 export const saveOverviewContent = (ticker: string, content: string) =>
   client
     .put(`/overview/${encodeURIComponent(ticker)}`, { content })
-    .then(r => r.data as { status: "ok"; ticker: string; content: string })
+    .then(r => r.data as StagedMutationResponse)
 
 export const uploadOverviewDocument = (ticker: string, file: File) =>
   uploadDocumentForGeneration<{ status: "ok"; ticker: string; content: string }>("/overview/generate", ticker, file)

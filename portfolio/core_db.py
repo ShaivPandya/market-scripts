@@ -607,7 +607,6 @@ CREATE TABLE IF NOT EXISTS policy_gate_results (
     account_id              TEXT,
     portfolio_id            TEXT,
     policy_id               TEXT,
-    mandate_id              TEXT,
     action_id               TEXT,
     source_type             TEXT,
     source_id               TEXT,
@@ -5179,7 +5178,6 @@ def create_policy_gate_result(
         "account_id": result.get("account_id"),
         "portfolio_id": result.get("portfolio_id"),
         "policy_id": result.get("policy_id"),
-        "mandate_id": result.get("mandate_id"),
         "action_id": action_id or result.get("action_id"),
         "source_type": source_type,
         "source_id": source_id,
@@ -5221,7 +5219,6 @@ def create_policy_gate_result(
                             "account_id": result.get("account_id"),
                             "portfolio_id": result.get("portfolio_id"),
                             "policy_id": result.get("policy_id"),
-                            "mandate_id": result.get("mandate_id"),
                         },
                     )
                 ],

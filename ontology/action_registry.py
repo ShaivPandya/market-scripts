@@ -648,6 +648,19 @@ class SaveThesisContentInput(TickerMixin):
         return text
 
 
+class SaveOverviewContentInput(TickerMixin):
+    content: str
+    preserve_exact_content: bool = False
+
+    @field_validator("content")
+    @classmethod
+    def _validate_content(cls, value: str) -> str:
+        text = str(value or "")
+        if not text.strip():
+            raise ValueError("Overview content cannot be empty.")
+        return text
+
+
 class SaveManagementQualityContentInput(TickerMixin):
     content: str
     preserve_exact_content: bool = False
@@ -679,6 +692,33 @@ class SaveEvaluationInput(TickerMixin):
         if not text:
             raise ValueError("Evaluation thesis_status cannot be empty.")
         return text
+
+
+class CreateResearchNoteInput(OptionalTickerMixin):
+    title: str
+    note: str | None = None
+    content: str | None = None
+    body: str | None = None
+    text: str | None = None
+    summary: str | None = None
+    document_id: str | None = None
+    artifact_uri: str | None = None
+    source_path: str | None = None
+    status: str = "active"
+
+    @field_validator("title")
+    @classmethod
+    def _validate_title(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Research note title cannot be empty.")
+        return text
+
+    @model_validator(mode="after")
+    def _validate_body(self) -> CreateResearchNoteInput:
+        if not any(str(value or "").strip() for value in (self.note, self.content, self.body, self.text, self.summary)):
+            raise ValueError("Research note content cannot be empty.")
+        return self
 
 
 class DeletePortfolioNewsDigestInput(BaseModel):
@@ -867,6 +907,20 @@ def _hash_current_thesis(model: BaseModel) -> dict[str, Any]:
         result["meta"] = OntologyRuntimeReadService().thesis(ticker)
     except Exception:
         result["meta"] = None
+    return result
+
+
+def _hash_current_overview(model: BaseModel) -> dict[str, Any]:
+    ticker = str(getattr(model, "ticker", "") or "").strip().upper()
+    result: dict[str, Any] = {"ticker": ticker}
+    if not ticker:
+        return result
+    try:
+        from portfolio import overview_content
+
+        result["content_hash"] = _stable_hash({"content": overview_content.read_overview(ticker)})
+    except Exception:
+        result["content_hash"] = None
     return result
 
 
@@ -2176,6 +2230,21 @@ def _index_thesis_callback(ticker: str, content: str, source_path: str) -> Actio
     return ActionCallback("index_thesis", _index)
 
 
+def _index_overview_callback(ticker: str, content: str, source_path: str) -> ActionCallback:
+    def _index() -> None:
+        from api.retrieval import index_document
+
+        index_document(
+            doc_type="overview",
+            content=content,
+            ticker=ticker,
+            source_path=source_path,
+            doc_id=f"overview-{ticker}",
+        )
+
+    return ActionCallback("index_overview", _index)
+
+
 def _index_management_quality_callback(ticker: str, content: str, source_path: str) -> ActionCallback:
     def _index() -> None:
         from api.retrieval import index_document
@@ -2407,6 +2476,21 @@ def _save_thesis_content(input_model: BaseModel, _context: ActionContext) -> Act
     )
 
 
+def _save_overview_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(SaveOverviewContentInput, input_model)
+    from portfolio.overview_content import save_overview_content
+
+    saved = save_overview_content(
+        typed.ticker,
+        typed.content,
+        preserve_exact_content=typed.preserve_exact_content,
+    )
+    return ActionResult(
+        saved.output,
+        (_index_overview_callback(typed.ticker, saved.index_content, saved.source_path),),
+    )
+
+
 def _save_management_quality_content(input_model: BaseModel, _context: ActionContext) -> ActionResult:
     typed = cast(SaveManagementQualityContentInput, input_model)
     from portfolio.management_quality_content import save_management_quality_content
@@ -2437,6 +2521,11 @@ def _save_evaluation(input_model: BaseModel, _context: ActionContext) -> ActionR
             "count": inserted,
         }
     )
+
+
+def _create_research_note(input_model: BaseModel, _context: ActionContext) -> ActionResult:
+    typed = cast(CreateResearchNoteInput, input_model)
+    return ActionResult({"status": "ok", **typed.model_dump()})
 
 
 def _delete_portfolio_news_digest(input_model: BaseModel, _context: ActionContext) -> ActionResult:
@@ -2715,6 +2804,17 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         precondition_builder=_hash_current_thesis,
         base_state_hash_fields=("ticker", "content_hash", "meta"),
     ),
+    "save_overview_content": DomainAction(
+        action_id="save_overview_content",
+        input_model=SaveOverviewContentInput,
+        handler=_save_overview_content,
+        approval_entity_type="overview_content",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+        effect_kind="approval_gated",
+        precondition_builder=_hash_current_overview,
+        base_state_hash_fields=("ticker", "content_hash"),
+    ),
     "save_management_quality_content": DomainAction(
         action_id="save_management_quality_content",
         input_model=SaveManagementQualityContentInput,
@@ -2731,6 +2831,15 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         input_model=SaveEvaluationInput,
         handler=_save_evaluation,
         approval_entity_type="evaluation",
+        approval_payload=_model_payload,
+        approval_ticker=_ticker_from_model,
+        effect_kind="approval_gated",
+    ),
+    "create_research_note": DomainAction(
+        action_id="create_research_note",
+        input_model=CreateResearchNoteInput,
+        handler=_create_research_note,
+        approval_entity_type="research_note",
         approval_payload=_model_payload,
         approval_ticker=_ticker_from_model,
         effect_kind="approval_gated",

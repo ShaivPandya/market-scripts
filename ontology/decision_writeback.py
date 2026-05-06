@@ -23,9 +23,13 @@ from ontology.object_service import OntologyObjectService
 from ontology.schemas.identity import (
     account_id,
     asset_id,
+    citation_id,
+    evidence_id,
     object_version_ref_id,
     policy_gate_result_id,
     portfolio_id,
+    portfolio_risk_snapshot_id,
+    position_risk_snapshot_id,
     report_run_id,
     risk_metric_id,
     scenario_id,
@@ -423,6 +427,28 @@ class DecisionOntologyWriteback:
                 approval_id=approval_id,
             )
         )
+        rows.extend(
+            self._record_recommendation_evidence(
+                recommendation_object_uid=recommendation_object_uid,
+                recommendation_key=recommendation_key,
+                record=record,
+                actor=actor,
+                provenance_id=provenance_id,
+                valid_from=valid_from,
+                approval_id=approval_id,
+            )
+        )
+        rows.extend(
+            self._record_recommendation_risk_snapshots(
+                recommendation_object_uid=recommendation_object_uid,
+                recommendation_key=recommendation_key,
+                record=record,
+                actor=actor,
+                provenance_id=provenance_id,
+                valid_from=valid_from,
+                approval_id=approval_id,
+            )
+        )
         if record.get("account_id"):
             rows.append(
                 self.object_service.write_relation(
@@ -520,6 +546,18 @@ class DecisionOntologyWriteback:
                     approval_id=approval_id,
                 )
             )
+            rows.append(
+                self.object_service.write_relation(
+                    recommendation_object_uid,
+                    policy_gate_result_id(gate_key),
+                    "recommendation_has_policy_gate_result",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    approval_id=approval_id,
+                )
+            )
         if _is_actionable(record):
             proposal_key = str(record.get("trade_proposal_id") or record.get("idempotency_key") or recommendation_key)
             rows.append(
@@ -553,6 +591,18 @@ class DecisionOntologyWriteback:
                 )
             )
             proposal_uid = trade_proposal_id(proposal_key)
+            rows.append(
+                self.object_service.write_relation(
+                    recommendation_object_uid,
+                    proposal_uid,
+                    "recommendation_has_trade_proposal",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    approval_id=approval_id,
+                )
+            )
             rows.append(
                 self.object_service.write_relation(
                     proposal_uid,
@@ -616,6 +666,190 @@ class DecisionOntologyWriteback:
                         approval_id=approval_id,
                     )
                 )
+        return rows
+
+    def _record_recommendation_evidence(
+        self,
+        *,
+        recommendation_object_uid: str,
+        recommendation_key: str,
+        record: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        valid_from: str,
+        approval_id: int | None,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for relation_type, evidence_items in (
+            ("recommendation_supported_by_evidence", _as_list(record.get("evidence"))),
+            ("recommendation_contradicted_by_evidence", _as_list(record.get("disconfirming_evidence"))),
+        ):
+            for index, item in enumerate(evidence_items):
+                if item is None or item == "":
+                    continue
+                evidence_payload = _as_dict(item) if isinstance(item, (Mapping, str)) else {}
+                summary = (
+                    evidence_payload.get("summary")
+                    or evidence_payload.get("text")
+                    or evidence_payload.get("evidence")
+                    or evidence_payload.get("description")
+                    or (item if isinstance(item, str) else None)
+                )
+                if not str(summary or "").strip():
+                    continue
+                role = "supporting" if relation_type == "recommendation_supported_by_evidence" else "disconfirming"
+                evidence_key = str(
+                    evidence_payload.get("evidence_id") or f"{recommendation_key}:{role}:{index}:{_hash_value(item)}"
+                )
+                evidence_row = self.object_service.write_object(
+                    "Evidence",
+                    evidence_key,
+                    {
+                        "evidence_id": evidence_key,
+                        "evidence_type": str(evidence_payload.get("evidence_type") or role),
+                        "title": evidence_payload.get("title") or evidence_payload.get("source"),
+                        "summary": _truncate(summary, 2000),
+                        "source_record_id": evidence_payload.get("source_record_id"),
+                        "document_artifact_id": evidence_payload.get("document_artifact_id"),
+                        "confidence": _optional_float(evidence_payload.get("confidence")),
+                        "observed_at": evidence_payload.get("observed_at") or record.get("as_of"),
+                        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                    },
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    approval_id=approval_id,
+                    input_hash=_hash_value(item),
+                )
+                rows.append(evidence_row)
+                evidence_uid_value = evidence_id(evidence_key)
+                rows.append(
+                    self.object_service.write_relation(
+                        recommendation_object_uid,
+                        evidence_uid_value,
+                        relation_type,
+                        {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID, "relation_role": role},
+                        valid_from,
+                        actor=actor,
+                        provenance=provenance_id,
+                        approval_id=approval_id,
+                        input_hash=_hash_value(item),
+                    )
+                )
+                citation_payload = _citation_payload(evidence_payload)
+                if citation_payload:
+                    citation_key = str(
+                        citation_payload.get("citation_id")
+                        or f"{recommendation_key}:{role}:{index}:citation:{_hash_value(citation_payload)}"
+                    )
+                    citation_row = self.object_service.write_object(
+                        "Citation",
+                        citation_key,
+                        {
+                            "citation_id": citation_key,
+                            "source_record_id": citation_payload.get("source_record_id")
+                            or evidence_payload.get("source_record_id"),
+                            "document_artifact_id": citation_payload.get("document_artifact_id")
+                            or evidence_payload.get("document_artifact_id"),
+                            "title": citation_payload.get("title") or evidence_payload.get("title"),
+                            "url": citation_payload.get("url"),
+                            "source_path": citation_payload.get("source_path"),
+                            "quote_hash": citation_payload.get("quote_hash")
+                            or _hash_text(str(citation_payload.get("quote") or summary), length=32),
+                            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                        },
+                        valid_from,
+                        actor=actor,
+                        provenance=provenance_id,
+                        approval_id=approval_id,
+                        input_hash=_hash_value(citation_payload),
+                    )
+                    rows.append(citation_row)
+                    citation_uid_value = citation_id(citation_key)
+                    for citation_relation in ("evidence_has_citation", "evidence_cites_citation"):
+                        rows.append(
+                            self.object_service.write_relation(
+                                evidence_uid_value,
+                                citation_uid_value,
+                                citation_relation,
+                                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                                valid_from,
+                                actor=actor,
+                                provenance=provenance_id,
+                                approval_id=approval_id,
+                                input_hash=_hash_value(citation_payload),
+                            )
+                        )
+        return rows
+
+    def _record_recommendation_risk_snapshots(
+        self,
+        *,
+        recommendation_object_uid: str,
+        recommendation_key: str,
+        record: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        valid_from: str,
+        approval_id: int | None,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        position_snapshot_id = str(record.get("risk_snapshot_id") or "").strip()
+        if position_snapshot_id:
+            props = _position_risk_snapshot_props(record, snapshot_id=position_snapshot_id)
+            rows.append(
+                self.object_service.write_object(
+                    "PositionRiskSnapshot",
+                    position_snapshot_id,
+                    props,
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    approval_id=approval_id,
+                    input_hash=_hash_value(props),
+                )
+            )
+            rows.append(
+                self.object_service.write_relation(
+                    recommendation_object_uid,
+                    position_risk_snapshot_id(position_snapshot_id),
+                    "recommendation_uses_position_risk_snapshot",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    approval_id=approval_id,
+                    input_hash=recommendation_key,
+                )
+            )
+        portfolio_snapshot_id = str(record.get("portfolio_risk_snapshot_id") or "").strip()
+        if portfolio_snapshot_id:
+            props = _portfolio_risk_snapshot_props(record, snapshot_id=portfolio_snapshot_id)
+            rows.append(
+                self.object_service.write_object(
+                    "PortfolioRiskSnapshot",
+                    portfolio_snapshot_id,
+                    props,
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    approval_id=approval_id,
+                    input_hash=_hash_value(props),
+                )
+            )
+            rows.append(
+                self.object_service.write_relation(
+                    recommendation_object_uid,
+                    portfolio_risk_snapshot_id(portfolio_snapshot_id),
+                    "recommendation_uses_portfolio_risk_snapshot",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    valid_from,
+                    actor=actor,
+                    provenance=provenance_id,
+                    approval_id=approval_id,
+                    input_hash=recommendation_key,
+                )
+            )
         return rows
 
     def _record_report_context_objects(
@@ -860,6 +1094,68 @@ def _as_dict(value: Any) -> dict[str, Any]:
             return {}
         return _as_dict(decoded)
     return {}
+
+
+def _citation_payload(value: Mapping[str, Any]) -> dict[str, Any]:
+    citation = value.get("citation")
+    if isinstance(citation, Mapping):
+        return {str(key): item for key, item in citation.items()}
+    if any(value.get(key) for key in ("url", "source_path", "document_artifact_id", "source_record_id")):
+        return {
+            "title": value.get("title") or value.get("source"),
+            "url": value.get("url"),
+            "source_path": value.get("source_path"),
+            "document_artifact_id": value.get("document_artifact_id"),
+            "source_record_id": value.get("source_record_id"),
+            "quote": value.get("quote") or value.get("summary") or value.get("text"),
+        }
+    return {}
+
+
+def _position_risk_snapshot_props(record: Mapping[str, Any], *, snapshot_id: str) -> dict[str, Any]:
+    risk_status = _as_dict(record.get("risk_source_status"))
+    bindings = _as_list(record.get("risk_bindings"))
+    payload = {
+        "risk_bindings": bindings,
+        "risk_source_status": risk_status,
+    }
+    return {
+        "snapshot_id": snapshot_id,
+        "ticker": record.get("ticker"),
+        "portfolio_risk_snapshot_id": record.get("portfolio_risk_snapshot_id"),
+        "as_of": record.get("as_of"),
+        "computed_at": risk_status.get("computed_at"),
+        "risk_score": _optional_float(record.get("risk_score")),
+        "risk_level": record.get("risk_level"),
+        "confidence": _optional_float(record.get("risk_confidence")),
+        "quality": record.get("risk_quality") or risk_status.get("quality"),
+        "source_status": risk_status,
+        "payload": payload,
+        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+    }
+
+
+def _portfolio_risk_snapshot_props(record: Mapping[str, Any], *, snapshot_id: str) -> dict[str, Any]:
+    risk_status = _as_dict(record.get("risk_source_status"))
+    bindings = _as_list(record.get("risk_bindings"))
+    return {
+        "snapshot_id": snapshot_id,
+        "as_of": record.get("as_of"),
+        "computed_at": risk_status.get("computed_at"),
+        "average_risk_score": _optional_float(risk_status.get("average_risk_score")),
+        "max_risk_score": _optional_float(risk_status.get("max_risk_score")),
+        "confidence": _optional_float(record.get("risk_confidence") or risk_status.get("confidence")),
+        "quality": record.get("risk_quality") or risk_status.get("quality"),
+        "position_count": _optional_int(risk_status.get("position_count")),
+        "position_snapshot_ids": [
+            str(item.get("risk_snapshot_id"))
+            for item in bindings
+            if isinstance(item, Mapping) and item.get("risk_snapshot_id")
+        ],
+        "source_status": risk_status,
+        "payload": {"risk_bindings": bindings, "risk_source_status": risk_status},
+        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+    }
 
 
 def _as_list(value: Any) -> list[Any]:

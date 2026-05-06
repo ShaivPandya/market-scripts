@@ -35,12 +35,16 @@ from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
 from ontology.schemas.identity import (
     citation_id,
+    company_financial_profile_id,
     document_artifact_id,
+    equity_overview_id,
     evidence_id,
+    extrinsic_sensitivity_id,
     factor_score_id,
     idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
+    industry_force_assessment_id,
     investment_idea_id,
     issuer_id,
     management_quality_accomplishment_id,
@@ -52,7 +56,13 @@ from ontology.schemas.identity import (
     optimization_alert_id,
     optimization_mission_id,
     optimization_run_id,
+    portfolio_risk_snapshot_id,
+    position_risk_snapshot_id,
+    recommendation_id,
     source_freshness_id,
+    supply_demand_outlook_id,
+    thesis_document_id,
+    thesis_section_id,
 )
 from ontology.temporal_repository import SnapshotVersionWrite, TemporalOntologyRepository, payload_hash
 
@@ -122,6 +132,8 @@ def backfill_runtime_objects(
     portfolio_db_path: str | Path | None = None,
     thesis_db_path: str | Path | None = None,
     snapshot_db_path: str | Path | None = None,
+    overview_dir: str | Path | None = None,
+    thesis_content_dir: str | Path | None = None,
     management_quality_dir: str | Path | None = None,
     dry_run: bool = False,
     provenance_event_id_value: str = "pv:legacy_backfill:runtime_objects",
@@ -153,6 +165,16 @@ def backfill_runtime_objects(
             snapshot_versions.extend(
                 _snapshot_versions(conn, cutover_time=cutover_time, provenance_event_id_value=provenance_event_id_value)
             )
+    if overview_dir is not None:
+        overview_mutations, overview_relations = _overview_rows(Path(overview_dir), cutover_time=cutover_time)
+        mutations.extend(overview_mutations)
+        link_relations.extend(overview_relations)
+    if thesis_content_dir is not None:
+        thesis_doc_mutations, thesis_doc_relations = _thesis_document_rows(
+            Path(thesis_content_dir), cutover_time=cutover_time
+        )
+        mutations.extend(thesis_doc_mutations)
+        link_relations.extend(thesis_doc_relations)
     if management_quality_dir is not None:
         mq_mutations, mq_relations = _management_quality_rows(Path(management_quality_dir), cutover_time=cutover_time)
         mutations.extend(mq_mutations)
@@ -216,7 +238,23 @@ def backfill_runtime_objects(
         )
     repository = TemporalOntologyRepository()
     for snapshot_version in snapshot_versions:
-        repository.write_computed_snapshot_version(snapshot_version)
+        row = repository.write_computed_snapshot_version(snapshot_version)
+        if snapshot_version.snapshot_key == "signal_aggregator:current:v1" and isinstance(
+            snapshot_version.payload, dict
+        ):
+            from ontology.market_regime_writeback import materialize_signal_aggregator_snapshot
+
+            materialize_signal_aggregator_snapshot(
+                snapshot_key=snapshot_version.snapshot_key,
+                snapshot_version_id=str(row.get("snapshot_id") or ""),
+                payload=snapshot_version.payload,
+                as_of_date=str(snapshot_version.as_of) if snapshot_version.as_of else None,
+                fetched_at=str(snapshot_version.load_time) if snapshot_version.load_time else cutover_time,
+                status=snapshot_version.status,
+                quality=snapshot_version.quality,
+                error=snapshot_version.error,
+                provenance_id=provenance_event_id_value,
+            )
     return {
         "dry_run": False,
         "objects": counts,
@@ -1057,7 +1095,7 @@ def _management_quality_rows(
                 (
                     "Issuer",
                     issuer_uid,
-                    {"issuer_id": issuer_uid, "name": ticker, "ticker": ticker, "ontology_run_id": "operational"},
+                    {"issuer_id": ticker, "name": ticker, "ticker": ticker, "ontology_run_id": "operational"},
                     cutover_time,
                 ),
                 (
@@ -1065,7 +1103,7 @@ def _management_quality_rows(
                     doc_uid,
                     {
                         "document_type": "management_quality",
-                        "document_id": f"management_quality:{ticker}",
+                        "document_id": ticker,
                         "title": f"{ticker} management quality",
                         "ticker": ticker,
                         "content_hash": content_hash,
@@ -1107,6 +1145,15 @@ def _management_quality_rows(
         )
         relations.append(
             _domain_relation("management_quality_assesses_issuer", assessment_uid, issuer_uid, cutover_time)
+        )
+        relations.append(
+            _domain_relation(
+                "document_artifact_materializes_research_object",
+                doc_uid,
+                assessment_uid,
+                cutover_time,
+                {"document_role": "markdown"},
+            )
         )
         relations.append(
             _domain_relation(
@@ -1206,6 +1253,330 @@ def _management_quality_rows(
     return mutations, relations
 
 
+def _overview_rows(
+    directory: Path, *, cutover_time: str
+) -> tuple[list[tuple[str, str, dict[str, Any], str]], list[tuple[str, str, str, dict[str, Any], str]]]:
+    mutations: list[tuple[str, str, dict[str, Any], str]] = []
+    relations: list[tuple[str, str, str, dict[str, Any], str]] = []
+    if not directory.exists():
+        return mutations, relations
+    try:
+        from api.routers.overview import parse_overview_markdown
+    except Exception:
+        parse_overview_markdown = None
+    for path in sorted(directory.glob("*.md")):
+        ticker = path.stem.strip().upper()
+        if not ticker:
+            continue
+        content = path.read_text(encoding="utf-8", errors="replace")
+        parsed = parse_overview_markdown(content) if parse_overview_markdown is not None else None
+        parsed_dict = parsed if isinstance(parsed, dict) else {}
+        issuer_uid = issuer_id(ticker)
+        instr_uid = f"instrument:{ticker.lower()}"
+        overview_uid = equity_overview_id(issuer_uid)
+        doc_uid = document_artifact_id("overview", ticker)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        mutations.extend(
+            [
+                ("Issuer", issuer_uid, {"issuer_id": ticker, "name": ticker, "ticker": ticker}, cutover_time),
+                (
+                    "Instrument",
+                    instr_uid,
+                    {
+                        "instrument_id": ticker,
+                        "ticker": ticker,
+                        "asset_class": "security",
+                        "instrument_type": "security",
+                        "issuer_id": issuer_uid,
+                        "status": "active",
+                    },
+                    cutover_time,
+                ),
+                (
+                    "DocumentArtifact",
+                    doc_uid,
+                    {
+                        "document_type": "overview",
+                        "document_id": ticker,
+                        "title": f"{ticker} overview",
+                        "ticker": ticker,
+                        "content_hash": content_hash,
+                        "artifact_uri": str(path),
+                        "status": "active",
+                        "source_type": "legacy_markdown",
+                        "source_id": str(path),
+                        "created_at": cutover_time,
+                        "updated_at": cutover_time,
+                    },
+                    cutover_time,
+                ),
+                (
+                    "EquityOverview",
+                    overview_uid,
+                    {
+                        "overview_id": overview_uid,
+                        "issuer_id": issuer_uid,
+                        "ticker": ticker,
+                        "document_id": doc_uid,
+                        "content_hash": content_hash,
+                        "status": "active",
+                        "created_at": cutover_time,
+                        "updated_at": cutover_time,
+                    },
+                    cutover_time,
+                ),
+            ]
+        )
+        relations.extend(
+            [
+                _domain_relation(
+                    "document_artifact_materializes_research_object",
+                    doc_uid,
+                    overview_uid,
+                    cutover_time,
+                    {"document_role": "markdown"},
+                ),
+                _domain_relation(
+                    "research_object_uses_document",
+                    overview_uid,
+                    doc_uid,
+                    cutover_time,
+                    {"document_role": "rendered_markdown"},
+                ),
+                _domain_relation("equity_overview_covers_issuer", overview_uid, issuer_uid, cutover_time),
+                _domain_relation("equity_overview_covers_instrument", overview_uid, instr_uid, cutover_time),
+            ]
+        )
+        financials = parsed_dict.get("financials") if isinstance(parsed_dict.get("financials"), dict) else {}
+        if financials:
+            profile_uid = company_financial_profile_id(f"{overview_uid}:financial_profile")
+            mutations.append(
+                (
+                    "CompanyFinancialProfile",
+                    profile_uid,
+                    {
+                        "profile_id": profile_uid,
+                        "overview_id": overview_uid,
+                        "issuer_id": issuer_uid,
+                        "ticker": ticker,
+                        "revenue_growth": financials.get("revenue_growth"),
+                        "eps_growth": financials.get("eps_growth"),
+                        "debt": financials.get("debt"),
+                        "reinvestment": financials.get("reinvestment"),
+                    },
+                    cutover_time,
+                )
+            )
+            relations.append(
+                _domain_relation("equity_overview_has_financial_profile", overview_uid, profile_uid, cutover_time)
+            )
+        for index, item in enumerate(
+            parsed_dict.get("sensitivity") if isinstance(parsed_dict.get("sensitivity"), list) else [], start=1
+        ):
+            if not isinstance(item, dict) or not item.get("factor"):
+                continue
+            child_uid = extrinsic_sensitivity_id(f"{overview_uid}:sensitivity:{index}:{item.get('factor')}")
+            mutations.append(
+                (
+                    "ExtrinsicSensitivity",
+                    child_uid,
+                    {
+                        "sensitivity_id": child_uid,
+                        "overview_id": overview_uid,
+                        "issuer_id": issuer_uid,
+                        "ticker": ticker,
+                        "factor": item.get("factor"),
+                        "sensitivity": item.get("sensitivity"),
+                        "capacity": item.get("capacity"),
+                        "ordinal": index,
+                    },
+                    cutover_time,
+                )
+            )
+            relations.append(
+                _domain_relation("equity_overview_has_extrinsic_sensitivity", overview_uid, child_uid, cutover_time)
+            )
+        for index, item in enumerate(
+            parsed_dict.get("porters_five_forces") if isinstance(parsed_dict.get("porters_five_forces"), list) else [],
+            start=1,
+        ):
+            if not isinstance(item, dict) or not item.get("force"):
+                continue
+            child_uid = industry_force_assessment_id(f"{overview_uid}:force:{index}:{item.get('force')}")
+            mutations.append(
+                (
+                    "IndustryForceAssessment",
+                    child_uid,
+                    {
+                        "force_id": child_uid,
+                        "overview_id": overview_uid,
+                        "issuer_id": issuer_uid,
+                        "ticker": ticker,
+                        "force": item.get("force"),
+                        "rating": item.get("rating"),
+                        "description": item.get("description"),
+                        "ordinal": index,
+                    },
+                    cutover_time,
+                )
+            )
+            relations.append(
+                _domain_relation("equity_overview_has_industry_force", overview_uid, child_uid, cutover_time)
+            )
+        for outlook_type, item in (
+            ("supply", parsed_dict.get("supply_outlook")),
+            ("demand", parsed_dict.get("demand_outlook")),
+        ):
+            if not isinstance(item, dict):
+                continue
+            child_uid = supply_demand_outlook_id(f"{overview_uid}:{outlook_type}")
+            mutations.append(
+                (
+                    "SupplyDemandOutlook",
+                    child_uid,
+                    {
+                        "outlook_id": child_uid,
+                        "overview_id": overview_uid,
+                        "issuer_id": issuer_uid,
+                        "ticker": ticker,
+                        "outlook_type": outlook_type,
+                        "rating": item.get("rating"),
+                        "points": item.get("points") if isinstance(item.get("points"), list) else [],
+                    },
+                    cutover_time,
+                )
+            )
+            relations.append(
+                _domain_relation("equity_overview_has_supply_demand_outlook", overview_uid, child_uid, cutover_time)
+            )
+    return mutations, relations
+
+
+def _thesis_document_rows(
+    directory: Path, *, cutover_time: str
+) -> tuple[list[tuple[str, str, dict[str, Any], str]], list[tuple[str, str, str, dict[str, Any], str]]]:
+    mutations: list[tuple[str, str, dict[str, Any], str]] = []
+    relations: list[tuple[str, str, str, dict[str, Any], str]] = []
+    if not directory.exists():
+        return mutations, relations
+    for path in sorted(directory.glob("*.md")):
+        ticker = path.stem.strip().upper()
+        if not ticker:
+            continue
+        content = path.read_text(encoding="utf-8", errors="replace")
+        issuer_uid = issuer_id(ticker)
+        instr_uid = f"instrument:{ticker.lower()}"
+        doc_uid = document_artifact_id("thesis", ticker)
+        thesis_doc_uid = thesis_document_id(ticker)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        mutations.extend(
+            [
+                ("Issuer", issuer_uid, {"issuer_id": ticker, "name": ticker, "ticker": ticker}, cutover_time),
+                (
+                    "Instrument",
+                    instr_uid,
+                    {
+                        "instrument_id": ticker,
+                        "ticker": ticker,
+                        "asset_class": "security",
+                        "instrument_type": "security",
+                        "issuer_id": issuer_uid,
+                        "status": "active",
+                    },
+                    cutover_time,
+                ),
+                (
+                    "Thesis",
+                    ticker,
+                    {
+                        "ticker": ticker,
+                        "status": "active",
+                        "created_at": cutover_time,
+                        "updated_at": cutover_time,
+                        "instrument_id": instr_uid,
+                        "ontology_run_id": "operational",
+                    },
+                    cutover_time,
+                ),
+                (
+                    "DocumentArtifact",
+                    doc_uid,
+                    {
+                        "document_type": "thesis",
+                        "document_id": ticker,
+                        "title": f"{ticker} thesis",
+                        "ticker": ticker,
+                        "content_hash": content_hash,
+                        "artifact_uri": str(path),
+                        "status": "active",
+                        "source_type": "legacy_markdown",
+                        "source_id": str(path),
+                        "created_at": cutover_time,
+                        "updated_at": cutover_time,
+                    },
+                    cutover_time,
+                ),
+                (
+                    "ThesisDocument",
+                    thesis_doc_uid,
+                    {
+                        "thesis_document_id": thesis_doc_uid,
+                        "ticker": ticker,
+                        "issuer_id": issuer_uid,
+                        "instrument_id": instr_uid,
+                        "document_id": doc_uid,
+                        "content_hash": content_hash,
+                        "status": "active",
+                        "created_at": cutover_time,
+                        "updated_at": cutover_time,
+                    },
+                    cutover_time,
+                ),
+            ]
+        )
+        relations.extend(
+            [
+                _domain_relation(
+                    "document_artifact_materializes_research_object",
+                    doc_uid,
+                    thesis_doc_uid,
+                    cutover_time,
+                    {"document_role": "markdown"},
+                ),
+                _domain_relation(
+                    "research_object_uses_document",
+                    thesis_doc_uid,
+                    doc_uid,
+                    cutover_time,
+                    {"document_role": "rendered_markdown"},
+                ),
+                _domain_relation("thesis_document_covers_issuer", thesis_doc_uid, issuer_uid, cutover_time),
+                _domain_relation("thesis_document_covers_instrument", thesis_doc_uid, instr_uid, cutover_time),
+            ]
+        )
+        for index, section in enumerate(_markdown_sections(content), start=1):
+            section_uid = thesis_section_id(f"{thesis_doc_uid}:section:{index}:{section['heading']}")
+            mutations.append(
+                (
+                    "ThesisSection",
+                    section_uid,
+                    {
+                        "section_id": section_uid,
+                        "thesis_document_id": thesis_doc_uid,
+                        "ticker": ticker,
+                        "heading": section["heading"],
+                        "level": section["level"],
+                        "content": section["content"],
+                        "content_hash": hashlib.sha256(section["content"].encode("utf-8")).hexdigest(),
+                        "ordinal": index,
+                    },
+                    cutover_time,
+                )
+            )
+            relations.append(_domain_relation("thesis_document_has_section", thesis_doc_uid, section_uid, cutover_time))
+    return mutations, relations
+
+
 def _summary_rating(summary: dict[str, Any], key: str) -> str | None:
     value = summary.get(key)
     return str(value.get("rating")) if isinstance(value, dict) and value.get("rating") is not None else None
@@ -1214,6 +1585,30 @@ def _summary_rating(summary: dict[str, Any], key: str) -> str | None:
 def _summary_text(summary: dict[str, Any], key: str) -> str | None:
     value = summary.get(key)
     return str(value.get("text")) if isinstance(value, dict) and value.get("text") is not None else None
+
+
+def _markdown_sections(content: str) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    lines: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            level = len(stripped) - len(stripped.lstrip("#"))
+            if heading and 1 <= level <= 6:
+                if current is not None:
+                    current["content"] = "\n".join(lines).strip()
+                    sections.append(current)
+                current = {"heading": heading, "level": level, "content": ""}
+                lines = []
+                continue
+        if current is not None:
+            lines.append(line)
+    if current is not None:
+        current["content"] = "\n".join(lines).strip()
+        sections.append(current)
+    return sections
 
 
 def _snapshot_versions(

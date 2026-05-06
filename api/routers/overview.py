@@ -8,12 +8,13 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
 
+from api.action_execution import stage_api_action
 from api.document_generation_jobs import classify_upload_document, enqueue_document_generation_upload
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
-from api.state_storage import exists_text, read_text, write_text
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
 from paths import PROJECT_ROOT
+from portfolio import overview_content
 
 router = APIRouter()
 
@@ -93,30 +94,34 @@ def _validate_ticker(ticker: str) -> None:
         raise ValidationError(f"Invalid ticker format: '{ticker}'. Only letters, digits, and dots are allowed.")
 
 
+def _sync_overview_content_paths() -> None:
+    overview_content.OVERVIEWS_DIR = OVERVIEWS_DIR
+    overview_content.OVERVIEWS_GCS_PREFIX = OVERVIEWS_GCS_PREFIX
+
+
 def _overview_path(ticker: str) -> Path:
-    return OVERVIEWS_DIR / f"{ticker}.md"
+    _sync_overview_content_paths()
+    return overview_content.overview_path(ticker)
 
 
 def _overview_gcs_key(ticker: str) -> str:
-    return f"{OVERVIEWS_GCS_PREFIX}/{ticker}.md"
+    _sync_overview_content_paths()
+    return overview_content.overview_gcs_key(ticker)
 
 
 def _overview_exists(ticker: str) -> bool:
-    return exists_text(_overview_path(ticker), _overview_gcs_key(ticker))
+    _sync_overview_content_paths()
+    return overview_content.overview_exists(ticker)
 
 
 def _read_overview(ticker: str) -> str:
-    return read_text(_overview_path(ticker), _overview_gcs_key(ticker), encoding="utf-8")
+    _sync_overview_content_paths()
+    return overview_content.read_overview(ticker)
 
 
 def _write_overview(ticker: str, content: str) -> str:
-    return write_text(
-        _overview_path(ticker),
-        _overview_gcs_key(ticker),
-        content,
-        encoding="utf-8",
-        content_type="text/markdown; charset=utf-8",
-    )
+    _sync_overview_content_paths()
+    return overview_content.write_overview(ticker, content)
 
 
 def _strip_outer_markdown_fence(text: str) -> str:
@@ -439,7 +444,7 @@ def generate_overview_from_upload_bytes(
         from api.retrieval import index_document
 
         index_document(
-            doc_type="thesis",
+            doc_type="overview",
             content=content,
             ticker=normalized_ticker,
             source_path=source_path,
@@ -473,11 +478,14 @@ async def generate_overview(
 
 class SaveOverviewRequest(BaseModel):
     content: str = Field(..., max_length=MAX_UPLOAD_SIZE_BYTES)
+    reason: str | None = None
+    apply: bool = False
+    approval_note: str | None = None
 
 
 @router.put("/overview/{ticker}")
 def save_overview(ticker: str, body: SaveOverviewRequest):
-    """Save overview markdown content directly."""
+    """Stage an overview markdown save through the governed action path."""
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
@@ -485,28 +493,16 @@ def save_overview(ticker: str, body: SaveOverviewRequest):
     if not content:
         raise ValidationError("Overview content cannot be empty.")
 
-    try:
-        source_path = _write_overview(normalized_ticker, content + "\n")
-    except Exception as e:
-        from api.exceptions import AppError
-
-        raise AppError(f"Failed to write overview file: {e}") from e
-
-    # Index overview for semantic search (best-effort)
-    try:
-        from api.retrieval import index_document
-
-        index_document(
-            doc_type="thesis",
-            content=content,
-            ticker=normalized_ticker,
-            source_path=source_path,
-            doc_id=f"overview-{normalized_ticker}",
-        )
-    except Exception:
-        pass
-
-    return {"status": "ok", "ticker": normalized_ticker, "content": content}
+    content = _normalize_overview_markdown(normalized_ticker, content)
+    _sync_overview_content_paths()
+    return stage_api_action(
+        "save_overview_content",
+        {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
+        source_id="overview.save_overview",
+        reason=body.reason or f"Update equity overview for {normalized_ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
+    )
 
 
 @router.get("/overview/{ticker}")

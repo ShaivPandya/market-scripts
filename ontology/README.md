@@ -29,7 +29,7 @@ README maps the code that exists in `ontology/`.
 
 `ontology/` is not responsible for:
 
-- Order management, broker execution, fills, mandates, or counterparties.
+- Order management, broker execution, fills, or counterparties.
 - Raw market-data vendor clients outside the adapter outputs consumed here.
 - UI presentation beyond shaping API/tool responses.
 - Arbitrary direct mutation of legacy portfolio/thesis/process state except

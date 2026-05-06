@@ -69,6 +69,15 @@ class PositionV1(OntologySchemaBase):
     instrument_type: str = "security"
     price_symbol: str | None = None
     contract_multiplier: float = 1.0
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
+    base_currency: str | None = None
+    fx_rate_to_base: float | None = None
+    fx_rate_as_of: str | None = None
+    cost_basis_base: float | None = None
+    notional_base: float | None = None
+    valuation_status: str | None = None
     role: str = "position"
 
     @field_validator("ticker", mode="before")
@@ -86,7 +95,20 @@ class PositionV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("account_id", "portfolio_id", "instrument_id", "as_of", "price_symbol", mode="before")
+    @field_validator(
+        "account_id",
+        "portfolio_id",
+        "instrument_id",
+        "as_of",
+        "price_symbol",
+        "currency",
+        "country",
+        "exchange",
+        "base_currency",
+        "fx_rate_as_of",
+        "valuation_status",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -276,34 +298,9 @@ class PortfolioV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class MandateV1(OntologySchemaBase):
-    mandate_id: NonBlankStr
-    benchmark: str | None = None
-    permitted_asset_classes: list[str] = Field(default_factory=list)
-    permitted_actions: list[str] = Field(default_factory=list)
-    liquidity_needs: str | None = None
-    ontology_run_id: NonBlankStr = "operational"
-
-    @field_validator("mandate_id", mode="before")
-    @classmethod
-    def _id(cls, value: object) -> str:
-        return slug(value)
-
-    @field_validator("benchmark", "liquidity_needs", mode="before")
-    @classmethod
-    def _optional_text(cls, value: object) -> str | None:
-        return clean_optional_text(value)
-
-    @field_validator("ontology_run_id", mode="before")
-    @classmethod
-    def _required_text(cls, value: object) -> str:
-        return clean_text(value)
-
-
 class InvestmentPolicyV1(OntologySchemaBase):
     policy_id: NonBlankStr
     account_id: NonBlankStr
-    mandate_id: NonBlankStr
     policy_version: int = 1
     owner_account_id: str | None = None
     effective_from: str | None = None
@@ -313,7 +310,7 @@ class InvestmentPolicyV1(OntologySchemaBase):
     disclosures: list[str] = Field(default_factory=list)
     ontology_run_id: NonBlankStr = "operational"
 
-    @field_validator("policy_id", "account_id", "mandate_id", mode="before")
+    @field_validator("policy_id", "account_id", mode="before")
     @classmethod
     def _id(cls, value: object) -> str:
         return slug(value)
@@ -815,6 +812,15 @@ class HedgePositionV1(OntologySchemaBase):
     instrument_type: str = "security"
     price_symbol: str | None = None
     contract_multiplier: float = 1.0
+    currency: str | None = None
+    country: str | None = None
+    exchange: str | None = None
+    base_currency: str | None = None
+    fx_rate_to_base: float | None = None
+    fx_rate_as_of: str | None = None
+    cost_basis_base: float | None = None
+    notional_base: float | None = None
+    valuation_status: str | None = None
     ontology_run_id: NonBlankStr = "operational"
 
     @field_validator("ticker", mode="before")
@@ -832,7 +838,16 @@ class HedgePositionV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("price_symbol", mode="before")
+    @field_validator(
+        "price_symbol",
+        "currency",
+        "country",
+        "exchange",
+        "base_currency",
+        "fx_rate_as_of",
+        "valuation_status",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -1594,6 +1609,360 @@ class ComputedSnapshotRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class MarketRegimeSnapshotV1(OntologySchemaBase):
+    snapshot_id: NonBlankStr
+    snapshot_key: NonBlankStr
+    regime_label: NonBlankStr
+    score: float | None = Field(default=None, ge=0, le=100)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    history_percentile: float | None = Field(default=None, ge=0, le=100)
+    as_of_date: str | None = None
+    fetched_at: str | None = None
+    status: NonBlankStr = "unknown"
+    quality: NonBlankStr = "unknown"
+    stale_after_hours: int | None = Field(default=None, ge=0)
+    source_status: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    weights: dict[str, Any] = Field(default_factory=dict)
+    module_status: dict[str, Any] = Field(default_factory=dict)
+    failed_modules: list[str] = Field(default_factory=list)
+    snapshot_payload_hash: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator(
+        "snapshot_id", "snapshot_key", "regime_label", "status", "quality", "ontology_run_id", mode="before"
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("as_of_date", "fetched_at", "error", "snapshot_payload_hash", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class SignalFactorScoreV1(OntologySchemaBase):
+    factor_score_id: NonBlankStr
+    snapshot_id: NonBlankStr
+    factor_key: NonBlankStr
+    factor_name: NonBlankStr
+    status: NonBlankStr = "unknown"
+    score: float | None = Field(default=None, ge=0, le=100)
+    weight: float | None = None
+    contribution: float | None = None
+    highlights: dict[str, Any] | list[Any] | str | None = None
+    source_snapshot_key: str | None = None
+    source_record_ids: list[str] = Field(default_factory=list)
+    as_of_date: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator(
+        "factor_score_id",
+        "snapshot_id",
+        "factor_key",
+        "factor_name",
+        "status",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("source_snapshot_key", "as_of_date", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ForwardOutlookV1(OntologySchemaBase):
+    outlook_id: NonBlankStr
+    snapshot_id: NonBlankStr
+    label: NonBlankStr
+    detail: str | None = None
+    basis: str | list[str] | None = None
+    as_of_date: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("outlook_id", "snapshot_id", "label", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("detail", "as_of_date", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class RegimeEpisodeV1(OntologySchemaBase):
+    episode_id: NonBlankStr
+    snapshot_id: NonBlankStr
+    regime: NonBlankStr
+    start_date: str | None = None
+    end_date: str | None = None
+    weeks: int | None = Field(default=None, ge=0)
+    avg_score: float | None = Field(default=None, ge=0, le=100)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("episode_id", "snapshot_id", "regime", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class PositionRiskSnapshotV1(OntologySchemaBase):
+    snapshot_id: NonBlankStr
+    ticker: str | None = None
+    portfolio_risk_snapshot_id: str | None = None
+    as_of: str | None = None
+    computed_at: str | None = None
+    risk_score: float | None = Field(default=None, ge=0, le=1)
+    risk_level: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    quality: str | None = None
+    source_status: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("snapshot_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("portfolio_risk_snapshot_id", "as_of", "computed_at", "risk_level", "quality", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class PortfolioRiskSnapshotV1(OntologySchemaBase):
+    snapshot_id: NonBlankStr
+    as_of: str | None = None
+    computed_at: str | None = None
+    average_risk_score: float | None = Field(default=None, ge=0, le=1)
+    max_risk_score: float | None = Field(default=None, ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    quality: str | None = None
+    position_count: int | None = Field(default=None, ge=0)
+    position_snapshot_ids: list[str] = Field(default_factory=list)
+    source_status: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("snapshot_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("as_of", "computed_at", "quality", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class EquityOverviewV1(OntologySchemaBase):
+    overview_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    document_id: str | None = None
+    content_hash: str | None = None
+    status: NonBlankStr = "active"
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("overview_id", "issuer_id", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("document_id", "content_hash", "created_at", "updated_at", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class CompanyFinancialProfileV1(OntologySchemaBase):
+    profile_id: NonBlankStr
+    overview_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    revenue_growth: dict[str, Any] | None = None
+    eps_growth: dict[str, Any] | None = None
+    debt: dict[str, Any] | None = None
+    reinvestment: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("profile_id", "overview_id", "issuer_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("reinvestment", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ExtrinsicSensitivityV1(OntologySchemaBase):
+    sensitivity_id: NonBlankStr
+    overview_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    factor: NonBlankStr
+    sensitivity: str | None = None
+    capacity: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("sensitivity_id", "overview_id", "issuer_id", "factor", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("sensitivity", "capacity", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class IndustryForceAssessmentV1(OntologySchemaBase):
+    force_id: NonBlankStr
+    overview_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    force: NonBlankStr
+    rating: str | None = None
+    description: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("force_id", "overview_id", "issuer_id", "force", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("rating", "description", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class SupplyDemandOutlookV1(OntologySchemaBase):
+    outlook_id: NonBlankStr
+    overview_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    outlook_type: NonBlankStr
+    rating: str | None = None
+    points: list[Any] = Field(default_factory=list)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("outlook_id", "overview_id", "issuer_id", "outlook_type", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ThesisDocumentV1(OntologySchemaBase):
+    thesis_document_id: NonBlankStr
+    ticker: NonBlankStr
+    issuer_id: str | None = None
+    instrument_id: str | None = None
+    document_id: str | None = None
+    content_hash: str | None = None
+    status: NonBlankStr = "active"
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("thesis_document_id", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "issuer_id", "instrument_id", "document_id", "content_hash", "created_at", "updated_at", mode="before"
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ThesisSectionV1(OntologySchemaBase):
+    section_id: NonBlankStr
+    thesis_document_id: NonBlankStr
+    ticker: NonBlankStr
+    heading: NonBlankStr
+    level: int = Field(default=2, ge=1, le=6)
+    content: str | None = None
+    content_hash: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("section_id", "thesis_document_id", "heading", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("content", "content_hash", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class InvestmentIdeaV1(OntologySchemaBase):
     idea_id: NonBlankStr
     id: str | int | None = None
@@ -2161,7 +2530,6 @@ OntologyObjectV1 = (
     | InvestorV1
     | AccountV1
     | PortfolioV1
-    | MandateV1
     | InvestmentPolicyV1
     | RiskLimitV1
     | RiskMetricV1
@@ -2197,11 +2565,24 @@ OntologyObjectV1 = (
     | ModelCallRefV1
     | ToolCallRefV1
     | ComputedSnapshotRefV1
+    | MarketRegimeSnapshotV1
+    | SignalFactorScoreV1
+    | ForwardOutlookV1
+    | RegimeEpisodeV1
+    | PositionRiskSnapshotV1
+    | PortfolioRiskSnapshotV1
     | WorkflowRunV1
     | WorkflowArtifactV1
     | RecommendationV1
     | ReportRunV1
     | DocumentArtifactV1
+    | EquityOverviewV1
+    | CompanyFinancialProfileV1
+    | ExtrinsicSensitivityV1
+    | IndustryForceAssessmentV1
+    | SupplyDemandOutlookV1
+    | ThesisDocumentV1
+    | ThesisSectionV1
     | InvestmentIdeaV1
     | IdeaEvaluationV1
     | IdeaComparisonRunV1

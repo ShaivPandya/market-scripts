@@ -2,8 +2,7 @@
 
 The gate is intentionally deterministic and conservative. It does not decide
 whether an investment idea is good; it decides whether the idea has enough
-account, mandate, risk, freshness, and disclosure context to be staged for
-human review.
+account, risk, freshness, and disclosure context to be staged for human review.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ FINANCIAL_ACTION_IDS = {"create_recommendation", "update_portfolio_positions", "
 FAILURE_REASON_CODES = {
     "data_missing",
     "missing_constraint",
-    "mandate_violation",
     "suitability_warning",
     "liquidity_shortfall",
     "concentration_limit",
@@ -55,13 +53,6 @@ DEFAULT_POLICY: dict[str, Any] = {
         "cash": None,
         "benchmark": "SPY",
     },
-    "mandate": {
-        "mandate_id": "default-mandate",
-        "permitted_asset_classes": ["equity", "commodity", "fx", "bond"],
-        "permitted_actions": sorted(ACTIONABLE_RECOMMENDATION_ACTIONS | {"hold", "watch", "avoid", "do_nothing"}),
-        "benchmark": "SPY",
-        "liquidity_needs": None,
-    },
     "policy": {
         "policy_id": "default-investment-policy",
         "max_position_weight_pct": 0.20,
@@ -82,7 +73,6 @@ MISSING_CONSTRAINT_PATHS: tuple[tuple[str, ...], ...] = (
     ("investor", "suitability_profile"),
     ("account", "account_type"),
     ("account", "tax_status"),
-    ("mandate", "liquidity_needs"),
     ("policy", "min_cash_reserve_pct"),
     ("policy", "taxable_account_rules"),
 )
@@ -90,7 +80,7 @@ MISSING_CONSTRAINT_PATHS: tuple[tuple[str, ...], ...] = (
 DECISION_SUPPORT_DISCLOSURES = [
     "Decision support only; human approval required.",
     "Policy gate checks deterministic constraints and data quality; it does not certify suitability.",
-    "Missing investor, account, tax, or mandate constraints are surfaced as warnings in v1.",
+    "Missing investor, account, tax, or policy constraints are surfaced as warnings in v1.",
 ]
 
 
@@ -193,7 +183,7 @@ def evaluate_policy_gate(
     context: Mapping[str, Any] | None = None,
     source_quality: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate deterministic suitability, mandate, risk, and data checks."""
+    """Evaluate deterministic suitability, risk, and data checks."""
     if not isinstance(payload, Mapping):
         return _result(
             action_id=action_id,
@@ -215,7 +205,6 @@ def evaluate_policy_gate(
     check_results.extend(_missing_constraint_checks(policy))
     check_results.extend(_required_disclosure_checks(payload))
     check_results.extend(_data_freshness_checks(payload, source_quality=source_quality))
-    check_results.extend(_mandate_checks(action_id, payload, policy))
     check_results.extend(_portfolio_constraint_checks(action_id, payload, policy))
     check_results.extend(_liquidity_checks(payload, policy))
     check_results.extend(_tax_checks(payload, policy))
@@ -277,7 +266,6 @@ def _result(
         "account_id": policy_snapshot["account"]["account_id"],
         "portfolio_id": policy_snapshot["portfolio"]["portfolio_id"],
         "policy_id": policy_snapshot["policy"]["policy_id"],
-        "mandate_id": policy_snapshot["mandate"]["mandate_id"],
         "evaluated_at": datetime.now(UTC).isoformat(),
         "action_id": action_id,
     }
@@ -467,56 +455,6 @@ def _data_freshness_checks(
                         observed={"risk_quality": risk_quality, "risk_score": risk_score},
                     )
                 )
-    return checks
-
-
-def _mandate_checks(action_id: str, payload: Mapping[str, Any], policy: Mapping[str, Any]) -> list[dict[str, Any]]:
-    checks: list[dict[str, Any]] = []
-    record = _recommendation_record(payload)
-    action = str(record.get("action") or payload.get("action_type") or action_id).lower()
-    permitted = {str(item).lower() for item in _as_list(_deep_get(policy, ("mandate", "permitted_actions")))}
-    if action in ACTIONABLE_RECOMMENDATION_ACTIONS and action not in permitted:
-        checks.append(
-            _check(
-                "mandate.permitted_actions",
-                "fail",
-                "mandate_violation",
-                f"Action {action!r} is outside the mandate.",
-                severity="fail",
-                observed=action,
-                limit=sorted(permitted),
-            )
-        )
-    asset_classes = _asset_classes_from_payload(payload)
-    permitted_assets = {
-        str(item).lower() for item in _as_list(_deep_get(policy, ("mandate", "permitted_asset_classes")))
-    }
-    for asset_class in sorted(asset_classes - permitted_assets):
-        checks.append(
-            _check(
-                "mandate.permitted_asset_classes",
-                "fail",
-                "mandate_violation",
-                f"Asset class {asset_class!r} is outside the mandate.",
-                severity="fail",
-                observed=asset_class,
-                limit=sorted(permitted_assets),
-            )
-        )
-    benchmark = str(_deep_get(policy, ("mandate", "benchmark")) or "")
-    portfolio_benchmark = str(_deep_get(policy, ("portfolio", "benchmark")) or "")
-    if benchmark and portfolio_benchmark and benchmark != portfolio_benchmark:
-        checks.append(
-            _check(
-                "benchmark",
-                "fail",
-                "benchmark_mismatch",
-                "Portfolio benchmark does not match the governing mandate.",
-                severity="fail",
-                observed=portfolio_benchmark,
-                limit=benchmark,
-            )
-        )
     return checks
 
 
@@ -992,7 +930,7 @@ def _metrics_from_checks(checks: list[dict[str, Any]]) -> dict[str, Any]:
 def _assumptions(policy: Mapping[str, Any]) -> list[str]:
     return [
         f"Default account {policy['account']['account_id']} governs v1 recommendations.",
-        "Current prices, account cash, and liquidity needs may be incomplete unless supplied by the caller.",
+        "Current prices and account cash may be incomplete unless supplied by the caller.",
     ]
 
 

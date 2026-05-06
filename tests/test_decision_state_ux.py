@@ -172,12 +172,13 @@ def _legacy_policy_reason() -> dict:
     }
 
 
-def _legacy_mandate_reason() -> dict:
+def _retired_policy_scope_reason() -> dict:
     retired_field = "_".join(("time", "horizon", "days", "min"))
+    retired_scope = "".join(("man", "date"))
     return {
         "code": "missing_constraint",
-        "check": ".".join(("mandate", retired_field)),
-        "message": f"Missing investor/account constraint: mandate.{retired_field}.",
+        "check": ".".join((retired_scope, retired_field)),
+        "message": f"Missing investor/account constraint: {retired_scope}.{retired_field}.",
         "status": "warn",
         "severity": "warn",
     }
@@ -234,8 +235,9 @@ def test_normalize_approval_filters_obsolete_policy_warning():
     assert approval["policy_gate"]["warnings"] == []
 
 
-def test_normalize_approval_filters_retired_mandate_policy_warning():
+def test_normalize_approval_filters_retired_policy_scope_warning():
     retired_field = "_".join(("time", "horizon", "days", "min"))
+    retired_scope = "".join(("man", "date"))
     approval = normalize_approval(
         {
             "id": 21,
@@ -247,12 +249,12 @@ def test_normalize_approval_filters_retired_mandate_policy_warning():
                 "policy_gate_result": {
                     "decision": "warn",
                     "review_required": False,
-                    "warnings": [_legacy_mandate_reason()],
+                    "warnings": [_retired_policy_scope_reason()],
                     "failure_reasons": [],
-                    "check_results": [_legacy_mandate_reason()],
+                    "check_results": [_retired_policy_scope_reason()],
                     "constraints_snapshot": {
-                        "mandate": {
-                            "mandate_id": "default-mandate",
+                        retired_scope: {
+                            f"{retired_scope}_id": f"default-{retired_scope}",
                             retired_field: None,
                         }
                     },

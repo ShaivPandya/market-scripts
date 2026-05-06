@@ -30,7 +30,6 @@ def _ensure_policy_gate_results() -> None:
             account_id text,
             portfolio_id text,
             policy_id text,
-            mandate_id text,
             action_id text,
             source_type text,
             source_id text,

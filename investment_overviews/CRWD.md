@@ -21,7 +21,7 @@
 | Currency/FX | Medium | Medium — contracts denominated in USD but opex in GBP, AUD, EUR; a 10% adverse FX move increases operating loss by ~$75.8M; no active hedging program in place |
 | Tariffs/trade policy | Low | High — cloud-based SaaS with no physical goods; indirect risk only through customer budget pressure |
 | War/geopolitical disruption | Medium-High (net positive) | High — conflicts elevate cyber threats and enterprise security spending; CrowdStrike directly serves government/defense customers; Iran conflict (Feb–Mar 2026) drove demand surge |
-| Regulatory changes | Medium | Medium-High — expanding mandates (NIS2, SEC rules, FedRAMP, EU AI Act) generally drive spending but create compliance complexity for international expansion |
+| Regulatory changes | Medium | Medium-High — expanding requirements (NIS2, SEC rules, FedRAMP, EU AI Act) generally drive spending but create compliance complexity for international expansion |
 | Inflation/economic recession | Medium | Medium-High — cybersecurity budgets grew only 4% in 2025 (vs. 8% in 2024); however, 97%+ gross retention and recurring subscription model provide a meaningful revenue floor |
 | Labor costs | Medium | Medium — 4.8M cybersecurity positions unfilled globally; SBC of $1.13B (23.5% of revenue) required for retention and dilutes shareholders; talent shortage is a structural industry-wide cost pressure |
 
@@ -41,7 +41,7 @@
 - Vendor consolidation accelerating — 93% of organizations prefer platform-based security purchases in 2026 (up from 87% in 2025), structurally advantaging broad platforms like Falcon
 
 ### Demand Outlook
-- **Near-term**: Strong demand driven by AI-enabled threat proliferation (attacks up 89% YoY), geopolitical tensions elevating state-sponsored cyber activity, and regulatory compliance mandates (NIS2, FedRAMP, Zero Trust)
+- **Near-term**: Strong demand driven by AI-enabled threat proliferation (attacks up 89% YoY), geopolitical tensions elevating state-sponsored cyber activity, and regulatory compliance requirements (NIS2, FedRAMP, Zero Trust)
 - **Medium-term**: Global information security spending projected at $240–$244B in 2026 (+12.5–13.3% YoY); cloud security growing at 17.8% CAGR; AI-amplified security market projected at $160B by 2029
-- **Long-term**: Global cybersecurity market projected at $300–$350B by 2028 and $699B by 2034 (13.8% CAGR); SIEM growing at 16.8% CAGR; agentic AI security and governance emerging as a new spending category; post-quantum cryptography mandates represent an additional future demand driver
+- **Long-term**: Global cybersecurity market projected at $300–$350B by 2028 and $699B by 2034 (13.8% CAGR); SIEM growing at 16.8% CAGR; agentic AI security and governance emerging as a new spending category; post-quantum cryptography requirements represent an additional future demand driver
 - CrowdStrike's Falcon Flex ARR reached $1.69B (up 120%+ YoY), and 50% of customers now use 6+ modules — deepening wallet share within the installed base is a key organic demand lever

@@ -45,7 +45,6 @@ RECOMMENDATION_USES_SCENARIO: RelationType = "recommendation_uses_scenario"
 INVESTOR_OWNS_ACCOUNT: RelationType = "investor_owns_account"
 ACCOUNT_HAS_PORTFOLIO: RelationType = "account_has_portfolio"
 ACCOUNT_GOVERNED_BY_POLICY: RelationType = "account_governed_by_policy"
-POLICY_HAS_MANDATE: RelationType = "policy_has_mandate"
 POLICY_HAS_RISK_LIMIT: RelationType = "policy_has_risk_limit"
 RECOMMENDATION_TARGETS_ACCOUNT: RelationType = "recommendation_targets_account"
 RECOMMENDATION_TARGETS_PORTFOLIO: RelationType = "recommendation_targets_portfolio"
@@ -103,6 +102,32 @@ OPTIMIZATION_SNAPSHOT_TARGETS_INSTRUMENT: RelationType = "optimization_snapshot_
 OPTIMIZATION_ALERT_LINKS_APPROVAL: RelationType = "optimization_alert_links_approval"
 OPTIMIZATION_ALERT_LINKS_ACTION_ITEM: RelationType = "optimization_alert_links_action_item"
 OPTIMIZATION_OBJECT_HAS_SOURCE_FRESHNESS: RelationType = "optimization_object_has_source_freshness"
+COMPUTED_SNAPSHOT_MATERIALIZES_OBJECT_VERSION: RelationType = "computed_snapshot_materializes_object_version"
+MARKET_REGIME_HAS_FACTOR_SCORE: RelationType = "market_regime_has_factor_score"
+MARKET_REGIME_HAS_FORWARD_OUTLOOK: RelationType = "market_regime_has_forward_outlook"
+MARKET_REGIME_HAS_EPISODE: RelationType = "market_regime_has_episode"
+FACTOR_SCORE_USES_SOURCE_RECORD: RelationType = "factor_score_uses_source_record"
+FACTOR_SCORE_USES_COMPUTED_SNAPSHOT: RelationType = "factor_score_uses_computed_snapshot"
+MARKET_REGIME_USES_RISK_SNAPSHOT: RelationType = "market_regime_uses_risk_snapshot"
+MARKET_REGIME_REFERENCES_MACRO_INDICATOR: RelationType = "market_regime_references_macro_indicator"
+FACTOR_SCORE_REFERENCES_SECTOR: RelationType = "factor_score_references_sector"
+RECOMMENDATION_SUPPORTED_BY_EVIDENCE: RelationType = "recommendation_supported_by_evidence"
+RECOMMENDATION_CONTRADICTED_BY_EVIDENCE: RelationType = "recommendation_contradicted_by_evidence"
+EVIDENCE_CITES_CITATION: RelationType = "evidence_cites_citation"
+RECOMMENDATION_HAS_POLICY_GATE_RESULT: RelationType = "recommendation_has_policy_gate_result"
+RECOMMENDATION_HAS_TRADE_PROPOSAL: RelationType = "recommendation_has_trade_proposal"
+RECOMMENDATION_USES_POSITION_RISK_SNAPSHOT: RelationType = "recommendation_uses_position_risk_snapshot"
+RECOMMENDATION_USES_PORTFOLIO_RISK_SNAPSHOT: RelationType = "recommendation_uses_portfolio_risk_snapshot"
+DOCUMENT_ARTIFACT_MATERIALIZES_RESEARCH_OBJECT: RelationType = "document_artifact_materializes_research_object"
+EQUITY_OVERVIEW_COVERS_ISSUER: RelationType = "equity_overview_covers_issuer"
+EQUITY_OVERVIEW_COVERS_INSTRUMENT: RelationType = "equity_overview_covers_instrument"
+EQUITY_OVERVIEW_HAS_FINANCIAL_PROFILE: RelationType = "equity_overview_has_financial_profile"
+EQUITY_OVERVIEW_HAS_EXTRINSIC_SENSITIVITY: RelationType = "equity_overview_has_extrinsic_sensitivity"
+EQUITY_OVERVIEW_HAS_INDUSTRY_FORCE: RelationType = "equity_overview_has_industry_force"
+EQUITY_OVERVIEW_HAS_SUPPLY_DEMAND_OUTLOOK: RelationType = "equity_overview_has_supply_demand_outlook"
+THESIS_DOCUMENT_COVERS_ISSUER: RelationType = "thesis_document_covers_issuer"
+THESIS_DOCUMENT_COVERS_INSTRUMENT: RelationType = "thesis_document_covers_instrument"
+THESIS_DOCUMENT_HAS_SECTION: RelationType = "thesis_document_has_section"
 
 PROVENANCE_RELATION_TYPES: frozenset[RelationType] = frozenset(
     {
@@ -430,14 +455,6 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
-    POLICY_HAS_MANDATE: RelationDefinition(
-        name=POLICY_HAS_MANDATE,
-        source_type="InvestmentPolicy",
-        target_type="Mandate",
-        cardinality=RelationCardinality.SOURCE_UNIQUE,
-        required_properties=frozenset({"ontology_run_id"}),
-        optional=True,
-    ),
     POLICY_HAS_RISK_LIMIT: RelationDefinition(
         name=POLICY_HAS_RISK_LIMIT,
         source_type="InvestmentPolicy",
@@ -670,6 +687,13 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
                 "ManagementQualityScorecardRow",
                 "ManagementQualityAccomplishment",
                 "ManagementQualitySetback",
+                "EquityOverview",
+                "CompanyFinancialProfile",
+                "ExtrinsicSensitivity",
+                "IndustryForceAssessment",
+                "SupplyDemandOutlook",
+                "ThesisDocument",
+                "ThesisSection",
             }
         ),
     ),
@@ -687,6 +711,13 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
                 "ManagementQualityScorecardRow",
                 "ManagementQualityAccomplishment",
                 "ManagementQualitySetback",
+                "EquityOverview",
+                "CompanyFinancialProfile",
+                "ExtrinsicSensitivity",
+                "IndustryForceAssessment",
+                "SupplyDemandOutlook",
+                "ThesisDocument",
+                "ThesisSection",
             }
         ),
     ),
@@ -697,7 +728,15 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id", "document_role"}),
         optional=True,
-        allowed_source_types=frozenset({"InvestmentIdea", "IdeaEvaluation", "ManagementQualityAssessment"}),
+        allowed_source_types=frozenset(
+            {
+                "InvestmentIdea",
+                "IdeaEvaluation",
+                "ManagementQualityAssessment",
+                "EquityOverview",
+                "ThesisDocument",
+            }
+        ),
     ),
     RESEARCH_OBJECT_LINKS_RECOMMENDATION: RelationDefinition(
         name=RESEARCH_OBJECT_LINKS_RECOMMENDATION,
@@ -830,6 +869,216 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
         allowed_source_types=frozenset({"OptimizationRun", "OptimizationActionSnapshot", "OptimizationAlert"}),
+    ),
+    COMPUTED_SNAPSHOT_MATERIALIZES_OBJECT_VERSION: RelationDefinition(
+        name=COMPUTED_SNAPSHOT_MATERIALIZES_OBJECT_VERSION,
+        source_type="ComputedSnapshotRef",
+        target_type="ObjectVersionRef",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "object_uid", "version_id"}),
+        optional=True,
+    ),
+    MARKET_REGIME_HAS_FACTOR_SCORE: RelationDefinition(
+        name=MARKET_REGIME_HAS_FACTOR_SCORE,
+        source_type="MarketRegimeSnapshot",
+        target_type="SignalFactorScore",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    MARKET_REGIME_HAS_FORWARD_OUTLOOK: RelationDefinition(
+        name=MARKET_REGIME_HAS_FORWARD_OUTLOOK,
+        source_type="MarketRegimeSnapshot",
+        target_type="ForwardOutlook",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    MARKET_REGIME_HAS_EPISODE: RelationDefinition(
+        name=MARKET_REGIME_HAS_EPISODE,
+        source_type="MarketRegimeSnapshot",
+        target_type="RegimeEpisode",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    FACTOR_SCORE_USES_SOURCE_RECORD: RelationDefinition(
+        name=FACTOR_SCORE_USES_SOURCE_RECORD,
+        source_type="SignalFactorScore",
+        target_type="SourceRecord",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    FACTOR_SCORE_USES_COMPUTED_SNAPSHOT: RelationDefinition(
+        name=FACTOR_SCORE_USES_COMPUTED_SNAPSHOT,
+        source_type="SignalFactorScore",
+        target_type="ComputedSnapshotRef",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    MARKET_REGIME_USES_RISK_SNAPSHOT: RelationDefinition(
+        name=MARKET_REGIME_USES_RISK_SNAPSHOT,
+        source_type="MarketRegimeSnapshot",
+        target_type="PositionRiskSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_target_types=frozenset({"PositionRiskSnapshot", "PortfolioRiskSnapshot"}),
+    ),
+    MARKET_REGIME_REFERENCES_MACRO_INDICATOR: RelationDefinition(
+        name=MARKET_REGIME_REFERENCES_MACRO_INDICATOR,
+        source_type="MarketRegimeSnapshot",
+        target_type="MacroIndicator",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    FACTOR_SCORE_REFERENCES_SECTOR: RelationDefinition(
+        name=FACTOR_SCORE_REFERENCES_SECTOR,
+        source_type="SignalFactorScore",
+        target_type="Sector",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_SUPPORTED_BY_EVIDENCE: RelationDefinition(
+        name=RECOMMENDATION_SUPPORTED_BY_EVIDENCE,
+        source_type="Recommendation",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_CONTRADICTED_BY_EVIDENCE: RelationDefinition(
+        name=RECOMMENDATION_CONTRADICTED_BY_EVIDENCE,
+        source_type="Recommendation",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EVIDENCE_CITES_CITATION: RelationDefinition(
+        name=EVIDENCE_CITES_CITATION,
+        source_type="Evidence",
+        target_type="Citation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_HAS_POLICY_GATE_RESULT: RelationDefinition(
+        name=RECOMMENDATION_HAS_POLICY_GATE_RESULT,
+        source_type="Recommendation",
+        target_type="PolicyGateResult",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_HAS_TRADE_PROPOSAL: RelationDefinition(
+        name=RECOMMENDATION_HAS_TRADE_PROPOSAL,
+        source_type="Recommendation",
+        target_type="TradeProposal",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_USES_POSITION_RISK_SNAPSHOT: RelationDefinition(
+        name=RECOMMENDATION_USES_POSITION_RISK_SNAPSHOT,
+        source_type="Recommendation",
+        target_type="PositionRiskSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RECOMMENDATION_USES_PORTFOLIO_RISK_SNAPSHOT: RelationDefinition(
+        name=RECOMMENDATION_USES_PORTFOLIO_RISK_SNAPSHOT,
+        source_type="Recommendation",
+        target_type="PortfolioRiskSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    DOCUMENT_ARTIFACT_MATERIALIZES_RESEARCH_OBJECT: RelationDefinition(
+        name=DOCUMENT_ARTIFACT_MATERIALIZES_RESEARCH_OBJECT,
+        source_type="DocumentArtifact",
+        target_type="EquityOverview",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "document_role"}),
+        optional=True,
+        allowed_target_types=frozenset({"EquityOverview", "ThesisDocument", "ManagementQualityAssessment"}),
+    ),
+    EQUITY_OVERVIEW_COVERS_ISSUER: RelationDefinition(
+        name=EQUITY_OVERVIEW_COVERS_ISSUER,
+        source_type="EquityOverview",
+        target_type="Issuer",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EQUITY_OVERVIEW_COVERS_INSTRUMENT: RelationDefinition(
+        name=EQUITY_OVERVIEW_COVERS_INSTRUMENT,
+        source_type="EquityOverview",
+        target_type="Instrument",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EQUITY_OVERVIEW_HAS_FINANCIAL_PROFILE: RelationDefinition(
+        name=EQUITY_OVERVIEW_HAS_FINANCIAL_PROFILE,
+        source_type="EquityOverview",
+        target_type="CompanyFinancialProfile",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EQUITY_OVERVIEW_HAS_EXTRINSIC_SENSITIVITY: RelationDefinition(
+        name=EQUITY_OVERVIEW_HAS_EXTRINSIC_SENSITIVITY,
+        source_type="EquityOverview",
+        target_type="ExtrinsicSensitivity",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EQUITY_OVERVIEW_HAS_INDUSTRY_FORCE: RelationDefinition(
+        name=EQUITY_OVERVIEW_HAS_INDUSTRY_FORCE,
+        source_type="EquityOverview",
+        target_type="IndustryForceAssessment",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EQUITY_OVERVIEW_HAS_SUPPLY_DEMAND_OUTLOOK: RelationDefinition(
+        name=EQUITY_OVERVIEW_HAS_SUPPLY_DEMAND_OUTLOOK,
+        source_type="EquityOverview",
+        target_type="SupplyDemandOutlook",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    THESIS_DOCUMENT_COVERS_ISSUER: RelationDefinition(
+        name=THESIS_DOCUMENT_COVERS_ISSUER,
+        source_type="ThesisDocument",
+        target_type="Issuer",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    THESIS_DOCUMENT_COVERS_INSTRUMENT: RelationDefinition(
+        name=THESIS_DOCUMENT_COVERS_INSTRUMENT,
+        source_type="ThesisDocument",
+        target_type="Instrument",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    THESIS_DOCUMENT_HAS_SECTION: RelationDefinition(
+        name=THESIS_DOCUMENT_HAS_SECTION,
+        source_type="ThesisDocument",
+        target_type="ThesisSection",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
     ),
 }
 for _provenance_relation_type in PROVENANCE_RELATION_TYPES:

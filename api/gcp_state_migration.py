@@ -868,7 +868,6 @@ class StateMigrator:
                 "account_id",
                 "portfolio_id",
                 "policy_id",
-                "mandate_id",
                 "action_id",
                 "source_type",
                 "source_id",

@@ -19,17 +19,22 @@ from ontology.schemas.identity import (
     audit_event_id,
     catalyst_id,
     citation_id,
+    company_financial_profile_id,
     computed_snapshot_ref_id,
     document_artifact_id,
+    equity_overview_id,
     evaluation_id,
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    extrinsic_sensitivity_id,
     factor_score_id,
+    forward_outlook_id,
     hedge_position_id,
     idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
+    industry_force_assessment_id,
     instrument_id,
     investment_idea_id,
     investment_policy_id,
@@ -41,7 +46,7 @@ from ontology.schemas.identity import (
     management_quality_assessment_id,
     management_quality_scorecard_row_id,
     management_quality_setback_id,
-    mandate_id,
+    market_regime_snapshot_id,
     missing_information_requirement_id,
     model_call_ref_id,
     object_version_ref_id,
@@ -52,9 +57,12 @@ from ontology.schemas.identity import (
     optimization_run_id,
     policy_gate_result_id,
     portfolio_id,
+    portfolio_risk_snapshot_id,
     position_id,
+    position_risk_snapshot_id,
     provenance_event_id,
     recommendation_id,
+    regime_episode_id,
     relation_version_ref_id,
     report_run_id,
     risk_limit_id,
@@ -62,11 +70,15 @@ from ontology.schemas.identity import (
     scenario_id,
     schema_definition_ref_id,
     sector_id,
+    signal_factor_score_id,
     signal_id,
     source_freshness_id,
     source_record_object_id,
+    supply_demand_outlook_id,
     thesis_claim_id,
+    thesis_document_id,
     thesis_id,
+    thesis_section_id,
     tool_call_ref_id,
     trade_proposal_id,
     watch_trigger_id,
@@ -85,17 +97,22 @@ from ontology.schemas.objects import (
     AuditEventV1,
     CatalystV1,
     CitationV1,
+    CompanyFinancialProfileV1,
     ComputedSnapshotRefV1,
     DocumentArtifactV1,
+    EquityOverviewV1,
     EvaluationV1,
     EvidenceV1,
     ExecutedActionV1,
     ExecutedDecisionRecordV1,
+    ExtrinsicSensitivityV1,
     FactorScoreV1,
+    ForwardOutlookV1,
     HedgePositionV1,
     IdeaComparisonRankingV1,
     IdeaComparisonRunV1,
     IdeaEvaluationV1,
+    IndustryForceAssessmentV1,
     InstrumentV1,
     InvestmentIdeaV1,
     InvestmentPolicyV1,
@@ -107,7 +124,7 @@ from ontology.schemas.objects import (
     ManagementQualityAssessmentV1,
     ManagementQualityScorecardRowV1,
     ManagementQualitySetbackV1,
-    MandateV1,
+    MarketRegimeSnapshotV1,
     MissingInformationRequirementV1,
     ModelCallRefV1,
     ObjectVersionRefV1,
@@ -118,10 +135,13 @@ from ontology.schemas.objects import (
     OptimizationMissionV1,
     OptimizationRunV1,
     PolicyGateResultV1,
+    PortfolioRiskSnapshotV1,
     PortfolioV1,
+    PositionRiskSnapshotV1,
     PositionV1,
     ProvenanceEventV1,
     RecommendationV1,
+    RegimeEpisodeV1,
     RelationVersionRefV1,
     ReportRunV1,
     RiskLimitV1,
@@ -129,10 +149,14 @@ from ontology.schemas.objects import (
     ScenarioV1,
     SchemaDefinitionRefV1,
     SectorV1,
+    SignalFactorScoreV1,
     SignalV1,
     SourceFreshnessV1,
     SourceRecordV1,
+    SupplyDemandOutlookV1,
     ThesisClaimV1,
+    ThesisDocumentV1,
+    ThesisSectionV1,
     ThesisV1,
     ToolCallRefV1,
     TradeProposalV1,
@@ -163,7 +187,6 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Investor": InvestorV1,
     "Account": AccountV1,
     "Portfolio": PortfolioV1,
-    "Mandate": MandateV1,
     "InvestmentPolicy": InvestmentPolicyV1,
     "RiskLimit": RiskLimitV1,
     "RiskMetric": RiskMetricV1,
@@ -198,11 +221,24 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "ModelCallRef": ModelCallRefV1,
     "ToolCallRef": ToolCallRefV1,
     "ComputedSnapshotRef": ComputedSnapshotRefV1,
+    "MarketRegimeSnapshot": MarketRegimeSnapshotV1,
+    "SignalFactorScore": SignalFactorScoreV1,
+    "ForwardOutlook": ForwardOutlookV1,
+    "RegimeEpisode": RegimeEpisodeV1,
+    "PositionRiskSnapshot": PositionRiskSnapshotV1,
+    "PortfolioRiskSnapshot": PortfolioRiskSnapshotV1,
     "WorkflowRun": WorkflowRunV1,
     "WorkflowArtifact": WorkflowArtifactV1,
     "Recommendation": RecommendationV1,
     "ReportRun": ReportRunV1,
     "DocumentArtifact": DocumentArtifactV1,
+    "EquityOverview": EquityOverviewV1,
+    "CompanyFinancialProfile": CompanyFinancialProfileV1,
+    "ExtrinsicSensitivity": ExtrinsicSensitivityV1,
+    "IndustryForceAssessment": IndustryForceAssessmentV1,
+    "SupplyDemandOutlook": SupplyDemandOutlookV1,
+    "ThesisDocument": ThesisDocumentV1,
+    "ThesisSection": ThesisSectionV1,
     "InvestmentIdea": InvestmentIdeaV1,
     "IdeaEvaluation": IdeaEvaluationV1,
     "IdeaComparisonRun": IdeaComparisonRunV1,
@@ -243,6 +279,19 @@ OPTIONAL_NODE_TYPES = {
     "ModelCallRef",
     "ToolCallRef",
     "ComputedSnapshotRef",
+    "MarketRegimeSnapshot",
+    "SignalFactorScore",
+    "ForwardOutlook",
+    "RegimeEpisode",
+    "PositionRiskSnapshot",
+    "PortfolioRiskSnapshot",
+    "EquityOverview",
+    "CompanyFinancialProfile",
+    "ExtrinsicSensitivity",
+    "IndustryForceAssessment",
+    "SupplyDemandOutlook",
+    "ThesisDocument",
+    "ThesisSection",
     "InvestmentIdea",
     "IdeaEvaluation",
     "IdeaComparisonRun",
@@ -261,7 +310,6 @@ OPTIONAL_NODE_TYPES = {
     "Investor",
     "Account",
     "Portfolio",
-    "Mandate",
     "InvestmentPolicy",
     "RiskLimit",
     "RiskMetric",
@@ -550,8 +598,6 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return account_id(model.account_id)
     if isinstance(model, PortfolioV1):
         return portfolio_id(model.portfolio_id)
-    if isinstance(model, MandateV1):
-        return mandate_id(model.mandate_id)
     if isinstance(model, InvestmentPolicyV1):
         return investment_policy_id(model.policy_id)
     if isinstance(model, RiskLimitV1):
@@ -620,6 +666,18 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return tool_call_ref_id(model.call_id)
     if isinstance(model, ComputedSnapshotRefV1):
         return computed_snapshot_ref_id(model.snapshot_key)
+    if isinstance(model, MarketRegimeSnapshotV1):
+        return market_regime_snapshot_id(model.snapshot_id)
+    if isinstance(model, SignalFactorScoreV1):
+        return signal_factor_score_id(model.factor_score_id)
+    if isinstance(model, ForwardOutlookV1):
+        return forward_outlook_id(model.outlook_id)
+    if isinstance(model, RegimeEpisodeV1):
+        return regime_episode_id(model.episode_id)
+    if isinstance(model, PositionRiskSnapshotV1):
+        return position_risk_snapshot_id(model.snapshot_id)
+    if isinstance(model, PortfolioRiskSnapshotV1):
+        return portfolio_risk_snapshot_id(model.snapshot_id)
     if isinstance(model, WorkflowRunV1):
         return workflow_run_id(model.run_id)
     if isinstance(model, WorkflowArtifactV1):
@@ -635,6 +693,20 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return report_run_id(model.report_id)
     if isinstance(model, DocumentArtifactV1):
         return document_artifact_id(model.document_type, model.document_id)
+    if isinstance(model, EquityOverviewV1):
+        return equity_overview_id(model.overview_id)
+    if isinstance(model, CompanyFinancialProfileV1):
+        return company_financial_profile_id(model.profile_id)
+    if isinstance(model, ExtrinsicSensitivityV1):
+        return extrinsic_sensitivity_id(model.sensitivity_id)
+    if isinstance(model, IndustryForceAssessmentV1):
+        return industry_force_assessment_id(model.force_id)
+    if isinstance(model, SupplyDemandOutlookV1):
+        return supply_demand_outlook_id(model.outlook_id)
+    if isinstance(model, ThesisDocumentV1):
+        return thesis_document_id(model.thesis_document_id)
+    if isinstance(model, ThesisSectionV1):
+        return thesis_section_id(model.section_id)
     if isinstance(model, InvestmentIdeaV1):
         return investment_idea_id(model.idea_id)
     if isinstance(model, IdeaEvaluationV1):
@@ -883,6 +955,32 @@ def _label_for(node_type: str, label: str, model: OntologyObjectV1) -> str:
         return model.change_summary
     if isinstance(model, SourceFreshnessV1):
         return f"{model.source_name}: {model.status}"
+    if isinstance(model, MarketRegimeSnapshotV1):
+        return f"Market regime: {model.regime_label}"
+    if isinstance(model, SignalFactorScoreV1):
+        return f"{model.factor_name}: {model.status}"
+    if isinstance(model, ForwardOutlookV1):
+        return f"Forward outlook: {model.label}"
+    if isinstance(model, RegimeEpisodeV1):
+        return f"Regime episode: {model.regime}"
+    if isinstance(model, PositionRiskSnapshotV1):
+        return f"Position risk: {model.ticker or model.snapshot_id}"
+    if isinstance(model, PortfolioRiskSnapshotV1):
+        return f"Portfolio risk: {model.snapshot_id}"
+    if isinstance(model, EquityOverviewV1):
+        return f"Equity overview: {model.ticker or model.issuer_id}"
+    if isinstance(model, CompanyFinancialProfileV1):
+        return f"Financial profile: {model.ticker or model.issuer_id}"
+    if isinstance(model, ExtrinsicSensitivityV1):
+        return model.factor
+    if isinstance(model, IndustryForceAssessmentV1):
+        return model.force
+    if isinstance(model, SupplyDemandOutlookV1):
+        return f"{model.outlook_type} outlook"
+    if isinstance(model, ThesisDocumentV1):
+        return f"Thesis document: {model.ticker}"
+    if isinstance(model, ThesisSectionV1):
+        return model.heading
     if isinstance(model, ManagementQualityAssessmentV1):
         return f"Management quality: {model.ticker or model.issuer_id}"
     if isinstance(model, ManagementQualityScorecardRowV1):

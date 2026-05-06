@@ -61,10 +61,6 @@ def portfolio_id(identifier: object) -> str:
     return f"portfolio:{slug(identifier)}"
 
 
-def mandate_id(identifier: object) -> str:
-    return f"mandate:{slug(identifier)}"
-
-
 def investment_policy_id(identifier: object) -> str:
     return f"investment_policy:{slug(identifier)}"
 
@@ -147,6 +143,48 @@ def computed_snapshot_ref_id(identifier: object) -> str:
     if text.startswith("computed_snapshot_ref:"):
         text = text.split(":", 1)[1]
     return f"computed_snapshot_ref:{slug(text)}"
+
+
+def market_regime_snapshot_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("market_regime_snapshot:"):
+        text = text.split(":", 1)[1]
+    return f"market_regime_snapshot:{slug(text)}"
+
+
+def signal_factor_score_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("signal_factor_score:"):
+        text = text.split(":", 1)[1]
+    return f"signal_factor_score:{slug(text)}"
+
+
+def forward_outlook_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("forward_outlook:"):
+        text = text.split(":", 1)[1]
+    return f"forward_outlook:{slug(text)}"
+
+
+def regime_episode_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("regime_episode:"):
+        text = text.split(":", 1)[1]
+    return f"regime_episode:{slug(text)}"
+
+
+def position_risk_snapshot_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("position_risk_snapshot:"):
+        text = text.split(":", 1)[1]
+    return f"position_risk_snapshot:{slug(text)}"
+
+
+def portfolio_risk_snapshot_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("portfolio_risk_snapshot:"):
+        text = text.split(":", 1)[1]
+    return f"portfolio_risk_snapshot:{slug(text)}"
 
 
 def executed_action_id(identifier: object) -> str:
@@ -253,6 +291,55 @@ def report_run_id(identifier: object) -> str:
 
 def document_artifact_id(kind: object, identifier: object) -> str:
     return f"document_artifact:{slug(kind)}:{slug(identifier)}"
+
+
+def equity_overview_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("equity_overview:"):
+        text = text.split(":", 1)[1]
+    return f"equity_overview:{slug(text)}"
+
+
+def company_financial_profile_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("company_financial_profile:"):
+        text = text.split(":", 1)[1]
+    return f"company_financial_profile:{slug(text)}"
+
+
+def extrinsic_sensitivity_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("extrinsic_sensitivity:"):
+        text = text.split(":", 1)[1]
+    return f"extrinsic_sensitivity:{slug(text)}"
+
+
+def industry_force_assessment_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("industry_force_assessment:"):
+        text = text.split(":", 1)[1]
+    return f"industry_force_assessment:{slug(text)}"
+
+
+def supply_demand_outlook_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("supply_demand_outlook:"):
+        text = text.split(":", 1)[1]
+    return f"supply_demand_outlook:{slug(text)}"
+
+
+def thesis_document_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("thesis_document:"):
+        text = text.split(":", 1)[1]
+    return f"thesis_document:{slug(text)}"
+
+
+def thesis_section_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("thesis_section:"):
+        text = text.split(":", 1)[1]
+    return f"thesis_section:{slug(text)}"
 
 
 def investment_idea_id(identifier: object) -> str:
