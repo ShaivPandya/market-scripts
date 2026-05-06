@@ -12,6 +12,7 @@ from api.decision_state import analysis_metadata
 from api.exceptions import ConfigurationError, DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -105,11 +106,9 @@ def get_hedging_tool_job(job_id: str):
 @router.get("/hedging-tool/prefill")
 def get_hedging_tool_prefill():
     try:
-        from portfolio.portfolio_db import get_positions_df
-
-        df = get_positions_df()
+        df = OntologyRuntimeReadService().positions_df()
         if "ticker" not in df.columns:
-            raise ValueError("Portfolio database is missing required 'ticker' column.")
+            raise ValueError("Ontology positions are missing required 'ticker' column.")
 
         tickers = df["ticker"].astype(str).str.strip().str.upper()
         tickers = [t for t in tickers.tolist() if t]
@@ -118,7 +117,7 @@ def get_hedging_tool_prefill():
 
         return {
             "positions": [{"ticker": t, "weight": 0.0} for t in deduped],
-            "source": "portfolio.db",
+            "source": "ontology",
             "count": len(deduped),
         }
     except Exception as e:
@@ -127,21 +126,97 @@ def get_hedging_tool_prefill():
 
 @router.get("/hedging-tool/portfolio-weights")
 def get_portfolio_weights(book: float = 100_000):
-    """Derive portfolio weights from the portfolio DB for use in the hedging tool."""
+    """Derive portfolio weights from ontology positions for use in the hedging tool."""
     try:
-        from portfolio.portfolio_optimizer.hedging_tool import derive_portfolio_weights
-
-        positions, metadata, suggested_book = derive_portfolio_weights(book)
+        positions, metadata, suggested_book = _derive_portfolio_weights_from_ontology(book)
         return {
             "positions": positions,
             "metadata": metadata,
             "book": suggested_book,
-            "source": "portfolio_db",
+            "source": "ontology",
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise DataFetchError(source="hedging_tool", detail=str(e)) from e
+
+
+def _derive_portfolio_weights_from_ontology(book: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float]:
+    rows = OntologyRuntimeReadService().positions()
+    if not rows:
+        raise ValueError("No ontology positions found.")
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        asset = str(row.get("asset") or "equity").strip().lower()
+        instrument_type = str(row.get("instrument_type") or "security").strip().lower()
+        if instrument_type == "future" and asset != "equity":
+            continue
+        if asset != "equity":
+            continue
+        ticker = str(row.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        direction = str(row.get("direction") or "long").strip().lower()
+        sign = 1.0 if direction == "long" else -1.0
+        conviction = max(1, min(5, int(row.get("conviction") or 3)))
+        quantity = _float_or_none(row.get("quantity") if row.get("quantity") is not None else row.get("shares"))
+        cost_basis = _float_or_none(row.get("cost_basis"))
+        multiplier = _float_or_none(row.get("contract_multiplier")) or 1.0
+        dollar_value = quantity * cost_basis * multiplier if quantity and cost_basis else None
+        records.append(
+            {
+                "ticker": ticker,
+                "direction": direction,
+                "sign": sign,
+                "conviction": conviction,
+                "quantity": quantity,
+                "shares": quantity,
+                "cost_basis": cost_basis,
+                "instrument_type": instrument_type,
+                "contract_multiplier": multiplier,
+                "dollar_value": dollar_value,
+            }
+        )
+    if not records:
+        raise ValueError("No equity ontology positions found.")
+    suggested_book = float(book)
+    if all(row["dollar_value"] for row in records):
+        total_gross = sum(float(row["dollar_value"]) for row in records)
+        suggested_book = total_gross if total_gross > 0 else float(book)
+        for row in records:
+            row["weight"] = row["sign"] * float(row["dollar_value"]) / suggested_book
+    else:
+        total_conviction = sum(int(row["conviction"]) for row in records)
+        for row in records:
+            row["weight"] = row["sign"] * (int(row["conviction"]) / total_conviction)
+    return (
+        [{"ticker": row["ticker"], "weight": row["weight"]} for row in records],
+        [
+            {
+                "ticker": row["ticker"],
+                "direction": row["direction"],
+                "conviction": row["conviction"],
+                "shares": row["shares"],
+                "quantity": row["quantity"],
+                "cost_basis": row["cost_basis"],
+                "weight": row["weight"],
+                "instrument_type": row["instrument_type"],
+                "contract_multiplier": row["contract_multiplier"],
+            }
+            for row in records
+        ],
+        suggested_book,
+    )
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 class HedgingRecommendRequest(BaseModel):

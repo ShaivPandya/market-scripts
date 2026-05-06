@@ -32,11 +32,11 @@ _APPROVED_DOMAIN_WRITE_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
 
 
 def ontology_shadow_writes_enabled() -> bool:
-    return _env_flag("ONTOLOGY_SHADOW_WRITES") or ontology_primary_writes_enabled()
+    return True
 
 
 def ontology_primary_writes_enabled() -> bool:
-    return _env_flag("ONTOLOGY_PRIMARY_WRITES")
+    return True
 
 
 def ontology_read_model_enabled() -> bool:
@@ -44,7 +44,7 @@ def ontology_read_model_enabled() -> bool:
 
 
 def legacy_write_guard_enabled() -> bool:
-    return _env_flag("LEGACY_WRITE_GUARD")
+    return True
 
 
 def approved_domain_write_scope() -> dict[str, Any] | None:
@@ -82,14 +82,12 @@ def domain_write_scope(
 
 
 def assert_legacy_domain_write_allowed(surface: str) -> None:
-    if approved_domain_write_scope() is not None:
+    if approved_domain_write_scope() is not None and _env_flag("TALISMAN_ALLOW_LEGACY_PROJECTION_WRITE"):
         return
-    if legacy_write_guard_enabled() and not _env_flag("LEGACY_WRITE_GUARD_ALLOW_PROJECTION"):
-        raise RuntimeError(
-            f"Legacy domain write blocked by LEGACY_WRITE_GUARD: {surface}. "
-            "Use the approval application path, OntologyObjectService/domain write service, "
-            "or an approved projection refresh path."
-        )
+    raise RuntimeError(
+        f"Legacy domain write blocked by ontology-primary runtime: {surface}. "
+        "Use OntologyObjectService/OntologyCommandService, or run the isolated legacy backfill job."
+    )
 
 
 def _env_flag(name: str) -> bool:

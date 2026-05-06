@@ -290,28 +290,28 @@ def _linked_context(definition: dict[str, Any], fallback_ticker: str | None) -> 
     context: dict[str, Any] = {"claims": [], "catalysts": [], "kill_conditions": [], "terms": []}
     ticker = str(definition.get("ticker") or fallback_ticker or "").upper()
     try:
-        from portfolio.core_db import get_catalysts, get_kill_conditions, get_thesis_claim, get_thesis_claims
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        claim_ids = [int(item) for item in _as_list(definition.get("linked_claim_ids")) if str(item).isdigit()]
-        claims = []
-        for claim_id in claim_ids:
-            claim = get_thesis_claim(claim_id)
-            if claim:
-                claims.append(claim)
+        reads = OntologyRuntimeReadService()
+        claim_ids = {str(item) for item in _as_list(definition.get("linked_claim_ids")) if str(item).strip()}
+        claims = [reads.get(claim_id) for claim_id in claim_ids]
+        claims = [claim for claim in claims if claim]
         if not claims and ticker and definition.get("include_ticker_claims", True):
-            claims = get_thesis_claims(ticker=ticker, status="active", limit=20)
+            claims = reads.thesis_claims(ticker=ticker, status="active", limit=20)
         context["claims"] = claims
 
-        catalysts = get_catalysts(ticker) if ticker else []
-        catalyst_ids = {int(item) for item in _as_list(definition.get("linked_catalyst_ids")) if str(item).isdigit()}
+        catalysts = reads.catalysts(ticker) if ticker else []
+        catalyst_ids = {str(item) for item in _as_list(definition.get("linked_catalyst_ids")) if str(item).strip()}
         if catalyst_ids:
-            catalysts = [item for item in catalysts if int(item.get("id") or 0) in catalyst_ids]
+            catalysts = [item for item in catalysts if str(item.get("id") or item.get("object_uid")) in catalyst_ids]
         context["catalysts"] = catalysts
 
-        kill_conditions = get_kill_conditions(ticker) if ticker else []
-        kill_ids = {int(item) for item in _as_list(definition.get("linked_kill_condition_ids")) if str(item).isdigit()}
+        kill_conditions = reads.kill_conditions(ticker) if ticker else []
+        kill_ids = {str(item) for item in _as_list(definition.get("linked_kill_condition_ids")) if str(item).strip()}
         if kill_ids:
-            kill_conditions = [item for item in kill_conditions if int(item.get("id") or 0) in kill_ids]
+            kill_conditions = [
+                item for item in kill_conditions if str(item.get("id") or item.get("object_uid")) in kill_ids
+            ]
         context["kill_conditions"] = kill_conditions
     except Exception:
         return context
@@ -703,14 +703,30 @@ def _research_note_content(trigger: dict[str, Any], result: dict[str, Any]) -> s
 
 
 def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from portfolio.action_registry import ActionContext, propose_action
-    from portfolio.core_db import get_watch_triggers
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+    from ontology.policy import system_actor
+    from ontology.runtime_read_service import OntologyRuntimeReadService
+
+    command_service = OntologyCommandService()
+    reads = OntologyRuntimeReadService()
+
+    def propose_action(action_id: str, payload: dict[str, Any], *, source_id: str, reason: str) -> dict[str, Any]:
+        return command_service.propose_action(
+            action_id,
+            payload,
+            OntologyCommandContext(
+                actor=system_actor("watch_trigger_monitor"),
+                source_type="workflow",
+                source_id=source_id,
+            ),
+            reason=reason,
+        )
 
     checked = 0
     fired = 0
     skipped = 0
     errors = 0
-    for trigger in get_watch_triggers(status="active"):
+    for trigger in reads.watch_triggers(status="active"):
         checked += 1
         trigger_id = int(trigger["id"])
         try:
@@ -719,12 +735,8 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                 propose_action(
                     "update_watch_trigger_definition",
                     {"trigger_id": trigger_id, "definition": result["inferred_definition"]},
-                    ActionContext(
-                        actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"
-                    ),
+                    source_id=f"watch_trigger:{trigger_id}",
                     reason=f"Infer watch trigger definition for {trigger_id}",
-                    entity_id=trigger_id,
-                    once=True,
                 )
             evidence = str(result.get("evidence") or "")
             if result.get("skipped"):
@@ -732,26 +744,19 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                 propose_action(
                     "update_watch_trigger_check",
                     {"trigger_id": trigger_id, "result": result, "evidence": evidence},
-                    ActionContext(
-                        actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"
-                    ),
+                    source_id=f"watch_trigger:{trigger_id}",
                     reason=f"Record skipped watch trigger check for {trigger_id}",
-                    entity_id=trigger_id,
-                    once=True,
                 )
                 continue
             if result.get("fired"):
                 fired += 1
                 fingerprint = _result_fingerprint(result)
                 source_id = f"watch_trigger:{trigger_id}:{fingerprint}"
-                context = ActionContext(actor_type="workflow", source_type="workflow", source_id=source_id)
                 propose_action(
                     "fire_watch_trigger",
                     {"trigger_id": trigger_id, "result": result, "evidence": evidence},
-                    context,
+                    source_id=source_id,
                     reason=f"Watch trigger {trigger_id} fired",
-                    entity_id=trigger_id,
-                    once=True,
                 )
                 propose_action(
                     "create_action_item",
@@ -761,9 +766,8 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                         "ticker": trigger.get("ticker"),
                         "urgency": "high",
                     },
-                    context,
+                    source_id=source_id,
                     reason=f"Create action item for fired watch trigger {trigger_id}",
-                    once=True,
                 )
                 if result.get("news") or result.get("news_enrichment"):
                     propose_action(
@@ -774,29 +778,22 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                             "ticker": trigger.get("ticker"),
                             "note_type": "workflow_output",
                         },
-                        context,
+                        source_id=source_id,
                         reason=f"Create evidence note for fired watch trigger {trigger_id}",
-                        once=True,
                     )
             else:
                 propose_action(
                     "update_watch_trigger_check",
                     {"trigger_id": trigger_id, "result": result, "evidence": evidence},
-                    ActionContext(
-                        actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"
-                    ),
+                    source_id=f"watch_trigger:{trigger_id}",
                     reason=f"Record watch trigger check for {trigger_id}",
-                    entity_id=trigger_id,
-                    once=True,
                 )
         except Exception as exc:
             errors += 1
             propose_action(
                 "update_watch_trigger_check",
                 {"trigger_id": trigger_id, "result": {"error": str(exc), "fired": False}, "evidence": str(exc)},
-                ActionContext(actor_type="workflow", source_type="workflow", source_id=f"watch_trigger:{trigger_id}"),
+                source_id=f"watch_trigger:{trigger_id}",
                 reason=f"Record watch trigger monitor error for {trigger_id}",
-                entity_id=trigger_id,
-                once=True,
             )
     return {"checked": checked, "fired": fired, "skipped": skipped, "errors": errors}

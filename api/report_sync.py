@@ -6,6 +6,9 @@ import hashlib
 from typing import Any
 
 from auto_report.recommendations import persist_recommendations, stable_hash, validate_recommendations_payload
+from ontology.command_service import OntologyCommandContext, OntologyCommandService
+from ontology.object_service import OntologyObjectService
+from ontology.policy import actor_to_dict, system_actor
 
 
 def _hash_text(value: str | None) -> str | None:
@@ -24,6 +27,19 @@ def _as_list(value: Any) -> list:
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _propose_report_action(action_id: str, payload: dict[str, Any], *, source_id: str, reason: str) -> dict[str, Any]:
+    return OntologyCommandService().propose_action(
+        action_id,
+        payload,
+        OntologyCommandContext(
+            actor=system_actor("report_sync"),
+            source_type="workflow",
+            source_id=source_id,
+        ),
+        reason=reason,
+    )
 
 
 def _report_id(report_type: str, as_of: str, payload: dict[str, Any]) -> str:
@@ -46,23 +62,18 @@ def _extract_as_of(report_type: str, payload: dict[str, Any]) -> str:
 
 
 def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.action_registry import ActionContext, propose_action
-
-    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
-
     count = 0
     report_md = str(payload.get("report_md") or payload.get("report") or "").strip()
     if report_md:
-        propose_action(
+        _propose_report_action(
             "create_research_note",
             {
                 "title": f"{report_type.title()} Report - {as_of}",
                 "content": report_md[:20000],
                 "note_type": "workflow_output",
             },
-            context,
+            source_id=report_id,
             reason=f"{report_type.title()} report note ({as_of})",
-            once=True,
         )
         count += 1
 
@@ -72,7 +83,7 @@ def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: 
         if not isinstance(item, dict) or not item.get("summary"):
             continue
         ticker = str(item.get("ticker") or "").upper() or None
-        propose_action(
+        _propose_report_action(
             "create_research_note",
             {
                 "title": f"{ticker or 'Portfolio'} thesis development - {as_of}",
@@ -80,19 +91,15 @@ def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: 
                 "ticker": ticker,
                 "note_type": "risk_assessment" if item.get("type") in {"contradicts_thesis", "new_risk"} else "general",
             },
-            context,
+            source_id=report_id,
             reason=f"{report_type.title()} thesis development note ({as_of})",
-            once=True,
         )
         count += 1
     return count
 
 
 def _create_report_action_items(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.action_registry import ActionContext, propose_action
-
     summary = _as_dict(payload.get("summary"))
-    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
     count = 0
 
     if report_type == "daily":
@@ -100,7 +107,7 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
             ticker_s = str(ticker).strip().upper()
             if not ticker_s:
                 continue
-            propose_action(
+            _propose_report_action(
                 "create_action_item",
                 {
                     "description": f"Review daily report flag for {ticker_s} ({as_of})",
@@ -108,9 +115,8 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
                     "ticker": ticker_s,
                     "urgency": "normal",
                 },
-                context,
+                source_id=report_id,
                 reason=f"Daily report flagged {ticker_s} ({as_of})",
-                once=True,
             )
             count += 1
     thesis = _as_dict(summary.get("thesis_monitoring"))
@@ -118,7 +124,7 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
         ticker_s = str(ticker).strip().upper()
         if not ticker_s:
             continue
-        propose_action(
+        _propose_report_action(
             "create_action_item",
             {
                 "description": f"Reassess thesis after {report_type} report for {ticker_s} ({as_of})",
@@ -126,24 +132,21 @@ def _create_report_action_items(report_type: str, as_of: str, report_id: str, pa
                 "ticker": ticker_s,
                 "urgency": "high",
             },
-            context,
+            source_id=report_id,
             reason=f"{report_type.title()} report thesis reassessment for {ticker_s} ({as_of})",
-            once=True,
         )
         count += 1
     return count
 
 
 def _create_watch_trigger_approvals(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.action_registry import ActionContext, propose_action
-
     summary = _as_dict(payload.get("summary"))
     count = 0
     for condition in _as_list(summary.get("watchlist_triggers")):
         condition_s = str(condition).strip()
         if not condition_s:
             continue
-        propose_action(
+        _propose_report_action(
             "create_watch_trigger",
             {
                 "condition": condition_s,
@@ -151,9 +154,8 @@ def _create_watch_trigger_approvals(report_type: str, as_of: str, report_id: str
                 "ticker": None,
                 "definition": None,
             },
-            ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id),
+            source_id=report_id,
             reason=f"{report_type.title()} report watch trigger ({as_of})",
-            once=True,
         )
         count += 1
     return count
@@ -165,39 +167,31 @@ def _persist_weekly_thesis_evaluations(as_of: str, payload: dict[str, Any]) -> i
     evals = thesis.get("thesis_evaluations")
     if not isinstance(evals, list) or not evals:
         return 0
-    from portfolio.action_registry import ActionContext, propose_action
-
     report_id = str(payload.get("report_id") or f"weekly:{as_of}")
-    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
     count = 0
     for evaluation in evals:
         if not isinstance(evaluation, dict) or not evaluation.get("ticker"):
             continue
-        propose_action(
+        _propose_report_action(
             "save_evaluation",
             {"evaluated_at": as_of, **evaluation},
-            context,
+            source_id=report_id,
             reason=f"Weekly thesis evaluation for {str(evaluation.get('ticker')).upper()} ({as_of})",
-            once=True,
         )
         count += 1
     return count
 
 
 def _persist_thesis_claims(report_id: str, payload: dict[str, Any]) -> int:
-    from portfolio.action_registry import ActionContext, propose_action
-
-    context = ActionContext(actor_type="workflow", source_type="workflow", source_id=report_id)
     count = 0
     for claim in _as_list(payload.get("thesis_claims")):
         if not isinstance(claim, dict) or not claim.get("ticker") or not claim.get("claim"):
             continue
-        propose_action(
+        _propose_report_action(
             "create_thesis_claim",
             {**claim, "source_type": "workflow", "source_id": report_id},
-            context,
+            source_id=report_id,
             reason=f"Report thesis claim for {str(claim.get('ticker')).upper()}",
-            once=True,
         )
         count += 1
     return count
@@ -231,24 +225,32 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
         or stable_hash({"summary": summary, "bundle": bundle, "recommendations": recommendations_payload})
     )
 
-    from portfolio.core_db import upsert_report_run
-
-    report_run = upsert_report_run(
-        {
-            "report_id": report_id,
-            "report_type": report_type,
-            "as_of": as_of,
-            "source": metadata.get("source") or "github_actions",
-            "source_run_id": metadata.get("github_run_id") or metadata.get("source_run_id"),
-            "source_url": metadata.get("source_url"),
-            "status": "completed",
-            "report_hash": report_hash,
-            "input_hash": input_hash,
-            "summary": summary,
-            "artifact_paths": _as_dict(payload.get("artifact_paths")),
-            "issue_url": metadata.get("issue_url"),
-        }
+    report_actor = system_actor("report_sync")
+    report_run_payload = {
+        "report_id": report_id,
+        "report_type": report_type,
+        "as_of": as_of,
+        "source": metadata.get("source") or "github_actions",
+        "source_run_id": metadata.get("github_run_id") or metadata.get("source_run_id"),
+        "source_url": metadata.get("source_url"),
+        "status": "completed",
+        "report_hash": report_hash,
+        "input_hash": input_hash,
+        "summary": summary,
+        "artifact_paths": _as_dict(payload.get("artifact_paths")),
+        "issue_url": metadata.get("issue_url"),
+        "ontology_run_id": "operational",
+    }
+    report_row = OntologyObjectService().write_object(
+        "ReportRun",
+        report_id,
+        report_run_payload,
+        as_of,
+        actor=actor_to_dict(report_actor),
+        provenance=f"pv:report_sync:{report_id}",
+        input_hash=input_hash,
     )
+    report_run = {**report_run_payload, "id": report_row.get("object_uid"), "object_uid": report_row.get("object_uid")}
 
     persisted_recommendations = persist_recommendations(
         recommendations_payload,

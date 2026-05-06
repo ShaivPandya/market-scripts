@@ -696,10 +696,10 @@ def _load_portfolio_position(ticker: str, *, now: datetime) -> dict[str, Any]:
 
 
 def _load_portfolio_positions(*, now: datetime) -> list[dict[str, Any]]:
-    from portfolio.portfolio_db import get_positions
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
     rows: list[dict[str, Any]] = []
-    for raw in get_positions(include_hedges=False):
+    for raw in OntologyRuntimeReadService().positions(include_hedges=False):
         ticker = _ticker(raw.get("ticker"))
         if not ticker:
             continue
@@ -739,7 +739,7 @@ def _portfolio_source_status(position: dict[str, Any], now: datetime) -> dict[st
         "freshness": {
             "policy": "request_time",
             "fresh": True,
-            "basis": "portfolio_db",
+            "basis": "ontology",
             "observed_as_of_date": str(now.astimezone(_EASTERN).date()),
         },
     }
@@ -760,7 +760,7 @@ def _portfolio_aggregate_source_status(positions: list[dict[str, Any]], now: dat
         "freshness": {
             "policy": "request_time",
             "fresh": True,
-            "basis": "portfolio_db",
+            "basis": "ontology",
             "observed_as_of_date": str(now.astimezone(_EASTERN).date()),
         },
     }

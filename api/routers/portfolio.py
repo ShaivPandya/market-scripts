@@ -4,7 +4,8 @@ from fastapi import APIRouter
 
 from api.cache import get_or_set_cached, short_cache
 from api.exceptions import DataFetchError
-from api.serializers import serialize_series, serialize_value
+from api.serializers import serialize_value
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -22,58 +23,47 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
 
     def loader():
         try:
-            from portfolio.portfolio_dashboard import get_data
-
-            data = get_data(timeframe=timeframe, all_timeframes=all_timeframes)
+            positions = OntologyRuntimeReadService().positions(include_hedges=True)
         except Exception as e:
             raise DataFetchError(source="portfolio", detail=str(e)) from e
 
-        if "error" in data and data["error"]:
-            raise DataFetchError(source="portfolio", detail=data["error"])
-
-        # Include ordering / display name lists if the module exposes them
-        try:
-            from portfolio.portfolio_dashboard import POSITION_ORDER
-
-            position_order = POSITION_ORDER
-        except ImportError:
-            position_order = []
+        position_order = [str(row.get("ticker") or row.get("id") or "") for row in positions if row.get("ticker")]
+        analytics = {
+            "portfolio": {"position_count": len(positions)},
+            "per_position": {
+                str(row.get("ticker") or row.get("id")): {
+                    "weight": row.get("weight"),
+                    "current_notional": row.get("notional_base"),
+                    "cost_notional": row.get("cost_basis_base"),
+                }
+                for row in positions
+            },
+        }
 
         if all_timeframes:
-            timeframes = data.get("timeframes", {})
             result: dict[str, Any] = {
-                "timeframes": {},
-                "timestamp": data["timestamp"].isoformat() if data.get("timestamp") else None,
+                "timeframes": {
+                    "Current": {
+                        "positions": {},
+                        "metadata": {"source": "ontology"},
+                        "timeframe": "Current",
+                        "timestamp": None,
+                        "position_order": position_order,
+                    }
+                },
+                "timestamp": None,
             }
-            if data.get("warning"):
-                result["warning"] = data["warning"]
-
-            result["analytics"] = serialize_value(data.get("analytics", {}))
-
-            for tf_name, tf_data in timeframes.items():
-                positions_raw = tf_data.get("positions", {})
-                tf_result = {
-                    "positions": {ticker: serialize_series(series) for ticker, series in positions_raw.items()},
-                    "metadata": serialize_value(tf_data.get("metadata", {})),
-                    "timeframe": tf_name,
-                    "timestamp": tf_data["timestamp"].isoformat() if tf_data.get("timestamp") else None,
-                    "position_order": position_order or list(positions_raw.keys()),
-                }
-                if tf_data.get("warning"):
-                    tf_result["warning"] = tf_data["warning"]
-                result["timeframes"][tf_name] = tf_result
+            result["analytics"] = serialize_value(analytics)
         else:
-            positions_raw = data.get("positions", {})
             result = {
-                "positions": {ticker: serialize_series(series) for ticker, series in positions_raw.items()},
-                "metadata": serialize_value(data.get("metadata", {})),
+                "positions": {},
+                "metadata": {"source": "ontology", "position_count": len(positions)},
                 "timeframe": timeframe,
-                "timestamp": data["timestamp"].isoformat() if data.get("timestamp") else None,
-                "position_order": position_order or list(positions_raw.keys()),
-                "analytics": serialize_value(data.get("analytics", {})),
+                "timestamp": None,
+                "position_order": position_order,
+                "analytics": serialize_value(analytics),
+                "holdings": positions,
             }
-            if data.get("warning"):
-                result["warning"] = data["warning"]
 
         return result
 

@@ -17,12 +17,17 @@ from ontology.schemas.identity import (
     asset_id,
     audit_event_id,
     catalyst_id,
+    citation_id,
     document_artifact_id,
     evaluation_id,
+    evidence_id,
     executed_action_id,
+    executed_decision_record_id,
     hedge_position_id,
+    instrument_id,
     investment_policy_id,
     investor_id,
+    issuer_id,
     kill_condition_id,
     macro_indicator_id,
     mandate_id,
@@ -56,12 +61,17 @@ from ontology.schemas.objects import (
     AssetV1,
     AuditEventV1,
     CatalystV1,
+    CitationV1,
     DocumentArtifactV1,
     EvaluationV1,
+    EvidenceV1,
     ExecutedActionV1,
+    ExecutedDecisionRecordV1,
     HedgePositionV1,
+    InstrumentV1,
     InvestmentPolicyV1,
     InvestorV1,
+    IssuerV1,
     KillConditionV1,
     MacroIndicatorV1,
     MandateV1,
@@ -104,6 +114,8 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Position": PositionV1,
     "HedgePosition": HedgePositionV1,
     "Asset": AssetV1,
+    "Instrument": InstrumentV1,
+    "Issuer": IssuerV1,
     "Investor": InvestorV1,
     "Account": AccountV1,
     "Portfolio": PortfolioV1,
@@ -117,6 +129,7 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "SourceRecord": SourceRecordV1,
     "ObjectVersionRef": ObjectVersionRefV1,
     "ExecutedAction": ExecutedActionV1,
+    "ExecutedDecisionRecord": ExecutedDecisionRecordV1,
     "AuditEvent": AuditEventV1,
     "Sector": SectorV1,
     "MacroIndicator": MacroIndicatorV1,
@@ -126,6 +139,8 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Catalyst": CatalystV1,
     "KillCondition": KillConditionV1,
     "ThesisClaim": ThesisClaimV1,
+    "Evidence": EvidenceV1,
+    "Citation": CitationV1,
     "ActionItem": ActionItemV1,
     "WatchTrigger": WatchTriggerV1,
     "ResearchNote": ResearchNoteV1,
@@ -437,6 +452,10 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return hedge_position_id(model.ticker)
     if isinstance(model, AssetV1):
         return asset_id(model.ticker)
+    if isinstance(model, InstrumentV1):
+        return instrument_id(model.instrument_id)
+    if isinstance(model, IssuerV1):
+        return issuer_id(model.issuer_id)
     if isinstance(model, InvestorV1):
         return investor_id(model.investor_id)
     if isinstance(model, AccountV1):
@@ -463,6 +482,8 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return object_version_ref_id(model.ref_id)
     if isinstance(model, ExecutedActionV1):
         return executed_action_id(model.executed_action_id)
+    if isinstance(model, ExecutedDecisionRecordV1):
+        return executed_decision_record_id(model.decision_record_id)
     if isinstance(model, AuditEventV1):
         return audit_event_id(model.event_id)
     if isinstance(model, SectorV1):
@@ -481,6 +502,10 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return kill_condition_id(model.ticker, model.legacy_id or model.condition)
     if isinstance(model, ThesisClaimV1):
         return thesis_claim_id(model.ticker, model.legacy_id or model.claim)
+    if isinstance(model, EvidenceV1):
+        return evidence_id(model.evidence_id)
+    if isinstance(model, CitationV1):
+        return citation_id(model.citation_id)
     if isinstance(model, ActionItemV1):
         return action_item_id(model.legacy_id or model.description)
     if isinstance(model, WatchTriggerV1):

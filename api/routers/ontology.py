@@ -157,12 +157,7 @@ def get_ontology_run(run_id: str, actor: ActorDep):
     run = _service.repo.get_run(run_id)
     if run is None:
         raise NotFoundError("Ontology run", run_id)
-    try:
-        from portfolio.core_db import provenance_summary
-
-        run["provenance_summary"] = provenance_summary(ontology_run_id=run_id)
-    except Exception:
-        run["provenance_summary"] = {"event_count": 0, "link_count": 0}
+    run["provenance_summary"] = {"selector": {"ontology_run_id": run_id}, "lineage_state": "ontology"}
     return run
 
 

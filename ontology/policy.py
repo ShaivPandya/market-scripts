@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -101,13 +102,32 @@ class OntologyPolicy(Protocol):
 
 
 class DefaultOntologyPolicy:
-    """V1 policy: authenticated admin and internal system actors retain full access."""
+    """Single-owner ontology policy with system-only bypass."""
+
+    def _owner_actor_id(self) -> str:
+        return (os.getenv("ONTOLOGY_OWNER_ACTOR_ID") or "admin").strip() or "admin"
 
     def _is_allowed_actor(self, actor: Actor | None) -> bool:
         if actor is None:
             return False
         roles = {role.lower() for role in actor.roles}
-        return actor.actor_type == "system" or "admin" in roles
+        if actor.actor_type == "system":
+            return True
+        if actor.actor_type == "agent":
+            return bool(actor.parent_actor_id == self._owner_actor_id() and ({"owner", "admin"} & roles))
+        return (
+            actor.actor_type == "user" and actor.actor_id == self._owner_actor_id() and bool({"owner", "admin"} & roles)
+        )
+
+    def _scope_allows(self, actor: Actor | None, properties: dict[str, Any]) -> bool:
+        if actor is None or actor.actor_type == "system":
+            return actor is not None
+        owner_account = (os.getenv("ONTOLOGY_OWNER_ACCOUNT_ID") or "default").strip() or "default"
+        account_id = str(properties.get("account_id") or properties.get("owner_account_id") or "").strip()
+        portfolio_id = str(properties.get("portfolio_id") or "").strip()
+        if not account_id and not portfolio_id:
+            return True
+        return account_id in {"", owner_account} and portfolio_id in {"", "default"}
 
     def check_action(
         self,
@@ -125,7 +145,7 @@ class DefaultOntologyPolicy:
         node: NodeResource,
         action: str = "read",
     ) -> PolicyDecision:
-        if self._is_allowed_actor(actor):
+        if self._is_allowed_actor(actor) and self._scope_allows(actor, node.properties):
             return PolicyDecision(True)
         return PolicyDecision(False, f"Actor is not allowed to {action} ontology object '{node.id}'")
 
@@ -157,7 +177,7 @@ DEFAULT_ONTOLOGY_POLICY = DefaultOntologyPolicy()
 
 def admin_actor(subject: str = "admin", *, source: str = "api") -> Actor:
     actor_id = str(subject or "admin").strip() or "admin"
-    return Actor(actor_id=actor_id, actor_type="user", roles=("admin",), source=source)
+    return Actor(actor_id=actor_id, actor_type="user", roles=("owner", "admin"), source=source)
 
 
 def system_actor(source: str) -> Actor:

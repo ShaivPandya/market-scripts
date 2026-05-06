@@ -169,7 +169,7 @@ export function PositionDossier() {
     : { path: "/workspace", label: "Workspace" }
   const [tab, setTab] = useState<Tab>("Overview")
   const qc = useQueryClient()
-  const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
+  const [processingIds, setProcessingIds] = useState<Set<number | string>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [newStatus, setNewStatus] = useState<ThesisStatusValue>("under_review")

@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 
 class _FakeCursor:
     def __init__(self, conn):
@@ -114,7 +116,7 @@ class _FakePool:
         self.closed = True
 
 
-def test_portfolio_uses_postgres_in_production(monkeypatch):
+def test_portfolio_legacy_writes_are_blocked_in_production(monkeypatch):
     from portfolio import portfolio_db
 
     fake = _FakeConn()
@@ -126,10 +128,10 @@ def test_portfolio_uses_postgres_in_production(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr(portfolio_db, "connect", fake_connect)
 
-    portfolio_db.save_positions([{"ticker": "MU", "asset": "equity", "direction": "long"}])
+    with pytest.raises(RuntimeError, match="Legacy domain write blocked"):
+        portfolio_db.save_positions([{"ticker": "MU", "asset": "equity", "direction": "long"}])
 
-    assert any("DELETE FROM positions WHERE role = %s" in sql for sql, _params in fake.queries)
-    assert any("INSERT INTO positions" in sql for sql, _params in fake.queries)
+    assert fake.queries == []
 
 
 def test_postgres_connect_uses_pool_when_enabled(monkeypatch):

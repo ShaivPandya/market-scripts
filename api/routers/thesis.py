@@ -12,12 +12,9 @@ from api.document_generation_jobs import classify_upload_document, enqueue_docum
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text
+from ontology.object_service import OntologyObjectService
 from paths import PROJECT_ROOT
 from portfolio import thesis_content
-from portfolio.action_registry import (
-    ActionNotFoundError,
-    ActionValidationError,
-)
 
 router = APIRouter()
 
@@ -223,17 +220,15 @@ async def generate_thesis(
 
 @router.get("/thesis/meta")
 def get_thesis_meta_all():
-    from portfolio.portfolio_db import get_positions
-    from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
-
     positions = {}
-    for row in get_positions():
+    service = OntologyObjectService()
+    for row in (_object_props(row) for row in service.query_objects("Position", limit=1000)):
         ticker = _normalize_ticker(str(row.get("ticker", "")))
         if ticker and ticker not in positions:
             positions[ticker] = row
 
     meta_by_ticker = {}
-    for row in get_all_thesis_meta():
+    for row in (_object_props(row) for row in service.query_objects("Thesis", limit=1000)):
         ticker = _normalize_ticker(str(row.get("ticker", "")))
         if ticker in positions and ticker not in meta_by_ticker:
             meta_by_ticker[ticker] = dict(row)
@@ -258,7 +253,10 @@ def get_thesis_meta_all():
         row["conviction"] = pos.get("conviction")
         meta.append(row)
 
-    latest = {_normalize_ticker(str(e.get("ticker", ""))): e for e in get_latest_evaluations()}
+    latest = {
+        _normalize_ticker(str(e.get("ticker", ""))): e
+        for e in (_object_props(row) for row in service.query_objects("Evaluation", limit=1000))
+    }
     for m in meta:
         ticker = _normalize_ticker(str(m["ticker"]))
         ev = latest.get(ticker)
@@ -272,17 +270,13 @@ def get_thesis_meta_all():
 
 @router.get("/thesis/evaluations/latest")
 def get_latest_evaluations_endpoint():
-    from portfolio.thesis_db import get_latest_evaluations
-
-    return get_latest_evaluations()
+    return [_object_props(row) for row in OntologyObjectService().query_objects("Evaluation", limit=1000)]
 
 
 @router.get("/thesis/status")
 def get_thesis_status() -> dict[str, Literal["populated", "empty", "missing"]]:
-    from portfolio.portfolio_db import get_positions
-
     statuses: dict[str, Literal["populated", "empty", "missing"]] = {}
-    for row in get_positions():
+    for row in (_object_props(row) for row in OntologyObjectService().query_objects("Position", limit=1000)):
         ticker = _normalize_ticker(str(row.get("ticker", "")))
         if not ticker or ticker in statuses:
             continue
@@ -305,9 +299,9 @@ def get_thesis_detail(ticker: str):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    from portfolio.thesis_db import get_evaluations, get_status_history, get_thesis_meta
-
-    meta = get_thesis_meta(normalized_ticker)
+    service = OntologyObjectService()
+    meta_row = service.get_object(f"thesis:{normalized_ticker}")
+    meta = _object_props(meta_row) if meta_row else None
     if not meta:
         raise NotFoundError("Thesis metadata", normalized_ticker)
 
@@ -321,8 +315,11 @@ def get_thesis_detail(ticker: str):
     return {
         "meta": meta,
         "content": content,
-        "status_history": get_status_history(normalized_ticker),
-        "evaluations": get_evaluations(normalized_ticker, limit=52),
+        "status_history": [],
+        "evaluations": [
+            _object_props(row)
+            for row in service.query_objects("Evaluation", filters={"ticker": normalized_ticker}, limit=52)
+        ],
     }
 
 
@@ -338,19 +335,14 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    try:
-        return stage_api_action(
-            "change_thesis_status",
-            {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
-            source_id="thesis.change_thesis_status",
-            reason=body.reason or f"Change thesis status for {normalized_ticker}",
-            apply=body.apply,
-            approval_note=body.approval_note,
-        )
-    except ActionValidationError as e:
-        raise ValidationError(e.message) from e
-    except ActionNotFoundError as e:
-        raise NotFoundError("Thesis", normalized_ticker) from e
+    return stage_api_action(
+        "change_thesis_status",
+        {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
+        source_id="thesis.change_thesis_status",
+        reason=body.reason or f"Change thesis status for {normalized_ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
+    )
 
 
 class SaveThesisRequest(BaseModel):
@@ -395,3 +387,12 @@ def get_thesis(ticker: str):
 
         raise AppError(f"Failed to read thesis file: {e}") from e
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
+
+
+def _object_props(row: dict | None) -> dict:
+    if not row:
+        return {}
+    props = dict(row.get("properties") or row.get("properties_json") or {})
+    props["id"] = str(row.get("object_uid") or props.get("id") or "")
+    props["object_uid"] = props["id"]
+    return props

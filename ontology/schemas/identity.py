@@ -41,6 +41,14 @@ def asset_id(ticker: object) -> str:
     return f"asset:{canonical_ticker(ticker)}"
 
 
+def instrument_id(identifier: object) -> str:
+    return f"instrument:{slug(identifier)}"
+
+
+def issuer_id(identifier: object) -> str:
+    return f"issuer:{slug(identifier)}"
+
+
 def investor_id(identifier: object) -> str:
     return f"investor:{slug(identifier)}"
 
@@ -93,6 +101,10 @@ def executed_action_id(identifier: object) -> str:
     return f"executed_action:{slug(identifier)}"
 
 
+def executed_decision_record_id(identifier: object) -> str:
+    return f"executed_decision_record:{slug(identifier)}"
+
+
 def audit_event_id(identifier: object) -> str:
     return f"audit_event:{slug(identifier)}"
 
@@ -131,6 +143,14 @@ def kill_condition_id(ticker: object, identifier: object) -> str:
 
 def thesis_claim_id(ticker: object, identifier: object) -> str:
     return f"thesis_claim:{canonical_ticker(ticker)}:{slug(identifier)}"
+
+
+def evidence_id(identifier: object) -> str:
+    return f"evidence:{slug(identifier)}"
+
+
+def citation_id(identifier: object) -> str:
+    return f"citation:{slug(identifier)}"
 
 
 def action_item_id(identifier: object) -> str:

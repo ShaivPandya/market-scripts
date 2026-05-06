@@ -8,9 +8,8 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.action_execution import stage_api_action
+from api.action_execution import execute_api_action, stage_api_action
 from api.exceptions import ValidationError
-from portfolio.action_registry import ActionContext, execute_action, get_action
 
 router = APIRouter()
 
@@ -55,22 +54,14 @@ def self_apply_domain_action(action_id: str, body: DomainActionRequest):
 def break_glass_domain_action(action_id: str, body: BreakGlassRequest):
     if (os.getenv("BREAK_GLASS_ENABLED") or "").strip().lower() not in {"1", "true", "yes", "on"}:
         raise HTTPException(status_code=403, detail="Break-glass execution is disabled.")
-    action = get_action(action_id)
-    if not action.break_glass_allowed:
-        raise HTTPException(status_code=403, detail=f"Break-glass is not allowed for {action_id}.")
-    result = execute_action(
+    result = execute_api_action(
         action_id,
         body.payload,
-        ActionContext(
-            actor_type="approval_apply",
-            source_type="break_glass",
-            source_id=f"{body.reason_code}: {body.reason}",
-            approval_id=-1,
-        ),
+        source_id=f"break_glass.{body.reason_code}",
     )
     return {
         "status": "break_glass_applied",
         "action_id": action_id,
         "reason_code": body.reason_code,
-        "result": result.output,
+        "result": result,
     }

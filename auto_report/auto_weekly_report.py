@@ -263,16 +263,16 @@ def _build_system_message(last_week_summary: str | None) -> str:
 
 def load_theses() -> dict[str, str | None]:
     """Load investment thesis markdown files for all portfolio tickers."""
-    from portfolio.portfolio_db import get_positions
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
     tickers: list[str] = []
     try:
-        for row in get_positions():
+        for row in OntologyRuntimeReadService().positions():
             t = str(row.get("ticker", "")).strip()
             if t:
                 tickers.append(t)
     except Exception as e:
-        log.warning("Failed to read positions from portfolio_db: %s", e)
+        log.warning("Failed to read positions from ontology: %s", e)
 
     theses: dict[str, str | None] = {}
     for ticker in tickers:
@@ -319,9 +319,9 @@ def collect_thesis_data() -> dict:
     results["theses"] = load_theses()
 
     # 2. Load portfolio positions
-    from portfolio.portfolio_db import get_positions as _get_positions
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    results["portfolio"] = [r for r in _get_positions() if r.get("ticker")]
+    results["portfolio"] = [r for r in OntologyRuntimeReadService().positions() if r.get("ticker")]
 
     tickers = [p["ticker"] for p in results["portfolio"]]
 
@@ -1553,18 +1553,37 @@ def main():
             # Merge thesis into summary
             summary = _merge_thesis_into_summary(summary, thesis_summary)
 
-            # Persist evaluations to thesis DB
+            # Stage evaluations through ontology approvals.
             try:
-                from portfolio.thesis_db import save_evaluations, upsert_thesis_meta
+                from ontology.command_service import OntologyCommandContext, OntologyCommandService
+                from ontology.policy import system_actor
 
                 evals = thesis_summary.get("thesis_evaluations", [])
+                service = OntologyCommandService()
+                context = OntologyCommandContext(
+                    actor=system_actor("weekly_report"),
+                    source_type="workflow",
+                    source_id=f"weekly_report:{today_str}",
+                )
                 if evals:
-                    save_evaluations(today_str, evals)
-                    log.info("Persisted %d thesis evaluations to thesis.db", len(evals))
+                    for evaluation in evals:
+                        if isinstance(evaluation, dict) and evaluation.get("ticker"):
+                            service.propose_action(
+                                "save_evaluation",
+                                {"evaluated_at": today_str, **evaluation},
+                                context,
+                                reason=f"Weekly thesis evaluation for {evaluation.get('ticker')}",
+                            )
+                    log.info("Staged %d thesis evaluation approvals", len(evals))
                 for t in thesis_summary.get("positions_reviewed", []):
-                    upsert_thesis_meta(t)
+                    service.propose_action(
+                        "change_thesis_status",
+                        {"ticker": t, "status": "under_review", "reason": "Weekly report reviewed position."},
+                        context,
+                        reason=f"Weekly report reviewed {t}",
+                    )
             except Exception:
-                log.warning("Failed to persist thesis evaluations", exc_info=True)
+                log.warning("Failed to stage thesis evaluation approvals", exc_info=True)
 
             log.info(
                 "Thesis pass completed in %.2fs (%d evaluations)",

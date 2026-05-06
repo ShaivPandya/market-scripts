@@ -292,7 +292,7 @@ export function Workspace() {
     30_000,
   )
 
-  const [processingIds, setProcessingIds] = useState<Set<number>>(new Set())
+  const [processingIds, setProcessingIds] = useState<Set<number | string>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [provenanceSelector, setProvenanceSelector] = useState<ProvenanceSelector | null>(null)

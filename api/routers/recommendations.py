@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from api.decision_state import normalize_recommendation
 from api.exceptions import NotFoundError
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -19,9 +20,7 @@ def list_recommendations(
     outcome_status: str | None = None,
     limit: int = 50,
 ):
-    from portfolio.core_db import get_recommendations
-
-    items = get_recommendations(
+    items = OntologyRuntimeReadService().recommendations(
         report_type=report_type,
         status=status,
         ticker=ticker,
@@ -34,19 +33,20 @@ def list_recommendations(
 
 @router.get("/recommendations/latest")
 def latest_recommendations():
-    from portfolio.core_db import get_latest_recommendation
+    reads = OntologyRuntimeReadService()
 
     return {
-        "daily": normalize_recommendation(get_latest_recommendation("daily")),
-        "weekly": normalize_recommendation(get_latest_recommendation("weekly")),
+        "daily": normalize_recommendation(reads.latest_recommendation("daily")),
+        "weekly": normalize_recommendation(reads.latest_recommendation("weekly")),
     }
 
 
 @router.get("/recommendations/{recommendation_id}")
-def get_recommendation_detail(recommendation_id: int):
-    from portfolio.core_db import get_recommendation
-
-    item = get_recommendation(recommendation_id)
+def get_recommendation_detail(recommendation_id: str):
+    reads = OntologyRuntimeReadService()
+    item = reads.get(
+        recommendation_id if recommendation_id.startswith("recommendation:") else f"recommendation:{recommendation_id}"
+    )
     if not item:
         raise NotFoundError("Recommendation", str(recommendation_id))
     return normalize_recommendation(item)

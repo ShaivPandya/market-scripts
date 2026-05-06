@@ -79,10 +79,13 @@ def list_governance_outbox(
     limit: int = 100,
     _sub: str = Depends(require_job_admin),
 ):
-    from portfolio.core_db import get_governance_outbox_items, get_governance_outbox_metrics
-
-    items = get_governance_outbox_items(status=status_filter, lineage_root_id=lineage_root_id, limit=limit)
-    return {"items": items, "count": len(items), "metrics": get_governance_outbox_metrics()}
+    return {
+        "items": [],
+        "count": 0,
+        "metrics": {"pending": 0, "retry": 0, "failed": 0},
+        "lineage_state": "ontology",
+        "message": "Legacy governance outbox has been removed from runtime.",
+    }
 
 
 @router.post("/admin/governance-outbox/{outbox_id}/requeue")
@@ -91,17 +94,7 @@ def requeue_governance_outbox(
     body: GovernanceOutboxRequeueRequest | None = None,
     _sub: str = Depends(require_job_admin),
 ):
-    from portfolio.core_db import requeue_governance_outbox_item
-
-    body = body or GovernanceOutboxRequeueRequest()
-    try:
-        return requeue_governance_outbox_item(
-            outbox_id=outbox_id,
-            idempotency_key=body.idempotency_key,
-            next_attempt_at=body.next_attempt_at,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    raise HTTPException(status_code=410, detail="Legacy governance outbox has been removed from runtime.")
 
 
 @router.post("/admin/jobs/enqueue-market-snapshot-refresh")

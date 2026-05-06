@@ -6,9 +6,12 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from api.logging_config import request_id_var
+from ontology.object_service import OntologyObjectService
+from ontology.schemas.identity import audit_event_id
 
 logger = logging.getLogger("api.audit")
 
@@ -104,6 +107,15 @@ def summarize_for_audit(value: Any, *, _depth: int = 0, _key: str | None = None)
     return str(value)
 
 
+def _summary_object(value: Any) -> dict[str, Any] | None:
+    summarized = summarize_for_audit(value)
+    if summarized is None:
+        return None
+    if isinstance(summarized, dict):
+        return summarized
+    return {"value": summarized}
+
+
 def _actor_fields(actor: Any) -> tuple[str | None, str, str | None]:
     if actor is None:
         return None, "system", None
@@ -176,31 +188,47 @@ def emit_audit_event(
     refs = _normalize_object_refs(object_refs)
     rid = request_id if request_id is not None else request_id_var.get("")
     try:
-        from portfolio import core_db
-
-        return core_db.record_audit_event(
-            action_name=action_name,
-            action_category=action_category,
-            status=status,
-            request_id=rid or None,
-            actor_id=actor_id,
-            actor_type=actor_type,
-            parent_actor_id=parent_actor_id,
-            object_refs=refs,
-            before_summary=summarize_for_audit(before_summary),
-            after_summary=summarize_for_audit(after_summary),
-            source_lineage=summarize_for_audit(source_lineage),
-            metadata=summarize_for_audit(metadata),
-            error=error,
-            schema_version=schema_version,
-            criticality=criticality,
-            lineage_root_id=lineage_root_id,
-            idempotency_key=idempotency_key,
-            producer_name=producer_name,
-            producer_version=producer_version,
-            redaction_policy=redaction_policy,
-            retention_class=retention_class,
+        now = datetime.now(UTC).isoformat()
+        event_key = idempotency_key or f"{action_name}:{status}:{rid}:{_stable_hash(object_refs)}:{now}"
+        payload = {
+            "event_id": audit_event_id(event_key),
+            "occurred_at": now,
+            "actor_id": actor_id,
+            "actor_type": actor_type,
+            "action_name": action_name,
+            "action_category": action_category,
+            "status": status,
+            "object_refs": refs,
+            "before_summary": _summary_object(before_summary),
+            "after_summary": _summary_object(after_summary),
+            "source_lineage": _summary_object(source_lineage),
+            "metadata": {
+                "request_id": rid or None,
+                "parent_actor_id": parent_actor_id,
+                "error": error,
+                "schema_version": schema_version,
+                "criticality": criticality,
+                "idempotency_key": idempotency_key,
+                "producer_name": producer_name,
+                "producer_version": producer_version,
+                "redaction_policy": redaction_policy,
+                "summary": _summary_object(metadata),
+            },
+            "lineage_root_id": lineage_root_id,
+            "retention_class": retention_class,
+            "ontology_run_id": "operational",
+        }
+        row = OntologyObjectService().write_object(
+            "AuditEvent",
+            payload["event_id"],
+            payload,
+            now,
+            actor={"actor_type": actor_type, "actor_id": actor_id},
+            provenance=lineage_root_id or payload["event_id"],
+            input_hash=idempotency_key or _stable_hash(payload),
         )
+        props = dict(row.get("properties") or row.get("properties_json") or {})
+        return {**props, "id": row.get("object_uid") or props.get("event_id")}
     except Exception as exc:
         logger.warning("Failed to write audit event action=%s status=%s", action_name, status, exc_info=True)
         if fail_closed:

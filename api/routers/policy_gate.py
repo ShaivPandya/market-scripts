@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.exceptions import NotFoundError
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -40,9 +41,7 @@ def list_policy_gate_results(
     action_id: str | None = None,
     limit: int = 50,
 ):
-    from portfolio.core_db import list_policy_gate_results
-
-    items = list_policy_gate_results(
+    items = OntologyRuntimeReadService().policy_gate_results(
         decision=decision,
         target_type=target_type,
         target_id=target_id,
@@ -53,10 +52,9 @@ def list_policy_gate_results(
 
 
 @router.get("/policy-gate-results/{result_id}")
-def get_policy_gate_result(result_id: int):
-    from portfolio.core_db import get_policy_gate_result
-
-    item = get_policy_gate_result(result_id)
+def get_policy_gate_result(result_id: str):
+    reads = OntologyRuntimeReadService()
+    item = reads.get(result_id if result_id.startswith("policy_gate_result:") else f"policy_gate_result:{result_id}")
     if not item:
         raise NotFoundError("PolicyGateResult", str(result_id))
     return item

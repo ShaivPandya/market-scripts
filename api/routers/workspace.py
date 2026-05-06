@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from api.decision_state import normalize_action_item, normalize_approval, normalize_recommendation
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 logger = logging.getLogger("api.workspace")
@@ -25,17 +26,7 @@ def _safe_call(fn, *args, **kwargs) -> Any:
 @router.get("/workspace")
 def get_workspace():
     """Return workspace landing page data."""
-    from portfolio.core_db import (
-        get_action_items,
-        get_latest_recommendation,
-        get_optimization_alerts,
-        get_pending_approvals,
-        get_recommendations,
-        get_report_runs,
-        get_thesis_claims,
-        get_watch_triggers,
-        get_workflow_runs,
-    )
+    reads = OntologyRuntimeReadService()
 
     # Parallel fetch for expensive cached calls
     regime_data = None
@@ -139,10 +130,8 @@ def get_workspace():
     # Positions under thesis pressure
     thesis_pressure = []
     try:
-        from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
-
-        latest_evals = {e["ticker"]: e for e in get_latest_evaluations()}
-        for meta in get_all_thesis_meta():
+        latest_evals = {e["ticker"]: e for e in reads.latest_evaluations()}
+        for meta in reads.theses():
             ticker = meta["ticker"]
             ev = latest_evals.get(ticker)
             if not ev:
@@ -164,23 +153,16 @@ def get_workspace():
         pass
 
     # Pending approvals
-    pending_approvals = [normalize_approval(a) for a in get_pending_approvals(status="pending")]
+    pending_approvals = [normalize_approval(a) for a in reads.approvals(status="pending")]
     recommendation_approvals = [
         a
         for a in pending_approvals
         if isinstance(a.get("proposed_change"), dict) and a["proposed_change"].get("recommendation_id") is not None
     ]
 
-    latest_daily_recommendation = normalize_recommendation(_safe_call(get_latest_recommendation, "daily"))
-    latest_weekly_recommendation = normalize_recommendation(_safe_call(get_latest_recommendation, "weekly"))
-    pending_actionable_recommendations = (
-        _safe_call(
-            get_recommendations,
-            approval_status="pending",
-            limit=5,
-        )
-        or []
-    )
+    latest_daily_recommendation = normalize_recommendation(reads.latest_recommendation("daily"))
+    latest_weekly_recommendation = normalize_recommendation(reads.latest_recommendation("weekly"))
+    pending_actionable_recommendations = reads.recommendations(approval_status="pending", limit=5)
     pending_actionable_recommendations = [
         normalize_recommendation(rec) for rec in pending_actionable_recommendations if isinstance(rec, dict)
     ]
@@ -199,18 +181,18 @@ def get_workspace():
             )
 
     # Open action items
-    open_actions = [normalize_action_item(a) for a in get_action_items(status="open")]
+    open_actions = [normalize_action_item(a) for a in reads.action_items(status="open")]
 
     # Continuous optimization alerts
-    optimizer_alerts = _safe_call(get_optimization_alerts, status="open", limit=5) or []
+    optimizer_alerts = []
 
     # Active watch triggers
-    active_triggers = get_watch_triggers(status="active")
+    active_triggers = reads.watch_triggers(status="active")
 
     # Latest workflow run
-    recent_runs = get_workflow_runs(limit=3)
-    recent_report_runs = get_report_runs(limit=5)
-    challenged_claims = get_thesis_claims(status="challenged", limit=5) + get_thesis_claims(
+    recent_runs = reads.workflow_runs(limit=3)
+    recent_report_runs = reads.report_runs(limit=5)
+    challenged_claims = reads.thesis_claims(status="challenged", limit=5) + reads.thesis_claims(
         status="disconfirmed",
         limit=5,
     )

@@ -277,7 +277,7 @@ def derive_portfolio_weights(book: float = DEFAULT_BOOK) -> tuple[list[dict[str,
     - metadata: [{ticker, direction, conviction, shares, cost_basis, weight}]
     - suggested_book: total gross dollar value if computable, else *book*
     """
-    from portfolio.portfolio_db import get_positions_df
+    from ontology.runtime_read_service import get_positions_df
 
     df = get_positions_df()
     if df.empty:

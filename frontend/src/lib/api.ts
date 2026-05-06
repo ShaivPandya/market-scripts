@@ -90,7 +90,7 @@ export interface StagedMutationOptions {
 
 export interface StagedMutationResponse {
   status: "pending_approval_created" | "applied" | string
-  approval_id: number
+  approval_id: string
   application_status: "pending" | "applying" | "applied" | "failed" | "not_applicable" | string
   action_id: string
   entity_type: string
@@ -126,7 +126,7 @@ export interface PolicyGateResult {
 }
 
 export interface ApprovalRecord extends DecisionStateFields {
-  id: number
+  id: string
   status?: string | null
   entity_type: string
   action_id?: string | null
@@ -267,9 +267,9 @@ export interface IdeaEvaluation {
   invalidation: string | null
   portfolio_fit: Record<string, unknown>
   recommendation_record?: Partial<RecommendationRecord> & Record<string, unknown>
-  recommendation_id: number | null
-  approval_id: number | null
-  action_approval_id: number | null
+  recommendation_id: string | null
+  approval_id: string | null
+  action_approval_id: string | null
   accepted_at: string | null
   accepted_by: string | null
   created_at: string
@@ -1977,9 +1977,9 @@ export interface OptimizationAlert {
   severity: "low" | "normal" | "high" | "urgent" | string
   status: string
   change_summary: string
-  approval_id?: number | null
-  recommendation_id?: number | null
-  action_item_approval_id?: number | null
+  approval_id?: string | null
+  recommendation_id?: string | null
+  action_item_approval_id?: string | null
   evidence?: Record<string, unknown>
   previous_snapshot?: OptimizationSnapshot | null
   current_snapshot?: OptimizationSnapshot | null
@@ -2102,17 +2102,17 @@ export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
-export const approveItem = (id: number, note: string) =>
+export const approveItem = (id: string, note: string) =>
   client.post(`/approvals/${id}/approve`, { note }).then(r => r.data as ApprovalRecord)
-export const rejectItem = (id: number, note?: string) =>
+export const rejectItem = (id: string, note?: string) =>
   client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
-export const rejectAndRestageApproval = (id: number, note?: string) =>
+export const rejectAndRestageApproval = (id: string, note?: string) =>
   client
     .post(`/approvals/${id}/reject-and-restage`, note ? { note } : {})
     .then(r => r.data as RejectAndRestageResponse)
-export const bulkApprove = (ids: number[], note: string) =>
+export const bulkApprove = (ids: string[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
-export const bulkReject = (ids: number[], note?: string) =>
+export const bulkReject = (ids: string[], note?: string) =>
   client.post("/approvals/bulk-reject", { ids, note }).then(r => r.data)
 
 // Action Items
@@ -2238,8 +2238,8 @@ export const fetchWorkflowRun = (runId: string) =>
 export interface ProvenanceSelector {
   workflow_run_id?: string
   ontology_run_id?: string
-  approval_id?: number
-  action_run_id?: number
+  approval_id?: string
+  action_run_id?: string
   agent_session_id?: string
   event_id?: string
   ref_type?: string

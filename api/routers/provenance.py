@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from api.exceptions import ValidationError
 from api.routers.auth import require_actor
 from ontology.policy import Actor, PolicyDenied
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
@@ -29,8 +30,8 @@ def get_provenance_trace(
     relation_version_id: str | None = None,
     source_record_id: str | None = None,
     snapshot_id: str | None = None,
-    approval_id: int | None = None,
-    action_run_id: int | None = None,
+    approval_id: str | None = None,
+    action_run_id: str | None = None,
     agent_session_id: str | None = None,
     event_id: str | None = None,
     ref_type: str | None = None,
@@ -70,9 +71,7 @@ def get_provenance_trace(
     if max_depth < 1 or max_depth > 8:
         raise ValidationError("max_depth must be between 1 and 8.")
 
-    from portfolio.core_db import get_provenance_trace
-
-    return get_provenance_trace(
+    return _ontology_trace(
         workflow_run_id=workflow_run_id,
         ontology_run_id=ontology_run_id,
         approval_id=approval_id,
@@ -81,7 +80,6 @@ def get_provenance_trace(
         event_id=event_id,
         ref_type=ref_type,
         ref_id=ref_id,
-        max_depth=max_depth,
     )
 
 
@@ -93,17 +91,15 @@ def get_entity_provenance(ref_type: str, ref_id: str, actor: ActorDep, max_depth
     if max_depth < 1 or max_depth > 8:
         raise ValidationError("max_depth must be between 1 and 8.")
 
-    from portfolio.core_db import get_provenance_trace
-
-    return get_provenance_trace(ref_type=ref_type, ref_id=ref_id, max_depth=max_depth)
+    return _ontology_trace(ref_type=ref_type, ref_id=ref_id)
 
 
 @router.get("/governance/lineage")
 def get_governance_lineage_report(
     actor: ActorDep,
-    recommendation_id: int | None = None,
-    approval_id: int | None = None,
-    action_run_id: int | None = None,
+    recommendation_id: str | None = None,
+    approval_id: str | None = None,
+    action_run_id: str | None = None,
     workflow_run_id: str | None = None,
     object_version_id: str | None = None,
     relation_version_id: str | None = None,
@@ -116,14 +112,30 @@ def get_governance_lineage_report(
     if sum(value is not None for value in selectors) != 1:
         raise ValidationError("Provide exactly one governance lineage selector.")
 
-    from portfolio.core_db import get_decision_lineage_report
-
-    return get_decision_lineage_report(
+    return _ontology_trace(
         recommendation_id=recommendation_id,
         approval_id=approval_id,
         action_run_id=action_run_id,
         workflow_run_id=workflow_run_id,
         object_version_id=object_version_id,
         relation_version_id=relation_version_id,
-        max_depth=max_depth,
     )
+
+
+def _ontology_trace(**selector: str | None) -> dict:
+    clean_selector = {key: value for key, value in selector.items() if value is not None}
+    reads = OntologyRuntimeReadService()
+    events = reads.list_objects("ProvenanceEvent", limit=500)
+    links = reads.list_objects("ProvenanceLink", limit=500)
+    if clean_selector:
+        needle_values = {str(value) for value in clean_selector.values()}
+        events = [event for event in events if any(value in str(event.values()) for value in needle_values)]
+        links = [link for link in links if any(value in str(link.values()) for value in needle_values)]
+    return {
+        "selector": clean_selector,
+        "events": events,
+        "links": links,
+        "lineage_state": "ontology",
+        "event_count": len(events),
+        "link_count": len(links),
+    }

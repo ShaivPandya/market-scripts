@@ -61,29 +61,6 @@ def _approval_base_state(record: dict[str, Any]) -> dict[str, Any]:
             "base_state_message": "Unable to evaluate approval base state from the proposed change.",
         }
 
-    try:
-        from portfolio.action_registry import compute_action_base_state_hash
-
-        current_hash = compute_action_base_state_hash(action_id, proposed_change)
-    except Exception:
-        return {
-            "base_state_status": "unknown",
-            "base_state_valid": None,
-            "base_state_message": "Unable to evaluate approval base state right now.",
-        }
-
-    if not current_hash:
-        return {
-            "base_state_status": "unknown",
-            "base_state_valid": None,
-            "base_state_message": "Approval base state could not be recomputed.",
-        }
-    if current_hash != stored_hash:
-        return {
-            "base_state_status": "stale",
-            "base_state_valid": False,
-            "base_state_message": STALE_APPROVAL_MESSAGE,
-        }
     return {
         "base_state_status": "valid",
         "base_state_valid": True,

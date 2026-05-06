@@ -2,6 +2,26 @@
   "hosting": {
     "public": "frontend/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [
+      {
+        "source": "/assets/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "regex": "^/(?:index\\.html|login(?:/.*)?|portfolio(?:/.*)?|workspace(?:/.*)?|dossier(?:/.*)?|ideas(?:/.*)?|theses(?:/.*)?|analyzer(?:/.*)?|optimizer(?:/.*)?|hedging-tool(?:/.*)?|sizer(?:/.*)?|momentum(?:/.*)?|signal-aggregator(?:/.*)?|ontology(?:/.*)?|chart(?:/.*)?|screeners(?:/.*)?|quality(?:/.*)?|short-screen(?:/.*)?|fundamental-momentum(?:/.*)?|financials(?:/.*)?|dcf-model(?:/.*)?|index-dashboard(?:/.*)?|fx-dashboard(?:/.*)?|commodities(?:/.*)?|market-technicals(?:/.*)?|sector-metrics(?:/.*)?|positioning(?:/.*)?|sentiment(?:/.*)?|breakout(?:/.*)?|fx-model(?:/.*)?|economic-growth(?:/.*)?|labor-market(?:/.*)?|housing(?:/.*)?|liquidity(?:/.*)?|country-dashboard(?:/.*)?|central-banks(?:/.*)?|industry-monitor(?:/.*)?|yield-curve(?:/.*)?|bond-dashboard(?:/.*)?|commodities-curve(?:/.*)?|commodity-research(?:/.*)?|portfolio-news(?:/.*)?|weekly-report(?:/.*)?|settings(?:/.*)?)?$",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      }
+    ],
     "rewrites": [
       {
         "source": "/api/**",

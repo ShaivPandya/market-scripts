@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from api.action_execution import stage_api_action
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -35,9 +36,7 @@ class UpdateCatalystStatusRequest(BaseModel):
 
 @router.get("/catalysts")
 def list_catalysts(ticker: str):
-    from portfolio.core_db import get_catalysts
-
-    catalysts = get_catalysts(ticker)
+    catalysts = OntologyRuntimeReadService().catalysts(ticker)
     return {"catalysts": catalysts, "count": len(catalysts)}
 
 
@@ -54,7 +53,7 @@ def create_catalyst(body: CreateCatalystRequest):
 
 
 @router.put("/catalysts/{catalyst_id}/status")
-def update_catalyst_status(catalyst_id: int, body: UpdateCatalystStatusRequest):
+def update_catalyst_status(catalyst_id: str, body: UpdateCatalystStatusRequest):
     return stage_api_action(
         "update_catalyst_status",
         {"catalyst_id": catalyst_id, "status": body.status, "evidence": body.evidence},
@@ -90,9 +89,7 @@ class UpdateKillConditionStatusRequest(BaseModel):
 
 @router.get("/kill-conditions")
 def list_kill_conditions(ticker: str):
-    from portfolio.core_db import get_kill_conditions
-
-    kcs = get_kill_conditions(ticker)
+    kcs = OntologyRuntimeReadService().kill_conditions(ticker)
     return {"kill_conditions": kcs, "count": len(kcs)}
 
 
@@ -132,8 +129,8 @@ class CreateThesisClaimRequest(BaseModel):
     cadence: str | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     status: str = "active"
-    linked_catalyst_ids: list[int] = Field(default_factory=list)
-    linked_kill_condition_ids: list[int] = Field(default_factory=list)
+    linked_catalyst_ids: list[str] = Field(default_factory=list)
+    linked_kill_condition_ids: list[str] = Field(default_factory=list)
     reason: str | None = None
     apply: bool = False
     approval_note: str | None = None
@@ -147,8 +144,8 @@ class UpdateThesisClaimRequest(BaseModel):
     cadence: str | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     status: str | None = None
-    linked_catalyst_ids: list[int] | None = None
-    linked_kill_condition_ids: list[int] | None = None
+    linked_catalyst_ids: list[str] | None = None
+    linked_kill_condition_ids: list[str] | None = None
     reason: str | None = None
     apply: bool = False
     approval_note: str | None = None
@@ -170,9 +167,7 @@ def list_thesis_claims(
     status: str | None = None,
     limit: int = 100,
 ):
-    from portfolio.core_db import get_thesis_claims
-
-    claims = get_thesis_claims(ticker=ticker, status=status, limit=limit)
+    claims = OntologyRuntimeReadService().thesis_claims(ticker=ticker, status=status, limit=limit)
     return {"claims": claims, "count": len(claims)}
 
 
@@ -201,7 +196,7 @@ def create_thesis_claim(body: CreateThesisClaimRequest):
 
 
 @router.put("/thesis-claims/{claim_id}")
-def update_thesis_claim(claim_id: int, body: UpdateThesisClaimRequest):
+def update_thesis_claim(claim_id: str, body: UpdateThesisClaimRequest):
     updates = body.model_dump(exclude_unset=True, exclude={"reason", "apply", "approval_note"})
     if "source_requirements" in updates:
         updates["source_requirements"] = _source_requirements_payload(body.source_requirements)
@@ -217,7 +212,7 @@ def update_thesis_claim(claim_id: int, body: UpdateThesisClaimRequest):
 
 
 @router.put("/kill-conditions/{kc_id}/status")
-def update_kill_condition_status(kc_id: int, body: UpdateKillConditionStatusRequest):
+def update_kill_condition_status(kc_id: str, body: UpdateKillConditionStatusRequest):
     return stage_api_action(
         "update_kill_condition_status",
         {"kill_condition_id": kc_id, "status": body.status},

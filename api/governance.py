@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from api.audit import summarize_for_audit
 from api.provenance import deterministic_id, stable_hash
+from ontology.object_service import OntologyObjectService
 
 SCHEMA_VERSION = 1
 CRITICAL_FINANCIAL = "financial_critical"
@@ -478,9 +480,58 @@ def object_version_changed_bundle(
 
 def record_now_tx(conn: Any, event_bundle: dict[str, Any]) -> dict[str, int]:
     try:
-        from portfolio import core_db
-
-        return core_db._materialize_governance_bundle_tx(conn, event_bundle)
+        objects = OntologyObjectService()
+        now = datetime.now(UTC).isoformat()
+        provenance_count = 0
+        audit_count = 0
+        link_count = 0
+        for event in event_bundle.get("provenance_events") or []:
+            event_id = str(event.get("event_id") or deterministic_id("provenance_event", event))
+            objects.write_object(
+                "ProvenanceEvent",
+                event_id,
+                {**event, "event_id": event_id},
+                now,
+                provenance=event.get("lineage_root_id") or event_id,
+            )
+            provenance_count += 1
+        for event in event_bundle.get("audit_events") or []:
+            event_id = str(event.get("event_id") or deterministic_id("audit_event", event))
+            objects.write_object(
+                "AuditEvent",
+                event_id,
+                {
+                    "event_id": event_id,
+                    "occurred_at": now,
+                    "actor_type": event.get("actor_type") or "system",
+                    "actor_id": event.get("actor_id"),
+                    "action_name": event.get("action_name") or "governance.event",
+                    "action_category": "governance",
+                    "status": event.get("status") or "succeeded",
+                    "object_refs": event.get("object_refs") or [],
+                    "before_summary": event.get("before_summary"),
+                    "after_summary": event.get("after_summary"),
+                    "source_lineage": event.get("source_lineage"),
+                    "metadata": event.get("metadata"),
+                    "lineage_root_id": event.get("lineage_root_id"),
+                    "retention_class": event.get("retention_class") or FINANCIAL_RETENTION_CLASS,
+                    "ontology_run_id": "operational",
+                },
+                now,
+                provenance=event.get("lineage_root_id") or event_id,
+            )
+            audit_count += 1
+        for link in event_bundle.get("provenance_links") or []:
+            link_id = str(link.get("link_id") or deterministic_id("provenance_link", link))
+            objects.write_object(
+                "ProvenanceLink",
+                link_id,
+                {**link, "link_id": link_id},
+                now,
+                provenance=link.get("lineage_root_id") or link.get("event_id") or link_id,
+            )
+            link_count += 1
+        return {"provenance_events": provenance_count, "audit_events": audit_count, "provenance_links": link_count}
     except Exception as exc:
         raise GovernanceWriteError("Failed to materialize mandatory governance bundle") from exc
 
@@ -493,15 +544,10 @@ def enqueue_outbox_tx(
     lineage_root_id: str | None = None,
     retention_class: str = FINANCIAL_RETENTION_CLASS,
 ) -> dict[str, Any]:
-    try:
-        from portfolio import core_db
-
-        return core_db._enqueue_governance_outbox_tx(
-            conn,
-            event_bundle,
-            idempotency_key=idempotency_key,
-            lineage_root_id=lineage_root_id,
-            retention_class=retention_class,
-        )
-    except Exception as exc:
-        raise GovernanceWriteError("Failed to enqueue mandatory governance bundle") from exc
+    return {
+        "status": "not_queued",
+        "lineage_state": "ontology",
+        "idempotency_key": idempotency_key or event_bundle.get("idempotency_key"),
+        "lineage_root_id": lineage_root_id or event_bundle.get("lineage_root_id"),
+        "retention_class": retention_class,
+    }

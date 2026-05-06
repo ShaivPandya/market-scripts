@@ -1061,19 +1061,23 @@ def persist_recommendations(
     source_json_path: str,
     prompt_metadata: dict | None = None,
 ) -> list[dict]:
-    from portfolio import core_db
-    from portfolio.action_registry import ActionContext, propose_action
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+    from ontology.object_service import OntologyObjectService
+    from ontology.policy import actor_to_dict, system_actor
+    from ontology.schemas.identity import policy_gate_result_id
     from portfolio.policy_gate import attach_policy_gate_to_recommendation
 
     prompt_metadata = prompt_metadata or {}
     report_id = prompt_metadata.get("report_id")
     persisted: list[dict] = []
-    context = ActionContext(
-        actor_type="workflow",
+    actor = system_actor("recommendations")
+    context = OntologyCommandContext(
+        actor=actor,
         source_type="workflow",
         source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
     )
-    active_idempotency_keys: list[str] = []
+    command_service = OntologyCommandService()
+    object_service = OntologyObjectService()
     for action in payload.get("recommended_actions", []):
         action_hash = stable_hash(
             {
@@ -1088,8 +1092,6 @@ def persist_recommendations(
             }
         )
         idempotency_key = f"{payload['report_type']}:{payload['as_of']}:{action_hash}" if report_id else None
-        if idempotency_key:
-            active_idempotency_keys.append(idempotency_key)
         record = {
             **action,
             "report_type": payload["report_type"],
@@ -1135,30 +1137,26 @@ def persist_recommendations(
                 record["blocked_reasons"] = [*record.get("blocked_reasons", []), policy_reason]
         if gate and not record.get("policy_gate_result_id"):
             gate_target_id = idempotency_key or action_hash
-            existing_gate_rows = core_db.list_policy_gate_results(
-                action_id="create_recommendation",
-                target_type="recommendation",
-                target_id=gate_target_id,
-                limit=1,
+            gate_uid = policy_gate_result_id(f"create_recommendation:{gate_target_id}")
+            object_service.write_object(
+                "PolicyGateResult",
+                gate_uid,
+                {
+                    "gate_result_id": gate_uid,
+                    "decision": gate.get("decision") or "review_required",
+                    "review_required": bool(gate.get("review_required")),
+                    "failure_reasons": gate.get("failure_reasons", []),
+                    "warnings": gate.get("warnings", []),
+                    "evaluated_at": payload["as_of"],
+                    "ontology_run_id": "operational",
+                },
+                payload["as_of"],
+                actor=actor_to_dict(actor),
+                provenance=f"pv:recommendation_policy_gate:{gate_target_id}",
+                input_hash=stable_hash({"gate": gate, "record": record}),
             )
-            gate_row = (
-                existing_gate_rows[0]
-                if existing_gate_rows
-                else core_db.create_policy_gate_result(
-                    gate,
-                    action_id="create_recommendation",
-                    source_type="report_run",
-                    source_id=report_id or f"{payload['report_type']}:{payload['as_of']}",
-                    target_type="recommendation",
-                    target_id=gate_target_id,
-                    payload=record,
-                )
-            )
-            persisted_gate = gate_row.get("result_json") if existing_gate_rows else gate
-            if isinstance(persisted_gate, dict):
-                gate = dict(persisted_gate)
-            gate["policy_gate_result_id"] = gate_row["id"]
-            record["policy_gate_result_id"] = gate_row["id"]
+            gate["policy_gate_result_id"] = gate_uid
+            record["policy_gate_result_id"] = gate_uid
             record["policy_gate_result"] = gate
             record["policy_gate_status"] = gate.get("decision")
             record["policy_gate_decision"] = gate.get("decision")
@@ -1166,16 +1164,13 @@ def persist_recommendations(
             record["policy_gate_failures"] = gate.get("failure_reasons", [])
             record["policy_gate_warnings"] = gate.get("warnings", [])
             record["policy_gate_disclosures"] = gate.get("disclosures", [])
-        approval = propose_action(
+        approval = command_service.propose_action(
             "create_recommendation",
             {"record": record},
             context,
             reason=f"{payload['report_type'].title()} recommendation for {action.get('instrument') or action.get('ticker') or 'portfolio'}",
-            once=True,
         )
         persisted.append({"status": "pending_approval_created", "approval_id": approval["id"], "record": record})
-    if report_id:
-        core_db.supersede_report_recommendations(report_id, active_idempotency_keys)
     return persisted
 
 
@@ -1257,9 +1252,9 @@ def _thesis_and_kill_context(ticker: str | None) -> dict[str, Any]:
         return {"thesis_validation": None, "kill_condition_status": None}
     context: dict[str, Any] = {"thesis_validation": None, "kill_condition_status": None}
     try:
-        from portfolio.thesis_db import get_evaluations
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        latest = get_evaluations(ticker, limit=1)
+        latest = OntologyRuntimeReadService().evaluations(ticker, limit=1)
         if latest:
             ev = latest[0]
             context["thesis_validation"] = {
@@ -1271,9 +1266,9 @@ def _thesis_and_kill_context(ticker: str | None) -> dict[str, Any]:
     except Exception:
         context["thesis_validation"] = {"status": "unavailable"}
     try:
-        from portfolio.core_db import get_kill_conditions
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        conditions = get_kill_conditions(ticker)
+        conditions = OntologyRuntimeReadService().kill_conditions(ticker)
         context["kill_condition_status"] = {
             "active": sum(1 for row in conditions if row.get("status") == "active"),
             "triggered": sum(1 for row in conditions if row.get("status") == "triggered"),
@@ -1285,17 +1280,46 @@ def _thesis_and_kill_context(ticker: str | None) -> dict[str, Any]:
 
 
 def evaluate_due_recommendations(limit: int = 50) -> dict:
-    from portfolio.core_db import get_recommendations, update_recommendation_outcome
+    from ontology.object_service import OntologyObjectService
+    from ontology.policy import actor_to_dict, system_actor
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
     today = datetime.now(UTC).date()
+    reads = OntologyRuntimeReadService()
+    objects = OntologyObjectService()
+    actor = system_actor("recommendation_evaluator")
+
+    def update_recommendation_outcome(rec: dict[str, Any], status: str, outcome: dict[str, Any]) -> None:
+        rec_uid = str(rec.get("object_uid") or rec.get("id") or rec.get("recommendation_id") or "")
+        payload = dict(rec.get("payload") or {})
+        payload["outcome"] = outcome
+        props = {
+            **rec,
+            "recommendation_id": rec.get("recommendation_id") or rec_uid,
+            "outcome_status": status,
+            "payload": payload,
+            "ontology_run_id": "operational",
+        }
+        props.pop("_meta", None)
+        props.pop("id", None)
+        props.pop("object_uid", None)
+        objects.write_object(
+            "Recommendation",
+            rec_uid,
+            props,
+            datetime.now(UTC).isoformat(),
+            actor=actor_to_dict(actor),
+            provenance=f"pv:recommendation_outcome:{rec_uid}",
+        )
+
     checked = 0
     updated = 0
     unavailable = 0
-    for rec in get_recommendations(outcome_status="pending", limit=limit):
+    for rec in reads.recommendations(outcome_status="pending", limit=limit):
         checked += 1
         as_of = _parse_date(rec.get("as_of"))
         if as_of is None:
-            update_recommendation_outcome(rec["id"], "unavailable", {"reason": "missing as_of date"})
+            update_recommendation_outcome(rec, "unavailable", {"reason": "missing as_of date"})
             unavailable += 1
             continue
         if today < as_of + timedelta(days=_horizon_days(rec.get("horizon"))):
@@ -1303,7 +1327,7 @@ def evaluate_due_recommendations(limit: int = 50) -> dict:
         action = rec.get("action")
         if action == "do_nothing":
             update_recommendation_outcome(
-                rec["id"],
+                rec,
                 "evaluated",
                 {
                     "evaluation_authority": "ai_draft_user_final",
@@ -1326,7 +1350,7 @@ def evaluate_due_recommendations(limit: int = 50) -> dict:
         direction = _expected_direction(str(action))
         if not ticker or direction is None:
             update_recommendation_outcome(
-                rec["id"],
+                rec,
                 "unavailable",
                 {
                     "reason": "broad or non-directional recommendation; manual review required",
@@ -1359,7 +1383,7 @@ def evaluate_due_recommendations(limit: int = 50) -> dict:
             outcome_quality = "good" if directionally_right and relative_right else "bad"
             thesis_context = _thesis_and_kill_context(ticker)
             update_recommendation_outcome(
-                rec["id"],
+                rec,
                 "evaluated",
                 {
                     "evaluation_authority": "ai_draft_user_final",
@@ -1404,6 +1428,6 @@ def evaluate_due_recommendations(limit: int = 50) -> dict:
             )
             updated += 1
         except Exception as exc:
-            update_recommendation_outcome(rec["id"], "unavailable", {"reason": str(exc)})
+            update_recommendation_outcome(rec, "unavailable", {"reason": str(exc)})
             unavailable += 1
     return {"checked": checked, "updated": updated, "unavailable": unavailable}

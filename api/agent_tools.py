@@ -37,17 +37,15 @@ from api.agent_governance import (
 from api.cache import _get_or_set_cached_with_status, get_cached, long_cache, set_cached, short_cache
 from api.serializers import serialize_value
 from ontology.action_registry import (
-    ActionContext as RegistryActionContext,
-)
-from ontology.action_registry import (
     ActionValidationError,
+    get_action,
     get_tool_exposure,
     is_agent_tool_exposed,
     iter_tool_exposures,
-    propose_action_from_tool,
     validate_tool_input,
 )
-from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor
+from ontology.command_service import OntologyCommandContext, OntologyCommandService
+from ontology.policy import Actor, PolicyDenied, actor_cache_key, admin_actor, agent_actor
 
 logger = logging.getLogger("api.agent")
 _DEFAULT_GET_CACHED = get_cached
@@ -1991,9 +1989,9 @@ def _find_thesis_file(ticker: str) -> Path | None:
 
 
 def _fetch_thesis(ticker: str) -> dict[str, Any]:
-    from portfolio.thesis_db import get_thesis_meta
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    meta = get_thesis_meta(ticker)
+    meta = OntologyRuntimeReadService().thesis(ticker)
     thesis_path = _find_thesis_file(ticker)
     content: str | None = None
     truncated = False
@@ -2019,11 +2017,12 @@ def _fetch_thesis(ticker: str) -> dict[str, Any]:
 
 
 def _fetch_thesis_evaluations(ticker: str, limit: int) -> dict[str, Any]:
-    from portfolio.thesis_db import get_evaluations, get_status_history, get_thesis_meta
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    meta = get_thesis_meta(ticker)
-    evaluations = get_evaluations(ticker, limit=limit)
-    status_history = get_status_history(ticker)
+    reads = OntologyRuntimeReadService()
+    meta = reads.thesis(ticker)
+    evaluations = reads.evaluations(ticker, limit=limit)
+    status_history: list[dict[str, Any]] = []
 
     if meta is None and not evaluations:
         return {
@@ -2057,55 +2056,33 @@ def _queue_tool_call_lineage_retry(
     payload: Any | None = None,
     error: str | None = None,
 ) -> None:
-    from api import governance
-    from portfolio import core_db
+    from datetime import UTC, datetime
 
-    lineage_root_id = governance.lineage_root(governance.REF_TOOL_CALL, provenance_event_id)
-    bundle = governance.event_bundle(
-        lineage_root_id=lineage_root_id,
-        idempotency_key=f"tool_call:{provenance_event_id}:{status}:retry",
-        provenance_events=[
-            governance.provenance_event(
-                event_id=provenance_event_id,
-                event_type="tool_call",
-                event_name=name,
-                status=status,
-                actor_type=getattr(actor, "actor_type", None),
-                actor_id=getattr(actor, "actor_id", None),
-                parent_event_id=provenance_context.get("parent_event_id"),
-                workflow_run_id=provenance_context.get("workflow_run_id"),
-                agent_session_id=provenance_context.get("agent_session_id"),
-                input_value=safe_args,
-                output_value=payload,
-                summary={
-                    "tool": name,
-                    "status": status,
-                    "arg_keys": sorted(str(key) for key in safe_args.keys()),
-                    "call_id": provenance_context.get("call_id"),
-                },
-                metadata={"source": provenance_context.get("source") or "agent_tools.execute_tool"},
-                error=error,
-                lineage_root_id=lineage_root_id,
-            )
-        ],
-        audit_events=[
-            governance.audit_event(
-                action_name=governance.EVENT_TOOL_CALL_COMPLETED,
-                status=status,
-                lineage_root_id=lineage_root_id,
-                actor_type=getattr(actor, "actor_type", None) or "agent",
-                actor_id=getattr(actor, "actor_id", None),
-                object_refs=[{"type": governance.REF_TOOL_CALL, "id": provenance_event_id}],
-                after_summary={"tool": name, "status": status},
-                metadata={"arg_keys": sorted(str(key) for key in safe_args.keys())},
-                error=error,
-            )
-        ],
-    )
-    core_db.enqueue_governance_outbox(
-        bundle,
-        idempotency_key=f"tool_call:{provenance_event_id}:{status}:retry",
-        lineage_root_id=lineage_root_id,
+    from ontology.object_service import OntologyObjectService
+
+    now = datetime.now(UTC).isoformat()
+    OntologyObjectService().write_object(
+        "WorkflowArtifact",
+        f"tool_call_retry:{provenance_event_id}:{status}",
+        {
+            "artifact_id": f"tool_call_retry:{provenance_event_id}:{status}",
+            "workflow_run_id": provenance_context.get("workflow_run_id"),
+            "artifact_key": "tool_call_lineage_retry",
+            "artifact_value": {
+                "tool": name,
+                "status": status,
+                "args": safe_args,
+                "payload": payload,
+                "error": error,
+            },
+            "artifact_hash": provenance_event_id,
+            "state": "extracted",
+            "provenance_event_id": provenance_event_id,
+            "ontology_run_id": "operational",
+        },
+        now,
+        actor={"actor_type": getattr(actor, "actor_type", None), "actor_id": getattr(actor, "actor_id", None)},
+        provenance=provenance_event_id,
     )
 
 
@@ -2611,14 +2588,45 @@ def _is_proposal_tool(name: str) -> bool:
         return False
 
 
-def _registry_agent_context(actor: Actor, provenance_event_id: str | None = None) -> RegistryActionContext:
-    source_id = actor.parent_actor_id or actor.actor_id
-    return RegistryActionContext(
-        actor_type="agent",
-        actor_id=actor.actor_id,
+def _command_agent_context(actor: Actor, provenance_event_id: str | None = None) -> OntologyCommandContext:
+    tool_actor = actor if actor.actor_type == "agent" else agent_actor(actor)
+    source_id = tool_actor.parent_actor_id or tool_actor.actor_id
+    if provenance_event_id:
+        source_id = f"{source_id}:{provenance_event_id}"
+    return OntologyCommandContext(
+        actor=tool_actor,
         source_type="agent",
         source_id=source_id,
-        provenance_event_id=provenance_event_id,
+    )
+
+
+def propose_action_from_tool(
+    tool_name: str,
+    raw_input: dict[str, Any],
+    context: OntologyCommandContext,
+) -> dict[str, Any]:
+    exposure = get_tool_exposure(tool_name)
+    if exposure.access_mode != "proposal" or not exposure.action_id or exposure.to_action_input is None:
+        raise ActionValidationError(f"Tool {tool_name} is not a proposal tool")
+    try:
+        typed_input = exposure.input_model.model_validate(raw_input)
+    except PydanticValidationError as exc:
+        raise ActionValidationError(str(exc)) from exc
+    action_input = exposure.to_action_input(typed_input)
+    try:
+        get_action(exposure.action_id).input_model.model_validate(action_input)
+    except PydanticValidationError as exc:
+        raise ActionValidationError(str(exc)) from exc
+    except ValueError as exc:
+        raise ActionValidationError(str(exc)) from exc
+    reason = exposure.reason_builder(typed_input) if exposure.reason_builder else None
+    entity_id = exposure.entity_id_builder(typed_input) if exposure.entity_id_builder else None
+    return OntologyCommandService().propose_action(
+        exposure.action_id,
+        action_input,
+        context,
+        reason=reason,
+        entity_id=str(entity_id) if entity_id is not None else None,
     )
 
 
@@ -2637,7 +2645,7 @@ def _dispatch(
         return _fetch_with_cache(cache, key, loader, force_refresh=force_refresh)
 
     if _is_proposal_tool(name):
-        approval = propose_action_from_tool(name, args, _registry_agent_context(actor, provenance_event_id))
+        approval = propose_action_from_tool(name, args, _command_agent_context(actor, provenance_event_id))
         return {
             "status": "pending_approval_created",
             "approval_id": approval["id"],
@@ -2655,6 +2663,17 @@ def _dispatch(
         key = "agent_liquidity"
 
         def _load():
+            from api.exceptions import SnapshotUnavailableError
+            from api.snapshot_keys import SNAPSHOT_LIQUIDITY
+            from api.snapshot_store import get_snapshot_response, snapshots_required
+
+            snapshot = get_snapshot_response(SNAPSHOT_LIQUIDITY)
+            if snapshot is not None:
+                filtered = {k: v for k, v in snapshot.items() if k not in ("df_weekly", "composite_series")}
+                return serialize_value(filtered)
+            if snapshots_required():
+                raise SnapshotUnavailableError(SNAPSHOT_LIQUIDITY)
+
             from macro.liquidity.liquidity import get_snapshot
 
             data = get_snapshot()
@@ -2832,11 +2851,10 @@ def _dispatch(
         key = f"portfolio:v2:{timeframe}:hedges={include_hedges}"
 
         def _load():
-            from portfolio.portfolio_dashboard import get_data
-            from portfolio.portfolio_db import get_positions
+            from ontology.runtime_read_service import OntologyRuntimeReadService
 
-            raw = get_data(timeframe=timeframe)
-            holdings = get_positions(include_hedges=include_hedges)
+            raw = {"timeframe": timeframe}
+            holdings = OntologyRuntimeReadService().positions(include_hedges=include_hedges)
             return _build_agent_portfolio_payload(raw, holdings, include_hedges=include_hedges)
 
         data, meta = fetch(short_cache, key, _load)
@@ -3129,37 +3147,37 @@ def _dispatch(
     # Investing OS — read tools
     # -------------------------------------------------------------------
     if name == "get_catalysts":
-        from portfolio.core_db import get_catalysts
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
         ticker = args.get("ticker", "").strip().upper()
-        return get_catalysts(ticker), {"cache": "n/a"}
+        return OntologyRuntimeReadService().catalysts(ticker), {"cache": "n/a"}
 
     if name == "get_kill_conditions":
-        from portfolio.core_db import get_kill_conditions
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
         ticker = args.get("ticker", "").strip().upper()
-        return get_kill_conditions(ticker), {"cache": "n/a"}
+        return OntologyRuntimeReadService().kill_conditions(ticker), {"cache": "n/a"}
 
     if name == "get_action_items":
-        from portfolio.core_db import get_action_items
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        return get_action_items(
+        return OntologyRuntimeReadService().action_items(
             ticker=args.get("ticker"),
             status=args.get("status", "open"),
         ), {"cache": "n/a"}
 
     if name == "get_watch_triggers":
-        from portfolio.core_db import get_watch_triggers
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        return get_watch_triggers(
+        return OntologyRuntimeReadService().watch_triggers(
             ticker=args.get("ticker"),
             status=args.get("status", "active"),
         ), {"cache": "n/a"}
 
     if name == "get_pending_approvals":
-        from portfolio.core_db import get_pending_approvals
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        return get_pending_approvals(
+        return OntologyRuntimeReadService().approvals(
             ticker=args.get("ticker"),
             status=args.get("status", "pending"),
         ), {"cache": "n/a"}
@@ -3171,13 +3189,16 @@ def _dispatch(
         return _get_dossier(ticker), {"cache": "n/a"}
 
     if name == "get_workflow_history":
-        from portfolio.core_db import get_workflow_runs
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        return get_workflow_runs(
+        runs = OntologyRuntimeReadService().workflow_runs(
             ticker=args.get("ticker"),
-            workflow_name=args.get("workflow_name"),
             limit=int(args.get("limit", 10)),
-        ), {"cache": "n/a"}
+        )
+        workflow_name = args.get("workflow_name")
+        if workflow_name:
+            runs = [run for run in runs if run.get("workflow_name") == workflow_name]
+        return runs, {"cache": "n/a"}
 
     # -------------------------------------------------------------------
     # Full app capability registry additions
@@ -3196,10 +3217,15 @@ def _dispatch(
         return serialize_value(snapshot), {"cache": "n/a"}
 
     if name == "get_recommendation_risk":
-        from portfolio.core_db import get_recommendation, get_recommendation_risk_bindings
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        recommendation_id = int(args.get("recommendation_id") or 0)
-        recommendation = get_recommendation(recommendation_id)
+        recommendation_id = str(args.get("recommendation_id") or "").strip()
+        reads = OntologyRuntimeReadService()
+        recommendation = reads.get(
+            recommendation_id
+            if recommendation_id.startswith("recommendation:")
+            else f"recommendation:{recommendation_id}"
+        )
         if not recommendation:
             return {"error": f"No recommendation with id {recommendation_id}."}, {"cache": "n/a"}
         return {
@@ -3217,7 +3243,7 @@ def _dispatch(
                 "risk_source_status": recommendation.get("risk_source_status"),
                 "risk_bindings": recommendation.get("risk_bindings"),
             },
-            "bindings": get_recommendation_risk_bindings(recommendation_id),
+            "bindings": recommendation.get("risk_bindings") or [],
         }, {"cache": "n/a"}
 
     if name == "get_portfolio_positions":

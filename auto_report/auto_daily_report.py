@@ -179,10 +179,10 @@ def _is_weekday_morning_et() -> bool:
 
 
 def load_portfolio():
-    """Load portfolio positions from the portfolio db and return a DataFrame."""
-    from portfolio.portfolio_db import get_positions_df
+    """Load portfolio positions from the ontology runtime and return a DataFrame."""
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    df = get_positions_df()
+    df = OntologyRuntimeReadService().positions_df()
     df["ticker"] = df["ticker"].str.strip().str.upper()
     df["direction"] = df["direction"].fillna("").str.strip().str.lower()
     df["conviction"] = df["conviction"].fillna(3).astype(int)

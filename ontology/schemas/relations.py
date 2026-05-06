@@ -11,6 +11,13 @@ from ontology.schemas.base import NonBlankStr, OntologySchemaBase, clean_optiona
 from ontology.schemas.objects import SignalDirection
 
 REFERENCES_ASSET: RelationType = "references_asset"
+PORTFOLIO_HOLDS_POSITION: RelationType = "portfolio_holds_position"
+POSITION_REFERENCES_INSTRUMENT: RelationType = "position_references_instrument"
+INSTRUMENT_ISSUED_BY_ISSUER: RelationType = "instrument_issued_by_issuer"
+THESIS_COVERS_INSTRUMENT: RelationType = "thesis_covers_instrument"
+CLAIM_SUPPORTED_BY_EVIDENCE: RelationType = "claim_supported_by_evidence"
+CLAIM_DISCONFIRMED_BY_EVIDENCE: RelationType = "claim_disconfirmed_by_evidence"
+EVIDENCE_HAS_CITATION: RelationType = "evidence_has_citation"
 BELONGS_TO_SECTOR: RelationType = "belongs_to_sector"
 HAS_THESIS: RelationType = "has_thesis"
 EVALUATED_BY: RelationType = "evaluated_by"
@@ -42,14 +49,18 @@ POLICY_HAS_MANDATE: RelationType = "policy_has_mandate"
 POLICY_HAS_RISK_LIMIT: RelationType = "policy_has_risk_limit"
 RECOMMENDATION_TARGETS_ACCOUNT: RelationType = "recommendation_targets_account"
 RECOMMENDATION_TARGETS_PORTFOLIO: RelationType = "recommendation_targets_portfolio"
+RECOMMENDATION_TARGETS_INSTRUMENT: RelationType = "recommendation_targets_instrument"
 TRADE_PROPOSAL_DERIVES_FROM_RECOMMENDATION: RelationType = "trade_proposal_derives_from_recommendation"
 TRADE_PROPOSAL_TARGETS_ASSET: RelationType = "trade_proposal_targets_asset"
 TRADE_PROPOSAL_REQUIRES_APPROVAL: RelationType = "trade_proposal_requires_approval"
 APPROVAL_TARGETS_RECOMMENDATION: RelationType = "approval_targets_recommendation"
 APPROVAL_TARGETS_TRADE_PROPOSAL: RelationType = "approval_targets_trade_proposal"
 APPROVAL_TARGETS_WORKFLOW_ARTIFACT: RelationType = "approval_targets_workflow_artifact"
+APPROVAL_TARGETS_RESEARCH_OBJECT: RelationType = "approval_targets_research_object"
 ACTION_RUN_PRODUCES_EXECUTED_ACTION: RelationType = "action_run_produces_executed_action"
 EXECUTED_ACTION_MUTATES_OBJECT_VERSION: RelationType = "executed_action_mutates_object_version"
+EXECUTED_DECISION_APPLIES_APPROVAL: RelationType = "executed_decision_applies_approval"
+EXECUTED_DECISION_RECORDS_ACTION_RUN: RelationType = "executed_decision_records_action_run"
 SOURCE_RECORD_MATERIALIZES_OBJECT_VERSION: RelationType = "source_record_materializes_object_version"
 AUDIT_EVENT_OBSERVES_ACTION_RUN: RelationType = "audit_event_observes_action_run"
 POLICY_GATE_EVALUATES_RECOMMENDATION: RelationType = "policy_gate_evaluates_recommendation"
@@ -82,6 +93,62 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         target_type="Asset",
         cardinality=RelationCardinality.SOURCE_UNIQUE,
         required_properties=frozenset({"ontology_run_id"}),
+    ),
+    PORTFOLIO_HOLDS_POSITION: RelationDefinition(
+        name=PORTFOLIO_HOLDS_POSITION,
+        source_type="Portfolio",
+        target_type="Position",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    POSITION_REFERENCES_INSTRUMENT: RelationDefinition(
+        name=POSITION_REFERENCES_INSTRUMENT,
+        source_type="Position",
+        target_type="Instrument",
+        cardinality=RelationCardinality.SOURCE_UNIQUE,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    INSTRUMENT_ISSUED_BY_ISSUER: RelationDefinition(
+        name=INSTRUMENT_ISSUED_BY_ISSUER,
+        source_type="Instrument",
+        target_type="Issuer",
+        cardinality=RelationCardinality.SOURCE_UNIQUE,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    THESIS_COVERS_INSTRUMENT: RelationDefinition(
+        name=THESIS_COVERS_INSTRUMENT,
+        source_type="Thesis",
+        target_type="Instrument",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    CLAIM_SUPPORTED_BY_EVIDENCE: RelationDefinition(
+        name=CLAIM_SUPPORTED_BY_EVIDENCE,
+        source_type="ThesisClaim",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    CLAIM_DISCONFIRMED_BY_EVIDENCE: RelationDefinition(
+        name=CLAIM_DISCONFIRMED_BY_EVIDENCE,
+        source_type="ThesisClaim",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EVIDENCE_HAS_CITATION: RelationDefinition(
+        name=EVIDENCE_HAS_CITATION,
+        source_type="Evidence",
+        target_type="Citation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
     ),
     BELONGS_TO_SECTOR: RelationDefinition(
         name=BELONGS_TO_SECTOR,
@@ -329,6 +396,14 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
+    RECOMMENDATION_TARGETS_INSTRUMENT: RelationDefinition(
+        name=RECOMMENDATION_TARGETS_INSTRUMENT,
+        source_type="Recommendation",
+        target_type="Instrument",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
     TRADE_PROPOSAL_DERIVES_FROM_RECOMMENDATION: RelationDefinition(
         name=TRADE_PROPOSAL_DERIVES_FROM_RECOMMENDATION,
         source_type="TradeProposal",
@@ -377,6 +452,14 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
+    APPROVAL_TARGETS_RESEARCH_OBJECT: RelationDefinition(
+        name=APPROVAL_TARGETS_RESEARCH_OBJECT,
+        source_type="Approval",
+        target_type="Thesis",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "target_object_type"}),
+        optional=True,
+    ),
     ACTION_RUN_PRODUCES_EXECUTED_ACTION: RelationDefinition(
         name=ACTION_RUN_PRODUCES_EXECUTED_ACTION,
         source_type="ActionRun",
@@ -391,6 +474,22 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         target_type="ObjectVersionRef",
         cardinality=RelationCardinality.MANY_TO_MANY,
         required_properties=frozenset({"ontology_run_id", "object_uid", "version_id"}),
+        optional=True,
+    ),
+    EXECUTED_DECISION_APPLIES_APPROVAL: RelationDefinition(
+        name=EXECUTED_DECISION_APPLIES_APPROVAL,
+        source_type="ExecutedDecisionRecord",
+        target_type="Approval",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    EXECUTED_DECISION_RECORDS_ACTION_RUN: RelationDefinition(
+        name=EXECUTED_DECISION_RECORDS_ACTION_RUN,
+        source_type="ExecutedDecisionRecord",
+        target_type="ActionRun",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
     SOURCE_RECORD_MATERIALIZES_OBJECT_VERSION: RelationDefinition(
