@@ -13,6 +13,7 @@ from portfolio.portfolio_optimizer.analyzer_scenarios import (
     SCENARIO_FACTOR_DEFAULTS,
     SCENARIO_FUNDAMENTAL_DEFAULTS,
     SCENARIO_METRIC_SCORE_DEFAULTS,
+    SCENARIO_QUALITATIVE_DEFAULTS,
     SCENARIO_VALUATION_DEFAULTS,
     normalize_analyzer_scenario,
 )
@@ -25,10 +26,14 @@ class AnalyzerFactorWeights(BaseModel):
     price_momentum: float = Field(default=SCENARIO_FACTOR_DEFAULTS["price_momentum"], ge=0)
     fundamental_momentum: float = Field(default=SCENARIO_FACTOR_DEFAULTS["fundamental_momentum"], ge=0)
     valuation: float = Field(default=SCENARIO_FACTOR_DEFAULTS["valuation"], ge=0)
+    qualitative: float = Field(default=SCENARIO_FACTOR_DEFAULTS["qualitative"], ge=0)
 
     @model_validator(mode="after")
     def require_nonzero(self):
-        if self.quality + self.price_momentum + self.fundamental_momentum + self.valuation <= 0:
+        legacy_total = self.quality + self.price_momentum + self.fundamental_momentum + self.valuation
+        if "qualitative" not in self.model_fields_set and legacy_total <= 0:
+            raise ValueError("factor_weights must include at least one positive weight.")
+        if legacy_total + self.qualitative <= 0:
             raise ValueError("factor_weights must include at least one positive weight.")
         return self
 
@@ -59,6 +64,21 @@ class AnalyzerValuationWeights(BaseModel):
         return self
 
 
+class AnalyzerQualitativeWeights(BaseModel):
+    business_quality_qualitative: float = Field(
+        default=SCENARIO_QUALITATIVE_DEFAULTS["business_quality_qualitative"], ge=0
+    )
+    industry_quality: float = Field(default=SCENARIO_QUALITATIVE_DEFAULTS["industry_quality"], ge=0)
+    management_quality: float = Field(default=SCENARIO_QUALITATIVE_DEFAULTS["management_quality"], ge=0)
+
+    @model_validator(mode="after")
+    def require_nonzero(self):
+        total = self.business_quality_qualitative + self.industry_quality + self.management_quality
+        if total <= 0:
+            raise ValueError("qualitative_weights must include at least one positive weight.")
+        return self
+
+
 class AnalyzerMetricScores(BaseModel):
     quality: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["quality"], ge=0, le=100)
     price_momentum: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_momentum"], ge=0, le=100)
@@ -71,6 +91,11 @@ class AnalyzerMetricScores(BaseModel):
     price_fcf: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_fcf"], ge=0, le=100)
     price_earnings: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_earnings"], ge=0, le=100)
     price_book: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_book"], ge=0, le=100)
+    business_quality_qualitative: float = Field(
+        default=SCENARIO_METRIC_SCORE_DEFAULTS["business_quality_qualitative"], ge=0, le=100
+    )
+    industry_quality: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["industry_quality"], ge=0, le=100)
+    management_quality: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["management_quality"], ge=0, le=100)
 
     @model_validator(mode="after")
     def require_nonzero(self):
@@ -84,6 +109,9 @@ class AnalyzerMetricScores(BaseModel):
             + self.price_fcf
             + self.price_earnings
             + self.price_book
+            + self.business_quality_qualitative
+            + self.industry_quality
+            + self.management_quality
         )
         if total <= 0:
             raise ValueError("metric_scores must include at least one positive score.")
@@ -104,6 +132,7 @@ class AnalyzerScenario(BaseModel):
         default_factory=AnalyzerFundamentalMomentumWeights
     )
     valuation_weights: AnalyzerValuationWeights = Field(default_factory=AnalyzerValuationWeights)
+    qualitative_weights: AnalyzerQualitativeWeights = Field(default_factory=AnalyzerQualitativeWeights)
     brakes: AnalyzerScenarioBrakes = Field(default_factory=AnalyzerScenarioBrakes)
 
 
@@ -126,9 +155,17 @@ def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
 
 
 def _cache_key(req: AnalyzerRequest) -> str:
-    strategy_version = "v3_course_of_action"
+    strategy_version = "v4_qualitative_course_of_action"
     scenario = json.dumps(_canonical_scenario(req), sort_keys=True, separators=(",", ":"))
-    return f"portfolio_analyzer:{strategy_version}:scenario={scenario}"
+    source_token = {}
+    try:
+        from portfolio.portfolio_optimizer.portfolio_analyzer import analyzer_source_cache_token
+
+        source_token = analyzer_source_cache_token()
+    except Exception:
+        source_token = {"status": "unavailable"}
+    source = json.dumps(source_token, sort_keys=True, separators=(",", ":"), default=str)
+    return f"portfolio_analyzer:{strategy_version}:scenario={scenario}:source={source}"
 
 
 def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:

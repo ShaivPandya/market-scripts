@@ -135,6 +135,8 @@ MAX SCALED PORTFOLIO:
 """
 
 import argparse
+import hashlib
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -156,10 +158,13 @@ from utils.retry import yf_download, yf_ticker_info
 LOGGER = logging.getLogger(__name__)
 
 from portfolio.portfolio_optimizer.analyzer_scenarios import (
+    QUALITATIVE_COLUMNS,
+    QUALITATIVE_LABELS,
     SCENARIO_BRAKE_DEFAULTS,
     SCENARIO_FACTOR_DEFAULTS,
     SCENARIO_FUNDAMENTAL_DEFAULTS,
     SCENARIO_METRIC_SCORE_DEFAULTS,
+    SCENARIO_QUALITATIVE_DEFAULTS,
     SCENARIO_VALUATION_DEFAULTS,
     VALUATION_COLUMNS,
     VALUATION_LABELS,
@@ -362,6 +367,391 @@ def compute_valuation_signal(raw_df: pd.DataFrame, weights: Mapping[str, float])
     return zscore_of_ranks(composite)
 
 
+QUALITATIVE_CACHE_VERSION = "v1"
+QUALITATIVE_OUTPUT_COLUMNS = (
+    "business_quality_qual_score",
+    "business_quality_qual_confidence",
+    "business_quality_qual_status",
+    "business_quality_qual_evidence",
+    "industry_quality_score",
+    "industry_quality_confidence",
+    "industry_quality_status",
+    "industry_quality_evidence",
+    "management_quality_score",
+    "management_quality_confidence",
+    "management_quality_status",
+    "management_quality_evidence",
+    "overview_source_hash",
+    "management_quality_source_hash",
+)
+QUALITATIVE_METRIC_OUTPUT = {
+    "business_quality_qualitative": {
+        "score": "business_quality_qual_score",
+        "confidence": "business_quality_qual_confidence",
+        "status": "business_quality_qual_status",
+        "evidence": "business_quality_qual_evidence",
+        "source": "overview",
+    },
+    "industry_quality": {
+        "score": "industry_quality_score",
+        "confidence": "industry_quality_confidence",
+        "status": "industry_quality_status",
+        "evidence": "industry_quality_evidence",
+        "source": "overview",
+    },
+    "management_quality": {
+        "score": "management_quality_score",
+        "confidence": "management_quality_confidence",
+        "status": "management_quality_status",
+        "evidence": "management_quality_evidence",
+        "source": "management_quality",
+    },
+}
+
+
+def _sha256_text(content: str | None) -> str | None:
+    if not content:
+        return None
+    return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _clip_text(content: str | None, limit: int = 12000) -> str:
+    text = (content or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n\n[truncated]"
+
+
+def _read_overview_markdown(ticker: str) -> str | None:
+    try:
+        from api.state_storage import exists_text, read_text
+        from paths import PROJECT_ROOT
+
+        normalized = str(ticker).strip().upper()
+        local_path = PROJECT_ROOT / "investment_overviews" / f"{normalized}.md"
+        gcs_key = f"live/overviews/{normalized}.md"
+        if exists_text(local_path, gcs_key):
+            return read_text(local_path, gcs_key, encoding="utf-8")
+    except Exception:
+        return None
+    return None
+
+
+def _read_management_quality_markdown(ticker: str) -> str | None:
+    normalized = str(ticker).strip().upper()
+    try:
+        from ontology.domain_write_service import ontology_primary_writes_enabled
+        from ontology.runtime_read_service import OntologyRuntimeReadService
+        from portfolio.management_quality_content import management_quality_exists, read_management_quality
+
+        if ontology_primary_writes_enabled():
+            try:
+                from api.routers.management_quality import _render_management_quality_markdown
+
+                assessment = OntologyRuntimeReadService().management_quality_assessment(normalized)
+                if assessment:
+                    if management_quality_exists(normalized):
+                        return read_management_quality(normalized)
+                    return _render_management_quality_markdown(normalized, assessment)
+            except Exception:
+                pass
+
+        if management_quality_exists(normalized):
+            return read_management_quality(normalized)
+    except Exception:
+        return None
+    return None
+
+
+def analyzer_source_cache_token() -> dict[str, Any]:
+    try:
+        meta = _get_positions_df()
+        tickers = sorted(
+            str(ticker).strip().upper() for ticker in meta["ticker"].dropna().tolist() if str(ticker).strip()
+        )
+    except Exception:
+        tickers = []
+
+    sources: list[dict[str, Any]] = []
+    for ticker in tickers:
+        overview = _read_overview_markdown(ticker)
+        management = _read_management_quality_markdown(ticker)
+        sources.append(
+            {
+                "ticker": ticker,
+                "overview_hash": _sha256_text(overview),
+                "management_quality_hash": _sha256_text(management),
+            }
+        )
+    return {"tickers": tickers, "qualitative_sources": sources}
+
+
+def _empty_qualitative_row(
+    ticker: str,
+    *,
+    overview_hash: str | None,
+    management_hash: str | None,
+    default_status: str = "missing_document",
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "ticker": ticker,
+        "overview_source_hash": overview_hash,
+        "management_quality_source_hash": management_hash,
+    }
+    for _metric, output in QUALITATIVE_METRIC_OUTPUT.items():
+        source = str(output["source"])
+        has_source = bool(overview_hash) if source == "overview" else bool(management_hash)
+        status = default_status if has_source else f"missing_{source}"
+        row[str(output["score"])] = np.nan
+        row[str(output["confidence"])] = 0.0
+        row[str(output["status"])] = status
+        row[str(output["evidence"])] = ""
+    return row
+
+
+def _safe_score_0_100(value: Any) -> float:
+    out = _safe_float(value)
+    if not np.isfinite(out):
+        return np.nan
+    return float(min(100.0, max(0.0, out)))
+
+
+def _safe_confidence_0_1(value: Any) -> float:
+    out = _safe_float(value)
+    if not np.isfinite(out):
+        return 0.0
+    if out > 1.0:
+        out = out / 100.0
+    return float(min(1.0, max(0.0, out)))
+
+
+def _normalize_qualitative_llm_payload(
+    *,
+    ticker: str,
+    payload: Mapping[str, Any] | None,
+    overview_hash: str | None,
+    management_hash: str | None,
+) -> dict[str, Any]:
+    row = _empty_qualitative_row(
+        ticker,
+        overview_hash=overview_hash,
+        management_hash=management_hash,
+        default_status="insufficient_evidence",
+    )
+    raw = dict(payload or {})
+    for metric, output in QUALITATIVE_METRIC_OUTPUT.items():
+        source = str(output["source"])
+        has_source = bool(overview_hash) if source == "overview" else bool(management_hash)
+        if not has_source:
+            continue
+
+        raw_metric = raw.get(metric)
+        metric_payload = raw_metric if isinstance(raw_metric, Mapping) else {}
+        score = _safe_score_0_100(metric_payload.get("score"))
+        confidence = _safe_confidence_0_1(metric_payload.get("confidence"))
+        status = str(metric_payload.get("status") or ("available" if np.isfinite(score) else "insufficient_evidence"))
+        status = status.strip().lower().replace(" ", "_") or "insufficient_evidence"
+        evidence = str(metric_payload.get("evidence") or metric_payload.get("rationale") or "").strip()
+
+        if status not in {"available", "ok"} or not np.isfinite(score):
+            score = np.nan
+            if status in {"available", "ok"}:
+                status = "insufficient_evidence"
+        else:
+            status = "available"
+
+        row[str(output["score"])] = score
+        row[str(output["confidence"])] = confidence
+        row[str(output["status"])] = status
+        row[str(output["evidence"])] = evidence[:600]
+    return row
+
+
+def _score_qualitative_with_llm(
+    *,
+    ticker: str,
+    overview: str | None,
+    management_quality: str | None,
+    overview_hash: str | None,
+    management_hash: str | None,
+) -> dict[str, Any]:
+    from llm_utils import MODEL_MID, call_llm_text, has_llm_api_key, parse_json_text
+
+    if not has_llm_api_key():
+        return _empty_qualitative_row(
+            ticker,
+            overview_hash=overview_hash,
+            management_hash=management_hash,
+            default_status="llm_unavailable",
+        )
+
+    system = (
+        "You score stored buy-side research evidence for a portfolio analyzer. "
+        "Return only valid JSON. Use source-backed evidence only. Do not infer from market knowledge outside the supplied text. "
+        "If evidence is absent or too thin, set status to insufficient_evidence and score to null."
+    )
+    prompt = f"""
+Score {ticker} on these qualitative metrics using a 0-100 rubric:
+
+1. business_quality_qualitative from the overview: durability of competitive advantage, customer value, unit economics,
+   pricing power, recurring/repeat demand, reinvestment runway, balance-sheet/business-model resilience, and evidence of
+   attractive returns on capital. 80-100 = exceptional durable compounder evidence; 60-79 = good quality with some limits;
+   40-59 = mixed; 20-39 = weak; 0-19 = structurally impaired.
+2. industry_quality from the overview: Porter's forces, demand outlook, supply discipline, cyclicality, regulation,
+   substitution risk, market growth, and rivalry. 80-100 = structurally attractive industry; 60-79 = above average;
+   40-59 = mixed; 20-39 = unattractive; 0-19 = severely adverse.
+3. management_quality from the management-quality assessment: owner mindset, capital allocation, value-driver
+   understanding, follow-through, candor, and response to setbacks. 80-100 = strong evidence across dimensions;
+   60-79 = good but incomplete or mixed; 40-59 = mixed; 20-39 = weak; 0-19 = poor.
+
+Return JSON exactly in this shape:
+{{
+  "business_quality_qualitative": {{"score": 0-100 or null, "confidence": 0-1, "status": "available|insufficient_evidence", "evidence": "short source-backed reason"}},
+  "industry_quality": {{"score": 0-100 or null, "confidence": 0-1, "status": "available|insufficient_evidence", "evidence": "short source-backed reason"}},
+  "management_quality": {{"score": 0-100 or null, "confidence": 0-1, "status": "available|insufficient_evidence", "evidence": "short source-backed reason"}}
+}}
+
+<overview_markdown>
+{_clip_text(overview) if overview else "MISSING"}
+</overview_markdown>
+
+<management_quality_markdown>
+{_clip_text(management_quality) if management_quality else "MISSING"}
+</management_quality_markdown>
+"""
+    try:
+        text, _citations, _response = call_llm_text(
+            prompt=prompt,
+            model=MODEL_MID,
+            max_tokens=1200,
+            system=system,
+            max_web_search_uses=0,
+        )
+        parsed = parse_json_text(text)
+        return _normalize_qualitative_llm_payload(
+            ticker=ticker,
+            payload=parsed if isinstance(parsed, Mapping) else None,
+            overview_hash=overview_hash,
+            management_hash=management_hash,
+        )
+    except Exception as exc:
+        row = _empty_qualitative_row(
+            ticker,
+            overview_hash=overview_hash,
+            management_hash=management_hash,
+            default_status="scoring_error",
+        )
+        for output in QUALITATIVE_METRIC_OUTPUT.values():
+            source = str(output["source"])
+            if (source == "overview" and overview_hash) or (source == "management_quality" and management_hash):
+                row[str(output["evidence"])] = str(exc)[:300]
+        return row
+
+
+def fetch_qualitative_metrics(ticker: str) -> dict[str, Any]:
+    normalized = str(ticker).strip().upper()
+    overview = _read_overview_markdown(normalized)
+    management_quality = _read_management_quality_markdown(normalized)
+    overview_hash = _sha256_text(overview)
+    management_hash = _sha256_text(management_quality)
+
+    if not overview_hash and not management_hash:
+        return _empty_qualitative_row(
+            normalized,
+            overview_hash=overview_hash,
+            management_hash=management_hash,
+        )
+
+    from llm_utils import has_llm_api_key
+
+    if not has_llm_api_key():
+        return _empty_qualitative_row(
+            normalized,
+            overview_hash=overview_hash,
+            management_hash=management_hash,
+            default_status="llm_unavailable",
+        )
+
+    from api.cache import daily_cache, get_or_set_cached
+    from api.serializers import serialize_value
+
+    key = f"portfolio_analyzer_qualitative:{QUALITATIVE_CACHE_VERSION}:{normalized}:{overview_hash}:{management_hash}"
+    cached = get_or_set_cached(
+        daily_cache,
+        key,
+        lambda: serialize_value(
+            _score_qualitative_with_llm(
+                ticker=normalized,
+                overview=overview,
+                management_quality=management_quality,
+                overview_hash=overview_hash,
+                management_hash=management_hash,
+            )
+        ),
+    )
+    if isinstance(cached, dict):
+        out = dict(cached)
+        out.pop("_meta", None)
+        return out
+    return _empty_qualitative_row(normalized, overview_hash=overview_hash, management_hash=management_hash)
+
+
+def fetch_qualitative_metrics_batch(tickers: list[str]) -> pd.DataFrame:
+    clean_tickers = list(dict.fromkeys(str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()))
+    if not clean_tickers:
+        return pd.DataFrame(columns=QUALITATIVE_OUTPUT_COLUMNS)
+
+    rows: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=min(6, len(clean_tickers))) as pool:
+        futures = {pool.submit(fetch_qualitative_metrics, ticker): ticker for ticker in clean_tickers}
+        for future in as_completed(futures):
+            ticker = futures[future]
+            try:
+                rows[ticker] = future.result()
+            except Exception as exc:
+                rows[ticker] = _empty_qualitative_row(ticker, overview_hash=None, management_hash=None)
+                rows[ticker]["business_quality_qual_evidence"] = str(exc)[:300]
+
+    return pd.DataFrame.from_dict(rows, orient="index").reindex(index=clean_tickers, columns=QUALITATIVE_OUTPUT_COLUMNS)
+
+
+def _qualitative_score_to_signal(score: Any) -> float:
+    value = _safe_score_0_100(score)
+    if not np.isfinite(value):
+        return np.nan
+    return float(np.clip((value - 50.0) / (100.0 / 6.0), -3.0, 3.0))
+
+
+def compute_qualitative_signals(
+    raw_df: pd.DataFrame,
+    weights: Mapping[str, float],
+    tickers: list[str],
+) -> tuple[pd.Series, dict[str, pd.Series]]:
+    if raw_df is None or raw_df.empty:
+        empty = pd.Series(np.nan, index=tickers, dtype="float64")
+        return empty, {key: empty.copy() for key in QUALITATIVE_COLUMNS}
+
+    sub_signals: dict[str, pd.Series] = {}
+    for metric, output in QUALITATIVE_METRIC_OUTPUT.items():
+        score_col = str(output["score"])
+        scores = pd.to_numeric(raw_df[score_col], errors="coerce") if score_col in raw_df else pd.Series(np.nan)
+        sub_signals[metric] = scores.reindex(tickers).map(_qualitative_score_to_signal)
+
+    composite = pd.Series(np.nan, index=tickers, dtype="float64")
+    for ticker in tickers:
+        weighted_values: list[tuple[float, float]] = []
+        for metric in QUALITATIVE_COLUMNS:
+            weight = max(0.0, float(weights.get(metric, 0.0) or 0.0))
+            value = _safe_float(sub_signals[metric].get(ticker))
+            if weight > 0 and np.isfinite(value):
+                weighted_values.append((weight, value))
+        weight_sum = sum(weight for weight, _value in weighted_values)
+        if weight_sum > 0:
+            composite.loc[ticker] = sum((weight / weight_sum) * value for weight, value in weighted_values)
+
+    return composite, sub_signals
+
+
 def _combine_weighted_components(
     components: Mapping[str, pd.Series],
     weights: Mapping[str, float],
@@ -423,6 +813,7 @@ def _scenario_drivers(
         "price_momentum": "Price momentum",
         "fundamental_momentum": "Fundamental momentum",
         "valuation": "Valuation",
+        "qualitative": "Qualitative",
     }
     out: list[str] = []
     for ticker in tickers:
@@ -452,6 +843,7 @@ COURSE_FACTOR_LABELS = {
     "price_momentum": "Price momentum",
     "fundamental_momentum": "Fundamental momentum",
     "valuation": "Valuation",
+    "qualitative": "Qualitative",
 }
 
 
@@ -466,6 +858,8 @@ def _factor_value(row: pd.Series, key: str) -> float:
         column = "price_mom_signal"
     if key == "fundamental_momentum":
         column = "fundamental_momentum_signal"
+    if key == "qualitative":
+        column = "qualitative_signal"
     value = _safe_float(row.get(column))
     return float(value) if np.isfinite(value) else np.nan
 
@@ -475,7 +869,7 @@ def _factor_status(row: pd.Series, key: str, weight: float, asset: str) -> tuple
         return "disabled", None
 
     asset_l = asset.strip().lower()
-    if asset_l != "equity" and key in {"quality", "fundamental_momentum", "valuation"}:
+    if asset_l != "equity" and key in {"quality", "fundamental_momentum", "valuation", "qualitative"}:
         return "not_applicable", None
 
     if key == "fundamental_momentum":
@@ -483,11 +877,39 @@ def _factor_status(row: pd.Series, key: str, weight: float, asset: str) -> tuple
         eps = _safe_float(row.get("eps_mom_signal"))
         if not np.isfinite(rev) and not np.isfinite(eps):
             return "missing", "Missing revenue and EPS momentum data"
+    if key == "qualitative":
+        business = _safe_float(row.get("business_quality_qual_signal"))
+        industry = _safe_float(row.get("industry_quality_signal"))
+        management = _safe_float(row.get("management_quality_signal"))
+        if not any(np.isfinite(value) for value in (business, industry, management)):
+            statuses = [
+                str(row.get("business_quality_qual_status") or "").replace("_", " "),
+                str(row.get("industry_quality_status") or "").replace("_", " "),
+                str(row.get("management_quality_status") or "").replace("_", " "),
+            ]
+            detail = ", ".join(sorted({status for status in statuses if status})) or "missing documents"
+            return "missing", f"Missing qualitative evidence ({detail})"
 
     value = _factor_value(row, key)
     if not np.isfinite(value):
         return "missing", f"Missing {COURSE_FACTOR_LABELS.get(key, key).lower()} data"
     return "available", None
+
+
+def _qualitative_evidence_summary(row: pd.Series) -> str | None:
+    snippets: list[str] = []
+    for label, evidence_col, status_col in (
+        ("Business", "business_quality_qual_evidence", "business_quality_qual_status"),
+        ("Industry", "industry_quality_evidence", "industry_quality_status"),
+        ("Management", "management_quality_evidence", "management_quality_status"),
+    ):
+        status = str(row.get(status_col) or "")
+        evidence = str(row.get(evidence_col) or "").strip()
+        if status == "available" and evidence:
+            snippets.append(f"{label}: {evidence}")
+    if not snippets:
+        return None
+    return "; ".join(snippets[:3])
 
 
 def _build_factor_breakdown(row: pd.Series, factor_weights: Mapping[str, float]) -> list[dict[str, Any]]:
@@ -497,6 +919,8 @@ def _build_factor_breakdown(row: pd.Series, factor_weights: Mapping[str, float])
         weight = float(factor_weights.get(key, 0.0) or 0.0)
         value = _factor_value(row, key)
         status, reason = _factor_status(row, key, weight, asset)
+        if key == "qualitative" and status == "available":
+            reason = _qualitative_evidence_summary(row)
         contribution = weight * value if status == "available" and np.isfinite(value) else np.nan
         breakdown.append(
             {
@@ -1978,6 +2402,23 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
             if valuation_active
             else pd.Series(0.0, index=tickers, dtype="float64")
         )
+        qualitative_active = (
+            float(scenario_config["factor_weights"].get("qualitative", 0.0)) > 0
+            and sum(float(value) for value in scenario_config["qualitative_weights"].values()) > 0
+        )
+        qualitative_df = (
+            fetch_qualitative_metrics_batch(valuation_tickers).reindex(tickers)
+            if qualitative_active
+            else pd.DataFrame(index=tickers, columns=QUALITATIVE_OUTPUT_COLUMNS)
+        )
+        qualitative_signal, qualitative_subsignals = (
+            compute_qualitative_signals(qualitative_df, scenario_config["qualitative_weights"], tickers)
+            if qualitative_active
+            else (
+                pd.Series(0.0, index=tickers, dtype="float64"),
+                {key: pd.Series(np.nan, index=tickers, dtype="float64") for key in QUALITATIVE_COLUMNS},
+            )
+        )
 
         fundamental_momentum_signal = _combine_weighted_components(
             {
@@ -1992,6 +2433,7 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
             "price_momentum": signal_subcomponents["price_mom_signal"].reindex(tickers),
             "fundamental_momentum": fundamental_momentum_signal.reindex(tickers),
             "valuation": valuation_signal.reindex(tickers),
+            "qualitative": qualitative_signal.reindex(tickers),
         }
         scenario_base_score = _combine_weighted_components(
             scenario_components,
@@ -2041,6 +2483,22 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
                 "price_mom_signal": signal_subcomponents["price_mom_signal"].values,
                 "fundamental_momentum_signal": fundamental_momentum_signal.values,
                 "valuation_signal": valuation_signal.values,
+                "qualitative_signal": qualitative_signal.values,
+                "business_quality_qual_signal": qualitative_subsignals["business_quality_qualitative"].values,
+                "industry_quality_signal": qualitative_subsignals["industry_quality"].values,
+                "management_quality_signal": qualitative_subsignals["management_quality"].values,
+                "business_quality_qual_score": qualitative_df["business_quality_qual_score"].values,
+                "business_quality_qual_confidence": qualitative_df["business_quality_qual_confidence"].values,
+                "business_quality_qual_status": qualitative_df["business_quality_qual_status"].values,
+                "business_quality_qual_evidence": qualitative_df["business_quality_qual_evidence"].values,
+                "industry_quality_score": qualitative_df["industry_quality_score"].values,
+                "industry_quality_confidence": qualitative_df["industry_quality_confidence"].values,
+                "industry_quality_status": qualitative_df["industry_quality_status"].values,
+                "industry_quality_evidence": qualitative_df["industry_quality_evidence"].values,
+                "management_quality_score": qualitative_df["management_quality_score"].values,
+                "management_quality_confidence": qualitative_df["management_quality_confidence"].values,
+                "management_quality_status": qualitative_df["management_quality_status"].values,
+                "management_quality_evidence": qualitative_df["management_quality_evidence"].values,
                 "price_sales": valuation_df["price_sales"].values,
                 "price_operating_income": valuation_df["price_operating_income"].values,
                 "price_fcf": valuation_df["price_fcf"].values,

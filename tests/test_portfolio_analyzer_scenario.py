@@ -10,7 +10,9 @@ from portfolio.portfolio_optimizer.portfolio_analyzer import (
     INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
     INTERACTIVE_SIGNAL_ANCHOR_TOP_N,
     build_course_of_action,
+    compute_qualitative_signals,
     compute_valuation_signal,
+    fetch_qualitative_metrics,
     normalize_analyzer_scenario,
     overlay_anchor_long_equity_signals,
 )
@@ -83,14 +85,21 @@ def test_metric_scores_normalize_across_all_alpha_metrics():
                 "price_fcf": 0,
                 "price_earnings": 0,
                 "price_book": 0,
+                "business_quality_qualitative": 20,
+                "industry_quality": 10,
+                "management_quality": 10,
             }
         }
     )
 
-    assert math.isclose(scenario["factor_weights"]["quality"], 0.20)
-    assert math.isclose(scenario["factor_weights"]["fundamental_momentum"], 0.80)
+    assert math.isclose(scenario["factor_weights"]["quality"], 1 / 9)
+    assert math.isclose(scenario["factor_weights"]["fundamental_momentum"], 4 / 9)
+    assert math.isclose(scenario["factor_weights"]["qualitative"], 4 / 9)
     assert math.isclose(scenario["fundamental_momentum_weights"]["revenue"], 0.50)
     assert math.isclose(scenario["fundamental_momentum_weights"]["eps"], 0.50)
+    assert math.isclose(scenario["qualitative_weights"]["business_quality_qualitative"], 0.50)
+    assert math.isclose(scenario["qualitative_weights"]["industry_quality"], 0.25)
+    assert math.isclose(scenario["qualitative_weights"]["management_quality"], 0.25)
 
 
 def test_metric_score_cache_key_is_ratio_based_and_brakes_accept_scores():
@@ -141,13 +150,15 @@ def test_metric_score_cache_key_is_ratio_based_and_brakes_accept_scores():
 def test_default_balanced_mission_includes_small_valuation_sleeve():
     scenario = normalize_analyzer_scenario()
 
-    assert math.isclose(scenario["factor_weights"]["quality"], 0.30)
-    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.35)
-    assert math.isclose(scenario["factor_weights"]["fundamental_momentum"], 0.25)
-    assert math.isclose(scenario["factor_weights"]["valuation"], 0.10)
-    assert math.isclose(scenario["fundamental_momentum_weights"]["revenue"], 0.60)
-    assert math.isclose(scenario["fundamental_momentum_weights"]["eps"], 0.40)
+    assert math.isclose(scenario["factor_weights"]["quality"], 0.20)
+    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.30)
+    assert math.isclose(scenario["factor_weights"]["fundamental_momentum"], 0.21)
+    assert math.isclose(scenario["factor_weights"]["valuation"], 0.09)
+    assert math.isclose(scenario["factor_weights"]["qualitative"], 0.20)
+    assert math.isclose(scenario["fundamental_momentum_weights"]["revenue"], 13 / 21)
+    assert math.isclose(scenario["fundamental_momentum_weights"]["eps"], 8 / 21)
     assert "price_book" in scenario["valuation_weights"]
+    assert math.isclose(scenario["qualitative_weights"]["business_quality_qualitative"], 0.40)
 
 
 def test_core_db_default_mission_uses_shared_balanced_scenario():
@@ -181,8 +192,9 @@ def test_legacy_balanced_default_is_upgraded_to_current_default():
         }
     )
 
-    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.35)
-    assert math.isclose(scenario["factor_weights"]["valuation"], 0.10)
+    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.30)
+    assert math.isclose(scenario["factor_weights"]["valuation"], 0.09)
+    assert math.isclose(scenario["factor_weights"]["qualitative"], 0.20)
     assert "price_book" in scenario["valuation_weights"]
 
 
@@ -191,21 +203,24 @@ def test_preset_only_request_uses_named_mission_weights():
     req = AnalyzerRequest(scenario={"preset": "value_dislocation"})
 
     assert math.isclose(scenario["factor_weights"]["valuation"], 0.50)
-    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.10)
+    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.08)
     assert _cache_key(req) == _cache_key(
         AnalyzerRequest(
             scenario={
                 "preset": "value_dislocation",
                 "metric_scores": {
-                    "quality": 25,
-                    "price_momentum": 10,
-                    "revenue": 10,
-                    "eps": 5,
+                    "quality": 18,
+                    "price_momentum": 8,
+                    "revenue": 8,
+                    "eps": 4,
                     "price_sales": 8,
                     "price_operating_income": 10,
                     "price_fcf": 17,
                     "price_earnings": 10,
                     "price_book": 5,
+                    "business_quality_qualitative": 5,
+                    "industry_quality": 4,
+                    "management_quality": 3,
                 },
                 "brakes": {
                     "drawdown_sensitivity": 30,
@@ -286,6 +301,92 @@ def test_valuation_signal_uses_profile_weights_when_available():
     assert signal["CHEAP_SALES"] > signal["MID"] > signal["EXPENSIVE_SALES"]
 
 
+def test_compute_qualitative_signals_maps_rubric_scores_to_signal_scale():
+    raw = pd.DataFrame(
+        {
+            "business_quality_qual_score": [80, 35],
+            "industry_quality_score": [70, 45],
+            "management_quality_score": [90, 30],
+        },
+        index=["STRONG", "WEAK"],
+    )
+
+    signal, sub_signals = compute_qualitative_signals(
+        raw,
+        {
+            "business_quality_qualitative": 0.4,
+            "industry_quality": 0.3,
+            "management_quality": 0.3,
+        },
+        ["STRONG", "WEAK"],
+    )
+
+    assert signal["STRONG"] > 0
+    assert signal["WEAK"] < 0
+    assert sub_signals["management_quality"]["STRONG"] > sub_signals["management_quality"]["WEAK"]
+
+
+def test_fetch_qualitative_metrics_reuses_cache_for_same_source_hash(monkeypatch):
+    import uuid
+
+    import llm_utils
+
+    calls = {"count": 0}
+    overview_content = f"overview evidence {uuid.uuid4()}"
+    management_content = f"management evidence {uuid.uuid4()}"
+    monkeypatch.setattr(analyzer_module, "_read_overview_markdown", lambda ticker: overview_content)
+    monkeypatch.setattr(analyzer_module, "_read_management_quality_markdown", lambda ticker: management_content)
+    monkeypatch.setattr(llm_utils, "has_llm_api_key", lambda provider=None: True)
+
+    def fake_score(**kwargs):
+        calls["count"] += 1
+        return {
+            "ticker": kwargs["ticker"],
+            "business_quality_qual_score": 82,
+            "business_quality_qual_confidence": 0.8,
+            "business_quality_qual_status": "available",
+            "business_quality_qual_evidence": "durable business",
+            "industry_quality_score": 74,
+            "industry_quality_confidence": 0.7,
+            "industry_quality_status": "available",
+            "industry_quality_evidence": "attractive industry",
+            "management_quality_score": 68,
+            "management_quality_confidence": 0.6,
+            "management_quality_status": "available",
+            "management_quality_evidence": "solid management",
+            "overview_source_hash": kwargs["overview_hash"],
+            "management_quality_source_hash": kwargs["management_hash"],
+        }
+
+    monkeypatch.setattr(analyzer_module, "_score_qualitative_with_llm", fake_score)
+
+    first = fetch_qualitative_metrics("QUALCACHE")
+    second = fetch_qualitative_metrics("QUALCACHE")
+
+    assert calls["count"] == 1
+    assert first["business_quality_qual_score"] == second["business_quality_qual_score"] == 82
+
+
+def test_fetch_qualitative_metrics_missing_documents_do_not_call_llm(monkeypatch):
+    import llm_utils
+
+    monkeypatch.setattr(analyzer_module, "_read_overview_markdown", lambda ticker: None)
+    monkeypatch.setattr(analyzer_module, "_read_management_quality_markdown", lambda ticker: None)
+    monkeypatch.setattr(llm_utils, "has_llm_api_key", lambda provider=None: True)
+
+    def fail_score(**kwargs):
+        raise AssertionError("LLM scoring should not run without source documents")
+
+    monkeypatch.setattr(analyzer_module, "_score_qualitative_with_llm", fail_score)
+
+    result = fetch_qualitative_metrics("NODOCS")
+
+    assert result["business_quality_qual_status"] == "missing_overview"
+    assert result["industry_quality_status"] == "missing_overview"
+    assert result["management_quality_status"] == "missing_management_quality"
+    assert math.isnan(result["business_quality_qual_score"])
+
+
 def test_interactive_anchor_overlay_uses_reduced_scoring_universe(monkeypatch):
     captured: dict[str, int] = {}
 
@@ -350,6 +451,13 @@ def _course_rows(rows: list[dict]) -> pd.DataFrame:
         "rev_mom_signal": 0.0,
         "eps_mom_signal": 0.0,
         "valuation_signal": 0.0,
+        "qualitative_signal": 0.0,
+        "business_quality_qual_signal": 0.0,
+        "industry_quality_signal": 0.0,
+        "management_quality_signal": 0.0,
+        "business_quality_qual_status": "available",
+        "industry_quality_status": "available",
+        "management_quality_status": "available",
     }
     return pd.DataFrame([{**defaults, **row} for row in rows])
 
@@ -468,6 +576,52 @@ def test_course_of_action_missing_equity_data_gates_strong_action():
     assert action["action"] == "Review"
     assert action["gate_status"] == "review"
     assert "Insufficient applicable data coverage" in action["gate_reasons"]
+
+
+def test_course_of_action_missing_qualitative_evidence_warns_when_weighted():
+    course = build_course_of_action(
+        _course_rows(
+            [
+                {
+                    "ticker": "QUALMISS",
+                    "direction": "long",
+                    "scenario_score": 1.10,
+                    "score_delta": 0.40,
+                    "quality_signal": 1.0,
+                    "price_mom_signal": 1.0,
+                    "fundamental_momentum_signal": 1.0,
+                    "qualitative_signal": math.nan,
+                    "business_quality_qual_signal": math.nan,
+                    "industry_quality_signal": math.nan,
+                    "management_quality_signal": math.nan,
+                    "business_quality_qual_status": "missing_overview",
+                    "industry_quality_status": "missing_overview",
+                    "management_quality_status": "missing_management_quality",
+                }
+            ]
+        ),
+        normalize_analyzer_scenario(
+            {
+                "metric_scores": {
+                    "quality": 20,
+                    "price_momentum": 20,
+                    "revenue": 20,
+                    "eps": 0,
+                    "price_sales": 0,
+                    "price_operating_income": 0,
+                    "price_fcf": 0,
+                    "price_earnings": 0,
+                    "price_book": 0,
+                    "business_quality_qualitative": 20,
+                    "industry_quality": 10,
+                    "management_quality": 10,
+                }
+            }
+        ),
+    )
+
+    action = _first_action(course, "QUALMISS")
+    assert any("Missing qualitative evidence" in warning for warning in action["warnings"])
 
 
 def test_course_of_action_non_equity_missing_equity_metrics_are_not_missing():

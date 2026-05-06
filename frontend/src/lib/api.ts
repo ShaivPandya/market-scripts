@@ -1398,12 +1398,16 @@ export type AnalyzerScenarioRequest = {
     price_fcf: number
     price_earnings: number
     price_book: number
+    business_quality_qualitative: number
+    industry_quality: number
+    management_quality: number
   }
   factor_weights?: {
     quality: number
     price_momentum: number
     fundamental_momentum: number
     valuation: number
+    qualitative: number
   }
   fundamental_momentum_weights?: {
     revenue: number
@@ -1415,6 +1419,11 @@ export type AnalyzerScenarioRequest = {
     price_fcf: number
     price_earnings: number
     price_book: number
+  }
+  qualitative_weights?: {
+    business_quality_qualitative: number
+    industry_quality: number
+    management_quality: number
   }
   brakes?: {
     drawdown_sensitivity: number

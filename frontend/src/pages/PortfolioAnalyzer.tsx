@@ -57,6 +57,9 @@ interface AnalyzerScenarioState {
     price_fcf: number
     price_earnings: number
     price_book: number
+    business_quality_qualitative: number
+    industry_quality: number
+    management_quality: number
   }
   brakes: {
     drawdown_sensitivity: number
@@ -75,75 +78,90 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
   balanced: {
     preset: "balanced",
     metric_scores: {
-      quality: 30,
-      price_momentum: 35,
-      revenue: 15,
-      eps: 10,
+      quality: 20,
+      price_momentum: 30,
+      revenue: 13,
+      eps: 8,
       price_sales: 1,
-      price_operating_income: 3,
+      price_operating_income: 2,
       price_fcf: 4,
       price_earnings: 1,
       price_book: 1,
+      business_quality_qualitative: 8,
+      industry_quality: 6,
+      management_quality: 6,
     },
     brakes: { drawdown_sensitivity: 0, contrarian_penalty: 0, short_squeeze_brake: 0 },
   },
   capital_preservation: {
     preset: "capital_preservation",
     metric_scores: {
-      quality: 45,
-      price_momentum: 20,
-      revenue: 10,
+      quality: 30,
+      price_momentum: 15,
+      revenue: 8,
       eps: 5,
       price_sales: 2,
       price_operating_income: 5,
       price_fcf: 8,
       price_earnings: 3,
       price_book: 2,
+      business_quality_qualitative: 8,
+      industry_quality: 6,
+      management_quality: 8,
     },
     brakes: { drawdown_sensitivity: 70, contrarian_penalty: 60, short_squeeze_brake: 60 },
   },
   momentum_exploitation: {
     preset: "momentum_exploitation",
     metric_scores: {
-      quality: 20,
-      price_momentum: 55,
-      revenue: 15,
-      eps: 10,
+      quality: 15,
+      price_momentum: 50,
+      revenue: 13,
+      eps: 9,
       price_sales: 0,
       price_operating_income: 0,
       price_fcf: 0,
       price_earnings: 0,
       price_book: 0,
+      business_quality_qualitative: 5,
+      industry_quality: 4,
+      management_quality: 4,
     },
     brakes: { drawdown_sensitivity: 10, contrarian_penalty: 10, short_squeeze_brake: 25 },
   },
   value_dislocation: {
     preset: "value_dislocation",
     metric_scores: {
-      quality: 25,
-      price_momentum: 10,
-      revenue: 10,
-      eps: 5,
+      quality: 18,
+      price_momentum: 8,
+      revenue: 8,
+      eps: 4,
       price_sales: 8,
       price_operating_income: 10,
       price_fcf: 17,
       price_earnings: 10,
       price_book: 5,
+      business_quality_qualitative: 5,
+      industry_quality: 4,
+      management_quality: 3,
     },
     brakes: { drawdown_sensitivity: 30, contrarian_penalty: 30, short_squeeze_brake: 35 },
   },
   short_defense: {
     preset: "short_defense",
     metric_scores: {
-      quality: 30,
-      price_momentum: 45,
-      revenue: 10,
-      eps: 5,
+      quality: 20,
+      price_momentum: 40,
+      revenue: 8,
+      eps: 4,
       price_sales: 0,
       price_operating_income: 2,
       price_fcf: 5,
       price_earnings: 0,
       price_book: 3,
+      business_quality_qualitative: 6,
+      industry_quality: 5,
+      management_quality: 7,
     },
     brakes: { drawdown_sensitivity: 35, contrarian_penalty: 25, short_squeeze_brake: 80 },
   },
@@ -191,8 +209,24 @@ const COLUMN_LABELS: Record<string, string> = {
   price_mom_signal: "Price Momentum",
   fundamental_momentum_signal: "Fundamental Momentum",
   valuation_signal: "Valuation",
+  qualitative_signal: "Qualitative",
+  business_quality_qual_signal: "Business Quality (Qual)",
+  industry_quality_signal: "Industry Quality",
+  management_quality_signal: "Management Quality",
+  business_quality_qual_score: "Business Quality Score",
+  business_quality_qual_confidence: "Business Quality Confidence",
+  business_quality_qual_status: "Business Quality Status",
+  business_quality_qual_evidence: "Business Quality Evidence",
+  industry_quality_score: "Industry Quality Score",
+  industry_quality_confidence: "Industry Quality Confidence",
+  industry_quality_status: "Industry Quality Status",
+  industry_quality_evidence: "Industry Quality Evidence",
+  management_quality_score: "Management Quality Score",
+  management_quality_confidence: "Management Quality Confidence",
+  management_quality_status: "Management Quality Status",
+  management_quality_evidence: "Management Quality Evidence",
   price_sales: "EV/S",
-  price_operating_income: "EV/EBIT",
+  price_operating_income: "EV/Operating Income",
   price_fcf: "EV/FCF",
   price_earnings: "P/E",
   price_book: "P/B",
@@ -208,9 +242,13 @@ const COLUMN_ORDER = [
   "scenario_penalty",
   "baseline_score",
   "signal",
+  "qualitative_signal",
   "valuation_signal",
   "fundamental_momentum_signal",
   "quality_signal",
+  "business_quality_qual_signal",
+  "industry_quality_signal",
+  "management_quality_signal",
   "price_mom_signal",
   "rev_mom_signal",
   "eps_mom_signal",
@@ -219,6 +257,18 @@ const COLUMN_ORDER = [
   "price_fcf",
   "price_earnings",
   "price_book",
+  "business_quality_qual_score",
+  "business_quality_qual_confidence",
+  "business_quality_qual_status",
+  "business_quality_qual_evidence",
+  "industry_quality_score",
+  "industry_quality_confidence",
+  "industry_quality_status",
+  "industry_quality_evidence",
+  "management_quality_score",
+  "management_quality_confidence",
+  "management_quality_status",
+  "management_quality_evidence",
   "contrarian",
   "drawdown_52w",
   "stabilized_10d",
@@ -241,6 +291,7 @@ type LegacyScenarioState = Partial<AnalyzerScenarioState> & {
     price_momentum?: number
     fundamental_momentum?: number
     valuation?: number
+    qualitative?: number
   }
   fundamental_momentum_weights?: {
     revenue?: number
@@ -252,6 +303,11 @@ type LegacyScenarioState = Partial<AnalyzerScenarioState> & {
     price_fcf?: number
     price_earnings?: number
     price_book?: number
+  }
+  qualitative_weights?: {
+    business_quality_qualitative?: number
+    industry_quality?: number
+    management_quality?: number
   }
 }
 
@@ -320,17 +376,20 @@ function normalizeWeightGroup<T extends Record<string, number>>(weights: T): T {
 }
 
 function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: MetricScores): MetricScores {
-  if (!value.factor_weights && !value.fundamental_momentum_weights && !value.valuation_weights) {
+  if (!value.factor_weights && !value.fundamental_momentum_weights && !value.valuation_weights && !value.qualitative_weights) {
     return normalizeScoreMap(defaults, defaults)
   }
 
   const defaultValuationTotal =
     defaults.price_sales + defaults.price_operating_income + defaults.price_fcf + defaults.price_earnings + defaults.price_book
+  const defaultQualitativeTotal =
+    defaults.business_quality_qualitative + defaults.industry_quality + defaults.management_quality
   const factorWeights = normalizeWeightGroup({
     quality: defaults.quality,
     price_momentum: defaults.price_momentum,
     fundamental_momentum: defaults.revenue + defaults.eps,
     valuation: defaultValuationTotal,
+    qualitative: defaultQualitativeTotal,
     ...(value.factor_weights ?? {}),
   })
   const fundamentalWeights = normalizeWeightGroup({
@@ -346,6 +405,12 @@ function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: Metri
     price_book: defaults.price_book,
     ...(value.valuation_weights ?? {}),
   })
+  const qualitativeWeights = normalizeWeightGroup({
+    business_quality_qualitative: defaults.business_quality_qualitative,
+    industry_quality: defaults.industry_quality,
+    management_quality: defaults.management_quality,
+    ...(value.qualitative_weights ?? {}),
+  })
 
   return {
     quality: clampScore(factorWeights.quality * SCORE_MAX),
@@ -357,6 +422,11 @@ function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: Metri
     price_fcf: clampScore(factorWeights.valuation * valuationWeights.price_fcf * SCORE_MAX),
     price_earnings: clampScore(factorWeights.valuation * valuationWeights.price_earnings * SCORE_MAX),
     price_book: clampScore(factorWeights.valuation * valuationWeights.price_book * SCORE_MAX),
+    business_quality_qualitative: clampScore(
+      factorWeights.qualitative * qualitativeWeights.business_quality_qualitative * SCORE_MAX,
+    ),
+    industry_quality: clampScore(factorWeights.qualitative * qualitativeWeights.industry_quality * SCORE_MAX),
+    management_quality: clampScore(factorWeights.qualitative * qualitativeWeights.management_quality * SCORE_MAX),
   }
 }
 
@@ -1118,10 +1188,9 @@ export function PortfolioAnalyzer() {
         </button>
 
         {advancedOpen && (
-          <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-4">
+          <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-5">
             <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-app">Signal Scores</h3>
-              <SliderInput label="Quality" value={scenario.metric_scores.quality} onChange={v => setMetricScore("quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <h3 className="text-sm font-semibold text-app">Momentum</h3>
               <SliderInput label="Price Momentum" value={scenario.metric_scores.price_momentum} onChange={v => setMetricScore("price_momentum", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>
 
@@ -1134,10 +1203,18 @@ export function PortfolioAnalyzer() {
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Valuation</h3>
               <SliderInput label="EV/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="EV/EBIT" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="EV/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
               <SliderInput label="EV/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
               <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
               <SliderInput label="P/B" value={scenario.metric_scores.price_book} onChange={v => setMetricScore("price_book", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-app">Qualitative</h3>
+              <SliderInput label="Business Quality (Quant)" value={scenario.metric_scores.quality} onChange={v => setMetricScore("quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Business Quality (Overview)" value={scenario.metric_scores.business_quality_qualitative} onChange={v => setMetricScore("business_quality_qualitative", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Industry Quality" value={scenario.metric_scores.industry_quality} onChange={v => setMetricScore("industry_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Management Quality" value={scenario.metric_scores.management_quality} onChange={v => setMetricScore("management_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>
 
             <section className="space-y-4">
