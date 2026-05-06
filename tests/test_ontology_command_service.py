@@ -36,7 +36,6 @@ class FakeObjectService:
                 "portfolio:",
                 "position:",
                 "recommendation:",
-                "research_note:",
                 "thesis:",
             )
         ):

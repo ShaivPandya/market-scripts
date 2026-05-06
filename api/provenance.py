@@ -42,7 +42,6 @@ from ontology.schemas.identity import (
     recommendation_id,
     relation_version_ref_id,
     report_run_id,
-    research_note_id,
     schema_definition_ref_id,
     slug,
     source_record_object_id,
@@ -270,8 +269,6 @@ def ref_object_uid_for(ref_type: str, ref_id: Any) -> str:
         return _prefixed_or("action_item", action_item_id, text)
     if ref_type == "watch_trigger":
         return _prefixed_or("watch_trigger", watch_trigger_id, text)
-    if ref_type == "research_note":
-        return _prefixed_or("research_note", research_note_id, text)
     if ref_type in {"news_digest", "management_quality"}:
         return document_artifact_id(ref_type, text)
     if ref_type in {"domain_action", "tool", "prompt_template"}:
