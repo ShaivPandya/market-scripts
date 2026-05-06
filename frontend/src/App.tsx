@@ -41,11 +41,17 @@ function lazyPage<T extends ComponentType>(
   })
 }
 
-class RouteErrorBoundary extends Component<{ children: ReactNode }, { error: unknown }> {
+class RouteErrorBoundary extends Component<{ children: ReactNode; resetKey: string }, { error: unknown }> {
   state = { error: null as unknown }
 
   static getDerivedStateFromError(error: unknown) {
     return { error }
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ error: null })
+    }
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
@@ -84,7 +90,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, { error: unk
 
 function RouteLoadBoundary({ children }: { children: ReactNode }) {
   const location = useLocation()
-  return <RouteErrorBoundary key={location.pathname}>{children}</RouteErrorBoundary>
+  return <RouteErrorBoundary resetKey={location.pathname}>{children}</RouteErrorBoundary>
 }
 
 const LoginPage = lazyPage(() => import("@/pages/LoginPage"), "LoginPage")
