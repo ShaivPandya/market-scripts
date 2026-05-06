@@ -99,6 +99,7 @@ _OPTIONAL_MODULES = [
     ("api.routers.yield_curve", "yield_curve", "fixed-income"),
     ("api.routers.bond_dashboard", "bond_dashboard", "fixed-income"),
     ("api.routers.financials", "financials", "equities"),
+    ("api.routers.valuation", "valuation", "equities"),
     ("api.routers.signal_aggregator", "signal_aggregator", "macro"),
     ("api.routers.portfolio_news", "portfolio_news", "portfolio"),
     ("api.routers.ontology", "ontology", "ontology"),

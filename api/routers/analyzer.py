@@ -41,10 +41,11 @@ class AnalyzerValuationWeights(BaseModel):
     price_operating_income: float = Field(default=1.0, ge=0)
     price_fcf: float = Field(default=1.0, ge=0)
     price_earnings: float = Field(default=1.0, ge=0)
+    price_book: float = Field(default=1.0, ge=0)
 
     @model_validator(mode="after")
     def require_nonzero(self):
-        total = self.price_sales + self.price_operating_income + self.price_fcf + self.price_earnings
+        total = self.price_sales + self.price_operating_income + self.price_fcf + self.price_earnings + self.price_book
         if total <= 0:
             raise ValueError("valuation_weights must include at least one positive weight.")
         return self
@@ -59,6 +60,7 @@ class AnalyzerMetricScores(BaseModel):
     price_operating_income: float = Field(default=0.0, ge=0, le=100)
     price_fcf: float = Field(default=0.0, ge=0, le=100)
     price_earnings: float = Field(default=0.0, ge=0, le=100)
+    price_book: float = Field(default=0.0, ge=0, le=100)
 
     @model_validator(mode="after")
     def require_nonzero(self):
@@ -71,6 +73,7 @@ class AnalyzerMetricScores(BaseModel):
             + self.price_operating_income
             + self.price_fcf
             + self.price_earnings
+            + self.price_book
         )
         if total <= 0:
             raise ValueError("metric_scores must include at least one positive score.")
@@ -133,6 +136,7 @@ def _scenario_from_metric_scores(metric_scores: dict[str, Any]) -> dict[str, dic
         + scores.get("price_operating_income", 0.0)
         + scores.get("price_fcf", 0.0)
         + scores.get("price_earnings", 0.0)
+        + scores.get("price_book", 0.0)
     )
 
     factor_weights = _normalize_group(
@@ -155,6 +159,7 @@ def _scenario_from_metric_scores(metric_scores: dict[str, Any]) -> dict[str, dic
                 "price_operating_income": scores.get("price_operating_income", 0.0),
                 "price_fcf": scores.get("price_fcf", 0.0),
                 "price_earnings": scores.get("price_earnings", 0.0),
+                "price_book": scores.get("price_book", 0.0),
             }
         )
         if valuation_total > 0

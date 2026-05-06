@@ -21,7 +21,10 @@ import {
   updateThesisClaim,
   fetchPositionRiskLatest,
   refreshPositionRisk,
+  fetchPositionValuation,
+  updatePositionValuationProfileOverride,
   type ApprovalRecord,
+  type PositionValuation,
   type PositionRiskEvidence,
   type PositionRiskSnapshot,
   type SourceRequirement,
@@ -118,7 +121,7 @@ interface ActionItem { id: number; description: string; action_type: string; urg
 interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
 
 const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Workflows"] as const
-type Tab = "Overview" | "Management Quality" | typeof BASE_TABS[number]
+type Tab = "Overview" | "Management Quality" | "Valuation" | typeof BASE_TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
   active: "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950",
@@ -302,8 +305,8 @@ export function PositionDossier() {
   const approvalSummaryError = approvalSummary.error
   const isEquity =
     String(data.position?.asset ?? "") === "equity" && String(data.position?.instrument_type ?? "security") !== "future"
-  const visibleTabs: Tab[] = isEquity ? ["Overview", "Management Quality", ...BASE_TABS] : [...BASE_TABS]
-  const activeTab: Tab = (tab === "Overview" || tab === "Management Quality") && !isEquity ? "Thesis" : tab
+  const visibleTabs: Tab[] = isEquity ? ["Overview", "Management Quality", "Valuation", ...BASE_TABS] : [...BASE_TABS]
+  const activeTab: Tab = (tab === "Overview" || tab === "Management Quality" || tab === "Valuation") && !isEquity ? "Thesis" : tab
   const pos = data.position
   const thesisClaims = Array.isArray(data.thesis_claims) ? data.thesis_claims : []
   const catalysts = Array.isArray(data.catalysts) ? data.catalysts : []
@@ -415,6 +418,7 @@ export function PositionDossier() {
             ticker={data.ticker}
           />
         )}
+        {activeTab === "Valuation" && <ValuationTab ticker={data.ticker} />}
         {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
         {activeTab === "Claims" && <ClaimsTab claims={thesisClaims} catalysts={catalysts} conditions={killConditions} ticker={ticker!} />}
         {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} ticker={ticker!} />}
@@ -997,6 +1001,196 @@ function ManagementQualityTab({
           <MarkdownRenderer content={content} />
         </div>
       </section>
+    </div>
+  )
+}
+
+const VALUATION_METRIC_ORDER = [
+  "price_sales",
+  "price_operating_income",
+  "price_fcf",
+  "price_earnings",
+  "price_book",
+] as const
+
+function formatMultipleValue(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
+  if (Math.abs(value) >= 100) return `${value.toFixed(0)}x`
+  return `${value.toFixed(1)}x`
+}
+
+function formatValuationMoney(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
+  const abs = Math.abs(value)
+  if (abs >= 1e12) return `$${(value / 1e12).toFixed(2)}T`
+  if (abs >= 1e9) return `$${(value / 1e9).toFixed(2)}B`
+  if (abs >= 1e6) return `$${(value / 1e6).toFixed(1)}M`
+  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+}
+
+function formatValuationPct(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
+  return `${Math.round(value)}%`
+}
+
+function formatWeight(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "0%"
+  return `${Math.round(value * 100)}%`
+}
+
+function valuationStatusClass(status?: string | null): string {
+  if (status === "ok") return "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
+  if (status === "degraded") return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+  return "border-app bg-[hsl(var(--muted-2))] text-muted"
+}
+
+function ValuationTab({ ticker }: { ticker: string }) {
+  const qc = useQueryClient()
+  const { data, isLoading, error } = useApiQuery<PositionValuation>(
+    ["valuation", ticker],
+    () => fetchPositionValuation(ticker),
+    300_000,
+  )
+
+  const profileMutation = useMutation({
+    mutationFn: (profileId: string | null) => updatePositionValuationProfileOverride(ticker, profileId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["valuation", ticker] })
+    },
+  })
+
+  if (isLoading) return <LoadingSpinner message="Loading valuation..." />
+  if (error) return <ErrorMessage message={String(error)} />
+  if (!data) return null
+
+  const profileValue = data.profile.override_profile_id ?? "auto"
+  const profileOptions = [
+    { value: "auto", label: `Auto (${data.profile.label})` },
+    ...data.profile.options.map(option => ({ value: option.id, label: option.label })),
+  ]
+  const warnings = data.data_quality?.warnings ?? []
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-app">Valuation</h2>
+            <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", valuationStatusClass(data.data_quality?.status))}>
+              {data.data_quality?.status?.replace(/_/g, " ") ?? "unknown"}
+            </span>
+            <span className="text-xs text-subtle">{data.source_policy?.replace(/_/g, " ")}</span>
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            {data.company_name || data.ticker}
+            {data.market_data?.sector ? ` - ${data.market_data.sector}` : ""}
+            {data.market_data?.industry ? ` / ${data.market_data.industry}` : ""}
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:w-[420px]">
+          <div className="rounded-lg border border-app px-3 py-2">
+            <p className="text-xs uppercase text-subtle">Composite</p>
+            <p className="mt-1 text-xl font-semibold text-app">{formatValuationPct(data.composite_score?.value)}</p>
+            <p className="text-xs text-muted">{data.peer_context.peer_count} peers - {data.peer_context.source.replace(/_/g, " ")}</p>
+          </div>
+          <SelectInput
+            label="Profile"
+            value={profileValue}
+            onChange={value => profileMutation.mutate(value === "auto" ? null : value)}
+            options={profileOptions}
+            disabled={profileMutation.isPending}
+            helperText={profileMutation.isPending ? "Saving profile override..." : data.profile.selection_mode === "override" ? "Manual profile override" : "Auto profile"}
+          />
+        </div>
+      </div>
+
+      {warnings.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          {warnings.join(" ")}
+        </div>
+      )}
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-app">Profile Weights</h3>
+          <p className="text-xs text-muted">{data.profile.rationale}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {VALUATION_METRIC_ORDER.map(key => (
+            <div key={key} className="rounded-lg border border-app px-3 py-2">
+              <p className="text-xs text-subtle">{data.metrics[key]?.label ?? key}</p>
+              <p className="text-sm font-semibold text-app">{formatWeight(data.profile.effective_weights[key])}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="overflow-x-auto rounded-lg border border-app">
+        <table className="min-w-full text-left text-sm">
+          <thead className="border-b border-app text-xs uppercase text-subtle">
+            <tr>
+              <th className="px-3 py-2 font-semibold">Metric</th>
+              <th className="px-3 py-2 font-semibold">Multiple</th>
+              <th className="px-3 py-2 font-semibold">Denominator</th>
+              <th className="px-3 py-2 font-semibold">Peer Percentile</th>
+              <th className="px-3 py-2 font-semibold">Peer Median</th>
+              <th className="px-3 py-2 font-semibold">History</th>
+              <th className="px-3 py-2 font-semibold">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[hsl(var(--border))]">
+            {VALUATION_METRIC_ORDER.map(key => {
+              const metric = data.metrics[key]
+              const peer = data.peer_context.metric_stats[key]
+              const history = data.historical_bands[key]
+              return (
+                <tr key={key}>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-app">{metric?.label ?? key}</div>
+                    <div className="text-xs text-subtle">{metric?.period ?? ""}</div>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-app">{formatMultipleValue(metric?.value)}</td>
+                  <td className="px-3 py-2">
+                    <div className="text-app">{formatValuationMoney(metric?.denominator)}</div>
+                    <div className="text-xs text-subtle">{metric?.denominator_label}</div>
+                  </td>
+                  <td className="px-3 py-2 text-app">{formatValuationPct(peer?.percentile)}</td>
+                  <td className="px-3 py-2 text-app">{formatMultipleValue(peer?.median)}</td>
+                  <td className="px-3 py-2 text-app">
+                    {history?.status === "ok"
+                      ? `${formatMultipleValue(history.q1)} / ${formatMultipleValue(history.median)} / ${formatMultipleValue(history.q3)}`
+                      : "N/A"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={cn("inline-flex rounded border px-2 py-0.5 text-xs font-semibold", valuationStatusClass(metric?.status))}>
+                      {(metric?.status ?? "missing").replace(/_/g, " ")}
+                    </span>
+                    {metric?.reason && <div className="mt-1 text-xs text-subtle">{metric.reason.replace(/_/g, " ")}</div>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </section>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-app px-3 py-2">
+          <h3 className="text-sm font-semibold text-app">Peer Set</h3>
+          <p className="mt-1 text-sm text-muted">
+            {data.peer_context.peer_count > 0 ? data.peer_context.peers.slice(0, 18).join(", ") : "No peer set available."}
+            {data.peer_context.peer_count > 18 ? "..." : ""}
+          </p>
+        </div>
+        <div className="rounded-lg border border-app px-3 py-2">
+          <h3 className="text-sm font-semibold text-app">Market Data</h3>
+          <p className="mt-1 text-sm text-muted">
+            Market cap {formatValuationMoney(data.market_data?.market_cap)}
+            {data.market_data?.current_price ? ` - Price ${formatValuationMoney(data.market_data.current_price)}` : ""}
+            {data.market_data?.currency ? ` - ${data.market_data.currency}` : ""}
+          </p>
+        </div>
+      </div>
     </div>
   )
 }

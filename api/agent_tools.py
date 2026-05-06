@@ -3364,6 +3364,11 @@ def _dispatch(
         req = _model_validate(FinancialsRequest, args)
         return run_financials(req), {"cache": "n/a"}
 
+    if name == "get_position_valuation":
+        from api.routers.valuation import get_position_valuation_endpoint
+
+        return get_position_valuation_endpoint(str(args.get("ticker") or "")), {"cache": "n/a"}
+
     if name == "get_dcf_historical":
         from api.routers.dcf import get_dcf_historical
 

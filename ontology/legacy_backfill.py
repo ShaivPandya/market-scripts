@@ -129,7 +129,7 @@ def backfill_runtime_objects(
     """Backfill current legacy runtime objects into temporal ontology versions.
 
     This is cutover-only scaffolding. It reads a legacy SQLite export under the
-    explicit `TALISMAN_ENABLE_LEGACY_BACKFILL` gate and writes first-class
+    explicit `TALISMAN_ENABLE_LEGACY_BACKFILL` gate and writes
     ontology objects with `temporal_confidence='backfilled'`.
     """
 

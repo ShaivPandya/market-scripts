@@ -765,6 +765,8 @@ def _select_tool_names(user_text: str) -> list[str]:
         add("get_fx_dashboard", "get_fx_model_pairs", "run_fx_model")
     if "financials" in text or "income statement" in text or "balance sheet" in text:
         add("get_financials")
+    if "valuation" in text or "multiple" in text or "multiples" in text:
+        add("get_position_valuation")
     if "dcf" in text or "valuation" in text:
         add("get_dcf_historical", "run_dcf_valuation")
     if "chart" in text or "technical analysis" in text:
@@ -788,6 +790,7 @@ def _select_tool_names(user_text: str) -> list[str]:
             "get_dossier",
             "get_thesis",
             "get_financials",
+            "get_position_valuation",
             "get_dcf_historical",
             "run_chart",
             "search_web",

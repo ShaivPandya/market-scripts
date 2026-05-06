@@ -39,6 +39,7 @@ def test_analyzer_request_rejects_all_zero_nested_weight_group():
                     "price_operating_income": 0,
                     "price_fcf": 0,
                     "price_earnings": 0,
+                    "price_book": 0,
                 }
             }
         )
@@ -81,6 +82,7 @@ def test_metric_scores_normalize_across_all_alpha_metrics():
                 "price_operating_income": 0,
                 "price_fcf": 0,
                 "price_earnings": 0,
+                "price_book": 0,
             }
         }
     )
@@ -103,6 +105,7 @@ def test_metric_score_cache_key_is_ratio_based_and_brakes_accept_scores():
                 "price_operating_income": 0,
                 "price_fcf": 0,
                 "price_earnings": 0,
+                "price_book": 0,
             },
             "brakes": {
                 "drawdown_sensitivity": 60,
@@ -122,6 +125,7 @@ def test_metric_score_cache_key_is_ratio_based_and_brakes_accept_scores():
                 "price_operating_income": 0,
                 "price_fcf": 0,
                 "price_earnings": 0,
+                "price_book": 0,
             },
             "brakes": {
                 "drawdown_sensitivity": 0.6,
@@ -141,6 +145,7 @@ def test_valuation_signal_ranks_lower_positive_multiples_higher():
             "price_operating_income": [8.0, 12.0, 20.0],
             "price_fcf": [10.0, 18.0, 25.0],
             "price_earnings": [14.0, 22.0, 35.0],
+            "price_book": [1.5, 3.0, 6.0],
         },
         index=["CHEAP", "MID", "EXPENSIVE"],
     )
@@ -150,8 +155,9 @@ def test_valuation_signal_ranks_lower_positive_multiples_higher():
         {
             "price_sales": 0.25,
             "price_operating_income": 0.25,
-            "price_fcf": 0.25,
-            "price_earnings": 0.25,
+            "price_fcf": 0.20,
+            "price_earnings": 0.20,
+            "price_book": 0.10,
         },
     )
 
@@ -165,6 +171,7 @@ def test_valuation_signal_excludes_invalid_or_missing_multiples():
             "price_operating_income": [8.0, 12.0, None],
             "price_fcf": [10.0, -2.0, None],
             "price_earnings": [14.0, 22.0, None],
+            "price_book": [1.5, 3.0, None],
         },
         index=["A", "B", "NON_EQUITY"],
     )
@@ -174,13 +181,30 @@ def test_valuation_signal_excludes_invalid_or_missing_multiples():
         {
             "price_sales": 0.25,
             "price_operating_income": 0.25,
-            "price_fcf": 0.25,
-            "price_earnings": 0.25,
+            "price_fcf": 0.20,
+            "price_earnings": 0.20,
+            "price_book": 0.10,
         },
     )
 
     assert signal["A"] > signal["B"]
     assert math.isnan(signal["NON_EQUITY"])
+
+
+def test_valuation_signal_uses_profile_weights_when_available():
+    raw = pd.DataFrame(
+        {
+            "price_sales": [1.0, 5.0, 10.0],
+            "price_book": [10.0, 5.0, 1.0],
+            "price_sales_profile_weight": [1.0, 1.0, 1.0],
+            "price_book_profile_weight": [0.0, 0.0, 0.0],
+        },
+        index=["CHEAP_SALES", "MID", "EXPENSIVE_SALES"],
+    )
+
+    signal = compute_valuation_signal(raw, {"price_sales": 0.5, "price_book": 0.5})
+
+    assert signal["CHEAP_SALES"] > signal["MID"] > signal["EXPENSIVE_SALES"]
 
 
 def test_interactive_anchor_overlay_uses_reduced_scoring_universe(monkeypatch):

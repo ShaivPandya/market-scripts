@@ -1397,6 +1397,7 @@ export type AnalyzerScenarioRequest = {
     price_operating_income: number
     price_fcf: number
     price_earnings: number
+    price_book: number
   }
   factor_weights?: {
     quality: number
@@ -1413,6 +1414,7 @@ export type AnalyzerScenarioRequest = {
     price_operating_income: number
     price_fcf: number
     price_earnings: number
+    price_book: number
   }
   brakes?: {
     drawdown_sensitivity: number
@@ -1878,6 +1880,75 @@ export const runFundamentalMomentum = runFundamentalMomentumAsync
 
 export const runFinancials = (body: { ticker: string }) =>
   client.post("/financials", body).then(r => r.data)
+
+export interface ValuationMetric {
+  key: string
+  label: string
+  value: number | null
+  period: string
+  denominator: number | null
+  denominator_label: string
+  status: "ok" | "missing" | "not_meaningful" | "degraded" | string
+  reason?: string | null
+  source: string
+}
+
+export interface PositionValuation {
+  ticker: string
+  company_name?: string
+  as_of?: string
+  source_policy?: string
+  market_data: {
+    market_cap?: number | null
+    currency?: string | null
+    sector?: string | null
+    industry?: string | null
+    current_price?: number | null
+  }
+  profile: {
+    id: string
+    label: string
+    selection_mode: string
+    weights: Record<string, number>
+    effective_weights: Record<string, number>
+    rationale?: string
+    override_profile_id?: string | null
+    options: { id: string; label: string }[]
+  }
+  metrics: Record<string, ValuationMetric>
+  peer_context: {
+    source: string
+    peer_count: number
+    peers: string[]
+    metric_stats: Record<string, {
+      status: string
+      sample_size?: number
+      percentile?: number | null
+      rank?: number | null
+      median?: number | null
+      q1?: number | null
+      q3?: number | null
+    }>
+  }
+  historical_bands: Record<string, {
+    status: string
+    periods?: number
+    median?: number | null
+    q1?: number | null
+    q3?: number | null
+    min?: number | null
+    max?: number | null
+    percentile?: number | null
+  }>
+  composite_score: { value: number | null; status: string; components: Record<string, unknown> }
+  data_quality: { status: string; usable_metric_count: number; warnings: string[]; metric_statuses: Record<string, string> }
+}
+
+export const fetchPositionValuation = (ticker: string) =>
+  client.get(`/valuation/${encodeURIComponent(ticker)}`).then(r => r.data as PositionValuation)
+
+export const updatePositionValuationProfileOverride = (ticker: string, profile_id: string | null) =>
+  client.put(`/valuation/${encodeURIComponent(ticker)}/profile-override`, { profile_id }).then(r => r.data)
 
 // DCF Model
 export const fetchDCFHistorical = (ticker: string) =>
