@@ -1079,7 +1079,6 @@ function ValuationTab({ ticker }: { ticker: string }) {
             <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", valuationStatusClass(data.data_quality?.status))}>
               {data.data_quality?.status?.replace(/_/g, " ") ?? "unknown"}
             </span>
-            <span className="text-xs text-subtle">{data.source_policy?.replace(/_/g, " ")}</span>
           </div>
           <p className="mt-1 text-sm text-muted">
             {data.company_name || data.ticker}
