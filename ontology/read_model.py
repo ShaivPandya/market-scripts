@@ -644,10 +644,7 @@ def _attach_management_quality_children(conn: Any, assessment: dict[str, Any]) -
             limit=200,
             order_by="updated_sort ASC, object_uid ASC",
         )
-        if key == "scorecard":
-            children.sort(key=lambda item: int(_row_dict(item.get("properties_json")).get("ordinal") or 0))
-        elif children:
-            children.sort(key=lambda item: int(_row_dict(item.get("properties_json")).get("ordinal") or 0))
+        children.sort(key=lambda item: int(_row_dict(item.get("properties_json")).get("ordinal") or 0))
         assessment[key] = children
 
 

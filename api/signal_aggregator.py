@@ -96,7 +96,6 @@ _SP500_CACHE_DATA = _SP500_CACHE_DIR / "sp500_prices.pkl"
 _SP500_CACHE_META = _SP500_CACHE_DIR / "sp500_prices_meta.json"
 _SP500_CACHE_TTL_SECONDS = 24 * 60 * 60
 _CLOSE_PROBE_TICKER = "SPY"
-_LAST_SP500_MARKET_CACHE: dict[str, Any] | None = None
 
 
 def _load_sp500_cache() -> tuple[pd.DataFrame | None, dict[str, Any] | None]:
@@ -764,13 +763,6 @@ def _download_sp500_prices_uncached() -> pd.DataFrame:
     return pd.concat(merged, axis=1)
 
 
-def _download_sp500_prices() -> pd.DataFrame:
-    global _LAST_SP500_MARKET_CACHE
-    df, _meta = _download_sp500_prices_with_meta()
-    _LAST_SP500_MARKET_CACHE = _meta
-    return df
-
-
 def _download_sp500_prices_with_meta() -> tuple[pd.DataFrame, dict[str, Any]]:
     """Download S&P 500 prices with smart staleness caching.
 
@@ -905,15 +897,8 @@ def _fetch_current_modules(
     # ── Phase 1: Shared S&P 500 price download (serial) ──────────────
     # This replaces 3 separate concurrent yfinance downloads that caused
     # rate-limiting and 401 errors.
-    global _LAST_SP500_MARKET_CACHE
-    _LAST_SP500_MARKET_CACHE = build_market_cache_metadata(
-        status="unknown",
-        stale=False,
-        reason="S&P 500 price cache metadata unavailable",
-        cache_ttl_seconds=_SP500_CACHE_TTL_SECONDS,
-    )
-    sp500_prices = _download_sp500_prices()
-    sp500_market_cache = dict(_LAST_SP500_MARKET_CACHE)
+    sp500_prices, sp500_market_cache = _download_sp500_prices_with_meta()
+    sp500_market_cache = dict(sp500_market_cache)
     prices_arg = sp500_prices if not sp500_prices.empty else None
     _log.info("Shared S&P 500 download complete (empty=%s)", sp500_prices.empty)
 

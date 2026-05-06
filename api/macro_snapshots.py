@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from cachetools import TTLCache
 
@@ -82,10 +82,13 @@ def get_snapshot_backed_response(
     try:
         if force_refresh:
             return _load_and_write_snapshot(snapshot_key=snapshot_key, load_payload=load_payload)
-        return get_or_set_cached(
-            cache,
-            cache_key,
-            lambda: _load_and_write_snapshot(snapshot_key=snapshot_key, load_payload=load_payload),
+        return cast(
+            dict[str, Any],
+            get_or_set_cached(
+                cache,
+                cache_key,
+                lambda: _load_and_write_snapshot(snapshot_key=snapshot_key, load_payload=load_payload),
+            ),
         )
     except DataFetchError:
         if snapshot is not None:
