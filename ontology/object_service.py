@@ -18,12 +18,17 @@ from ontology.schemas.identity import (
     audit_event_id,
     canonical_ticker,
     catalyst_id,
+    citation_id,
     document_artifact_id,
     evaluation_id,
+    evidence_id,
     executed_action_id,
+    executed_decision_record_id,
     hedge_position_id,
+    instrument_id,
     investment_policy_id,
     investor_id,
+    issuer_id,
     kill_condition_id,
     macro_indicator_id,
     mandate_id,
@@ -60,14 +65,24 @@ _GOVERNED_OBJECT_TYPES = {
     "ActionRun",
     "Approval",
     "AuditEvent",
+    "Catalyst",
+    "Citation",
+    "DocumentArtifact",
+    "Evidence",
     "Evaluation",
     "ExecutedAction",
+    "ExecutedDecisionRecord",
     "HedgePosition",
+    "KillCondition",
     "ObjectVersionRef",
     "PolicyGateResult",
     "Position",
     "Recommendation",
+    "ResearchNote",
+    "Thesis",
+    "ThesisClaim",
     "TradeProposal",
+    "WorkflowArtifact",
     "WatchTrigger",
 }
 _GOVERNED_RELATION_TYPES = {
@@ -75,10 +90,15 @@ _GOVERNED_RELATION_TYPES = {
     "approval_applies_action_run",
     "action_run_produces_executed_action",
     "approval_targets_recommendation",
+    "approval_targets_research_object",
     "approval_targets_trade_proposal",
     "approval_targets_workflow_artifact",
+    "claim_disconfirmed_by_evidence",
+    "claim_supported_by_evidence",
+    "evidence_has_citation",
     "executed_action_mutates_object_version",
-    "recommendation_requires_approval",
+    "executed_decision_applies_approval",
+    "executed_decision_records_action_run",
     "trade_proposal_requires_approval",
 }
 
@@ -368,6 +388,14 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("asset:"):
             return key
         return asset_id(canonical_ticker(props.get("ticker") or key))
+    if object_type == "Instrument":
+        if key.startswith("instrument:"):
+            return key
+        return instrument_id(props.get("instrument_id") or props.get("ticker") or key)
+    if object_type == "Issuer":
+        if key.startswith("issuer:"):
+            return key
+        return issuer_id(props.get("issuer_id") or props.get("name") or props.get("ticker") or key)
     if object_type == "Investor":
         if key.startswith("investor:"):
             return key
@@ -420,6 +448,10 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("executed_action:"):
             return key
         return executed_action_id(props.get("executed_action_id") or key)
+    if object_type == "ExecutedDecisionRecord":
+        if key.startswith("executed_decision_record:"):
+            return key
+        return executed_decision_record_id(props.get("decision_record_id") or key)
     if object_type == "AuditEvent":
         if key.startswith("audit_event:"):
             return key
@@ -465,6 +497,14 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
             return key
         ticker = canonical_ticker(props.get("ticker") or key.split(":", 1)[0])
         return thesis_claim_id(ticker, props.get("legacy_id") or props.get("claim") or key)
+    if object_type == "Evidence":
+        if key.startswith("evidence:"):
+            return key
+        return evidence_id(props.get("evidence_id") or props.get("source_record_id") or key)
+    if object_type == "Citation":
+        if key.startswith("citation:"):
+            return key
+        return citation_id(props.get("citation_id") or props.get("url") or props.get("source_path") or key)
     if object_type == "ActionItem":
         if key.startswith("action_item:"):
             return key

@@ -12,8 +12,14 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
 from api.audit import emit_audit_event
+from ontology.command_service import OntologyCommandContext, OntologyCommandService, OntologyCommandValidationError
+from ontology.object_service import OntologyObjectService
+from ontology.policy import system_actor
 
 logger = logging.getLogger("api.workflow_artifacts")
 
@@ -21,6 +27,60 @@ _ARTIFACTS_PATTERN = re.compile(
     r"```artifacts\s*\n(.*?)```",
     re.DOTALL,
 )
+
+
+@dataclass(frozen=True)
+class ArtifactBinding:
+    action_id: str | None
+    reason: str
+    multiple: bool = False
+    required_keys: tuple[str, ...] = ()
+
+
+_ARTIFACT_BINDINGS: dict[str, ArtifactBinding] = {
+    "evaluation_draft": ArtifactBinding(
+        "save_evaluation", "Workflow-generated evaluation", required_keys=("thesis_status",)
+    ),
+    "action_items": ArtifactBinding(
+        "create_action_item",
+        "Workflow-generated action item",
+        multiple=True,
+        required_keys=("description",),
+    ),
+    "watch_triggers": ArtifactBinding(
+        "create_watch_trigger",
+        "Workflow-generated watch trigger",
+        multiple=True,
+        required_keys=("condition",),
+    ),
+    "catalyst_updates": ArtifactBinding(
+        "update_catalyst_status",
+        "Workflow-suggested catalyst status change",
+        multiple=True,
+    ),
+    "kill_condition_updates": ArtifactBinding(
+        "update_kill_condition_status",
+        "Workflow-suggested kill condition status change",
+        multiple=True,
+    ),
+    "thesis_status_change": ArtifactBinding(
+        "change_thesis_status",
+        "Workflow-suggested thesis status change",
+        required_keys=("new_status",),
+    ),
+    "research_notes": ArtifactBinding(
+        "create_research_note",
+        "Workflow-generated research note",
+        multiple=True,
+        required_keys=("title", "content"),
+    ),
+    "news_digest_deletes": ArtifactBinding(
+        "delete_portfolio_news_digest",
+        "Workflow-suggested news digest delete",
+        multiple=True,
+        required_keys=("digest_id",),
+    ),
+}
 
 
 def extract_artifacts(synthesis_text: str, workflow_name: str) -> dict:
@@ -92,24 +152,91 @@ def persist_artifacts(
     ticker: str | None,
     artifacts: dict,
 ) -> int:
-    """Create pending_approvals for each artifact in the extracted dict.
+    """Create ontology workflow artifacts and pending approvals for governed artifacts.
 
     Returns the number of approvals created.
     """
-    from ontology.action_registry import propose_workflow_artifact, workflow_artifact_keys
+    from ontology.domain_write_service import ontology_primary_writes_enabled
 
+    if not ontology_primary_writes_enabled():
+        from ontology.action_registry import propose_workflow_artifact
+
+        count = 0
+        for artifact_key in _ARTIFACT_BINDINGS:
+            count += propose_workflow_artifact(
+                artifact_key,
+                artifacts.get(artifact_key),
+                run_id=run_id,
+                ticker=ticker,
+            )
+        _emit_persisted_audit(run_id, ticker, artifacts, count)
+        return count
+
+    actor = system_actor("workflow_artifacts")
+    context = OntologyCommandContext(actor=actor, source_type="workflow", source_id=run_id)
+    command_service = OntologyCommandService()
+    object_service = OntologyObjectService()
     count = 0
-    for artifact_key in workflow_artifact_keys():
-        count += propose_workflow_artifact(
-            artifact_key,
-            artifacts.get(artifact_key),
-            run_id=run_id,
-            ticker=ticker,
-        )
+    for artifact_key, binding in _ARTIFACT_BINDINGS.items():
+        for item_index, item in enumerate(_artifact_items(artifacts.get(artifact_key), multiple=binding.multiple)):
+            if binding.required_keys and any(not item.get(key) for key in binding.required_keys):
+                continue
+            artifact_uid = (
+                f"workflow_artifact:{hashlib.sha256(f'{run_id}:{artifact_key}:{item_index}'.encode()).hexdigest()[:24]}"
+            )
+            provenance_id = f"pv:workflow_artifact:{run_id}:{artifact_key}:{item_index}"
+            now = datetime.now(UTC).isoformat()
+            payload = _artifact_payload(artifact_key, item, ticker)
+            object_service.write_object(
+                "WorkflowArtifact",
+                artifact_uid,
+                {
+                    "artifact_id": artifact_uid,
+                    "workflow_run_id": run_id,
+                    "artifact_key": artifact_key,
+                    "artifact_index": item_index,
+                    "artifact_value": item,
+                    "artifact_hash": hashlib.sha256(
+                        json.dumps(item, sort_keys=True, default=str).encode("utf-8")
+                    ).hexdigest(),
+                    "state": "proposed" if binding.action_id else "extracted",
+                    "action_id": binding.action_id,
+                    "provenance_event_id": provenance_id,
+                    "metadata": {"ticker": ticker, "payload": payload},
+                    "ontology_run_id": "operational",
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+            )
+            if not binding.action_id:
+                continue
+            try:
+                command_service.propose_action(
+                    binding.action_id,
+                    payload,
+                    context,
+                    reason=binding.reason,
+                    entity_id=artifact_uid,
+                )
+            except OntologyCommandValidationError:
+                logger.warning(
+                    "Skipping invalid workflow artifact proposal (run_id=%s artifact_key=%s)",
+                    run_id,
+                    artifact_key,
+                    exc_info=True,
+                )
+                continue
+            count += 1
 
     if count:
         logger.info("Persisted %d artifacts as pending approvals (run_id=%s)", count, run_id)
 
+    _emit_persisted_audit(run_id, ticker, artifacts, count)
+    return count
+
+
+def _emit_persisted_audit(run_id: str, ticker: str | None, artifacts: dict, count: int) -> None:
     emit_audit_event(
         "workflow.artifacts.persisted",
         "workflow",
@@ -123,4 +250,22 @@ def persist_artifacts(
         },
         source_lineage={"run_id": run_id, "ticker": ticker},
     )
-    return count
+
+
+def _artifact_items(value: Any, *, multiple: bool) -> list[dict[str, Any]]:
+    if multiple:
+        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    return [value] if isinstance(value, dict) else []
+
+
+def _artifact_payload(artifact_key: str, item: dict[str, Any], ticker: str | None) -> dict[str, Any]:
+    payload = dict(item)
+    if ticker and not payload.get("ticker"):
+        payload["ticker"] = ticker
+    if artifact_key == "thesis_status_change":
+        return {
+            "ticker": str(payload.get("ticker") or ticker or "").strip().upper(),
+            "status": payload.get("new_status") or payload.get("status"),
+            "reason": str(payload.get("reason") or ""),
+        }
+    return payload

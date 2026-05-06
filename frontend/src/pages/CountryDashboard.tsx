@@ -11,6 +11,7 @@ import { ChartTile } from "@/components/shared/ChartTile"
 
 const METRICS = ["Inflation", "Unemployment", "GDP"] as const
 type Metric = typeof METRICS[number]
+const COUNTRY_DASHBOARD_STALE_TIME_MS = 24 * 60 * 60 * 1000
 
 const SOURCE_DISPLAY: Record<string, string> = {
   fred: "FRED", statcan_wds: "Statcan", ons: "ONS",
@@ -23,7 +24,7 @@ export function CountryDashboard() {
   const { data, isLoading, error } = useApiQuery(
     ["country-dashboard", metric],
     () => fetchCountryDashboard(metric),
-    5 * 60 * 1000, // 5m stale time
+    COUNTRY_DASHBOARD_STALE_TIME_MS,
   )
 
   const METRIC_LABEL: Record<Metric, string> = {

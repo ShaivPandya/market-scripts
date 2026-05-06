@@ -206,39 +206,22 @@ cardinality, required properties, and whether the relation is optional.
 
 `action_registry.py` owns two related registries:
 
-- `DomainAction`: typed validation, authorization, approval, handler, audit,
-  output, and effect metadata for state-changing operations.
+- `DomainAction`: typed validation, authorization, approval, output, and effect
+  metadata for state-changing operations.
 - `ToolExposure`: the agent/workflow-safe callable surface derived from action
   bindings, input schemas, access modes, aliases, and ontology policy specs.
 
-Direct execution flow:
+Runtime mutation flow is ontology-primary:
 
-1. `execute_action()` loads the `DomainAction`.
-2. `_audit_start()` creates a `core_db` action run, starts provenance, records
-   input hash and source lineage, and emits a start audit event.
-3. Input is validated and upgraded against the action input schema version.
-4. The actor type is checked against `execute_actor_types`.
-5. The handler mutates the current backing store, such as `portfolio_db`,
-   `thesis_db`, `core_db`, thesis content files, or news digest files.
-6. Post-commit callbacks refresh caches, sync markdown/entities, or reindex
-   retrieval documents.
-7. The action run is completed, result entities are linked in provenance, and a
-   success audit event is emitted.
-8. Validation, authorization, and runtime failures complete the action run as
-   failed or denied and preserve audit/provenance records.
-
-Proposal flow:
-
-1. `propose_action()` validates input and checks `propose_actor_types`.
-2. It requires an `ApprovalSpec`.
-3. It creates a pending approval in `core_db`, records source lineage and input
-   hash, links approval provenance, and completes the proposal action run.
-4. Approval application later executes the real domain action via
-   `resolve_approval` / `core_db.apply_approval_resolution()`.
-
-Workflow artifacts use `propose_workflow_artifact()` to convert persisted
-workflow output into pending approvals with provenance links back to the workflow
-run and artifact.
+1. APIs, agent proposal tools, reports, and workflow artifacts call
+   `OntologyCommandService`.
+2. Proposal paths write `Approval`, `PolicyGateResult` where applicable,
+   provenance, and audit objects through `OntologyObjectService`.
+3. Approval application writes new temporal object versions plus
+   `ActionRun`/`ExecutedDecisionRecord` lineage.
+4. `action_registry.execute_action()`, `action_registry.propose_action()`, and
+   workflow-artifact proposal helpers are fail-closed legacy paths retained only
+   so existing tool metadata can be read during the cutover.
 
 ## Decision Writeback
 

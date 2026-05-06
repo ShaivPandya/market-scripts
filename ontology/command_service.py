@@ -1,0 +1,1030 @@
+"""Ontology-primary command layer for governed investing mutations."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+from ontology.object_service import OntologyObjectService
+from ontology.policy import DEFAULT_ONTOLOGY_POLICY as POLICY
+from ontology.policy import Actor, actor_to_dict, admin_actor, require_allowed
+from ontology.schemas.identity import (
+    action_run_id,
+    approval_id,
+    audit_event_id,
+    executed_decision_record_id,
+    instrument_id,
+    portfolio_id,
+    recommendation_id,
+    research_note_id,
+    thesis_id,
+)
+
+OPERATIONAL_ONTOLOGY_RUN_ID = "operational"
+ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
+FINANCIAL_ACTION_IDS = {"update_portfolio_positions", "update_hedge_positions", "create_recommendation"}
+RESEARCH_ACTION_IDS = {
+    "change_thesis_status",
+    "create_catalyst",
+    "update_catalyst_status",
+    "create_kill_condition",
+    "update_kill_condition_status",
+    "create_thesis_claim",
+    "update_thesis_claim",
+    "save_thesis_content",
+    "save_evaluation",
+    "create_research_note",
+    "create_portfolio_news_digest",
+    "delete_portfolio_news_digest",
+    "create_action_item",
+    "complete_action_item",
+    "dismiss_action_item",
+    "create_watch_trigger",
+    "fire_watch_trigger",
+    "cancel_watch_trigger",
+    "update_watch_trigger_check",
+    "update_watch_trigger_definition",
+}
+
+
+class OntologyCommandError(Exception):
+    message: str
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+class OntologyCommandNotFound(OntologyCommandError):
+    resource: str
+    identifier: str
+
+    def __init__(self, resource: str, identifier: str):
+        super().__init__(f"{resource} not found: {identifier}")
+        self.resource = resource
+        self.identifier = identifier
+
+
+class OntologyCommandConflict(OntologyCommandError):
+    pass
+
+
+class OntologyCommandValidationError(OntologyCommandError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class OntologyCommandContext:
+    actor: Actor
+    source_type: str
+    source_id: str
+
+    @property
+    def actor_type(self) -> str:
+        return self.actor.actor_type
+
+    @property
+    def actor_id(self) -> str:
+        return self.actor.actor_id
+
+
+class OntologyCommandService:
+    """Write approvals, recommendations, research, and position state through ontology only."""
+
+    def __init__(self, object_service: OntologyObjectService | None = None):
+        self.objects = object_service or OntologyObjectService()
+
+    def list_approvals(
+        self,
+        *,
+        actor: Actor | None = None,
+        status: str | None = "pending",
+        ticker: str | None = None,
+        application_status: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        actor = actor or admin_actor(source="ontology_command")
+        require_allowed(POLICY.check_action(actor, "approval.read"))
+        filters: dict[str, Any] = {}
+        if status:
+            filters["status"] = status
+        if ticker:
+            filters["ticker"] = str(ticker).strip().upper()
+        if application_status:
+            filters["application_status"] = application_status
+        rows = self.objects.query_objects("Approval", filters=filters, limit=limit)
+        return [_flatten_object(row) for row in rows]
+
+    def get_approval(self, approval_uid: str, *, actor: Actor | None = None) -> dict[str, Any]:
+        actor = actor or admin_actor(source="ontology_command")
+        require_allowed(POLICY.check_action(actor, "approval.read"))
+        row = self.objects.get_object(_normalize_approval_uid(approval_uid))
+        if not row:
+            raise OntologyCommandNotFound("Approval", approval_uid)
+        return _flatten_object(row)
+
+    def propose_action(
+        self,
+        action_id: str,
+        payload: Mapping[str, Any],
+        context: OntologyCommandContext,
+        *,
+        reason: str | None = None,
+        entity_id: str | None = None,
+        supersedes_approval_id: str | None = None,
+    ) -> dict[str, Any]:
+        require_allowed(POLICY.check_action(context.actor, "approval.create"))
+        action_id = _non_blank(action_id, "action_id")
+        payload_dict = dict(payload)
+        _validate_governed_action(action_id, payload_dict)
+        policy_gate_result = self._evaluate_policy_gate(action_id, payload_dict, context)
+        now = _now()
+        input_hash = _stable_hash({"action_id": action_id, "payload": payload_dict})
+        entity_type = _entity_type_for_action(action_id)
+        normalized_supersedes_id = _normalize_approval_uid(supersedes_approval_id) if supersedes_approval_id else None
+        uid_hash = input_hash
+        if normalized_supersedes_id:
+            uid_hash = _stable_hash(
+                {
+                    "action_id": action_id,
+                    "payload": payload_dict,
+                    "supersedes_approval_id": normalized_supersedes_id,
+                }
+            )
+        approval_uid = approval_id(f"{entity_type}:{uid_hash}")
+        provenance_id = _provenance_id("approval", approval_uid, input_hash)
+        ticker = _ticker_from_payload(payload_dict)
+        target_uid, target_type = _target_for_action(action_id, payload_dict)
+
+        props = {
+            "entity_type": entity_type,
+            "entity_id": entity_id or target_uid,
+            "ticker": ticker,
+            "target_object_uid": target_uid,
+            "target_object_type": target_type,
+            "action_id": action_id,
+            "action_schema_name": action_id,
+            "action_schema_version": 1,
+            "action_input_hash": input_hash,
+            "proposed_change": payload_dict,
+            "reason": reason,
+            "source_type": context.source_type,
+            "source_id": context.source_id,
+            "status": "pending",
+            "resolution_state": "pending",
+            "application_state": "pending",
+            "application_status": "pending",
+            "risk_class": "financial" if action_id in FINANCIAL_ACTION_IDS else "research",
+            "policy_gate_result": policy_gate_result,
+            "policy_gate_result_id": policy_gate_result.get("policy_gate_result_id") if policy_gate_result else None,
+            "policy_gate_decision": policy_gate_result.get("decision") if policy_gate_result else None,
+            "base_state_hash": _base_state_hash(action_id, payload_dict),
+            "requested_by_actor_id": context.actor.actor_id,
+            "created_at": now,
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
+        if normalized_supersedes_id:
+            props["supersedes_approval_id"] = normalized_supersedes_id
+
+        row = self.objects.write_object(
+            "Approval",
+            approval_uid,
+            props,
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        self._write_audit(
+            "approval.created",
+            "approval",
+            "succeeded",
+            actor=context.actor,
+            provenance_id=provenance_id,
+            object_refs=[{"type": "Approval", "id": approval_uid}],
+            after_summary={"action_id": action_id, "target_object_uid": target_uid},
+        )
+        return _flatten_object(row)
+
+    def _evaluate_policy_gate(
+        self,
+        action_id: str,
+        payload: dict[str, Any],
+        context: OntologyCommandContext,
+    ) -> dict[str, Any] | None:
+        if action_id not in FINANCIAL_ACTION_IDS:
+            return None
+        from portfolio.policy_gate import PolicyGateBlockedError, ensure_policy_gate_for_action
+
+        try:
+            gated_payload, gate = ensure_policy_gate_for_action(
+                action_id,
+                payload,
+                context={
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "actor_id": context.actor.actor_id,
+                },
+                object_service=self.objects,
+            )
+        except PolicyGateBlockedError as exc:
+            raise OntologyCommandValidationError(str(exc)) from exc
+        payload.clear()
+        payload.update(gated_payload)
+        return gate
+
+    def resolve_approval(
+        self,
+        approval_uid: str,
+        status: str,
+        note: str | None,
+        context: OntologyCommandContext,
+    ) -> dict[str, Any]:
+        require_allowed(POLICY.check_action(context.actor, "approval.resolve"))
+        approval = self.get_approval(approval_uid, actor=context.actor)
+        current_status = str(approval.get("status") or "pending").lower()
+        if current_status != "pending":
+            raise OntologyCommandConflict(f"Approval {approval['id']} is already {current_status}")
+        status = str(status or "").strip().lower()
+        if status not in {"approved", "rejected"}:
+            raise OntologyCommandValidationError("Approval status must be approved or rejected.")
+        if status == "approved" and not str(note or "").strip():
+            raise OntologyCommandValidationError("Approval note is required.")
+        if status == "approved":
+            _ensure_fresh_base_state(approval)
+
+        now = _now()
+        props = {
+            **{k: v for k, v in approval.items() if not k.startswith("_")},
+            "status": status,
+            "resolution_state": status,
+            "application_state": "pending" if status == "rejected" else "applying",
+            "application_status": "not_applicable" if status == "rejected" else "applying",
+            "resolved_by_actor_id": context.actor.actor_id,
+            "resolved_at": now,
+            "resolved_note": note,
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
+        props.pop("id", None)
+        props.pop("object_uid", None)
+        input_hash = str(approval.get("action_input_hash") or _stable_hash(approval))
+        provenance_id = _provenance_id("approval_resolution", approval["id"], status, input_hash)
+        row = self.objects.write_object(
+            "Approval",
+            approval["id"],
+            props,
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        resolved = _flatten_object(row)
+        if status == "approved":
+            resolved = self._apply_approval(resolved, context, provenance_id=provenance_id, input_hash=input_hash)
+        else:
+            self._write_audit(
+                "approval.rejected",
+                "approval",
+                "succeeded",
+                actor=context.actor,
+                provenance_id=provenance_id,
+                object_refs=[{"type": "Approval", "id": approval["id"]}],
+                after_summary={"note": note},
+            )
+        return resolved
+
+    def _apply_approval(
+        self,
+        approval: dict[str, Any],
+        context: OntologyCommandContext,
+        *,
+        provenance_id: str,
+        input_hash: str,
+    ) -> dict[str, Any]:
+        action_id = _non_blank(approval.get("action_id"), "action_id")
+        payload = _dict(approval.get("proposed_change"))
+        now = _now()
+        run_uid = action_run_id(f"{approval['id']}:{action_id}")
+        run = self.objects.write_object(
+            "ActionRun",
+            run_uid,
+            {
+                "action_id": action_id,
+                "action_schema_name": action_id,
+                "action_schema_version": 1,
+                "actor_type": context.actor.actor_type,
+                "actor_id": context.actor.actor_id,
+                "source_type": context.source_type,
+                "source_id": context.source_id,
+                "approval_id": approval["id"],
+                "input_hash": input_hash,
+                "status": "succeeded",
+                "execution_state": "succeeded",
+                "started_at": now,
+                "completed_at": now,
+                "provenance_event_id": provenance_id,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        version_refs = self._write_action_targets(
+            action_id, payload, context, provenance_id=provenance_id, input_hash=input_hash
+        )
+        decision_uid = executed_decision_record_id(f"{approval['id']}:{run_uid}")
+        decision = self.objects.write_object(
+            "ExecutedDecisionRecord",
+            decision_uid,
+            {
+                "decision_record_id": decision_uid,
+                "approval_id": approval["id"],
+                "action_run_id": run_uid,
+                "action_id": action_id,
+                "target_object_uid": approval.get("target_object_uid"),
+                "target_object_type": approval.get("target_object_type"),
+                "applied_object_versions": version_refs,
+                "applied_at": now,
+                "status": "recorded",
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        self.objects.write_relation(
+            _flatten_object(decision)["id"],
+            approval["id"],
+            "executed_decision_applies_approval",
+            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        self.objects.write_relation(
+            _flatten_object(decision)["id"],
+            _flatten_object(run)["id"],
+            "executed_decision_records_action_run",
+            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        applied_props = {
+            **{k: v for k, v in approval.items() if not k.startswith("_") and k != "id"},
+            "application_state": "applied",
+            "application_status": "applied",
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
+        applied_props.pop("object_uid", None)
+        applied = self.objects.write_object(
+            "Approval",
+            approval["id"],
+            applied_props,
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        self._write_audit(
+            "approval.applied",
+            "approval",
+            "succeeded",
+            actor=context.actor,
+            provenance_id=provenance_id,
+            object_refs=[{"type": "Approval", "id": approval["id"]}, {"type": "ActionRun", "id": run_uid}],
+            after_summary={"mutated_object_versions": version_refs},
+        )
+        return _flatten_object(applied)
+
+    def _write_action_targets(
+        self,
+        action_id: str,
+        payload: Mapping[str, Any],
+        context: OntologyCommandContext,
+        *,
+        provenance_id: str,
+        input_hash: str,
+    ) -> list[dict[str, Any]]:
+        now = _now()
+        actor = actor_to_dict(context.actor)
+        refs: list[dict[str, Any]] = []
+        if action_id == "update_portfolio_positions":
+            self._ensure_default_account_portfolio(context, provenance_id=provenance_id, input_hash=input_hash)
+            for position in _list(payload.get("positions")):
+                row = dict(position)
+                ticker = _non_blank(row.get("ticker"), "ticker").upper()
+                instr_uid = instrument_id(row.get("instrument_id") or ticker)
+                self.objects.write_object(
+                    "Instrument",
+                    instr_uid,
+                    {
+                        "instrument_id": instr_uid,
+                        "ticker": ticker,
+                        "asset_class": row.get("asset") or "security",
+                        "instrument_type": row.get("instrument_type") or "security",
+                        "price_symbol": row.get("price_symbol") or ticker,
+                        "status": "active",
+                        "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                    },
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+                row.setdefault("asset", "equity")
+                row.setdefault("direction", "long")
+                row["account_id"] = str(row.get("account_id") or "default")
+                row["portfolio_id"] = str(row.get("portfolio_id") or "default")
+                row["instrument_id"] = instr_uid
+                row["ontology_run_id"] = OPERATIONAL_ONTOLOGY_RUN_ID
+                pos = self.objects.write_object(
+                    "Position",
+                    ticker,
+                    row,
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+                pos_uid = _flatten_object(pos)["id"]
+                self.objects.write_relation(
+                    portfolio_id(row["portfolio_id"]),
+                    pos_uid,
+                    "portfolio_holds_position",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+                self.objects.write_relation(
+                    pos_uid,
+                    instr_uid,
+                    "position_references_instrument",
+                    {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+                refs.append(_version_ref_from_row(pos))
+            return refs
+        if action_id == "update_hedge_positions":
+            for position in _list(payload.get("positions")):
+                row = dict(position)
+                ticker = _non_blank(row.get("ticker"), "ticker").upper()
+                row.setdefault("asset", "equity")
+                row.setdefault("direction", "short")
+                row["ontology_run_id"] = OPERATIONAL_ONTOLOGY_RUN_ID
+                hedge = self.objects.write_object(
+                    "HedgePosition",
+                    ticker,
+                    row,
+                    now,
+                    actor=actor,
+                    provenance=provenance_id,
+                    input_hash=input_hash,
+                )
+                refs.append(_version_ref_from_row(hedge))
+            return refs
+        if action_id == "change_thesis_status":
+            ticker = _non_blank(payload.get("ticker"), "ticker").upper()
+            thesis_uid = thesis_id(ticker)
+            row = self.objects.write_object(
+                "Thesis",
+                thesis_uid,
+                {
+                    "ticker": ticker,
+                    "status": str(payload.get("new_status") or payload.get("status") or "under_review"),
+                    "created_at": now,
+                    "updated_at": now,
+                    "instrument_id": instrument_id(ticker),
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "create_research_note":
+            note_key = research_note_id(_stable_hash(payload))
+            row = self.objects.write_object(
+                "ResearchNote",
+                note_key,
+                {
+                    "title": _non_blank(payload.get("title"), "title"),
+                    "content": _non_blank(payload.get("content"), "content"),
+                    "ticker": _optional_ticker(payload),
+                    "note_type": str(payload.get("note_type") or "general"),
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "created_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id in {"create_portfolio_news_digest", "delete_portfolio_news_digest"}:
+            digest_id = str(payload.get("digest_id") or payload.get("filename") or _stable_hash(payload))
+            content = str(payload.get("content") or "")
+            status = "deleted" if action_id == "delete_portfolio_news_digest" else "active"
+            row = self.objects.write_object(
+                "DocumentArtifact",
+                f"news_digest:{digest_id}",
+                {
+                    "document_type": "news_digest",
+                    "document_id": digest_id,
+                    "title": str(payload.get("filename") or digest_id),
+                    "content_hash": _stable_hash(content) if content else None,
+                    "status": status,
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "created_at": now,
+                    "deleted_at": now if status == "deleted" else None,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id in {"create_catalyst", "update_catalyst_status"}:
+            ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
+            description = _non_blank(
+                payload.get("description") or payload.get("evidence") or "Catalyst update", "description"
+            )
+            row = self.objects.write_object(
+                "Catalyst",
+                payload.get("catalyst_id") or f"{ticker}:{description}",
+                {
+                    "ticker": ticker,
+                    "name": str(payload.get("name") or description[:120]),
+                    "description": description,
+                    "source": context.source_type,
+                    "category": payload.get("category"),
+                    "target_date": payload.get("target_date"),
+                    "status": payload.get("status") or "active",
+                    "evidence": payload.get("evidence"),
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id in {"create_kill_condition", "update_kill_condition_status"}:
+            ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
+            condition = _non_blank(
+                payload.get("condition") or payload.get("status") or "Kill condition update", "condition"
+            )
+            row = self.objects.write_object(
+                "KillCondition",
+                payload.get("kill_condition_id") or f"{ticker}:{condition}",
+                {
+                    "ticker": ticker,
+                    "condition": condition,
+                    "metric": payload.get("metric"),
+                    "threshold": payload.get("threshold"),
+                    "status": payload.get("status") or "active",
+                    "created_at": now,
+                    "updated_at": now,
+                    "created_by": context.source_type,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id in {"create_thesis_claim", "update_thesis_claim"}:
+            ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
+            claim = _non_blank(payload.get("claim") or payload.get("status") or "Thesis claim update", "claim")
+            row = self.objects.write_object(
+                "ThesisClaim",
+                payload.get("claim_id") or f"{ticker}:{claim}",
+                {
+                    "ticker": ticker,
+                    "claim": claim,
+                    "expected_evidence": payload.get("expected_evidence"),
+                    "disconfirming_evidence": payload.get("disconfirming_evidence"),
+                    "source_requirements": _list(payload.get("source_requirements")),
+                    "cadence": payload.get("cadence"),
+                    "confidence": payload.get("confidence"),
+                    "status": payload.get("status") or "active",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "save_evaluation":
+            ticker = _non_blank(payload.get("ticker"), "ticker").upper()
+            evaluated_at = str(payload.get("evaluated_at") or now)
+            row = self.objects.write_object(
+                "Evaluation",
+                f"{ticker}:{evaluated_at}",
+                {
+                    "ticker": ticker,
+                    "evaluated_at": evaluated_at,
+                    "thesis_status": str(payload.get("thesis_status") or "under_review"),
+                    "technical_read": str(payload.get("technical_read") or "unknown"),
+                    "fundamental_read": str(payload.get("fundamental_read") or "unknown"),
+                    "action": str(payload.get("action") or "review"),
+                    "confidence": str(payload.get("confidence") or "unknown"),
+                    "earnings_note": payload.get("earnings_note"),
+                    "risk_flag": payload.get("risk_flag"),
+                    "key_developments": _list(payload.get("key_developments")),
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "save_thesis_content":
+            ticker = _non_blank(payload.get("ticker"), "ticker").upper()
+            content = _non_blank(payload.get("content"), "content")
+            row = self.objects.write_object(
+                "DocumentArtifact",
+                f"thesis:{ticker}",
+                {
+                    "document_type": "thesis",
+                    "document_id": f"thesis:{ticker}",
+                    "title": f"{ticker} thesis",
+                    "ticker": ticker,
+                    "content_hash": _stable_hash(content),
+                    "status": "active",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "create_action_item":
+            item_key = f"action_item:{_stable_hash(payload)}"
+            row = self.objects.write_object(
+                "ActionItem",
+                item_key,
+                {
+                    "description": _non_blank(payload.get("description"), "description"),
+                    "action_type": str(payload.get("action_type") or "review"),
+                    "ticker": _optional_ticker(payload),
+                    "urgency": str(payload.get("urgency") or "normal"),
+                    "status": "open",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "created_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id in {"complete_action_item", "dismiss_action_item"}:
+            item_key = str(payload.get("item_id") or payload.get("id") or _stable_hash(payload))
+            row = self.objects.write_object(
+                "ActionItem",
+                item_key,
+                {
+                    "description": str(payload.get("description") or f"Action item {item_key}"),
+                    "action_type": str(payload.get("action_type") or "review"),
+                    "ticker": _optional_ticker(payload),
+                    "urgency": str(payload.get("urgency") or "normal"),
+                    "status": "completed" if action_id == "complete_action_item" else "dismissed",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "completed_at": now,
+                    "resolution_note": payload.get("resolution_note"),
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "create_watch_trigger":
+            trigger_key = f"watch_trigger:{_stable_hash(payload)}"
+            row = self.objects.write_object(
+                "WatchTrigger",
+                trigger_key,
+                {
+                    "condition": _non_blank(payload.get("condition"), "condition"),
+                    "trigger_type": str(payload.get("trigger_type") or "custom"),
+                    "ticker": _optional_ticker(payload),
+                    "status": "active",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "expires_at": payload.get("expires_at"),
+                    "definition": _dict(payload.get("definition")),
+                    "created_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id in {
+            "cancel_watch_trigger",
+            "fire_watch_trigger",
+            "update_watch_trigger_check",
+            "update_watch_trigger_definition",
+        }:
+            trigger_key = str(payload.get("trigger_id") or payload.get("id") or _stable_hash(payload))
+            status = "cancelled"
+            if action_id == "fire_watch_trigger":
+                status = "fired"
+            elif action_id in {"update_watch_trigger_check", "update_watch_trigger_definition"}:
+                status = str(payload.get("status") or "active")
+            row = self.objects.write_object(
+                "WatchTrigger",
+                trigger_key,
+                {
+                    "condition": str(payload.get("condition") or f"Watch trigger {trigger_key}"),
+                    "trigger_type": str(payload.get("trigger_type") or "custom"),
+                    "ticker": _optional_ticker(payload),
+                    "status": status,
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "last_result": _dict(payload.get("result")),
+                    "last_evidence": payload.get("evidence"),
+                    "definition": _dict(payload.get("definition")),
+                    "last_checked_at": now if action_id == "update_watch_trigger_check" else None,
+                    "fired_at": now if action_id == "fire_watch_trigger" else None,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "create_recommendation":
+            record = _dict(payload.get("record") or payload)
+            rec_key = recommendation_id(
+                record.get("recommendation_id") or record.get("idempotency_key") or _stable_hash(record)
+            )
+            row = self.objects.write_object(
+                "Recommendation",
+                rec_key,
+                {
+                    "recommendation_id": rec_key,
+                    "source_kind": str(record.get("source_kind") or record.get("report_type") or "agent"),
+                    "report_type": record.get("report_type"),
+                    "as_of": record.get("as_of") or now,
+                    "action": _non_blank(record.get("action"), "action"),
+                    "ticker": _optional_ticker(record),
+                    "instrument": record.get("instrument") or record.get("ticker"),
+                    "decision_state": "approved" if record.get("action") in ACTIONABLE_ACTIONS else "generated",
+                    "approval_required": bool(record.get("action") in ACTIONABLE_ACTIONS),
+                    "confidence": record.get("confidence"),
+                    "horizon": record.get("horizon"),
+                    "rationale_summary": record.get("rationale") or record.get("rationale_summary"),
+                    "source_quality": record.get("critical_data_quality") or record.get("source_quality"),
+                    "payload": record,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        raise OntologyCommandValidationError(f"Ontology-primary action is not implemented: {action_id}")
+
+    def _ensure_default_account_portfolio(
+        self,
+        context: OntologyCommandContext,
+        *,
+        provenance_id: str,
+        input_hash: str,
+    ) -> None:
+        now = _now()
+        actor = actor_to_dict(context.actor)
+        self.objects.write_object(
+            "Account",
+            "default",
+            {
+                "account_id": "default",
+                "investor_id": "owner",
+                "account_type": "single_owner",
+                "tax_status": "unknown",
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        self.objects.write_object(
+            "Portfolio",
+            "default",
+            {
+                "portfolio_id": "default",
+                "account_id": "default",
+                "base_currency": "USD",
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+
+    def _write_audit(
+        self,
+        action_name: str,
+        category: str,
+        status: str,
+        *,
+        actor: Actor,
+        provenance_id: str,
+        object_refs: list[dict[str, Any]],
+        after_summary: dict[str, Any] | None = None,
+    ) -> None:
+        now = _now()
+        event_uid = audit_event_id(f"{action_name}:{_stable_hash(object_refs)}:{now}")
+        self.objects.write_object(
+            "AuditEvent",
+            event_uid,
+            {
+                "event_id": event_uid,
+                "occurred_at": now,
+                "actor_type": actor.actor_type,
+                "actor_id": actor.actor_id,
+                "action_name": action_name,
+                "action_category": category,
+                "status": status,
+                "object_refs": object_refs,
+                "after_summary": after_summary,
+                "lineage_root_id": provenance_id,
+                "retention_class": "audit_7y",
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor_to_dict(actor),
+            provenance=provenance_id,
+        )
+
+
+def _flatten_object(row: Mapping[str, Any]) -> dict[str, Any]:
+    props = dict(row.get("properties") or row.get("properties_json") or {})
+    out = {**props}
+    out["id"] = str(row.get("object_uid") or props.get("id") or "")
+    out["object_uid"] = out["id"]
+    out["_meta"] = dict(row.get("_meta") or {})
+    return out
+
+
+def _version_ref_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    flat = _flatten_object(row)
+    temporal = _dict(flat.get("_meta")).get("temporal") if isinstance(flat.get("_meta"), dict) else {}
+    temporal = _dict(temporal)
+    return {
+        "object_uid": flat["id"],
+        "object_type": row.get("object_type"),
+        "version_id": temporal.get("version_id"),
+        "valid_from": temporal.get("valid_from"),
+    }
+
+
+def _normalize_approval_uid(value: str) -> str:
+    text = _non_blank(value, "approval_id")
+    return text if text.startswith("approval:") else approval_id(text)
+
+
+def _entity_type_for_action(action_id: str) -> str:
+    if action_id in {"update_portfolio_positions", "update_hedge_positions"}:
+        return "portfolio_positions"
+    if action_id == "create_recommendation":
+        return "recommendation"
+    if action_id in RESEARCH_ACTION_IDS:
+        return "research_object"
+    return "ontology_action"
+
+
+def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    ticker = _ticker_from_payload(payload)
+    if action_id == "create_recommendation":
+        record = _dict(payload.get("record") or payload)
+        ticker = _ticker_from_payload(record)
+    if ticker and action_id in RESEARCH_ACTION_IDS:
+        return thesis_id(ticker), "Thesis"
+    if ticker and action_id in {"update_portfolio_positions", "update_hedge_positions"}:
+        return portfolio_id(payload.get("portfolio_id") or "default"), "Portfolio"
+    if action_id == "create_recommendation":
+        rec = _dict(payload.get("record") or payload)
+        return instrument_id(rec.get("instrument") or rec.get("ticker") or _stable_hash(rec)), "Instrument"
+    return None, None
+
+
+def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> None:
+    if action_id not in FINANCIAL_ACTION_IDS | RESEARCH_ACTION_IDS:
+        raise OntologyCommandValidationError(f"Unsupported ontology-primary action: {action_id}")
+    if action_id == "update_portfolio_positions" and not _list(payload.get("positions")):
+        raise OntologyCommandValidationError("At least one position is required.")
+    if action_id == "create_recommendation":
+        record = _dict(payload.get("record") or payload)
+        _non_blank(record.get("action"), "action")
+
+
+def _base_state_hash(action_id: str, payload: Mapping[str, Any]) -> str | None:
+    from portfolio.action_registry import compute_action_base_state_hash
+
+    return compute_action_base_state_hash(action_id, dict(payload))
+
+
+def _ensure_fresh_base_state(approval: Mapping[str, Any]) -> None:
+    stored_hash = str(approval.get("base_state_hash") or "").strip()
+    action_id = str(approval.get("action_id") or "").strip()
+    proposed_change = _dict(approval.get("proposed_change"))
+    if not stored_hash or not action_id or not proposed_change:
+        return
+    current_hash = _base_state_hash(action_id, proposed_change)
+    if current_hash and current_hash != stored_hash:
+        raise OntologyCommandConflict(
+            "Approval base state changed before application; refresh and create a new proposal"
+        )
+
+
+def _provenance_id(*parts: Any) -> str:
+    return "pv:ontology_command:" + _stable_hash(parts)
+
+
+def _stable_hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _non_blank(value: Any, field: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise OntologyCommandValidationError(f"{field} is required.")
+    return text
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _ticker_from_payload(payload: Mapping[str, Any]) -> str | None:
+    return _optional_ticker(payload)
+
+
+def _optional_ticker(payload: Mapping[str, Any]) -> str | None:
+    raw = payload.get("ticker") or payload.get("instrument")
+    text = str(raw or "").strip().upper()
+    return text or None

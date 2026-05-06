@@ -11,8 +11,12 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
-from portfolio import core_db
+from ontology.domain_write_service import ontology_primary_writes_enabled
+from ontology.object_service import OntologyObjectService
+from ontology.policy import system_actor
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 
 def _stable_hash(value: Any) -> str:
@@ -46,6 +50,90 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _object_id(row: dict[str, Any]) -> str:
+    return str(row.get("object_uid") or row.get("id") or row.get("run_id") or "")
+
+
+def _business_key(prefix: str, *parts: Any) -> str:
+    clean = [str(part or "").strip() for part in parts if str(part or "").strip()]
+    return f"{prefix}:{':'.join(clean)}" if clean else f"{prefix}:{uuid4().hex}"
+
+
+def _write_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
+    props = dict(properties)
+    props.setdefault("updated_at", _now_iso())
+    if not ontology_primary_writes_enabled():
+        return _write_legacy_runtime_object(object_type, business_key, props)
+    row = OntologyObjectService().write_object(
+        object_type,
+        business_key,
+        props,
+        props.get("created_at") or props.get("started_at") or props.get("as_of") or props["updated_at"],
+        actor=system_actor("continuous_optimizer"),
+        provenance=f"pv:continuous_optimizer:{object_type}:{business_key}:{_stable_hash(props)}",
+    )
+    payload = dict(row.get("properties") or props)
+    object_uid = str(row.get("object_uid") or business_key)
+    payload["id"] = object_uid
+    payload["object_uid"] = object_uid
+    return payload
+
+
+def _write_legacy_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
+    from portfolio import core_db
+
+    props = dict(properties)
+    if object_type == "OptimizationRun":
+        status = str(props.get("status") or "running")
+        run_id = str(props.get("run_id") or business_key)
+        if status in {"succeeded", "completed"}:
+            return core_db.complete_optimization_run(
+                run_id,
+                summary=_as_dict(props.get("summary")),
+                source_freshness=_as_dict(props.get("source_freshness")),
+                input_hash=props.get("input_hash"),
+                output_hash=props.get("output_hash"),
+            )
+        if status == "failed":
+            return core_db.fail_optimization_run(
+                run_id,
+                str(props.get("error") or "Continuous optimizer failed."),
+                summary=_as_dict(props.get("summary")),
+                source_freshness=_as_dict(props.get("source_freshness")),
+            )
+        return core_db.create_optimization_run(
+            {"id": int(props["mission_id"]), "name": props.get("mission_name")},
+            run_id=run_id,
+            input_hash=props.get("input_hash"),
+        )
+    if object_type == "OptimizationActionSnapshot":
+        return core_db.create_optimization_action_snapshot(props)
+    if object_type == "OptimizationAlert":
+        alert_id = props.get("id")
+        if isinstance(alert_id, int) or (isinstance(alert_id, str) and alert_id.isdigit()):
+            return core_db.update_optimization_alert_links(
+                int(alert_id),
+                approval_id=_optional_int(props.get("approval_id")),
+                action_item_approval_id=_optional_int(props.get("action_item_approval_id")),
+                recommendation_id=_optional_int(props.get("recommendation_id")),
+            )
+        return core_db.create_optimization_alert(props)
+    raise ValueError(f"Unsupported legacy optimizer object type: {object_type}")
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return int(text)
 
 
 def _action_is_hold(action: str) -> bool:
@@ -140,6 +228,7 @@ def _safe_source(name: str, fn) -> tuple[Any, dict[str, Any]]:
 def _collect_context(tickers: list[str]) -> tuple[dict[str, Any], dict[str, Any]]:
     source_freshness: dict[str, Any] = {}
     context: dict[str, Any] = {}
+    reads = OntologyRuntimeReadService()
 
     portfolio_risk, source_freshness["portfolio_risk"] = _safe_source(
         "portfolio_risk",
@@ -157,30 +246,26 @@ def _collect_context(tickers: list[str]) -> tuple[dict[str, Any], dict[str, Any]
     position_risk, source_freshness["position_risk"] = _safe_source("position_risk", _position_risks)
     context["position_risk"] = position_risk or {}
 
-    latest_reports, source_freshness["reports"] = _safe_source("reports", lambda: core_db.get_report_runs(limit=5))
+    latest_reports, source_freshness["reports"] = _safe_source("reports", lambda: reads.report_runs(limit=5))
     context["recent_report_runs"] = latest_reports or []
 
     recommendations, source_freshness["recommendations"] = _safe_source(
-        "recommendations", lambda: core_db.get_recommendations(limit=10)
+        "recommendations", lambda: reads.recommendations(limit=10)
     )
     context["recent_recommendations"] = recommendations or []
 
     triggers, source_freshness["watch_triggers"] = _safe_source(
-        "watch_triggers", lambda: core_db.get_watch_triggers(status="active")
+        "watch_triggers", lambda: reads.watch_triggers(status="active")
     )
     context["active_watch_triggers"] = triggers or []
 
-    workflows, source_freshness["workflow_runs"] = _safe_source(
-        "workflow_runs", lambda: core_db.get_workflow_runs(limit=5)
-    )
+    workflows, source_freshness["workflow_runs"] = _safe_source("workflow_runs", lambda: reads.workflow_runs(limit=5))
     context["recent_workflow_runs"] = workflows or []
 
     def _thesis_pressure() -> list[dict[str, Any]]:
-        from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
-
-        latest = {str(row.get("ticker") or "").upper(): row for row in get_latest_evaluations()}
+        latest = {str(row.get("ticker") or "").upper(): row for row in reads.latest_evaluations()}
         pressure = []
-        for meta in get_all_thesis_meta():
+        for meta in reads.theses(limit=1000):
             ticker = str(meta.get("ticker") or "").upper()
             evaluation = latest.get(ticker)
             if not evaluation:
@@ -229,7 +314,7 @@ def _normalize_state(
 
     base_state = {
         "run_id": run_id,
-        "mission_id": int(mission["id"]),
+        "mission_id": _object_id(mission) or str(mission.get("mission_id") or mission.get("id") or ""),
         "ticker": ticker,
         "asset": action.get("asset"),
         "direction": action.get("direction"),
@@ -280,9 +365,7 @@ def _is_material_change(previous: dict[str, Any] | None, current: dict[str, Any]
     return True
 
 
-def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> int | None:
-    from portfolio.action_registry import ActionContext, propose_action
-
+def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str | None:
     ticker = str(snapshot.get("ticker") or "").upper() or None
     action = str(snapshot.get("action") or "Review")
     severity = str(alert.get("severity") or "normal")
@@ -297,7 +380,29 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> int |
     description = f"Continuous optimizer: {alert['change_summary']}"
     if rationale:
         description = f"{description}\n\nEvidence: {rationale}"
-    approval = propose_action(
+    if not ontology_primary_writes_enabled():
+        from portfolio.action_registry import ActionContext, propose_action
+
+        approval = propose_action(
+            "create_action_item",
+            {
+                "ticker": ticker,
+                "action_type": action_type,
+                "description": description,
+                "urgency": urgency,
+            },
+            ActionContext(
+                actor_type="workflow",
+                source_type="workflow",
+                source_id=str(alert.get("run_id")),
+            ),
+            reason=f"Review continuous optimizer alert {alert['id']}",
+        )
+        return str(approval["id"]) if approval and approval.get("id") is not None else None
+
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+
+    approval = OntologyCommandService().propose_action(
         "create_action_item",
         {
             "ticker": ticker,
@@ -305,16 +410,77 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> int |
             "description": description,
             "urgency": urgency,
         },
-        ActionContext(actor_type="workflow", source_type="workflow", source_id=str(alert.get("run_id"))),
+        OntologyCommandContext(
+            actor=system_actor("continuous_optimizer"),
+            source_type="workflow",
+            source_id=str(alert.get("run_id")),
+        ),
         reason=f"Review continuous optimizer alert {alert['id']}",
-        once=True,
     )
-    return int(approval["id"]) if approval and approval.get("id") is not None else None
+    return str(approval["id"]) if approval and approval.get("id") is not None else None
+
+
+def _get_mission(mission_id: Any) -> dict[str, Any] | None:
+    reads = OntologyRuntimeReadService()
+    if mission_id:
+        key = str(mission_id)
+        for candidate in (key, f"optimizationmission:{key}", f"optimization_mission:{key}"):
+            mission = reads.get(candidate)
+            if mission:
+                return mission
+        matches = reads.list_objects("OptimizationMission", filters={"mission_id": key}, limit=1)
+        if matches:
+            return matches[0]
+        return None
+    active = reads.list_objects("OptimizationMission", filters={"status": "active"}, limit=1)
+    if active:
+        return active[0]
+    missions = reads.list_objects("OptimizationMission", limit=1)
+    return missions[0] if missions else None
+
+
+def _create_run(mission: dict[str, Any], input_hash: str) -> dict[str, Any]:
+    run_uid = _business_key("optimization_run", uuid4().hex)
+    now = _now_iso()
+    mission_uid = _object_id(mission)
+    return _write_runtime_object(
+        "OptimizationRun",
+        run_uid,
+        {
+            "id": run_uid,
+            "run_id": run_uid,
+            "mission_id": mission_uid,
+            "mission_name": mission.get("name"),
+            "status": "running",
+            "started_at": now,
+            "input_hash": input_hash,
+        },
+    )
+
+
+def _previous_successful_run(mission_id: str, current_run_id: str) -> dict[str, Any] | None:
+    runs = OntologyRuntimeReadService().list_objects("OptimizationRun", filters={"mission_id": mission_id}, limit=100)
+    candidates = [
+        run
+        for run in runs
+        if str(run.get("run_id") or run.get("id")) != current_run_id
+        and str(run.get("status") or "") in {"succeeded", "completed"}
+    ]
+    candidates.sort(key=lambda row: str(row.get("completed_at") or row.get("started_at") or ""), reverse=True)
+    return candidates[0] if candidates else None
+
+
+def _snapshots_for_run(run_id: str) -> list[dict[str, Any]]:
+    return OntologyRuntimeReadService().list_objects(
+        "OptimizationActionSnapshot",
+        filters={"run_id": run_id},
+        limit=1000,
+    )
 
 
 def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload or {}
-    mission = core_db.get_optimization_mission(payload.get("mission_id"))
+    mission = _get_mission(payload.get("mission_id"))
     if not mission:
         raise ValueError(f"Unknown optimization mission: {payload.get('mission_id')}")
     if mission.get("status") != "active" and not payload.get("force"):
@@ -327,14 +493,15 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
         }
 
     scenario = _as_dict(mission.get("scenario"))
+    mission_uid = _object_id(mission)
     input_payload = {
-        "mission_id": mission["id"],
-        "mission_name": mission["name"],
+        "mission_id": mission_uid,
+        "mission_name": mission.get("name"),
         "scenario": scenario,
         "source": payload.get("source") or "manual",
     }
     input_hash = _stable_hash(input_payload)
-    run = core_db.create_optimization_run(mission, input_hash=input_hash)
+    run = _create_run(mission, input_hash=input_hash)
     run_id = str(run["run_id"])
 
     source_freshness: dict[str, Any] = {}
@@ -363,28 +530,49 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
         ]
         staging_allowed = not degraded_sources
 
-        previous_run = core_db.get_latest_successful_optimization_run(int(mission["id"]), before_run_id=run_id)
+        previous_run = _previous_successful_run(mission_uid, run_id)
         previous_by_ticker = {
             str(snapshot.get("ticker") or "").upper(): snapshot
-            for snapshot in (
-                core_db.get_optimization_snapshots(run_id=str(previous_run["run_id"])) if previous_run else []
-            )
+            for snapshot in (_snapshots_for_run(str(previous_run["run_id"])) if previous_run else [])
         }
 
         current_snapshots = []
         alerts = []
         for action in actions:
             state = _normalize_state(action, mission=mission, run_id=run_id, context=context)
-            snapshot = core_db.create_optimization_action_snapshot(state)
+            snapshot_uid = _business_key("optimization_action_snapshot", run_id, state.get("ticker") or uuid4().hex)
+            snapshot = _write_runtime_object(
+                "OptimizationActionSnapshot",
+                snapshot_uid,
+                {
+                    **state,
+                    "id": snapshot_uid,
+                    "snapshot_id": snapshot_uid,
+                    "mission_id": mission_uid,
+                    "created_at": _now_iso(),
+                },
+            )
             current_snapshots.append(snapshot)
             previous = previous_by_ticker.get(str(snapshot.get("ticker") or "").upper())
             if previous_run is None:
                 continue
             if not _is_material_change(previous, snapshot, mission.get("thresholds") or {}):
                 continue
-            alert = core_db.create_optimization_alert(
+            alert_uid = _business_key(
+                "optimization_alert",
+                run_id,
+                snapshot.get("ticker") or uuid4().hex,
+                _alert_type(previous, snapshot),
+            )
+            alert = _write_runtime_object(
+                "OptimizationAlert",
+                alert_uid,
                 {
-                    "mission_id": mission["id"],
+                    "id": alert_uid,
+                    "alert_id": alert_uid,
+                    "status": "open",
+                    "created_at": _now_iso(),
+                    "mission_id": mission_uid,
                     "run_id": run_id,
                     "ticker": snapshot.get("ticker"),
                     "alert_type": _alert_type(previous, snapshot),
@@ -400,16 +588,20 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
                             {"reason": "degraded_sources", "sources": degraded_sources} if not staging_allowed else None
                         ),
                     },
-                }
+                },
             )
             if staging_allowed and alert.get("severity") != "low":
                 try:
                     approval_id = _stage_action_item(alert, snapshot)
                     if approval_id is not None:
-                        alert = core_db.update_optimization_alert_links(
-                            int(alert["id"]),
-                            approval_id=approval_id,
-                            action_item_approval_id=approval_id,
+                        alert = _write_runtime_object(
+                            "OptimizationAlert",
+                            str(alert["id"]),
+                            {
+                                **alert,
+                                "approval_id": approval_id,
+                                "action_item_approval_id": approval_id,
+                            },
                         )
                 except Exception as exc:  # noqa: BLE001 - alert remains open even if staging fails.
                     alert.setdefault("evidence", {})["staging_error"] = str(exc) or exc.__class__.__name__
@@ -426,12 +618,18 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
             "staged_approvals": len([alert for alert in alerts if alert.get("action_item_approval_id")]),
         }
         output_hash = _stable_hash({"snapshots": [s.get("state_hash") for s in current_snapshots], "alerts": alerts})
-        completed = core_db.complete_optimization_run(
+        completed = _write_runtime_object(
+            "OptimizationRun",
             run_id,
-            summary=summary,
-            source_freshness=source_freshness,
-            input_hash=input_hash,
-            output_hash=output_hash,
+            {
+                **run,
+                "status": "succeeded",
+                "completed_at": _now_iso(),
+                "summary": summary,
+                "source_freshness": source_freshness,
+                "input_hash": input_hash,
+                "output_hash": output_hash,
+            },
         )
         return {
             "status": "completed",
@@ -449,10 +647,16 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
             "source_quality": "failed",
             "alerts_created": 0,
         }
-        core_db.fail_optimization_run(
+        _write_runtime_object(
+            "OptimizationRun",
             run_id,
-            str(exc) or exc.__class__.__name__,
-            summary=summary,
-            source_freshness=source_freshness,
+            {
+                **run,
+                "status": "failed",
+                "completed_at": _now_iso(),
+                "error": str(exc) or exc.__class__.__name__,
+                "summary": summary,
+                "source_freshness": source_freshness,
+            },
         )
         raise

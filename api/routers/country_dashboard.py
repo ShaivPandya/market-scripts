@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from api.cache import get_or_set_cached, long_cache
+from api.cache import daily_cache, get_or_set_cached
 from api.exceptions import DataFetchError
 from api.serializers import serialize_series, serialize_value
 
@@ -40,4 +40,4 @@ def get_country_dashboard(metric: str = "Inflation"):
             "metric": metric,
         }
 
-    return get_or_set_cached(long_cache, key, loader)
+    return get_or_set_cached(daily_cache, key, loader)

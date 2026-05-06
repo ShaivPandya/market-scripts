@@ -3,7 +3,8 @@ TTL caching for FastAPI route handlers.
 
 TTL cache behaviour:
 - short_cache: 300s  — live market data (prices, breadth, signals)
-- long_cache:  3600s — slow/external scrapes (country dashboard, central banks, industry)
+- long_cache:  3600s — slow/external scrapes (central banks, industry)
+- daily_cache: 86400s — low-frequency macro/reference data (country dashboard)
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ logger = logging.getLogger("uvicorn.error")
 
 short_cache: TTLCache = TTLCache(maxsize=128, ttl=300)
 long_cache: TTLCache = TTLCache(maxsize=128, ttl=3600)
+daily_cache: TTLCache = TTLCache(maxsize=128, ttl=24 * 60 * 60)
 _lock = threading.Lock()
 _singleflight_lock = threading.Lock()
 _MISSING = object()
@@ -63,6 +65,7 @@ def _initialize_disk_cache_root(candidates: list[Path]) -> tuple[Path, bool]:
         try:
             (root / "short").mkdir(parents=True, exist_ok=True)
             (root / "long").mkdir(parents=True, exist_ok=True)
+            (root / "daily").mkdir(parents=True, exist_ok=True)
             return root, True
         except Exception:
             logger.warning(
@@ -79,16 +82,25 @@ if _DISK_CACHE_ENABLED:
     _DISK_CACHE_ROOT, _DISK_CACHE_ENABLED = _initialize_disk_cache_root(_DISK_CACHE_ROOTS)
 
 logger.info(
-    "api cache init: disk_cache=%s root=%s short_ttl=%ss long_ttl=%ss",
+    "api cache init: disk_cache=%s root=%s short_ttl=%ss long_ttl=%ss daily_ttl=%ss",
     "enabled" if _DISK_CACHE_ENABLED else "disabled",
     str(_DISK_CACHE_ROOT),
     getattr(short_cache, "ttl", "n/a"),
     getattr(long_cache, "ttl", "n/a"),
+    getattr(daily_cache, "ttl", "n/a"),
 )
 
 
+def _disk_cache_name(cache: TTLCache) -> str:
+    if cache is short_cache:
+        return "short"
+    if cache is daily_cache:
+        return "daily"
+    return "long"
+
+
 def _disk_cache_path(cache: TTLCache, key: str) -> Path:
-    name = "short" if cache is short_cache else "long"
+    name = _disk_cache_name(cache)
     h = hashlib.sha1(key.encode("utf-8")).hexdigest()
     return _DISK_CACHE_ROOT / name / f"{h}.json"
 
@@ -286,10 +298,11 @@ def invalidate_all() -> None:
     with _lock:
         short_cache.clear()
         long_cache.clear()
+        daily_cache.clear()
     logger.info("api cache invalidate_all: memory cleared")
     try:
         if _DISK_CACHE_ROOT.exists():
-            for sub in ("short", "long"):
+            for sub in ("short", "long", "daily"):
                 d = _DISK_CACHE_ROOT / sub
                 if d.exists():
                     for p in d.glob("*.json"):

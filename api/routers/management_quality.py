@@ -8,8 +8,8 @@ from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
 
 from api.action_execution import stage_api_action
+from api.document_generation_jobs import classify_upload_document, enqueue_document_generation_upload
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
-from api.request_limits import read_upload_file_bytes
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
 from portfolio import management_quality_content
@@ -17,7 +17,6 @@ from portfolio import management_quality_content
 router = APIRouter()
 
 MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
-_MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
 _REQ_SECTIONS = (
     "## Executive Summary",
@@ -253,7 +252,11 @@ def _parse_bullets(text: str) -> list[dict] | None:
         match = re.match(r"^\s*-\s*(?:\*\*(.+?)\*\*:\s*)?(.+)", line)
         if not match:
             continue
-        rows.append({"title": (match.group(1) or "").strip() or None, "text": match.group(2).strip()})
+        title = (match.group(1) or "").strip()
+        body = match.group(2).strip()
+        if not title and body in {"-", "--", "—", "–"}:
+            continue
+        rows.append({"title": title or None, "text": body})
     return rows if rows else None
 
 
@@ -269,6 +272,7 @@ def _parse_setbacks(text: str) -> list[dict] | None:
         if response:
             row["response_rating"] = response.group(1)
             row["response_text"] = (response.group(2) or "").strip() or None
+            row["text"] = body[: response.start()].rstrip(" -—–")
     return rows if rows else None
 
 
@@ -296,27 +300,20 @@ def parse_management_quality_markdown(content: str) -> dict | None:
     return result if any(v is not None for v in result.values()) else None
 
 
-@router.post("/management-quality/generate")
-async def generate_management_quality(
-    ticker: str = Form(...),  # noqa: B008 - FastAPI parameter declaration
-    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
-):
+def generate_management_quality_from_upload_bytes(
+    ticker: str,
+    upload_bytes: bytes,
+    *,
+    content_type: str,
+    filename: str,
+) -> dict:
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
-
-    upload_bytes = await read_upload_file_bytes(file, limit_bytes=MAX_UPLOAD_SIZE_BYTES, limit_label="30 MiB")
     if not upload_bytes:
         raise ValidationError("Uploaded file is empty.")
 
-    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
-    filename = (file.filename or "").lower()
-    has_pdf_type = content_type == "application/pdf" or filename.endswith(".pdf")
-    has_pdf_signature = upload_bytes.startswith(b"%PDF-")
-    has_markdown_type = content_type in _MARKDOWN_CONTENT_TYPES or filename.endswith(".md")
-
-    if has_pdf_type or has_pdf_signature:
-        if not (has_pdf_type and has_pdf_signature):
-            raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+    upload_type = classify_upload_document(upload_bytes, content_type=content_type, filename=filename)
+    if upload_type == "pdf":
         try:
             content = _call_llm_management_quality_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
         except (ValidationError, DataFetchError):
@@ -326,7 +323,7 @@ async def generate_management_quality(
                 source="llm",
                 detail=f"Failed to generate management quality: {_llm_error_message(e)}",
             ) from e
-    elif has_markdown_type:
+    else:
         markdown = _decode_markdown_upload(upload_bytes)
         try:
             content = _call_llm_management_quality_markdown(ticker=normalized_ticker, markdown=markdown)
@@ -337,14 +334,27 @@ async def generate_management_quality(
                 source="llm",
                 detail=f"Failed to generate management quality: {_llm_error_message(e)}",
             ) from e
-    else:
-        raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
     return stage_api_action(
         "save_management_quality_content",
         {"ticker": normalized_ticker, "content": content, "preserve_exact_content": True},
         source_id="management_quality.generate_management_quality",
         reason=f"Generate management quality assessment for {normalized_ticker} from uploaded document",
+    )
+
+
+@router.post("/management-quality/generate")
+async def generate_management_quality(
+    ticker: str = Form(...),  # noqa: B008 - FastAPI parameter declaration
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
+):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+    return await enqueue_document_generation_upload(
+        kind="management_quality",
+        ticker=normalized_ticker,
+        file=file,
+        max_upload_size_bytes=MAX_UPLOAD_SIZE_BYTES,
     )
 
 

@@ -7,9 +7,10 @@ This module owns two related registries:
 * agent tool exposures, which provide the AI-safe callable surface derived from
   typed inputs plus access and approval rules
 
-Despite living under ``ontology/``, state-changing domain actions execute
-against the canonical backing stores in ``portfolio_db``, ``thesis_db``, and
-``core_db``. Ontology snapshots only materialize those writes after ingestion.
+State-changing domain action execution has moved to
+``ontology.command_service.OntologyCommandService``. This registry is retained
+for typed action metadata and agent tool exposure only; legacy execution paths
+are fail-closed unless explicitly enabled for migration repair.
 """
 
 from __future__ import annotations
@@ -85,6 +86,16 @@ class ActionNotFoundError(ActionError):
         super().__init__(f"{resource} '{identifier}' not found", code="not_found")
         self.resource = resource
         self.identifier = identifier
+
+
+def _assert_legacy_action_runtime_enabled() -> None:
+    from ontology.domain_write_service import ontology_primary_writes_enabled
+
+    if ontology_primary_writes_enabled():
+        raise ActionConflictError(
+            "Legacy action_registry execution is disabled in ontology-primary runtime; "
+            "use ontology.command_service.OntologyCommandService instead."
+        )
 
 
 @dataclass(frozen=True)
@@ -811,9 +822,9 @@ def _portfolio_position_changes(
 
 def _portfolio_positions_approval_payload(model: BaseModel) -> dict[str, Any]:
     typed = cast(UpdatePortfolioPositionsInput, model)
-    from portfolio.portfolio_db import get_positions
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    before_rows = get_positions(include_hedges=False)
+    before_rows = OntologyRuntimeReadService().positions(include_hedges=False)
     after_rows = _position_rows(typed)
     return {
         "positions": after_rows,
@@ -842,13 +853,13 @@ def _valuation_quality(rows: Sequence[Mapping[str, Any]]) -> str:
 
 
 def _hash_current_portfolio_book(_model: BaseModel) -> dict[str, Any]:
-    from portfolio.portfolio_db import get_positions
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    return {"positions": get_positions(include_hedges=False)}
+    return {"positions": OntologyRuntimeReadService().positions(include_hedges=False)}
 
 
 def _hash_current_hedge_book(_model: BaseModel) -> dict[str, Any]:
-    from portfolio.portfolio_db import get_hedge_positions
+    from ontology.runtime_read_service import get_hedge_positions
 
     return {"positions": get_hedge_positions()}
 
@@ -865,9 +876,9 @@ def _hash_current_thesis(model: BaseModel) -> dict[str, Any]:
     except Exception:
         result["content_hash"] = None
     try:
-        from portfolio.thesis_db import get_thesis_meta
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        result["meta"] = get_thesis_meta(ticker)
+        result["meta"] = OntologyRuntimeReadService().thesis(ticker)
     except Exception:
         result["meta"] = None
     return result
@@ -889,17 +900,19 @@ def _hash_current_management_quality(model: BaseModel) -> dict[str, Any]:
 
 def _hash_action_item_status(model: BaseModel) -> dict[str, Any]:
     item_id = int(getattr(model, "item_id", 0) or 0)
-    from portfolio.core_db import get_action_items
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    item = next((row for row in get_action_items(status=None) if int(row.get("id") or 0) == item_id), None)
+    item_uid = f"action_item:{item_id}"
+    item = OntologyRuntimeReadService().get(item_uid)
     return {"item_id": item_id, "status": item.get("status") if item else None}
 
 
 def _hash_watch_trigger_status(model: BaseModel) -> dict[str, Any]:
     trigger_id = int(getattr(model, "trigger_id", 0) or 0)
-    from portfolio.core_db import get_watch_triggers
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
-    trigger = next((row for row in get_watch_triggers(status=None) if int(row.get("id") or 0) == trigger_id), None)
+    trigger_uid = f"watch_trigger:{trigger_id}"
+    trigger = OntologyRuntimeReadService().get(trigger_uid)
     return {"trigger_id": trigger_id, "status": trigger.get("status") if trigger else None}
 
 
@@ -1563,6 +1576,7 @@ def execute_action(
     *,
     input_schema_version: int | None = None,
 ) -> ActionResult:
+    _assert_legacy_action_runtime_enabled()
     action = get_action(action_id)
     context = context or ActionContext()
     audit_action = action
@@ -1697,6 +1711,7 @@ def propose_action(
     reason_code: str | None = None,
     supersedes_approval_id: int | None = None,
 ) -> dict[str, Any]:
+    _assert_legacy_action_runtime_enabled()
     action = get_action(action_id)
     approval_spec = action.approval_spec
     proposal_action = DomainAction(
@@ -3151,16 +3166,19 @@ def _proposal_research_note_payload(model: BaseModel) -> dict[str, Any]:
 
 
 def _proposal_news_digest_delete_payload(model: BaseModel) -> dict[str, Any]:
-    from portfolio.news_digests import get_digest
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
     payload = model.model_dump()
     digest_id = str(payload["digest_id"])
-    try:
-        get_digest(digest_id)
-    except FileNotFoundError as exc:
-        raise ActionValidationError(f"Unknown news digest id: {digest_id}") from exc
-    except ValueError as exc:
-        raise ActionValidationError(str(exc) or "Invalid news digest id") from exc
+    reads = OntologyRuntimeReadService()
+    digest = reads.get(f"document_artifact:news_digest:{digest_id}") or next(
+        iter(
+            reads.list_objects("DocumentArtifact", filters={"document_type": "news_digest", "document_id": digest_id})
+        ),
+        None,
+    )
+    if not digest:
+        raise ActionValidationError(f"Unknown news digest id: {digest_id}")
     return {"digest_id": payload["digest_id"]}
 
 
@@ -3601,6 +3619,7 @@ def validate_tool_input(tool_name: str, raw_input: dict[str, Any]) -> BaseModel:
 
 
 def propose_action_from_tool(tool_name: str, raw_input: dict[str, Any], context: ActionContext) -> dict[str, Any]:
+    _assert_legacy_action_runtime_enabled()
     exposure = get_tool_exposure(tool_name)
     if exposure.access_mode != "proposal" or not exposure.action_id or exposure.to_action_input is None:
         raise ActionValidationError(f"Tool {tool_name} is not a proposal tool")
@@ -3627,6 +3646,7 @@ def workflow_artifact_keys() -> set[str]:
 
 
 def propose_workflow_artifact(artifact_key: str, artifact_value: Any, *, run_id: str, ticker: str | None) -> int:
+    _assert_legacy_action_runtime_enabled()
     binding = _WORKFLOW_ARTIFACT_BINDINGS.get(artifact_key)
     if binding is None:
         return 0

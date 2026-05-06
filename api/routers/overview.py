@@ -8,8 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
 
+from api.document_generation_jobs import classify_upload_document, enqueue_document_generation_upload
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
-from api.request_limits import read_upload_file_bytes
 from api.routers.portfolio_edit import _TICKER_RE
 from api.state_storage import exists_text, read_text, write_text
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
@@ -20,7 +20,6 @@ router = APIRouter()
 OVERVIEWS_DIR = PROJECT_ROOT / "investment_overviews"
 OVERVIEWS_GCS_PREFIX = "live/overviews"
 MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
-_MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
 _REQ_SECTIONS = ("## Financials", "## Sensitivity to Extrinsic Factors", "## Industry")
 
@@ -399,39 +398,27 @@ def _call_llm_overview_markdown(*, ticker: str, markdown: str) -> str:
     return _finish_llm_overview(ticker, generated)
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-
-@router.post("/overview/generate")
-async def generate_overview(
-    ticker: str = Form(...),  # noqa: B008 - FastAPI parameter declaration
-    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
-):
+def generate_overview_from_upload_bytes(
+    ticker: str,
+    upload_bytes: bytes,
+    *,
+    content_type: str,
+    filename: str,
+) -> dict:
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
-
-    upload_bytes = await read_upload_file_bytes(file, limit_bytes=MAX_UPLOAD_SIZE_BYTES, limit_label="30 MiB")
     if not upload_bytes:
         raise ValidationError("Uploaded file is empty.")
 
-    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
-    filename = (file.filename or "").lower()
-    has_pdf_type = content_type == "application/pdf" or filename.endswith(".pdf")
-    has_pdf_signature = upload_bytes.startswith(b"%PDF-")
-    has_markdown_type = content_type in _MARKDOWN_CONTENT_TYPES or filename.endswith(".md")
-
-    if has_pdf_type or has_pdf_signature:
-        if not (has_pdf_type and has_pdf_signature):
-            raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+    upload_type = classify_upload_document(upload_bytes, content_type=content_type, filename=filename)
+    if upload_type == "pdf":
         try:
             content = _call_llm_overview_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
         except (ValidationError, DataFetchError):
             raise
         except Exception as e:
             raise DataFetchError(source="llm", detail=f"Failed to generate overview: {e}") from e
-    elif has_markdown_type:
+    else:
         markdown = _decode_markdown_upload(upload_bytes)
         try:
             content = _call_llm_overview_markdown(ticker=normalized_ticker, markdown=markdown)
@@ -439,8 +426,6 @@ async def generate_overview(
             raise
         except Exception as e:
             raise DataFetchError(source="llm", detail=f"Failed to generate overview: {e}") from e
-    else:
-        raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
 
     try:
         source_path = _write_overview(normalized_ticker, content)
@@ -464,6 +449,26 @@ async def generate_overview(
         pass
 
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/overview/generate")
+async def generate_overview(
+    ticker: str = Form(...),  # noqa: B008 - FastAPI parameter declaration
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
+):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+    return await enqueue_document_generation_upload(
+        kind="overview",
+        ticker=normalized_ticker,
+        file=file,
+        max_upload_size_bytes=MAX_UPLOAD_SIZE_BYTES,
+    )
 
 
 class SaveOverviewRequest(BaseModel):

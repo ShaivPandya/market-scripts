@@ -115,6 +115,7 @@ def ensure_policy_gate_for_action(
     payload: Mapping[str, Any],
     *,
     context: Mapping[str, Any] | None = None,
+    object_service: Any | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Attach or reuse a policy gate result for a financial action payload."""
     mutable = deepcopy(dict(payload))
@@ -130,31 +131,36 @@ def ensure_policy_gate_for_action(
 
     gate = evaluate_policy_gate(action_id, mutable, context=context)
     from api.provenance import stable_hash
-    from portfolio import core_db
+    from ontology.domain_write_service import ontology_primary_writes_enabled
+    from ontology.schemas.identity import policy_gate_result_id
 
     target_id = stable_hash({"action_id": action_id, "payload": mutable})
-    existing_rows = core_db.list_policy_gate_results(
-        action_id=action_id,
-        target_type="action_payload",
-        target_id=target_id,
-        limit=1,
-    )
-    if existing_rows:
-        persisted_gate = existing_rows[0].get("result_json")
-        if isinstance(persisted_gate, Mapping):
-            gate = normalize_policy_gate_result(persisted_gate)
-        gate["policy_gate_result_id"] = existing_rows[0]["id"]
-    else:
-        persisted = core_db.create_policy_gate_result(
-            gate,
-            action_id=action_id,
-            source_type=str((context or {}).get("source_type") or "policy_gate"),
-            source_id=str((context or {}).get("source_id") or (context or {}).get("proposal_action_run_id") or ""),
-            target_type="action_payload",
-            target_id=target_id,
-            payload=mutable,
+    gate_key = f"{action_id}:action_payload:{target_id}"
+    gate_uid = policy_gate_result_id(gate_key)
+    if object_service is not None or ontology_primary_writes_enabled():
+        from ontology.object_service import OntologyObjectService
+        from ontology.policy import actor_to_dict, system_actor
+
+        actor = system_actor("policy_gate")
+        objects = object_service or OntologyObjectService()
+        objects.write_object(
+            "PolicyGateResult",
+            gate_uid,
+            {
+                "gate_result_id": gate_key,
+                "decision": gate.get("decision") or "review_required",
+                "review_required": bool(gate.get("review_required")),
+                "failure_reasons": gate.get("failure_reasons", []),
+                "warnings": gate.get("warnings", []),
+                "evaluated_at": datetime.now(UTC).isoformat(),
+                "ontology_run_id": "operational",
+            },
+            datetime.now(UTC).isoformat(),
+            actor=actor_to_dict(actor),
+            provenance=f"pv:policy_gate:{target_id}",
+            input_hash=target_id,
         )
-        gate["policy_gate_result_id"] = persisted["id"]
+    gate["policy_gate_result_id"] = gate_uid
     if gate["decision"] == "blocked":
         raise PolicyGateBlockedError(_gate_summary(gate))
     return _attach_gate_to_payload(action_id, mutable, gate), gate

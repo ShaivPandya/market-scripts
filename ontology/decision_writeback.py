@@ -479,11 +479,13 @@ class DecisionOntologyWriteback:
         gate_id = record.get("policy_gate_result_id")
         if isinstance(gate, Mapping) or gate_id:
             gate_key = str(gate_id or _hash_value(gate or record))
+            if gate_key.startswith("policy_gate_result:"):
+                gate_key = gate_key.split(":", 1)[1]
             gate_payload = gate if isinstance(gate, Mapping) else {}
             rows.append(
                 self.object_service.write_object(
                     "PolicyGateResult",
-                    gate_key,
+                    policy_gate_result_id(gate_key),
                     {
                         "gate_result_id": gate_key,
                         "decision": str(gate_payload.get("decision") or record.get("policy_gate_decision") or "warn"),

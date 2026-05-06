@@ -1726,7 +1726,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
                 synthesis_text = "".join(synthesis_chunks)
                 try:
                     from api.workflow_artifacts import extract_artifacts, persist_artifacts
-                    from portfolio.core_db import complete_workflow_run
+                    from api.workflows import complete_workflow_run
 
                     artifacts = extract_artifacts(synthesis_text, workflow_name)
                     complete_workflow_run(run_id, synthesis_text, artifacts, sections)
@@ -1756,7 +1756,7 @@ def agent_chat(req: AgentChatRequest, actor: ActorDep):
             except Exception as exc:
                 logger.exception("Workflow %s failed", workflow_name)
                 try:
-                    from portfolio.core_db import fail_workflow_run
+                    from api.workflows import fail_workflow_run
 
                     fail_workflow_run(run_id, str(exc))
                 except Exception:
@@ -2566,7 +2566,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
                 synthesis_text = "".join(synthesis_chunks)
                 try:
                     from api.workflow_artifacts import extract_artifacts, persist_artifacts
-                    from portfolio.core_db import complete_workflow_run
+                    from api.workflows import complete_workflow_run
 
                     artifacts = extract_artifacts(synthesis_text, workflow_name)
                     complete_workflow_run(run_id, synthesis_text, artifacts, sections)
@@ -2613,7 +2613,7 @@ def agent_chat_v2(req: AgentChatRequestV2, actor: ActorDep):
             except Exception as exc:
                 logger.exception("Workflow %s failed (v2)", workflow_name)
                 try:
-                    from portfolio.core_db import fail_workflow_run
+                    from api.workflows import fail_workflow_run
 
                     fail_workflow_run(run_id, str(exc))
                 except Exception:

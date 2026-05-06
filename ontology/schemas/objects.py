@@ -48,6 +48,9 @@ class PositionV1(OntologySchemaBase):
     ticker: NonBlankStr
     asset: NonBlankStr
     direction: NonBlankStr
+    account_id: str | None = None
+    portfolio_id: str | None = None
+    instrument_id: str | None = None
     timeframe: NonBlankStr = "operational"
     latest_price: float | None = None
     as_of: str | None = None
@@ -83,7 +86,7 @@ class PositionV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("as_of", "price_symbol", mode="before")
+    @field_validator("account_id", "portfolio_id", "instrument_id", "as_of", "price_symbol", mode="before")
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -114,6 +117,83 @@ class AssetV1(OntologySchemaBase):
         return clean_lower_text(value)
 
     @field_validator("name", "currency", "exchange", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class InstrumentV1(OntologySchemaBase):
+    instrument_id: NonBlankStr
+    ticker: str | None = None
+    name: str | None = None
+    asset_class: NonBlankStr = "security"
+    instrument_type: NonBlankStr = "security"
+    issuer_id: str | None = None
+    currency: str | None = None
+    exchange: str | None = None
+    country: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    price_symbol: str | None = None
+    status: NonBlankStr = "active"
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("instrument_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("asset_class", "instrument_type", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "name",
+        "issuer_id",
+        "currency",
+        "exchange",
+        "country",
+        "sector",
+        "industry",
+        "price_symbol",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class IssuerV1(OntologySchemaBase):
+    issuer_id: NonBlankStr
+    name: NonBlankStr
+    ticker: str | None = None
+    country: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("issuer_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("name", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("country", "sector", "industry", mode="before")
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -380,8 +460,8 @@ class TradeProposalV1(OntologySchemaBase):
     proposed_change: dict[str, Any] = Field(default_factory=dict)
     sizing_summary: dict[str, Any] = Field(default_factory=dict)
     risk_summary: dict[str, Any] = Field(default_factory=dict)
-    policy_gate_result_id: int | None = None
-    approval_id: int | None = None
+    policy_gate_result_id: str | None = None
+    approval_id: str | None = None
     decision_state: TradeProposalDecisionState = "staged"
     expires_at: str | None = None
     status: NonBlankStr = "staged"
@@ -397,7 +477,15 @@ class TradeProposalV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("recommendation_id", "account_id", "portfolio_id", "expires_at", mode="before")
+    @field_validator(
+        "recommendation_id",
+        "account_id",
+        "portfolio_id",
+        "policy_gate_result_id",
+        "approval_id",
+        "expires_at",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -418,6 +506,7 @@ class SourceRecordV1(OntologySchemaBase):
     load_time: str | None = None
     artifact_uri: str | None = None
     provenance_event_id: str | None = None
+    metadata: dict[str, Any] | None = None
     ontology_run_id: NonBlankStr = "operational"
 
     @field_validator(
@@ -466,11 +555,41 @@ class ObjectVersionRefV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class ExecutedDecisionRecordV1(OntologySchemaBase):
+    decision_record_id: NonBlankStr
+    approval_id: str | None = None
+    action_run_id: str | None = None
+    action_id: NonBlankStr
+    target_object_uid: str | None = None
+    target_object_type: str | None = None
+    applied_object_versions: list[dict[str, Any]] = Field(default_factory=list)
+    applied_at: str | None = None
+    status: NonBlankStr = "recorded"
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("decision_record_id", "action_id", "status", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "approval_id",
+        "action_run_id",
+        "target_object_uid",
+        "target_object_type",
+        "applied_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class ExecutedActionV1(OntologySchemaBase):
     executed_action_id: NonBlankStr
     action_id: NonBlankStr
-    approval_id: int | None = None
-    action_run_id: int | None = None
+    approval_id: str | None = None
+    action_run_id: str | None = None
     execution_mode: NonBlankStr = "approval_required"
     produced_object_versions: list[dict[str, Any]] = Field(default_factory=list)
     mutated_object_versions: list[dict[str, Any]] = Field(default_factory=list)
@@ -483,7 +602,7 @@ class ExecutedActionV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("applied_at", mode="before")
+    @field_validator("approval_id", "action_run_id", "applied_at", mode="before")
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -595,6 +714,7 @@ class ThesisV1(OntologySchemaBase):
     status: ThesisStatus
     created_at: NonBlankStr
     updated_at: NonBlankStr
+    instrument_id: str | None = None
     ontology_run_id: NonBlankStr
 
     @field_validator("ticker", mode="before")
@@ -606,6 +726,11 @@ class ThesisV1(OntologySchemaBase):
     @classmethod
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
+
+    @field_validator("instrument_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
 
 
 class EvaluationV1(OntologySchemaBase):
@@ -785,6 +910,74 @@ class ThesisClaimV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class EvidenceV1(OntologySchemaBase):
+    evidence_id: NonBlankStr
+    evidence_type: NonBlankStr = "source_excerpt"
+    title: str | None = None
+    summary: str | None = None
+    source_record_id: str | None = None
+    document_artifact_id: str | None = None
+    object_uid: str | None = None
+    object_version_id: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    observed_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("evidence_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("evidence_type", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "title",
+        "summary",
+        "source_record_id",
+        "document_artifact_id",
+        "object_uid",
+        "object_version_id",
+        "observed_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class CitationV1(OntologySchemaBase):
+    citation_id: NonBlankStr
+    source_record_id: str | None = None
+    document_artifact_id: str | None = None
+    title: str | None = None
+    url: str | None = None
+    source_path: str | None = None
+    span_start: int | None = Field(default=None, ge=0)
+    span_end: int | None = Field(default=None, ge=0)
+    quote_hash: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("citation_id", mode="before")
+    @classmethod
+    def _id(cls, value: object) -> str:
+        return slug(value)
+
+    @field_validator("ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "source_record_id", "document_artifact_id", "title", "url", "source_path", "quote_hash", mode="before"
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class ActionItemV1(OntologySchemaBase):
     description: NonBlankStr
     action_type: NonBlankStr = "review"
@@ -887,7 +1080,7 @@ class ResearchNoteV1(OntologySchemaBase):
 class ApprovalV1(OntologySchemaBase):
     legacy_id: int | None = None
     entity_type: NonBlankStr
-    entity_id: int | None = None
+    entity_id: str | None = None
     ticker: str | None = None
     target_object_uid: str | None = None
     target_object_type: str | None = None
@@ -904,7 +1097,11 @@ class ApprovalV1(OntologySchemaBase):
     application_state: ApprovalApplicationState = "pending"
     application_status: str | None = None
     risk_class: str | None = None
+    policy_gate_result: dict[str, Any] | None = None
+    policy_gate_result_id: str | None = None
+    policy_gate_decision: str | None = None
     base_state_hash: str | None = None
+    supersedes_approval_id: str | None = None
     requested_by_actor_id: str | None = None
     resolved_by_actor_id: str | None = None
     created_at: str | None = None
@@ -926,6 +1123,7 @@ class ApprovalV1(OntologySchemaBase):
         "action_id",
         "action_schema_name",
         "action_input_hash",
+        "entity_id",
         "target_object_uid",
         "target_object_type",
         "reason",
@@ -933,7 +1131,10 @@ class ApprovalV1(OntologySchemaBase):
         "source_id",
         "application_status",
         "risk_class",
+        "policy_gate_result_id",
+        "policy_gate_decision",
         "base_state_hash",
+        "supersedes_approval_id",
         "requested_by_actor_id",
         "resolved_by_actor_id",
         "created_at",
@@ -955,8 +1156,8 @@ class ActionRunV1(OntologySchemaBase):
     actor_id: str | None = None
     source_type: str | None = None
     source_id: str | None = None
-    approval_id: int | None = None
-    parent_action_run_id: int | None = None
+    approval_id: str | None = None
+    parent_action_run_id: str | None = None
     input_hash: str | None = None
     output_hash: str | None = None
     status: NonBlankStr = "running"
@@ -977,6 +1178,8 @@ class ActionRunV1(OntologySchemaBase):
         "actor_id",
         "source_type",
         "source_id",
+        "approval_id",
+        "parent_action_run_id",
         "input_hash",
         "output_hash",
         "error",
@@ -992,14 +1195,14 @@ class ActionRunV1(OntologySchemaBase):
 
 class ActionEventV1(OntologySchemaBase):
     legacy_id: int | None = None
-    action_run_id: int
+    action_run_id: str
     event_type: NonBlankStr
     message: str | None = None
     payload: dict[str, Any] | None = None
     created_at: str | None = None
     ontology_run_id: NonBlankStr = "operational"
 
-    @field_validator("event_type", mode="before")
+    @field_validator("action_run_id", "event_type", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
@@ -1049,8 +1252,9 @@ class WorkflowArtifactV1(OntologySchemaBase):
     artifact_hash: str | None = None
     state: WorkflowArtifactState = "extracted"
     action_id: str | None = None
-    approval_id: int | None = None
+    approval_id: str | None = None
     provenance_event_id: str | None = None
+    metadata: dict[str, Any] | None = None
     ontology_run_id: NonBlankStr = "operational"
 
     @field_validator("artifact_id", "artifact_key", mode="before")
@@ -1058,7 +1262,9 @@ class WorkflowArtifactV1(OntologySchemaBase):
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator("workflow_run_id", "artifact_hash", "action_id", "provenance_event_id", mode="before")
+    @field_validator(
+        "workflow_run_id", "artifact_hash", "action_id", "approval_id", "provenance_event_id", mode="before"
+    )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -1076,7 +1282,7 @@ class RecommendationV1(OntologySchemaBase):
     instrument: str | None = None
     decision_state: RecommendationDecisionState = "generated"
     status: str | None = None
-    approval_id: int | None = None
+    approval_id: str | None = None
     approval_required: bool = False
     approval_status: str | None = None
     outcome_status: str | None = None
@@ -1084,7 +1290,7 @@ class RecommendationV1(OntologySchemaBase):
     account_id: str | None = None
     portfolio_id: str | None = None
     policy_id: str | None = None
-    policy_gate_result_id: int | None = None
+    policy_gate_result_id: str | None = None
     policy_gate_decision: str | None = None
     policy_gate_review_required: bool = False
     confidence: float | None = Field(default=None, ge=0, le=1)
@@ -1112,12 +1318,14 @@ class RecommendationV1(OntologySchemaBase):
         "as_of",
         "instrument",
         "status",
+        "approval_id",
         "approval_status",
         "outcome_status",
         "supersedes_recommendation_id",
         "account_id",
         "portfolio_id",
         "policy_id",
+        "policy_gate_result_id",
         "policy_gate_decision",
         "horizon",
         "rationale_summary",
@@ -1207,6 +1415,8 @@ class DocumentArtifactV1(OntologySchemaBase):
 OntologyObjectV1 = (
     PositionV1
     | AssetV1
+    | InstrumentV1
+    | IssuerV1
     | InvestorV1
     | AccountV1
     | PortfolioV1
@@ -1220,6 +1430,7 @@ OntologyObjectV1 = (
     | SourceRecordV1
     | ObjectVersionRefV1
     | ExecutedActionV1
+    | ExecutedDecisionRecordV1
     | AuditEventV1
     | SectorV1
     | MacroIndicatorV1
@@ -1230,6 +1441,8 @@ OntologyObjectV1 = (
     | HedgePositionV1
     | KillConditionV1
     | ThesisClaimV1
+    | EvidenceV1
+    | CitationV1
     | ActionItemV1
     | WatchTriggerV1
     | ResearchNoteV1

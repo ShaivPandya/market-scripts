@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
+from ontology.runtime_read_service import OntologyRuntimeReadService
 from ontology.sources.base import (
     as_dict,
     build_source_result,
@@ -28,9 +30,24 @@ class PortfolioAdapter:
         self.parameters = {"timeframe": timeframe, "all_timeframes": False}
 
     def fetch(self) -> dict[str, Any]:
-        from portfolio.portfolio_dashboard import get_data
-
-        return get_data(timeframe=self.timeframe, all_timeframes=False)
+        positions = OntologyRuntimeReadService().positions(include_hedges=True)
+        timestamp = datetime.now(UTC).isoformat()
+        metadata = {}
+        position_order = []
+        for row in positions:
+            ticker = str(row.get("ticker") or row.get("symbol") or "").strip().upper()
+            if not ticker:
+                continue
+            position_order.append(ticker)
+            metadata[ticker] = dict(row)
+        return {
+            "positions": {ticker: [] for ticker in position_order},
+            "metadata": metadata,
+            "timeframe": self.timeframe,
+            "timestamp": timestamp,
+            "position_order": position_order,
+            "analytics": {"source": "ontology"},
+        }
 
     def normalize(self, raw: Any):
         if not isinstance(raw, dict):

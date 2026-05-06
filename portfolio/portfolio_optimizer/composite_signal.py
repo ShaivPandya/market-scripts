@@ -36,7 +36,7 @@ LOGGER = logging.getLogger(__name__)
 # -----------------------------
 # Configuration
 # -----------------------------
-from portfolio.portfolio_db import get_positions_df as _get_positions_df
+from ontology.runtime_read_service import get_positions_df as _get_positions_df
 from portfolio.portfolio_optimizer.signal_fetchers import (
     fetch_eps_momentum_batch,
     fetch_etf_lookthrough_fundamentals_batch,

@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.action_execution import stage_api_action
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -32,9 +33,7 @@ def list_triggers(
     status: str | None = None,
     ticker: str | None = None,
 ):
-    from portfolio.core_db import get_watch_triggers
-
-    triggers = get_watch_triggers(status=status, ticker=ticker)
+    triggers = OntologyRuntimeReadService().watch_triggers(status=status, ticker=ticker)
     return {"triggers": triggers, "count": len(triggers)}
 
 
@@ -51,7 +50,7 @@ def create_trigger(body: CreateTriggerRequest):
 
 
 @router.put("/triggers/{trigger_id}/fire")
-def fire_trigger(trigger_id: int, body: TriggerMutationRequest | None = None):
+def fire_trigger(trigger_id: str, body: TriggerMutationRequest | None = None):
     return stage_api_action(
         "fire_watch_trigger",
         {"trigger_id": trigger_id},
@@ -64,7 +63,7 @@ def fire_trigger(trigger_id: int, body: TriggerMutationRequest | None = None):
 
 
 @router.put("/triggers/{trigger_id}/cancel")
-def cancel_trigger(trigger_id: int, body: TriggerMutationRequest | None = None):
+def cancel_trigger(trigger_id: str, body: TriggerMutationRequest | None = None):
     return stage_api_action(
         "cancel_watch_trigger",
         {"trigger_id": trigger_id},

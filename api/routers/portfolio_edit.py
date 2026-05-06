@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from api.action_execution import stage_api_action
 from api.exceptions import AppError, DataFetchError
-from portfolio.action_registry import ActionConflictError, ActionValidationError
+from ontology.runtime_read_service import OntologyRuntimeReadService
 from portfolio.instruments import (
     default_contract_multiplier,
     is_continuous_future_symbol,
@@ -77,9 +77,7 @@ class PortfolioUpdateRequest(BaseModel):
 @router.get("/portfolio-positions")
 def get_portfolio_positions(include_hedges: bool = False):
     try:
-        from portfolio.portfolio_db import get_positions
-
-        return {"positions": get_positions(include_hedges=include_hedges)}
+        return {"positions": OntologyRuntimeReadService().positions(include_hedges=include_hedges)}
     except Exception as e:
         raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
 
@@ -98,14 +96,17 @@ def update_portfolio_positions(req: PortfolioUpdateRequest):
         )
     except (HTTPException, AppError):
         raise
-    except ActionValidationError as e:
-        raise HTTPException(status_code=400, detail=e.message) from e
-    except ActionConflictError as e:
-        raise HTTPException(status_code=409, detail=e.message) from e
     except Exception as e:
         raise DataFetchError(source="portfolio_positions", detail=str(e)) from e
 
     return result
+
+
+def _flatten_object(row: dict) -> dict:
+    props = dict(row.get("properties") or row.get("properties_json") or {})
+    props["id"] = str(row.get("object_uid") or props.get("id") or "")
+    props["object_uid"] = props["id"]
+    return props
 
 
 # ---------------------------------------------------------------------------
@@ -165,9 +166,8 @@ class HedgeUpdateRequest(BaseModel):
 @router.get("/hedge-positions")
 def get_hedge_positions_endpoint():
     try:
-        from portfolio.portfolio_db import get_hedge_positions
-
-        return {"positions": get_hedge_positions()}
+        rows = OntologyRuntimeReadService().list_objects("HedgePosition", limit=1000)
+        return {"positions": rows}
     except Exception as e:
         raise DataFetchError(source="hedge_positions", detail=str(e)) from e
 
@@ -186,10 +186,6 @@ def update_hedge_positions(req: HedgeUpdateRequest):
         )
     except (HTTPException, AppError):
         raise
-    except ActionValidationError as e:
-        raise HTTPException(status_code=400, detail=e.message) from e
-    except ActionConflictError as e:
-        raise HTTPException(status_code=409, detail=e.message) from e
     except Exception as e:
         raise DataFetchError(source="hedge_positions", detail=str(e)) from e
 

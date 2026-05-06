@@ -1,8 +1,8 @@
 """
 Embedding-based document retrieval for the AI agent.
 
-Indexes thesis files, reports, and conversation summaries into a local
-SQLite database with sentence-transformer embeddings for semantic search.
+Indexes thesis files, reports, and conversation summaries into ontology-linked
+retrieval chunks with sentence-transformer embeddings for semantic search.
 Uses all-MiniLM-L6-v2 (~80 MB, runs on CPU).
 
 Follows the same connection pattern as memory_db.py (WAL mode, thread-safe).
@@ -10,6 +10,7 @@ Follows the same connection pattern as memory_db.py (WAL mode, thread-safe).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -63,7 +64,18 @@ CREATE TABLE IF NOT EXISTS chunks (
     chunk_index INTEGER NOT NULL,
     content     TEXT NOT NULL,
     embedding   BLOB NOT NULL,
-    heading     TEXT
+    heading     TEXT,
+    object_uid  TEXT,
+    object_version_id TEXT,
+    source_record_id TEXT,
+    source_record_version_id TEXT,
+    citation_span_start INTEGER,
+    citation_span_end INTEGER,
+    permission_scope TEXT NOT NULL DEFAULT 'owner',
+    freshness_as_of TEXT,
+    stale_after TEXT,
+    is_stale INTEGER NOT NULL DEFAULT 0,
+    content_hash TEXT
 )
 """
 
@@ -166,6 +178,10 @@ def _embedding_to_blob(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
 
+def _content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def _blob_to_embedding(blob: bytes) -> list[float]:
     """Unpack bytes into float32 vector."""
     n = len(blob) // 4
@@ -257,8 +273,18 @@ def index_document(
     ticker: str | None = None,
     source_path: str | None = None,
     doc_id: str | None = None,
+    object_uid: str | None = None,
+    object_version_id: str | None = None,
+    source_record_id: str | None = None,
+    source_record_version_id: str | None = None,
+    citation_span_start: int | None = None,
+    citation_span_end: int | None = None,
+    permission_scope: str = "owner",
+    freshness_as_of: str | None = None,
+    stale_after: str | None = None,
+    is_stale: bool = False,
 ) -> str:
-    """Index a document: chunk it, embed chunks, store in SQLite.
+    """Index a document into ontology-linked retrieval chunks.
 
     If doc_id is provided and already exists, the document is re-indexed
     (old chunks deleted, new ones created).
@@ -268,7 +294,6 @@ def index_document(
     if not content or not content.strip():
         raise ValueError("Cannot index empty content")
 
-    conn = _get_conn()
     did = doc_id or str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
 
@@ -291,6 +316,16 @@ def index_document(
             raw_chunks=raw_chunks,
             embeddings=embeddings,
             updated_at=now,
+            object_uid=object_uid,
+            object_version_id=object_version_id,
+            source_record_id=source_record_id,
+            source_record_version_id=source_record_version_id,
+            citation_span_start=citation_span_start,
+            citation_span_end=citation_span_end,
+            permission_scope=permission_scope,
+            freshness_as_of=freshness_as_of,
+            stale_after=stale_after,
+            is_stale=is_stale,
         )
         logger.info(
             "Indexed doc_id=%s type=%s ticker=%s chunks=%d",
@@ -301,6 +336,7 @@ def index_document(
         )
         return did
 
+    conn = _get_conn()
     with _lock:
         # Delete existing chunks if re-indexing
         conn.execute("DELETE FROM chunks WHERE doc_id = ?", (did,))
@@ -323,10 +359,33 @@ def index_document(
         for i, ((heading, text), emb) in enumerate(zip(raw_chunks, embeddings, strict=True)):
             conn.execute(
                 """
-                INSERT INTO chunks (chunk_id, doc_id, chunk_index, content, embedding, heading)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO chunks (
+                    chunk_id, doc_id, chunk_index, content, embedding, heading,
+                    object_uid, object_version_id, source_record_id, source_record_version_id,
+                    citation_span_start, citation_span_end, permission_scope,
+                    freshness_as_of, stale_after, is_stale, content_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (str(uuid.uuid4()), did, i, text, _embedding_to_blob(emb), heading),
+                (
+                    str(uuid.uuid4()),
+                    did,
+                    i,
+                    text,
+                    _embedding_to_blob(emb),
+                    heading,
+                    object_uid,
+                    object_version_id,
+                    source_record_id,
+                    source_record_version_id,
+                    citation_span_start,
+                    citation_span_end,
+                    permission_scope,
+                    freshness_as_of,
+                    stale_after,
+                    1 if is_stale else 0,
+                    _content_hash(text),
+                ),
             )
 
         conn.commit()
@@ -381,10 +440,14 @@ def search(
         rows = conn.execute(
             f"""
             SELECT c.chunk_id, c.doc_id, c.chunk_index, c.content, c.embedding,
-                   c.heading, d.doc_type, d.ticker, d.source_path, d.created_at
+                   c.heading, c.object_uid, c.object_version_id, c.source_record_id,
+                   c.source_record_version_id, c.citation_span_start, c.citation_span_end,
+                   c.permission_scope, c.freshness_as_of, c.stale_after, c.is_stale,
+                   c.content_hash, d.doc_type, d.ticker, d.source_path, d.created_at
             FROM chunks c
             JOIN documents d ON c.doc_id = d.doc_id
             {where_clause}
+              {"AND" if where_clause else "WHERE"} c.is_stale = 0
             """,
             params,
         ).fetchall()
@@ -415,6 +478,20 @@ def search(
                 "source_path": row["source_path"],
                 "created_at": row["created_at"],
                 "doc_id": row["doc_id"],
+                "chunk_id": row["chunk_id"],
+                "object_uid": row["object_uid"],
+                "object_version_id": row["object_version_id"],
+                "source_record_id": row["source_record_id"],
+                "source_record_version_id": row["source_record_version_id"],
+                "citation_span": {
+                    "start": row["citation_span_start"],
+                    "end": row["citation_span_end"],
+                },
+                "permission_scope": row["permission_scope"],
+                "freshness_as_of": row["freshness_as_of"],
+                "stale_after": row["stale_after"],
+                "is_stale": bool(row["is_stale"]),
+                "content_hash": row["content_hash"],
             }
         )
 
@@ -496,10 +573,38 @@ def _pg_index_document(
     raw_chunks: list[tuple[str | None, str]],
     embeddings: list[list[float]],
     updated_at: str,
+    object_uid: str | None,
+    object_version_id: str | None,
+    source_record_id: str | None,
+    source_record_version_id: str | None,
+    citation_span_start: int | None,
+    citation_span_end: int | None,
+    permission_scope: str,
+    freshness_as_of: str | None,
+    stale_after: str | None,
+    is_stale: bool,
 ) -> None:
     created_at = datetime.fromisoformat(updated_at)
     rows = [
-        (str(uuid.uuid4()), doc_id, i, text, heading, emb)
+        (
+            str(uuid.uuid4()),
+            doc_id,
+            i,
+            text,
+            heading,
+            emb,
+            object_uid,
+            object_version_id,
+            source_record_id,
+            source_record_version_id,
+            citation_span_start,
+            citation_span_end,
+            permission_scope,
+            freshness_as_of,
+            stale_after,
+            is_stale,
+            _content_hash(text),
+        )
         for i, ((heading, text), emb) in enumerate(zip(raw_chunks, embeddings, strict=True))
     ]
     with open_connection(register_pgvector=True) as conn:
@@ -520,8 +625,13 @@ def _pg_index_document(
         with conn.cursor() as cur:
             cur.executemany(
                 """
-                INSERT INTO retrieval_chunks (chunk_id, doc_id, chunk_index, content, heading, embedding)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO retrieval_chunks (
+                    chunk_id, doc_id, chunk_index, content, heading, embedding,
+                    object_uid, object_version_id, source_record_id, source_record_version_id,
+                    citation_span_start, citation_span_end, permission_scope,
+                    freshness_as_of, stale_after, is_stale, content_hash
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 rows,
             )
@@ -543,6 +653,7 @@ def _pg_search(
     if tickers:
         where_parts.append("UPPER(d.ticker) = ANY(%s)")
         params.append([t.upper() for t in tickers])
+    where_parts.append("COALESCE(c.is_stale, false) = false")
     where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     params.extend([query_emb, top_k])
 
@@ -550,7 +661,10 @@ def _pg_search(
         rows = conn.execute(
             f"""
             SELECT c.chunk_id, c.doc_id, c.chunk_index, c.content,
-                   c.heading, d.doc_type, d.ticker, d.source_path, d.created_at,
+                   c.heading, c.object_uid, c.object_version_id, c.source_record_id,
+                   c.source_record_version_id, c.citation_span_start, c.citation_span_end,
+                   c.permission_scope, c.freshness_as_of, c.stale_after, c.is_stale,
+                   c.content_hash, d.doc_type, d.ticker, d.source_path, d.created_at,
                    1 - (c.embedding <=> %s) AS score
             FROM retrieval_chunks c
             JOIN retrieval_documents d ON c.doc_id = d.doc_id
@@ -573,6 +687,33 @@ def _pg_search(
             if hasattr(row["created_at"], "isoformat")
             else row["created_at"],
             "doc_id": row["doc_id"],
+            "chunk_id": row["chunk_id"],
+            "object_uid": _row_get(row, "object_uid"),
+            "object_version_id": _row_get(row, "object_version_id"),
+            "source_record_id": _row_get(row, "source_record_id"),
+            "source_record_version_id": _row_get(row, "source_record_version_id"),
+            "citation_span": {
+                "start": _row_get(row, "citation_span_start"),
+                "end": _row_get(row, "citation_span_end"),
+            },
+            "permission_scope": _row_get(row, "permission_scope") or "owner",
+            "freshness_as_of": _iso_value(_row_get(row, "freshness_as_of")),
+            "stale_after": _iso_value(_row_get(row, "stale_after")),
+            "is_stale": bool(_row_get(row, "is_stale", False)),
+            "content_hash": _row_get(row, "content_hash"),
         }
         for row in rows
     ]
+
+
+def _row_get(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except Exception:
+        return default
+
+
+def _iso_value(value: Any) -> Any:
+    return value.isoformat() if hasattr(value, "isoformat") else value

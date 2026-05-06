@@ -117,6 +117,31 @@ def test_normalize_approval_reports_base_state_valid_stale_and_untracked(monkeyp
     assert untracked["can_approve"] is True
 
 
+def test_normalize_approval_recomputes_base_state_in_ontology_primary_mode(monkeypatch):
+    import portfolio.action_registry as action_registry
+
+    monkeypatch.setenv("ONTOLOGY_PRIMARY_WRITES", "true")
+    monkeypatch.setattr(action_registry, "compute_action_base_state_hash", lambda _action_id, _change: "current")
+
+    stale = normalize_approval(
+        {
+            "id": "approval:old",
+            "status": "pending",
+            "application_status": "pending",
+            "entity_type": "action_item_status",
+            "action_id": "complete_action_item",
+            "base_state_hash": "old",
+            "proposed_change": {"item_id": 1},
+        }
+    )
+
+    assert stale is not None
+    assert stale["base_state_status"] == "stale"
+    assert stale["base_state_valid"] is False
+    assert stale["can_approve"] is False
+    assert stale["can_restage"] is True
+
+
 def test_normalize_recommendation_keeps_execution_capability_none():
     rec = normalize_recommendation(
         {

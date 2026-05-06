@@ -51,6 +51,7 @@ logger = logging.getLogger("api")
 # Core routers (must succeed)
 from api.routers import (
     agent,
+    document_generation,
     management_quality,
     memory,
     overview,
@@ -355,6 +356,7 @@ app.include_router(portfolio_edit.router, prefix=_V1, dependencies=_auth_dep, ta
 app.include_router(thesis.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(overview.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(management_quality.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
+app.include_router(document_generation.router, prefix=_V1, dependencies=_auth_dep, tags=["portfolio"])
 app.include_router(memory.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(agent.router, prefix=_V1, dependencies=_auth_dep, tags=["agent"])
 app.include_router(settings.router, prefix=_V1, dependencies=_auth_dep, tags=["settings"])
@@ -441,38 +443,16 @@ def health():
 def _detailed_health_response() -> JSONResponse:
     checks: dict[str, str | list[str]] = {}
 
-    # Check portfolio DB connectivity
+    # Check ontology/Postgres connectivity
     try:
-        from portfolio.portfolio_db import _get_conn as _portfolio_conn
+        from api.postgres import connect
 
-        conn = _portfolio_conn()
-        conn.execute("SELECT COUNT(*) FROM positions")
-        checks["portfolio_db"] = "ok"
+        with connect() as conn:
+            conn.execute("SELECT 1")
+        checks["postgres"] = "ok"
     except Exception:
-        logger.warning("portfolio_db health check failed", exc_info=True)
-        checks["portfolio_db"] = "error"
-
-    # Check thesis DB connectivity
-    try:
-        from portfolio.thesis_db import _get_conn as _thesis_conn
-
-        conn = _thesis_conn()
-        conn.execute("SELECT COUNT(*) FROM thesis_meta")
-        checks["thesis_db"] = "ok"
-    except Exception:
-        logger.warning("thesis_db health check failed", exc_info=True)
-        checks["thesis_db"] = "error"
-
-    # Check core DB connectivity
-    try:
-        from portfolio.core_db import _get_conn as _core_conn
-
-        conn = _core_conn()
-        conn.execute("SELECT COUNT(*) FROM catalysts")
-        checks["core_db"] = "ok"
-    except Exception:
-        logger.warning("core_db health check failed", exc_info=True)
-        checks["core_db"] = "error"
+        logger.warning("postgres health check failed", exc_info=True)
+        checks["postgres"] = "error"
 
     # Check FRED API reachability
     fred_key = os.environ.get("FRED_API_KEY")

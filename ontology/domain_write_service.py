@@ -20,7 +20,7 @@ from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.read_model import TemporalReadModelRepository
-from ontology.schemas.identity import action_run_id, object_version_ref_id, thesis_id
+from ontology.schemas.identity import action_run_id, object_version_ref_id, policy_gate_result_id, thesis_id
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def ontology_shadow_writes_enabled() -> bool:
 
 
 def ontology_primary_writes_enabled() -> bool:
-    return _env_flag("ONTOLOGY_PRIMARY_WRITES")
+    return _env_flag("ONTOLOGY_PRIMARY_WRITES") or _is_production()
 
 
 def ontology_read_model_enabled() -> bool:
@@ -44,7 +44,7 @@ def ontology_read_model_enabled() -> bool:
 
 
 def legacy_write_guard_enabled() -> bool:
-    return _env_flag("LEGACY_WRITE_GUARD")
+    return _env_flag("LEGACY_WRITE_GUARD") or _is_production()
 
 
 def approved_domain_write_scope() -> dict[str, Any] | None:
@@ -86,14 +86,17 @@ def assert_legacy_domain_write_allowed(surface: str) -> None:
         return
     if legacy_write_guard_enabled() and not _env_flag("LEGACY_WRITE_GUARD_ALLOW_PROJECTION"):
         raise RuntimeError(
-            f"Legacy domain write blocked by LEGACY_WRITE_GUARD: {surface}. "
-            "Use the approval application path, OntologyObjectService/domain write service, "
-            "or an approved projection refresh path."
+            f"Legacy domain write blocked by ontology-primary runtime: {surface}. "
+            "Use OntologyObjectService/OntologyCommandService, or run the isolated legacy backfill job."
         )
 
 
 def _env_flag(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_production() -> bool:
+    return (os.getenv("ENVIRONMENT") or "").strip().lower() == "production"
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,10 +522,12 @@ def action_mutations(
             gate_id = str(
                 row.get("policy_gate_result_id") or gate.get("id") or gate.get("evaluated_at") or _stable_hash(gate)
             )
+            if gate_id.startswith("policy_gate_result:"):
+                gate_id = gate_id.split(":", 1)[1]
             mutations.append(
                 OntologyMutation(
                     "PolicyGateResult",
-                    gate_id,
+                    policy_gate_result_id(gate_id),
                     _policy_gate_result_properties(gate, gate_result_id=gate_id),
                     str(gate.get("evaluated_at") or now),
                 )

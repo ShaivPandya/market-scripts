@@ -10,6 +10,7 @@ from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_
 from api.decision_state import analysis_metadata
 from api.exceptions import DataFetchError
 from api.serializers import serialize_dataframe, serialize_value
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -119,11 +120,9 @@ def get_portfolio_sizer_job(job_id: str):
 @router.get("/portfolio-sizer/prefill")
 def get_sizer_prefill():
     try:
-        from portfolio.portfolio_db import get_positions_df
-
-        df = get_positions_df()
+        df = OntologyRuntimeReadService().positions_df()
         if "ticker" not in df.columns:
-            raise ValueError("Portfolio database is missing required 'ticker' column.")
+            raise ValueError("Ontology positions are missing required 'ticker' column.")
 
         tickers = df["ticker"].astype(str).str.strip().str.upper()
         directions = (
@@ -163,7 +162,7 @@ def get_sizer_prefill():
 
         return {
             "positions": deduped_rows,
-            "source": "portfolio.db",
+            "source": "ontology",
             "count": len(deduped_rows),
         }
     except Exception as e:

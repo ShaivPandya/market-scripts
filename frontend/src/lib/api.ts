@@ -90,7 +90,7 @@ export interface StagedMutationOptions {
 
 export interface StagedMutationResponse {
   status: "pending_approval_created" | "applied" | string
-  approval_id: number
+  approval_id: string
   application_status: "pending" | "applying" | "applied" | "failed" | "not_applicable" | string
   action_id: string
   entity_type: string
@@ -126,7 +126,7 @@ export interface PolicyGateResult {
 }
 
 export interface ApprovalRecord extends DecisionStateFields {
-  id: number
+  id: string
   status?: string | null
   entity_type: string
   action_id?: string | null
@@ -267,9 +267,9 @@ export interface IdeaEvaluation {
   invalidation: string | null
   portfolio_fit: Record<string, unknown>
   recommendation_record?: Partial<RecommendationRecord> & Record<string, unknown>
-  recommendation_id: number | null
-  approval_id: number | null
-  action_approval_id: number | null
+  recommendation_id: string | null
+  approval_id: string | null
+  action_approval_id: string | null
   accepted_at: string | null
   accepted_by: string | null
   created_at: string
@@ -562,14 +562,71 @@ export const saveThesisContent = (ticker: string, content: string, options?: Sta
     .put(`/thesis/${encodeURIComponent(ticker)}`, { content, ...options })
     .then(r => r.data as StagedMutationResponse)
 
-export const uploadThesisDocument = (ticker: string, file: File) => {
+type DocumentGenerationJobBase = { job_id: string; timeout_s?: number }
+type DocumentGenerationJobResponse<T> =
+  | (DocumentGenerationJobBase & { status: "queued" | "running" })
+  | (DocumentGenerationJobBase & { status: "error" | "cancelled"; error?: string })
+  | (DocumentGenerationJobBase & { status: "done"; result?: T })
+
+function isRetryableDocumentGenerationError(err: unknown) {
+  if (!axios.isAxiosError(err)) return false
+  if (!err.response) return true
+  return [408, 429, 500, 502, 503, 504].includes(err.response.status)
+}
+
+const fetchDocumentGenerationJob = <T>(job_id: string) =>
+  client
+    .get(`/document-generation/async/${encodeURIComponent(job_id)}`, { timeout: 30_000 })
+    .then(r => r.data as DocumentGenerationJobResponse<T>)
+
+async function pollDocumentGenerationResult<T>(started: DocumentGenerationJobResponse<T>): Promise<T> {
+  if (started.status === "done") {
+    if (started.result != null) return started.result
+    throw new Error("Document generation completed without a result.")
+  }
+  if (started.status === "error" || started.status === "cancelled") {
+    throw new Error(started.error || "Document generation failed")
+  }
+
+  const timeoutMs = Number.isFinite(started.timeout_s) ? Math.max(180, Number(started.timeout_s)) * 1000 : 1_200_000
+  const deadline = Date.now() + timeoutMs + 30_000
+  let transientPollErrors = 0
+
+  for (; ;) {
+    if (Date.now() > deadline) throw new Error("Timeout: Document generation is taking too long. Try again.")
+    await sleep(2000)
+
+    let job: DocumentGenerationJobResponse<T>
+    try {
+      job = await fetchDocumentGenerationJob<T>(started.job_id)
+      transientPollErrors = 0
+    } catch (err) {
+      if (!isRetryableDocumentGenerationError(err) || transientPollErrors >= 5) throw err
+      transientPollErrors += 1
+      continue
+    }
+
+    if (job.status === "done") {
+      if (job.result != null) return job.result
+      throw new Error("Document generation completed without a result.")
+    }
+    if (job.status === "error" || job.status === "cancelled") {
+      throw new Error(job.error || "Document generation failed")
+    }
+  }
+}
+
+const uploadDocumentForGeneration = <T>(path: string, ticker: string, file: File) => {
   const formData = new FormData()
   formData.append("ticker", ticker)
   formData.append("file", file)
   return client
-    .post("/thesis/generate", formData, { timeout: 120_000 })
-    .then(r => r.data as StagedMutationResponse)
+    .post(path, formData, { timeout: 30_000 })
+    .then(r => pollDocumentGenerationResult<T>(r.data as DocumentGenerationJobResponse<T>))
 }
+
+export const uploadThesisDocument = (ticker: string, file: File) =>
+  uploadDocumentForGeneration<StagedMutationResponse>("/thesis/generate", ticker, file)
 
 // --- Overview ---
 
@@ -578,14 +635,8 @@ export const saveOverviewContent = (ticker: string, content: string) =>
     .put(`/overview/${encodeURIComponent(ticker)}`, { content })
     .then(r => r.data as { status: "ok"; ticker: string; content: string })
 
-export const uploadOverviewDocument = (ticker: string, file: File) => {
-  const formData = new FormData()
-  formData.append("ticker", ticker)
-  formData.append("file", file)
-  return client
-    .post("/overview/generate", formData, { timeout: 120_000 })
-    .then(r => r.data as { status: "ok"; ticker: string; content: string })
-}
+export const uploadOverviewDocument = (ticker: string, file: File) =>
+  uploadDocumentForGeneration<{ status: "ok"; ticker: string; content: string }>("/overview/generate", ticker, file)
 
 // --- Management Quality ---
 
@@ -594,14 +645,8 @@ export const saveManagementQualityContent = (ticker: string, content: string, op
     .put(`/management-quality/${encodeURIComponent(ticker)}`, { content, ...options })
     .then(r => r.data as StagedMutationResponse)
 
-export const uploadManagementQualityDocument = (ticker: string, file: File) => {
-  const formData = new FormData()
-  formData.append("ticker", ticker)
-  formData.append("file", file)
-  return client
-    .post("/management-quality/generate", formData, { timeout: 120_000 })
-    .then(r => r.data as StagedMutationResponse)
-}
+export const uploadManagementQualityDocument = (ticker: string, file: File) =>
+  uploadDocumentForGeneration<StagedMutationResponse>("/management-quality/generate", ticker, file)
 
 export const fetchManagementQuality = (ticker: string) =>
   client
@@ -1932,9 +1977,9 @@ export interface OptimizationAlert {
   severity: "low" | "normal" | "high" | "urgent" | string
   status: string
   change_summary: string
-  approval_id?: number | null
-  recommendation_id?: number | null
-  action_item_approval_id?: number | null
+  approval_id?: string | null
+  recommendation_id?: string | null
+  action_item_approval_id?: string | null
   evidence?: Record<string, unknown>
   previous_snapshot?: OptimizationSnapshot | null
   current_snapshot?: OptimizationSnapshot | null
@@ -2057,17 +2102,17 @@ export const fetchApprovals = (status?: string) =>
   client.get("/approvals", { params: status ? { status } : undefined }).then(r => r.data)
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
-export const approveItem = (id: number, note: string) =>
+export const approveItem = (id: string, note: string) =>
   client.post(`/approvals/${id}/approve`, { note }).then(r => r.data as ApprovalRecord)
-export const rejectItem = (id: number, note?: string) =>
+export const rejectItem = (id: string, note?: string) =>
   client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
-export const rejectAndRestageApproval = (id: number, note?: string) =>
+export const rejectAndRestageApproval = (id: string, note?: string) =>
   client
     .post(`/approvals/${id}/reject-and-restage`, note ? { note } : {})
     .then(r => r.data as RejectAndRestageResponse)
-export const bulkApprove = (ids: number[], note: string) =>
+export const bulkApprove = (ids: string[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
-export const bulkReject = (ids: number[], note?: string) =>
+export const bulkReject = (ids: string[], note?: string) =>
   client.post("/approvals/bulk-reject", { ids, note }).then(r => r.data)
 
 // Action Items
@@ -2193,8 +2238,8 @@ export const fetchWorkflowRun = (runId: string) =>
 export interface ProvenanceSelector {
   workflow_run_id?: string
   ontology_run_id?: string
-  approval_id?: number
-  action_run_id?: number
+  approval_id?: string
+  action_run_id?: string
   agent_session_id?: string
   event_id?: string
   ref_type?: string

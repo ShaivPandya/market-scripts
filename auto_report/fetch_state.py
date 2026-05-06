@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fetch live portfolio positions from the deployed API and seed the local SQLite DB.
+"""Fetch live ontology portfolio positions from the deployed API.
 
-Run before auto_daily_report / auto_weekly_report in GitHub Actions so the local
-portfolio.db contains real positions rather than an empty schema-only database.
+This is now a runtime validation helper. The reports read ontology/Postgres
+state directly, so this command no longer writes a local SQLite seed database.
 
 Usage:
     python -m auto_report.fetch_state
@@ -19,6 +19,8 @@ import os
 import sys
 
 import requests
+
+from ontology.domain_write_service import ontology_primary_writes_enabled
 
 
 def _build_headers() -> dict[str, str]:
@@ -78,16 +80,17 @@ def fetch_and_seed() -> int:
     positions = [p for p in all_positions if p.get("role", "position") == "position"]
     hedges = [p for p in all_positions if p.get("role") == "hedge"]
 
-    from portfolio.portfolio_db import save_positions
-
-    save_positions(positions, role="position")
-    save_positions(hedges, role="hedge")
-
     total = len(positions) + len(hedges)
-    print(f"Seeded {len(positions)} position(s) and {len(hedges)} hedge(s) into local portfolio.db.")
+    print(f"Fetched {len(positions)} position(s) and {len(hedges)} hedge(s) from ontology runtime.")
+
+    if not ontology_primary_writes_enabled():
+        from portfolio.portfolio_db import save_positions
+
+        save_positions(positions, role="position")
+        save_positions(hedges, role="hedge")
 
     if total == 0:
-        print("WARNING: No positions returned from API — report will still block.", file=sys.stderr)
+        print("WARNING: No positions returned from API; report generation will still block.", file=sys.stderr)
 
     return 0
 

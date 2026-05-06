@@ -37,15 +37,17 @@ def test_get_missing_key_returns_none():
 
 
 def test_invalidate_all_clears_caches():
-    from api.cache import get_cached, invalidate_all, long_cache, set_cached, short_cache
+    from api.cache import daily_cache, get_cached, invalidate_all, long_cache, set_cached, short_cache
 
     set_cached(short_cache, "test_inv_short", "a")
     set_cached(long_cache, "test_inv_long", "b")
+    set_cached(daily_cache, "test_inv_daily", "c")
 
     invalidate_all()
 
     assert get_cached(short_cache, "test_inv_short") is None
     assert get_cached(long_cache, "test_inv_long") is None
+    assert get_cached(daily_cache, "test_inv_daily") is None
 
 
 def test_delete_cached():

@@ -157,12 +157,7 @@ def get_ontology_run(run_id: str, actor: ActorDep):
     run = _service.repo.get_run(run_id)
     if run is None:
         raise NotFoundError("Ontology run", run_id)
-    try:
-        from portfolio.core_db import provenance_summary
-
-        run["provenance_summary"] = provenance_summary(ontology_run_id=run_id)
-    except Exception:
-        run["provenance_summary"] = {"event_count": 0, "link_count": 0}
+    run["provenance_summary"] = {"selector": {"ontology_run_id": run_id}, "lineage_state": "ontology"}
     return run
 
 
@@ -386,12 +381,13 @@ def _require_temporal_read(actor: Actor) -> None:
 def _preflight_job_read(job_id: str, actor: Actor) -> dict[str, Any]:
     policy = getattr(_service, "policy", None)
     try:
-        if policy is not None:
-            require_allowed(policy.check_action(actor, OntologyAction.JOB_READ, {"job_id": job_id}))
-
         row = get_job(job_id)
         if row is None:
             raise KeyError(job_id)
+
+        if policy is not None:
+            require_allowed(policy.check_action(actor, OntologyAction.JOB_READ, {"job_id": job_id}))
+
         payload = row.get("payload_json")
         payload_actor = actor_from_dict(payload.get("actor") if isinstance(payload, dict) else None)
         roles = {role.lower() for role in actor.roles}

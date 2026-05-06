@@ -849,13 +849,14 @@ def _ingest_thesis_entities(
     """Create Thesis and Evaluation nodes linked to existing Position nodes."""
     import logging
 
-    from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
+    from ontology.runtime_read_service import OntologyRuntimeReadService
 
     log = logging.getLogger(__name__)
 
     try:
-        all_meta = get_all_thesis_meta()
-        latest_evals = get_latest_evaluations()
+        reads = OntologyRuntimeReadService()
+        all_meta = reads.theses(limit=1000)
+        latest_evals = reads.latest_evaluations(limit=1000)
     except Exception:
         log.warning("Could not load thesis data for ontology ingestion", exc_info=True)
         return

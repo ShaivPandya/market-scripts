@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from api.action_execution import stage_api_action
 from api.exceptions import NotFoundError
+from ontology.object_service import OntologyObjectService
 
 router = APIRouter()
 
@@ -39,20 +40,22 @@ def list_actions(
     status: str | None = None,
     ticker: str | None = None,
 ):
-    from portfolio.core_db import get_action_items
-
-    items = get_action_items(status=status, ticker=ticker)
+    filters = {}
+    if status:
+        filters["status"] = status
+    if ticker:
+        filters["ticker"] = ticker.strip().upper()
+    items = [_flatten_object(row) for row in OntologyObjectService().query_objects("ActionItem", filters=filters)]
     return {"actions": items, "count": len(items)}
 
 
 @router.get("/actions/{item_id}")
-def get_action(item_id: int):
-    from portfolio.core_db import get_action_items
-
-    items = get_action_items()
-    for item in items:
-        if item["id"] == item_id:
-            return item
+def get_action(item_id: str):
+    item = OntologyObjectService().get_object(
+        item_id if item_id.startswith("action_item:") else f"action_item:{item_id}"
+    )
+    if item:
+        return _flatten_object(item)
     raise NotFoundError("Action item", str(item_id))
 
 
@@ -69,7 +72,7 @@ def create_action(body: CreateActionRequest):
 
 
 @router.put("/actions/{item_id}/complete")
-def complete_action(item_id: int, body: CompleteActionRequest | None = None):
+def complete_action(item_id: str, body: CompleteActionRequest | None = None):
     return stage_api_action(
         "complete_action_item",
         {"item_id": item_id, "resolution_note": body.resolution_note if body else ""},
@@ -82,7 +85,7 @@ def complete_action(item_id: int, body: CompleteActionRequest | None = None):
 
 
 @router.put("/actions/{item_id}/dismiss")
-def dismiss_action(item_id: int, body: DismissActionRequest | None = None):
+def dismiss_action(item_id: str, body: DismissActionRequest | None = None):
     return stage_api_action(
         "dismiss_action_item",
         {"item_id": item_id},
@@ -92,3 +95,10 @@ def dismiss_action(item_id: int, body: DismissActionRequest | None = None):
         approval_note=body.approval_note if body else None,
         entity_id=item_id,
     )
+
+
+def _flatten_object(row: dict) -> dict:
+    props = dict(row.get("properties") or row.get("properties_json") or {})
+    props["id"] = str(row.get("object_uid") or props.get("id") or "")
+    props["object_uid"] = props["id"]
+    return props

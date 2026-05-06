@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.action_execution import stage_api_action
+from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
 
@@ -25,10 +26,8 @@ def list_research_notes(
     ticker: str | None = None,
     limit: int = 20,
 ):
-    from portfolio.core_db import get_research_notes
-
     safe_limit = max(1, min(int(limit), 100))
-    notes = get_research_notes(ticker=ticker, limit=safe_limit)
+    notes = OntologyRuntimeReadService().research_notes(ticker=ticker, limit=safe_limit)
     return {"notes": notes, "count": len(notes)}
 
 

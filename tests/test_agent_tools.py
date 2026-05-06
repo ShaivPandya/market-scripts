@@ -51,6 +51,34 @@ def test_get_sector_metrics_tool_uses_snapshot_when_required(monkeypatch):
     assert payload["_meta"]["snapshot"]["key"] == "sector_metrics:sp500:2y"
 
 
+def test_get_liquidity_tool_uses_snapshot_when_required(monkeypatch):
+    monkeypatch.setattr(agent_tools, "get_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agent_tools, "set_cached", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "api.snapshot_store.get_snapshot_response",
+        lambda key: {
+            "composite_score": -0.56,
+            "regime": "tight",
+            "df_weekly": [{"should": "be dropped"}],
+            "composite_series": [{"should": "be dropped"}],
+            "_meta": {"snapshot": {"key": key}},
+        },
+    )
+    monkeypatch.setattr("api.snapshot_store.snapshots_required", lambda: True)
+    monkeypatch.setattr(
+        "macro.liquidity.liquidity.get_snapshot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live liquidity compute should not run")),
+    )
+
+    payload = json.loads(agent_tools.execute_tool("get_liquidity", {"_force_refresh": True}))
+
+    assert payload["composite_score"] == -0.56
+    assert payload["regime"] == "tight"
+    assert "df_weekly" not in payload
+    assert "composite_series" not in payload
+    assert payload["_meta"]["snapshot"]["key"] == "liquidity:current:v1"
+
+
 def test_agent_tools_return_first_class_portfolio_risk(tmp_path, monkeypatch):
     from api import position_risk_store
     from api.position_risk_store import write_portfolio_risk_snapshot

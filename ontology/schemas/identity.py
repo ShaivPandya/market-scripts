@@ -41,6 +41,14 @@ def asset_id(ticker: object) -> str:
     return f"asset:{canonical_ticker(ticker)}"
 
 
+def instrument_id(identifier: object) -> str:
+    return f"instrument:{slug(identifier)}"
+
+
+def issuer_id(identifier: object) -> str:
+    return f"issuer:{slug(identifier)}"
+
+
 def investor_id(identifier: object) -> str:
     return f"investor:{slug(identifier)}"
 
@@ -74,7 +82,10 @@ def scenario_id(identifier: object) -> str:
 
 
 def policy_gate_result_id(identifier: object) -> str:
-    return f"policy_gate_result:{slug(identifier)}"
+    text = str(identifier or "").strip()
+    if text.startswith("policy_gate_result:"):
+        text = text.split(":", 1)[1]
+    return f"policy_gate_result:{slug(text)}"
 
 
 def trade_proposal_id(identifier: object) -> str:
@@ -91,6 +102,10 @@ def object_version_ref_id(identifier: object) -> str:
 
 def executed_action_id(identifier: object) -> str:
     return f"executed_action:{slug(identifier)}"
+
+
+def executed_decision_record_id(identifier: object) -> str:
+    return f"executed_decision_record:{slug(identifier)}"
 
 
 def audit_event_id(identifier: object) -> str:
@@ -131,6 +146,14 @@ def kill_condition_id(ticker: object, identifier: object) -> str:
 
 def thesis_claim_id(ticker: object, identifier: object) -> str:
     return f"thesis_claim:{canonical_ticker(ticker)}:{slug(identifier)}"
+
+
+def evidence_id(identifier: object) -> str:
+    return f"evidence:{slug(identifier)}"
+
+
+def citation_id(identifier: object) -> str:
+    return f"citation:{slug(identifier)}"
 
 
 def action_item_id(identifier: object) -> str:

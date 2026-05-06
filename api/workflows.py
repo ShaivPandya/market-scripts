@@ -5,7 +5,7 @@ Complex multi-step research tasks execute a fixed tool sequence, collect all
 data, then hand it to Claude for synthesis only.  This avoids multi-round tool
 discovery and ensures consistent, repeatable outputs.
 
-Each workflow run is persisted in core_db.workflow_runs for auditability.
+Each workflow run is persisted as an ontology WorkflowRun object for auditability.
 """
 
 from __future__ import annotations
@@ -14,12 +14,16 @@ import inspect
 import json
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import Any
 
 from api.agent_tools import execute_tool
 from api.audit import emit_audit_event
 from ontology.action_registry import get_tool_exposure
+from ontology.domain_write_service import ontology_primary_writes_enabled
+from ontology.object_service import OntologyObjectService
 from ontology.policy import Actor, admin_actor
 
 logger = logging.getLogger("api.workflows")
@@ -627,11 +631,11 @@ def run_thesis_invalidation_check(
     for name, _parsed, elapsed in results:
         logger.info("workflow=thesis_invalidation_check ticker=%s tool=%s duration_ms=%.1f", ticker, name, elapsed)
 
-    # Also fetch kill conditions from core_db
+    # Also fetch kill conditions from ontology.
     try:
-        from portfolio.core_db import get_kill_conditions
+        from ontology.runtime_read_service import OntologyRuntimeReadService
 
-        kcs = get_kill_conditions(ticker)
+        kcs = OntologyRuntimeReadService().kill_conditions(ticker)
         results.append(("kill_conditions", {"ticker": ticker, "conditions": kcs}, 0.0))
     except Exception:
         pass
@@ -788,10 +792,8 @@ def execute_workflow(
         raise ValueError(f"Workflow '{workflow_name}' is defined but has no implementation")
 
     # Governed workflows must have a durable run id before tool execution.
-    from portfolio.core_db import create_workflow_run
-
-    run = create_workflow_run(workflow_name, ticker)
-    run_id = run["run_id"]
+    run = create_workflow_run(workflow_name, ticker, actor=actor or admin_actor(source="workflow"))
+    run_id = str(run["run_id"])
     emit_audit_event(
         "workflow.execution.started",
         "workflow",
@@ -816,3 +818,110 @@ def execute_workflow(
         actor=effective_actor,
     )
     return run_id, synthesis_prompt, sections
+
+
+def create_workflow_run(
+    workflow_name: str,
+    ticker: str | None,
+    *,
+    actor: Actor | None = None,
+) -> dict[str, Any]:
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.create_workflow_run(workflow_name, ticker=ticker)
+
+    now = datetime.now(UTC).isoformat()
+    run_id = f"workflow:{workflow_name}:{uuid.uuid4().hex}"
+    OntologyObjectService().write_object(
+        "WorkflowRun",
+        run_id,
+        {
+            "run_id": run_id,
+            "workflow_name": workflow_name,
+            "ticker": ticker,
+            "status": "running",
+            "started_at": now,
+            "ontology_run_id": "operational",
+        },
+        now,
+        actor=_actor_payload(actor),
+        provenance=f"pv:workflow_run:{run_id}",
+    )
+    return {"run_id": run_id, "workflow_name": workflow_name, "ticker": ticker, "status": "running"}
+
+
+def complete_workflow_run(
+    run_id: str,
+    synthesis: str,
+    artifacts: dict[str, Any] | None = None,
+    sections: list[dict[str, Any]] | None = None,
+    *,
+    actor: Actor | None = None,
+) -> dict[str, Any]:
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.complete_workflow_run(run_id, synthesis, artifacts=artifacts, tool_sections=sections)
+
+    now = datetime.now(UTC).isoformat()
+    existing = OntologyObjectService().get_object(run_id) or {}
+    props = dict(existing.get("properties") or existing.get("properties_json") or {})
+    props.update(
+        {
+            "run_id": run_id,
+            "workflow_name": props.get("workflow_name") or "unknown",
+            "status": "succeeded",
+            "completed_at": now,
+            "synthesis": synthesis,
+            "artifacts": artifacts or {},
+            "tool_sections": sections or [],
+            "ontology_run_id": "operational",
+        }
+    )
+    row = OntologyObjectService().write_object(
+        "WorkflowRun",
+        run_id,
+        props,
+        now,
+        actor=_actor_payload(actor),
+        provenance=f"pv:workflow_run:{run_id}:complete",
+    )
+    return dict(row.get("properties") or props)
+
+
+def fail_workflow_run(run_id: str, error: str, *, actor: Actor | None = None) -> dict[str, Any]:
+    if not ontology_primary_writes_enabled():
+        from portfolio import core_db
+
+        return core_db.fail_workflow_run(run_id, error)
+
+    now = datetime.now(UTC).isoformat()
+    existing = OntologyObjectService().get_object(run_id) or {}
+    props = dict(existing.get("properties") or existing.get("properties_json") or {})
+    props.update(
+        {
+            "run_id": run_id,
+            "workflow_name": props.get("workflow_name") or "unknown",
+            "status": "failed",
+            "completed_at": now,
+            "error": error,
+            "ontology_run_id": "operational",
+        }
+    )
+    row = OntologyObjectService().write_object(
+        "WorkflowRun",
+        run_id,
+        props,
+        now,
+        actor=_actor_payload(actor),
+        provenance=f"pv:workflow_run:{run_id}:failed",
+    )
+    return dict(row.get("properties") or props)
+
+
+def _actor_payload(actor: Actor | None) -> dict[str, Any]:
+    return {
+        "actor_type": getattr(actor, "actor_type", None) or "system",
+        "actor_id": getattr(actor, "actor_id", None),
+    }

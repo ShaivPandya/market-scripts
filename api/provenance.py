@@ -14,10 +14,12 @@ import re
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from api.audit import summarize_for_audit
 from api.logging_config import request_id_var
+from ontology.object_service import OntologyObjectService
 
 logger = logging.getLogger("api.provenance")
 
@@ -120,6 +122,38 @@ def input_hash(value: Any) -> str | None:
 
 def output_hash(value: Any) -> str | None:
     return stable_hash(value) if value is not None else None
+
+
+def _ontology_primary_writes_enabled() -> bool:
+    try:
+        from ontology.domain_write_service import ontology_primary_writes_enabled
+
+        return ontology_primary_writes_enabled()
+    except Exception:
+        return False
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _legacy_int_id(value: str | int | None) -> int | None:
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    if ":" in text:
+        text = text.rsplit(":", 1)[-1]
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _flatten_object(row: Mapping[str, Any]) -> dict[str, Any]:
+    props = dict(row.get("properties") or row.get("properties_json") or {})
+    props["id"] = str(row.get("object_uid") or props.get("id") or "")
+    props["object_uid"] = props["id"]
+    return props
 
 
 def redacted_summary(value: Any) -> Any:
@@ -226,8 +260,8 @@ def start_event(
     workflow_run_id: str | None = None,
     ontology_run_id: str | None = None,
     agent_session_id: str | None = None,
-    action_run_id: int | None = None,
-    approval_id: int | None = None,
+    action_run_id: str | int | None = None,
+    approval_id: str | int | None = None,
     audit_event_id: str | None = None,
     input_value: Any | None = None,
     summary: Any | None = None,
@@ -243,39 +277,90 @@ def start_event(
     producer_name: str | None = None,
     producer_version: str | None = None,
 ) -> dict | None:
-    try:
-        from portfolio import core_db
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
 
+            actor_type, actor_id, parent_actor_id = _actor_fields(actor)
+            return core_db.upsert_provenance_event(
+                event_id=event_id,
+                event_type=event_type,
+                event_name=event_name,
+                status="started",
+                started_at=started_at,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                parent_actor_id=parent_actor_id,
+                request_id=request_id if request_id is not None else (request_id_var.get("") or None),
+                parent_event_id=parent_event_id,
+                workflow_run_id=workflow_run_id,
+                ontology_run_id=ontology_run_id,
+                agent_session_id=agent_session_id,
+                action_run_id=_legacy_int_id(action_run_id),
+                approval_id=_legacy_int_id(approval_id),
+                audit_event_id=audit_event_id,
+                input_hash=input_hash(input_value),
+                summary=redacted_summary(summary),
+                metadata=redacted_summary(metadata),
+                schema_version=schema_version,
+                criticality=criticality,
+                lineage_root_id=lineage_root_id,
+                idempotency_key=idempotency_key,
+                producer_name=producer_name,
+                producer_version=producer_version,
+                redaction_policy=DEFAULT_REDACTION_POLICY,
+                retention_class=retention_class,
+            )
+        except Exception as exc:
+            logger.debug("Failed to start provenance event type=%s name=%s", event_type, event_name, exc_info=True)
+            if fail_closed:
+                raise ProvenanceWriteError(
+                    f"Failed to write mandatory provenance event {event_type}:{event_name}"
+                ) from exc
+            return None
+
+    try:
         actor_type, actor_id, parent_actor_id = _actor_fields(actor)
-        return core_db.upsert_provenance_event(
-            event_id=event_id,
-            event_type=event_type,
-            event_name=event_name,
-            status="started",
-            started_at=started_at,
-            actor_type=actor_type,
-            actor_id=actor_id,
-            parent_actor_id=parent_actor_id,
-            request_id=request_id if request_id is not None else (request_id_var.get("") or None),
-            parent_event_id=parent_event_id,
-            workflow_run_id=workflow_run_id,
-            ontology_run_id=ontology_run_id,
-            agent_session_id=agent_session_id,
-            action_run_id=action_run_id,
-            approval_id=approval_id,
-            audit_event_id=audit_event_id,
-            input_hash=input_hash(input_value),
-            summary=redacted_summary(summary),
-            metadata=redacted_summary(metadata),
-            schema_version=schema_version,
-            criticality=criticality,
-            lineage_root_id=lineage_root_id,
-            idempotency_key=idempotency_key,
-            producer_name=producer_name,
-            producer_version=producer_version,
-            redaction_policy=DEFAULT_REDACTION_POLICY,
-            retention_class=retention_class,
+        started = started_at or _now()
+        uid = event_id or deterministic_id("provenance_event", event_type, event_name, idempotency_key, started)
+        row = OntologyObjectService().write_object(
+            "ProvenanceEvent",
+            uid,
+            {
+                "event_id": uid,
+                "event_type": event_type,
+                "event_name": event_name,
+                "status": "started",
+                "started_at": started,
+                "actor_type": actor_type,
+                "actor_id": actor_id,
+                "parent_actor_id": parent_actor_id,
+                "request_id": request_id if request_id is not None else (request_id_var.get("") or None),
+                "parent_event_id": parent_event_id,
+                "workflow_run_id": workflow_run_id,
+                "ontology_run_id": ontology_run_id,
+                "agent_session_id": agent_session_id,
+                "action_run_id": str(action_run_id) if action_run_id is not None else None,
+                "approval_id": str(approval_id) if approval_id is not None else None,
+                "audit_event_id": audit_event_id,
+                "input_hash": input_hash(input_value),
+                "summary": redacted_summary(summary),
+                "metadata": redacted_summary(metadata),
+                "schema_version": schema_version,
+                "criticality": criticality,
+                "lineage_root_id": lineage_root_id,
+                "idempotency_key": idempotency_key,
+                "producer_name": producer_name,
+                "producer_version": producer_version,
+                "redaction_policy": DEFAULT_REDACTION_POLICY,
+                "retention_class": retention_class,
+            },
+            started,
+            actor={"actor_type": actor_type, "actor_id": actor_id},
+            provenance=lineage_root_id or uid,
+            input_hash=idempotency_key or input_hash(input_value),
         )
+        return _flatten_object(row)
     except Exception as exc:
         logger.debug("Failed to start provenance event type=%s name=%s", event_type, event_name, exc_info=True)
         if fail_closed:
@@ -295,17 +380,47 @@ def finish_event(
 ) -> dict | None:
     if not event_id:
         return None
-    try:
-        from portfolio import core_db
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
 
-        return core_db.finish_provenance_event(
+            return core_db.finish_provenance_event(
+                event_id,
+                status=status,
+                output_hash=output_hash(output_value),
+                summary=redacted_summary(summary),
+                metadata=redacted_summary(metadata),
+                error=error,
+            )
+        except Exception as exc:
+            logger.debug("Failed to finish provenance event id=%s", event_id, exc_info=True)
+            if fail_closed:
+                raise ProvenanceWriteError(f"Failed to finish mandatory provenance event {event_id}") from exc
+            return None
+
+    try:
+        completed = _now()
+        objects = OntologyObjectService()
+        existing = objects.get_object(event_id) or {}
+        existing_props = dict(existing.get("properties") or existing.get("properties_json") or {})
+        row = objects.write_object(
+            "ProvenanceEvent",
             event_id,
-            status=status,
-            output_hash=output_hash(output_value),
-            summary=redacted_summary(summary),
-            metadata=redacted_summary(metadata),
-            error=error,
+            {
+                **existing_props,
+                "event_id": event_id,
+                "status": status,
+                "completed_at": completed,
+                "output_hash": output_hash(output_value),
+                "summary": redacted_summary(summary),
+                "metadata": redacted_summary(metadata),
+                "error": error,
+            },
+            completed,
+            provenance=event_id,
+            input_hash=output_hash(output_value),
         )
+        return _flatten_object(row)
     except Exception as exc:
         logger.debug("Failed to finish provenance event id=%s", event_id, exc_info=True)
         if fail_closed:
@@ -352,22 +467,68 @@ def link_refs(
 ) -> dict | None:
     if not event_id:
         return None
-    try:
-        from portfolio import core_db
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
 
-        return core_db.upsert_provenance_link(
-            link_id=link_id,
-            event_id=event_id,
-            source_ref_type=source_ref_type,
-            source_ref_id=str(source_ref_id),
-            source_ref_version=source_ref_version,
-            target_ref_type=target_ref_type,
-            target_ref_id=str(target_ref_id),
-            target_ref_version=target_ref_version,
-            link_type=link_type,
-            metadata=redacted_summary(metadata),
-            lineage_root_id=lineage_root_id,
+            return core_db.upsert_provenance_link(
+                link_id=link_id,
+                event_id=event_id,
+                source_ref_type=source_ref_type,
+                source_ref_id=str(source_ref_id),
+                source_ref_version=source_ref_version,
+                target_ref_type=target_ref_type,
+                target_ref_id=str(target_ref_id),
+                target_ref_version=target_ref_version,
+                link_type=link_type,
+                metadata=redacted_summary(metadata),
+                lineage_root_id=lineage_root_id,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to link provenance refs event=%s source=%s:%s target=%s:%s",
+                event_id,
+                source_ref_type,
+                source_ref_id,
+                target_ref_type,
+                target_ref_id,
+                exc_info=True,
+            )
+            if fail_closed:
+                raise ProvenanceWriteError(f"Failed to write mandatory provenance link for event {event_id}") from exc
+            return None
+
+    try:
+        uid = link_id or deterministic_id(
+            "provenance_link",
+            event_id,
+            source_ref_type,
+            source_ref_id,
+            target_ref_type,
+            target_ref_id,
+            link_type,
         )
+        now = _now()
+        row = OntologyObjectService().write_object(
+            "ProvenanceLink",
+            uid,
+            {
+                "link_id": uid,
+                "event_id": event_id,
+                "source_ref_type": source_ref_type,
+                "source_ref_id": str(source_ref_id),
+                "source_ref_version": source_ref_version,
+                "target_ref_type": target_ref_type,
+                "target_ref_id": str(target_ref_id),
+                "target_ref_version": target_ref_version,
+                "link_type": link_type,
+                "metadata": redacted_summary(metadata),
+                "lineage_root_id": lineage_root_id,
+            },
+            now,
+            provenance=lineage_root_id or event_id,
+        )
+        return _flatten_object(row)
     except Exception as exc:
         logger.debug(
             "Failed to link provenance refs event=%s source=%s:%s target=%s:%s",
@@ -400,21 +561,58 @@ def record_source_ref(
     record_key_hash = stable_hash(record_key)
     record_hash = stable_hash(record_value)
     record_ref_id = deterministic_id("source_record", source_name, record_kind, record_key_hash)
-    try:
-        from portfolio import core_db
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
 
-        return core_db.upsert_source_record_ref(
-            record_ref_id=record_ref_id,
-            adapter_run_event_id=adapter_run_event_id,
-            source_name=source_name,
-            record_kind=record_kind,
-            record_key_hash=record_key_hash,
-            record_hash=record_hash,
-            as_of=as_of,
-            summary=redacted_summary(summary),
-            redaction_policy=DEFAULT_REDACTION_POLICY,
-            retention_class=retention_class,
+            return core_db.upsert_source_record_ref(
+                record_ref_id=record_ref_id,
+                adapter_run_event_id=adapter_run_event_id,
+                source_name=source_name,
+                record_kind=record_kind,
+                record_key_hash=record_key_hash,
+                record_hash=record_hash,
+                as_of=as_of,
+                summary=redacted_summary(summary),
+                redaction_policy=DEFAULT_REDACTION_POLICY,
+                retention_class=retention_class,
+            )
+        except Exception as exc:
+            logger.debug("Failed to record source ref source=%s kind=%s", source_name, record_kind, exc_info=True)
+            if fail_closed:
+                raise ProvenanceWriteError(f"Failed to write mandatory source ref {source_name}:{record_kind}") from exc
+            return None
+
+    try:
+        now = _now()
+        row = OntologyObjectService().write_object(
+            "SourceRecord",
+            record_ref_id,
+            {
+                "source_record_id": record_ref_id,
+                "vendor": source_name,
+                "source_name": source_name,
+                "source_version": "unknown",
+                "dataset": source_name,
+                "record_kind": record_kind,
+                "record_key_hash": record_key_hash,
+                "payload_hash": record_hash,
+                "status": "ok",
+                "quality": "ok",
+                "as_of": as_of,
+                "load_time": now,
+                "provenance_event_id": adapter_run_event_id,
+                "metadata": {
+                    "summary": redacted_summary(summary),
+                    "redaction_policy": DEFAULT_REDACTION_POLICY,
+                    "retention_class": retention_class,
+                },
+            },
+            as_of or now,
+            provenance=adapter_run_event_id,
+            input_hash=record_hash,
         )
+        return _flatten_object(row)
     except Exception as exc:
         logger.debug("Failed to record source ref source=%s kind=%s", source_name, record_kind, exc_info=True)
         if fail_closed:
@@ -428,28 +626,64 @@ def record_workflow_artifact(
     artifact_key: str,
     artifact_index: int,
     artifact_value: Any,
-    approval_id: int | None = None,
+    approval_id: str | int | None = None,
     provenance_event_id: str | None = None,
     retention_class: str = WORKFLOW_ARTIFACT_RETENTION_CLASS,
     fail_closed: bool = False,
 ) -> dict | None:
     artifact_hash = stable_hash(artifact_value)
     artifact_id = deterministic_id("workflow_artifact", workflow_run_id, artifact_key, artifact_index, artifact_hash)
-    try:
-        from portfolio import core_db
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
 
-        return core_db.upsert_workflow_artifact_record(
-            artifact_id=artifact_id,
-            workflow_run_id=workflow_run_id,
-            artifact_key=artifact_key,
-            artifact_index=artifact_index,
-            artifact_hash=artifact_hash,
-            summary=redacted_summary(_shape_summary(artifact_value)),
-            approval_id=approval_id,
-            provenance_event_id=provenance_event_id,
-            redaction_policy=DEFAULT_REDACTION_POLICY,
-            retention_class=retention_class,
+            return core_db.upsert_workflow_artifact_record(
+                artifact_id=artifact_id,
+                workflow_run_id=workflow_run_id,
+                artifact_key=artifact_key,
+                artifact_index=artifact_index,
+                artifact_hash=artifact_hash,
+                summary=redacted_summary(_shape_summary(artifact_value)),
+                approval_id=_legacy_int_id(approval_id),
+                provenance_event_id=provenance_event_id,
+                redaction_policy=DEFAULT_REDACTION_POLICY,
+                retention_class=retention_class,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to record workflow artifact run=%s key=%s", workflow_run_id, artifact_key, exc_info=True
+            )
+            if fail_closed:
+                raise ProvenanceWriteError(
+                    f"Failed to write mandatory workflow artifact {workflow_run_id}:{artifact_key}"
+                ) from exc
+            return None
+
+    try:
+        now = _now()
+        row = OntologyObjectService().write_object(
+            "WorkflowArtifact",
+            artifact_id,
+            {
+                "artifact_id": artifact_id,
+                "workflow_run_id": workflow_run_id,
+                "artifact_key": artifact_key,
+                "artifact_index": artifact_index,
+                "artifact_value": redacted_summary(_shape_summary(artifact_value)),
+                "artifact_hash": artifact_hash,
+                "state": "extracted",
+                "approval_id": str(approval_id) if approval_id is not None else None,
+                "provenance_event_id": provenance_event_id,
+                "metadata": {
+                    "redaction_policy": DEFAULT_REDACTION_POLICY,
+                    "retention_class": retention_class,
+                },
+            },
+            now,
+            provenance=provenance_event_id or artifact_id,
+            input_hash=artifact_hash,
         )
+        return _flatten_object(row)
     except Exception as exc:
         logger.debug("Failed to record workflow artifact run=%s key=%s", workflow_run_id, artifact_key, exc_info=True)
         if fail_closed:

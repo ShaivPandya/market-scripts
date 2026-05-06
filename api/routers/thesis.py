@@ -8,23 +8,19 @@ from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
 
 from api.action_execution import stage_api_action
+from api.document_generation_jobs import classify_upload_document, enqueue_document_generation_upload
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
-from api.request_limits import read_upload_file_bytes
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text
+from ontology.runtime_read_service import OntologyRuntimeReadService
 from paths import PROJECT_ROOT
 from portfolio import thesis_content
-from portfolio.action_registry import (
-    ActionNotFoundError,
-    ActionValidationError,
-)
 
 router = APIRouter()
 
 THESES_DIR = PROJECT_ROOT / "investment_theses"
 THESES_GCS_PREFIX = "live/theses"
 MAX_UPLOAD_SIZE_BYTES = 30 * 1024 * 1024
-_MARKDOWN_CONTENT_TYPES = {"text/markdown", "text/x-markdown"}
 
 _REQ_SECTIONS = ("## Thesis", "## Key Catalysts", "## Risk Factors")
 
@@ -172,27 +168,20 @@ def _call_llm_pdf(*, ticker: str, pdf_bytes: bytes) -> str:
     return _normalize_output_markdown(ticker, generated)
 
 
-@router.post("/thesis/generate")
-async def generate_thesis(
-    ticker: str = Form(...),  # noqa: B008 - FastAPI parameter declaration
-    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
-):
+def generate_thesis_from_upload_bytes(
+    ticker: str,
+    upload_bytes: bytes,
+    *,
+    content_type: str,
+    filename: str,
+) -> dict:
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
-
-    upload_bytes = await read_upload_file_bytes(file, limit_bytes=MAX_UPLOAD_SIZE_BYTES, limit_label="30 MiB")
     if not upload_bytes:
         raise ValidationError("Uploaded file is empty.")
 
-    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
-    filename = (file.filename or "").lower()
-    has_pdf_type = content_type == "application/pdf" or filename.endswith(".pdf")
-    has_pdf_signature = upload_bytes.startswith(b"%PDF-")
-    has_markdown_type = content_type in _MARKDOWN_CONTENT_TYPES or filename.endswith(".md")
-
-    if has_pdf_type or has_pdf_signature:
-        if not (has_pdf_type and has_pdf_signature):
-            raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+    upload_type = classify_upload_document(upload_bytes, content_type=content_type, filename=filename)
+    if upload_type == "pdf":
         try:
             content = _call_llm_pdf(ticker=normalized_ticker, pdf_bytes=upload_bytes)
         except (ValidationError, DataFetchError):
@@ -202,10 +191,8 @@ async def generate_thesis(
                 source="llm",
                 detail=f"Failed to generate thesis: {_llm_error_message(e)}",
             ) from e
-    elif has_markdown_type:
-        content = _normalize_output_markdown(normalized_ticker, _decode_markdown_upload(upload_bytes))
     else:
-        raise ValidationError("File must be a valid PDF or Markdown (.md) file.")
+        content = _normalize_output_markdown(normalized_ticker, _decode_markdown_upload(upload_bytes))
 
     _configure_thesis_content_storage()
     return stage_api_action(
@@ -216,19 +203,32 @@ async def generate_thesis(
     )
 
 
+@router.post("/thesis/generate")
+async def generate_thesis(
+    ticker: str = Form(...),  # noqa: B008 - FastAPI parameter declaration
+    file: UploadFile = File(...),  # noqa: B008 - FastAPI parameter declaration
+):
+    normalized_ticker = _normalize_ticker(ticker)
+    _validate_ticker(normalized_ticker)
+    return await enqueue_document_generation_upload(
+        kind="thesis",
+        ticker=normalized_ticker,
+        file=file,
+        max_upload_size_bytes=MAX_UPLOAD_SIZE_BYTES,
+    )
+
+
 @router.get("/thesis/meta")
 def get_thesis_meta_all():
-    from portfolio.portfolio_db import get_positions
-    from portfolio.thesis_db import get_all_thesis_meta, get_latest_evaluations
-
     positions = {}
-    for row in get_positions():
+    reads = OntologyRuntimeReadService()
+    for row in (_object_props(row) for row in reads.positions(limit=1000)):
         ticker = _normalize_ticker(str(row.get("ticker", "")))
         if ticker and ticker not in positions:
             positions[ticker] = row
 
     meta_by_ticker = {}
-    for row in get_all_thesis_meta():
+    for row in (_object_props(row) for row in reads.theses(limit=1000)):
         ticker = _normalize_ticker(str(row.get("ticker", "")))
         if ticker in positions and ticker not in meta_by_ticker:
             meta_by_ticker[ticker] = dict(row)
@@ -253,7 +253,10 @@ def get_thesis_meta_all():
         row["conviction"] = pos.get("conviction")
         meta.append(row)
 
-    latest = {_normalize_ticker(str(e.get("ticker", ""))): e for e in get_latest_evaluations()}
+    latest = {
+        _normalize_ticker(str(e.get("ticker", ""))): e
+        for e in (_object_props(row) for row in reads.evaluations(limit=1000))
+    }
     for m in meta:
         ticker = _normalize_ticker(str(m["ticker"]))
         ev = latest.get(ticker)
@@ -267,17 +270,13 @@ def get_thesis_meta_all():
 
 @router.get("/thesis/evaluations/latest")
 def get_latest_evaluations_endpoint():
-    from portfolio.thesis_db import get_latest_evaluations
-
-    return get_latest_evaluations()
+    return [_object_props(row) for row in OntologyRuntimeReadService().latest_evaluations(limit=1000)]
 
 
 @router.get("/thesis/status")
 def get_thesis_status() -> dict[str, Literal["populated", "empty", "missing"]]:
-    from portfolio.portfolio_db import get_positions
-
     statuses: dict[str, Literal["populated", "empty", "missing"]] = {}
-    for row in get_positions():
+    for row in (_object_props(row) for row in OntologyRuntimeReadService().positions(limit=1000)):
         ticker = _normalize_ticker(str(row.get("ticker", "")))
         if not ticker or ticker in statuses:
             continue
@@ -300,9 +299,8 @@ def get_thesis_detail(ticker: str):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    from portfolio.thesis_db import get_evaluations, get_status_history, get_thesis_meta
-
-    meta = get_thesis_meta(normalized_ticker)
+    reads = OntologyRuntimeReadService()
+    meta = _object_props(reads.thesis(normalized_ticker))
     if not meta:
         raise NotFoundError("Thesis metadata", normalized_ticker)
 
@@ -316,8 +314,8 @@ def get_thesis_detail(ticker: str):
     return {
         "meta": meta,
         "content": content,
-        "status_history": get_status_history(normalized_ticker),
-        "evaluations": get_evaluations(normalized_ticker, limit=52),
+        "status_history": [],
+        "evaluations": [_object_props(row) for row in reads.evaluations(normalized_ticker, limit=52)],
     }
 
 
@@ -333,19 +331,14 @@ def change_thesis_status(ticker: str, body: StatusChangeRequest):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
 
-    try:
-        return stage_api_action(
-            "change_thesis_status",
-            {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
-            source_id="thesis.change_thesis_status",
-            reason=body.reason or f"Change thesis status for {normalized_ticker}",
-            apply=body.apply,
-            approval_note=body.approval_note,
-        )
-    except ActionValidationError as e:
-        raise ValidationError(e.message) from e
-    except ActionNotFoundError as e:
-        raise NotFoundError("Thesis", normalized_ticker) from e
+    return stage_api_action(
+        "change_thesis_status",
+        {"ticker": normalized_ticker, "status": body.status, "reason": body.reason},
+        source_id="thesis.change_thesis_status",
+        reason=body.reason or f"Change thesis status for {normalized_ticker}",
+        apply=body.apply,
+        approval_note=body.approval_note,
+    )
 
 
 class SaveThesisRequest(BaseModel):
@@ -390,3 +383,15 @@ def get_thesis(ticker: str):
 
         raise AppError(f"Failed to read thesis file: {e}") from e
     return {"status": "ok", "ticker": normalized_ticker, "content": content}
+
+
+def _object_props(row: dict | None) -> dict:
+    if not row:
+        return {}
+    if "properties" not in row and "properties_json" not in row:
+        props = dict(row)
+    else:
+        props = dict(row.get("properties") or row.get("properties_json") or {})
+    props["id"] = str(row.get("object_uid") or props.get("id") or "")
+    props["object_uid"] = props["id"]
+    return props

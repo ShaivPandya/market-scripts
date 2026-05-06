@@ -20,8 +20,8 @@ import cvxpy as cp
 import numpy as np
 import pandas as pd
 
-from portfolio.portfolio_db import get_hedge_positions as _get_hedge_positions
-from portfolio.portfolio_db import get_positions_df as _get_positions_df
+from ontology.runtime_read_service import get_hedge_positions as _get_hedge_positions
+from ontology.runtime_read_service import get_positions_df as _get_positions_df
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
     BASE_CCY,
     BETA_EWMA_HALFLIFE_DAYS,
