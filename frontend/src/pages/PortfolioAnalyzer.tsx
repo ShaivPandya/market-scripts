@@ -809,7 +809,7 @@ function ContinuousOptimizationPanel({
   latestRun: OptimizationRun | null
   alerts: OptimizationAlert[]
   running: boolean
-  dismissingId: number | null
+  dismissingId: string | null
   onRun: () => void
   onDismiss: (alert: OptimizationAlert) => void
 }) {
@@ -962,7 +962,7 @@ export function PortfolioAnalyzer() {
   })
 
   const runOptimizerMutation = useMutation({
-    mutationFn: (missionId: number) => runOptimizationMissionAsync(missionId, { source: "manual" }),
+    mutationFn: (missionId: string) => runOptimizationMissionAsync(missionId, { source: "manual" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_ALERTS_QUERY_KEY })
       void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_RUNS_QUERY_KEY })

@@ -7,6 +7,7 @@ from typing import Any
 
 from api.audit import summarize_for_audit
 from api.provenance import deterministic_id, stable_hash
+from api.provenance import link_refs as write_provenance_relation
 from ontology.object_service import OntologyObjectService
 
 SCHEMA_VERSION = 1
@@ -57,6 +58,13 @@ LINK_APPLIED_BY = "applied_by"
 LINK_UPDATED = "updated"
 LINK_AUDITED_BY = "audited_by"
 LINK_SCHEMA_BOUND = "schema_bound"
+LINK_EVALUATED = "evaluated"
+
+_LINK_TYPE_ONTOLOGY_ALIASES = {
+    LINK_GATED: LINK_USED,
+    LINK_APPLIED_BY: LINK_APPROVED_EXECUTION,
+    LINK_EVALUATED: LINK_USED,
+}
 
 
 class GovernanceWriteError(RuntimeError):
@@ -202,6 +210,22 @@ def provenance_link(
         "metadata": redacted(metadata),
         "lineage_root_id": lineage_root_id,
     }
+
+
+def _normalize_link_relation(link: dict[str, Any]) -> tuple[str, Any | None]:
+    link_type = str(link.get("link_type") or "")
+    normalized = _LINK_TYPE_ONTOLOGY_ALIASES.get(link_type, link_type)
+    metadata = link.get("metadata")
+    if normalized == link_type:
+        return normalized, metadata
+    if isinstance(metadata, dict):
+        metadata = dict(metadata)
+    elif metadata is None:
+        metadata = {}
+    else:
+        metadata = {"metadata": metadata}
+    metadata.setdefault("governance_link_type", link_type)
+    return normalized, metadata
 
 
 def event_bundle(
@@ -522,13 +546,19 @@ def record_now_tx(conn: Any, event_bundle: dict[str, Any]) -> dict[str, int]:
             )
             audit_count += 1
         for link in event_bundle.get("provenance_links") or []:
-            link_id = str(link.get("link_id") or deterministic_id("provenance_link", link))
-            objects.write_object(
-                "ProvenanceLink",
-                link_id,
-                {**link, "link_id": link_id},
-                now,
-                provenance=link.get("lineage_root_id") or link.get("event_id") or link_id,
+            link_type, metadata = _normalize_link_relation(link)
+            write_provenance_relation(
+                event_id=str(link.get("event_id") or ""),
+                source_ref_type=str(link.get("source_ref_type") or ""),
+                source_ref_id=str(link.get("source_ref_id") or ""),
+                source_ref_version=link.get("source_ref_version"),
+                target_ref_type=str(link.get("target_ref_type") or ""),
+                target_ref_id=str(link.get("target_ref_id") or ""),
+                target_ref_version=link.get("target_ref_version"),
+                link_type=link_type,
+                metadata=metadata,
+                lineage_root_id=link.get("lineage_root_id"),
+                fail_closed=True,
             )
             link_count += 1
         return {"provenance_events": provenance_count, "audit_events": audit_count, "provenance_links": link_count}

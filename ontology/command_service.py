@@ -16,8 +16,14 @@ from ontology.schemas.identity import (
     action_run_id,
     approval_id,
     audit_event_id,
+    document_artifact_id,
     executed_decision_record_id,
     instrument_id,
+    issuer_id,
+    management_quality_accomplishment_id,
+    management_quality_assessment_id,
+    management_quality_scorecard_row_id,
+    management_quality_setback_id,
     portfolio_id,
     recommendation_id,
     research_note_id,
@@ -36,6 +42,7 @@ RESEARCH_ACTION_IDS = {
     "create_thesis_claim",
     "update_thesis_claim",
     "save_thesis_content",
+    "save_management_quality_content",
     "save_evaluation",
     "create_research_note",
     "create_portfolio_news_digest",
@@ -697,6 +704,18 @@ class OntologyCommandService:
             )
             refs.append(_version_ref_from_row(row))
             return refs
+        if action_id == "save_management_quality_content":
+            refs.extend(
+                self._write_management_quality_content(
+                    payload,
+                    context,
+                    actor=actor,
+                    provenance_id=provenance_id,
+                    input_hash=input_hash,
+                    now=now,
+                )
+            )
+            return refs
         if action_id == "create_action_item":
             item_key = f"action_item:{_stable_hash(payload)}"
             row = self.objects.write_object(
@@ -838,6 +857,253 @@ class OntologyCommandService:
             return refs
         raise OntologyCommandValidationError(f"Ontology-primary action is not implemented: {action_id}")
 
+    def _write_management_quality_content(
+        self,
+        payload: Mapping[str, Any],
+        context: OntologyCommandContext,
+        *,
+        actor: Mapping[str, Any],
+        provenance_id: str,
+        input_hash: str,
+        now: str,
+    ) -> list[dict[str, Any]]:
+        ticker = _non_blank(payload.get("ticker"), "ticker").upper()
+        content = _non_blank(payload.get("content"), "content")
+        preserve_exact = bool(payload.get("preserve_exact_content"))
+        try:
+            from api.routers.management_quality import parse_management_quality_markdown
+            from portfolio.management_quality_content import save_management_quality_content
+
+            parsed = parse_management_quality_markdown(content) or {}
+            saved = save_management_quality_content(ticker, content, preserve_exact_content=preserve_exact)
+            try:
+                from api.retrieval import index_document
+
+                index_document(
+                    doc_type="management_quality",
+                    content=saved.index_content,
+                    ticker=ticker,
+                    source_path=saved.source_path,
+                    doc_id=f"management_quality-{ticker}",
+                )
+            except Exception:
+                # Retrieval indexing should not prevent the authoritative ontology write.
+                pass
+        except Exception as exc:
+            raise OntologyCommandValidationError(str(exc) or exc.__class__.__name__) from exc
+
+        issuer_uid = issuer_id(ticker)
+        assessment_uid = management_quality_assessment_id(issuer_uid)
+        document_uid = document_artifact_id("management_quality", ticker)
+        summary = _dict(parsed.get("summary"))
+        owner = _dict(summary.get("owner_mindset"))
+        business = _dict(summary.get("business_value_understanding"))
+        follow = _dict(summary.get("follow_through"))
+
+        refs: list[dict[str, Any]] = []
+        issuer_row = self.objects.write_object(
+            "Issuer",
+            issuer_uid,
+            {
+                "issuer_id": issuer_uid,
+                "name": ticker,
+                "ticker": ticker,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        refs.append(_version_ref_from_row(issuer_row))
+        doc_row = self.objects.write_object(
+            "DocumentArtifact",
+            document_uid,
+            {
+                "document_type": "management_quality",
+                "document_id": f"management_quality:{ticker}",
+                "title": f"{ticker} management quality",
+                "ticker": ticker,
+                "content_hash": _stable_hash(content),
+                "artifact_uri": saved.source_path,
+                "status": "active",
+                "source_type": context.source_type,
+                "source_id": context.source_id,
+                "created_at": now,
+                "updated_at": now,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        refs.append(_version_ref_from_row(doc_row))
+        assessment_row = self.objects.write_object(
+            "ManagementQualityAssessment",
+            assessment_uid,
+            {
+                "assessment_id": assessment_uid,
+                "issuer_id": issuer_uid,
+                "ticker": ticker,
+                "status": "active",
+                "overall_rating": summary.get("overall_rating"),
+                "bottom_line": summary.get("bottom_line"),
+                "owner_mindset_rating": owner.get("rating"),
+                "owner_mindset_text": owner.get("text"),
+                "business_value_understanding_rating": business.get("rating"),
+                "business_value_understanding_text": business.get("text"),
+                "follow_through_rating": follow.get("rating"),
+                "follow_through_text": follow.get("text"),
+                "content_hash": _stable_hash(content),
+                "document_id": document_uid,
+                "source_type": context.source_type,
+                "source_id": context.source_id,
+                "created_at": now,
+                "updated_at": now,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            },
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        refs.append(_version_ref_from_row(assessment_row))
+        self.objects.write_relation(
+            assessment_uid,
+            issuer_uid,
+            "management_quality_assesses_issuer",
+            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        self.objects.write_relation(
+            assessment_uid,
+            document_uid,
+            "research_object_uses_document",
+            {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID, "document_role": "rendered_markdown"},
+            now,
+            actor=actor,
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+
+        for index, row in enumerate(_list(parsed.get("scorecard")), start=1):
+            if not isinstance(row, Mapping):
+                continue
+            question = str(row.get("question") or "").strip()
+            rating = str(row.get("rating") or "").strip()
+            if not question or not rating:
+                continue
+            row_uid = management_quality_scorecard_row_id(f"{assessment_uid}:scorecard:{index}:{question}")
+            scorecard = self.objects.write_object(
+                "ManagementQualityScorecardRow",
+                row_uid,
+                {
+                    "row_id": row_uid,
+                    "assessment_id": assessment_uid,
+                    "issuer_id": issuer_uid,
+                    "ticker": ticker,
+                    "question": question,
+                    "rating": rating,
+                    "evidence": row.get("evidence"),
+                    "ordinal": index,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(scorecard))
+            self.objects.write_relation(
+                assessment_uid,
+                _flatten_object(scorecard)["id"],
+                "management_quality_has_scorecard_row",
+                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+
+        for index, row in enumerate(_list(parsed.get("accomplishments")), start=1):
+            if not isinstance(row, Mapping) or not str(row.get("text") or "").strip():
+                continue
+            acc_uid = management_quality_accomplishment_id(
+                f"{assessment_uid}:accomplishment:{index}:{row.get('title') or row.get('text')}"
+            )
+            acc = self.objects.write_object(
+                "ManagementQualityAccomplishment",
+                acc_uid,
+                {
+                    "accomplishment_id": acc_uid,
+                    "assessment_id": assessment_uid,
+                    "issuer_id": issuer_uid,
+                    "ticker": ticker,
+                    "title": row.get("title"),
+                    "text": row.get("text"),
+                    "ordinal": index,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(acc))
+            self.objects.write_relation(
+                assessment_uid,
+                _flatten_object(acc)["id"],
+                "management_quality_has_accomplishment",
+                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+
+        for index, row in enumerate(_list(parsed.get("setbacks")), start=1):
+            if not isinstance(row, Mapping) or not str(row.get("text") or "").strip():
+                continue
+            setback_uid = management_quality_setback_id(
+                f"{assessment_uid}:setback:{index}:{row.get('title') or row.get('text')}"
+            )
+            setback = self.objects.write_object(
+                "ManagementQualitySetback",
+                setback_uid,
+                {
+                    "setback_id": setback_uid,
+                    "assessment_id": assessment_uid,
+                    "issuer_id": issuer_uid,
+                    "ticker": ticker,
+                    "title": row.get("title"),
+                    "text": row.get("text"),
+                    "response_rating": row.get("response_rating"),
+                    "response_text": row.get("response_text"),
+                    "ordinal": index,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(setback))
+            self.objects.write_relation(
+                assessment_uid,
+                _flatten_object(setback)["id"],
+                "management_quality_has_setback",
+                {"ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID},
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+        return refs
+
     def _ensure_default_account_portfolio(
         self,
         context: OntologyCommandContext,
@@ -954,6 +1220,8 @@ def _target_for_action(action_id: str, payload: Mapping[str, Any]) -> tuple[str 
     if action_id == "create_recommendation":
         record = _dict(payload.get("record") or payload)
         ticker = _ticker_from_payload(record)
+    if ticker and action_id == "save_management_quality_content":
+        return management_quality_assessment_id(issuer_id(ticker)), "ManagementQualityAssessment"
     if ticker and action_id in RESEARCH_ACTION_IDS:
         return thesis_id(ticker), "Thesis"
     if ticker and action_id in {"update_portfolio_positions", "update_hedge_positions"}:
@@ -969,6 +1237,9 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
         raise OntologyCommandValidationError(f"Unsupported ontology-primary action: {action_id}")
     if action_id == "update_portfolio_positions" and not _list(payload.get("positions")):
         raise OntologyCommandValidationError("At least one position is required.")
+    if action_id == "save_management_quality_content":
+        _non_blank(payload.get("ticker"), "ticker")
+        _non_blank(payload.get("content"), "content")
     if action_id == "create_recommendation":
         record = _dict(payload.get("record") or payload)
         _non_blank(record.get("action"), "action")

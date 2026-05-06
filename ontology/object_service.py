@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import os
 import re
 from collections.abc import Mapping
 from datetime import datetime
@@ -13,53 +16,78 @@ from ontology.schemas.identity import (
     action_event_id,
     action_item_id,
     action_run_id,
+    agent_session_ref_id,
     approval_id,
     asset_id,
     audit_event_id,
     canonical_ticker,
     catalyst_id,
     citation_id,
+    computed_snapshot_ref_id,
     document_artifact_id,
     evaluation_id,
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    factor_score_id,
     hedge_position_id,
+    idea_comparison_ranking_id,
+    idea_comparison_run_id,
+    idea_evaluation_id,
     instrument_id,
+    investment_idea_id,
     investment_policy_id,
     investor_id,
     issuer_id,
     kill_condition_id,
     macro_indicator_id,
+    management_quality_accomplishment_id,
+    management_quality_assessment_id,
+    management_quality_scorecard_row_id,
+    management_quality_setback_id,
     mandate_id,
+    missing_information_requirement_id,
+    model_call_ref_id,
     object_version_ref_id,
+    ontology_run_ref_id,
+    optimization_action_snapshot_id,
+    optimization_alert_id,
+    optimization_mission_id,
+    optimization_run_id,
     policy_gate_result_id,
     portfolio_id,
     position_id,
+    provenance_event_id,
     recommendation_id,
+    relation_version_ref_id,
     report_run_id,
     research_note_id,
     risk_limit_id,
     risk_metric_id,
     scenario_id,
+    schema_definition_ref_id,
     sector_id,
     signal_id,
+    source_freshness_id,
     source_record_object_id,
     thesis_claim_id,
     thesis_id,
+    tool_call_ref_id,
     trade_proposal_id,
     watch_trigger_id,
     workflow_artifact_id,
     workflow_run_id,
 )
 from ontology.schemas.registry import NODE_SCHEMAS, normalize_edge, normalize_node
-from ontology.schemas.relations import RELATION_REGISTRY
+from ontology.schemas.relations import PROVENANCE_RELATION_TYPES, RELATION_REGISTRY, get_relation_definition
 from ontology.temporal_repository import (
     ObjectVersionWrite,
     RelationVersionWrite,
     TemporalActor,
     TemporalOntologyRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 _GOVERNED_OBJECT_TYPES = {
     "ActionRun",
@@ -72,8 +100,15 @@ _GOVERNED_OBJECT_TYPES = {
     "Evaluation",
     "ExecutedAction",
     "ExecutedDecisionRecord",
+    "FactorScore",
     "HedgePosition",
+    "IdeaComparisonRanking",
     "KillCondition",
+    "ManagementQualityAccomplishment",
+    "ManagementQualityAssessment",
+    "ManagementQualityScorecardRow",
+    "ManagementQualitySetback",
+    "MissingInformationRequirement",
     "ObjectVersionRef",
     "PolicyGateResult",
     "Position",
@@ -101,6 +136,10 @@ _GOVERNED_RELATION_TYPES = {
     "executed_decision_records_action_run",
     "trade_proposal_requires_approval",
 }
+
+
+class OntologyWriteContractError(ValueError):
+    """Raised when an ontology write violates the authoritative write contract."""
 
 
 class OntologyObjectService:
@@ -157,8 +196,10 @@ class OntologyObjectService:
         input_hash: str | None = None,
         temporal_confidence: str = "native",
     ) -> dict[str, Any]:
+        _check_registered_object_type(object_type)
         actor_fields = _actor_fields(actor)
         provenance_event_id = _provenance_event_id(provenance)
+        _require_write_provenance("object", object_type, provenance_event_id)
         _require_governed_lineage(
             "object",
             object_type,
@@ -208,8 +249,10 @@ class OntologyObjectService:
         input_hash: str | None = None,
         temporal_confidence: str = "native",
     ) -> dict[str, Any]:
+        _check_registered_relation_type(relation_type)
         actor_fields = _actor_fields(actor)
         provenance_event_id = _provenance_event_id(provenance)
+        _require_write_provenance("relation", relation_type, provenance_event_id)
         _require_governed_lineage(
             "relation",
             relation_type,
@@ -219,9 +262,10 @@ class OntologyObjectService:
             source_record_id=source_record_id,
         )
         normalized = normalize_relation_payload(source_uid, target_uid, relation_type, properties or {})
+        _require_registered_relation_properties(relation_type, normalized["properties"], source_uid, target_uid)
         row = self.repo.write_relation_version(
             RelationVersionWrite(
-                relation_uid=relation_uid_for(source_uid, target_uid, relation_type),
+                relation_uid=relation_uid_for(source_uid, target_uid, relation_type, normalized["properties"]),
                 source_object_uid=source_uid,
                 target_object_uid=target_uid,
                 relation_type=relation_type,
@@ -275,11 +319,13 @@ class OntologyObjectService:
         provenance: Mapping[str, Any] | str | None = None,
         input_hash: str | None = None,
     ) -> dict[str, Any]:
+        provenance_event_id = _provenance_event_id(provenance)
+        _require_write_provenance("object correction", version_id, provenance_event_id)
         row = self.repo.correct_object_version(
             version_id,
             properties=dict(properties),
             actor=_actor_fields(actor),
-            provenance_event_id=_provenance_event_id(provenance),
+            provenance_event_id=provenance_event_id,
             input_hash=input_hash,
         )
         return with_temporal_meta(row)
@@ -313,6 +359,7 @@ def normalize_object_payload(
 ) -> dict[str, Any]:
     props = dict(properties or {})
     if object_type in NODE_SCHEMAS:
+        props = _with_object_identity_fields(object_type, business_key, props)
         node = normalize_node(
             OntologyNode(
                 id=object_uid,
@@ -356,6 +403,7 @@ def normalize_relation_payload(
                 target_id=target_uid,
                 relation_type=cast(Any, relation_type),
                 properties=props,
+                schema_version=1,
                 relation_schema_name=relation_type,
                 relation_schema_version=1,
             ),
@@ -444,6 +492,34 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("object_version_ref:"):
             return key
         return object_version_ref_id(props.get("ref_id") or key)
+    if object_type == "RelationVersionRef":
+        if key.startswith("relation_version_ref:"):
+            return key
+        return relation_version_ref_id(props.get("ref_id") or props.get("version_id") or key)
+    if object_type == "SchemaDefinitionRef":
+        if key.startswith("schema_definition_ref:"):
+            return key
+        return schema_definition_ref_id(props.get("ref_id") or key)
+    if object_type == "OntologyRunRef":
+        if key.startswith("ontology_run_ref:"):
+            return key
+        return ontology_run_ref_id(props.get("run_id") or key)
+    if object_type == "AgentSessionRef":
+        if key.startswith("agent_session_ref:"):
+            return key
+        return agent_session_ref_id(props.get("session_id") or key)
+    if object_type == "ModelCallRef":
+        if key.startswith("model_call_ref:"):
+            return key
+        return model_call_ref_id(props.get("call_id") or key)
+    if object_type == "ToolCallRef":
+        if key.startswith("tool_call_ref:"):
+            return key
+        return tool_call_ref_id(props.get("call_id") or key)
+    if object_type == "ComputedSnapshotRef":
+        if key.startswith("computed_snapshot_ref:"):
+            return key
+        return computed_snapshot_ref_id(props.get("snapshot_key") or props.get("snapshot_id") or key)
     if object_type == "ExecutedAction":
         if key.startswith("executed_action:"):
             return key
@@ -551,14 +627,66 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("document_artifact:"):
             return key
         return document_artifact_id(props.get("document_type") or "document", props.get("document_id") or key)
+    if object_type == "ProvenanceEvent":
+        return provenance_event_id(props.get("event_id") or props.get("id") or key)
+    if object_type == "InvestmentIdea":
+        return investment_idea_id(props.get("idea_id") or props.get("id") or key)
+    if object_type == "IdeaEvaluation":
+        return idea_evaluation_id(props.get("evaluation_id") or props.get("id") or key)
+    if object_type == "IdeaComparisonRun":
+        return idea_comparison_run_id(props.get("comparison_run_id") or props.get("run_id") or props.get("id") or key)
+    if object_type == "IdeaComparisonRanking":
+        return idea_comparison_ranking_id(props.get("ranking_id") or props.get("id") or key)
+    if object_type == "FactorScore":
+        return factor_score_id(props.get("factor_score_id") or props.get("id") or key)
+    if object_type == "MissingInformationRequirement":
+        return missing_information_requirement_id(props.get("requirement_id") or props.get("id") or key)
+    if object_type == "OptimizationMission":
+        return optimization_mission_id(props.get("mission_id") or props.get("id") or key)
+    if object_type == "OptimizationRun":
+        return optimization_run_id(props.get("run_id") or props.get("id") or key)
+    if object_type == "OptimizationActionSnapshot":
+        return optimization_action_snapshot_id(props.get("snapshot_id") or props.get("id") or key)
+    if object_type == "OptimizationAlert":
+        return optimization_alert_id(props.get("alert_id") or props.get("id") or key)
+    if object_type == "SourceFreshness":
+        return source_freshness_id(props.get("freshness_id") or props.get("id") or key)
+    if object_type == "ManagementQualityAssessment":
+        return management_quality_assessment_id(props.get("assessment_id") or props.get("id") or key)
+    if object_type == "ManagementQualityScorecardRow":
+        return management_quality_scorecard_row_id(props.get("row_id") or props.get("id") or key)
+    if object_type == "ManagementQualityAccomplishment":
+        return management_quality_accomplishment_id(props.get("accomplishment_id") or props.get("id") or key)
+    if object_type == "ManagementQualitySetback":
+        return management_quality_setback_id(props.get("setback_id") or props.get("id") or key)
     if ":" in key and key.split(":", 1)[0]:
         return key
     return f"{_slug(object_type)}:{_slug(key)}"
 
 
-def relation_uid_for(source_uid: str, target_uid: str, relation_type: str) -> str:
-    raw = f"{relation_type}:{source_uid}->{target_uid}"
-    return raw if len(raw) <= 180 else f"{relation_type}:{_slug(source_uid)}:{_slug(target_uid)}"
+def relation_uid_for(
+    source_uid: str,
+    target_uid: str,
+    relation_type: str,
+    properties: Mapping[str, Any] | None = None,
+) -> str:
+    props = dict(properties or {})
+    if relation_type in PROVENANCE_RELATION_TYPES:
+        raw = ":".join(
+            [
+                relation_type,
+                str(props.get("event_id") or "unknown_event"),
+                str(props.get("source_ref_type") or "unknown_source"),
+                str(props.get("source_ref_id") or source_uid),
+                str(props.get("source_ref_version") or "latest"),
+                str(props.get("target_ref_type") or "unknown_target"),
+                str(props.get("target_ref_id") or target_uid),
+                str(props.get("target_ref_version") or "latest"),
+            ]
+        )
+    else:
+        raw = f"{relation_type}:{source_uid}->{target_uid}"
+    return raw if len(raw) <= 180 else f"{relation_type}:{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:32]}"
 
 
 def with_temporal_meta(row: dict[str, Any]) -> dict[str, Any]:
@@ -624,6 +752,113 @@ def _require_governed_lineage(
     if provenance_event_id or action_run_id is not None or approval_id is not None or source_record_id:
         return
     raise ValueError(f"Governed ontology {surface} write '{name}' requires provenance or action lineage")
+
+
+def _strict_write_contract_enabled() -> bool:
+    if (os.getenv("ONTOLOGY_PRIMARY_WRITES") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return (os.getenv("ENVIRONMENT") or "").strip().lower() == "production"
+
+
+def _check_registered_object_type(object_type: str) -> None:
+    if object_type in NODE_SCHEMAS:
+        return
+    message = f"Unregistered ontology object type: {object_type}"
+    if _strict_write_contract_enabled():
+        raise OntologyWriteContractError(message)
+    logger.warning("%s; local non-primary write will use compatibility fallback", message)
+
+
+def _check_registered_relation_type(relation_type: str) -> None:
+    if relation_type in RELATION_REGISTRY:
+        return
+    message = f"Unregistered ontology relation type: {relation_type}"
+    if _strict_write_contract_enabled():
+        raise OntologyWriteContractError(message)
+    logger.warning("%s; local non-primary write will use compatibility fallback", message)
+
+
+def _require_write_provenance(surface: str, name: str, provenance_event_id: str | None) -> None:
+    if provenance_event_id:
+        return
+    raise OntologyWriteContractError(f"Ontology {surface} write '{name}' requires provenance")
+
+
+def _require_registered_relation_properties(
+    relation_type: str,
+    properties: Mapping[str, Any],
+    source_uid: str,
+    target_uid: str,
+) -> None:
+    definition = get_relation_definition(relation_type)
+    missing = [name for name in sorted(definition.required_properties) if _missing_property(properties.get(name))]
+    if missing:
+        fields = ", ".join(missing)
+        raise OntologyWriteContractError(
+            f"Ontology relation write '{relation_type}' {source_uid}->{target_uid} missing required properties: {fields}"
+        )
+
+
+def _missing_property(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _with_object_identity_fields(object_type: str, business_key: str, props: dict[str, Any]) -> dict[str, Any]:
+    out = dict(props)
+    key = str(business_key or "").strip()
+    if object_type == "ProvenanceEvent":
+        out.setdefault("event_id", out.get("id") or key)
+    elif object_type == "RelationVersionRef":
+        out.setdefault("ref_id", out.get("version_id") or out.get("relation_uid") or out.get("id") or key)
+        out.setdefault("version_id", out.get("ref_id"))
+    elif object_type == "SchemaDefinitionRef":
+        out.setdefault("ref_id", out.get("id") or key)
+    elif object_type == "OntologyRunRef":
+        out.setdefault("run_id", out.get("id") or key)
+    elif object_type == "AgentSessionRef":
+        out.setdefault("session_id", out.get("id") or key)
+    elif object_type == "ModelCallRef":
+        out.setdefault("call_id", out.get("id") or key)
+    elif object_type == "ToolCallRef":
+        out.setdefault("call_id", out.get("id") or key)
+    elif object_type == "ComputedSnapshotRef":
+        out.setdefault("snapshot_key", out.get("snapshot_id") or out.get("id") or key)
+    elif object_type == "InvestmentIdea":
+        out.setdefault("idea_id", out.get("id") or key)
+    elif object_type == "IdeaEvaluation":
+        out.setdefault("evaluation_id", out.get("id") or key)
+    elif object_type == "IdeaComparisonRun":
+        out.setdefault("comparison_run_id", out.get("run_id") or out.get("id") or key)
+        out.setdefault("run_id", out.get("comparison_run_id"))
+    elif object_type == "IdeaComparisonRanking":
+        out.setdefault("ranking_id", out.get("id") or key)
+    elif object_type == "FactorScore":
+        out.setdefault("factor_score_id", out.get("id") or key)
+    elif object_type == "MissingInformationRequirement":
+        out.setdefault("requirement_id", out.get("id") or key)
+    elif object_type == "OptimizationMission":
+        out.setdefault("mission_id", out.get("id") or key)
+    elif object_type == "OptimizationRun":
+        out.setdefault("run_id", out.get("id") or key)
+    elif object_type == "OptimizationActionSnapshot":
+        out.setdefault("snapshot_id", out.get("id") or key)
+    elif object_type == "OptimizationAlert":
+        out.setdefault("alert_id", out.get("id") or key)
+    elif object_type == "SourceFreshness":
+        out.setdefault("freshness_id", out.get("id") or key)
+    elif object_type == "ManagementQualityAssessment":
+        out.setdefault("assessment_id", out.get("id") or key)
+    elif object_type == "ManagementQualityScorecardRow":
+        out.setdefault("row_id", out.get("id") or key)
+    elif object_type == "ManagementQualityAccomplishment":
+        out.setdefault("accomplishment_id", out.get("id") or key)
+    elif object_type == "ManagementQualitySetback":
+        out.setdefault("setback_id", out.get("id") or key)
+    return out
 
 
 def _slug(value: str) -> str:

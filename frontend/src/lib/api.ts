@@ -2,7 +2,7 @@ import axios from "axios"
 
 import { getAuthMode } from "@/lib/authMode"
 import type { DecisionState, DecisionStateFields, EffectScope } from "@/lib/decisionState"
-import type { ParsedManagementQuality } from "@/lib/managementQualityTypes"
+import type { ManagementQualityAssessment, ParsedManagementQuality } from "@/lib/managementQualityTypes"
 import type { ParsedOverview } from "@/lib/overviewTypes"
 
 const client = axios.create({
@@ -208,7 +208,8 @@ export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "acce
 export type IdeaAction = "buy" | "watch" | "avoid" | "do_nothing"
 
 export interface InvestmentIdea {
-  id: number
+  id: string
+  legacy_id?: number | null
   ticker: string
   company_name: string | null
   status: IdeaStatus | string
@@ -219,9 +220,9 @@ export interface InvestmentIdea {
   updated_at: string
   source_type?: string | null
   source_id?: string | null
-  latest_evaluation_id: number | null
+  latest_evaluation_id: string | null
   latest_job_id: string | null
-  accepted_recommendation_id: number | null
+  accepted_recommendation_id: string | null
   metadata?: Record<string, unknown>
   latest_evaluation?: IdeaEvaluation | null
 }
@@ -247,8 +248,9 @@ export interface IdeaEvidenceItem {
 }
 
 export interface IdeaEvaluation {
-  id: number
-  idea_id: number
+  id: string
+  legacy_id?: number | null
+  idea_id: string
   ticker: string
   job_id: string | null
   evaluated_at: string
@@ -319,10 +321,11 @@ export interface IdeaAcceptResponse {
 }
 
 export interface IdeaComparisonRanking {
-  id: number
+  id: string
+  legacy_id?: number | null
   run_id: string
-  idea_id: number
-  evaluation_id: number
+  idea_id: string
+  evaluation_id: string
   ticker: string
   rank: number
   action: IdeaAction | string
@@ -334,7 +337,8 @@ export interface IdeaComparisonRanking {
 }
 
 export interface IdeaComparisonRun {
-  id: number
+  id: string
+  legacy_id?: number | null
   run_id: string
   job_id: string | null
   scope_statuses: string[]
@@ -520,6 +524,20 @@ export const fetchPortfolioPositions = (includeHedges = false) =>
 export const savePortfolioPositions = (positions: PortfolioPosition[], options?: StagedMutationOptions) =>
   client.put("/portfolio-positions", { positions, ...options }).then(r => r.data as StagedMutationResponse)
 
+export interface PortfolioSettings {
+  book_size: number
+  default_book_size: number
+  configured: boolean
+  min_book_size: number
+  max_book_size: number
+}
+
+export const fetchPortfolioSettings = () =>
+  client.get("/portfolio-settings").then(r => r.data as PortfolioSettings)
+
+export const updatePortfolioSettings = (settings: { book_size: number }) =>
+  client.put("/portfolio-settings", settings).then(r => r.data as PortfolioSettings)
+
 export interface HedgePosition {
   ticker: string
   asset?: PortfolioAsset | null
@@ -651,7 +669,16 @@ export const uploadManagementQualityDocument = (ticker: string, file: File) =>
 export const fetchManagementQuality = (ticker: string) =>
   client
     .get(`/management-quality/${encodeURIComponent(ticker)}`)
-    .then(r => r.data as { status: "ok"; ticker: string; content: string; parsed: ParsedManagementQuality | null })
+    .then(
+      r =>
+        r.data as {
+          status: "ok"
+          ticker: string
+          content: string
+          parsed: ParsedManagementQuality | null
+          assessment?: ManagementQualityAssessment | null
+        },
+    )
 
 // --- Thesis metadata types ---
 
@@ -1323,8 +1350,20 @@ export const fetchHedgingPortfolioWeights = (book?: number) =>
 export const fetchHedgingRecommendations = (body: Record<string, unknown>) =>
   client.post("/hedging-tool/recommend", body, { timeout: 180_000 }).then(r => r.data as { analysis: string })
 
+export interface SizerPrefillResponse {
+  positions: {
+    ticker?: string
+    conviction?: number
+    direction?: string
+    instrument_type?: InstrumentType | null
+  }[]
+  book_size?: number
+  source?: string
+  count?: number
+}
+
 export const fetchSizerPrefill = () =>
-  client.get("/portfolio-sizer/prefill").then(r => r.data)
+  client.get("/portfolio-sizer/prefill").then(r => r.data as SizerPrefillResponse)
 
 // ─── POST endpoints ───────────────────────────────────────────────────────────
 
@@ -1925,7 +1964,8 @@ export const fetchWorkspace = () => client.get("/workspace").then(r => r.data)
 
 // Continuous Optimization
 export interface OptimizationMission {
-  id: number
+  id: string
+  legacy_id?: number | null
   name: string
   status: string
   schedule_label?: string | null
@@ -1938,7 +1978,9 @@ export interface OptimizationMission {
 
 export interface OptimizationRun {
   run_id: string
-  mission_id: number
+  id?: string
+  legacy_id?: number | null
+  mission_id: string
   mission_name: string
   status: string
   started_at: string
@@ -1950,9 +1992,10 @@ export interface OptimizationRun {
 }
 
 export interface OptimizationSnapshot {
-  id: number
+  id: string
+  legacy_id?: number | null
   run_id: string
-  mission_id: number
+  mission_id: string
   ticker?: string | null
   asset?: string | null
   direction?: string | null
@@ -1969,8 +2012,9 @@ export interface OptimizationSnapshot {
 }
 
 export interface OptimizationAlert {
-  id: number
-  mission_id: number
+  id: string
+  legacy_id?: number | null
+  mission_id: string
   run_id: string
   ticker?: string | null
   alert_type: string
@@ -1989,10 +2033,12 @@ export interface OptimizationAlert {
 export const fetchOptimizationMissions = () =>
   client.get("/optimization/missions").then(r => r.data as { missions: OptimizationMission[]; count: number })
 
-export const runOptimizationMission = (missionId: number, body?: { source?: string; force?: boolean }) =>
-  client.post(`/optimization/missions/${missionId}/run`, body ?? { source: "manual" }).then(r => r.data as AdminJobResponse)
+export const runOptimizationMission = (missionId: string, body?: { source?: string; force?: boolean }) =>
+  client
+    .post(`/optimization/missions/${encodeURIComponent(missionId)}/run`, body ?? { source: "manual" })
+    .then(r => r.data as AdminJobResponse)
 
-export async function runOptimizationMissionAsync(missionId: number, body?: { source?: string; force?: boolean }) {
+export async function runOptimizationMissionAsync(missionId: string, body?: { source?: string; force?: boolean }) {
   const started = await runOptimizationMission(missionId, body)
   if (started.status === "done" && "result" in started) return started.result
   if (started.status === "error") throw new Error(started.error || "Continuous optimizer failed")
@@ -2007,24 +2053,24 @@ export async function runOptimizationMissionAsync(missionId: number, body?: { so
   }
 }
 
-export const fetchOptimizationRuns = (params?: { mission_id?: number; limit?: number }) =>
+export const fetchOptimizationRuns = (params?: { mission_id?: string; limit?: number }) =>
   client.get("/optimization/runs", { params }).then(r => r.data as { runs: OptimizationRun[]; count: number })
 
 export const fetchOptimizationRun = (runId: string) =>
   client.get(`/optimization/runs/${encodeURIComponent(runId)}`).then(r => r.data as OptimizationRun)
 
-export const fetchOptimizationAlerts = (params?: { status?: string; mission_id?: number; limit?: number }) =>
+export const fetchOptimizationAlerts = (params?: { status?: string; mission_id?: string; limit?: number }) =>
   client.get("/optimization/alerts", { params }).then(r => r.data as { alerts: OptimizationAlert[]; count: number })
 
-export const dismissOptimizationAlert = (id: number, note?: string) =>
-  client.put(`/optimization/alerts/${id}/dismiss`, note ? { note } : {}).then(r => r.data as OptimizationAlert)
+export const dismissOptimizationAlert = (id: string, note?: string) =>
+  client.put(`/optimization/alerts/${encodeURIComponent(id)}/dismiss`, note ? { note } : {}).then(r => r.data as OptimizationAlert)
 
 // Idea Watchlist
 export const fetchIdeas = (params?: { status?: IdeaStatus | string; include_archived?: boolean; limit?: number }) =>
   client.get("/ideas", { params }).then(r => r.data as IdeaListResponse)
 
-export const fetchIdea = (id: number) =>
-  client.get(`/ideas/${id}`).then(r => r.data as IdeaDetailResponse)
+export const fetchIdea = (id: string) =>
+  client.get(`/ideas/${encodeURIComponent(id)}`).then(r => r.data as IdeaDetailResponse)
 
 export const createIdea = (body: {
   ticker: string
@@ -2034,20 +2080,20 @@ export const createIdea = (body: {
   status?: IdeaStatus
 }) => client.post("/ideas", body).then(r => r.data as IdeaDetailResponse)
 
-export const updateIdea = (id: number, body: {
+export const updateIdea = (id: string, body: {
   ticker?: string
   company_name?: string | null
   user_notes?: string | null
   tags?: string[]
   status?: IdeaStatus
-}) => client.put(`/ideas/${id}`, body).then(r => r.data as IdeaDetailResponse)
+}) => client.put(`/ideas/${encodeURIComponent(id)}`, body).then(r => r.data as IdeaDetailResponse)
 
-export const archiveIdea = (id: number) =>
-  client.delete(`/ideas/${id}`).then(r => r.data as { status: string; idea: InvestmentIdea })
+export const archiveIdea = (id: string) =>
+  client.delete(`/ideas/${encodeURIComponent(id)}`).then(r => r.data as { status: string; idea: InvestmentIdea })
 
-export const startIdeaEvaluationJob = (id: number, body?: { force_refresh?: boolean }) =>
+export const startIdeaEvaluationJob = (id: string, body?: { force_refresh?: boolean }) =>
   client
-    .post(`/ideas/${id}/evaluate/async`, body ?? {}, { timeout: 30_000 })
+    .post(`/ideas/${encodeURIComponent(id)}/evaluate/async`, body ?? {}, { timeout: 30_000 })
     .then(r => r.data as IdeaEvaluationJobResponse)
 
 export const fetchIdeaEvaluationJob = (jobId: string) =>
@@ -2071,13 +2117,13 @@ export const fetchIdeaComparisonRuns = (params?: { limit?: number }) =>
 export const fetchIdeaComparisonRun = (runId: string) =>
   client.get(`/ideas/comparison-runs/${encodeURIComponent(runId)}`).then(r => r.data as IdeaComparisonRun)
 
-export const acceptIdeaEvaluation = (ideaId: number, evaluationId: number, body?: { note?: string }) =>
+export const acceptIdeaEvaluation = (ideaId: string, evaluationId: string, body?: { note?: string }) =>
   client
-    .post(`/ideas/${ideaId}/evaluations/${evaluationId}/accept`, body ?? {})
+    .post(`/ideas/${encodeURIComponent(ideaId)}/evaluations/${encodeURIComponent(evaluationId)}/accept`, body ?? {})
     .then(r => r.data as IdeaAcceptResponse)
 
-export const rejectIdea = (id: number, note?: string) =>
-  client.post(`/ideas/${id}/reject`, note ? { note } : {}).then(r => r.data as { status: string; idea: InvestmentIdea })
+export const rejectIdea = (id: string, note?: string) =>
+  client.post(`/ideas/${encodeURIComponent(id)}/reject`, note ? { note } : {}).then(r => r.data as { status: string; idea: InvestmentIdea })
 
 // Recommendations
 export const fetchRecommendations = (params?: {

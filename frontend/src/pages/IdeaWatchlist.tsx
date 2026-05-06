@@ -423,7 +423,7 @@ function EvaluationPanel({
 
 export function IdeaWatchlist() {
   const qc = useQueryClient()
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [activeJobs, setActiveJobs] = useState<Record<string, string>>(() => readActiveJobs())
   const [activeComparisonJob, setActiveComparisonJob] = useState<string | null>(() => readActiveComparisonJob())
   const [jobSnapshots, setJobSnapshots] = useState<Record<string, IdeaEvaluationJobResponse>>({})
@@ -460,7 +460,7 @@ export function IdeaWatchlist() {
 
   const detailQuery = useQuery({
     queryKey: ["idea", selectedId],
-    queryFn: () => fetchIdea(selectedId as number),
+    queryFn: () => fetchIdea(selectedId as string),
     enabled: selectedId != null,
     staleTime: 15_000,
   })
@@ -501,7 +501,7 @@ export function IdeaWatchlist() {
             delete next[ideaId]
             changed = true
             await qc.invalidateQueries({ queryKey: ["ideas"] })
-            await qc.invalidateQueries({ queryKey: ["idea", Number(ideaId)] })
+            await qc.invalidateQueries({ queryKey: ["idea", ideaId] })
           } else if (job.status === "error" || job.status === "cancelled") {
             delete next[ideaId]
             changed = true
@@ -587,7 +587,7 @@ export function IdeaWatchlist() {
   })
 
   const evaluateMutation = useMutation({
-    mutationFn: ({ ideaId, forceRefresh }: { ideaId: number; forceRefresh?: boolean }) =>
+    mutationFn: ({ ideaId, forceRefresh }: { ideaId: string; forceRefresh?: boolean }) =>
       startIdeaEvaluationJob(ideaId, { force_refresh: Boolean(forceRefresh) }),
     onSuccess: (job, variables) => {
       setJobErrors(prev => {
@@ -625,7 +625,7 @@ export function IdeaWatchlist() {
   })
 
   const archiveMutation = useMutation({
-    mutationFn: (ideaId: number) => archiveIdea(ideaId),
+    mutationFn: (ideaId: string) => archiveIdea(ideaId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["ideas"] })
       setSelectedId(null)
@@ -693,7 +693,7 @@ export function IdeaWatchlist() {
     return { idea, evaluation, activeJob }
   }), [ideas, selectedId, detail, activeJobs])
 
-  function currentJobResponse(ideaId: number): { jobId: string; message: string } | null {
+  function currentJobResponse(ideaId: string): { jobId: string; message: string } | null {
     const jobId = activeJobs[String(ideaId)]
     if (!jobId) return null
     const progress = jobSnapshots[String(ideaId)]?.progress

@@ -13,39 +13,62 @@ from ontology.schemas.identity import (
     action_event_id,
     action_item_id,
     action_run_id,
+    agent_session_ref_id,
     approval_id,
     asset_id,
     audit_event_id,
     catalyst_id,
     citation_id,
+    computed_snapshot_ref_id,
     document_artifact_id,
     evaluation_id,
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    factor_score_id,
     hedge_position_id,
+    idea_comparison_ranking_id,
+    idea_comparison_run_id,
+    idea_evaluation_id,
     instrument_id,
+    investment_idea_id,
     investment_policy_id,
     investor_id,
     issuer_id,
     kill_condition_id,
     macro_indicator_id,
+    management_quality_accomplishment_id,
+    management_quality_assessment_id,
+    management_quality_scorecard_row_id,
+    management_quality_setback_id,
     mandate_id,
+    missing_information_requirement_id,
+    model_call_ref_id,
     object_version_ref_id,
+    ontology_run_ref_id,
+    optimization_action_snapshot_id,
+    optimization_alert_id,
+    optimization_mission_id,
+    optimization_run_id,
     policy_gate_result_id,
     portfolio_id,
     position_id,
+    provenance_event_id,
     recommendation_id,
+    relation_version_ref_id,
     report_run_id,
     research_note_id,
     risk_limit_id,
     risk_metric_id,
     scenario_id,
+    schema_definition_ref_id,
     sector_id,
     signal_id,
+    source_freshness_id,
     source_record_object_id,
     thesis_claim_id,
     thesis_id,
+    tool_call_ref_id,
     trade_proposal_id,
     watch_trigger_id,
     workflow_artifact_id,
@@ -57,40 +80,63 @@ from ontology.schemas.objects import (
     ActionEventV1,
     ActionItemV1,
     ActionRunV1,
+    AgentSessionRefV1,
     ApprovalV1,
     AssetV1,
     AuditEventV1,
     CatalystV1,
     CitationV1,
+    ComputedSnapshotRefV1,
     DocumentArtifactV1,
     EvaluationV1,
     EvidenceV1,
     ExecutedActionV1,
     ExecutedDecisionRecordV1,
+    FactorScoreV1,
     HedgePositionV1,
+    IdeaComparisonRankingV1,
+    IdeaComparisonRunV1,
+    IdeaEvaluationV1,
     InstrumentV1,
+    InvestmentIdeaV1,
     InvestmentPolicyV1,
     InvestorV1,
     IssuerV1,
     KillConditionV1,
     MacroIndicatorV1,
+    ManagementQualityAccomplishmentV1,
+    ManagementQualityAssessmentV1,
+    ManagementQualityScorecardRowV1,
+    ManagementQualitySetbackV1,
     MandateV1,
+    MissingInformationRequirementV1,
+    ModelCallRefV1,
     ObjectVersionRefV1,
     OntologyObjectV1,
+    OntologyRunRefV1,
+    OptimizationActionSnapshotV1,
+    OptimizationAlertV1,
+    OptimizationMissionV1,
+    OptimizationRunV1,
     PolicyGateResultV1,
     PortfolioV1,
     PositionV1,
+    ProvenanceEventV1,
     RecommendationV1,
+    RelationVersionRefV1,
     ReportRunV1,
     ResearchNoteV1,
     RiskLimitV1,
     RiskMetricV1,
     ScenarioV1,
+    SchemaDefinitionRefV1,
     SectorV1,
     SignalV1,
+    SourceFreshnessV1,
     SourceRecordV1,
     ThesisClaimV1,
     ThesisV1,
+    ToolCallRefV1,
     TradeProposalV1,
     WatchTriggerV1,
     WorkflowArtifactV1,
@@ -147,11 +193,34 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Approval": ApprovalV1,
     "ActionRun": ActionRunV1,
     "ActionEvent": ActionEventV1,
+    "ProvenanceEvent": ProvenanceEventV1,
+    "RelationVersionRef": RelationVersionRefV1,
+    "SchemaDefinitionRef": SchemaDefinitionRefV1,
+    "OntologyRunRef": OntologyRunRefV1,
+    "AgentSessionRef": AgentSessionRefV1,
+    "ModelCallRef": ModelCallRefV1,
+    "ToolCallRef": ToolCallRefV1,
+    "ComputedSnapshotRef": ComputedSnapshotRefV1,
     "WorkflowRun": WorkflowRunV1,
     "WorkflowArtifact": WorkflowArtifactV1,
     "Recommendation": RecommendationV1,
     "ReportRun": ReportRunV1,
     "DocumentArtifact": DocumentArtifactV1,
+    "InvestmentIdea": InvestmentIdeaV1,
+    "IdeaEvaluation": IdeaEvaluationV1,
+    "IdeaComparisonRun": IdeaComparisonRunV1,
+    "IdeaComparisonRanking": IdeaComparisonRankingV1,
+    "FactorScore": FactorScoreV1,
+    "MissingInformationRequirement": MissingInformationRequirementV1,
+    "OptimizationMission": OptimizationMissionV1,
+    "OptimizationRun": OptimizationRunV1,
+    "OptimizationActionSnapshot": OptimizationActionSnapshotV1,
+    "OptimizationAlert": OptimizationAlertV1,
+    "SourceFreshness": SourceFreshnessV1,
+    "ManagementQualityAssessment": ManagementQualityAssessmentV1,
+    "ManagementQualityScorecardRow": ManagementQualityScorecardRowV1,
+    "ManagementQualityAccomplishment": ManagementQualityAccomplishmentV1,
+    "ManagementQualitySetback": ManagementQualitySetbackV1,
 }
 OPTIONAL_NODE_TYPES = {
     "Thesis",
@@ -170,6 +239,29 @@ OPTIONAL_NODE_TYPES = {
     "Recommendation",
     "ReportRun",
     "DocumentArtifact",
+    "ProvenanceEvent",
+    "RelationVersionRef",
+    "SchemaDefinitionRef",
+    "OntologyRunRef",
+    "AgentSessionRef",
+    "ModelCallRef",
+    "ToolCallRef",
+    "ComputedSnapshotRef",
+    "InvestmentIdea",
+    "IdeaEvaluation",
+    "IdeaComparisonRun",
+    "IdeaComparisonRanking",
+    "FactorScore",
+    "MissingInformationRequirement",
+    "OptimizationMission",
+    "OptimizationRun",
+    "OptimizationActionSnapshot",
+    "OptimizationAlert",
+    "SourceFreshness",
+    "ManagementQualityAssessment",
+    "ManagementQualityScorecardRow",
+    "ManagementQualityAccomplishment",
+    "ManagementQualitySetback",
     "Investor",
     "Account",
     "Portfolio",
@@ -518,6 +610,22 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return action_run_id(model.legacy_id or f"{model.action_id}:{model.started_at}")
     if isinstance(model, ActionEventV1):
         return action_event_id(model.legacy_id or f"{model.action_run_id}:{model.event_type}:{model.created_at}")
+    if isinstance(model, ProvenanceEventV1):
+        return provenance_event_id(model.event_id)
+    if isinstance(model, RelationVersionRefV1):
+        return relation_version_ref_id(model.ref_id)
+    if isinstance(model, SchemaDefinitionRefV1):
+        return schema_definition_ref_id(model.ref_id)
+    if isinstance(model, OntologyRunRefV1):
+        return ontology_run_ref_id(model.run_id)
+    if isinstance(model, AgentSessionRefV1):
+        return agent_session_ref_id(model.session_id)
+    if isinstance(model, ModelCallRefV1):
+        return model_call_ref_id(model.call_id)
+    if isinstance(model, ToolCallRefV1):
+        return tool_call_ref_id(model.call_id)
+    if isinstance(model, ComputedSnapshotRefV1):
+        return computed_snapshot_ref_id(model.snapshot_key)
     if isinstance(model, WorkflowRunV1):
         return workflow_run_id(model.run_id)
     if isinstance(model, WorkflowArtifactV1):
@@ -533,6 +641,36 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return report_run_id(model.report_id)
     if isinstance(model, DocumentArtifactV1):
         return document_artifact_id(model.document_type, model.document_id)
+    if isinstance(model, InvestmentIdeaV1):
+        return investment_idea_id(model.idea_id)
+    if isinstance(model, IdeaEvaluationV1):
+        return idea_evaluation_id(model.evaluation_id)
+    if isinstance(model, IdeaComparisonRunV1):
+        return idea_comparison_run_id(model.comparison_run_id)
+    if isinstance(model, IdeaComparisonRankingV1):
+        return idea_comparison_ranking_id(model.ranking_id)
+    if isinstance(model, FactorScoreV1):
+        return factor_score_id(model.factor_score_id)
+    if isinstance(model, MissingInformationRequirementV1):
+        return missing_information_requirement_id(model.requirement_id)
+    if isinstance(model, OptimizationMissionV1):
+        return optimization_mission_id(model.mission_id)
+    if isinstance(model, OptimizationRunV1):
+        return optimization_run_id(model.run_id)
+    if isinstance(model, OptimizationActionSnapshotV1):
+        return optimization_action_snapshot_id(model.snapshot_id)
+    if isinstance(model, OptimizationAlertV1):
+        return optimization_alert_id(model.alert_id)
+    if isinstance(model, SourceFreshnessV1):
+        return source_freshness_id(model.freshness_id)
+    if isinstance(model, ManagementQualityAssessmentV1):
+        return management_quality_assessment_id(model.assessment_id)
+    if isinstance(model, ManagementQualityScorecardRowV1):
+        return management_quality_scorecard_row_id(model.row_id)
+    if isinstance(model, ManagementQualityAccomplishmentV1):
+        return management_quality_accomplishment_id(model.accomplishment_id)
+    if isinstance(model, ManagementQualitySetbackV1):
+        return management_quality_setback_id(model.setback_id)
     raise OntologySchemaValidationError(f"Unsupported node schema for type {node_type}")
 
 
@@ -575,16 +713,19 @@ def _validate_relation(
         definition = get_relation_definition(relation_type)
     except ValueError as exc:
         raise OntologySchemaValidationError(str(exc)) from exc
-    expected = (definition.source_type, definition.target_type)
+    expected_source_types = definition.allowed_source_types or frozenset({definition.source_type})
+    expected_target_types = definition.allowed_target_types or frozenset({definition.target_type})
     source_type = node_types.get(source_id)
     target_type = node_types.get(target_id)
     if source_type is None:
         raise OntologySchemaValidationError(f"Edge {relation_type} has missing source node: {source_id}")
     if target_type is None:
         raise OntologySchemaValidationError(f"Edge {relation_type} has missing target node: {target_id}")
-    if (source_type, target_type) != expected:
+    if source_type not in expected_source_types or target_type not in expected_target_types:
+        expected_source = "|".join(sorted(expected_source_types))
+        expected_target = "|".join(sorted(expected_target_types))
         raise OntologySchemaValidationError(
-            f"Edge {relation_type} must connect {expected[0]}->{expected[1]}, got {source_type}->{target_type}"
+            f"Edge {relation_type} must connect {expected_source}->{expected_target}, got {source_type}->{target_type}"
         )
 
 
@@ -734,4 +875,26 @@ def _label_for(node_type: str, label: str, model: OntologyObjectV1) -> str:
         return f"Eval: {model.ticker}"
     if isinstance(model, CatalystV1):
         return model.name
+    if isinstance(model, InvestmentIdeaV1):
+        return model.ticker
+    if isinstance(model, IdeaComparisonRankingV1):
+        return f"{model.ticker} rank {model.rank}"
+    if isinstance(model, FactorScoreV1):
+        return model.factor_name
+    if isinstance(model, MissingInformationRequirementV1):
+        return model.field
+    if isinstance(model, OptimizationMissionV1):
+        return model.name
+    if isinstance(model, OptimizationAlertV1):
+        return model.change_summary
+    if isinstance(model, SourceFreshnessV1):
+        return f"{model.source_name}: {model.status}"
+    if isinstance(model, ManagementQualityAssessmentV1):
+        return f"Management quality: {model.ticker or model.issuer_id}"
+    if isinstance(model, ManagementQualityScorecardRowV1):
+        return model.question
+    if isinstance(model, ManagementQualityAccomplishmentV1):
+        return model.title or model.text[:80]
+    if isinstance(model, ManagementQualitySetbackV1):
+        return model.title or model.text[:80]
     return label

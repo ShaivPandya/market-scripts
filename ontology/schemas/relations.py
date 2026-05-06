@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import Field, field_validator
 
@@ -67,6 +67,70 @@ POLICY_GATE_EVALUATES_RECOMMENDATION: RelationType = "policy_gate_evaluates_reco
 POLICY_GATE_EVALUATES_TRADE_PROPOSAL: RelationType = "policy_gate_evaluates_trade_proposal"
 POLICY_GATE_USES_RISK_METRIC: RelationType = "policy_gate_uses_risk_metric"
 POLICY_GATE_USES_SCENARIO: RelationType = "policy_gate_uses_scenario"
+PROVENANCE_USED: RelationType = "provenance_used"
+PROVENANCE_PRODUCED: RelationType = "provenance_produced"
+PROVENANCE_SCHEMA_BOUND: RelationType = "provenance_schema_bound"
+PROVENANCE_EXECUTED: RelationType = "provenance_executed"
+PROVENANCE_EXECUTED_AS: RelationType = "provenance_executed_as"
+PROVENANCE_TRIGGERED: RelationType = "provenance_triggered"
+PROVENANCE_PROPOSED: RelationType = "provenance_proposed"
+PROVENANCE_RESOLVED_BY: RelationType = "provenance_resolved_by"
+PROVENANCE_APPROVED_EXECUTION: RelationType = "provenance_approved_execution"
+PROVENANCE_AUDITED_BY: RelationType = "provenance_audited_by"
+PROVENANCE_UPDATED: RelationType = "provenance_updated"
+IDEA_HAS_EVALUATION: RelationType = "idea_has_evaluation"
+COMPARISON_RUN_HAS_RANKING: RelationType = "comparison_run_has_ranking"
+RANKING_TARGETS_IDEA: RelationType = "ranking_targets_idea"
+RANKING_USES_EVALUATION: RelationType = "ranking_uses_evaluation"
+RESEARCH_OBJECT_HAS_FACTOR_SCORE: RelationType = "research_object_has_factor_score"
+RESEARCH_OBJECT_HAS_MISSING_INFORMATION: RelationType = "research_object_has_missing_information"
+RESEARCH_OBJECT_SUPPORTED_BY_EVIDENCE: RelationType = "research_object_supported_by_evidence"
+RESEARCH_OBJECT_DISCONFIRMED_BY_EVIDENCE: RelationType = "research_object_disconfirmed_by_evidence"
+RESEARCH_OBJECT_USES_DOCUMENT: RelationType = "research_object_uses_document"
+RESEARCH_OBJECT_LINKS_RECOMMENDATION: RelationType = "research_object_links_recommendation"
+RESEARCH_OBJECT_LINKS_APPROVAL: RelationType = "research_object_links_approval"
+RESEARCH_OBJECT_LINKS_ACTION_ITEM: RelationType = "research_object_links_action_item"
+MANAGEMENT_QUALITY_ASSESSES_ISSUER: RelationType = "management_quality_assesses_issuer"
+MANAGEMENT_QUALITY_HAS_SCORECARD_ROW: RelationType = "management_quality_has_scorecard_row"
+MANAGEMENT_QUALITY_HAS_ACCOMPLISHMENT: RelationType = "management_quality_has_accomplishment"
+MANAGEMENT_QUALITY_HAS_SETBACK: RelationType = "management_quality_has_setback"
+OPTIMIZATION_MISSION_HAS_RUN: RelationType = "optimization_mission_has_run"
+OPTIMIZATION_RUN_HAS_SNAPSHOT: RelationType = "optimization_run_has_snapshot"
+OPTIMIZATION_ALERT_CURRENT_SNAPSHOT: RelationType = "optimization_alert_current_snapshot"
+OPTIMIZATION_ALERT_PREVIOUS_SNAPSHOT: RelationType = "optimization_alert_previous_snapshot"
+OPTIMIZATION_SNAPSHOT_TARGETS_POSITION: RelationType = "optimization_snapshot_targets_position"
+OPTIMIZATION_SNAPSHOT_TARGETS_INSTRUMENT: RelationType = "optimization_snapshot_targets_instrument"
+OPTIMIZATION_ALERT_LINKS_APPROVAL: RelationType = "optimization_alert_links_approval"
+OPTIMIZATION_ALERT_LINKS_ACTION_ITEM: RelationType = "optimization_alert_links_action_item"
+OPTIMIZATION_OBJECT_HAS_SOURCE_FRESHNESS: RelationType = "optimization_object_has_source_freshness"
+
+PROVENANCE_RELATION_TYPES: frozenset[RelationType] = frozenset(
+    {
+        PROVENANCE_USED,
+        PROVENANCE_PRODUCED,
+        PROVENANCE_SCHEMA_BOUND,
+        PROVENANCE_EXECUTED,
+        PROVENANCE_EXECUTED_AS,
+        PROVENANCE_TRIGGERED,
+        PROVENANCE_PROPOSED,
+        PROVENANCE_RESOLVED_BY,
+        PROVENANCE_APPROVED_EXECUTION,
+        PROVENANCE_AUDITED_BY,
+        PROVENANCE_UPDATED,
+    }
+)
+PROVENANCE_ENDPOINT_TYPES: frozenset[EntityType] = frozenset(get_args(EntityType))
+PROVENANCE_REQUIRED_PROPERTIES = frozenset(
+    {
+        "event_id",
+        "source_ref_type",
+        "source_ref_id",
+        "target_ref_type",
+        "target_ref_id",
+        "redaction_policy",
+        "retention_class",
+    }
+)
 
 
 class RelationCardinality(StrEnum):
@@ -84,6 +148,8 @@ class RelationDefinition:
     cardinality: RelationCardinality
     required_properties: frozenset[str]
     optional: bool = False
+    allowed_source_types: frozenset[EntityType] | None = None
+    allowed_target_types: frozenset[EntityType] | None = None
 
 
 RELATION_REGISTRY: dict[str, RelationDefinition] = {
@@ -540,7 +606,243 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
+    IDEA_HAS_EVALUATION: RelationDefinition(
+        name=IDEA_HAS_EVALUATION,
+        source_type="InvestmentIdea",
+        target_type="IdeaEvaluation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    COMPARISON_RUN_HAS_RANKING: RelationDefinition(
+        name=COMPARISON_RUN_HAS_RANKING,
+        source_type="IdeaComparisonRun",
+        target_type="IdeaComparisonRanking",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RANKING_TARGETS_IDEA: RelationDefinition(
+        name=RANKING_TARGETS_IDEA,
+        source_type="IdeaComparisonRanking",
+        target_type="InvestmentIdea",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RANKING_USES_EVALUATION: RelationDefinition(
+        name=RANKING_USES_EVALUATION,
+        source_type="IdeaComparisonRanking",
+        target_type="IdeaEvaluation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    RESEARCH_OBJECT_HAS_FACTOR_SCORE: RelationDefinition(
+        name=RESEARCH_OBJECT_HAS_FACTOR_SCORE,
+        source_type="IdeaEvaluation",
+        target_type="FactorScore",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset({"IdeaEvaluation", "ManagementQualityAssessment"}),
+    ),
+    RESEARCH_OBJECT_HAS_MISSING_INFORMATION: RelationDefinition(
+        name=RESEARCH_OBJECT_HAS_MISSING_INFORMATION,
+        source_type="IdeaEvaluation",
+        target_type="MissingInformationRequirement",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset({"IdeaEvaluation", "ManagementQualityAssessment"}),
+    ),
+    RESEARCH_OBJECT_SUPPORTED_BY_EVIDENCE: RelationDefinition(
+        name=RESEARCH_OBJECT_SUPPORTED_BY_EVIDENCE,
+        source_type="IdeaEvaluation",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset(
+            {
+                "IdeaEvaluation",
+                "ManagementQualityAssessment",
+                "ManagementQualityScorecardRow",
+                "ManagementQualityAccomplishment",
+                "ManagementQualitySetback",
+            }
+        ),
+    ),
+    RESEARCH_OBJECT_DISCONFIRMED_BY_EVIDENCE: RelationDefinition(
+        name=RESEARCH_OBJECT_DISCONFIRMED_BY_EVIDENCE,
+        source_type="IdeaEvaluation",
+        target_type="Evidence",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset(
+            {
+                "IdeaEvaluation",
+                "ManagementQualityAssessment",
+                "ManagementQualityScorecardRow",
+                "ManagementQualityAccomplishment",
+                "ManagementQualitySetback",
+            }
+        ),
+    ),
+    RESEARCH_OBJECT_USES_DOCUMENT: RelationDefinition(
+        name=RESEARCH_OBJECT_USES_DOCUMENT,
+        source_type="InvestmentIdea",
+        target_type="DocumentArtifact",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id", "document_role"}),
+        optional=True,
+        allowed_source_types=frozenset({"InvestmentIdea", "IdeaEvaluation", "ManagementQualityAssessment"}),
+    ),
+    RESEARCH_OBJECT_LINKS_RECOMMENDATION: RelationDefinition(
+        name=RESEARCH_OBJECT_LINKS_RECOMMENDATION,
+        source_type="IdeaEvaluation",
+        target_type="Recommendation",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset({"IdeaEvaluation"}),
+    ),
+    RESEARCH_OBJECT_LINKS_APPROVAL: RelationDefinition(
+        name=RESEARCH_OBJECT_LINKS_APPROVAL,
+        source_type="IdeaEvaluation",
+        target_type="Approval",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset({"IdeaEvaluation", "ManagementQualityAssessment"}),
+    ),
+    RESEARCH_OBJECT_LINKS_ACTION_ITEM: RelationDefinition(
+        name=RESEARCH_OBJECT_LINKS_ACTION_ITEM,
+        source_type="IdeaEvaluation",
+        target_type="ActionItem",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset({"IdeaEvaluation", "OptimizationAlert"}),
+    ),
+    MANAGEMENT_QUALITY_ASSESSES_ISSUER: RelationDefinition(
+        name=MANAGEMENT_QUALITY_ASSESSES_ISSUER,
+        source_type="ManagementQualityAssessment",
+        target_type="Issuer",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    MANAGEMENT_QUALITY_HAS_SCORECARD_ROW: RelationDefinition(
+        name=MANAGEMENT_QUALITY_HAS_SCORECARD_ROW,
+        source_type="ManagementQualityAssessment",
+        target_type="ManagementQualityScorecardRow",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    MANAGEMENT_QUALITY_HAS_ACCOMPLISHMENT: RelationDefinition(
+        name=MANAGEMENT_QUALITY_HAS_ACCOMPLISHMENT,
+        source_type="ManagementQualityAssessment",
+        target_type="ManagementQualityAccomplishment",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    MANAGEMENT_QUALITY_HAS_SETBACK: RelationDefinition(
+        name=MANAGEMENT_QUALITY_HAS_SETBACK,
+        source_type="ManagementQualityAssessment",
+        target_type="ManagementQualitySetback",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_MISSION_HAS_RUN: RelationDefinition(
+        name=OPTIMIZATION_MISSION_HAS_RUN,
+        source_type="OptimizationMission",
+        target_type="OptimizationRun",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_RUN_HAS_SNAPSHOT: RelationDefinition(
+        name=OPTIMIZATION_RUN_HAS_SNAPSHOT,
+        source_type="OptimizationRun",
+        target_type="OptimizationActionSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_ALERT_CURRENT_SNAPSHOT: RelationDefinition(
+        name=OPTIMIZATION_ALERT_CURRENT_SNAPSHOT,
+        source_type="OptimizationAlert",
+        target_type="OptimizationActionSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_ALERT_PREVIOUS_SNAPSHOT: RelationDefinition(
+        name=OPTIMIZATION_ALERT_PREVIOUS_SNAPSHOT,
+        source_type="OptimizationAlert",
+        target_type="OptimizationActionSnapshot",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_SNAPSHOT_TARGETS_POSITION: RelationDefinition(
+        name=OPTIMIZATION_SNAPSHOT_TARGETS_POSITION,
+        source_type="OptimizationActionSnapshot",
+        target_type="Position",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_SNAPSHOT_TARGETS_INSTRUMENT: RelationDefinition(
+        name=OPTIMIZATION_SNAPSHOT_TARGETS_INSTRUMENT,
+        source_type="OptimizationActionSnapshot",
+        target_type="Instrument",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_ALERT_LINKS_APPROVAL: RelationDefinition(
+        name=OPTIMIZATION_ALERT_LINKS_APPROVAL,
+        source_type="OptimizationAlert",
+        target_type="Approval",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_ALERT_LINKS_ACTION_ITEM: RelationDefinition(
+        name=OPTIMIZATION_ALERT_LINKS_ACTION_ITEM,
+        source_type="OptimizationAlert",
+        target_type="ActionItem",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+    ),
+    OPTIMIZATION_OBJECT_HAS_SOURCE_FRESHNESS: RelationDefinition(
+        name=OPTIMIZATION_OBJECT_HAS_SOURCE_FRESHNESS,
+        source_type="OptimizationRun",
+        target_type="SourceFreshness",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=frozenset({"ontology_run_id"}),
+        optional=True,
+        allowed_source_types=frozenset({"OptimizationRun", "OptimizationActionSnapshot", "OptimizationAlert"}),
+    ),
 }
+for _provenance_relation_type in PROVENANCE_RELATION_TYPES:
+    RELATION_REGISTRY[_provenance_relation_type] = RelationDefinition(
+        name=_provenance_relation_type,
+        source_type="ProvenanceEvent",
+        target_type="ObjectVersionRef",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=PROVENANCE_REQUIRED_PROPERTIES,
+        optional=True,
+        allowed_source_types=PROVENANCE_ENDPOINT_TYPES,
+        allowed_target_types=PROVENANCE_ENDPOINT_TYPES,
+    )
 
 ALLOWED_RELATIONS: dict[str, tuple[EntityType, EntityType]] = {
     name: (definition.source_type, definition.target_type) for name, definition in RELATION_REGISTRY.items()
@@ -551,6 +853,7 @@ RELATION_TYPE_SQL_VALUES = ", ".join(f"'{relation_type}'" for relation_type in R
 
 class RelationPropertiesV1(OntologySchemaBase):
     ontology_run_id: NonBlankStr
+    event_id: str | None = None
     source: str | None = None
     action_id: str | None = None
     object_uid: str | None = None
@@ -561,7 +864,19 @@ class RelationPropertiesV1(OntologySchemaBase):
     target_object_uid: str | None = None
     approval_id: str | None = None
     artifact_key: str | None = None
+    document_role: str | None = None
     relation_role: str | None = None
+    link_type: str | None = None
+    source_ref_type: str | None = None
+    source_ref_id: str | None = None
+    source_ref_version: str | None = None
+    target_ref_type: str | None = None
+    target_ref_id: str | None = None
+    target_ref_version: str | None = None
+    redaction_policy: str | None = None
+    retention_class: str | None = None
+    lineage_root_id: str | None = None
+    metadata: dict[str, Any] | list[Any] | str | int | float | bool | None = None
 
     @field_validator("ontology_run_id", mode="before")
     @classmethod
@@ -579,7 +894,19 @@ class RelationPropertiesV1(OntologySchemaBase):
         "target_object_uid",
         "approval_id",
         "artifact_key",
+        "document_role",
         "relation_role",
+        "link_type",
+        "source_ref_type",
+        "source_ref_id",
+        "source_ref_version",
+        "target_ref_type",
+        "target_ref_id",
+        "target_ref_version",
+        "event_id",
+        "redaction_policy",
+        "retention_class",
+        "lineage_root_id",
         mode="before",
     )
     @classmethod

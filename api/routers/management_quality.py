@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ from api.document_generation_jobs import classify_upload_document, enqueue_docum
 from api.exceptions import DataFetchError, NotFoundError, ValidationError
 from api.routers.portfolio_edit import _TICKER_RE
 from llm_utils import MODEL_MID, call_llm_pdf_text, call_llm_text
+from ontology.domain_write_service import ontology_primary_writes_enabled
+from ontology.runtime_read_service import OntologyRuntimeReadService
 from portfolio import management_quality_content
 
 router = APIRouter()
@@ -300,6 +303,86 @@ def parse_management_quality_markdown(content: str) -> dict | None:
     return result if any(v is not None for v in result.values()) else None
 
 
+def _render_management_quality_markdown(ticker: str, assessment: dict) -> str:
+    raw_parsed = assessment.get("parsed")
+    parsed: dict[str, Any] = raw_parsed if isinstance(raw_parsed, dict) else {}
+    raw_summary = parsed.get("summary")
+    summary: dict[str, Any] = raw_summary if isinstance(raw_summary, dict) else {}
+    raw_scorecard = parsed.get("scorecard")
+    scorecard: list[Any] = raw_scorecard if isinstance(raw_scorecard, list) else []
+    raw_accomplishments = parsed.get("accomplishments")
+    accomplishments: list[Any] = raw_accomplishments if isinstance(raw_accomplishments, list) else []
+    raw_setbacks = parsed.get("setbacks")
+    setbacks: list[Any] = raw_setbacks if isinstance(raw_setbacks, list) else []
+
+    lines = [
+        f"# {ticker} Management Quality",
+        "",
+        "## Executive Summary",
+        f"- **Overall Rating**: {summary.get('overall_rating') or 'Insufficient evidence'}",
+        f"- **Bottom Line**: {summary.get('bottom_line') or assessment.get('bottom_line') or 'Insufficient evidence.'}",
+    ]
+    for label, key in (
+        ("Owner Mindset", "owner_mindset"),
+        ("Business Value Understanding", "business_value_understanding"),
+        ("Follow-through / Character", "follow_through"),
+    ):
+        raw_item = summary.get(key)
+        item: dict[str, Any] = raw_item if isinstance(raw_item, dict) else {}
+        rating = item.get("rating") or "Insufficient evidence"
+        text = item.get("text") or "Insufficient evidence."
+        lines.append(f"- **{label}**: {rating} - {text}")
+
+    lines.extend(
+        ["", "## Management Scorecard", "| Question | Rating | Evidence |", "|----------|--------|----------|"]
+    )
+    if scorecard:
+        for row in scorecard:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                f"| {row.get('question') or 'Question'} | {row.get('rating') or 'Insufficient evidence'} | {row.get('evidence') or ''} |"
+            )
+    else:
+        lines.append("| Insufficient evidence | Insufficient evidence | No scorecard rows parsed. |")
+
+    lines.extend(["", "## Most Impressive Accomplishments"])
+    if accomplishments:
+        for row in accomplishments:
+            if isinstance(row, dict):
+                title = row.get("title") or "Accomplishment"
+                lines.append(f"- **{title}**: {row.get('text') or ''}".rstrip())
+    else:
+        lines.append("- Insufficient evidence in source document.")
+
+    lines.extend(["", "## Biggest Setbacks and Responses"])
+    if setbacks:
+        for row in setbacks:
+            if not isinstance(row, dict):
+                continue
+            title = row.get("title") or "Setback"
+            response = row.get("response_rating")
+            response_text = row.get("response_text")
+            suffix = f" **Response**: {response}{f' - {response_text}' if response_text else ''}" if response else ""
+            lines.append(f"- **{title}**: {row.get('text') or ''}{suffix}".rstrip())
+    else:
+        lines.append("- Insufficient evidence in source document.")
+
+    lines.extend(
+        ["", "## Chronology / Detail", "- See source assessment.", "", "## Evidence Notes", "- See source assessment."]
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def _read_markdown_projection(ticker: str) -> str | None:
+    try:
+        if management_quality_content.management_quality_exists(ticker):
+            return management_quality_content.read_management_quality(ticker)
+    except Exception:
+        return None
+    return None
+
+
 def generate_management_quality_from_upload_bytes(
     ticker: str,
     upload_bytes: bytes,
@@ -389,6 +472,23 @@ def save_management_quality(ticker: str, body: SaveManagementQualityRequest):
 def get_management_quality(ticker: str):
     normalized_ticker = _normalize_ticker(ticker)
     _validate_ticker(normalized_ticker)
+
+    if ontology_primary_writes_enabled():
+        assessment = OntologyRuntimeReadService().management_quality_assessment(normalized_ticker)
+        if assessment:
+            content = _read_markdown_projection(normalized_ticker) or _render_management_quality_markdown(
+                normalized_ticker, assessment
+            )
+            parsed = assessment.get("parsed") if isinstance(assessment.get("parsed"), dict) else None
+            if not parsed:
+                parsed = parse_management_quality_markdown(content)
+            return {
+                "status": "ok",
+                "ticker": normalized_ticker,
+                "content": content,
+                "parsed": parsed,
+                "assessment": assessment,
+            }
 
     if not management_quality_content.management_quality_exists(normalized_ticker):
         raise NotFoundError("Management quality", normalized_ticker)

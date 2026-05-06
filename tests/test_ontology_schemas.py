@@ -1,12 +1,50 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
-from ontology.models import OntologyEdge, OntologyNode
+from ontology.models import EntityType, OntologyEdge, OntologyNode
+from ontology.schema_definitions import SCHEMA_KIND_ONTOLOGY_OBJECT, ontology_schema_definitions
 from ontology.schemas.identity import action_item_id, evaluation_id, hedge_position_id, signal_id
-from ontology.schemas.objects import ActionItemV1, HedgePositionV1, PositionV1
-from ontology.schemas.registry import OntologySchemaValidationError, normalize_graph, normalize_node
+from ontology.schemas.objects import (
+    ActionItemV1,
+    FactorScoreV1,
+    HedgePositionV1,
+    IdeaComparisonRankingV1,
+    InvestmentIdeaV1,
+    ManagementQualityAssessmentV1,
+    MissingInformationRequirementV1,
+    OptimizationRunV1,
+    PositionV1,
+    ProvenanceEventV1,
+    SourceFreshnessV1,
+)
+from ontology.schemas.registry import NODE_SCHEMAS, OntologySchemaValidationError, normalize_graph, normalize_node
+from ontology.schemas.relations import (
+    PROVENANCE_RELATION_TYPES,
+    PROVENANCE_REQUIRED_PROPERTIES,
+    get_relation_definition,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE_SCAN_EXCLUDED_PARTS = {
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "tests",
+}
+
+
+def _iter_source_python_files() -> list[Path]:
+    return sorted(
+        path
+        for path in ROOT.rglob("*.py")
+        if path.is_file() and SOURCE_SCAN_EXCLUDED_PARTS.isdisjoint(path.relative_to(ROOT).parts)
+    )
 
 
 def test_position_schema_normalizes_and_checks_risk_level():
@@ -102,6 +140,140 @@ def test_account_schema_drops_deprecated_tax_lot_field():
     assert "tax_lot_data_available" not in account.properties
 
 
+def test_runtime_migration_schema_rejects_unregistered_fields():
+    with pytest.raises(ValidationError):
+        InvestmentIdeaV1(
+            idea_id="investment_idea:MU",
+            ticker="MU",
+            status="watching",
+            unregistered_field=True,
+        )
+
+
+def test_first_class_research_optimizer_and_management_quality_objects_accept_uid_links():
+    ranking = IdeaComparisonRankingV1(
+        ranking_id="idea_comparison_ranking:run_1_rank_1",
+        comparison_run_id="idea_comparison_run:run_1",
+        idea_id="investment_idea:mu",
+        evaluation_id="idea_evaluation:eval_1",
+        ticker="mu",
+        rank=1,
+        action="buy",
+    )
+    factor = FactorScoreV1(
+        factor_score_id="factor_score:eval_1_management",
+        parent_uid="idea_evaluation:eval_1",
+        parent_type="IdeaEvaluation",
+        factor_name="management_quality",
+        score=82,
+    )
+    missing = MissingInformationRequirementV1(
+        requirement_id="missing_information_requirement:eval_1_valuation",
+        parent_uid="idea_evaluation:eval_1",
+        parent_type="IdeaEvaluation",
+        field="valuation",
+    )
+    run = OptimizationRunV1(run_id="optimization_run:run_1", mission_id="optimization_mission:default")
+    freshness = SourceFreshnessV1(
+        freshness_id="source_freshness:run_1_reports",
+        parent_uid=run.run_id,
+        parent_type="OptimizationRun",
+        source_name="reports",
+        status="ok",
+    )
+    assessment = ManagementQualityAssessmentV1(
+        assessment_id="management_quality_assessment:issuer_mu",
+        issuer_id="issuer:mu",
+        ticker="mu",
+    )
+
+    assert ranking.ticker == "MU"
+    assert factor.score == 82
+    assert missing.status == "open"
+    assert run.status == "running"
+    assert freshness.freshness_category is None
+    assert assessment.ticker == "MU"
+
+
+def test_every_entity_type_has_pydantic_schema_and_definition():
+    entity_types = set(get_args(EntityType))
+    definitions = {
+        definition.schema_name
+        for definition in ontology_schema_definitions()
+        if definition.schema_kind == SCHEMA_KIND_ONTOLOGY_OBJECT and definition.schema_version == 1
+    }
+
+    assert entity_types <= set(NODE_SCHEMAS)
+    assert entity_types <= definitions
+
+
+def test_provenance_event_requires_lifecycle_redaction_retention_and_context():
+    event = ProvenanceEventV1(
+        event_id="pv:unit",
+        event_type="unit",
+        event_name="test",
+        status="started",
+        actor_id="alice",
+        redaction_policy="audit_summary_v1",
+        retention_class="provenance_365d",
+    )
+
+    assert event.status == "started"
+
+    with pytest.raises(ValidationError, match="at least one"):
+        ProvenanceEventV1(
+            event_id="pv:no-context",
+            event_type="unit",
+            event_name="test",
+            status="started",
+            redaction_policy="audit_summary_v1",
+            retention_class="provenance_365d",
+        )
+
+    with pytest.raises(ValidationError):
+        ProvenanceEventV1(
+            event_id="pv:bad-status",
+            event_type="unit",
+            event_name="test",
+            status="running",
+            actor_id="alice",
+            redaction_policy="audit_summary_v1",
+            retention_class="provenance_365d",
+        )
+
+    with pytest.raises(ValidationError):
+        ProvenanceEventV1(
+            event_id="pv:no-retention",
+            event_type="unit",
+            event_name="test",
+            status="started",
+            actor_id="alice",
+            redaction_policy="audit_summary_v1",
+            retention_class=" ",
+        )
+
+
+def test_literal_write_object_calls_use_registered_object_types():
+    registered = set(NODE_SCHEMAS)
+    offenders: list[str] = []
+    for path in _iter_source_python_files():
+        rel_path = path.relative_to(ROOT)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "write_object"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and node.args[0].value not in registered
+            ):
+                offenders.append(f"{rel_path}:{node.lineno}:{node.args[0].value}")
+
+    assert offenders == []
+
+
 def test_legacy_signal_node_is_canonicalized_to_stable_identity():
     node = normalize_node(
         OntologyNode(
@@ -181,6 +353,118 @@ def test_evaluation_identity_uses_canonical_timestamp_key():
 def test_relation_registry_rejects_unsupported_relation_type():
     with pytest.raises(OntologySchemaValidationError, match="Unsupported relation type"):
         normalize_graph(_core_nodes(), [OntologyEdge("position:MU", "asset:MU", "owns", {})])
+
+
+@pytest.mark.parametrize("relation_type", sorted(PROVENANCE_RELATION_TYPES))
+def test_relation_registry_accepts_typed_provenance_relation_verbs(relation_type):
+    definition = get_relation_definition(relation_type)
+    nodes = [
+        OntologyNode(
+            id="provenance_event:pv_unit",
+            type="ProvenanceEvent",
+            label="Unit event",
+            properties={
+                "event_id": "pv:unit",
+                "event_type": "unit",
+                "event_name": "test",
+                "status": "started",
+                "actor_id": "alice",
+                "redaction_policy": "audit_summary_v1",
+                "retention_class": "provenance_365d",
+            },
+            schema_name="ProvenanceEvent",
+            schema_version=1,
+        ),
+        OntologyNode(
+            id="object_version_ref:version_1",
+            type="ObjectVersionRef",
+            label="version 1",
+            properties={
+                "ref_id": "version:1",
+                "object_uid": "position:MU",
+                "version_id": "version:1",
+                "ontology_run_id": "operational",
+            },
+            schema_name="ObjectVersionRef",
+            schema_version=1,
+        ),
+    ]
+    edge = OntologyEdge(
+        "provenance_event:pv_unit",
+        "object_version_ref:version_1",
+        relation_type,
+        {
+            "event_id": "pv:unit",
+            "ontology_run_id": "operational",
+            "source_ref_type": "producer_event",
+            "source_ref_id": "pv:unit",
+            "target_ref_type": "ontology_object_version",
+            "target_ref_id": "version:1",
+            "redaction_policy": "audit_summary_v1",
+            "retention_class": "provenance_365d",
+        },
+        schema_name=relation_type,
+        schema_version=1,
+        relation_schema_name=relation_type,
+        relation_schema_version=1,
+    )
+
+    graph = normalize_graph(nodes, [edge], require_core_edges=False)
+
+    assert graph.edges[0].relation_type == relation_type
+    assert definition.required_properties == PROVENANCE_REQUIRED_PROPERTIES
+
+
+def test_relation_registry_rejects_unregistered_legacy_provenance_link_relation():
+    nodes = [
+        OntologyNode(
+            id="provenance_event:pv_unit",
+            type="ProvenanceEvent",
+            label="Unit event",
+            properties={
+                "event_id": "pv:unit",
+                "event_type": "unit",
+                "event_name": "test",
+                "status": "started",
+                "actor_id": "alice",
+                "redaction_policy": "audit_summary_v1",
+                "retention_class": "provenance_365d",
+            },
+            schema_name="ProvenanceEvent",
+            schema_version=1,
+        ),
+        OntologyNode(
+            id="object_version_ref:version_1",
+            type="ObjectVersionRef",
+            label="version 1",
+            properties={
+                "ref_id": "version:1",
+                "object_uid": "position:MU",
+                "version_id": "version:1",
+                "ontology_run_id": "operational",
+            },
+            schema_name="ObjectVersionRef",
+            schema_version=1,
+        ),
+    ]
+
+    with pytest.raises(OntologySchemaValidationError, match="Unsupported relation type"):
+        normalize_graph(
+            nodes,
+            [
+                OntologyEdge(
+                    "provenance_event:pv_unit",
+                    "object_version_ref:version_1",
+                    "provenance_event_records_link",
+                    {"ontology_run_id": "operational"},
+                    schema_name="provenance_event_records_link",
+                    schema_version=1,
+                    relation_schema_name="provenance_event_records_link",
+                    relation_schema_version=1,
+                )
+            ],
+            require_core_edges=False,
+        )
 
 
 def test_relation_registry_rejects_wrong_endpoint_types():

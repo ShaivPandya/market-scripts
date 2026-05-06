@@ -100,6 +100,55 @@ def object_version_ref_id(identifier: object) -> str:
     return f"object_version_ref:{slug(identifier)}"
 
 
+def relation_version_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("relation_version_ref:"):
+        text = text.split(":", 1)[1]
+    return f"relation_version_ref:{slug(text)}"
+
+
+def schema_definition_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("schema_definition_ref:"):
+        text = text.split(":", 1)[1]
+    return f"schema_definition_ref:{slug(text)}"
+
+
+def ontology_run_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("ontology_run_ref:"):
+        text = text.split(":", 1)[1]
+    return f"ontology_run_ref:{slug(text)}"
+
+
+def agent_session_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("agent_session_ref:"):
+        text = text.split(":", 1)[1]
+    return f"agent_session_ref:{slug(text)}"
+
+
+def model_call_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("model_call_ref:"):
+        text = text.split(":", 1)[1]
+    return f"model_call_ref:{slug(text)}"
+
+
+def tool_call_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("tool_call_ref:"):
+        text = text.split(":", 1)[1]
+    return f"tool_call_ref:{slug(text)}"
+
+
+def computed_snapshot_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("computed_snapshot_ref:"):
+        text = text.split(":", 1)[1]
+    return f"computed_snapshot_ref:{slug(text)}"
+
+
 def executed_action_id(identifier: object) -> str:
     return f"executed_action:{slug(identifier)}"
 
@@ -180,6 +229,13 @@ def action_event_id(identifier: object) -> str:
     return f"action_event:{slug(identifier)}"
 
 
+def provenance_event_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("provenance_event:"):
+        text = text.split(":", 1)[1]
+    return f"provenance_event:{slug(text)}"
+
+
 def workflow_run_id(identifier: object) -> str:
     return f"workflow_run:{slug(identifier)}"
 
@@ -198,3 +254,108 @@ def report_run_id(identifier: object) -> str:
 
 def document_artifact_id(kind: object, identifier: object) -> str:
     return f"document_artifact:{slug(kind)}:{slug(identifier)}"
+
+
+def investment_idea_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("investment_idea:"):
+        text = text.split(":", 1)[1]
+    return f"investment_idea:{slug(text)}"
+
+
+def idea_evaluation_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("idea_evaluation:"):
+        text = text.split(":", 1)[1]
+    return f"idea_evaluation:{slug(text)}"
+
+
+def idea_comparison_run_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("idea_comparison_run:"):
+        text = text.split(":", 1)[1]
+    return f"idea_comparison_run:{slug(text)}"
+
+
+def idea_comparison_ranking_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("idea_comparison_ranking:"):
+        text = text.split(":", 1)[1]
+    return f"idea_comparison_ranking:{slug(text)}"
+
+
+def factor_score_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("factor_score:"):
+        text = text.split(":", 1)[1]
+    return f"factor_score:{slug(text)}"
+
+
+def missing_information_requirement_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("missing_information_requirement:"):
+        text = text.split(":", 1)[1]
+    return f"missing_information_requirement:{slug(text)}"
+
+
+def optimization_mission_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_mission:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_mission:{slug(text)}"
+
+
+def optimization_run_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_run:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_run:{slug(text)}"
+
+
+def optimization_action_snapshot_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_action_snapshot:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_action_snapshot:{slug(text)}"
+
+
+def optimization_alert_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("optimization_alert:"):
+        text = text.split(":", 1)[1]
+    return f"optimization_alert:{slug(text)}"
+
+
+def source_freshness_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("source_freshness:"):
+        text = text.split(":", 1)[1]
+    return f"source_freshness:{slug(text)}"
+
+
+def management_quality_assessment_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_assessment:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_assessment:{slug(text)}"
+
+
+def management_quality_scorecard_row_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_scorecard_row:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_scorecard_row:{slug(text)}"
+
+
+def management_quality_accomplishment_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_accomplishment:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_accomplishment:{slug(text)}"
+
+
+def management_quality_setback_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_setback:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_setback:{slug(text)}"

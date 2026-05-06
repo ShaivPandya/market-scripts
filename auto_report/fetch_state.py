@@ -11,6 +11,9 @@ Required env:
     TALISMAN_API_URL      — base URL of the deployed API (no trailing slash)
     API_PROXY_SECRET      — X-Api-Proxy-Secret header value (optional but usually required)
     TALISMAN_API_PASSWORD — password-mode login secret for CI/API automation (optional)
+
+Optional GitHub Actions integration:
+    GITHUB_ENV            — when present, TALISMAN_BOOK_SIZE is exported for later steps
 """
 
 from __future__ import annotations
@@ -52,6 +55,35 @@ def _login_if_needed(session: requests.Session, api_url: str, headers: dict[str,
     response.raise_for_status()
 
 
+def _fetch_portfolio_book_size(session: requests.Session, api_url: str, headers: dict[str, str]) -> float | None:
+    response = session.get(
+        f"{api_url}/api/v1/portfolio-settings",
+        headers=headers,
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    if not isinstance(data, dict):
+        return None
+
+    value = data.get("book_size")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _export_book_size_for_github_actions(book_size: float) -> None:
+    github_env = (os.getenv("GITHUB_ENV") or "").strip()
+    if not github_env:
+        return
+
+    with open(github_env, "a", encoding="utf-8") as fh:
+        fh.write(f"TALISMAN_BOOK_SIZE={book_size:.2f}\n")
+
+
 def fetch_and_seed() -> int:
     api_url = (os.getenv("TALISMAN_API_URL") or "").strip().rstrip("/")
     if not api_url:
@@ -75,6 +107,21 @@ def fetch_and_seed() -> int:
     if not isinstance(data, dict) or "positions" not in data:
         print("ERROR: Unexpected response shape from /portfolio-positions.", file=sys.stderr)
         return 1
+
+    try:
+        book_size = _fetch_portfolio_book_size(session, api_url, headers)
+    except requests.RequestException as exc:
+        book_size = None
+        print(f"WARNING: Could not fetch portfolio book size: {exc}", file=sys.stderr)
+    if book_size is not None:
+        from api.portfolio_settings import set_portfolio_book_size
+
+        try:
+            set_portfolio_book_size(book_size)
+            _export_book_size_for_github_actions(book_size)
+            print(f"Fetched portfolio book size from app: ${book_size:,.0f}.")
+        except ValueError as exc:
+            print(f"WARNING: Ignoring invalid portfolio book size: {exc}", file=sys.stderr)
 
     all_positions: list[dict] = data["positions"]
     positions = [p for p in all_positions if p.get("role", "position") == "position"]

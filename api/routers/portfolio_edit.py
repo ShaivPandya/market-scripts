@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from api.action_execution import stage_api_action
+from api.audit import emit_audit_event
 from api.exceptions import AppError, DataFetchError
+from api.portfolio_settings import (
+    DEFAULT_PORTFOLIO_BOOK_SIZE,
+    MAX_PORTFOLIO_BOOK_SIZE,
+    MIN_PORTFOLIO_BOOK_SIZE,
+    get_configured_portfolio_book_size,
+    get_portfolio_book_size,
+    normalize_portfolio_book_size,
+    set_portfolio_book_size,
+)
+from api.routers.auth import require_actor
+from ontology.policy import Actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
 from portfolio.instruments import (
     default_contract_multiplier,
@@ -19,8 +31,60 @@ from portfolio.instruments import (
 )
 
 router = APIRouter()
+ActorDep = Annotated[Actor, Depends(require_actor)]
 
 _TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.=-]{0,31}$")
+
+
+class PortfolioSettingsRequest(BaseModel):
+    book_size: float = Field(ge=MIN_PORTFOLIO_BOOK_SIZE, le=MAX_PORTFOLIO_BOOK_SIZE)
+
+    @model_validator(mode="after")
+    def _normalize_book_size(self) -> PortfolioSettingsRequest:
+        self.book_size = normalize_portfolio_book_size(self.book_size)
+        return self
+
+
+def _portfolio_settings_response() -> dict:
+    configured = get_configured_portfolio_book_size()
+    return {
+        "book_size": configured or get_portfolio_book_size(),
+        "default_book_size": DEFAULT_PORTFOLIO_BOOK_SIZE,
+        "configured": configured is not None,
+        "min_book_size": MIN_PORTFOLIO_BOOK_SIZE,
+        "max_book_size": MAX_PORTFOLIO_BOOK_SIZE,
+    }
+
+
+@router.get("/portfolio-settings")
+def get_portfolio_settings():
+    return _portfolio_settings_response()
+
+
+@router.put("/portfolio-settings")
+def update_portfolio_settings(req: PortfolioSettingsRequest, actor: ActorDep):
+    try:
+        before = _portfolio_settings_response()
+        set_portfolio_book_size(req.book_size)
+        after = _portfolio_settings_response()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    emit_audit_event(
+        "portfolio.settings.updated",
+        "permission",
+        "succeeded",
+        actor=actor,
+        before_summary={
+            "book_size": before.get("book_size"),
+            "configured": before.get("configured"),
+        },
+        after_summary={
+            "book_size": after.get("book_size"),
+            "configured": after.get("configured"),
+        },
+    )
+    return after
 
 
 class PortfolioPosition(BaseModel):

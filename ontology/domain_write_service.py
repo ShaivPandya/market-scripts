@@ -20,7 +20,15 @@ from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService, object_uid_for
 from ontology.read_model import TemporalReadModelRepository
-from ontology.schemas.identity import action_run_id, object_version_ref_id, policy_gate_result_id, thesis_id
+from ontology.schemas.identity import (
+    action_run_id,
+    document_artifact_id,
+    issuer_id,
+    management_quality_assessment_id,
+    object_version_ref_id,
+    policy_gate_result_id,
+    thesis_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +52,7 @@ def ontology_read_model_enabled() -> bool:
 
 
 def legacy_write_guard_enabled() -> bool:
-    return _env_flag("LEGACY_WRITE_GUARD") or _is_production()
+    return _env_flag("LEGACY_WRITE_GUARD") or ontology_primary_writes_enabled()
 
 
 def approved_domain_write_scope() -> dict[str, Any] | None:
@@ -445,6 +453,49 @@ def action_mutations(
                     "ticker": ticker,
                     "content_hash": _hash_text(content),
                     "status": "active",
+                },
+                now,
+            ),
+        ]
+    if action_id == "save_management_quality_content":
+        ticker = str(output.get("ticker") or input_payload.get("ticker") or "").upper()
+        content = str(output.get("content") or input_payload.get("content") or "")
+        issuer_uid = issuer_id(ticker)
+        document_uid = document_artifact_id("management_quality", ticker)
+        assessment_uid = management_quality_assessment_id(issuer_uid)
+        return [
+            OntologyMutation(
+                "Issuer",
+                issuer_uid,
+                {"issuer_id": issuer_uid, "name": ticker, "ticker": ticker},
+                now,
+            ),
+            OntologyMutation(
+                "DocumentArtifact",
+                document_uid,
+                {
+                    "document_type": "management_quality",
+                    "document_id": f"management_quality:{ticker}",
+                    "title": f"{ticker} management quality",
+                    "ticker": ticker,
+                    "content_hash": _hash_text(content),
+                    "artifact_uri": output.get("source_path"),
+                    "status": "active",
+                },
+                now,
+            ),
+            OntologyMutation(
+                "ManagementQualityAssessment",
+                assessment_uid,
+                {
+                    "assessment_id": assessment_uid,
+                    "issuer_id": issuer_uid,
+                    "ticker": ticker,
+                    "status": "active",
+                    "content_hash": _hash_text(content),
+                    "document_id": document_uid,
+                    "created_at": now,
+                    "updated_at": now,
                 },
                 now,
             ),

@@ -1412,6 +1412,767 @@ class DocumentArtifactV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class ProvenanceEventV1(OntologySchemaBase):
+    event_id: NonBlankStr
+    id: str | None = None
+    event_type: NonBlankStr
+    event_name: NonBlankStr
+    status: Literal["started", "succeeded", "failed"] = "started"
+    started_at: str | None = None
+    completed_at: str | None = None
+    actor_type: str | None = None
+    actor_id: str | None = None
+    parent_actor_id: str | None = None
+    request_id: str | None = None
+    parent_event_id: str | None = None
+    workflow_run_id: str | None = None
+    ontology_run_id: str | None = None
+    agent_session_id: str | None = None
+    action_run_id: str | int | None = None
+    approval_id: str | int | None = None
+    audit_event_id: str | None = None
+    input_hash: str | None = None
+    output_hash: str | None = None
+    summary: dict[str, Any] | list[Any] | str | int | float | bool | None = None
+    metadata: dict[str, Any] | list[Any] | str | int | float | bool | None = None
+    error: str | None = None
+    criticality: str | None = None
+    lineage_root_id: str | None = None
+    idempotency_key: str | None = None
+    producer_name: str | None = None
+    producer_version: str | None = None
+    redaction_policy: NonBlankStr
+    retention_class: NonBlankStr
+
+    @field_validator("event_id", "event_type", "event_name", "retention_class", "redaction_policy", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "id",
+        "started_at",
+        "completed_at",
+        "actor_type",
+        "actor_id",
+        "parent_actor_id",
+        "request_id",
+        "parent_event_id",
+        "workflow_run_id",
+        "ontology_run_id",
+        "agent_session_id",
+        "audit_event_id",
+        "input_hash",
+        "output_hash",
+        "error",
+        "criticality",
+        "lineage_root_id",
+        "idempotency_key",
+        "producer_name",
+        "producer_version",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @model_validator(mode="after")
+    def _has_context_anchor(self) -> ProvenanceEventV1:
+        if any(
+            (
+                self.actor_type,
+                self.actor_id,
+                self.request_id,
+                self.parent_event_id,
+                self.workflow_run_id,
+                self.ontology_run_id,
+                self.agent_session_id,
+                self.action_run_id,
+                self.approval_id,
+                self.audit_event_id,
+                self.lineage_root_id,
+            )
+        ):
+            return self
+        raise ValueError(
+            "ProvenanceEvent requires at least one actor, request, session, workflow, action, approval, ontology run, parent event, audit event, or lineage root anchor"
+        )
+
+
+class RelationVersionRefV1(OntologySchemaBase):
+    ref_id: NonBlankStr
+    relation_uid: str | None = None
+    relation_type: str | None = None
+    version_id: NonBlankStr
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ref_id", "version_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("relation_uid", "relation_type", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class SchemaDefinitionRefV1(OntologySchemaBase):
+    ref_id: NonBlankStr
+    schema_kind: NonBlankStr
+    schema_name: NonBlankStr
+    schema_version_value: int = Field(alias="schema_version_value")
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ref_id", "schema_kind", "schema_name", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+
+class OntologyRunRefV1(OntologySchemaBase):
+    run_id: NonBlankStr
+    status: str | None = None
+    as_of: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("run_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("status", "as_of", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class AgentSessionRefV1(OntologySchemaBase):
+    session_id: NonBlankStr
+    actor_id: str | None = None
+    started_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("session_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("actor_id", "started_at", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ModelCallRefV1(OntologySchemaBase):
+    call_id: NonBlankStr
+    model: str | None = None
+    provider: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("call_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("model", "provider", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ToolCallRefV1(OntologySchemaBase):
+    call_id: NonBlankStr
+    tool_name: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("call_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("tool_name", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ComputedSnapshotRefV1(OntologySchemaBase):
+    snapshot_key: NonBlankStr
+    snapshot_id: str | None = None
+    status: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("snapshot_key", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("snapshot_id", "status", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class InvestmentIdeaV1(OntologySchemaBase):
+    idea_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    ticker: NonBlankStr
+    company_name: str | None = None
+    status: NonBlankStr = "watching"
+    user_notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    tags_json: list[str] | str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    archived_at: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    latest_evaluation_id: str | int | None = None
+    latest_job_id: str | None = None
+    accepted_recommendation_id: str | int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("idea_id", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "company_name",
+        "user_notes",
+        "created_at",
+        "updated_at",
+        "archived_at",
+        "source_type",
+        "source_id",
+        "latest_job_id",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class IdeaEvaluationV1(OntologySchemaBase):
+    evaluation_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    idea_id: NonBlankStr
+    ticker: NonBlankStr
+    job_id: str | None = None
+    evaluated_at: NonBlankStr
+    action: NonBlankStr
+    recommendation_status: NonBlankStr = "clear"
+    score: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    thesis_statement: str | None = None
+    rationale: str | None = None
+    factor_scores: dict[str, Any] = Field(default_factory=dict)
+    missing_information: list[dict[str, Any]] = Field(default_factory=list)
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    disconfirming_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    catalyst: str | None = None
+    invalidation: str | None = None
+    portfolio_fit: dict[str, Any] = Field(default_factory=dict)
+    recommendation_record: dict[str, Any] | None = None
+    recommendation_id: str | int | None = None
+    approval_id: str | int | None = None
+    recommendation_approval_id: str | int | None = None
+    action_approval_id: str | int | None = None
+    accepted: bool = False
+    accepted_at: str | None = None
+    accepted_by: str | None = None
+    created_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator("evaluation_id", "idea_id", "evaluated_at", "action", "recommendation_status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "job_id",
+        "thesis_statement",
+        "rationale",
+        "catalyst",
+        "invalidation",
+        "accepted_at",
+        "accepted_by",
+        "created_at",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class IdeaComparisonRunV1(OntologySchemaBase):
+    comparison_run_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    run_id: NonBlankStr
+    job_id: str | None = None
+    scope_statuses: list[str] = Field(default_factory=list)
+    summary: str | None = None
+    ranking_count: int | None = None
+    rankings: list[dict[str, Any]] = Field(default_factory=list)
+    raw_result: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("comparison_run_id", "run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("job_id", "summary", "created_at", "updated_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class IdeaComparisonRankingV1(OntologySchemaBase):
+    ranking_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    comparison_run_id: NonBlankStr
+    run_id: str | None = None
+    idea_id: NonBlankStr
+    evaluation_id: NonBlankStr
+    ticker: NonBlankStr
+    rank: int = Field(ge=1)
+    action: NonBlankStr
+    score: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence_level: NonBlankStr = "low"
+    rationale: str | None = None
+    created_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator(
+        "ranking_id",
+        "comparison_run_id",
+        "idea_id",
+        "evaluation_id",
+        "action",
+        "confidence_level",
+        mode="before",
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("run_id", "rationale", "created_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class FactorScoreV1(OntologySchemaBase):
+    factor_score_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    parent_uid: NonBlankStr
+    parent_type: NonBlankStr
+    factor_name: NonBlankStr
+    score: float | None = Field(default=None, ge=0, le=100)
+    status: str | None = None
+    rationale: str | None = None
+    missing: list[str] = Field(default_factory=list)
+    weight: float | None = None
+    created_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("factor_score_id", "parent_uid", "parent_type", "factor_name", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("status", "rationale", "created_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class MissingInformationRequirementV1(OntologySchemaBase):
+    requirement_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    parent_uid: NonBlankStr
+    parent_type: NonBlankStr
+    field: NonBlankStr
+    severity: NonBlankStr = "medium"
+    reason: str | None = None
+    status: NonBlankStr = "open"
+    created_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("requirement_id", "parent_uid", "parent_type", "field", "severity", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("reason", "created_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class OptimizationMissionV1(OntologySchemaBase):
+    mission_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    name: NonBlankStr
+    status: NonBlankStr = "active"
+    schedule_label: str | None = None
+    scenario: dict[str, Any] = Field(default_factory=dict)
+    source_config: dict[str, Any] = Field(default_factory=dict)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("mission_id", "name", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("schedule_label", "created_at", "updated_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class OptimizationRunV1(OntologySchemaBase):
+    run_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    mission_id: NonBlankStr
+    mission_name: str | None = None
+    status: NonBlankStr = "running"
+    started_at: str | None = None
+    completed_at: str | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    source_freshness: dict[str, Any] = Field(default_factory=dict)
+    input_hash: str | None = None
+    output_hash: str | None = None
+    error: str | None = None
+    snapshots: list[dict[str, Any]] | None = None
+    updated_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("run_id", "mission_id", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "mission_name",
+        "started_at",
+        "completed_at",
+        "input_hash",
+        "output_hash",
+        "error",
+        "updated_at",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class OptimizationActionSnapshotV1(OntologySchemaBase):
+    snapshot_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    run_id: NonBlankStr
+    mission_id: NonBlankStr
+    ticker: str | None = None
+    asset: str | None = None
+    direction: str | None = None
+    action: NonBlankStr
+    conviction_band: str | None = None
+    priority_score: float | None = None
+    scenario_score: float | None = None
+    score_delta: float | None = None
+    confidence: float | None = None
+    gate_status: str | None = None
+    severity: str | None = None
+    risk: dict[str, Any] = Field(default_factory=dict)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    source_links: dict[str, Any] = Field(default_factory=dict)
+    state_hash: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("snapshot_id", "run_id", "mission_id", "action", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "asset",
+        "direction",
+        "conviction_band",
+        "gate_status",
+        "severity",
+        "state_hash",
+        "created_at",
+        "updated_at",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class OptimizationAlertV1(OntologySchemaBase):
+    alert_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    mission_id: NonBlankStr
+    run_id: NonBlankStr
+    ticker: str | None = None
+    alert_type: NonBlankStr
+    severity: NonBlankStr = "normal"
+    status: NonBlankStr = "open"
+    change_summary: NonBlankStr
+    previous_snapshot_id: str | int | None = None
+    current_snapshot_id: str | int | None = None
+    approval_id: str | int | None = None
+    recommendation_id: str | int | None = None
+    action_item_approval_id: str | int | None = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    previous_snapshot: dict[str, Any] | None = None
+    current_snapshot: dict[str, Any] | None = None
+    dismissal_note: str | None = None
+    dismissed_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator(
+        "alert_id", "mission_id", "run_id", "alert_type", "severity", "status", "change_summary", mode="before"
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("dismissal_note", "dismissed_at", "created_at", "updated_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class SourceFreshnessV1(OntologySchemaBase):
+    freshness_id: NonBlankStr
+    id: str | int | None = None
+    parent_uid: str | None = None
+    parent_type: str | None = None
+    source_name: NonBlankStr
+    status: NonBlankStr = "unknown"
+    checked_at: str | None = None
+    as_of: str | None = None
+    freshness_category: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: str | None = None
+
+    @field_validator("freshness_id", "source_name", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "parent_uid",
+        "parent_type",
+        "checked_at",
+        "as_of",
+        "freshness_category",
+        "error",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualityAssessmentV1(OntologySchemaBase):
+    assessment_id: NonBlankStr
+    id: str | int | None = None
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    status: NonBlankStr = "active"
+    overall_rating: str | None = None
+    bottom_line: str | None = None
+    owner_mindset_rating: str | None = None
+    owner_mindset_text: str | None = None
+    business_value_understanding_rating: str | None = None
+    business_value_understanding_text: str | None = None
+    follow_through_rating: str | None = None
+    follow_through_text: str | None = None
+    content_hash: str | None = None
+    document_id: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("assessment_id", "issuer_id", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "overall_rating",
+        "bottom_line",
+        "owner_mindset_rating",
+        "owner_mindset_text",
+        "business_value_understanding_rating",
+        "business_value_understanding_text",
+        "follow_through_rating",
+        "follow_through_text",
+        "content_hash",
+        "document_id",
+        "source_type",
+        "source_id",
+        "created_at",
+        "updated_at",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualityScorecardRowV1(OntologySchemaBase):
+    row_id: NonBlankStr
+    id: str | int | None = None
+    assessment_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    question: NonBlankStr
+    rating: NonBlankStr
+    evidence: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("row_id", "assessment_id", "issuer_id", "question", "rating", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("evidence", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualityAccomplishmentV1(OntologySchemaBase):
+    accomplishment_id: NonBlankStr
+    id: str | int | None = None
+    assessment_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    title: str | None = None
+    text: NonBlankStr
+    period: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("accomplishment_id", "assessment_id", "issuer_id", "text", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("title", "period", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualitySetbackV1(OntologySchemaBase):
+    setback_id: NonBlankStr
+    id: str | int | None = None
+    assessment_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    title: str | None = None
+    text: NonBlankStr
+    response_rating: str | None = None
+    response_text: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("setback_id", "assessment_id", "issuer_id", "text", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("title", "response_rating", "response_text", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 OntologyObjectV1 = (
     PositionV1
     | AssetV1
@@ -1449,10 +2210,33 @@ OntologyObjectV1 = (
     | ApprovalV1
     | ActionRunV1
     | ActionEventV1
+    | ProvenanceEventV1
+    | RelationVersionRefV1
+    | SchemaDefinitionRefV1
+    | OntologyRunRefV1
+    | AgentSessionRefV1
+    | ModelCallRefV1
+    | ToolCallRefV1
+    | ComputedSnapshotRefV1
     | WorkflowRunV1
     | WorkflowArtifactV1
     | RecommendationV1
     | ReportRunV1
     | DocumentArtifactV1
+    | InvestmentIdeaV1
+    | IdeaEvaluationV1
+    | IdeaComparisonRunV1
+    | IdeaComparisonRankingV1
+    | FactorScoreV1
+    | MissingInformationRequirementV1
+    | OptimizationMissionV1
+    | OptimizationRunV1
+    | OptimizationActionSnapshotV1
+    | OptimizationAlertV1
+    | SourceFreshnessV1
+    | ManagementQualityAssessmentV1
+    | ManagementQualityScorecardRowV1
+    | ManagementQualityAccomplishmentV1
+    | ManagementQualitySetbackV1
 )
 JsonObject = dict[str, Any]

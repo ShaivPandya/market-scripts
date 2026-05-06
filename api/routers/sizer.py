@@ -4,11 +4,12 @@ from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.decision_state import analysis_metadata
 from api.exceptions import DataFetchError
+from api.portfolio_settings import get_portfolio_book_size
 from api.serializers import serialize_dataframe, serialize_value
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
@@ -21,9 +22,19 @@ class SizerPosition(BaseModel):
 
 
 class SizerRequest(BaseModel):
-    book: float = 100_000
+    book: float | None = None
     target_leverage: float = 2.0
     positions: list[SizerPosition] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _default_book_size(self) -> SizerRequest:
+        if self.book is None:
+            self.book = float(get_portfolio_book_size())
+        return self
+
+
+def _effective_book(req: SizerRequest) -> float:
+    return float(req.book) if req.book is not None else float(get_portfolio_book_size())
 
 
 def _canonical_positions(req: SizerRequest) -> list[tuple[str, int]]:
@@ -46,7 +57,10 @@ def _cache_key(req: SizerRequest) -> str:
     strategy_version = "v2_conviction_sizing_equity_beta"
     canonical = _canonical_positions(req)
     token = "|".join(f"{ticker}:{conviction}" for ticker, conviction in canonical) or "none"
-    return f"portfolio_sizer:{strategy_version}:book={float(req.book):.4f}:lev={float(req.target_leverage):.4f}:positions={token}"
+    return (
+        f"portfolio_sizer:{strategy_version}:book={_effective_book(req):.4f}:"
+        f"lev={float(req.target_leverage):.4f}:positions={token}"
+    )
 
 
 def _compute_sizer_result(req: SizerRequest) -> dict[str, Any]:
@@ -56,7 +70,7 @@ def _compute_sizer_result(req: SizerRequest) -> dict[str, Any]:
         payload = [row.model_dump() for row in req.positions]
         data = get_data(
             positions=payload,
-            book=float(req.book),
+            book=_effective_book(req),
             target_leverage=float(req.target_leverage),
         )
     except ValueError:
@@ -162,6 +176,7 @@ def get_sizer_prefill():
 
         return {
             "positions": deduped_rows,
+            "book_size": get_portfolio_book_size(),
             "source": "ontology",
             "count": len(deduped_rows),
         }

@@ -11,6 +11,7 @@ from api.routers.auth import require_actor
 from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.policy import Actor, PolicyDenied
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from ontology.schemas.relations import PROVENANCE_RELATION_TYPES
 
 router = APIRouter()
 ActorDep = Annotated[Actor, Depends(require_actor)]
@@ -168,16 +169,80 @@ def _ontology_trace(max_depth: int = 3, **selector: str | None) -> dict:
         )
     reads = OntologyRuntimeReadService()
     events = reads.list_objects("ProvenanceEvent", limit=500)
-    links = reads.list_objects("ProvenanceLink", limit=500)
+    reference_types = (
+        "ObjectVersionRef",
+        "RelationVersionRef",
+        "SchemaDefinitionRef",
+        "OntologyRunRef",
+        "AgentSessionRef",
+        "ModelCallRef",
+        "ToolCallRef",
+        "ComputedSnapshotRef",
+        "SourceRecord",
+        "WorkflowRun",
+        "WorkflowArtifact",
+        "Approval",
+        "ActionRun",
+        "AuditEvent",
+    )
+    references = []
+    for object_type in reference_types:
+        references.extend(reads.list_objects(object_type, limit=500))
+    relations: list[dict] = []
+    for relation_type in sorted(PROVENANCE_RELATION_TYPES):
+        relations.extend(
+            _relation_payload(row)
+            for row in reads.objects.query_relations(relation_type=relation_type, include_history=True, limit=500)
+        )
     if clean_selector:
         needle_values = {str(value) for value in clean_selector.values()}
         events = [event for event in events if any(value in str(event.values()) for value in needle_values)]
-        links = [link for link in links if any(value in str(link.values()) for value in needle_values)]
+        references = [ref for ref in references if any(value in str(ref.values()) for value in needle_values)]
+        relations = [
+            relation for relation in relations if any(value in str(relation.values()) for value in needle_values)
+        ]
+    timeline = sorted(
+        [
+            {"kind": "event", "id": event.get("id"), "status": event.get("status"), "at": event.get("started_at")}
+            for event in events
+        ]
+        + [
+            {
+                "kind": "relation",
+                "id": relation.get("relation_uid"),
+                "relation_type": relation.get("relation_type"),
+                "at": ((relation.get("_meta") or {}).get("temporal") or {}).get("valid_from"),
+            }
+            for relation in relations
+        ],
+        key=lambda item: str(item.get("at") or ""),
+    )
     return {
         "selector": clean_selector,
+        "seed": _seed(clean_selector),
         "events": events,
-        "links": links,
+        "references": references,
+        "relations": relations,
+        "timeline": timeline,
         "lineage_state": "ontology",
         "event_count": len(events),
-        "link_count": len(links),
+        "reference_count": len(references),
+        "relation_count": len(relations),
     }
+
+
+def _relation_payload(row: dict) -> dict:
+    properties = dict(row.get("properties") or row.get("properties_json") or {})
+    relation_uid = str(row.get("relation_uid") or properties.get("id") or "")
+    properties["id"] = relation_uid
+    properties["relation_uid"] = relation_uid
+    return {**row, "properties": properties}
+
+
+def _seed(selector: dict[str, str]) -> dict[str, str] | None:
+    if not selector:
+        return None
+    key, value = next(iter(selector.items()))
+    if key == "ref_type":
+        return {"ref_type": selector.get("ref_type", ""), "ref_id": selector.get("ref_id", "")}
+    return {"selector_type": key, "selector_id": value}

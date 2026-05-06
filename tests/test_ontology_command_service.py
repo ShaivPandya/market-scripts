@@ -26,7 +26,13 @@ class FakeObjectService:
                 "approval:",
                 "audit_event:",
                 "executed_decision_record:",
+                "document_artifact:",
                 "instrument:",
+                "issuer:",
+                "management_quality_accomplishment:",
+                "management_quality_assessment:",
+                "management_quality_scorecard_row:",
+                "management_quality_setback:",
                 "portfolio:",
                 "position:",
                 "recommendation:",
@@ -150,3 +156,59 @@ def test_approve_rejects_stale_ontology_base_state(monkeypatch):
         service.resolve_approval(approval["id"], "approved", "Apply", context)
 
     assert service.get_approval(approval["id"], actor=context.actor)["status"] == "pending"
+
+
+def test_save_management_quality_content_writes_ontology_children_and_markdown(monkeypatch, tmp_path):
+    import portfolio.management_quality_content as management_quality_content
+
+    indexed: list[dict[str, Any]] = []
+    mgmt_dir = tmp_path / "investment_management_quality"
+    mgmt_dir.mkdir()
+    monkeypatch.setattr(management_quality_content, "MANAGEMENT_QUALITY_DIR", mgmt_dir)
+    monkeypatch.setattr("api.retrieval.index_document", lambda **kwargs: indexed.append(kwargs))
+
+    fake = FakeObjectService()
+    service = OntologyCommandService(fake)  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "save_management_quality_content",
+        {
+            "ticker": "mu",
+            "content": """# MU Management Quality
+
+## Executive Summary
+- **Overall Rating**: Strong
+- **Bottom Line**: Good operator.
+- **Owner Mindset**: Strong - Disciplined capital allocation.
+- **Business Value Understanding**: Mixed - Some gaps.
+- **Follow-through / Character**: Strong - Targets met.
+
+## Management Scorecard
+| Question | Rating | Evidence |
+|----------|--------|----------|
+| Do managers think and act like owners? | Strong | Buybacks were disciplined. |
+
+## Most Impressive Accomplishments
+- **HBM ramp (2025)**: Executed well.
+
+## Biggest Setbacks and Responses
+- **Inventory cycle (2023)**: Downturn. **Response**: Mixed - Costs were reset.
+""",
+        },
+        context,
+        reason="unit",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    assert applied["application_status"] == "applied"
+    assert (mgmt_dir / "MU.md").read_text(encoding="utf-8").endswith("\n")
+    object_types = {row["object_type"] for row in fake.objects.values()}
+    assert "ManagementQualityAssessment" in object_types
+    assert "ManagementQualityScorecardRow" in object_types
+    assert "ManagementQualityAccomplishment" in object_types
+    assert "ManagementQualitySetback" in object_types
+    assert any(rel["relation_type"] == "management_quality_assesses_issuer" for rel in fake.relations)
+    assert any(rel["relation_type"] == "research_object_uses_document" for rel in fake.relations)
+    assert indexed and indexed[0]["doc_type"] == "management_quality"

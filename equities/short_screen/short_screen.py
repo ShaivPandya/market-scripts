@@ -63,7 +63,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 YF_CHUNK_SIZE = 100  # tickers per batch (Phase 1 and Phase 3)
-YF_BATCH_DELAY = 0.5  # seconds between batches
+YF_BATCH_DELAY = 1.0  # seconds between batches
 PHASE1_WORKERS = max(1, _env_int("SCREEN_YF_WORKERS", 4))  # concurrent yfinance statement threads
 YF_CALL_INTERVAL_SECONDS = max(0.0, _env_float("SCREEN_YF_CALL_INTERVAL_SECONDS", 0.08))
 YF_RATE_LIMIT_COOLDOWN_SECONDS = max(0.0, _env_float("SCREEN_YF_RATE_LIMIT_COOLDOWN_SECONDS", 20.0))

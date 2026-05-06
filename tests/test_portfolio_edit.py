@@ -113,6 +113,23 @@ def test_save_and_get_hedge_positions(auth_client):
     assert updated_fetch.json()["positions"][0]["quantity"] == 8.5
 
 
+def test_portfolio_settings_book_size_persists(auth_client):
+    default_resp = auth_client.get("/api/v1/portfolio-settings")
+    assert default_resp.status_code == 200
+    assert default_resp.json()["book_size"] == 100_000.0
+    assert default_resp.json()["configured"] is False
+
+    update_resp = auth_client.put("/api/v1/portfolio-settings", json={"book_size": 125_000})
+    assert update_resp.status_code == 200
+    assert update_resp.json()["book_size"] == 125_000.0
+    assert update_resp.json()["configured"] is True
+
+    fetch_resp = auth_client.get("/api/v1/portfolio-settings")
+    assert fetch_resp.status_code == 200
+    assert fetch_resp.json()["book_size"] == 125_000.0
+    assert fetch_resp.json()["configured"] is True
+
+
 def test_save_and_get_futures_position(auth_client):
     resp = auth_client.put(
         "/api/v1/portfolio-positions",
