@@ -2253,6 +2253,9 @@ def overlay_anchor_long_equity_signals(
         metadata["reason"] = anchor_meta["reason"]
     if "signal_anchor_scoring_universe_size" in anchor_meta:
         metadata["signal_anchor_scoring_universe_size"] = anchor_meta["signal_anchor_scoring_universe_size"]
+    for key in ("signal_anchor_cache_status", "signal_anchor_as_of", "signal_anchor_stale"):
+        if key in anchor_meta:
+            metadata[key] = anchor_meta[key]
 
     if anchor_df is None or anchor_df.empty or "composite_signal" not in anchor_df.columns:
         return signal_composite_out, sub_out, metadata
@@ -2524,6 +2527,9 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
             "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
             "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
             "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
+            "signal_anchor_cache_status": signal_anchor_meta.get("signal_anchor_cache_status"),
+            "signal_anchor_as_of": signal_anchor_meta.get("signal_anchor_as_of"),
+            "signal_anchor_stale": signal_anchor_meta.get("signal_anchor_stale"),
             "weights_df": weights_df,
             "course_of_action": course_of_action,
         }
@@ -2973,6 +2979,9 @@ def optimize_portfolio(
             "signal_anchor_mode": signal_anchor_meta.get("signal_anchor_mode", SIGNAL_ANCHOR_MODE),
             "signal_anchor_universe_size": signal_anchor_meta.get("signal_anchor_universe_size", 0),
             "signal_anchor_fallback_used": signal_anchor_meta.get("signal_anchor_fallback_used", True),
+            "signal_anchor_cache_status": signal_anchor_meta.get("signal_anchor_cache_status"),
+            "signal_anchor_as_of": signal_anchor_meta.get("signal_anchor_as_of"),
+            "signal_anchor_stale": signal_anchor_meta.get("signal_anchor_stale"),
             "long_weighting_mode": LONG_WEIGHTING_MODE,
             # Exposures
             "exposures": exp,

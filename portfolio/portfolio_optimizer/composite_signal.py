@@ -37,13 +37,21 @@ LOGGER = logging.getLogger(__name__)
 # Configuration
 # -----------------------------
 from ontology.runtime_read_service import get_positions_df as _get_positions_df
+from portfolio.portfolio_optimizer.anchor_signal_cache import (
+    combine_cache_metadata,
+    get_anchor_fundamentals,
+    get_anchor_price_raw,
+    get_anchor_signal_table,
+    get_spdr_anchor_universe,
+)
 from portfolio.portfolio_optimizer.signal_fetchers import (
+    SPDR_SECTOR_ETFS,
     fetch_eps_momentum_batch,
     fetch_etf_lookthrough_fundamentals_batch,
+    fetch_etf_top_holdings_batch,
     fetch_price_momentum_batch,
     fetch_quality_batch,
     fetch_revenue_momentum_batch,
-    fetch_spdr_sector_anchor_universe,
 )
 from utils.retry import yf_download, yf_ticker_info
 
@@ -379,6 +387,93 @@ def clip_signal(signal: pd.Series, lower: float = -3.0, upper: float = 3.0) -> p
     return signal.clip(lower=lower, upper=upper)
 
 
+def _merge_raw_frames(left: pd.DataFrame, right: pd.DataFrame, index: list[str]) -> pd.DataFrame:
+    frames = [frame for frame in (left, right) if frame is not None and not frame.empty]
+    if not frames:
+        return pd.DataFrame(index=index)
+    merged = pd.concat(frames, axis=0)
+    merged = merged[~merged.index.duplicated(keep="last")]
+    return merged.reindex(index)
+
+
+def _build_anchor_signal_output(
+    *,
+    scoring_universe: list[str],
+    price_raw: pd.DataFrame,
+    quality_raw: pd.DataFrame,
+    eps_raw: pd.DataFrame,
+    rev_raw: pd.DataFrame,
+    weights: dict[str, float],
+    clip_bounds: tuple[float, float],
+) -> pd.DataFrame:
+    price_signal = (
+        compute_price_momentum_signal(price_raw).reindex(scoring_universe, fill_value=0.0)
+        if price_raw is not None and not price_raw.empty
+        else pd.Series(0.0, index=scoring_universe)
+    )
+    quality_signal = (
+        compute_quality_signal(quality_raw).reindex(scoring_universe)
+        if quality_raw is not None and not quality_raw.empty
+        else pd.Series(np.nan, index=scoring_universe)
+    )
+    eps_signal = (
+        compute_eps_momentum_signal(eps_raw).reindex(scoring_universe)
+        if eps_raw is not None and not eps_raw.empty
+        else pd.Series(np.nan, index=scoring_universe)
+    )
+    rev_signal = (
+        compute_revenue_momentum_signal(rev_raw).reindex(scoring_universe)
+        if rev_raw is not None and not rev_raw.empty
+        else pd.Series(np.nan, index=scoring_universe)
+    )
+
+    composite_signal = combine_signals(
+        {
+            "quality": quality_signal,
+            "eps_momentum": eps_signal,
+            "revenue_momentum": rev_signal,
+            "price_momentum": price_signal,
+        },
+        weights,
+        scoring_universe,
+    )
+    composite_signal = clip_signal(composite_signal, *clip_bounds)
+    return pd.DataFrame(
+        {
+            "quality_signal": quality_signal,
+            "eps_mom_signal": eps_signal,
+            "rev_mom_signal": rev_signal,
+            "price_mom_signal": price_signal,
+            "composite_signal": composite_signal,
+        },
+        index=scoring_universe,
+    )
+
+
+def _fetch_live_anchor_raw_inputs(
+    *,
+    tickers: list[str],
+    benchmark: str,
+    years: int,
+    use_edgar: bool,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if not tickers:
+        empty = pd.DataFrame()
+        return empty, empty, empty, empty
+
+    try:
+        prices = fetch_prices(list(dict.fromkeys([*tickers, benchmark])), years=years)
+        price_raw = fetch_price_momentum_batch(tickers, {ticker: benchmark for ticker in tickers}, prices)
+    except Exception as exc:
+        LOGGER.warning("Extra anchor ticker pricing failed: %s", exc)
+        price_raw = pd.DataFrame()
+
+    quality_raw = fetch_quality_batch(tickers, market=benchmark, growth_years=years)
+    eps_raw = fetch_eps_momentum_batch(tickers, growth_years=3, use_edgar=use_edgar)
+    rev_raw = fetch_revenue_momentum_batch(tickers, growth_years=3, use_edgar=use_edgar)
+    return price_raw, quality_raw, eps_raw, rev_raw
+
+
 def generate_anchor_normalized_long_equity_signals(
     long_equity_tickers: list[str],
     years: int = DEFAULT_YEARS,
@@ -413,10 +508,22 @@ def generate_anchor_normalized_long_equity_signals(
             "reason": "no_long_equities",
         }
 
-    anchor_universe, anchor_meta = fetch_spdr_sector_anchor_universe(
-        top_n=anchor_top_n,
-        min_unique=anchor_min_unique,
-    )
+    try:
+        anchor_universe, anchor_meta = get_spdr_anchor_universe(
+            top_n=anchor_top_n,
+            min_unique=anchor_min_unique,
+            sector_etfs=SPDR_SECTOR_ETFS,
+            holdings_fetcher=fetch_etf_top_holdings_batch,
+        )
+    except Exception as e:
+        LOGGER.warning("Anchor universe fetch failed: %s", e)
+        return pd.DataFrame(), {
+            "signal_anchor_mode": mode,
+            "signal_anchor_universe_size": 0,
+            "signal_anchor_fallback_used": True,
+            "reason": f"anchor_universe_failed:{e}",
+            "anchor_metadata": {},
+        }
     raw_anchor_size = anchor_meta.get("anchor_universe_size", 0)
     if isinstance(raw_anchor_size, (int, float, str)):
         try:
@@ -434,66 +541,97 @@ def generate_anchor_normalized_long_equity_signals(
             "anchor_metadata": anchor_meta,
         }
 
-    scoring_universe = list(dict.fromkeys(anchor_universe + tickers))
+    anchor_set = set(anchor_universe)
+    extra_tickers = [ticker for ticker in tickers if ticker not in anchor_set]
+    scoring_universe = list(dict.fromkeys(anchor_universe + extra_tickers))
     scoring_size = len(scoring_universe)
-    ticker_benchmarks = {t: benchmark for t in scoring_universe}
-    all_tickers = list(set(scoring_universe + [benchmark]))
 
     try:
-        prices = fetch_prices(all_tickers, years=years)
+        if extra_tickers:
+            anchor_price_raw, price_meta = get_anchor_price_raw(
+                anchor_universe=anchor_universe,
+                benchmark=benchmark,
+                years=years,
+                price_loader=fetch_prices,
+                price_momentum_fetcher=fetch_price_momentum_batch,
+            )
+            anchor_quality_raw, anchor_eps_raw, anchor_rev_raw, fundamentals_meta = get_anchor_fundamentals(
+                anchor_universe=anchor_universe,
+                benchmark=benchmark,
+                years=years,
+                use_edgar=use_edgar,
+                quality_fetcher=fetch_quality_batch,
+                eps_fetcher=fetch_eps_momentum_batch,
+                revenue_fetcher=fetch_revenue_momentum_batch,
+            )
+            extra_price_raw, extra_quality_raw, extra_eps_raw, extra_rev_raw = _fetch_live_anchor_raw_inputs(
+                tickers=extra_tickers,
+                benchmark=benchmark,
+                years=years,
+                use_edgar=use_edgar,
+            )
+            full_output = _build_anchor_signal_output(
+                scoring_universe=scoring_universe,
+                price_raw=_merge_raw_frames(anchor_price_raw, extra_price_raw, scoring_universe),
+                quality_raw=_merge_raw_frames(anchor_quality_raw, extra_quality_raw, scoring_universe),
+                eps_raw=_merge_raw_frames(anchor_eps_raw, extra_eps_raw, scoring_universe),
+                rev_raw=_merge_raw_frames(anchor_rev_raw, extra_rev_raw, scoring_universe),
+                weights=weights,
+                clip_bounds=clip_bounds,
+            )
+            cache_summary = combine_cache_metadata([anchor_meta, price_meta, fundamentals_meta])
+        else:
+
+            def _load_anchor_signal_table() -> tuple[pd.DataFrame, dict[str, object]]:
+                anchor_price_raw, price_meta = get_anchor_price_raw(
+                    anchor_universe=anchor_universe,
+                    benchmark=benchmark,
+                    years=years,
+                    price_loader=fetch_prices,
+                    price_momentum_fetcher=fetch_price_momentum_batch,
+                )
+                anchor_quality_raw, anchor_eps_raw, anchor_rev_raw, fundamentals_meta = get_anchor_fundamentals(
+                    anchor_universe=anchor_universe,
+                    benchmark=benchmark,
+                    years=years,
+                    use_edgar=use_edgar,
+                    quality_fetcher=fetch_quality_batch,
+                    eps_fetcher=fetch_eps_momentum_batch,
+                    revenue_fetcher=fetch_revenue_momentum_batch,
+                )
+                return (
+                    _build_anchor_signal_output(
+                        scoring_universe=scoring_universe,
+                        price_raw=anchor_price_raw,
+                        quality_raw=anchor_quality_raw,
+                        eps_raw=anchor_eps_raw,
+                        rev_raw=anchor_rev_raw,
+                        weights=weights,
+                        clip_bounds=clip_bounds,
+                    ),
+                    combine_cache_metadata([price_meta, fundamentals_meta]),
+                )
+
+            full_output, signal_meta = get_anchor_signal_table(
+                anchor_universe=anchor_universe,
+                benchmark=benchmark,
+                years=years,
+                weights=weights,
+                clip_bounds=clip_bounds,
+                loader=_load_anchor_signal_table,
+            )
+            cache_summary = combine_cache_metadata([anchor_meta, signal_meta])
     except Exception as e:
-        LOGGER.warning("Anchor signal pricing failed: %s", e)
+        LOGGER.warning("Anchor signal cache/scoring failed: %s", e)
         return pd.DataFrame(), {
             "signal_anchor_mode": mode,
             "signal_anchor_universe_size": anchor_universe_size,
             "signal_anchor_fallback_used": True,
-            "reason": "price_fetch_failed",
+            "reason": f"anchor_cache_failed:{e}",
             "anchor_metadata": anchor_meta,
         }
 
-    price_raw = fetch_price_momentum_batch(scoring_universe, ticker_benchmarks, prices)
-    price_signal = compute_price_momentum_signal(price_raw).reindex(scoring_universe, fill_value=0.0)
-
-    quality_raw = fetch_quality_batch(scoring_universe, market=benchmark, growth_years=years)
-    quality_signal = (
-        compute_quality_signal(quality_raw).reindex(scoring_universe)
-        if quality_raw is not None and not quality_raw.empty
-        else pd.Series(np.nan, index=scoring_universe)
-    )
-
-    eps_raw = fetch_eps_momentum_batch(scoring_universe, growth_years=3, use_edgar=use_edgar)
-    eps_signal = (
-        compute_eps_momentum_signal(eps_raw).reindex(scoring_universe)
-        if eps_raw is not None and not eps_raw.empty
-        else pd.Series(np.nan, index=scoring_universe)
-    )
-
-    rev_raw = fetch_revenue_momentum_batch(scoring_universe, growth_years=3, use_edgar=use_edgar)
-    rev_signal = (
-        compute_revenue_momentum_signal(rev_raw).reindex(scoring_universe)
-        if rev_raw is not None and not rev_raw.empty
-        else pd.Series(np.nan, index=scoring_universe)
-    )
-
-    signal_dict = {
-        "quality": quality_signal,
-        "eps_momentum": eps_signal,
-        "revenue_momentum": rev_signal,
-        "price_momentum": price_signal,
-    }
-    composite_signal = combine_signals(signal_dict, weights, scoring_universe)
-    composite_signal = clip_signal(composite_signal, *clip_bounds)
-
-    full_output = pd.DataFrame(
-        {
-            "quality_signal": quality_signal,
-            "eps_mom_signal": eps_signal,
-            "rev_mom_signal": rev_signal,
-            "price_mom_signal": price_signal,
-            "composite_signal": composite_signal,
-        },
-        index=scoring_universe,
-    )
+    full_output = full_output.reindex(scoring_universe)
     target_output = full_output.reindex(tickers)
     valid_count = (
         int(target_output["composite_signal"].notna().sum()) if "composite_signal" in target_output.columns else 0
@@ -504,6 +642,9 @@ def generate_anchor_normalized_long_equity_signals(
         "signal_anchor_universe_size": anchor_universe_size,
         "signal_anchor_scoring_universe_size": scoring_size,
         "signal_anchor_fallback_used": valid_count == 0,
+        "signal_anchor_cache_status": cache_summary.get("cache_status"),
+        "signal_anchor_as_of": cache_summary.get("as_of"),
+        "signal_anchor_stale": cache_summary.get("stale"),
         "anchor_metadata": anchor_meta,
     }
     if valid_count == 0:
