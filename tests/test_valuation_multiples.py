@@ -145,3 +145,61 @@ def test_effective_profile_weights_drop_unusable_metrics():
 
     assert weights["price_sales"] == 1.0
     assert weights["price_book"] == 0.0
+
+
+def test_value_range_scenario_uses_ev_to_equity_for_enterprise_multiples():
+    row = multiples.compute_value_range_scenario(
+        "price_sales",
+        {"multiple": 4.0, "denominator": 300.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=200.0,
+    )
+
+    assert row["status"] == "ok"
+    assert row["equity_value"] == 1000.0
+    assert row["expected_price"] == 10.0
+    assert row["percent_change"] == 0.0
+
+
+def test_value_range_scenario_uses_equity_value_for_pe_and_pb():
+    row = multiples.compute_value_range_scenario(
+        "price_earnings",
+        {"multiple": 15.0, "denominator": 100.0},
+        current_price=10.0,
+        shares=100.0,
+        net_debt=None,
+    )
+
+    assert row["status"] == "ok"
+    assert row["equity_value"] == 1500.0
+    assert row["expected_price"] == 15.0
+    assert row["percent_change"] == 50.0
+
+
+def test_value_range_assumption_persists_and_updates(tmp_path, monkeypatch):
+    monkeypatch.setattr(multiples, "VALUE_RANGE_LOCAL_PATH", tmp_path / "value_ranges.json")
+    monkeypatch.setattr(multiples, "VALUE_RANGE_GCS_KEY", "tests/value_ranges.json")
+
+    first = {
+        "metric": "price_sales",
+        "scenarios": {
+            "bear": {"multiple": 4.0, "denominator": 100.0},
+            "base": {"multiple": 5.0, "denominator": 110.0},
+            "bull": {"multiple": 6.0, "denominator": 120.0},
+        },
+    }
+    second = {
+        "metric": "price_earnings",
+        "scenarios": {
+            "bear": {"multiple": 12.0, "denominator": 50.0},
+            "base": {"multiple": 15.0, "denominator": 55.0},
+            "bull": {"multiple": 18.0, "denominator": 60.0},
+        },
+    }
+
+    multiples.write_value_range_assumption("zzrange", first)
+    assert multiples.read_value_range_assumption("ZZRANGE") == first
+
+    multiples.write_value_range_assumption("ZZRANGE", second)
+    assert multiples.read_value_range_assumption("zzrange") == second

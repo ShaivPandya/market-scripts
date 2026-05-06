@@ -345,9 +345,10 @@ class OntologyCommandService:
         failed_now = _now()
         failed_action_id = str(resolved.get("action_id") or "").strip()
         if failed_action_id:
+            failed_started_at = resolved.get("application_started_at") or failed_now
             self.objects.write_object(
                 "ActionRun",
-                action_run_id(f"{approval['id']}:{failed_action_id}"),
+                f"{failed_action_id}:{failed_started_at}",
                 {
                     "action_id": failed_action_id,
                     "action_schema_name": failed_action_id,
@@ -361,7 +362,7 @@ class OntologyCommandService:
                     "status": "failed",
                     "execution_state": "failed",
                     "error": error[:1000],
-                    "started_at": resolved.get("application_started_at") or failed_now,
+                    "started_at": failed_started_at,
                     "completed_at": failed_now,
                     "provenance_event_id": provenance_id,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
@@ -418,7 +419,8 @@ class OntologyCommandService:
         action_id = _non_blank(approval.get("action_id"), "action_id")
         payload = _dict(approval.get("proposed_change"))
         now = _now()
-        run_uid = action_run_id(f"{approval['id']}:{action_id}")
+        run_key = f"{action_id}:{now}"
+        run_uid = action_run_id(run_key)
         run_props = {
             "action_id": action_id,
             "action_schema_name": action_id,
@@ -435,7 +437,7 @@ class OntologyCommandService:
         }
         run = self.objects.write_object(
             "ActionRun",
-            run_uid,
+            run_key,
             {
                 **run_props,
                 "status": "running",
@@ -452,7 +454,7 @@ class OntologyCommandService:
         )
         run = self.objects.write_object(
             "ActionRun",
-            run_uid,
+            run_key,
             {
                 **run_props,
                 "status": "succeeded",
@@ -464,12 +466,12 @@ class OntologyCommandService:
             provenance=provenance_id,
             input_hash=input_hash,
         )
-        decision_uid = executed_decision_record_id(f"{approval['id']}:{run_uid}")
+        decision_key = f"{approval['id']}:{run_uid}"
         decision = self.objects.write_object(
             "ExecutedDecisionRecord",
-            decision_uid,
+            decision_key,
             {
-                "decision_record_id": decision_uid,
+                "decision_record_id": decision_key,
                 "approval_id": approval["id"],
                 "action_run_id": run_uid,
                 "action_id": action_id,
@@ -930,14 +932,13 @@ class OntologyCommandService:
             return refs
         if action_id == "create_recommendation":
             record = _dict(payload.get("record") or payload)
-            rec_key = recommendation_id(
-                record.get("recommendation_id") or record.get("idempotency_key") or _stable_hash(record)
-            )
+            rec_key = str(record.get("recommendation_id") or record.get("idempotency_key") or _stable_hash(record))
             row = self.objects.write_object(
                 "Recommendation",
                 rec_key,
                 {
                     "recommendation_id": rec_key,
+                    "idempotency_key": record.get("idempotency_key"),
                     "source_kind": str(record.get("source_kind") or record.get("report_type") or "agent"),
                     "report_type": record.get("report_type"),
                     "as_of": record.get("as_of") or now,

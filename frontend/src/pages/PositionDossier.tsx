@@ -23,8 +23,10 @@ import {
   refreshPositionRisk,
   fetchPositionValuation,
   updatePositionValuationProfileOverride,
+  updatePositionValueRange,
   type ApprovalRecord,
   type PositionValuation,
+  type PositionValueRangeRequest,
   type PositionRiskEvidence,
   type PositionRiskSnapshot,
   type SourceRequirement,
@@ -1012,6 +1014,36 @@ const VALUATION_METRIC_ORDER = [
   "price_earnings",
   "price_book",
 ] as const
+type ValuationMetricKey = typeof VALUATION_METRIC_ORDER[number]
+
+const VALUE_RANGE_SCENARIOS = ["bear", "base", "bull"] as const
+type ValueRangeScenarioKey = typeof VALUE_RANGE_SCENARIOS[number]
+
+const VALUE_RANGE_SCENARIO_LABELS: Record<ValueRangeScenarioKey, string> = {
+  bear: "Bear",
+  base: "Base",
+  bull: "Bull",
+}
+
+const ENTERPRISE_VALUE_METRICS = new Set<ValuationMetricKey>([
+  "price_sales",
+  "price_operating_income",
+  "price_fcf",
+])
+
+interface ValueRangeDraft {
+  metric: ValuationMetricKey
+  scenarios: Record<ValueRangeScenarioKey, { multiple: string; denominator: string }>
+}
+
+interface ComputedValueRangeScenario {
+  multiple: number | null
+  denominator: number | null
+  expectedPrice: number | null
+  percentChange: number | null
+  status: string
+  reason: string | null
+}
 
 function formatMultipleValue(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
@@ -1038,10 +1070,328 @@ function formatWeight(value: unknown): string {
   return `${Math.round(value * 100)}%`
 }
 
+function isValuationMetricKey(value: unknown): value is ValuationMetricKey {
+  return typeof value === "string" && (VALUATION_METRIC_ORDER as readonly string[]).includes(value)
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null
+  return value
+}
+
+function positiveNumber(value: unknown): number | null {
+  const parsed = finiteNumber(value)
+  return parsed != null && parsed > 0 ? parsed : null
+}
+
+function trimNumberText(value: string): string {
+  return value.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1")
+}
+
+function formatInputNumber(value: unknown): string {
+  const parsed = finiteNumber(value)
+  if (parsed == null) return ""
+  const abs = Math.abs(parsed)
+  if (abs >= 1e12) return `${trimNumberText((parsed / 1e12).toFixed(2))}T`
+  if (abs >= 1e9) return `${trimNumberText((parsed / 1e9).toFixed(2))}B`
+  if (abs >= 1e6) return `${trimNumberText((parsed / 1e6).toFixed(2))}M`
+  return trimNumberText(parsed.toFixed(abs >= 100 ? 0 : 2))
+}
+
+function formatMultipleInput(value: unknown): string {
+  const parsed = finiteNumber(value)
+  if (parsed == null) return ""
+  return trimNumberText(parsed.toFixed(2))
+}
+
+function parseMultipleInput(value: string): number | null {
+  const cleaned = value.trim().replace(/x$/i, "").replace(/,/g, "")
+  if (!cleaned) return null
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function parseScaledNumberInput(value: string): number | null {
+  const cleaned = value.trim().replace(/[$,\s]/g, "").toUpperCase()
+  if (!cleaned) return null
+  const match = cleaned.match(/^([+-]?(?:\d+\.?\d*|\.\d+))([MBT])?$/)
+  if (!match) return null
+  const base = Number(match[1])
+  if (!Number.isFinite(base) || base <= 0) return null
+  const suffix = match[2]
+  const multiplier = suffix === "T" ? 1e12 : suffix === "B" ? 1e9 : suffix === "M" ? 1e6 : 1
+  return base * multiplier
+}
+
+function formatSharePrice(value: unknown): string {
+  const parsed = finiteNumber(value)
+  if (parsed == null) return "N/A"
+  return `$${parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function formatScenarioChange(value: unknown): string {
+  const parsed = finiteNumber(value)
+  if (parsed == null) return "N/A"
+  const sign = parsed > 0 ? "+" : ""
+  return `${sign}${parsed.toFixed(1)}%`
+}
+
+function scenarioChangeClass(value: unknown): string {
+  const parsed = finiteNumber(value)
+  if (parsed == null) return "text-subtle"
+  if (parsed > 0) return "text-green-600 dark:text-green-300"
+  if (parsed < 0) return "text-red-600 dark:text-red-300"
+  return "text-subtle"
+}
+
+function valueRangeDefaultMetric(data: PositionValuation): ValuationMetricKey {
+  let selected: ValuationMetricKey | null = null
+  let selectedWeight = 0
+  for (const metric of VALUATION_METRIC_ORDER) {
+    const weight = positiveNumber(data.profile.effective_weights?.[metric])
+    const denominator = positiveNumber(data.metrics[metric]?.denominator)
+    const multiple = positiveNumber(data.metrics[metric]?.value)
+    if (weight != null && denominator != null && multiple != null && weight > selectedWeight) {
+      selected = metric
+      selectedWeight = weight
+    }
+  }
+  if (selected) return selected
+
+  for (const metric of VALUATION_METRIC_ORDER) {
+    const denominator = positiveNumber(data.metrics[metric]?.denominator)
+    const multiple = positiveNumber(data.metrics[metric]?.value)
+    if (denominator != null && multiple != null) return metric
+  }
+  return "price_sales"
+}
+
+function valueRangeDefaultMultiples(data: PositionValuation, metric: ValuationMetricKey): Record<ValueRangeScenarioKey, number | null> {
+  const history = data.historical_bands[metric]
+  if (history?.status === "ok" && positiveNumber(history.q1) != null && positiveNumber(history.median) != null && positiveNumber(history.q3) != null) {
+    return { bear: positiveNumber(history.q1), base: positiveNumber(history.median), bull: positiveNumber(history.q3) }
+  }
+
+  const peer = data.peer_context.metric_stats[metric]
+  if (peer?.status === "ok" && positiveNumber(peer.q1) != null && positiveNumber(peer.median) != null && positiveNumber(peer.q3) != null) {
+    return { bear: positiveNumber(peer.q1), base: positiveNumber(peer.median), bull: positiveNumber(peer.q3) }
+  }
+
+  const current = positiveNumber(data.metrics[metric]?.value)
+  if (current == null) return { bear: null, base: null, bull: null }
+  return { bear: current * 0.8, base: current, bull: current * 1.2 }
+}
+
+function valueRangeScenarioDrafts(data: PositionValuation, metric: ValuationMetricKey): ValueRangeDraft["scenarios"] {
+  const denominator = positiveNumber(data.metrics[metric]?.denominator)
+  const multiples = valueRangeDefaultMultiples(data, metric)
+  return {
+    bear: { multiple: formatMultipleInput(multiples.bear), denominator: formatInputNumber(denominator) },
+    base: { multiple: formatMultipleInput(multiples.base), denominator: formatInputNumber(denominator) },
+    bull: { multiple: formatMultipleInput(multiples.bull), denominator: formatInputNumber(denominator) },
+  }
+}
+
+function valueRangeDraftFromData(data: PositionValuation): ValueRangeDraft {
+  const savedMetric = isValuationMetricKey(data.value_range?.metric) ? data.value_range.metric : null
+  const metric = savedMetric ?? valueRangeDefaultMetric(data)
+  const fallbackScenarios = valueRangeScenarioDrafts(data, metric)
+  const scenarios = VALUE_RANGE_SCENARIOS.reduce((acc, scenario) => {
+    const saved = data.value_range?.scenarios?.[scenario]
+    acc[scenario] = {
+      multiple: formatMultipleInput(saved?.multiple ?? parseMultipleInput(fallbackScenarios[scenario].multiple)),
+      denominator: formatInputNumber(saved?.denominator ?? parseScaledNumberInput(fallbackScenarios[scenario].denominator)),
+    }
+    return acc
+  }, {} as ValueRangeDraft["scenarios"])
+  return { metric, scenarios }
+}
+
+function inferredShareCount(data: PositionValuation): number | null {
+  const direct = positiveNumber(data.value_range?.shares ?? data.market_data?.shares_outstanding)
+  if (direct != null) return direct
+  const marketCap = positiveNumber(data.market_data?.market_cap)
+  const price = positiveNumber(data.market_data?.current_price)
+  return marketCap != null && price != null ? marketCap / price : null
+}
+
+function computeDraftValueRangeScenario(
+  data: PositionValuation,
+  metric: ValuationMetricKey,
+  draft: ValueRangeDraft["scenarios"][ValueRangeScenarioKey],
+): ComputedValueRangeScenario {
+  const multiple = parseMultipleInput(draft.multiple)
+  const denominator = parseScaledNumberInput(draft.denominator)
+  const shares = inferredShareCount(data)
+  const currentPrice = positiveNumber(data.market_data?.current_price)
+  const netDebt = finiteNumber(data.value_range?.net_debt ?? data.market_data?.net_debt)
+
+  if (multiple == null) return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing multiple" }
+  if (denominator == null) return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing denominator" }
+  if (shares == null) return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing shares" }
+  if (ENTERPRISE_VALUE_METRICS.has(metric) && netDebt == null) {
+    return { multiple, denominator, expectedPrice: null, percentChange: null, status: "missing", reason: "missing net debt" }
+  }
+
+  const grossValue = multiple * denominator
+  const equityValue = ENTERPRISE_VALUE_METRICS.has(metric) ? grossValue - (netDebt ?? 0) : grossValue
+  if (!Number.isFinite(equityValue) || equityValue <= 0) {
+    return { multiple, denominator, expectedPrice: null, percentChange: null, status: "not_meaningful", reason: "non-positive equity value" }
+  }
+  const expectedPrice = equityValue / shares
+  const percentChange = currentPrice != null ? (expectedPrice / currentPrice - 1) * 100 : null
+  return { multiple, denominator, expectedPrice, percentChange, status: "ok", reason: null }
+}
+
+function valueRangeRequestFromDraft(draft: ValueRangeDraft): PositionValueRangeRequest {
+  const scenarios: PositionValueRangeRequest["scenarios"] = {}
+  for (const scenario of VALUE_RANGE_SCENARIOS) {
+    const row = draft.scenarios[scenario]
+    const multiple = parseMultipleInput(row.multiple)
+    const denominator = parseScaledNumberInput(row.denominator)
+    if (multiple == null || denominator == null) {
+      throw new Error(`${VALUE_RANGE_SCENARIO_LABELS[scenario]} requires a positive multiple and denominator.`)
+    }
+    scenarios[scenario] = { multiple, denominator }
+  }
+  return { metric: draft.metric, scenarios }
+}
+
 function valuationStatusClass(status?: string | null): string {
   if (status === "ok") return "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
   if (status === "degraded") return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
   return "border-app bg-[hsl(var(--muted-2))] text-muted"
+}
+
+function ValueRangePanel({
+  valuation,
+  isSaving,
+  saveError,
+  onSave,
+}: {
+  valuation: PositionValuation
+  isSaving: boolean
+  saveError: unknown
+  onSave: (payload: PositionValueRangeRequest) => void
+}) {
+  const [draft, setDraft] = useState<ValueRangeDraft>(() => valueRangeDraftFromData(valuation))
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDraft(valueRangeDraftFromData(valuation))
+    setValidationError(null)
+  }, [valuation])
+
+  function updateScenario(scenario: ValueRangeScenarioKey, patch: Partial<ValueRangeDraft["scenarios"][ValueRangeScenarioKey]>) {
+    setValidationError(null)
+    setDraft(prev => ({
+      ...prev,
+      scenarios: {
+        ...prev.scenarios,
+        [scenario]: { ...prev.scenarios[scenario], ...patch },
+      },
+    }))
+  }
+
+  function handleMetricChange(value: string) {
+    if (!isValuationMetricKey(value)) return
+    setValidationError(null)
+    setDraft({ metric: value, scenarios: valueRangeScenarioDrafts(valuation, value) })
+  }
+
+  function handleSave() {
+    try {
+      setValidationError(null)
+      onSave(valueRangeRequestFromDraft(draft))
+    } catch (err) {
+      setValidationError(err instanceof Error ? err.message : "Invalid value range.")
+    }
+  }
+
+  const metricLabel = valuation.metrics[draft.metric]?.label ?? draft.metric
+  const denominatorLabel = valuation.metrics[draft.metric]?.denominator_label ?? valuation.value_range?.denominator_label ?? "Denominator"
+  const currentPrice = formatSharePrice(valuation.market_data?.current_price)
+  const saveErrorText = saveError instanceof Error ? saveError.message : saveError ? String(saveError) : null
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-app">Value Range</h3>
+            <span className="rounded border border-app px-2 py-0.5 text-xs font-semibold text-muted">
+              {valuation.value_range?.saved ? "saved" : "draft"}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            {metricLabel} scenarios from user assumptions. Current price {currentPrice}
+            {valuation.market_data?.currency ? ` ${valuation.market_data.currency}` : ""}.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,1fr)_auto] lg:w-[430px]">
+          <SelectInput
+            label="Metric"
+            value={draft.metric}
+            onChange={handleMetricChange}
+            options={VALUATION_METRIC_ORDER.map(metric => ({ value: metric, label: valuation.metrics[metric]?.label ?? metric }))}
+          />
+          <ActionButton
+            onClick={handleSave}
+            loading={isSaving}
+            loadingText="Saving..."
+            className="min-h-10 px-4 sm:self-end sm:w-auto"
+          >
+            Save
+          </ActionButton>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        {VALUE_RANGE_SCENARIOS.map(scenario => {
+          const computed = computeDraftValueRangeScenario(valuation, draft.metric, draft.scenarios[scenario])
+          return (
+            <article key={scenario} className="rounded-lg border border-app bg-card px-3 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-app">{VALUE_RANGE_SCENARIO_LABELS[scenario]}</h4>
+                  <p className="text-xs text-subtle">{metricLabel}</p>
+                </div>
+                <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", valuationStatusClass(computed.status))}>
+                  {computed.status.replace(/_/g, " ")}
+                </span>
+              </div>
+              <p className="mt-3 text-2xl font-semibold text-app">{formatSharePrice(computed.expectedPrice)}</p>
+              <p className={cn("mt-0.5 text-xs font-medium", scenarioChangeClass(computed.percentChange))}>
+                {formatScenarioChange(computed.percentChange)} from current
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                <TextInput
+                  label="Multiple"
+                  value={draft.scenarios[scenario].multiple}
+                  onChange={value => updateScenario(scenario, { multiple: value })}
+                  placeholder="10x"
+                />
+                <TextInput
+                  label="Denominator"
+                  value={draft.scenarios[scenario].denominator}
+                  onChange={value => updateScenario(scenario, { denominator: value })}
+                  placeholder="1.5B"
+                  helperText={denominatorLabel}
+                />
+              </div>
+              {computed.reason && <p className="mt-2 text-xs text-subtle">{computed.reason}</p>}
+            </article>
+          )
+        })}
+      </div>
+
+      {(validationError || saveErrorText) && (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {validationError || saveErrorText}
+        </p>
+      )}
+    </section>
+  )
 }
 
 function ValuationTab({ ticker }: { ticker: string }) {
@@ -1054,6 +1404,13 @@ function ValuationTab({ ticker }: { ticker: string }) {
 
   const profileMutation = useMutation({
     mutationFn: (profileId: string | null) => updatePositionValuationProfileOverride(ticker, profileId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["valuation", ticker] })
+    },
+  })
+
+  const valueRangeMutation = useMutation({
+    mutationFn: (body: PositionValueRangeRequest) => updatePositionValueRange(ticker, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["valuation", ticker] })
     },
@@ -1108,6 +1465,13 @@ function ValuationTab({ ticker }: { ticker: string }) {
           {warnings.join(" ")}
         </div>
       )}
+
+      <ValueRangePanel
+        valuation={data}
+        isSaving={valueRangeMutation.isPending}
+        saveError={valueRangeMutation.error}
+        onSave={payload => valueRangeMutation.mutate(payload)}
+      />
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">

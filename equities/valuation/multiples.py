@@ -1,8 +1,8 @@
 """Shared equity valuation multiples service.
 
 This module intentionally returns snapshot-shaped dictionaries but does not
-persist metric snapshots. The only persisted state is the optional per-ticker
-profile override.
+persist metric snapshots. The persisted state is limited to per-ticker user
+assumptions, such as profile overrides and value-range scenarios.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ VALUATION_COLUMNS = (
     "price_book",
 )
 ENTERPRISE_VALUE_METRICS = {"price_sales", "price_operating_income", "price_fcf"}
+VALUE_RANGE_SCENARIOS = ("bear", "base", "bull")
 
 VALUATION_LABELS = {
     "price_sales": "EV/S",
@@ -173,6 +174,8 @@ SECTOR_ETFS = {
 
 PROFILE_OVERRIDE_LOCAL_PATH = Path("data_cache/valuation/profile_overrides.json")
 PROFILE_OVERRIDE_GCS_KEY = "live/valuation/profile_overrides.json"
+VALUE_RANGE_LOCAL_PATH = Path("data_cache/valuation/value_ranges.json")
+VALUE_RANGE_GCS_KEY = "live/valuation/value_ranges.json"
 
 REVENUE_KEYS = (
     "Total Revenue",
@@ -361,6 +364,110 @@ def _write_profile_overrides(overrides: Mapping[str, str]) -> None:
     )
 
 
+def normalize_value_range_metric(value: Any) -> str:
+    text = str(value or "").strip()
+    if text not in VALUATION_COLUMNS:
+        raise ValueError(f"Unsupported valuation metric: {value}")
+    return text
+
+
+def read_value_range_assumption(ticker: str) -> dict[str, Any] | None:
+    ranges = _read_value_ranges()
+    return ranges.get(_clean_ticker(ticker))
+
+
+def write_value_range_assumption(ticker: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    normalized_ticker = _clean_ticker(ticker)
+    if not normalized_ticker:
+        raise ValueError("Ticker is required")
+
+    normalized_payload = _normalize_value_range_payload(payload, require_complete=True)
+    ranges = _read_value_ranges()
+    ranges[normalized_ticker] = normalized_payload
+    _write_value_ranges(ranges)
+    return {"ticker": normalized_ticker, "value_range": normalized_payload}
+
+
+def _normalize_value_range_payload(payload: Mapping[str, Any] | None, *, require_complete: bool) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("Value range payload is required")
+
+    metric = normalize_value_range_metric(payload.get("metric"))
+    raw_scenarios = payload.get("scenarios")
+    if not isinstance(raw_scenarios, Mapping):
+        raise ValueError("Value range scenarios are required")
+
+    scenarios: dict[str, dict[str, float]] = {}
+    for scenario in VALUE_RANGE_SCENARIOS:
+        raw = raw_scenarios.get(scenario)
+        if not isinstance(raw, Mapping):
+            if require_complete:
+                raise ValueError(f"Missing {scenario} scenario")
+            continue
+        multiple = _positive_float(raw.get("multiple"))
+        denominator = _positive_float(raw.get("denominator"))
+        if multiple is None or denominator is None:
+            if require_complete:
+                raise ValueError(f"{scenario.title()} scenario requires positive multiple and denominator")
+            continue
+        scenarios[scenario] = {"multiple": multiple, "denominator": denominator}
+
+    if require_complete and set(scenarios) != set(VALUE_RANGE_SCENARIOS):
+        raise ValueError("Bear, base, and bull scenarios are required")
+    return {"metric": metric, "scenarios": scenarios}
+
+
+def _read_value_ranges() -> dict[str, dict[str, Any]]:
+    try:
+        from api.state_storage import exists_text, read_text
+        from paths import PROJECT_ROOT
+
+        path = PROJECT_ROOT / VALUE_RANGE_LOCAL_PATH
+        if not exists_text(path, VALUE_RANGE_GCS_KEY):
+            return {}
+        raw = json.loads(read_text(path, VALUE_RANGE_GCS_KEY, encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+
+        out: dict[str, dict[str, Any]] = {}
+        for key, value in raw.items():
+            ticker = _clean_ticker(key)
+            if not ticker or not isinstance(value, Mapping):
+                continue
+            try:
+                out[ticker] = _normalize_value_range_payload(value, require_complete=True)
+            except ValueError:
+                LOGGER.debug("Ignoring invalid value-range assumption for %s", ticker, exc_info=True)
+        return out
+    except Exception:
+        LOGGER.debug("Failed to read valuation value ranges", exc_info=True)
+        return {}
+
+
+def _write_value_ranges(ranges: Mapping[str, Mapping[str, Any]]) -> None:
+    from api.state_storage import write_text
+    from paths import PROJECT_ROOT
+
+    clean: dict[str, dict[str, Any]] = {}
+    for key, value in ranges.items():
+        ticker = _clean_ticker(key)
+        if not ticker or not isinstance(value, Mapping):
+            continue
+        try:
+            clean[ticker] = _normalize_value_range_payload(value, require_complete=True)
+        except ValueError:
+            LOGGER.debug("Skipping invalid value-range assumption for %s", ticker, exc_info=True)
+
+    path = PROJECT_ROOT / VALUE_RANGE_LOCAL_PATH
+    write_text(
+        path,
+        VALUE_RANGE_GCS_KEY,
+        json.dumps(dict(sorted(clean.items())), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        content_type="application/json",
+    )
+
+
 def get_position_valuation(ticker: str, *, include_peers: bool = True, include_history: bool = True) -> dict[str, Any]:
     normalized = _clean_ticker(ticker)
     if not normalized:
@@ -369,11 +476,31 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True, include_h
     info = _fetch_info(normalized)
     override = read_profile_override(normalized)
     current = fetch_current_valuation(normalized, info=info)
+    market_cap = _safe_float(current.get("market_cap"))
+    enterprise_value = _safe_float(current.get("enterprise_value"))
+    current_price = _current_price(info)
+    net_debt = _net_debt_or_ev_spread(current.get("net_debt"), enterprise_value, market_cap)
+    shares = _shares_outstanding(info, market_cap=market_cap, current_price=current_price)
     profile = resolve_profile(info, override)
     effective_weights = effective_profile_weights(profile["weights"], current["metrics"])
     peers = peer_context(normalized, info, current["metrics"]) if include_peers else _empty_peer_context()
     history = historical_bands(normalized, current["metrics"]) if include_history else {}
     composite_score = composite_valuation_score(current["metrics"], peers, effective_weights)
+    value_range = value_range_payload(
+        saved_assumption=read_value_range_assumption(normalized),
+        metrics=current["metrics"],
+        peers=peers,
+        history=history,
+        effective_weights=effective_weights,
+        market_data={
+            "market_cap": market_cap,
+            "enterprise_value": enterprise_value,
+            "net_debt": net_debt,
+            "current_price": current_price,
+            "shares": shares,
+            "currency": info.get("currency"),
+        },
+    )
 
     return {
         "ticker": normalized,
@@ -381,13 +508,14 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True, include_h
         "as_of": datetime.now(UTC).isoformat(),
         "source_policy": "free_providers",
         "market_data": {
-            "market_cap": current.get("market_cap"),
-            "enterprise_value": current.get("enterprise_value"),
-            "net_debt": current.get("net_debt"),
+            "market_cap": market_cap,
+            "enterprise_value": enterprise_value,
+            "net_debt": net_debt,
+            "shares_outstanding": shares,
             "currency": info.get("currency"),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
-            "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "current_price": current_price,
         },
         "profile": {
             **profile,
@@ -400,7 +528,198 @@ def get_position_valuation(ticker: str, *, include_peers: bool = True, include_h
         "historical_bands": history,
         "composite_score": composite_score,
         "data_quality": valuation_data_quality(current["metrics"], peers),
+        "value_range": value_range,
     }
+
+
+def value_range_payload(
+    *,
+    saved_assumption: Mapping[str, Any] | None,
+    metrics: Mapping[str, Mapping[str, Any]],
+    peers: Mapping[str, Any],
+    history: Mapping[str, Any],
+    effective_weights: Mapping[str, Any],
+    market_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    saved = saved_assumption is not None
+    assumption = (
+        _normalize_value_range_payload(saved_assumption, require_complete=True)
+        if saved_assumption is not None
+        else default_value_range_assumption(metrics, peers=peers, history=history, effective_weights=effective_weights)
+    )
+    metric = normalize_value_range_metric(assumption.get("metric"))
+    scenarios = {
+        scenario: compute_value_range_scenario(
+            metric,
+            row,
+            current_price=market_data.get("current_price"),
+            shares=market_data.get("shares"),
+            net_debt=market_data.get("net_debt"),
+        )
+        for scenario, row in (assumption.get("scenarios") or {}).items()
+        if scenario in VALUE_RANGE_SCENARIOS and isinstance(row, Mapping)
+    }
+
+    for scenario in VALUE_RANGE_SCENARIOS:
+        scenarios.setdefault(
+            scenario,
+            compute_value_range_scenario(
+                metric,
+                {"multiple": None, "denominator": None},
+                current_price=market_data.get("current_price"),
+                shares=market_data.get("shares"),
+                net_debt=market_data.get("net_debt"),
+            ),
+        )
+
+    return {
+        "saved": saved,
+        "source": "saved_assumptions" if saved else "default",
+        "metric": metric,
+        "metric_label": VALUATION_LABELS[metric],
+        "denominator_label": DENOMINATOR_LABELS[metric],
+        "calculation_method": "enterprise_value_to_equity" if metric in ENTERPRISE_VALUE_METRICS else "equity_value",
+        "current_price": _safe_float(market_data.get("current_price")),
+        "shares": _safe_float(market_data.get("shares")),
+        "net_debt": _safe_float(market_data.get("net_debt")),
+        "currency": market_data.get("currency"),
+        "scenarios": {scenario: scenarios[scenario] for scenario in VALUE_RANGE_SCENARIOS},
+    }
+
+
+def default_value_range_assumption(
+    metrics: Mapping[str, Mapping[str, Any]],
+    *,
+    peers: Mapping[str, Any],
+    history: Mapping[str, Any],
+    effective_weights: Mapping[str, Any],
+) -> dict[str, Any]:
+    metric = _default_value_range_metric(metrics, effective_weights)
+    denominator = _positive_float((metrics.get(metric) or {}).get("denominator"))
+    bear, base, bull = _default_value_range_multiples(metric, metrics, peers=peers, history=history)
+    return {
+        "metric": metric,
+        "scenarios": {
+            "bear": {"multiple": bear, "denominator": denominator},
+            "base": {"multiple": base, "denominator": denominator},
+            "bull": {"multiple": bull, "denominator": denominator},
+        },
+    }
+
+
+def compute_value_range_scenario(
+    metric: str,
+    scenario: Mapping[str, Any],
+    *,
+    current_price: Any,
+    shares: Any,
+    net_debt: Any,
+) -> dict[str, Any]:
+    normalized_metric = normalize_value_range_metric(metric)
+    multiple = _positive_float(scenario.get("multiple"))
+    denominator = _positive_float(scenario.get("denominator"))
+    current_price_value = _positive_float(current_price)
+    share_count = _positive_float(shares)
+    net_debt_value = _safe_float(net_debt)
+
+    status = "ok"
+    reason = None
+    equity_value = None
+    expected_price = None
+    percent_change = None
+
+    if multiple is None:
+        status = "missing"
+        reason = "missing_multiple"
+    elif denominator is None:
+        status = "missing"
+        reason = "missing_denominator"
+    elif share_count is None:
+        status = "missing"
+        reason = "missing_shares"
+    elif normalized_metric in ENTERPRISE_VALUE_METRICS and net_debt_value is None:
+        status = "missing"
+        reason = "missing_net_debt"
+    else:
+        enterprise_or_equity_value = multiple * denominator
+        equity_value = (
+            enterprise_or_equity_value - (net_debt_value or 0.0)
+            if normalized_metric in ENTERPRISE_VALUE_METRICS
+            else enterprise_or_equity_value
+        )
+        if equity_value <= 0:
+            status = "not_meaningful"
+            reason = "non_positive_equity_value"
+        else:
+            expected_price = equity_value / share_count
+            if current_price_value is not None:
+                percent_change = (expected_price / current_price_value - 1.0) * 100.0
+
+    return {
+        "multiple": multiple,
+        "denominator": denominator,
+        "equity_value": _round_float(equity_value),
+        "expected_price": _round_float(expected_price, 4),
+        "percent_change": _round_float(percent_change, 2),
+        "status": status,
+        "reason": reason,
+    }
+
+
+def _default_value_range_metric(
+    metrics: Mapping[str, Mapping[str, Any]],
+    effective_weights: Mapping[str, Any],
+) -> str:
+    weighted: list[tuple[float, int, str]] = []
+    for idx, metric in enumerate(VALUATION_COLUMNS):
+        weight = _positive_float(effective_weights.get(metric))
+        denominator = _positive_float((metrics.get(metric) or {}).get("denominator"))
+        multiple = _positive_float((metrics.get(metric) or {}).get("value"))
+        if weight is not None and denominator is not None and multiple is not None:
+            weighted.append((weight, -idx, metric))
+    if weighted:
+        return max(weighted)[2]
+
+    for metric in VALUATION_COLUMNS:
+        denominator = _positive_float((metrics.get(metric) or {}).get("denominator"))
+        multiple = _positive_float((metrics.get(metric) or {}).get("value"))
+        if denominator is not None and multiple is not None:
+            return metric
+    return "price_sales"
+
+
+def _default_value_range_multiples(
+    metric: str,
+    metrics: Mapping[str, Mapping[str, Any]],
+    *,
+    peers: Mapping[str, Any],
+    history: Mapping[str, Any],
+) -> tuple[float | None, float | None, float | None]:
+    historical = history.get(metric) if isinstance(history, Mapping) else None
+    if isinstance(historical, Mapping) and historical.get("status") == "ok":
+        values = (
+            _positive_float(historical.get("q1")),
+            _positive_float(historical.get("median")),
+            _positive_float(historical.get("q3")),
+        )
+        if all(value is not None for value in values):
+            return values
+
+    peer_stats = peers.get("metric_stats") if isinstance(peers, Mapping) else None
+    peer = peer_stats.get(metric) if isinstance(peer_stats, Mapping) else None
+    if isinstance(peer, Mapping) and peer.get("status") == "ok":
+        values = (
+            _positive_float(peer.get("q1")),
+            _positive_float(peer.get("median")),
+            _positive_float(peer.get("q3")),
+        )
+        if all(value is not None for value in values):
+            return values
+
+    current = _positive_float((metrics.get(metric) or {}).get("value"))
+    if current is None:
+        return None, None, None
+    return current * 0.8, current, current * 1.2
 
 
 def fetch_current_valuation(ticker: str, *, info: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -922,11 +1241,40 @@ def _market_cap(info: Mapping[str, Any]) -> float | None:
     market_cap = _positive_float(info.get("marketCap"))
     if market_cap is not None:
         return market_cap
-    price = _positive_float(info.get("currentPrice") or info.get("regularMarketPrice"))
+    price = _current_price(info)
     shares = _positive_float(info.get("sharesOutstanding"))
     if price is None or shares is None:
         return None
     return price * shares
+
+
+def _current_price(info: Mapping[str, Any]) -> float | None:
+    return _positive_float(info.get("currentPrice") or info.get("regularMarketPrice"))
+
+
+def _shares_outstanding(
+    info: Mapping[str, Any],
+    *,
+    market_cap: float | None,
+    current_price: float | None,
+) -> float | None:
+    shares = _positive_float(info.get("sharesOutstanding"))
+    if shares is not None:
+        return shares
+    if market_cap is None or current_price is None or current_price <= 0:
+        return None
+    value = market_cap / current_price
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def _net_debt_or_ev_spread(net_debt: Any, enterprise_value: float | None, market_cap: float | None) -> float | None:
+    value = _safe_float(net_debt)
+    if value is not None:
+        return value
+    if enterprise_value is None or market_cap is None:
+        return None
+    spread = enterprise_value - market_cap
+    return spread if math.isfinite(spread) else None
 
 
 def _enterprise_value(

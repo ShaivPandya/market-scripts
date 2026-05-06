@@ -23,6 +23,13 @@ def test_get_position_valuation_endpoint(auth_client, monkeypatch):
             "historical_bands": {},
             "composite_score": {"value": None, "status": "missing", "components": {}},
             "data_quality": {"status": "ok", "usable_metric_count": 0, "warnings": [], "metric_statuses": {}},
+            "value_range": {
+                "saved": False,
+                "metric": "price_sales",
+                "scenarios": {
+                    "bear": {"multiple": 1.0, "denominator": 100.0, "expected_price": 10.0, "percent_change": 0.0}
+                },
+            },
         },
     )
 
@@ -30,6 +37,7 @@ def test_get_position_valuation_endpoint(auth_client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["ticker"] == "ZZVALUATION"
+    assert resp.json()["value_range"]["metric"] == "price_sales"
 
 
 def test_update_position_valuation_profile_override_endpoint(auth_client, monkeypatch):
@@ -44,3 +52,29 @@ def test_update_position_valuation_profile_override_endpoint(auth_client, monkey
 
     assert resp.status_code == 200
     assert resp.json()["profile_override"] == "bank_financial"
+
+
+def test_update_position_valuation_value_range_endpoint(auth_client, monkeypatch):
+    monkeypatch.setattr(multiples, "read_profile_override", lambda ticker: None)
+
+    def _write(ticker, payload):
+        return {"ticker": ticker, "value_range": payload}
+
+    monkeypatch.setattr(multiples, "write_value_range_assumption", _write)
+
+    resp = auth_client.put(
+        "/api/v1/valuation/ZZVALUATION/value-range",
+        json={
+            "metric": "price_sales",
+            "scenarios": {
+                "bear": {"multiple": 4.0, "denominator": 1000000000},
+                "base": {"multiple": 6.0, "denominator": 1200000000},
+                "bull": {"multiple": 8.0, "denominator": 1400000000},
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["ticker"] == "ZZVALUATION"
+    assert resp.json()["value_range"]["metric"] == "price_sales"
+    assert resp.json()["value_range"]["scenarios"]["bull"]["multiple"] == 8.0

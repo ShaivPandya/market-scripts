@@ -1909,6 +1909,7 @@ export interface PositionValuation {
     sector?: string | null
     industry?: string | null
     current_price?: number | null
+    shares_outstanding?: number | null
   }
   profile: {
     id: string
@@ -1947,6 +1948,36 @@ export interface PositionValuation {
   }>
   composite_score: { value: number | null; status: string; components: Record<string, unknown> }
   data_quality: { status: string; usable_metric_count: number; warnings: string[]; metric_statuses: Record<string, string> }
+  value_range?: PositionValueRange | null
+}
+
+export interface PositionValueRangeScenario {
+  multiple?: number | null
+  denominator?: number | null
+  equity_value?: number | null
+  expected_price?: number | null
+  percent_change?: number | null
+  status?: string
+  reason?: string | null
+}
+
+export interface PositionValueRange {
+  saved: boolean
+  source: string
+  metric: string
+  metric_label: string
+  denominator_label: string
+  calculation_method: string
+  current_price?: number | null
+  shares?: number | null
+  net_debt?: number | null
+  currency?: string | null
+  scenarios: Record<string, PositionValueRangeScenario>
+}
+
+export interface PositionValueRangeRequest {
+  metric: string
+  scenarios: Record<string, { multiple: number; denominator: number }>
 }
 
 export const fetchPositionValuation = (ticker: string) =>
@@ -1954,6 +1985,9 @@ export const fetchPositionValuation = (ticker: string) =>
 
 export const updatePositionValuationProfileOverride = (ticker: string, profile_id: string | null) =>
   client.put(`/valuation/${encodeURIComponent(ticker)}/profile-override`, { profile_id }).then(r => r.data)
+
+export const updatePositionValueRange = (ticker: string, body: PositionValueRangeRequest) =>
+  client.put(`/valuation/${encodeURIComponent(ticker)}/value-range`, body).then(r => r.data)
 
 // DCF Model
 export const fetchDCFHistorical = (ticker: string) =>

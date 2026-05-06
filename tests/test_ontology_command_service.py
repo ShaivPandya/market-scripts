@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -10,7 +11,9 @@ from ontology.command_service import (
     OntologyCommandService,
     OntologyCommandValidationError,
 )
+from ontology.object_service import OntologyObjectService
 from ontology.policy import admin_actor
+from ontology.temporal_repository import ObjectVersionWrite, RelationVersionWrite
 
 
 class FakeObjectService:
@@ -71,6 +74,60 @@ class FakeObjectService:
         return rows
 
 
+class NormalizingTemporalRepo:
+    def __init__(self):
+        self.objects: dict[str, dict[str, Any]] = {}
+        self.relations: list[dict[str, Any]] = []
+        self.version = 0
+
+    def write_object_version(self, write: ObjectVersionWrite):
+        self.version += 1
+        row = {
+            "version_id": f"version:{self.version}",
+            "object_uid": write.object_uid,
+            "object_type": write.object_type,
+            "business_key": write.business_key,
+            "schema_name": write.schema_name,
+            "schema_version": write.schema_version,
+            "properties_json": dict(write.properties),
+            "valid_from": datetime(2026, 5, 6, tzinfo=UTC),
+            "valid_to": None,
+            "tx_from": datetime(2026, 5, 6, tzinfo=UTC),
+            "tx_to": None,
+            "temporal_confidence": write.temporal_confidence,
+        }
+        self.objects[write.object_uid] = row
+        return row
+
+    def write_relation_version(self, write: RelationVersionWrite):
+        row = {
+            "version_id": f"relation:{len(self.relations) + 1}",
+            "relation_uid": write.relation_uid,
+            "source_object_uid": write.source_object_uid,
+            "target_object_uid": write.target_object_uid,
+            "relation_type": write.relation_type,
+            "relation_schema_name": write.relation_schema_name,
+            "relation_schema_version": write.relation_schema_version,
+            "properties_json": dict(write.properties),
+            "valid_from": datetime(2026, 5, 6, tzinfo=UTC),
+            "valid_to": None,
+            "tx_from": datetime(2026, 5, 6, tzinfo=UTC),
+            "tx_to": None,
+            "temporal_confidence": write.temporal_confidence,
+        }
+        self.relations.append(row)
+        return row
+
+    def get_object(self, object_uid, **kwargs):
+        return self.objects.get(str(object_uid))
+
+    def query_objects(self, object_type=None, filters=None, **kwargs):
+        rows = [row for row in self.objects.values() if object_type is None or row["object_type"] == object_type]
+        for key, value in (filters or {}).items():
+            rows = [row for row in rows if row["properties_json"].get(key) == value]
+        return rows
+
+
 def test_propose_and_apply_position_update_writes_only_ontology_objects():
     service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
     context = OntologyCommandContext(
@@ -93,6 +150,38 @@ def test_propose_and_apply_position_update_writes_only_ontology_objects():
     assert "position:MU" in service.objects.objects  # type: ignore[attr-defined]
     assert any(rel["relation_type"] == "position_references_instrument" for rel in service.objects.relations)  # type: ignore[attr-defined]
     assert any(rel["relation_type"] == "executed_decision_applies_approval" for rel in service.objects.relations)  # type: ignore[attr-defined]
+
+
+def test_create_recommendation_approval_applies_with_real_schema_normalization():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="workflow", source_id="daily")
+
+    approval = service.propose_action(
+        "create_recommendation",
+        {
+            "record": {
+                "action": "rebalance",
+                "instrument": "hedge_overlay",
+                "report_type": "daily",
+                "as_of": "2026-05-06",
+                "confidence": 0.65,
+                "horizon": "1 trading day",
+                "rationale": "Rebalance hedge overlay.",
+                "critical_data_quality": "ok",
+                "idempotency_key": "daily:2026-05-06:hedge-overlay",
+            }
+        },
+        context,
+        reason="Daily recommendation for hedge_overlay",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "approved", context)
+
+    assert applied["application_status"] == "applied"
+    assert "recommendation:daily_2026_05_06_hedge_overlay" in repo.objects
+    assert any(row["object_type"] == "ActionRun" for row in repo.objects.values())
+    assert any(row["object_type"] == "ExecutedDecisionRecord" for row in repo.objects.values())
 
 
 def test_unsupported_action_is_rejected_before_any_write():

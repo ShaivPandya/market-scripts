@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import portfolio.core_db as core_db
 from portfolio.action_registry import ActionContext, compute_action_base_state_hash, propose_action
 
@@ -126,6 +128,53 @@ def test_approve_stale_action_backed_approval_returns_conflict_without_applying(
     current = core_db.get_action_items()[0]
     assert current["id"] == item["id"]
     assert current["status"] == "dismissed"
+
+
+def test_approve_ontology_recommendation_id_resolves_through_command_service(auth_client, monkeypatch):
+    from api import action_execution
+    from ontology.command_service import OntologyCommandContext, OntologyCommandService
+    from ontology.object_service import OntologyObjectService
+    from ontology.policy import admin_actor
+    from tests.test_ontology_command_service import NormalizingTemporalRepo
+
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))
+    approval = service.propose_action(
+        "create_recommendation",
+        {
+            "record": {
+                "action": "rebalance",
+                "instrument": "hedge_overlay",
+                "report_type": "daily",
+                "as_of": "2026-05-06",
+                "confidence": 0.65,
+                "horizon": "1 trading day",
+                "rationale": "Rebalance hedge overlay.",
+                "critical_data_quality": "ok",
+                "idempotency_key": "daily:2026-05-06:hedge-overlay",
+            }
+        },
+        OntologyCommandContext(actor=admin_actor(source="test"), source_type="workflow", source_id="daily"),
+        reason="Daily recommendation for hedge_overlay",
+    )
+    encoded_id = quote(approval["id"], safe="")
+    monkeypatch.setattr(action_execution, "ontology_primary_writes_enabled", lambda: True)
+    monkeypatch.setattr(action_execution, "OntologyCommandService", lambda: service)
+
+    resp = auth_client.post(
+        f"/api/v1/approvals/{encoded_id}/approve",
+        json={"note": "approved"},
+        headers={
+            "X-Request-Schema-Name": f"post:/api/v1/approvals/{encoded_id}/approve",
+            "X-Request-Schema-Version": "1",
+        },
+    )
+
+    assert resp.status_code == 200
+    resolved = resp.json()
+    assert resolved["id"] == approval["id"]
+    assert resolved["application_status"] == "applied"
+    assert "recommendation:daily_2026_05_06_hedge_overlay" in repo.objects
 
 
 def test_reject_and_restage_stale_action_backed_approval_creates_replacement(auth_client, tmp_path, monkeypatch):
