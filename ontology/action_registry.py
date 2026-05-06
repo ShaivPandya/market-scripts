@@ -681,20 +681,6 @@ class SaveEvaluationInput(TickerMixin):
         return text
 
 
-class CreateResearchNoteInput(OptionalTickerMixin):
-    title: str
-    content: str
-    note_type: Literal["general", "earnings", "catalyst_update", "risk_assessment", "workflow_output"] = "general"
-
-    @field_validator("title", "content", "note_type")
-    @classmethod
-    def _strip_required_text(cls, value: str) -> str:
-        text = str(value or "").strip()
-        if not text:
-            raise ValueError("Research note fields cannot be empty.")
-        return text
-
-
 class DeletePortfolioNewsDigestInput(BaseModel):
     digest_id: str
 
@@ -1513,9 +1499,6 @@ def _action_result_refs(
     }:
         if ref_id := _id("id", "trigger_id"):
             refs.append(("watch_trigger", ref_id, produced if action_id == "create_watch_trigger" else updated))
-    elif action_id == "create_research_note":
-        if ref_id := _id("id"):
-            refs.append(("research_note", ref_id, produced))
     elif action_id == "create_portfolio_news_digest":
         if ref_id := _id("id"):
             refs.append(("news_digest", ref_id, produced))
@@ -2456,21 +2439,6 @@ def _save_evaluation(input_model: BaseModel, _context: ActionContext) -> ActionR
     )
 
 
-def _create_research_note(input_model: BaseModel, context: ActionContext) -> ActionResult:
-    typed = cast(CreateResearchNoteInput, input_model)
-    from portfolio import core_db
-
-    result = core_db.create_research_note(
-        typed.title,
-        typed.content,
-        ticker=typed.ticker,
-        note_type=typed.note_type,
-        source_type=_source_type_from_context(context),
-        source_id=context.source_id,
-    )
-    return ActionResult(result)
-
-
 def _delete_portfolio_news_digest(input_model: BaseModel, _context: ActionContext) -> ActionResult:
     typed = cast(DeletePortfolioNewsDigestInput, input_model)
     from api.routers.portfolio_news import _delete_digest_index_best_effort
@@ -2767,15 +2735,6 @@ _ACTIONS: dict[ActionId, DomainAction] = {
         approval_ticker=_ticker_from_model,
         effect_kind="approval_gated",
     ),
-    "create_research_note": DomainAction(
-        action_id="create_research_note",
-        input_model=CreateResearchNoteInput,
-        handler=_create_research_note,
-        approval_entity_type="research_note",
-        approval_payload=_model_payload,
-        approval_ticker=_ticker_from_model,
-        effect_kind="approval_gated",
-    ),
     "create_portfolio_news_digest": DomainAction(
         action_id="create_portfolio_news_digest",
         input_model=CreatePortfolioNewsDigestInput,
@@ -2947,7 +2906,6 @@ _CONTROL_PLANE_TOOL_NAMES = {
     "get_workspace",
     "get_portfolio_risk",
     "get_recommendation_risk",
-    "get_research_notes",
     "get_portfolio_news",
     "get_portfolio_positions",
     "get_hedge_positions",
@@ -3159,12 +3117,6 @@ def _proposal_kill_condition_payload(model: BaseModel) -> dict[str, Any]:
     return payload
 
 
-def _proposal_research_note_payload(model: BaseModel) -> dict[str, Any]:
-    payload = model.model_dump(exclude_none=True)
-    payload.pop("reason", None)
-    return payload
-
-
 def _proposal_news_digest_delete_payload(model: BaseModel) -> dict[str, Any]:
     from ontology.runtime_read_service import OntologyRuntimeReadService
 
@@ -3204,7 +3156,6 @@ _PROPOSAL_TOOL_BINDINGS: dict[str, dict[str, Any]] = {
     "propose_thesis_content_update": {"action_id": "save_thesis_content", "adapter": _proposal_thesis_content_payload},
     "propose_catalyst": {"action_id": "create_catalyst", "adapter": _proposal_catalyst_payload},
     "propose_kill_condition": {"action_id": "create_kill_condition", "adapter": _proposal_kill_condition_payload},
-    "propose_research_note": {"action_id": "create_research_note", "adapter": _proposal_research_note_payload},
     "propose_news_digest_delete": {
         "action_id": "delete_portfolio_news_digest",
         "adapter": _proposal_news_digest_delete_payload,
@@ -3258,14 +3209,6 @@ _WORKFLOW_ARTIFACT_BINDINGS: dict[str, WorkflowArtifactBinding] = {
         required_keys=("new_status",),
         payload_adapter=_workflow_thesis_status_payload,
     ),
-    "research_notes": WorkflowArtifactBinding(
-        artifact_key="research_notes",
-        action_id="create_research_note",
-        reason="Workflow-generated research note",
-        multiple=True,
-        required_keys=("title", "content"),
-        payload_adapter=_workflow_payload_with_ticker,
-    ),
     "news_digest_deletes": WorkflowArtifactBinding(
         artifact_key="news_digest_deletes",
         action_id="delete_portfolio_news_digest",
@@ -3303,7 +3246,7 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_action_items', 'description': 'Fetch open action items, optionally filtered by ticker. Returns tasks with urgency (low/normal/high/urgent), action type, and status.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Optional ticker filter'}, 'status': {'type': 'string', 'description': "Filter by status. Default: 'open'"}}, 'required': []}, 'category': 'process', 'access_mode': 'read', 'aliases': ('action items', 'tasks', 'get action items'), 'selectable': True}
 {'name': 'get_watch_triggers', 'description': 'Fetch active watch triggers, optionally filtered by ticker. Returns conditions the system is monitoring with trigger type and status.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Optional ticker filter'}, 'status': {'type': 'string', 'description': "Filter by status. Default: 'active'"}}, 'required': []}, 'category': 'process', 'access_mode': 'read', 'aliases': ('watch triggers', 'monitoring', 'get watch triggers'), 'selectable': True}
 {'name': 'get_pending_approvals', 'description': 'Fetch pending approval items. These are proposed changes from workflows or agent that require user approval before being applied.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Optional ticker filter'}, 'status': {'type': 'string', 'description': "Filter by status. Default: 'pending'"}}, 'required': []}, 'category': 'approvals', 'access_mode': 'read', 'aliases': ('approvals', 'pending approvals', 'get pending approvals'), 'selectable': True}
-{'name': 'get_dossier', 'description': 'Fetch the complete position dossier for a ticker. Returns thesis, catalysts, kill conditions, evaluations, ontology risk, workflow runs, action items, triggers, research notes, and pending approvals — all in one call.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': "Ticker symbol (e.g. 'MU')"}}, 'required': ['ticker']}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('dossier', 'position dossier', 'get dossier'), 'selectable': True}
+{'name': 'get_dossier', 'description': 'Fetch the complete position dossier for a ticker. Returns thesis, catalysts, kill conditions, evaluations, ontology risk, workflow runs, action items, triggers, and pending approvals — all in one call.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': "Ticker symbol (e.g. 'MU')"}}, 'required': ['ticker']}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('dossier', 'position dossier', 'get dossier'), 'selectable': True}
 {'name': 'get_workflow_history', 'description': 'Fetch recent workflow run history, optionally filtered by workflow name or ticker.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Optional ticker filter'}, 'workflow_name': {'type': 'string', 'description': 'Optional workflow name filter'}, 'limit': {'type': 'integer', 'description': 'Max results (default 10)'}}, 'required': []}, 'category': 'workflows', 'access_mode': 'read', 'aliases': ('workflow history', 'workflow runs', 'get workflow history'), 'selectable': True}
 {'name': 'propose_thesis_status_change', 'description': 'Propose a thesis status change for a ticker. This creates a pending approval that the user must approve before the status is actually changed. Use this instead of directly modifying thesis status.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol'}, 'new_status': {'type': 'string', 'description': 'Proposed new status: active|under_review|invalidated'}, 'reason': {'type': 'string', 'description': 'Explanation for the proposed change'}}, 'required': ['ticker', 'new_status', 'reason']}, 'category': 'thesis', 'access_mode': 'proposal', 'aliases': ('propose thesis status', 'thesis status', 'propose thesis status change'), 'selectable': True}
 {'name': 'propose_action_item', 'description': 'Propose a new action item. This creates a pending approval that the user must approve before the action item is created. Use this for recommending trades, research tasks, or position adjustments.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol (optional for non-ticker-specific actions)'}, 'description': {'type': 'string', 'description': 'What needs to be done'}, 'action_type': {'type': 'string', 'description': 'Type: review|resize|research|exit|enter|hedge|other'}, 'urgency': {'type': 'string', 'description': 'Urgency: low|normal|high|urgent'}, 'reason': {'type': 'string', 'description': 'Why this action is recommended'}}, 'required': ['description', 'action_type', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose action', 'action item', 'propose action item'), 'selectable': True}
@@ -3312,12 +3255,11 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'propose_watch_trigger', 'description': 'Propose a new watch trigger. This creates a pending approval that the user must approve before the trigger is activated. Use this to set up monitoring conditions.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string', 'description': 'Ticker symbol (optional)'}, 'condition': {'type': 'string', 'description': "The condition to watch for (e.g. 'AAPL breaks below $180')"}, 'trigger_type': {'type': 'string', 'description': 'Type: price_level|technical|fundamental|fundamental_news|event|news_event|macro|custom'}, 'expires_at': {'type': 'string', 'description': 'Optional ISO timestamp when the trigger expires.'}, 'definition': {'type': 'object', 'description': 'Optional machine-readable executable trigger definition.'}, 'reason': {'type': 'string', 'description': 'Why this trigger matters'}}, 'required': ['condition', 'trigger_type', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose watch trigger', 'set trigger', 'propose watch trigger'), 'selectable': True}
 {'name': 'search_agent_capabilities', 'description': "Search Stan's available app capabilities by natural-language query. Use when you need a tool that was not in the initially visible set.", 'parameters': {'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Capability or app feature to find.'}, 'top_k': {'type': 'integer', 'description': 'Maximum matches to return. Default 8.'}}, 'required': ['query']}, 'category': 'agent', 'access_mode': 'read', 'aliases': ('capability search', 'available tools', 'what can you access'), 'selectable': True}
 {'name': 'get_workspace', 'description': 'Fetch the Workspace landing page aggregate: regime, portfolio summary, thesis pressure, approvals, action items, triggers, and workflow runs.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'workspace', 'access_mode': 'read', 'aliases': ('workspace', 'dashboard home'), 'selectable': True}
-{'name': 'get_portfolio_risk', 'description': 'Fetch the latest first-class portfolio risk snapshot, including aggregate risk scores, risk buckets, degraded modules, top contributors, and linked per-position risk snapshot ids. Use this for current portfolio risk questions without triggering ontology rebuilds.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'risk', 'access_mode': 'read', 'aliases': ('portfolio risk', 'risk snapshot', 'risk aggregate'), 'selectable': True}
-{'name': 'get_recommendation_risk', 'description': 'Fetch first-class risk bindings for a persisted recommendation. Returns the recommendation risk snapshot ids, quality, confidence, source status, and stored binding payload.', 'parameters': {'type': 'object', 'properties': {'recommendation_id': {'type': 'integer', 'description': 'Persisted recommendation id.'}}, 'required': ['recommendation_id']}, 'category': 'risk', 'access_mode': 'read', 'aliases': ('recommendation risk', 'risk bindings'), 'selectable': True}
+{'name': 'get_portfolio_risk', 'description': 'Fetch the latest portfolio risk snapshot, including aggregate risk scores, risk buckets, degraded modules, top contributors, and linked per-position risk snapshot ids. Use this for current portfolio risk questions without triggering ontology rebuilds.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'risk', 'access_mode': 'read', 'aliases': ('portfolio risk', 'risk snapshot', 'risk aggregate'), 'selectable': True}
+{'name': 'get_recommendation_risk', 'description': 'Fetch risk bindings for a persisted recommendation. Returns the recommendation risk snapshot ids, quality, confidence, source status, and stored binding payload.', 'parameters': {'type': 'object', 'properties': {'recommendation_id': {'type': 'integer', 'description': 'Persisted recommendation id.'}}, 'required': ['recommendation_id']}, 'category': 'risk', 'access_mode': 'read', 'aliases': ('recommendation risk', 'risk bindings'), 'selectable': True}
 {'name': 'get_portfolio_positions', 'description': 'Fetch editable portfolio positions, optionally including hedges.', 'parameters': {'type': 'object', 'properties': {'include_hedges': {'type': 'boolean'}}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('portfolio positions', 'editable holdings'), 'selectable': True}
 {'name': 'get_hedge_positions', 'description': 'Fetch hedge positions from the portfolio editor.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'portfolio', 'access_mode': 'read', 'aliases': ('hedge positions', 'hedges'), 'selectable': True}
 {'name': 'get_portfolio_news', 'description': 'List uploaded news digests, or fetch one digest when digest_id is provided.', 'parameters': {'type': 'object', 'properties': {'digest_id': {'type': 'string', 'description': 'Optional digest id for detail.'}}, 'required': []}, 'category': 'research', 'access_mode': 'read', 'aliases': ('news digests', 'portfolio news', 'uploaded news'), 'selectable': True}
-{'name': 'get_research_notes', 'description': 'Fetch research notes, optionally filtered by ticker.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'limit': {'type': 'integer'}}, 'required': []}, 'category': 'research', 'access_mode': 'read', 'aliases': ('research notes', 'notes'), 'selectable': True}
 {'name': 'get_workflow_run', 'description': 'Fetch one persisted workflow run by run_id.', 'parameters': {'type': 'object', 'properties': {'run_id': {'type': 'string'}}, 'required': ['run_id']}, 'category': 'workflows', 'access_mode': 'read', 'aliases': ('workflow run detail', 'run detail'), 'selectable': True}
 {'name': 'get_weekly_report', 'description': 'Fetch the weekly report payload.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'reports', 'access_mode': 'read', 'aliases': ('weekly report', 'weekly'), 'selectable': True}
 {'name': 'get_commodities', 'description': 'Fetch the commodity dashboard across major commodities for a timeframe.', 'parameters': {'type': 'object', 'properties': {'timeframe': {'type': 'string', 'description': 'This Week, Daily, Weekly, or Monthly. Default Daily.'}}, 'required': []}, 'category': 'commodities', 'access_mode': 'read', 'aliases': ('commodities dashboard', 'commodity prices'), 'selectable': True}
@@ -3330,6 +3272,7 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'get_top50_breadth', 'description': 'Fetch S&P 500 top-50 breadth data.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'technical', 'access_mode': 'read', 'aliases': ('top50 breadth', 'top 50 breadth'), 'selectable': True}
 {'name': 'get_price_volume_signals', 'description': 'Fetch price-volume technical signals.', 'parameters': {'type': 'object', 'properties': {}, 'required': []}, 'category': 'technical', 'access_mode': 'read', 'aliases': ('price volume', 'volume signals'), 'selectable': True}
 {'name': 'get_financials', 'description': 'Fetch single-company financial history and metrics.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}}, 'required': ['ticker']}, 'category': 'equities', 'access_mode': 'read', 'aliases': ('financials', 'company financials', 'revenue', 'eps'), 'selectable': True}
+{'name': 'get_position_valuation', 'description': 'Fetch position valuation multiples, profile weights, peer-relative percentiles, historical bands, and data-quality status for a ticker.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}}, 'required': ['ticker']}, 'category': 'equities', 'access_mode': 'read', 'aliases': ('valuation', 'multiples', 'position valuation', 'get position valuation'), 'selectable': True}
 {'name': 'get_dcf_historical', 'description': 'Fetch historical financials and multiples for DCF work.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}}, 'required': ['ticker']}, 'category': 'equities', 'access_mode': 'read', 'aliases': ('dcf historical', 'valuation historical'), 'selectable': True}
 {'name': 'run_dcf_valuation', 'description': 'Run a DCF valuation from explicit assumptions.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'revenue_growth_rates': {'type': 'array', 'items': {'type': 'number'}, 'description': 'Five annual revenue growth rates as decimals.'}, 'ebitda_margin': {'type': 'number'}, 'tax_rate': {'type': 'number'}, 'da_pct_revenue': {'type': 'number'}, 'nwc_pct_revenue': {'type': 'number'}, 'capex_pct_revenue': {'type': 'number'}, 'wacc': {'type': 'number'}, 'terminal_growth_rates': {'type': 'object'}, 'exit_ev_ebitda': {'type': 'object'}, 'exit_ev_revenue': {'type': 'object'}}, 'required': ['ticker', 'revenue_growth_rates', 'ebitda_margin', 'da_pct_revenue', 'nwc_pct_revenue', 'capex_pct_revenue', 'wacc', 'exit_ev_ebitda', 'exit_ev_revenue']}, 'category': 'equities', 'access_mode': 'compute', 'aliases': ('run dcf', 'dcf valuation', 'valuation'), 'selectable': True}
 {'name': 'run_chart', 'description': 'Run technical analysis for a ticker.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'lookback': {'type': 'string'}}, 'required': ['ticker']}, 'category': 'technical', 'access_mode': 'compute', 'aliases': ('chart', 'technical analysis'), 'selectable': True}
@@ -3352,7 +3295,6 @@ _TOOL_EXPOSURE_SPECS_TEXT = r"""
 {'name': 'propose_thesis_content_update', 'description': "Propose replacing a ticker's thesis markdown. Creates a pending approval.", 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'content': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['ticker', 'content', 'reason']}, 'category': 'thesis', 'access_mode': 'proposal', 'aliases': ('propose thesis edit', 'update thesis content'), 'selectable': True}
 {'name': 'propose_catalyst', 'description': 'Propose creating a catalyst. Creates a pending approval.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'description': {'type': 'string'}, 'category': {'type': 'string'}, 'target_date': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['ticker', 'description', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose catalyst', 'create catalyst'), 'selectable': True}
 {'name': 'propose_kill_condition', 'description': 'Propose creating a kill condition. Creates a pending approval.', 'parameters': {'type': 'object', 'properties': {'ticker': {'type': 'string'}, 'condition': {'type': 'string'}, 'metric': {'type': 'string'}, 'threshold': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['ticker', 'condition', 'reason']}, 'category': 'process', 'access_mode': 'proposal', 'aliases': ('propose kill condition', 'create kill condition'), 'selectable': True}
-{'name': 'propose_research_note', 'description': 'Propose creating a research note. Creates a pending approval.', 'parameters': {'type': 'object', 'properties': {'title': {'type': 'string'}, 'content': {'type': 'string'}, 'ticker': {'type': 'string'}, 'note_type': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['title', 'content', 'reason']}, 'category': 'research', 'access_mode': 'proposal', 'aliases': ('propose research note', 'create research note'), 'selectable': True}
 {'name': 'propose_news_digest_delete', 'description': 'Propose deleting an uploaded news digest. Creates a pending approval.', 'parameters': {'type': 'object', 'properties': {'digest_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['digest_id', 'reason']}, 'category': 'research', 'access_mode': 'proposal', 'aliases': ('delete news digest', 'remove digest'), 'selectable': True}
 """.strip()
 
@@ -3413,7 +3355,7 @@ def _tool_required_scopes(tool_name: str, category: str, access_mode: ToolAccess
 def _tool_data_sensitivity(tool_name: str, category: str, access_mode: ToolAccessMode) -> ToolDataSensitivity:
     if access_mode == "proposal":
         return "portfolio_private"
-    if category in _RESEARCH_TOOL_CATEGORIES or tool_name in {"search_knowledge_base", "get_research_notes"}:
+    if category in _RESEARCH_TOOL_CATEGORIES or tool_name == "search_knowledge_base":
         return "research_private"
     if category in _PRIVATE_TOOL_CATEGORIES:
         return "portfolio_private"

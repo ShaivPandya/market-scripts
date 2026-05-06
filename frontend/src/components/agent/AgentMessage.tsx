@@ -69,7 +69,6 @@ const ARTIFACT_JSON_KEYS = [
   "evaluation_draft",
   "action_items",
   "watch_triggers",
-  "research_note",
 ]
 
 function containsArtifactJsonKey(value: string): boolean {

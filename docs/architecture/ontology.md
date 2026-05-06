@@ -14,7 +14,7 @@ The supported domain scope is the existing Talisman domain model:
 
 - positions and hedge positions
 - theses, thesis status, evaluations, catalysts, kill conditions, and thesis claims
-- workflow runs, report runs, workflow artifacts, action items, watch triggers, research notes, recommendations, scenarios, risk metrics, policy gate results, trade proposals, action runs, executed actions, audit events, and action events
+- workflow runs, report runs, workflow artifacts, action items, watch triggers, recommendations, scenarios, risk metrics, policy gate results, trade proposals, action runs, executed actions, audit events, and action events
 - approvals and approval-linked workflow/report artifacts
 - source records and computed snapshots that support those objects
 

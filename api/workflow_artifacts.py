@@ -68,12 +68,6 @@ _ARTIFACT_BINDINGS: dict[str, ArtifactBinding] = {
         "Workflow-suggested thesis status change",
         required_keys=("new_status",),
     ),
-    "research_notes": ArtifactBinding(
-        "create_research_note",
-        "Workflow-generated research note",
-        multiple=True,
-        required_keys=("title", "content"),
-    ),
     "news_digest_deletes": ArtifactBinding(
         "delete_portfolio_news_digest",
         "Workflow-suggested news digest delete",

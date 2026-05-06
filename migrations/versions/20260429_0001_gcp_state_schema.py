@@ -151,19 +151,6 @@ def upgrade() -> None:
     op.create_index("idx_watch_triggers_ticker", "watch_triggers", ["ticker"])
 
     op.create_table(
-        "research_notes",
-        sa.Column("id", sa.Integer, sa.Identity(), primary_key=True),
-        sa.Column("ticker", sa.Text),
-        sa.Column("title", sa.Text, nullable=False),
-        sa.Column("content", sa.Text, nullable=False),
-        sa.Column("note_type", sa.Text, nullable=False, server_default="general"),
-        sa.Column("source_type", sa.Text, nullable=False, server_default="user"),
-        sa.Column("source_id", sa.Text),
-        sa.Column("created_at", sa.Text, nullable=False),
-    )
-    op.create_index("idx_research_notes_ticker", "research_notes", ["ticker"])
-
-    op.create_table(
         "pending_approvals",
         sa.Column("id", sa.Integer, sa.Identity(), primary_key=True),
         sa.Column("entity_type", sa.Text, nullable=False),
@@ -452,7 +439,6 @@ def downgrade() -> None:
         "action_events",
         "action_runs",
         "pending_approvals",
-        "research_notes",
         "watch_triggers",
         "action_items",
         "workflow_runs",

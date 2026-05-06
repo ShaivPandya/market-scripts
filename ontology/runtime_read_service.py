@@ -167,10 +167,6 @@ class OntologyRuntimeReadService:
     ) -> list[dict[str, Any]]:
         return self.list_objects("WatchTrigger", filters=_ticker_status_filter(ticker, status), limit=limit)
 
-    def research_notes(self, *, ticker: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        filters = {"ticker": _ticker(ticker)} if ticker else None
-        return self.list_objects("ResearchNote", filters=filters, limit=limit)
-
     def approvals(
         self,
         *,
@@ -489,8 +485,6 @@ def _legacy_list_objects(
             status=filters.get("status"),
             limit=limit,
         )
-    if object_type == "ResearchNote":
-        return core_db.get_research_notes(ticker=filters.get("ticker"), limit=limit)
     if object_type == "Approval":
         return core_db.get_pending_approvals(
             ticker=filters.get("ticker"),

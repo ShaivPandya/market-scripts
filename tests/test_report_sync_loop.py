@@ -178,12 +178,10 @@ def test_weekly_report_sync_persists_operating_artifacts(auth_client, monkeypatc
 
     assert resp.status_code == 200
     assert thesis_db.get_evaluations("CRWD", limit=1) == []
-    assert core_db.get_research_notes(ticker="CRWD") == []
     assert core_db.get_action_items(ticker="CRWD", status="open") == []
     approvals = core_db.get_pending_approvals(status="pending")
     assert {approval["entity_type"] for approval in approvals} >= {
         "evaluation",
-        "research_note",
         "action_item",
         "watch_trigger",
         "thesis_claim",

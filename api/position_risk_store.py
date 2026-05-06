@@ -1,4 +1,4 @@
-"""Durable storage for first-class risk snapshots."""
+"""Durable storage for risk snapshots."""
 
 from __future__ import annotations
 

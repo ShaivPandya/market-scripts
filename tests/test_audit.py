@@ -70,14 +70,14 @@ def test_audit_writer_redacts_sensitive_payloads(temp_core_db):
         "test",
         "succeeded",
         metadata={"password": "secret-pass", "prompt": "do not store this", "safe": "ok"},
-        after_summary={"content": "full research note text", "count": 2},
+        after_summary={"content": "full private memo text", "count": 2},
     )
 
     event = core_db.get_audit_events(action_name="test.redaction")[0]
     serialized = json.dumps(event, sort_keys=True)
     assert "secret-pass" not in serialized
     assert "do not store this" not in serialized
-    assert "full research note text" not in serialized
+    assert "full private memo text" not in serialized
     assert event["metadata"]["password"]["redacted"] is True
     assert event["metadata"]["prompt"]["redacted"] is True
     assert event["metadata"]["safe"] == "ok"

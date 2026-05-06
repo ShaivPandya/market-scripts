@@ -2,7 +2,7 @@
 core_db.py -- SQLite-backed canonical process model for the investing OS.
 
 Houses catalysts, kill conditions, workflow runs, action items, watch triggers,
-research notes, and pending approvals. Follows the same connection pattern as
+and pending approvals. Follows the same connection pattern as
 thesis_db.py (WAL mode, thread-safe singleton, _get_conn/_init_db).
 
 Public API:
@@ -34,10 +34,6 @@ Public API:
     get_watch_triggers(status, ticker)                -> list[dict]
     fire_watch_trigger(id)                            -> dict
     cancel_watch_trigger(id)                          -> dict
-
-  Research Notes:
-    create_research_note(ticker, title, content, ...) -> dict
-    get_research_notes(ticker, limit)                 -> list[dict]
 
   Pending Approvals:
     create_pending_approval(entity_type, ...)          -> dict
@@ -427,21 +423,6 @@ CREATE TABLE IF NOT EXISTS thesis_claims (
 )
 """
 
-_CREATE_RESEARCH_NOTES = """
-CREATE TABLE IF NOT EXISTS research_notes (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker      TEXT,
-    title       TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    note_type   TEXT NOT NULL DEFAULT 'general'
-                CHECK (note_type IN ('general', 'earnings', 'catalyst_update', 'risk_assessment', 'workflow_output')),
-    source_type TEXT NOT NULL DEFAULT 'user'
-                CHECK (source_type IN ('workflow', 'agent', 'user')),
-    source_id   TEXT,
-    created_at  TEXT NOT NULL
-)
-"""
-
 _CREATE_PENDING_APPROVALS = """
 CREATE TABLE IF NOT EXISTS pending_approvals (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -807,7 +788,6 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_watch_triggers_ticker ON watch_triggers(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_thesis_claims_ticker ON thesis_claims(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_thesis_claims_status ON thesis_claims(status)",
-    "CREATE INDEX IF NOT EXISTS idx_research_notes_ticker ON research_notes(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_ticker ON pending_approvals(ticker)",
     "CREATE INDEX IF NOT EXISTS idx_pending_approvals_application_status ON pending_approvals(application_status)",
@@ -900,7 +880,6 @@ def _get_conn() -> sqlite3.Connection | PostgresCompatConnection:
                             "thesis_claims",
                             "action_items",
                             "watch_triggers",
-                            "research_notes",
                             "pending_approvals",
                             "action_runs",
                             "action_events",
@@ -943,7 +922,6 @@ def _init_db(conn: sqlite3.Connection) -> None:
         _CREATE_ACTION_ITEMS,
         _CREATE_WATCH_TRIGGERS,
         _CREATE_THESIS_CLAIMS,
-        _CREATE_RESEARCH_NOTES,
         _CREATE_PENDING_APPROVALS,
         _CREATE_ACTION_RUNS,
         _CREATE_ACTION_EVENTS,
@@ -5154,91 +5132,6 @@ def update_thesis_claim(claim_id: int, updates: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Research Notes
-# ---------------------------------------------------------------------------
-
-
-def create_research_note(
-    title: str,
-    content: str,
-    *,
-    ticker: str | None = None,
-    note_type: str = "general",
-    source_type: str = "user",
-    source_id: str | None = None,
-) -> dict:
-    _guard_legacy_domain_write("core_db.create_research_note")
-    conn = _get_conn()
-    now = _now()
-    with _lock:
-        cur = conn.execute(
-            "INSERT INTO research_notes (ticker, title, content, note_type, source_type, source_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (ticker.upper() if ticker else None, title, content, note_type, source_type, source_id, now),
-        )
-        conn.commit()
-    return {
-        "id": cur.lastrowid,
-        "ticker": ticker.upper() if ticker else None,
-        "title": title,
-        "content": content,
-        "note_type": note_type,
-        "source_type": source_type,
-        "source_id": source_id,
-        "created_at": now,
-    }
-
-
-def create_research_note_once(
-    title: str,
-    content: str,
-    *,
-    ticker: str | None = None,
-    note_type: str = "general",
-    source_type: str = "workflow",
-    source_id: str | None = None,
-) -> dict:
-    conn = _get_conn()
-    normalized_ticker = ticker.upper() if ticker else None
-    if source_id:
-        with _lock:
-            row = conn.execute(
-                "SELECT * FROM research_notes WHERE source_type = ? AND source_id = ? AND COALESCE(ticker, '') = COALESCE(?, '') AND title = ? ORDER BY id DESC LIMIT 1",
-                (source_type, source_id, normalized_ticker, title),
-            ).fetchone()
-        if row:
-            return _require_row_dict(row)
-    return create_research_note(
-        title=title,
-        content=content,
-        ticker=normalized_ticker,
-        note_type=note_type,
-        source_type=source_type,
-        source_id=source_id,
-    )
-
-
-def get_research_notes(
-    ticker: str | None = None,
-    limit: int = 20,
-) -> list[dict]:
-    conn = _get_conn()
-    if ticker:
-        with _lock:
-            rows = conn.execute(
-                "SELECT * FROM research_notes WHERE ticker = ? ORDER BY created_at DESC LIMIT ?",
-                (ticker.upper(), limit),
-            ).fetchall()
-    else:
-        with _lock:
-            rows = conn.execute(
-                "SELECT * FROM research_notes ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-    return _rows_to_list(rows)
-
-
-# ---------------------------------------------------------------------------
 # Recommendations
 # ---------------------------------------------------------------------------
 
@@ -7261,29 +7154,6 @@ def _handle_kill_condition_approval(
     callbacks.append(_sync_markdown_callback(ticker))
 
 
-def _handle_research_note_approval(
-    conn: sqlite3.Connection | PostgresCompatConnection,
-    approval: dict,
-    change: dict,
-    callbacks: list[ApprovalPostCommitCallback],
-) -> None:
-    del callbacks
-    now = _now()
-    conn.execute(
-        "INSERT INTO research_notes (ticker, title, content, note_type, source_type, source_id, created_at) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (
-            _optional_ticker(change.get("ticker") or approval.get("ticker")),
-            change.get("title", ""),
-            change.get("content", ""),
-            change.get("note_type", "general"),
-            approval.get("source_type", "workflow"),
-            approval.get("source_id"),
-            now,
-        ),
-    )
-
-
 def _handle_news_digest_delete_approval(
     conn: sqlite3.Connection | PostgresCompatConnection,
     approval: dict,
@@ -7316,6 +7186,5 @@ _APPROVAL_SIDE_EFFECT_HANDLERS: dict[str, ApprovalSideEffectHandler] = {
     "thesis_content": _handle_thesis_content_approval,
     "catalyst": _handle_catalyst_approval,
     "kill_condition": _handle_kill_condition_approval,
-    "research_note": _handle_research_note_approval,
     "news_digest_delete": _handle_news_digest_delete_approval,
 }

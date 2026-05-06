@@ -1050,33 +1050,6 @@ class WatchTriggerV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
-class ResearchNoteV1(OntologySchemaBase):
-    title: NonBlankStr
-    content: NonBlankStr
-    legacy_id: int | None = None
-    ticker: str | None = None
-    note_type: NonBlankStr = "general"
-    source_type: str | None = None
-    source_id: str | None = None
-    created_at: str | None = None
-    ontology_run_id: NonBlankStr = "operational"
-
-    @field_validator("ticker", mode="before")
-    @classmethod
-    def _optional_ticker(cls, value: object) -> str | None:
-        return canonical_ticker(value) if clean_optional_text(value) else None
-
-    @field_validator("title", "content", "note_type", mode="before")
-    @classmethod
-    def _required_text(cls, value: object) -> str:
-        return clean_text(value)
-
-    @field_validator("source_type", "source_id", "created_at", mode="before")
-    @classmethod
-    def _optional_text(cls, value: object) -> str | None:
-        return clean_optional_text(value)
-
-
 class ApprovalV1(OntologySchemaBase):
     legacy_id: int | None = None
     entity_type: NonBlankStr
@@ -1096,6 +1069,10 @@ class ApprovalV1(OntologySchemaBase):
     resolution_state: ApprovalResolutionState = "pending"
     application_state: ApprovalApplicationState = "pending"
     application_status: str | None = None
+    application_attempts: int = 0
+    application_started_at: str | None = None
+    application_completed_at: str | None = None
+    application_error: str | None = None
     risk_class: str | None = None
     policy_gate_result: dict[str, Any] | None = None
     policy_gate_result_id: str | None = None
@@ -1130,6 +1107,9 @@ class ApprovalV1(OntologySchemaBase):
         "source_type",
         "source_id",
         "application_status",
+        "application_started_at",
+        "application_completed_at",
+        "application_error",
         "risk_class",
         "policy_gate_result_id",
         "policy_gate_decision",
@@ -2206,7 +2186,6 @@ OntologyObjectV1 = (
     | CitationV1
     | ActionItemV1
     | WatchTriggerV1
-    | ResearchNoteV1
     | ApprovalV1
     | ActionRunV1
     | ActionEventV1

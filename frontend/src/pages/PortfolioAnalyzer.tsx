@@ -56,6 +56,7 @@ interface AnalyzerScenarioState {
     price_operating_income: number
     price_fcf: number
     price_earnings: number
+    price_book: number
   }
   brakes: {
     drawdown_sensitivity: number
@@ -82,6 +83,7 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
       price_operating_income: 0,
       price_fcf: 0,
       price_earnings: 0,
+      price_book: 0,
     },
     brakes: { drawdown_sensitivity: 0, contrarian_penalty: 0, short_squeeze_brake: 0 },
   },
@@ -96,6 +98,7 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
       price_operating_income: 20,
       price_fcf: 20,
       price_earnings: 10,
+      price_book: 20,
     },
     brakes: { drawdown_sensitivity: 60, contrarian_penalty: 50, short_squeeze_brake: 60 },
   },
@@ -110,6 +113,7 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
       price_operating_income: 0,
       price_fcf: 0,
       price_earnings: 0,
+      price_book: 0,
     },
     brakes: { drawdown_sensitivity: 10, contrarian_penalty: 10, short_squeeze_brake: 20 },
   },
@@ -124,6 +128,7 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
       price_operating_income: 30,
       price_fcf: 30,
       price_earnings: 20,
+      price_book: 25,
     },
     brakes: { drawdown_sensitivity: 20, contrarian_penalty: 20, short_squeeze_brake: 30 },
   },
@@ -138,6 +143,7 @@ const SCENARIO_PRESETS: Record<Exclude<ScenarioPreset, "custom">, AnalyzerScenar
       price_operating_income: 0,
       price_fcf: 10,
       price_earnings: 0,
+      price_book: 5,
     },
     brakes: { drawdown_sensitivity: 30, contrarian_penalty: 20, short_squeeze_brake: 70 },
   },
@@ -189,6 +195,7 @@ const COLUMN_LABELS: Record<string, string> = {
   price_operating_income: "P/OI",
   price_fcf: "P/FCF",
   price_earnings: "P/E",
+  price_book: "P/B",
 }
 
 const COLUMN_ORDER = [
@@ -211,6 +218,7 @@ const COLUMN_ORDER = [
   "price_operating_income",
   "price_fcf",
   "price_earnings",
+  "price_book",
   "contrarian",
   "drawdown_52w",
   "stabilized_10d",
@@ -243,6 +251,7 @@ type LegacyScenarioState = Partial<AnalyzerScenarioState> & {
     price_operating_income?: number
     price_fcf?: number
     price_earnings?: number
+    price_book?: number
   }
 }
 
@@ -316,7 +325,7 @@ function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: Metri
   }
 
   const defaultValuationTotal =
-    defaults.price_sales + defaults.price_operating_income + defaults.price_fcf + defaults.price_earnings
+    defaults.price_sales + defaults.price_operating_income + defaults.price_fcf + defaults.price_earnings + defaults.price_book
   const factorWeights = normalizeWeightGroup({
     quality: defaults.quality,
     price_momentum: defaults.price_momentum,
@@ -334,6 +343,7 @@ function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: Metri
     price_operating_income: defaults.price_operating_income,
     price_fcf: defaults.price_fcf,
     price_earnings: defaults.price_earnings,
+    price_book: defaults.price_book,
     ...(value.valuation_weights ?? {}),
   })
 
@@ -346,6 +356,7 @@ function legacyWeightsToMetricScores(value: LegacyScenarioState, defaults: Metri
     price_operating_income: clampScore(factorWeights.valuation * valuationWeights.price_operating_income * SCORE_MAX),
     price_fcf: clampScore(factorWeights.valuation * valuationWeights.price_fcf * SCORE_MAX),
     price_earnings: clampScore(factorWeights.valuation * valuationWeights.price_earnings * SCORE_MAX),
+    price_book: clampScore(factorWeights.valuation * valuationWeights.price_book * SCORE_MAX),
   }
 }
 
@@ -383,7 +394,7 @@ function isScoreColumn(key: string) {
 }
 
 function isMultipleColumn(key: string) {
-  return key === "price_sales" || key === "price_operating_income" || key === "price_fcf" || key === "price_earnings"
+  return key === "price_sales" || key === "price_operating_income" || key === "price_fcf" || key === "price_earnings" || key === "price_book"
 }
 
 function formatScore(value: unknown) {
@@ -1126,6 +1137,7 @@ export function PortfolioAnalyzer() {
               <SliderInput label="P/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
               <SliderInput label="P/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
               <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="P/B" value={scenario.metric_scores.price_book} onChange={v => setMetricScore("price_book", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
             </section>
 
             <section className="space-y-4">

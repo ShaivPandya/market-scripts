@@ -120,7 +120,7 @@ Core portfolio and research workflows:
 - Portfolio dashboard, position editing, hedge positions, and performance analytics.
 - Portfolio analyzer, optimizer, hedging tool, and portfolio sizer with async execution paths for heavier jobs.
 - Thesis and overview generation from uploaded PDFs, editable thesis/overview storage, thesis status tracking, and position dossiers.
-- Workspace entities: catalysts, kill conditions, approvals, actions, triggers, recommendations, research notes, and workflow runs.
+- Workspace entities: catalysts, kill conditions, approvals, actions, triggers, recommendations, and workflow runs.
 - Agent chat and memory for cross-cutting research questions over portfolio data, theses, market data, materialized ontology risk snapshots, and workflow artifacts.
 
 Market and macro modules:
@@ -159,7 +159,7 @@ Important route groups include:
 - Portfolio: `/portfolio`, `/portfolio-positions`, `/hedge-positions`, `/portfolio-analyzer`, `/portfolio-sizer`, `/hedging-tool`
 - Research documents: `/thesis/*`, `/overview/*`, `/dossier/{ticker}`, `/portfolio-news`, `/weekly-report`
 - Agent and retrieval: `/agent/chat`, `/agent/chat/v2`, `/agent/workflows`, `/memory/sessions`, `/ontology/*`
-- Investing OS state: `/workspace`, `/actions`, `/approvals`, `/triggers`, `/catalysts`, `/kill-conditions`, `/recommendations`, `/research-notes`, `/workflow-runs`
+- Investing OS state: `/workspace`, `/actions`, `/approvals`, `/triggers`, `/catalysts`, `/kill-conditions`, `/recommendations`, `/workflow-runs`
 - Markets: `/momentum`, `/chart`, `/quality-screen`, `/short-screen`, `/long-screen`, `/fundamental-momentum`, `/financials`, `/dcf/*`
 - Macro and cross-asset: `/economic-growth`, `/labor-market`, `/housing`, `/liquidity`, `/country-dashboard`, `/central-banks`, `/positioning/*`, `/sentiment/*`, `/signal-aggregator`
 - FX, commodities, and rates: `/fx-dashboard`, `/fx-model`, `/commodities`, `/commodities-curve`, `/commodity-research`, `/yield-curve`, `/bond-dashboard`

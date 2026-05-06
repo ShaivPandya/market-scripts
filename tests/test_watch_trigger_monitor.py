@@ -162,10 +162,6 @@ def test_deterministic_fire_adds_news_enrichment_and_dedupes(monkeypatch, temp_m
     assert (
         len([a for a in core_db.get_pending_approvals(status="pending") if a["action_id"] == "create_action_item"]) == 1
     )
-    assert (
-        len([a for a in core_db.get_pending_approvals(status="pending") if a["action_id"] == "create_research_note"])
-        == 1
-    )
 
 
 def test_gated_news_trigger_creates_review_only(monkeypatch, temp_monitor_state):

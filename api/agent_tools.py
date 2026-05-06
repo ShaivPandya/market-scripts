@@ -613,7 +613,7 @@ _BASE_TOOL_DEFINITIONS: list[dict] = [
         "description": (
             "Fetch the complete position dossier for a ticker. Returns overview, management quality, thesis, catalysts, "
             "kill conditions, evaluations, ontology risk, workflow runs, action items, "
-            "triggers, research notes, and pending approvals — all in one call."
+            "triggers, and pending approvals — all in one call."
         ),
         "parameters": {
             "type": "object",
@@ -926,13 +926,6 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
         _schema({"digest_id": {"type": "string", "description": "Optional digest id for detail."}}),
         category="research",
         aliases=("news digests", "portfolio news", "uploaded news"),
-    ),
-    _cap(
-        "get_research_notes",
-        "Fetch research notes, optionally filtered by ticker.",
-        _schema({"ticker": _STRING, "limit": _INTEGER}),
-        category="research",
-        aliases=("research notes", "notes"),
     ),
     _cap(
         "get_workflow_run",
@@ -1281,17 +1274,6 @@ _EXTRA_CAPABILITIES: list[AgentCapability] = [
         category="process",
         access_mode="proposal",
         aliases=("propose kill condition", "create kill condition"),
-    ),
-    _cap(
-        "propose_research_note",
-        "Propose creating a research note. Creates a pending approval.",
-        _schema(
-            {"title": _STRING, "content": _STRING, "ticker": _STRING, "note_type": _STRING, "reason": _STRING},
-            ["title", "content", "reason"],
-        ),
-        category="research",
-        access_mode="proposal",
-        aliases=("propose research note", "create research note"),
     ),
     _cap(
         "propose_news_digest_delete",
@@ -3314,13 +3296,6 @@ def _dispatch(
 
         return list_portfolio_news(refresh=False), {"cache": "n/a"}
 
-    if name == "get_research_notes":
-        from api.routers.research_notes import list_research_notes
-
-        limit = max(1, min(int(args.get("limit", 20)), 100))
-        ticker = str(args.get("ticker") or "").strip().upper() or None
-        return list_research_notes(ticker=ticker, limit=limit), {"cache": "n/a"}
-
     if name == "get_workflow_run":
         from api.routers.workflow_runs import get_workflow_run_detail
 
@@ -3388,6 +3363,11 @@ def _dispatch(
 
         req = _model_validate(FinancialsRequest, args)
         return run_financials(req), {"cache": "n/a"}
+
+    if name == "get_position_valuation":
+        from api.routers.valuation import get_position_valuation_endpoint
+
+        return get_position_valuation_endpoint(str(args.get("ticker") or "")), {"cache": "n/a"}
 
     if name == "get_dcf_historical":
         from api.routers.dcf import get_dcf_historical

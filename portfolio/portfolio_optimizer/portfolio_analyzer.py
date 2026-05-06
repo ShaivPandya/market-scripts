@@ -236,6 +236,7 @@ SCENARIO_VALUATION_DEFAULTS = {
     "price_operating_income": 1.0,
     "price_fcf": 1.0,
     "price_earnings": 1.0,
+    "price_book": 1.0,
 }
 SCENARIO_METRIC_SCORE_DEFAULTS = {
     "quality": 0.0,
@@ -246,6 +247,7 @@ SCENARIO_METRIC_SCORE_DEFAULTS = {
     "price_operating_income": 0.0,
     "price_fcf": 0.0,
     "price_earnings": 0.0,
+    "price_book": 0.0,
 }
 SCENARIO_BRAKE_DEFAULTS = {
     "drawdown_sensitivity": 0.0,
@@ -257,12 +259,14 @@ VALUATION_COLUMNS = (
     "price_operating_income",
     "price_fcf",
     "price_earnings",
+    "price_book",
 )
 VALUATION_LABELS = {
     "price_sales": "P/S",
     "price_operating_income": "P/Operating Income",
     "price_fcf": "P/FCF",
     "price_earnings": "P/E",
+    "price_book": "P/B",
 }
 
 
@@ -288,6 +292,7 @@ class ValuationMetrics:
     price_operating_income: float = np.nan
     price_fcf: float = np.nan
     price_earnings: float = np.nan
+    price_book: float = np.nan
 
 
 def _safe_float(value: Any) -> float:
@@ -454,101 +459,17 @@ def _price_multiple(market_cap: float, denominator: float) -> float:
 
 
 def fetch_valuation_metrics(ticker: str) -> ValuationMetrics:
-    revenue_keys = (
-        "Total Revenue",
-        "TotalRevenue",
-        "Operating Revenue",
-        "OperatingRevenue",
-        "Revenue",
-        "Revenues",
-    )
-    operating_income_keys = (
-        "Operating Income",
-        "OperatingIncome",
-        "Operating Income Loss",
-        "OperatingIncomeLoss",
-        "Income From Operations",
-        "IncomeLossFromOperations",
-        "EBIT",
-    )
-    net_income_keys = (
-        "Net Income",
-        "NetIncome",
-        "Net Income Common Stockholders",
-        "NetIncomeCommonStockholders",
-        "Net Income Continuous Operations",
-        "NetIncomeContinuousOperations",
-    )
-    operating_cash_flow_keys = (
-        "Operating Cash Flow",
-        "OperatingCashFlow",
-        "Total Cash From Operating Activities",
-        "Net Cash Provided By Operating Activities",
-    )
-    capex_keys = (
-        "Capital Expenditure",
-        "CapitalExpenditure",
-        "Capital Expenditures",
-        "PaymentsToAcquirePropertyPlantAndEquipment",
-    )
+    from equities.valuation.multiples import fetch_current_valuation
 
-    info: dict[str, Any] = {}
-    try:
-        info = yf_ticker_info(ticker)
-    except Exception:
-        info = {}
-
-    market_cap = _safe_float(info.get("marketCap"))
-    trailing_pe = _safe_float(info.get("trailingPE"))
-
-    ticker_obj = yf.Ticker(ticker)
-    quarterly_income = _get_yf_statement(ticker_obj, ("quarterly_income_stmt", "quarterly_financials"))
-    annual_income = _get_yf_statement(ticker_obj, ("income_stmt", "financials"))
-    quarterly_cashflow = _get_yf_statement(ticker_obj, ("quarterly_cashflow", "quarterly_cash_flow"))
-    annual_cashflow = _get_yf_statement(ticker_obj, ("cashflow", "cash_flow"))
-
-    revenue_ttm = _ttm_or_latest(quarterly_income, annual_income, revenue_keys)
-    operating_income_ttm = _ttm_or_latest(quarterly_income, annual_income, operating_income_keys)
-    net_income_ttm = _ttm_or_latest(quarterly_income, annual_income, net_income_keys)
-    operating_cash_flow_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, operating_cash_flow_keys)
-    capex_ttm = _ttm_or_latest(quarterly_cashflow, annual_cashflow, capex_keys)
-    if np.isfinite(operating_cash_flow_ttm) and np.isfinite(capex_ttm):
-        fcf_ttm = operating_cash_flow_ttm + capex_ttm if capex_ttm < 0 else operating_cash_flow_ttm - capex_ttm
-    else:
-        fcf_ttm = np.nan
-
-    price_earnings = _price_multiple(market_cap, net_income_ttm)
-    if not np.isfinite(price_earnings) and np.isfinite(trailing_pe) and trailing_pe > 0:
-        price_earnings = trailing_pe
-
-    return ValuationMetrics(
-        price_sales=_price_multiple(market_cap, revenue_ttm),
-        price_operating_income=_price_multiple(market_cap, operating_income_ttm),
-        price_fcf=_price_multiple(market_cap, fcf_ttm),
-        price_earnings=price_earnings,
-    )
+    payload = fetch_current_valuation(ticker)
+    metrics = payload.get("metrics") or {}
+    return ValuationMetrics(**{key: _safe_float((metrics.get(key) or {}).get("value")) for key in VALUATION_COLUMNS})
 
 
 def fetch_valuation_metrics_batch(tickers: list[str]) -> pd.DataFrame:
-    if not tickers:
-        return pd.DataFrame(columns=list(VALUATION_COLUMNS))
+    from equities.valuation.multiples import fetch_valuation_metrics_batch as fetch_shared_valuation_metrics_batch
 
-    rows: dict[str, ValuationMetrics] = {}
-    max_workers = min(6, len(tickers))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(fetch_valuation_metrics, ticker): ticker for ticker in tickers}
-        for future in as_completed(futures):
-            ticker = futures[future]
-            try:
-                rows[ticker] = future.result()
-            except Exception as e:
-                LOGGER.warning("%s: Valuation fetch failed (%s)", ticker, e)
-
-    if not rows:
-        return pd.DataFrame(columns=list(VALUATION_COLUMNS))
-    return pd.DataFrame({ticker: vars(metrics) for ticker, metrics in rows.items()}).T.reindex(
-        columns=VALUATION_COLUMNS
-    )
+    return fetch_shared_valuation_metrics_batch(tickers)
 
 
 def compute_valuation_signal(raw_df: pd.DataFrame, weights: Mapping[str, float]) -> pd.Series:
@@ -557,14 +478,31 @@ def compute_valuation_signal(raw_df: pd.DataFrame, weights: Mapping[str, float])
 
     signal_df = pd.DataFrame(index=raw_df.index)
     for column in VALUATION_COLUMNS:
-        values = pd.to_numeric(raw_df.get(column), errors="coerce")
+        values = (
+            pd.to_numeric(raw_df[column], errors="coerce")
+            if column in raw_df
+            else pd.Series(np.nan, index=raw_df.index)
+        )
         positive = values.where(values > 0)
         signal_df[column] = zscore_of_ranks(-positive)
 
     composite = pd.Series(np.nan, index=raw_df.index, dtype="float64")
     for ticker in raw_df.index:
         available = signal_df.loc[ticker].dropna()
-        available_weights = {k: float(weights.get(k, 0.0)) for k in available.index if float(weights.get(k, 0.0)) > 0}
+        available_weights: dict[str, float] = {}
+        for key in available.index:
+            scenario_weight = float(weights.get(key, 0.0))
+            if scenario_weight <= 0:
+                continue
+            profile_weight_key = f"{key}_profile_weight"
+            profile_weight = (
+                _safe_float(raw_df.loc[ticker, profile_weight_key]) if profile_weight_key in raw_df else np.nan
+            )
+            effective_weight = (
+                scenario_weight * max(0.0, profile_weight) if np.isfinite(profile_weight) else scenario_weight
+            )
+            if effective_weight > 0:
+                available_weights[key] = float(effective_weight)
         weight_sum = sum(available_weights.values())
         if weight_sum <= 0:
             continue
@@ -2175,11 +2113,20 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
             if str(meta.loc[t, "asset"]).strip().lower() == "equity"
             and str(meta.loc[t, "instrument_type"]).strip().lower() != "future"
         ]
-        valuation_df = fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
-        valuation_signal = compute_valuation_signal(
-            valuation_df,
-            scenario_config["valuation_weights"],
-        ).reindex(tickers)
+        valuation_active = (
+            float(scenario_config["factor_weights"].get("valuation", 0.0)) > 0
+            and sum(float(value) for value in scenario_config["valuation_weights"].values()) > 0
+        )
+        valuation_df = (
+            fetch_valuation_metrics_batch(valuation_tickers).reindex(tickers)
+            if valuation_active
+            else pd.DataFrame(index=tickers, columns=[*VALUATION_COLUMNS, "valuation_profile_id"])
+        )
+        valuation_signal = (
+            compute_valuation_signal(valuation_df, scenario_config["valuation_weights"]).reindex(tickers)
+            if valuation_active
+            else pd.Series(0.0, index=tickers, dtype="float64")
+        )
 
         fundamental_momentum_signal = _combine_weighted_components(
             {
@@ -2247,6 +2194,10 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
                 "price_operating_income": valuation_df["price_operating_income"].values,
                 "price_fcf": valuation_df["price_fcf"].values,
                 "price_earnings": valuation_df["price_earnings"].values,
+                "price_book": valuation_df["price_book"].values,
+                "valuation_profile_id": valuation_df.get(
+                    "valuation_profile_id", pd.Series(index=tickers, dtype="object")
+                ).values,
             }
         )
         weights_df = weights_df.sort_values(["scenario_score", "ticker"], ascending=[False, True]).reset_index(

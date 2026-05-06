@@ -36,7 +36,6 @@ class FakeObjectService:
                 "portfolio:",
                 "position:",
                 "recommendation:",
-                "research_note:",
                 "thesis:",
             )
         ):
@@ -156,6 +155,56 @@ def test_approve_rejects_stale_ontology_base_state(monkeypatch):
         service.resolve_approval(approval["id"], "approved", "Apply", context)
 
     assert service.get_approval(approval["id"], actor=context.actor)["status"] == "pending"
+
+
+def test_apply_failure_keeps_ontology_approval_retryable(monkeypatch):
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_action_item",
+        {"ticker": "MU", "description": "Review MU thesis", "action_type": "review"},
+        context,
+        reason="Create action item",
+    )
+
+    def fail_apply(*args, **kwargs):
+        raise RuntimeError("cannot apply")
+
+    monkeypatch.setattr(service, "_write_action_targets", fail_apply)
+
+    with pytest.raises(OntologyCommandConflict, match="cannot apply"):
+        service.resolve_approval(approval["id"], "approved", "Apply", context)
+
+    failed = service.get_approval(approval["id"], actor=context.actor)
+    assert failed["status"] == "pending"
+    assert failed["resolution_state"] == "pending"
+    assert failed["application_status"] == "failed"
+    assert failed["application_state"] == "failed"
+    assert failed["application_attempts"] == 1
+    assert failed["application_error"] == "cannot apply"
+
+
+def test_audit_write_failure_does_not_break_ontology_rejection():
+    class AuditFailObjectService(FakeObjectService):
+        def write_object(self, object_type, business_key, properties, valid_from, **kwargs):
+            if object_type == "AuditEvent":
+                raise RuntimeError("audit down")
+            return super().write_object(object_type, business_key, properties, valid_from, **kwargs)
+
+    service = OntologyCommandService(AuditFailObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "create_action_item",
+        {"ticker": "MU", "description": "Review MU thesis", "action_type": "review"},
+        context,
+        reason="Create action item",
+    )
+    rejected = service.resolve_approval(approval["id"], "rejected", "Skip", context)
+
+    assert rejected["status"] == "rejected"
+    assert rejected["application_status"] == "not_applicable"
 
 
 def test_save_management_quality_content_writes_ontology_children_and_markdown(monkeypatch, tmp_path):

@@ -594,16 +594,6 @@ def action_mutations(
                 _row_time(row, now),
             )
         ]
-    if action_id == "create_research_note":
-        row = {**dict(input_payload), **dict(output)}
-        return [
-            OntologyMutation(
-                "ResearchNote",
-                str(row.get("id") or row.get("title") or ""),
-                _research_note_properties(row),
-                _row_time(row, now),
-            )
-        ]
     if action_id == "resolve_approval":
         return [
             OntologyMutation(
@@ -794,19 +784,6 @@ def _watch_trigger_properties(row: Mapping[str, Any]) -> dict[str, Any]:
         "last_checked_at": row.get("last_checked_at"),
         "last_result": _as_optional_dict(row.get("last_result") or row.get("last_result_json") or row.get("result")),
         "last_evidence": row.get("last_evidence") or row.get("evidence"),
-    }
-
-
-def _research_note_properties(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "legacy_id": _optional_int(row.get("id")),
-        "ticker": _optional_ticker(row.get("ticker")),
-        "title": str(row.get("title") or ""),
-        "content": str(row.get("content") or ""),
-        "note_type": str(row.get("note_type") or "general"),
-        "source_type": row.get("source_type"),
-        "source_id": row.get("source_id"),
-        "created_at": row.get("created_at"),
     }
 
 

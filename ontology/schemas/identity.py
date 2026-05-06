@@ -216,10 +216,6 @@ def watch_trigger_id(identifier: object) -> str:
     return f"watch_trigger:{slug(identifier)}"
 
 
-def research_note_id(identifier: object) -> str:
-    return f"research_note:{slug(identifier)}"
-
-
 def approval_id(identifier: object) -> str:
     return f"approval:{slug(identifier)}"
 

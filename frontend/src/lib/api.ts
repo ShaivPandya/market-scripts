@@ -1397,6 +1397,7 @@ export type AnalyzerScenarioRequest = {
     price_operating_income: number
     price_fcf: number
     price_earnings: number
+    price_book: number
   }
   factor_weights?: {
     quality: number
@@ -1413,6 +1414,7 @@ export type AnalyzerScenarioRequest = {
     price_operating_income: number
     price_fcf: number
     price_earnings: number
+    price_book: number
   }
   brakes?: {
     drawdown_sensitivity: number
@@ -1879,6 +1881,75 @@ export const runFundamentalMomentum = runFundamentalMomentumAsync
 export const runFinancials = (body: { ticker: string }) =>
   client.post("/financials", body).then(r => r.data)
 
+export interface ValuationMetric {
+  key: string
+  label: string
+  value: number | null
+  period: string
+  denominator: number | null
+  denominator_label: string
+  status: "ok" | "missing" | "not_meaningful" | "degraded" | string
+  reason?: string | null
+  source: string
+}
+
+export interface PositionValuation {
+  ticker: string
+  company_name?: string
+  as_of?: string
+  source_policy?: string
+  market_data: {
+    market_cap?: number | null
+    currency?: string | null
+    sector?: string | null
+    industry?: string | null
+    current_price?: number | null
+  }
+  profile: {
+    id: string
+    label: string
+    selection_mode: string
+    weights: Record<string, number>
+    effective_weights: Record<string, number>
+    rationale?: string
+    override_profile_id?: string | null
+    options: { id: string; label: string }[]
+  }
+  metrics: Record<string, ValuationMetric>
+  peer_context: {
+    source: string
+    peer_count: number
+    peers: string[]
+    metric_stats: Record<string, {
+      status: string
+      sample_size?: number
+      percentile?: number | null
+      rank?: number | null
+      median?: number | null
+      q1?: number | null
+      q3?: number | null
+    }>
+  }
+  historical_bands: Record<string, {
+    status: string
+    periods?: number
+    median?: number | null
+    q1?: number | null
+    q3?: number | null
+    min?: number | null
+    max?: number | null
+    percentile?: number | null
+  }>
+  composite_score: { value: number | null; status: string; components: Record<string, unknown> }
+  data_quality: { status: string; usable_metric_count: number; warnings: string[]; metric_statuses: Record<string, string> }
+}
+
+export const fetchPositionValuation = (ticker: string) =>
+  client.get(`/valuation/${encodeURIComponent(ticker)}`).then(r => r.data as PositionValuation)
+
+export const updatePositionValuationProfileOverride = (ticker: string, profile_id: string | null) =>
+  client.put(`/valuation/${encodeURIComponent(ticker)}/profile-override`, { profile_id }).then(r => r.data)
+
 // DCF Model
 export const fetchDCFHistorical = (ticker: string) =>
   client.get(`/dcf/historical/${encodeURIComponent(ticker)}`).then(r => r.data)
@@ -2149,12 +2220,12 @@ export const fetchApprovals = (status?: string) =>
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
 export const approveItem = (id: string, note: string) =>
-  client.post(`/approvals/${id}/approve`, { note }).then(r => r.data as ApprovalRecord)
+  client.post(`/approvals/${encodeURIComponent(id)}/approve`, { note }).then(r => r.data as ApprovalRecord)
 export const rejectItem = (id: string, note?: string) =>
-  client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
+  client.post(`/approvals/${encodeURIComponent(id)}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
 export const rejectAndRestageApproval = (id: string, note?: string) =>
   client
-    .post(`/approvals/${id}/reject-and-restage`, note ? { note } : {})
+    .post(`/approvals/${encodeURIComponent(id)}/reject-and-restage`, note ? { note } : {})
     .then(r => r.data as RejectAndRestageResponse)
 export const bulkApprove = (ids: string[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
@@ -2245,12 +2316,6 @@ export const createKillCondition = (body: { ticker: string; condition: string; m
   client.post("/kill-conditions", body).then(r => r.data as StagedMutationResponse)
 export const updateKillConditionStatus = (id: number | string, status: string, options?: StagedMutationOptions) =>
   client.put(`/kill-conditions/${id}/status`, { status, ...options }).then(r => r.data as StagedMutationResponse)
-
-// Research Notes
-export const fetchResearchNotes = (params?: { ticker?: string; limit?: number }) =>
-  client.get("/research-notes", { params }).then(r => r.data)
-export const createResearchNote = (body: { title: string; content: string; ticker?: string; note_type?: string } & StagedMutationOptions) =>
-  client.post("/research-notes", body).then(r => r.data as StagedMutationResponse)
 
 // Workflow Runs
 interface AgentWorkflowResponse {

@@ -129,7 +129,7 @@ def backfill_runtime_objects(
     """Backfill current legacy runtime objects into temporal ontology versions.
 
     This is cutover-only scaffolding. It reads a legacy SQLite export under the
-    explicit `TALISMAN_ENABLE_LEGACY_BACKFILL` gate and writes first-class
+    explicit `TALISMAN_ENABLE_LEGACY_BACKFILL` gate and writes
     ontology objects with `temporal_confidence='backfilled'`.
     """
 
@@ -385,7 +385,6 @@ _LEGACY_TABLES = {
     "provenance_links",
     "recommendations",
     "report_runs",
-    "research_notes",
     "source_record_refs",
     "thesis_claims",
     "thesis_evaluations",
@@ -895,12 +894,6 @@ def _core_operational_rows(
         )
         props["ontology_run_id"] = "operational"
         rows.append(("ThesisClaim", f"thesis_claim:{props.get('legacy_id')}", props, _valid_from(props, cutover_time)))
-    for row in _select_all(conn, "research_notes"):
-        props = _with_legacy_id(row, "id")
-        props["ontology_run_id"] = "operational"
-        rows.append(
-            ("ResearchNote", f"research_note:{props.get('legacy_id')}", props, _valid_from(props, cutover_time))
-        )
     for row in _select_all(conn, "action_items"):
         props = _with_legacy_id(row, "id")
         props["ontology_run_id"] = "operational"

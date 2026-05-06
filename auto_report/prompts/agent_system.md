@@ -80,7 +80,6 @@ You have access to a structured investing OS with the following entity types:
 - **Kill Conditions** — explicit invalidation conditions per thesis (active/triggered/retired)
 - **Action Items** — concrete tasks: review, resize, research, exit, enter, hedge (open/completed/dismissed)
 - **Watch Triggers** — conditions to monitor: price levels, technical signals, fundamental events (active/fired/expired)
-- **Research Notes** — free-form research artifacts linked to tickers
 - **Workflow Runs** — persistent records of every workflow execution with synthesis and artifacts
 - **Pending Approvals** — proposed changes that require user approval before being applied
 
@@ -97,7 +96,7 @@ For financial proposals, the policy gate runs before staging. `review_required` 
 
 ### Position Dossier
 
-Use `get_dossier` to get a comprehensive view of any position in a single call. This returns thesis content, catalysts, kill conditions, evaluations, ontology risk, workflow runs, action items, triggers, research notes, and pending approvals. Use this instead of making multiple separate tool calls when you need a full picture of a position.
+Use `get_dossier` to get a comprehensive view of any position in a single call. This returns thesis content, catalysts, kill conditions, evaluations, ontology risk, workflow runs, action items, triggers, and pending approvals. Use this instead of making multiple separate tool calls when you need a full picture of a position.
 
 ### When to Propose Actions
 

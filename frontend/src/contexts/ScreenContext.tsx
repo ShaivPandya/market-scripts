@@ -38,7 +38,7 @@ const ROUTE_PAGE_MAP: Record<string, RouteEntry> = {
   "/workspace": { pageName: "Workspace", tools: ["get_workspace"] },
   "/theses": { pageName: "Investment Theses", tools: ["get_thesis"] },
   "/weekly-report": { pageName: "Weekly Report" },
-  "/dossier": { pageName: "Position Dossier", tools: ["get_dossier"] },
+  "/dossier": { pageName: "Position Dossier", tools: ["get_dossier", "get_position_valuation"] },
 
   // Labs
   "/analyzer": { pageName: "Portfolio Analyzer", tools: ["run_portfolio_analyzer"] },

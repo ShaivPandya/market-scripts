@@ -431,7 +431,7 @@ def _data_freshness_checks(
                         "risk.first_class_snapshot",
                         "fail",
                         "stale_data",
-                        "Actionable recommendation requires a first-class risk score.",
+                        "Actionable recommendation requires a risk score.",
                         severity="block",
                         observed={
                             "risk_quality": risk_quality,
@@ -446,7 +446,7 @@ def _data_freshness_checks(
                         "risk.first_class_snapshot",
                         "fail",
                         "insufficient_history",
-                        "First-class risk is degraded; human review is required before action.",
+                        "Risk is degraded; human review is required before action.",
                         severity="fail",
                         observed={
                             "risk_quality": risk_quality,
@@ -462,7 +462,7 @@ def _data_freshness_checks(
                         "risk.first_class_snapshot",
                         "fail",
                         "stale_data",
-                        "Actionable recommendation requires linked first-class risk snapshots.",
+                        "Actionable recommendation requires linked risk snapshots.",
                         severity="block",
                         observed={"risk_quality": risk_quality, "risk_score": risk_score},
                     )
