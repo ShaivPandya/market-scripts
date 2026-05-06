@@ -151,6 +151,13 @@ SCENARIO_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
+LEGACY_BALANCED_FACTOR_WEIGHTS = {
+    "quality": 0.30,
+    "price_momentum": 0.40,
+    "fundamental_momentum": 0.30,
+    "valuation": 0.0,
+}
+
 
 def _safe_float(value: Any) -> float:
     try:
@@ -186,6 +193,33 @@ def _clamped_brakes(values: Mapping[str, Any] | None) -> dict[str, float]:
             value = value / 100.0
         out[key] = float(min(1.0, value))
     return out
+
+
+def _weights_close(
+    values: Mapping[str, Any] | None, expected: Mapping[str, float], *, tolerance: float = 0.015
+) -> bool:
+    if not isinstance(values, Mapping):
+        return False
+    try:
+        normalized = _nonnegative_weight_group(values, expected, group_name="legacy_check")
+    except ValueError:
+        return False
+    return all(abs(normalized[key] - expected[key]) <= tolerance for key in expected)
+
+
+def _brakes_are_default(values: Mapping[str, Any] | None) -> bool:
+    return all(value == 0.0 for value in _clamped_brakes(values).values())
+
+
+def _is_legacy_balanced_default(raw: Mapping[str, Any]) -> bool:
+    preset = str(raw.get("preset") or "balanced")
+    if preset != "balanced":
+        return False
+    if raw.get("metric_scores") is not None:
+        return False
+    if not _weights_close(raw.get("factor_weights"), LEGACY_BALANCED_FACTOR_WEIGHTS):
+        return False
+    return _brakes_are_default(raw.get("brakes"))
 
 
 def _weights_from_metric_scores(values: Mapping[str, Any] | None) -> dict[str, dict[str, float]]:
@@ -244,7 +278,8 @@ def normalize_analyzer_scenario(scenario: Mapping[str, Any] | None = None) -> di
     raw = dict(scenario or {})
     preset = str(raw.get("preset") or "balanced")
     preset_config = SCENARIO_PRESETS.get(preset)
-    has_explicit_weights = any(
+    legacy_balanced_default = _is_legacy_balanced_default(raw)
+    has_explicit_weights = not legacy_balanced_default and any(
         raw.get(key) is not None for key in ("factor_weights", "fundamental_momentum_weights", "valuation_weights")
     )
 

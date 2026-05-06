@@ -156,6 +156,36 @@ def test_core_db_default_mission_uses_shared_balanced_scenario():
     assert core_db._default_optimization_scenario() == normalize_analyzer_scenario({"preset": "balanced"})
 
 
+def test_legacy_balanced_default_is_upgraded_to_current_default():
+    scenario = normalize_analyzer_scenario(
+        {
+            "preset": "balanced",
+            "factor_weights": {
+                "quality": 0.30,
+                "price_momentum": 0.40,
+                "fundamental_momentum": 0.30,
+                "valuation": 0.0,
+            },
+            "fundamental_momentum_weights": {"revenue": 0.67, "eps": 0.33},
+            "valuation_weights": {
+                "price_sales": 0.25,
+                "price_operating_income": 0.25,
+                "price_fcf": 0.25,
+                "price_earnings": 0.25,
+            },
+            "brakes": {
+                "drawdown_sensitivity": 0,
+                "contrarian_penalty": 0,
+                "short_squeeze_brake": 0,
+            },
+        }
+    )
+
+    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.35)
+    assert math.isclose(scenario["factor_weights"]["valuation"], 0.10)
+    assert "price_book" in scenario["valuation_weights"]
+
+
 def test_preset_only_request_uses_named_mission_weights():
     scenario = normalize_analyzer_scenario({"preset": "value_dislocation"})
     req = AnalyzerRequest(scenario={"preset": "value_dislocation"})
