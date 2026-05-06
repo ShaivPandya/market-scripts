@@ -17,7 +17,8 @@ CACHE_VERSION = "v3"
 
 def _current_holdings() -> list[Any]:
     try:
-        return serialize_value(OntologyRuntimeReadService().positions(include_hedges=True))
+        holdings = serialize_value(OntologyRuntimeReadService().positions(include_hedges=True))
+        return holdings if isinstance(holdings, list) else []
     except Exception:
         return []
 

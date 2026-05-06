@@ -274,7 +274,7 @@ def latest_market_close_date(benchmark: str = "SPY") -> str:
         if probe is not None and not probe.empty:
             idx = pd.to_datetime(probe.index, errors="coerce").dropna()
             if not idx.empty:
-                return idx[-1].date().isoformat()
+                return str(idx[-1].date().isoformat())
     except Exception:
         LOGGER.debug("anchor cache latest close probe failed benchmark=%s", benchmark, exc_info=True)
     return _today().isoformat()
