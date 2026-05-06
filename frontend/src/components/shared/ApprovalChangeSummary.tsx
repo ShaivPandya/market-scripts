@@ -163,8 +163,8 @@ function positionChangeSummary(change: Record<string, unknown>): { summary: stri
     const proposedCount = proposedRows.length || (Array.isArray(change.positions) ? change.positions.length : null)
     return {
       summary: proposedCount == null
-        ? "This replaces portfolio positions after approval."
-        : `This replaces the portfolio book with ${formatValue(proposedCount)} proposed positions.`,
+        ? "No structured position list was stored on this approval."
+        : `This approval sets the portfolio book to ${formatValue(proposedCount)} proposed positions.`,
       rows: proposedRows.length
         ? proposedRows.map((row, index) => ({
             label: formatValue(row.ticker || `Position ${index + 1}`),

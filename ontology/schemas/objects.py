@@ -806,6 +806,8 @@ class HedgePositionV1(OntologySchemaBase):
     ticker: NonBlankStr
     direction: NonBlankStr
     asset: NonBlankStr = "equity"
+    contrarian: bool = False
+    conviction: int | None = Field(default=None, ge=1, le=5)
     cost_basis: float | None = None
     shares: float | None = None
     quantity: float | None = None

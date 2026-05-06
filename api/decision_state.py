@@ -142,12 +142,12 @@ def _scrub_retired_policy_scope(value: Any) -> Any:
                 out[key] = cleaned
         return out
     if isinstance(value, list):
-        out = []
+        scrubbed: list[Any] = []
         for item in value:
             cleaned = _scrub_retired_policy_scope(item)
             if cleaned is not _DROP_VALUE:
-                out.append(cleaned)
-        return out
+                scrubbed.append(cleaned)
+        return scrubbed
     if isinstance(value, str) and _RETIRED_POLICY_SCOPE in value.lower():
         return _DROP_VALUE
     return value

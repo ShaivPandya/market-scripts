@@ -548,7 +548,7 @@ class CreateThesisClaimInput(TickerMixin):
         return text
 
 
-class UpdateThesisClaimInput(BaseModel):
+class UpdateThesisClaimInput(OptionalTickerMixin):
     claim_id: int
     claim: str | None = None
     expected_evidence: str | None = None
@@ -753,7 +753,13 @@ class CreateRecommendationInput(BaseModel):
     def _validate_record(cls, value: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(value, dict) or not value:
             raise ValueError("Recommendation record cannot be empty.")
-        return value
+        record = dict(value)
+        missing = [field for field in ("report_type", "as_of", "action") if not str(record.get(field) or "").strip()]
+        if missing:
+            raise ValueError(f"Recommendation record missing required field(s): {', '.join(missing)}.")
+        if not str(record.get("stance") or "").strip():
+            record["stance"] = "Neutral / Watchful"
+        return record
 
 
 class ResolveApprovalInput(BaseModel):

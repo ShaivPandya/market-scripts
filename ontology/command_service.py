@@ -705,9 +705,14 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(row))
             return refs
         if action_id in {"create_catalyst", "update_catalyst_status"}:
-            ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
+            existing = _legacy_object_context(self.objects, "Catalyst", payload.get("catalyst_id"))
+            ticker = _optional_ticker(payload) or _optional_ticker(existing) or "UNKNOWN"
             description = _non_blank(
-                payload.get("description") or payload.get("evidence") or "Catalyst update", "description"
+                payload.get("description")
+                or existing.get("description")
+                or payload.get("evidence")
+                or "Catalyst update",
+                "description",
             )
             row = self.objects.write_object(
                 "Catalyst",
@@ -731,9 +736,14 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(row))
             return refs
         if action_id in {"create_kill_condition", "update_kill_condition_status"}:
-            ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
+            existing = _legacy_object_context(self.objects, "KillCondition", payload.get("kill_condition_id"))
+            ticker = _optional_ticker(payload) or _optional_ticker(existing) or "UNKNOWN"
             condition = _non_blank(
-                payload.get("condition") or payload.get("status") or "Kill condition update", "condition"
+                payload.get("condition")
+                or existing.get("condition")
+                or payload.get("status")
+                or "Kill condition update",
+                "condition",
             )
             row = self.objects.write_object(
                 "KillCondition",
@@ -757,10 +767,13 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(row))
             return refs
         if action_id in {"create_thesis_claim", "update_thesis_claim"}:
-            ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
-            claim = _non_blank(payload.get("claim") or payload.get("status") or "Thesis claim update", "claim")
             claim_legacy_id = _legacy_int(
                 payload.get("claim_id") or payload.get("thesis_claim_id") or payload.get("id")
+            )
+            existing = _legacy_object_context(self.objects, "ThesisClaim", claim_legacy_id)
+            ticker = _optional_ticker(payload) or _optional_ticker(existing) or "UNKNOWN"
+            claim = _non_blank(
+                payload.get("claim") or existing.get("claim") or payload.get("status") or "Thesis claim update", "claim"
             )
             row = self.objects.write_object(
                 "ThesisClaim",
@@ -1345,7 +1358,7 @@ class OntologyCommandService:
         instr_uid = instrument_id(ticker)
         doc_uid = document_artifact_id("overview", ticker)
         overview_uid = equity_overview_id(issuer_uid)
-        content_hash = _stable_hash(content)
+        content_hash = _stable_hash(saved.index_content)
         refs: list[dict[str, Any]] = []
 
         issuer_row = self.objects.write_object(
@@ -1625,9 +1638,10 @@ class OntologyCommandService:
         content = _non_blank(payload.get("content"), "content")
         preserve_exact = bool(payload.get("preserve_exact_content"))
         try:
-            from portfolio.thesis_content import save_thesis_content
+            from portfolio.thesis_content import write_thesis
 
-            saved = save_thesis_content(ticker, content, preserve_exact_content=preserve_exact)
+            index_content = content if preserve_exact else content.strip()
+            source_path = write_thesis(ticker, content if preserve_exact else f"{index_content}\n")
         except Exception as exc:
             raise OntologyCommandValidationError(str(exc) or exc.__class__.__name__) from exc
 
@@ -1635,7 +1649,7 @@ class OntologyCommandService:
         instr_uid = instrument_id(ticker)
         thesis_doc_uid = thesis_document_id(ticker)
         doc_uid = document_artifact_id("thesis", ticker)
-        content_hash = _stable_hash(content)
+        content_hash = _stable_hash(index_content)
         refs: list[dict[str, Any]] = []
         for object_type, business_key, props in (
             ("Issuer", issuer_uid, {"issuer_id": ticker, "name": ticker, "ticker": ticker}),
@@ -1671,7 +1685,7 @@ class OntologyCommandService:
                     "title": f"{ticker} thesis",
                     "ticker": ticker,
                     "content_hash": content_hash,
-                    "artifact_uri": saved.source_path,
+                    "artifact_uri": source_path,
                     "status": "active",
                     "source_type": context.source_type,
                     "source_id": context.source_id,
@@ -1727,7 +1741,7 @@ class OntologyCommandService:
                 provenance=provenance_id,
                 input_hash=input_hash,
             )
-        for index, section in enumerate(_markdown_sections(content), start=1):
+        for index, section in enumerate(_markdown_sections(index_content), start=1):
             section_uid = thesis_section_id(f"{thesis_doc_uid}:section:{index}:{section['heading']}")
             section_row = self.objects.write_object(
                 "ThesisSection",
@@ -1761,9 +1775,9 @@ class OntologyCommandService:
             )
         _best_effort_index_document(
             "thesis",
-            saved.index_content,
+            index_content,
             ticker,
-            saved.source_path,
+            source_path,
             f"thesis-{ticker}",
             thesis_doc_uid,
             _version_ref_from_row(thesis_doc_row).get("version_id"),
@@ -2132,8 +2146,10 @@ def _normalize_approval_uid(value: str) -> str:
 
 
 def _entity_type_for_action(action_id: str) -> str:
-    if action_id in {"update_portfolio_positions", "update_hedge_positions"}:
+    if action_id == "update_portfolio_positions":
         return "portfolio_positions"
+    if action_id == "update_hedge_positions":
+        return "hedge_positions"
     if action_id == "create_recommendation":
         return "recommendation"
     if action_id in RESEARCH_ACTION_IDS:
@@ -2184,7 +2200,12 @@ def _approval_payload_for_action(action_id: str, payload: Mapping[str, Any]) -> 
     except ActionValidationError as exc:
         raise OntologyCommandValidationError(exc.message) from exc
     except PydanticValidationError as exc:
-        first = exc.errors()[0] if exc.errors() else {}
+        errors = exc.errors()
+        first: Mapping[str, Any]
+        if errors:
+            first = errors[0]
+        else:
+            first = {}
         loc = ".".join(str(part) for part in first.get("loc", ()) if part != "__root__")
         msg = str(first.get("msg") or "Invalid action input")
         raise OntologyCommandValidationError(f"{loc}: {msg}" if loc else msg) from exc
@@ -2262,6 +2283,29 @@ def _strip_uid_prefix(value: Any, prefix: str) -> str:
     text = str(value or "").strip()
     marker = f"{prefix}:"
     return text.removeprefix(marker).strip() if text.startswith(marker) else text
+
+
+def _legacy_object_context(objects: Any, object_type: str, legacy_id: Any) -> dict[str, Any]:
+    normalized_id = _legacy_int(legacy_id)
+    if normalized_id is None:
+        return {}
+    prefix = {
+        "Catalyst": "catalyst",
+        "KillCondition": "kill_condition",
+        "ThesisClaim": "thesis_claim",
+    }.get(object_type, object_type.lower())
+    for uid in (f"{prefix}:{normalized_id}", str(normalized_id)):
+        try:
+            row = objects.get_object(uid)
+        except Exception:
+            row = None
+        if row:
+            return _flatten_object(row)
+    try:
+        rows = objects.query_objects(object_type, filters={"legacy_id": normalized_id}, limit=1)
+    except Exception:
+        return {}
+    return _flatten_object(rows[0]) if rows else {}
 
 
 def _list(value: Any) -> list[Any]:

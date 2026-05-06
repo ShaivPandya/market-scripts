@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import yfinance as yf
@@ -23,7 +23,6 @@ import yfinance as yf
 from utils.retry import yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
-
 VALUATION_CURRENT_CACHE_VERSION = "v1"
 VALUATION_PEER_ROW_CACHE_VERSION = "v1"
 VALUATION_COLUMNS = (
@@ -195,11 +194,11 @@ def _without_cache_meta(value: Any) -> Any:
     return clean
 
 
-def _get_or_set_daily_cache(key: str, loader):
+def _get_or_set_daily_cache[T](key: str, loader: Callable[[], T]) -> T:
     from api.cache import daily_cache, get_or_set_cached
     from api.serializers import serialize_value
 
-    return _without_cache_meta(get_or_set_cached(daily_cache, key, lambda: serialize_value(loader())))
+    return cast(T, _without_cache_meta(get_or_set_cached(daily_cache, key, lambda: serialize_value(loader()))))
 
 
 REVENUE_KEYS = (

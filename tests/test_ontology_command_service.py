@@ -196,6 +196,68 @@ def test_position_update_apply_accepts_reviewed_valuation_fields():
     assert "position:APO" in repo.objects
 
 
+def test_hedge_update_apply_accepts_enriched_payload_fields():
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "update_hedge_positions",
+        {
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "direction": "short",
+                    "asset": "equity",
+                    "shares": 5,
+                    "quantity": 5,
+                    "instrument_type": "security",
+                    "price_symbol": "SPY",
+                    "contrarian": False,
+                    "conviction": 3,
+                    "currency": None,
+                    "country": None,
+                    "exchange": None,
+                    "base_currency": None,
+                    "fx_rate_to_base": None,
+                    "fx_rate_as_of": None,
+                    "cost_basis_base": None,
+                    "notional_base": None,
+                    "valuation_status": None,
+                }
+            ]
+        },
+        context,
+        reason="unit",
+    )
+
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    assert approval["entity_type"] == "hedge_positions"
+    assert applied["application_status"] == "applied"
+    assert "hedge_position:SPY" in repo.objects
+
+
+@pytest.mark.parametrize(
+    ("action_id", "payload", "expected_type"),
+    [
+        ("update_catalyst_status", {"catalyst_id": 1, "status": "played_out"}, "Catalyst"),
+        ("update_kill_condition_status", {"kill_condition_id": 1, "status": "triggered"}, "KillCondition"),
+        ("update_thesis_claim", {"claim_id": 1, "status": "supported", "confidence": 0.8}, "ThesisClaim"),
+    ],
+)
+def test_id_only_ontology_update_approvals_apply_without_ticker_context(action_id, payload, expected_type):
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(action_id, payload, context, reason="unit")
+    applied = service.resolve_approval(approval["id"], "approved", "apply", context)
+
+    assert applied["application_status"] == "applied"
+    assert any(row["object_type"] == expected_type for row in repo.objects.values())
+
+
 def test_create_recommendation_approval_applies_with_real_schema_normalization():
     repo = NormalizingTemporalRepo()
     service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]

@@ -405,6 +405,28 @@ def test_action_backed_approval_applies_registered_action():
     assert "approval.applied" in audit_names
 
 
+def test_recommendation_approval_normalizes_apply_required_fields():
+    result = _approve_action(
+        "create_recommendation",
+        {
+            "record": {
+                "report_type": "daily",
+                "as_of": "2026-05-06",
+                "action": "rebalance",
+                "instrument": "hedge_overlay",
+                "horizon": "1 trading day",
+                "rationale": "Rebalance hedge overlay.",
+                "confidence": 0.65,
+                "critical_data_quality": "ok",
+                "idempotency_key": "daily:2026-05-06:hedge-overlay",
+            }
+        },
+    )
+
+    assert result["stance"] == "Neutral / Watchful"
+    assert core_db.get_recommendations(report_type="daily")[0]["stance"] == "Neutral / Watchful"
+
+
 def test_v1_portfolio_approval_upgrades_and_applies_after_schema_bump():
     approval = core_db.create_pending_approval(
         entity_type="portfolio_positions",
