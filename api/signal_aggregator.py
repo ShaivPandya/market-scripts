@@ -60,6 +60,13 @@ from typing import Any
 
 import pandas as pd
 
+from utils.market_freshness import (
+    build_market_cache_metadata,
+    expected_market_date,
+    market_cache_decision,
+    metadata_from_decision,
+)
+
 DEFAULT_LOOKBACK_WEEKS = 156
 DEFAULT_POSITIONING_INSTRUMENTS = "SP500,NASDAQ,RUSSELL,US10Y,EUR"
 
@@ -89,6 +96,7 @@ _SP500_CACHE_DATA = _SP500_CACHE_DIR / "sp500_prices.pkl"
 _SP500_CACHE_META = _SP500_CACHE_DIR / "sp500_prices_meta.json"
 _SP500_CACHE_TTL_SECONDS = 24 * 60 * 60
 _CLOSE_PROBE_TICKER = "SPY"
+_LAST_SP500_MARKET_CACHE: dict[str, Any] | None = None
 
 
 def _load_sp500_cache() -> tuple[pd.DataFrame | None, dict[str, Any] | None]:
@@ -757,54 +765,128 @@ def _download_sp500_prices_uncached() -> pd.DataFrame:
 
 
 def _download_sp500_prices() -> pd.DataFrame:
+    global _LAST_SP500_MARKET_CACHE
+    df, _meta = _download_sp500_prices_with_meta()
+    _LAST_SP500_MARKET_CACHE = _meta
+    return df
+
+
+def _download_sp500_prices_with_meta() -> tuple[pd.DataFrame, dict[str, Any]]:
     """Download S&P 500 prices with smart staleness caching.
 
     Cache strategy (mirrors market_breadth.py pattern):
-    1. If disk cache exists and is within TTL → return cached
-    2. If disk cache expired but market hasn't updated since cached as_of_date
+    1. If disk cache is current for the expected market date → return cached
+    2. If cache is older but market hasn't updated since cached as_of_date
        → refresh TTL and return cached (avoids re-downloading on weekends/holidays)
     3. On fresh download failure → fall back to cached data (graceful degradation)
     4. On success → write new cache to disk
     """
     cached_df, cached_meta = _load_sp500_cache()
+    cache_decision = None
 
     if cached_df is not None and cached_meta is not None:
-        try:
-            fetched_at = datetime.fromisoformat(str(cached_meta["fetched_at"]))
-            age_seconds = (datetime.now() - fetched_at).total_seconds()
-        except Exception:
-            age_seconds = _SP500_CACHE_TTL_SECONDS + 1
-
-        if age_seconds < _SP500_CACHE_TTL_SECONDS:
-            _log.info("S&P 500 prices: serving from disk cache (age=%.0fs)", age_seconds)
-            return cached_df
-
-        # Cache expired — check if market has actually updated
         cached_as_of = cached_meta.get("as_of_date")
-        latest_close = _latest_market_close_date()
-        if isinstance(cached_as_of, str) and latest_close is not None and latest_close <= cached_as_of:
-            _log.info(
-                "S&P 500 prices: cache expired but market unchanged (cached=%s, latest=%s), reusing",
-                cached_as_of,
-                latest_close,
+        fetched_at = cached_meta.get("fetched_at")
+        cache_decision = market_cache_decision(
+            cached_as_of=cached_as_of,
+            fetched_at=fetched_at,
+            ttl_seconds=_SP500_CACHE_TTL_SECONDS,
+        )
+        if cache_decision.action == "probe":
+            latest_close = _latest_market_close_date()
+            cache_decision = market_cache_decision(
+                cached_as_of=cached_as_of,
+                fetched_at=fetched_at,
+                ttl_seconds=_SP500_CACHE_TTL_SECONDS,
+                latest_close=latest_close,
+                latest_close_probed=True,
             )
-            _touch_sp500_cache_meta(cached_meta)
-            return cached_df
+        if cache_decision.action == "use_cache":
+            if cache_decision.status == "hit_unchanged":
+                _log.info(
+                    "S&P 500 prices: cache older than expected but latest close unchanged (cached=%s, latest=%s), reusing",
+                    cache_decision.cached_as_of,
+                    cache_decision.latest_close,
+                )
+                _touch_sp500_cache_meta(cached_meta)
+            elif cache_decision.status == "stale_fallback":
+                _log.warning("S&P 500 prices: using stale cache fallback (%s)", cache_decision.reason)
+            else:
+                _log.info(
+                    "S&P 500 prices: serving current disk cache (cached=%s, expected=%s)",
+                    cache_decision.cached_as_of,
+                    cache_decision.expected_market_date,
+                )
+            return cached_df, cache_decision.metadata()
 
-        _log.info("S&P 500 prices: cache stale (cached=%s, latest=%s), re-downloading", cached_as_of, latest_close)
+        _log.info(
+            "S&P 500 prices: cache stale (cached=%s, expected=%s, latest=%s), re-downloading",
+            cache_decision.cached_as_of,
+            cache_decision.expected_market_date,
+            cache_decision.latest_close,
+        )
 
     # Fresh download
-    df = _download_sp500_prices_uncached()
+    try:
+        df = _download_sp500_prices_uncached()
+    except Exception as exc:
+        if cached_df is not None:
+            _log.info(
+                "S&P 500 prices: fresh download failed, falling back to stale cache",
+                exc_info=True,
+            )
+            if cache_decision is not None:
+                return cached_df, metadata_from_decision(
+                    cache_decision,
+                    status="stale_fallback",
+                    stale=True,
+                    reason=f"refresh failed: {exc}",
+                )
+            return cached_df, build_market_cache_metadata(
+                status="stale_fallback",
+                stale=True,
+                cached_as_of=cached_meta.get("as_of_date") if cached_meta else None,
+                reason=f"refresh failed: {exc}",
+                cache_ttl_seconds=_SP500_CACHE_TTL_SECONDS,
+            )
+        raise
+
     if df.empty:
         if cached_df is not None:
             _log.warning("S&P 500 prices: fresh download failed, falling back to stale cache")
-            return cached_df
-        return df
+            if cache_decision is not None:
+                return cached_df, metadata_from_decision(
+                    cache_decision,
+                    status="stale_fallback",
+                    stale=True,
+                    reason="refresh returned empty data",
+                )
+            return cached_df, build_market_cache_metadata(
+                status="stale_fallback",
+                stale=True,
+                cached_as_of=cached_meta.get("as_of_date") if cached_meta else None,
+                reason="refresh returned empty data",
+                cache_ttl_seconds=_SP500_CACHE_TTL_SECONDS,
+            )
+        return df, build_market_cache_metadata(
+            status="miss",
+            stale=True,
+            reason="refresh returned empty data and no cache was available",
+            cache_ttl_seconds=_SP500_CACHE_TTL_SECONDS,
+        )
 
     as_of = _sp500_cache_as_of_date(df)
     _save_sp500_cache(df, as_of)
     _log.info("S&P 500 prices: fresh download complete (rows=%d, as_of=%s)", len(df), as_of)
-    return df
+    return df, build_market_cache_metadata(
+        status="refresh",
+        stale=False,
+        cached_as_of=as_of,
+        expected_market_date_value=expected_market_date().isoformat(),
+        latest_close=cache_decision.latest_close if cache_decision is not None else None,
+        reason="refreshed S&P 500 price cache",
+        cache_ttl_seconds=_SP500_CACHE_TTL_SECONDS,
+    )
 
 
 def _fetch_current_modules(
@@ -823,7 +905,15 @@ def _fetch_current_modules(
     # ── Phase 1: Shared S&P 500 price download (serial) ──────────────
     # This replaces 3 separate concurrent yfinance downloads that caused
     # rate-limiting and 401 errors.
+    global _LAST_SP500_MARKET_CACHE
+    _LAST_SP500_MARKET_CACHE = build_market_cache_metadata(
+        status="unknown",
+        stale=False,
+        reason="S&P 500 price cache metadata unavailable",
+        cache_ttl_seconds=_SP500_CACHE_TTL_SECONDS,
+    )
     sp500_prices = _download_sp500_prices()
+    sp500_market_cache = dict(_LAST_SP500_MARKET_CACHE)
     prices_arg = sp500_prices if not sp500_prices.empty else None
     _log.info("Shared S&P 500 download complete (empty=%s)", sp500_prices.empty)
 
@@ -904,6 +994,8 @@ def _fetch_current_modules(
                 else:
                     raw[name] = result
                     module_status[name] = {"status": "ok"}
+                    if name in {"market_breadth", "top50_breadth", "sector_metrics"}:
+                        module_status[name]["market_cache"] = sp500_market_cache
             except Exception as exc:
                 if name in _COMBINED_KEYS:
                     key_main, _ = _COMBINED_KEYS[name]
@@ -912,6 +1004,8 @@ def _fetch_current_modules(
                 else:
                     raw[name] = None
                     module_status[name] = {"status": "error", "detail": str(exc)}
+                    if name in {"market_breadth", "top50_breadth", "sector_metrics"}:
+                        module_status[name]["market_cache"] = sp500_market_cache
 
         for fut in not_done:
             name = futures[fut]
@@ -923,6 +1017,8 @@ def _fetch_current_modules(
             else:
                 raw[name] = None
                 module_status[name] = {"status": "error", "detail": "timeout"}
+                if name in {"market_breadth", "top50_breadth", "sector_metrics"}:
+                    module_status[name]["market_cache"] = sp500_market_cache
 
     return raw, module_status
 
