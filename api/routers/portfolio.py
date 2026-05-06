@@ -1,3 +1,7 @@
+import hashlib
+import json
+from typing import Any
+
 from fastapi import APIRouter
 
 from api.cache import get_or_set_cached, short_cache
@@ -8,16 +12,35 @@ from ontology.runtime_read_service import OntologyRuntimeReadService
 router = APIRouter()
 
 VALID_TIMEFRAMES = {"This Week", "Daily", "Weekly", "Monthly"}
+CACHE_VERSION = "v3"
+
+
+def _current_holdings() -> list[Any]:
+    try:
+        return serialize_value(OntologyRuntimeReadService().positions(include_hedges=True))
+    except Exception:
+        return []
+
+
+def _holdings_cache_token(holdings: list[Any]) -> str:
+    try:
+        encoded = json.dumps(holdings, sort_keys=True, separators=(",", ":"), default=str)
+    except TypeError:
+        encoded = repr(holdings)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
 @router.get("/portfolio")
 def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
+    holdings = _current_holdings()
+    holdings_token = _holdings_cache_token(holdings)
+
     if all_timeframes:
-        key = "portfolio:all_timeframes:v2"
+        key = f"portfolio:all_timeframes:{CACHE_VERSION}:{holdings_token}"
     else:
         if timeframe not in VALID_TIMEFRAMES:
             timeframe = "Daily"
-        key = f"portfolio:v2:{timeframe}"
+        key = f"portfolio:{CACHE_VERSION}:{timeframe}:{holdings_token}"
 
     def loader():
         try:
@@ -32,12 +55,8 @@ def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
 
         result = serialize_value(data)
 
-        try:
-            holdings = OntologyRuntimeReadService().positions(include_hedges=True)
-        except Exception:
-            holdings = []
         if isinstance(result, dict) and holdings:
-            result["holdings"] = serialize_value(holdings)
+            result["holdings"] = holdings
 
         return result
 

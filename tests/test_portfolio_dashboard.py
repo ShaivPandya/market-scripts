@@ -1,6 +1,29 @@
 import pandas as pd
 
 
+def test_dashboard_uses_runtime_portfolio_read_adapter():
+    import portfolio.portfolio_dashboard as dashboard
+    from ontology import runtime_read_service
+
+    assert dashboard.get_positions is runtime_read_service.get_positions
+    assert dashboard.get_positions_df is runtime_read_service.get_positions_df
+
+
+def test_runtime_positions_use_ontology_source_in_primary_mode(monkeypatch):
+    from ontology import runtime_read_service
+    from portfolio import portfolio_db
+
+    monkeypatch.setenv("ONTOLOGY_PRIMARY_WRITES", "true")
+    monkeypatch.setattr(portfolio_db, "get_positions", lambda **kwargs: [{"ticker": "NUAI"}])
+    monkeypatch.setattr(
+        runtime_read_service.OntologyRuntimeReadService,
+        "positions",
+        lambda self, include_hedges=False: [{"ticker": "NVDA"}],
+    )
+
+    assert runtime_read_service.get_positions() == [{"ticker": "NVDA"}]
+
+
 def test_empty_portfolio_returns_empty_payload_without_yfinance(monkeypatch):
     import portfolio.portfolio_dashboard as dashboard
 

@@ -22,6 +22,15 @@ def _ontology_primary_writes_enabled() -> bool:
         return False
 
 
+def get_positions(*, include_hedges: bool = False) -> list[dict[str, Any]]:
+    """Ontology-native replacement for legacy portfolio_db.get_positions."""
+    if not _ontology_primary_writes_enabled():
+        portfolio_db = importlib.import_module("portfolio.portfolio_db")
+
+        return _legacy_positions(portfolio_db, include_hedges=include_hedges)
+    return OntologyRuntimeReadService().positions(include_hedges=include_hedges)
+
+
 def object_props(row: dict[str, Any] | None) -> dict[str, Any]:
     if not row:
         return {}

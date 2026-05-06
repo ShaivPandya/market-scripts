@@ -41,6 +41,7 @@ type TimeframePayload = {
 }
 type PortfolioAllTimeframesResponse = {
   timeframes?: Partial<Record<Timeframe, TimeframePayload>>
+  holdings?: Array<{ ticker?: string | null; role?: string | null }>
   warning?: string
 }
 
@@ -149,13 +150,36 @@ export function PortfolioDashboard() {
     : !timeframeData
     ? `No ${timeframeLabel(timeframe)} portfolio data returned.`
     : null
+  const activePortfolioTickers = useMemo(() => {
+    if (!Array.isArray(data?.holdings)) return null
+
+    const tickers = new Set(
+      data.holdings
+        .filter(holding => String(holding.role ?? "position").toLowerCase() !== "hedge")
+        .map(holding => String(holding.ticker ?? "").trim().toUpperCase())
+        .filter(Boolean),
+    )
+
+    return tickers.size > 0 ? tickers : null
+  }, [data?.holdings])
   const positions: Record<string, DataPoint[]> = useMemo(
-    () => timeframeData?.positions ?? {},
-    [timeframeData?.positions],
+    () => {
+      const rawPositions = timeframeData?.positions ?? {}
+      if (!activePortfolioTickers) return rawPositions
+
+      return Object.fromEntries(
+        Object.entries(rawPositions).filter(([ticker]) => activePortfolioTickers.has(ticker.toUpperCase())),
+      )
+    },
+    [activePortfolioTickers, timeframeData?.positions],
   )
   const order: string[] = useMemo(
-    () => timeframeData?.position_order ?? Object.keys(positions),
-    [positions, timeframeData?.position_order],
+    () => {
+      const rawOrder = timeframeData?.position_order ?? Object.keys(positions)
+      if (!activePortfolioTickers) return rawOrder
+      return rawOrder.filter(ticker => activePortfolioTickers.has(ticker.toUpperCase()))
+    },
+    [activePortfolioTickers, positions, timeframeData?.position_order],
   )
   const warning = timeframeData?.warning ?? data?.warning
   const hasSeries = order.some(ticker => {

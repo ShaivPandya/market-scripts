@@ -3,7 +3,7 @@
 Portfolio Dashboard
 
 Fetches closing-price time series for portfolio positions from Yahoo Finance.
-Reads holdings from portfolio.csv (ticker, asset class, direction).
+Reads holdings from the runtime portfolio state (ticker, asset class, direction).
 Displays a grid of line charts with Daily/Weekly/Monthly toggles (GUI),
 or prints summary tables in the terminal.
 
@@ -17,8 +17,8 @@ from datetime import datetime
 
 import pandas as pd
 
+from ontology.runtime_read_service import get_positions, get_positions_df
 from portfolio.portfolio_analytics import compute_analytics
-from portfolio.portfolio_db import get_positions, get_positions_df
 from utils.retry import yf_download
 
 LOGGER = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
 
 
 def _load_portfolio() -> pd.DataFrame:
-    """Load portfolio positions from the database."""
+    """Load portfolio positions from the runtime read adapter."""
     return get_positions_df()
 
 
