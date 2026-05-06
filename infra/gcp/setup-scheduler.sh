@@ -7,6 +7,7 @@
 #   governance-outbox-drain   */5 * * * *   POST  /api/v1/admin/jobs/enqueue-governance-outbox-drain
 #   top50-refresh-daily       0 23 * * 1-5  POST  Cloud Run Jobs run -> ${TOP50_REFRESH_JOB}
 #   market-snapshot-refresh   15 23 * * 1-5 POST  /api/v1/admin/jobs/enqueue-market-snapshot-refresh
+#   macro-snapshot-refresh    30 23 * * 1-5 POST  /api/v1/admin/jobs/enqueue-macro-snapshot-refresh
 #   watch-trigger-monitor     30 14-22 * * 1-5 POST /api/v1/admin/jobs/enqueue-watch-trigger-monitor
 #   continuous-optimizer      15 10 * * 1-5 POST /api/v1/admin/jobs/enqueue-continuous-optimizer
 #
@@ -141,6 +142,7 @@ upsert_api_job enqueue-async-job-sweep "0 * * * *"   /api/v1/admin/jobs/enqueue-
 upsert_api_job governance-outbox-drain "${GOVERNANCE_OUTBOX_DRAIN_SCHEDULE:-*/5 * * * *}" /api/v1/admin/jobs/enqueue-governance-outbox-drain
 upsert_run_job_trigger top50-refresh-daily "0 23 * * 1-5" "${TOP50_REFRESH_JOB}"
 upsert_api_job market-snapshot-refresh "${MARKET_SNAPSHOT_SCHEDULE:-15 23 * * 1-5}" /api/v1/admin/jobs/enqueue-market-snapshot-refresh
+upsert_api_job macro-snapshot-refresh "${MACRO_SNAPSHOT_SCHEDULE:-30 23 * * 1-5}" /api/v1/admin/jobs/enqueue-macro-snapshot-refresh
 upsert_api_job watch-trigger-monitor "${WATCH_TRIGGER_MONITOR_SCHEDULE:-30 14-22 * * 1-5}" /api/v1/admin/jobs/enqueue-watch-trigger-monitor
 upsert_api_job continuous-optimizer "${CONTINUOUS_OPTIMIZER_SCHEDULE:-15 10 * * 1-5}" /api/v1/admin/jobs/enqueue-continuous-optimizer "${CONTINUOUS_OPTIMIZER_TIME_ZONE:-America/New_York}"
 

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from typing import Any
+
+import pandas as pd
 
 
 def test_regime_thresholds():
@@ -328,3 +332,58 @@ def test_signal_aggregator_endpoint_degraded_payload(auth_client, monkeypatch):
     data = resp.json()
     assert data["status"] == "degraded"
     assert "liquidity" in data["failed_modules"]
+
+
+def test_sp500_price_cache_refreshes_when_close_changed_under_ttl(monkeypatch, tmp_path):
+    from api import signal_aggregator as sa
+
+    cache_dir = tmp_path / "signal_aggregator"
+    monkeypatch.setattr(sa, "_SP500_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(sa, "_SP500_CACHE_DATA", cache_dir / "sp500_prices.pkl")
+    monkeypatch.setattr(sa, "_SP500_CACHE_META", cache_dir / "sp500_prices_meta.json")
+
+    stale_df = pd.DataFrame({"AAPL": [1.0]}, index=pd.to_datetime(["2000-01-01"]))
+    sa._save_sp500_cache(stale_df, "2000-01-01")
+    meta_path = cache_dir / "sp500_prices_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["fetched_at"] = (datetime.now() - timedelta(hours=2)).isoformat()
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    fresh_df = pd.DataFrame({"AAPL": [2.0]}, index=pd.to_datetime(["2099-01-01"]))
+    monkeypatch.setattr(sa, "_latest_market_close_date", lambda: "2099-01-01")
+    monkeypatch.setattr(sa, "_download_sp500_prices_uncached", lambda: fresh_df)
+
+    out, market_cache = sa._download_sp500_prices_with_meta()
+
+    assert out.iloc[-1]["AAPL"] == 2.0
+    assert market_cache["status"] == "refresh"
+    assert market_cache["stale"] is False
+
+
+def test_sp500_price_cache_returns_stale_fallback_when_probe_fails(monkeypatch, tmp_path):
+    from api import signal_aggregator as sa
+
+    cache_dir = tmp_path / "signal_aggregator"
+    monkeypatch.setattr(sa, "_SP500_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(sa, "_SP500_CACHE_DATA", cache_dir / "sp500_prices.pkl")
+    monkeypatch.setattr(sa, "_SP500_CACHE_META", cache_dir / "sp500_prices_meta.json")
+
+    stale_df = pd.DataFrame({"AAPL": [1.0]}, index=pd.to_datetime(["2000-01-01"]))
+    sa._save_sp500_cache(stale_df, "2000-01-01")
+    meta_path = cache_dir / "sp500_prices_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["fetched_at"] = (datetime.now() - timedelta(hours=2)).isoformat()
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    monkeypatch.setattr(sa, "_latest_market_close_date", lambda: None)
+    monkeypatch.setattr(
+        sa,
+        "_download_sp500_prices_uncached",
+        lambda: (_ for _ in ()).throw(AssertionError("should not refresh after probe failure fallback")),
+    )
+
+    out, market_cache = sa._download_sp500_prices_with_meta()
+
+    assert out.iloc[-1]["AAPL"] == 1.0
+    assert market_cache["status"] == "stale_fallback"
+    assert market_cache["stale"] is True

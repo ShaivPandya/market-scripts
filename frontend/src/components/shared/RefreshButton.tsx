@@ -7,18 +7,27 @@ interface RefreshButtonProps {
   beforeRefetch?: () => Promise<unknown>
   onError?: (error: unknown) => void
   onSuccess?: () => void
+  clearBackendCache?: boolean
 }
 
-export function RefreshButton({ queryKeys, beforeRefetch, onError, onSuccess }: RefreshButtonProps) {
+export function RefreshButton({
+  queryKeys,
+  beforeRefetch,
+  onError,
+  onSuccess,
+  clearBackendCache = true,
+}: RefreshButtonProps) {
   const qc = useQueryClient()
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   async function handleRefresh() {
     setIsRefreshing(true)
-    try {
-      await clearCache()
-    } catch {
-      // ignore cache clear errors — still refetch
+    if (clearBackendCache) {
+      try {
+        await clearCache()
+      } catch {
+        // ignore cache clear errors — still refetch
+      }
     }
     try {
       if (beforeRefetch) await beforeRefetch()

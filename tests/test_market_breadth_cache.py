@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from equities.market_technicals import market_breadth as mb
+from utils.market_freshness import expected_market_date
 
 
 def _write_cache(path: Path, payload: dict, fetched_at: datetime, as_of_date: str) -> None:
@@ -28,8 +29,9 @@ def _write_cache(path: Path, payload: dict, fetched_at: datetime, as_of_date: st
 
 def test_get_data_uses_fresh_cache(monkeypatch, tmp_path):
     cache_path = tmp_path / "market_breadth_sp500_1y.json"
-    cached = {"pct_above_200dma": 54.2, "as_of_date": "2026-03-06", "tickers": ["AAPL", "MSFT"]}
-    _write_cache(cache_path, cached, datetime.now() - timedelta(hours=2), "2026-03-06")
+    as_of = expected_market_date().isoformat()
+    cached = {"pct_above_200dma": 54.2, "as_of_date": as_of, "tickers": ["AAPL", "MSFT"]}
+    _write_cache(cache_path, cached, datetime.now() - timedelta(hours=2), as_of)
 
     monkeypatch.setattr(mb, "_breadth_cache_path", lambda *_: cache_path)
     monkeypatch.setattr(mb, "get_tickers", lambda *_: (_ for _ in ()).throw(AssertionError("should not fetch tickers")))
@@ -40,17 +42,20 @@ def test_get_data_uses_fresh_cache(monkeypatch, tmp_path):
     )
 
     out = mb.get_data(universe="sp500", period="1y")
-    assert out == cached
+    assert out["pct_above_200dma"] == cached["pct_above_200dma"]
+    assert out["as_of_date"] == as_of
+    assert out["_meta"]["market_cache"]["status"] == "hit"
+    assert out["_meta"]["market_cache"]["stale"] is False
 
 
 def test_get_data_renews_stale_cache_when_close_unchanged(monkeypatch, tmp_path):
     cache_path = tmp_path / "market_breadth_sp500_1y.json"
     old_fetch = datetime.now() - timedelta(hours=30)
-    cached = {"pct_above_200dma": 50.0, "as_of_date": "2026-03-06", "tickers": ["AAPL"]}
-    _write_cache(cache_path, cached, old_fetch, "2026-03-06")
+    cached = {"pct_above_200dma": 50.0, "as_of_date": "2000-01-01", "tickers": ["AAPL"]}
+    _write_cache(cache_path, cached, old_fetch, "2000-01-01")
 
     monkeypatch.setattr(mb, "_breadth_cache_path", lambda *_: cache_path)
-    monkeypatch.setattr(mb, "_latest_market_close_date", lambda: "2026-03-06")
+    monkeypatch.setattr(mb, "_latest_market_close_date", lambda: "2000-01-01")
     monkeypatch.setattr(mb, "get_tickers", lambda *_: (_ for _ in ()).throw(AssertionError("should not fetch tickers")))
     monkeypatch.setattr(
         mb,
@@ -59,40 +64,42 @@ def test_get_data_renews_stale_cache_when_close_unchanged(monkeypatch, tmp_path)
     )
 
     out = mb.get_data(universe="sp500", period="1y")
-    assert out == cached
+    assert out["pct_above_200dma"] == cached["pct_above_200dma"]
+    assert out["_meta"]["market_cache"]["status"] == "hit_unchanged"
 
     stored = json.loads(cache_path.read_text(encoding="utf-8"))
     assert datetime.fromisoformat(stored["fetched_at"]) > old_fetch
 
 
-def test_get_data_refreshes_when_close_changed(monkeypatch, tmp_path):
+def test_get_data_refreshes_when_close_changed_even_under_ttl(monkeypatch, tmp_path):
     cache_path = tmp_path / "market_breadth_sp500_1y.json"
-    cached = {"pct_above_200dma": 40.0, "as_of_date": "2026-03-06", "tickers": ["AAPL"]}
-    _write_cache(cache_path, cached, datetime.now() - timedelta(hours=30), "2026-03-06")
+    cached = {"pct_above_200dma": 40.0, "as_of_date": "2000-01-01", "tickers": ["AAPL"]}
+    _write_cache(cache_path, cached, datetime.now() - timedelta(hours=2), "2000-01-01")
 
-    fresh_metrics = {"pct_above_200dma": 61.0, "as_of_date": "2026-03-07", "failed_tickers": []}
+    fresh_metrics = {"pct_above_200dma": 61.0, "as_of_date": "2099-01-01", "failed_tickers": []}
     monkeypatch.setattr(mb, "_breadth_cache_path", lambda *_: cache_path)
-    monkeypatch.setattr(mb, "_latest_market_close_date", lambda: "2026-03-07")
+    monkeypatch.setattr(mb, "_latest_market_close_date", lambda: "2099-01-01")
     monkeypatch.setattr(mb, "get_tickers", lambda *_: ["AAPL", "MSFT"])
     monkeypatch.setattr(mb, "calculate_breadth_metrics", lambda *_args, **_kwargs: fresh_metrics.copy())
 
     out = mb.get_data(universe="sp500", period="1y")
     assert out["pct_above_200dma"] == 61.0
-    assert out["as_of_date"] == "2026-03-07"
+    assert out["as_of_date"] == "2099-01-01"
     assert out["tickers"] == ["AAPL", "MSFT"]
+    assert out["_meta"]["market_cache"]["status"] == "refresh"
 
     stored = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert stored["as_of_date"] == "2026-03-07"
+    assert stored["as_of_date"] == "2099-01-01"
     assert stored["payload"]["pct_above_200dma"] == 61.0
 
 
 def test_get_data_returns_stale_cache_when_refresh_fails(monkeypatch, tmp_path):
     cache_path = tmp_path / "market_breadth_sp500_1y.json"
-    cached = {"pct_above_200dma": 49.0, "as_of_date": "2026-03-06", "tickers": ["AAPL"]}
-    _write_cache(cache_path, cached, datetime.now() - timedelta(hours=30), "2026-03-06")
+    cached = {"pct_above_200dma": 49.0, "as_of_date": "2000-01-01", "tickers": ["AAPL"]}
+    _write_cache(cache_path, cached, datetime.now() - timedelta(hours=2), "2000-01-01")
 
     monkeypatch.setattr(mb, "_breadth_cache_path", lambda *_: cache_path)
-    monkeypatch.setattr(mb, "_latest_market_close_date", lambda: "2026-03-07")
+    monkeypatch.setattr(mb, "_latest_market_close_date", lambda: "2099-01-01")
     monkeypatch.setattr(mb, "get_tickers", lambda *_: ["AAPL"])
     monkeypatch.setattr(
         mb,
@@ -101,7 +108,9 @@ def test_get_data_returns_stale_cache_when_refresh_fails(monkeypatch, tmp_path):
     )
 
     out = mb.get_data(universe="sp500", period="1y")
-    assert out == cached
+    assert out["pct_above_200dma"] == cached["pct_above_200dma"]
+    assert out["_meta"]["market_cache"]["status"] == "stale_fallback"
+    assert out["_meta"]["market_cache"]["stale"] is True
 
 
 def test_get_data_raises_when_no_cache_and_refresh_fails(monkeypatch, tmp_path):

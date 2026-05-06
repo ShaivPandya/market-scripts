@@ -97,7 +97,7 @@ export function invalidateAfterApprovalResolution(queryClient: QueryClient, appr
   if (ticker) void queryClient.invalidateQueries({ queryKey: ["dossier", ticker] })
   const actionId = String(approval?.action_id || "")
   if (THESIS_FACING_ACTIONS.has(actionId)) void queryClient.invalidateQueries({ queryKey: ["thesis"] })
-  if (PORTFOLIO_ACTIONS.has(actionId)) void queryClient.invalidateQueries({ queryKey: ["portfolio", "all_timeframes"] })
+  if (PORTFOLIO_ACTIONS.has(actionId)) void queryClient.invalidateQueries({ queryKey: ["portfolio"] })
 }
 
 export function shouldRefetchApprovalSummariesAfterError(err: unknown): boolean {

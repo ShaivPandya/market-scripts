@@ -7,7 +7,7 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -196,6 +196,29 @@ def read_snapshot(snapshot_key: str) -> SnapshotRecord | None:
     with _sqlite_connect() as conn:
         row = conn.execute("SELECT * FROM computed_snapshots WHERE snapshot_key = ?", (snapshot_key,)).fetchone()
         return _row_to_record(row)
+
+
+def delete_snapshot(snapshot_key: str) -> None:
+    """Remove the current snapshot so the next read recomputes it."""
+    if use_postgres_state():
+        tx_to = datetime.now(UTC)
+        repo = TemporalOntologyRepository()
+        with repo._connect() as conn:
+            conn.execute(
+                """
+                UPDATE computed_snapshot_versions
+                SET tx_to = %s
+                WHERE snapshot_key = %s
+                  AND tx_to IS NULL
+                """,
+                (tx_to, snapshot_key),
+            )
+            conn.commit()
+        return
+
+    with _sqlite_connect() as conn:
+        conn.execute("DELETE FROM computed_snapshots WHERE snapshot_key = ?", (snapshot_key,))
+        conn.commit()
 
 
 def read_snapshot_at(

@@ -12,6 +12,7 @@ from api.postgres import connect
 ConnectionFactory = Callable[[], Any]
 
 TEMPORAL_READ_MODEL_RUN_ID = "temporal:read_model"
+OPERATIONAL_READ_MODEL_VIEW = "ontology_current_operational_object_read_model"
 
 
 class TemporalReadModelUnavailable(RuntimeError):
@@ -214,6 +215,219 @@ class TemporalReadModelRepository:
                 grouped.setdefault(position_id, {"evaluations": [], "catalysts": []})["catalysts"].append(bundle)
         return grouped
 
+    def fetch_workspace_bundle(self) -> dict[str, Any]:
+        """Fetch the ontology-backed workspace landing-page payload in bounded indexed reads."""
+        with self._connect() as conn:
+            latest_evaluations = _latest_by_ticker(
+                _fetch_operational_objects(
+                    conn,
+                    "Evaluation",
+                    limit=1000,
+                    order_by="evaluated_at_sort DESC, updated_sort DESC, object_uid ASC",
+                )
+            )
+            theses = _fetch_operational_objects(
+                conn,
+                "Thesis",
+                limit=1000,
+                order_by="ticker ASC NULLS LAST, updated_sort DESC, object_uid ASC",
+            )
+            pending_approvals = _fetch_operational_objects(
+                conn,
+                "Approval",
+                filters={"status": "pending"},
+                limit=200,
+                order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            latest_daily_recommendation = _first_row(
+                _fetch_operational_objects(
+                    conn,
+                    "Recommendation",
+                    filters={"report_type": "daily"},
+                    limit=1,
+                    order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+                )
+            )
+            latest_weekly_recommendation = _first_row(
+                _fetch_operational_objects(
+                    conn,
+                    "Recommendation",
+                    filters={"report_type": "weekly"},
+                    limit=1,
+                    order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+                )
+            )
+            pending_actionable_recommendations = _fetch_operational_objects(
+                conn,
+                "Recommendation",
+                filters={"approval_status": "pending"},
+                limit=5,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            open_action_items = _fetch_operational_objects(
+                conn,
+                "ActionItem",
+                filters={"status": "open"},
+                limit=100,
+                order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            optimizer_alerts = _fetch_operational_objects(
+                conn,
+                "OptimizationAlert",
+                filters={"status": "open"},
+                limit=5,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            _attach_optimization_alert_context(conn, optimizer_alerts)
+            active_watch_triggers = _fetch_operational_objects(
+                conn,
+                "WatchTrigger",
+                filters={"status": "active"},
+                limit=100,
+                order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            recent_workflow_runs = _fetch_operational_objects(
+                conn,
+                "WorkflowRun",
+                limit=3,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            recent_report_runs = _fetch_operational_objects(
+                conn,
+                "ReportRun",
+                limit=5,
+                order_by="as_of_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            challenged_claims = _fetch_operational_objects(
+                conn,
+                "ThesisClaim",
+                filters={"status": "challenged"},
+                limit=5,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            disconfirmed_claims = _fetch_operational_objects(
+                conn,
+                "ThesisClaim",
+                filters={"status": "disconfirmed"},
+                limit=5,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+
+        return {
+            "latest_evaluations": latest_evaluations,
+            "theses": theses,
+            "pending_approvals": pending_approvals,
+            "latest_daily_recommendation": latest_daily_recommendation,
+            "latest_weekly_recommendation": latest_weekly_recommendation,
+            "pending_actionable_recommendations": pending_actionable_recommendations,
+            "open_action_items": open_action_items,
+            "optimizer_alerts": optimizer_alerts,
+            "active_watch_triggers": active_watch_triggers,
+            "recent_workflow_runs": recent_workflow_runs,
+            "recent_report_runs": recent_report_runs,
+            "challenged_claims": challenged_claims,
+            "disconfirmed_claims": disconfirmed_claims,
+        }
+
+    def fetch_dossier_bundle(self, ticker: str) -> dict[str, Any]:
+        """Fetch the ontology-backed dossier payload for one ticker without scanning all positions."""
+        normalized = str(ticker or "").strip().upper()
+        with self._connect() as conn:
+            position = _first_row(
+                _fetch_operational_objects(
+                    conn,
+                    "Position",
+                    filters={"ticker": normalized},
+                    limit=1,
+                    order_by="updated_sort DESC, object_uid ASC",
+                )
+            )
+            thesis = _fetch_dossier_thesis(conn, normalized)
+            management_quality_assessment = _first_row(
+                _fetch_operational_objects(
+                    conn,
+                    "ManagementQualityAssessment",
+                    filters={"ticker": normalized},
+                    limit=20,
+                    order_by=(
+                        "CASE WHEN status = 'active' THEN 0 ELSE 1 END, "
+                        "updated_sort DESC, created_at_sort DESC, object_uid ASC"
+                    ),
+                )
+            )
+            if management_quality_assessment:
+                _attach_management_quality_children(conn, management_quality_assessment)
+            evaluations = _fetch_operational_objects(
+                conn,
+                "Evaluation",
+                filters={"ticker": normalized},
+                limit=52,
+                order_by="evaluated_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            catalysts = _fetch_operational_objects(
+                conn,
+                "Catalyst",
+                filters={"ticker": normalized},
+                limit=100,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            kill_conditions = _fetch_operational_objects(
+                conn,
+                "KillCondition",
+                filters={"ticker": normalized},
+                limit=100,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            thesis_claims = _fetch_operational_objects(
+                conn,
+                "ThesisClaim",
+                filters={"ticker": normalized},
+                limit=100,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            workflow_runs = _fetch_operational_objects(
+                conn,
+                "WorkflowRun",
+                filters={"ticker": normalized},
+                limit=10,
+                order_by="updated_sort DESC, created_at_sort DESC, object_uid ASC",
+            )
+            action_items = _fetch_operational_objects(
+                conn,
+                "ActionItem",
+                filters={"ticker": normalized, "status": "open"},
+                limit=100,
+                order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            watch_triggers = _fetch_operational_objects(
+                conn,
+                "WatchTrigger",
+                filters={"ticker": normalized},
+                limit=100,
+                order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+            pending_approvals = _fetch_operational_objects(
+                conn,
+                "Approval",
+                filters={"ticker": normalized, "status": "pending"},
+                limit=200,
+                order_by="created_at_sort DESC, updated_sort DESC, object_uid ASC",
+            )
+
+        return {
+            "position": position,
+            "thesis_meta": thesis,
+            "management_quality_assessment": management_quality_assessment,
+            "evaluations": evaluations,
+            "catalysts": catalysts,
+            "kill_conditions": kill_conditions,
+            "thesis_claims": thesis_claims,
+            "workflow_runs": workflow_runs,
+            "action_items": action_items,
+            "watch_triggers": watch_triggers,
+            "pending_approvals": pending_approvals,
+        }
+
     def source_status_summary(self) -> tuple[dict[str, dict[str, Any]], list[str]]:
         sql = """
         SELECT
@@ -240,6 +454,258 @@ class TemporalReadModelRepository:
                 "provenance_event_id": row.get("provenance_event_id"),
             }
         return status, sorted(status.keys())
+
+
+_OPERATIONAL_FILTER_COLUMNS = {
+    "object_uid",
+    "ticker",
+    "status",
+    "application_status",
+    "approval_status",
+    "outcome_status",
+    "report_type",
+    "parent_uid",
+    "assessment_id",
+    "run_id",
+}
+
+
+def _fetch_operational_objects(
+    conn: Any,
+    object_type: str,
+    *,
+    filters: Mapping[str, Any] | None = None,
+    limit: int = 100,
+    order_by: str = "updated_sort DESC, object_uid ASC",
+) -> list[dict[str, Any]]:
+    where_parts = ["object_type = %s"]
+    params: list[Any] = [object_type]
+    for column, raw_value in (filters or {}).items():
+        if column not in _OPERATIONAL_FILTER_COLUMNS:
+            raise ValueError(f"Unsupported operational read-model filter: {column}")
+        if raw_value is None or raw_value == "":
+            continue
+        value = str(raw_value)
+        if column == "ticker":
+            value = value.upper()
+        elif column in {"status", "application_status", "approval_status", "outcome_status", "report_type"}:
+            value = value.lower()
+        where_parts.append(f"{column} = %s")
+        params.append(value)
+
+    sql = f"""
+    SELECT *
+    FROM {OPERATIONAL_READ_MODEL_VIEW}
+    WHERE {" AND ".join(where_parts)}
+    ORDER BY {order_by}
+    LIMIT %s
+    """
+    rows = conn.execute(sql, tuple([*params, max(1, min(int(limit), 1000))])).fetchall()
+    return [_operational_object(row) for row in rows]
+
+
+def _fetch_operational_by_uids(conn: Any, object_uids: Sequence[str]) -> dict[str, dict[str, Any]]:
+    uids = _normalized_ids(object_uids)
+    if not uids:
+        return {}
+    where, params = _in_clause("object_uid", uids)
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM {OPERATIONAL_READ_MODEL_VIEW}
+        WHERE {where}
+        """,
+        tuple(params),
+    ).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for row_raw in rows:
+        row = _operational_object(row_raw)
+        uid = str(row.get("object_uid") or "")
+        if uid:
+            out[uid] = row
+    return out
+
+
+def _fetch_operational_in(
+    conn: Any,
+    object_type: str,
+    column: str,
+    values: Sequence[str],
+    *,
+    limit: int = 1000,
+    order_by: str = "updated_sort DESC, object_uid ASC",
+) -> list[dict[str, Any]]:
+    if column not in _OPERATIONAL_FILTER_COLUMNS:
+        raise ValueError(f"Unsupported operational read-model IN filter: {column}")
+    normalized = _normalized_ids(values)
+    if not normalized:
+        return []
+    where, params = _in_clause(column, normalized)
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM {OPERATIONAL_READ_MODEL_VIEW}
+        WHERE object_type = %s
+          AND {where}
+        ORDER BY {order_by}
+        LIMIT %s
+        """,
+        tuple([object_type, *params, max(1, min(int(limit), 5000))]),
+    ).fetchall()
+    return [_operational_object(row) for row in rows]
+
+
+def _fetch_dossier_thesis(conn: Any, ticker: str) -> dict[str, Any] | None:
+    object_uid = f"thesis:{ticker}"
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM {OPERATIONAL_READ_MODEL_VIEW}
+        WHERE object_type = 'Thesis'
+          AND (object_uid = %s OR ticker = %s)
+        ORDER BY CASE WHEN object_uid = %s THEN 0 ELSE 1 END,
+                 updated_sort DESC,
+                 object_uid ASC
+        LIMIT 1
+        """,
+        (object_uid, ticker, object_uid),
+    ).fetchall()
+    return _first_row([_operational_object(row) for row in rows])
+
+
+def _attach_optimization_alert_context(conn: Any, alerts: list[dict[str, Any]]) -> None:
+    snapshot_ids: list[str] = []
+    alert_ids: list[str] = []
+    for alert in alerts:
+        props = _row_dict(alert.get("properties_json"))
+        current_snapshot_id = str(props.get("current_snapshot_id") or "").strip()
+        previous_snapshot_id = str(props.get("previous_snapshot_id") or "").strip()
+        if current_snapshot_id:
+            snapshot_ids.append(current_snapshot_id)
+        if previous_snapshot_id:
+            snapshot_ids.append(previous_snapshot_id)
+        alert_uid = str(alert.get("object_uid") or props.get("id") or "").strip()
+        if alert_uid:
+            alert_ids.append(alert_uid)
+
+    snapshots = _fetch_operational_by_uids(conn, snapshot_ids)
+    source_freshness = _source_freshness_by_parent(conn, alert_ids)
+    for alert in alerts:
+        props = _row_dict(alert.get("properties_json"))
+        current_snapshot_id = str(props.get("current_snapshot_id") or "").strip()
+        previous_snapshot_id = str(props.get("previous_snapshot_id") or "").strip()
+        if current_snapshot_id and current_snapshot_id in snapshots:
+            alert["current_snapshot"] = snapshots[current_snapshot_id]
+        if previous_snapshot_id and previous_snapshot_id in snapshots:
+            alert["previous_snapshot"] = snapshots[previous_snapshot_id]
+        alert_uid = str(alert.get("object_uid") or props.get("id") or "").strip()
+        if alert_uid and alert_uid in source_freshness:
+            alert["source_freshness"] = source_freshness[alert_uid]
+
+
+def _source_freshness_by_parent(conn: Any, parent_uids: Sequence[str]) -> dict[str, dict[str, dict[str, Any]]]:
+    rows = _fetch_operational_in(
+        conn,
+        "SourceFreshness",
+        "parent_uid",
+        parent_uids,
+        limit=max(100, len(parent_uids) * 100),
+        order_by="parent_uid ASC, object_uid ASC",
+    )
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        props = _row_dict(row.get("properties_json"))
+        parent_uid = str(props.get("parent_uid") or row.get("parent_uid") or "").strip()
+        source_name = str(props.get("source_name") or "").strip()
+        if not parent_uid or not source_name:
+            continue
+        grouped.setdefault(parent_uid, {})[source_name] = {
+            key: props.get(key)
+            for key in ("status", "checked_at", "as_of", "freshness_category", "error", "metadata")
+            if props.get(key) is not None
+        }
+    return grouped
+
+
+def _attach_management_quality_children(conn: Any, assessment: dict[str, Any]) -> None:
+    assessment_uid = str(assessment.get("object_uid") or "").strip()
+    if not assessment_uid:
+        return
+    child_specs = (
+        ("ManagementQualityScorecardRow", "scorecard"),
+        ("ManagementQualityAccomplishment", "accomplishments"),
+        ("ManagementQualitySetback", "setbacks"),
+    )
+    for object_type, key in child_specs:
+        children = _fetch_operational_objects(
+            conn,
+            object_type,
+            filters={"assessment_id": assessment_uid},
+            limit=200,
+            order_by="updated_sort ASC, object_uid ASC",
+        )
+        children.sort(key=lambda item: int(_row_dict(item.get("properties_json")).get("ordinal") or 0))
+        assessment[key] = children
+
+
+def _latest_by_ticker(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        props = _row_dict(row.get("properties_json"))
+        ticker = str(props.get("ticker") or row.get("ticker") or "").strip().upper()
+        if ticker and ticker not in latest:
+            latest[ticker] = row
+    return list(latest.values())
+
+
+def _first_row(rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    return rows[0] if rows else None
+
+
+def _operational_object(row_raw: Any) -> dict[str, Any]:
+    row = _row_dict(row_raw)
+    props = _row_dict(row.get("properties_json"))
+    payload = {
+        "version_id": row.get("version_id"),
+        "object_uid": row.get("object_uid"),
+        "object_type": row.get("object_type"),
+        "business_key": row.get("business_key"),
+        "properties_json": props,
+        "properties": props,
+        "schema_name": row.get("schema_name"),
+        "schema_version": row.get("schema_version"),
+        "source_record_id": row.get("source_record_id"),
+        "valid_from": row.get("valid_from"),
+        "valid_to": row.get("valid_to"),
+        "tx_from": row.get("tx_from"),
+        "tx_to": row.get("tx_to"),
+        "actor_id": row.get("actor_id"),
+        "input_hash": row.get("input_hash"),
+        "supersedes_version_id": row.get("supersedes_version_id"),
+        "temporal_confidence": row.get("temporal_confidence"),
+        "ticker": row.get("ticker"),
+        "status": row.get("status"),
+        "application_status": row.get("application_status"),
+        "approval_status": row.get("approval_status"),
+        "outcome_status": row.get("outcome_status"),
+        "report_type": row.get("report_type"),
+        "parent_uid": row.get("parent_uid"),
+        "assessment_id": row.get("assessment_id"),
+        "run_id": row.get("run_id"),
+        "current_snapshot_id": row.get("current_snapshot_id"),
+        "previous_snapshot_id": row.get("previous_snapshot_id"),
+    }
+    temporal = {
+        "object_uid": payload.get("object_uid"),
+        "version_id": str(payload.get("version_id")) if payload.get("version_id") is not None else None,
+        "valid_from": _iso(payload.get("valid_from")),
+        "valid_to": _iso(payload.get("valid_to")),
+        "tx_from": _iso(payload.get("tx_from")),
+        "tx_to": _iso(payload.get("tx_to")),
+        "temporal_confidence": payload.get("temporal_confidence"),
+    }
+    payload["_meta"] = {"temporal": {key: value for key, value in temporal.items() if value is not None}}
+    return payload
 
 
 def _position_source_sql(

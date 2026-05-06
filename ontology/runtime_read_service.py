@@ -22,6 +22,15 @@ def _ontology_primary_writes_enabled() -> bool:
         return False
 
 
+def _ontology_read_model_enabled() -> bool:
+    try:
+        from ontology.domain_write_service import ontology_read_model_enabled
+
+        return ontology_read_model_enabled()
+    except Exception:
+        return False
+
+
 def get_positions(*, include_hedges: bool = False) -> list[dict[str, Any]]:
     """Ontology-native replacement for legacy portfolio_db.get_positions."""
     if not _ontology_primary_writes_enabled():
@@ -64,8 +73,9 @@ def get_hedge_positions() -> list[dict[str, Any]]:
 
 
 class OntologyRuntimeReadService:
-    def __init__(self, object_service: OntologyObjectService | None = None):
+    def __init__(self, object_service: OntologyObjectService | None = None, read_model_repository: Any | None = None):
         self.objects = object_service or OntologyObjectService()
+        self.read_model_repo = read_model_repository
 
     def get(self, object_uid: str) -> dict[str, Any] | None:
         if not _ontology_primary_writes_enabled():
@@ -88,6 +98,48 @@ class OntologyRuntimeReadService:
             self._project_object(object_type, object_props(row))
             for row in self.objects.query_objects(object_type, filters=_clean_filters(filters), limit=limit)
         ]
+
+    def workspace_bundle(self) -> dict[str, Any]:
+        if not _ontology_primary_writes_enabled() or not _ontology_read_model_enabled():
+            return self._workspace_bundle_from_objects()
+        repo = self._read_model_repository()
+        bundle = repo.fetch_workspace_bundle()
+        return {
+            "latest_evaluations": self._project_read_model_rows(bundle.get("latest_evaluations", [])),
+            "theses": self._project_read_model_rows(bundle.get("theses", [])),
+            "pending_approvals": self._project_read_model_rows(bundle.get("pending_approvals", [])),
+            "latest_daily_recommendation": self._project_read_model_row(bundle.get("latest_daily_recommendation")),
+            "latest_weekly_recommendation": self._project_read_model_row(bundle.get("latest_weekly_recommendation")),
+            "pending_actionable_recommendations": self._project_read_model_rows(
+                bundle.get("pending_actionable_recommendations", [])
+            ),
+            "open_action_items": self._project_read_model_rows(bundle.get("open_action_items", [])),
+            "optimizer_alerts": self._project_read_model_rows(bundle.get("optimizer_alerts", [])),
+            "active_watch_triggers": self._project_read_model_rows(bundle.get("active_watch_triggers", [])),
+            "recent_workflow_runs": self._project_read_model_rows(bundle.get("recent_workflow_runs", [])),
+            "recent_report_runs": self._project_read_model_rows(bundle.get("recent_report_runs", [])),
+            "challenged_claims": self._project_read_model_rows(bundle.get("challenged_claims", [])),
+            "disconfirmed_claims": self._project_read_model_rows(bundle.get("disconfirmed_claims", [])),
+        }
+
+    def dossier_bundle(self, ticker: str) -> dict[str, Any]:
+        if not _ontology_primary_writes_enabled() or not _ontology_read_model_enabled():
+            return self._dossier_bundle_from_objects(ticker)
+        repo = self._read_model_repository()
+        bundle = repo.fetch_dossier_bundle(ticker)
+        return {
+            "position": self._project_read_model_row(bundle.get("position")),
+            "thesis_meta": self._project_read_model_row(bundle.get("thesis_meta")),
+            "management_quality_assessment": self._project_read_model_row(bundle.get("management_quality_assessment")),
+            "evaluations": self._project_read_model_rows(bundle.get("evaluations", [])),
+            "catalysts": self._project_read_model_rows(bundle.get("catalysts", [])),
+            "kill_conditions": self._project_read_model_rows(bundle.get("kill_conditions", [])),
+            "thesis_claims": self._project_read_model_rows(bundle.get("thesis_claims", [])),
+            "workflow_runs": self._project_read_model_rows(bundle.get("workflow_runs", [])),
+            "action_items": self._project_read_model_rows(bundle.get("action_items", [])),
+            "watch_triggers": self._project_read_model_rows(bundle.get("watch_triggers", [])),
+            "pending_approvals": self._project_read_model_rows(bundle.get("pending_approvals", [])),
+        }
 
     def management_quality_assessment(self, ticker: str) -> dict[str, Any] | None:
         if not _ontology_primary_writes_enabled():
@@ -247,6 +299,75 @@ class OntologyRuntimeReadService:
         rows = self.list_objects("ReportRun", limit=limit)
         return sorted(rows, key=lambda row: str(row.get("as_of") or row.get("synced_at") or ""), reverse=True)
 
+    def _workspace_bundle_from_objects(self) -> dict[str, Any]:
+        return {
+            "latest_evaluations": self.latest_evaluations(),
+            "theses": self.theses(),
+            "pending_approvals": self.approvals(status="pending"),
+            "latest_daily_recommendation": self.latest_recommendation("daily"),
+            "latest_weekly_recommendation": self.latest_recommendation("weekly"),
+            "pending_actionable_recommendations": self.recommendations(approval_status="pending", limit=5),
+            "open_action_items": self.action_items(status="open"),
+            "optimizer_alerts": self.list_objects("OptimizationAlert", filters={"status": "open"}, limit=5),
+            "active_watch_triggers": self.watch_triggers(status="active"),
+            "recent_workflow_runs": self.workflow_runs(limit=3),
+            "recent_report_runs": self.report_runs(limit=5),
+            "challenged_claims": self.thesis_claims(status="challenged", limit=5),
+            "disconfirmed_claims": self.thesis_claims(status="disconfirmed", limit=5),
+        }
+
+    def _dossier_bundle_from_objects(self, ticker: str) -> dict[str, Any]:
+        normalized = _ticker(ticker)
+        position = None
+        for pos in self.positions():
+            if _ticker(pos.get("ticker")) == normalized:
+                position = pos
+                break
+        return {
+            "position": position,
+            "thesis_meta": self.thesis(normalized),
+            "management_quality_assessment": self.management_quality_assessment(normalized),
+            "evaluations": self.evaluations(normalized, limit=52),
+            "catalysts": self.catalysts(normalized),
+            "kill_conditions": self.kill_conditions(normalized),
+            "thesis_claims": self.thesis_claims(ticker=normalized),
+            "workflow_runs": self.workflow_runs(ticker=normalized, limit=10),
+            "action_items": self.action_items(ticker=normalized, status="open"),
+            "watch_triggers": self.watch_triggers(ticker=normalized),
+            "pending_approvals": self.approvals(ticker=normalized, status="pending"),
+        }
+
+    def _read_model_repository(self):
+        if self.read_model_repo is not None:
+            return self.read_model_repo
+        from ontology.read_model import TemporalReadModelRepository
+
+        self.read_model_repo = TemporalReadModelRepository()
+        return self.read_model_repo
+
+    def _project_read_model_rows(self, rows: Any) -> list[dict[str, Any]]:
+        if not isinstance(rows, list):
+            return []
+        return [row for row in (self._project_read_model_row(item) for item in rows) if row is not None]
+
+    def _project_read_model_row(self, row: Any) -> dict[str, Any] | None:
+        if not isinstance(row, dict):
+            return None
+        object_type = str(row.get("object_type") or "")
+        props = object_props(row)
+        for key in ("current_snapshot", "previous_snapshot"):
+            nested = row.get(key)
+            if isinstance(nested, dict):
+                props[key] = object_props(nested)
+        source_freshness = row.get("source_freshness")
+        if isinstance(source_freshness, dict):
+            props["source_freshness"] = source_freshness
+        for key in ("scorecard", "accomplishments", "setbacks"):
+            children = row.get(key)
+            if isinstance(children, list):
+                props[key] = [object_props(child) for child in children if isinstance(child, dict)]
+        return self._project_object(object_type, props)
+
     def _raw_object(self, object_uid: str) -> dict[str, Any] | None:
         row = self.objects.get_object(object_uid)
         return object_props(row) if row else None
@@ -343,6 +464,8 @@ class OntologyRuntimeReadService:
         return self._attach_source_freshness(row, uid) if uid else row
 
     def _attach_source_freshness(self, row: dict[str, Any], uid: str) -> dict[str, Any]:
+        if isinstance(row.get("source_freshness"), dict):
+            return row
         freshness_rows = self._raw_objects("SourceFreshness", filters={"parent_uid": uid}, limit=100)
         if not freshness_rows:
             return row
@@ -368,6 +491,8 @@ class OntologyRuntimeReadService:
             ("ManagementQualityAccomplishment", "accomplishments"),
             ("ManagementQualitySetback", "setbacks"),
         ):
+            if isinstance(row.get(key), list):
+                continue
             children = self._raw_objects(child_type, filters={"assessment_id": uid}, limit=200)
             if children:
                 row[key] = sorted(children, key=lambda item: int(item.get("ordinal") or 0))

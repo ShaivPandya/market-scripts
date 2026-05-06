@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from api.cache import delete_cached, get_cached, set_cached, short_cache
+from api.cache import daily_cache, delete_cached, get_cached, set_cached
 
 
 def _make_crb_workbook(rows: list[tuple[str, float]]) -> bytes:
@@ -31,7 +31,7 @@ def _isolate_crb_store(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(router, "CRB_METADATA_LOCAL_PATH", tmp_path / "crb.json")
     monkeypatch.setattr(router, "CRB_GCS_KEY", "test/economic_growth/crb.xlsx")
     monkeypatch.setattr(router, "CRB_METADATA_GCS_KEY", "test/economic_growth/crb.json")
-    delete_cached(short_cache, router.ECONOMIC_GROWTH_CACHE_KEY)
+    delete_cached(daily_cache, router.ECONOMIC_GROWTH_CACHE_KEY)
     return router
 
 
@@ -75,7 +75,7 @@ def test_crb_upload_saves_metadata_invalidates_cache_and_get_uses_managed_file(a
         ]
     )
 
-    set_cached(short_cache, router.ECONOMIC_GROWTH_CACHE_KEY, {"sentinel": True})
+    set_cached(daily_cache, router.ECONOMIC_GROWTH_CACHE_KEY, {"sentinel": True})
     upload = auth_client.post(
         "/api/v1/economic-growth/crb-file",
         files={
@@ -93,9 +93,9 @@ def test_crb_upload_saves_metadata_invalidates_cache_and_get_uses_managed_file(a
     assert uploaded["rows"] == 2
     assert uploaded["latest_date"] == "2026-03-27"
     assert uploaded["latest_value"] == 615.37
-    assert get_cached(short_cache, router.ECONOMIC_GROWTH_CACHE_KEY) is None
+    assert get_cached(daily_cache, router.ECONOMIC_GROWTH_CACHE_KEY) is None
 
-    response = auth_client.get("/api/v1/economic-growth")
+    response = auth_client.get("/api/v1/economic-growth", params={"force_refresh": "true"})
 
     assert response.status_code == 200
     data = response.json()
@@ -187,7 +187,7 @@ def test_economic_growth_get_falls_back_to_bundled_crb_when_no_managed_file(auth
     monkeypatch.setattr(eg, "DEFAULT_CRB_PATH", fallback)
     assert not router.CRB_LOCAL_PATH.exists()
 
-    response = auth_client.get("/api/v1/economic-growth")
+    response = auth_client.get("/api/v1/economic-growth", params={"force_refresh": "true"})
 
     assert response.status_code == 200
     data = response.json()

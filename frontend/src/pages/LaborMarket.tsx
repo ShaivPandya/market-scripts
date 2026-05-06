@@ -134,7 +134,11 @@ export function LaborMarket() {
             <Sparkles size={14} />
             AI Overview
           </button>
-          <RefreshButton queryKeys={[["labor-market"]]} />
+          <RefreshButton
+            clearBackendCache={false}
+            beforeRefetch={() => fetchLaborMarket({ force_refresh: true })}
+            queryKeys={[["labor-market"]]}
+          />
         </div>
       </div>
 

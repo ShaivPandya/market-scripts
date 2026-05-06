@@ -24,13 +24,9 @@ def get_dossier(ticker: str):
         raise NotFoundError("Position", "")
 
     reads = OntologyRuntimeReadService()
-    position = None
-    for pos in reads.positions():
-        if str(pos.get("ticker", "")).upper() == ticker:
-            position = pos
-            break
-
-    thesis_meta = reads.thesis(ticker)
+    ontology_bundle = reads.dossier_bundle(ticker)
+    position = ontology_bundle.get("position")
+    thesis_meta = ontology_bundle.get("thesis_meta")
     thesis_content = None
 
     try:
@@ -68,12 +64,11 @@ def get_dossier(ticker: str):
 
     # Management quality content
     management_quality_content = None
-    management_quality_assessment = None
+    management_quality_assessment = ontology_bundle.get("management_quality_assessment")
     if ontology_primary_writes_enabled():
         try:
             from api.routers.management_quality import _render_management_quality_markdown
 
-            management_quality_assessment = reads.management_quality_assessment(ticker)
             if management_quality_assessment:
                 management_quality_content = _render_management_quality_markdown(ticker, management_quality_assessment)
         except Exception:
@@ -98,15 +93,15 @@ def get_dossier(ticker: str):
         except Exception:
             pass
 
-    evaluations = reads.evaluations(ticker, limit=52)
+    evaluations = ontology_bundle.get("evaluations", [])
     status_history: list[dict[str, Any]] = []
-    catalysts = reads.catalysts(ticker)
-    kill_conditions = reads.kill_conditions(ticker)
-    thesis_claims = reads.thesis_claims(ticker=ticker)
-    workflow_runs = reads.workflow_runs(ticker=ticker, limit=10)
-    action_items = [normalize_action_item(a) for a in reads.action_items(ticker=ticker, status="open")]
-    watch_triggers = reads.watch_triggers(ticker=ticker)
-    pending_approvals = [normalize_approval(a) for a in reads.approvals(ticker=ticker, status="pending")]
+    catalysts = ontology_bundle.get("catalysts", [])
+    kill_conditions = ontology_bundle.get("kill_conditions", [])
+    thesis_claims = ontology_bundle.get("thesis_claims", [])
+    workflow_runs = ontology_bundle.get("workflow_runs", [])
+    action_items = [normalize_action_item(a) for a in ontology_bundle.get("action_items", [])]
+    watch_triggers = ontology_bundle.get("watch_triggers", [])
+    pending_approvals = [normalize_approval(a) for a in ontology_bundle.get("pending_approvals", [])]
 
     # Ontology risk is loaded lazily by the frontend Risk tab. Keep the field
     # in the aggregate payload for backwards compatibility without triggering

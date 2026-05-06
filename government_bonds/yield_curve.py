@@ -22,6 +22,13 @@ import pandas as pd
 import requests  # type: ignore[import-untyped]
 
 from load_env import load_env
+from utils.market_freshness import (
+    attach_market_cache_metadata,
+    build_market_cache_metadata,
+    expected_market_date,
+    market_cache_decision,
+    metadata_from_decision,
+)
 
 load_env()
 
@@ -614,30 +621,35 @@ def get_data(lookback_days: int = 90) -> dict:
     cache_p = _cache_path(lookback_days)
     cached_record = _load_cache(cache_p)
     cached_payload = cached_record.get("payload") if cached_record else None
+    cache_decision = None
 
     if cached_record and isinstance(cached_payload, dict):
-        try:
-            fetched_at = datetime.fromisoformat(str(cached_record["fetched_at"]))
-            age_seconds = (datetime.now() - fetched_at).total_seconds()
-        except Exception:
-            age_seconds = _CACHE_TTL_SECONDS + 1
-
-        if age_seconds < _CACHE_TTL_SECONDS:
-            return cached_payload
-
-        # TTL expired — check if market has actually closed with new data
         cached_as_of = cached_record.get("as_of_date")
-        latest_close = _latest_market_close_date()
-        if isinstance(cached_as_of, str) and latest_close is not None and latest_close <= cached_as_of:
-            # No new close since cache was built; refresh TTL
-            _write_cache(
-                path=cache_p,
-                payload=cached_payload,
-                lookback_days=lookback_days,
-                as_of_date=cached_as_of,
-                fetched_at=datetime.now().isoformat(),
+        fetched_at = cached_record.get("fetched_at")
+        cache_decision = market_cache_decision(
+            cached_as_of=cached_as_of,
+            fetched_at=fetched_at,
+            ttl_seconds=_CACHE_TTL_SECONDS,
+        )
+        if cache_decision.action == "probe":
+            latest_close = _latest_market_close_date()
+            cache_decision = market_cache_decision(
+                cached_as_of=cached_as_of,
+                fetched_at=fetched_at,
+                ttl_seconds=_CACHE_TTL_SECONDS,
+                latest_close=latest_close,
+                latest_close_probed=True,
             )
-            return cached_payload
+        if cache_decision.action == "use_cache":
+            if cache_decision.status == "hit_unchanged":
+                _write_cache(
+                    path=cache_p,
+                    payload=cached_payload,
+                    lookback_days=lookback_days,
+                    as_of_date=str(cached_as_of) if cached_as_of is not None else None,
+                    fetched_at=datetime.now().isoformat(),
+                )
+            return attach_market_cache_metadata(cached_payload, cache_decision.metadata())
 
     # --- fetch live ---
     try:
@@ -661,9 +673,24 @@ def get_data(lookback_days: int = 90) -> dict:
             "tenor_order": TENOR_ORDER,
             "countries": countries,
         }
-    except Exception:
+    except Exception as exc:
         if isinstance(cached_payload, dict):
-            return cached_payload
+            if cache_decision is not None:
+                meta = metadata_from_decision(
+                    cache_decision,
+                    status="stale_fallback",
+                    stale=True,
+                    reason=f"refresh failed: {exc}",
+                )
+            else:
+                meta = build_market_cache_metadata(
+                    status="stale_fallback",
+                    stale=True,
+                    cached_as_of=cached_record.get("as_of_date") if cached_record else None,
+                    reason=f"refresh failed: {exc}",
+                    cache_ttl_seconds=_CACHE_TTL_SECONDS,
+                )
+            return attach_market_cache_metadata(cached_payload, meta)
         raise
 
     # Determine as_of_date from country curves (latest across all)
@@ -680,7 +707,18 @@ def get_data(lookback_days: int = 90) -> dict:
         as_of_date=as_of_date,
     )
 
-    return result
+    return attach_market_cache_metadata(
+        result,
+        build_market_cache_metadata(
+            status="refresh",
+            stale=False,
+            cached_as_of=as_of_date,
+            expected_market_date_value=expected_market_date().isoformat(),
+            latest_close=cache_decision.latest_close if cache_decision is not None else None,
+            reason="refreshed yield curve cache",
+            cache_ttl_seconds=_CACHE_TTL_SECONDS,
+        ),
+    )
 
 
 if __name__ == "__main__":

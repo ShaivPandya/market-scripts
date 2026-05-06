@@ -1,34 +1,43 @@
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.cache import get_or_set_cached, short_cache
+from api.cache import long_cache
 from api.exceptions import ConfigurationError, DataFetchError
+from api.macro_snapshots import get_snapshot_backed_response
 from api.serializers import serialize_response
+from api.snapshot_keys import SNAPSHOT_LIQUIDITY
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
 
 
+def load_liquidity_payload() -> dict:
+    try:
+        from macro.liquidity.liquidity import get_snapshot
+
+        data = get_snapshot()
+    except Exception as e:
+        raise DataFetchError(source="liquidity", detail=str(e)) from e
+
+    # Drop large DataFrame/Series objects that React doesn't need
+    # (composite_series and df_weekly are internal computation artifacts)
+    filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
+    return serialize_response(filtered)
+
+
 @router.get("/liquidity")
-def get_liquidity():
+def get_liquidity(force_refresh: bool = Query(False)):
     key = "liquidity"
-
-    def loader():
-        try:
-            from macro.liquidity.liquidity import get_snapshot
-
-            data = get_snapshot()
-        except Exception as e:
-            raise DataFetchError(source="liquidity", detail=str(e)) from e
-
-        # Drop large DataFrame/Series objects that React doesn't need
-        # (composite_series and df_weekly are internal computation artifacts)
-        filtered = {k: v for k, v in data.items() if k not in ("df_weekly", "composite_series")}
-        return serialize_response(filtered)
-
-    return get_or_set_cached(short_cache, key, loader)
+    return get_snapshot_backed_response(
+        snapshot_key=SNAPSHOT_LIQUIDITY,
+        cache=long_cache,
+        cache_key=key,
+        source="liquidity",
+        load_payload=load_liquidity_payload,
+        force_refresh=force_refresh,
+    )
 
 
 class LiquidityAnalyzeRequest(BaseModel):

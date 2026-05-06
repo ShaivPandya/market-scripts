@@ -85,10 +85,17 @@ def test_signal_current_modules_share_one_sp500_price_frame(monkeypatch):
     download_calls = 0
     shared_calls: list[str] = []
 
-    def fake_download():
+    market_cache_meta = {
+        "status": "hit",
+        "stale": False,
+        "reason": "test metadata",
+        "cache_ttl_seconds": 86400,
+    }
+
+    def fake_download_with_meta():
         nonlocal download_calls
         download_calls += 1
-        return prices
+        return prices, market_cache_meta
 
     def assert_shared(name):
         def _inner(*args, **kwargs):
@@ -103,7 +110,7 @@ def test_signal_current_modules_share_one_sp500_price_frame(monkeypatch):
         index=pd.to_datetime(["2026-05-01"]),
     )
 
-    monkeypatch.setattr(sa, "_download_sp500_prices", fake_download)
+    monkeypatch.setattr(sa, "_download_sp500_prices_with_meta", fake_download_with_meta)
     monkeypatch.setattr(market_breadth, "get_data", assert_shared("market_breadth"))
     monkeypatch.setattr(top50_breadth, "get_data", assert_shared("top50_breadth"))
     monkeypatch.setattr(sector_metrics, "get_data", assert_shared("sector_metrics"))
@@ -117,4 +124,7 @@ def test_signal_current_modules_share_one_sp500_price_frame(monkeypatch):
     assert download_calls == 1
     assert set(shared_calls) == {"market_breadth", "top50_breadth", "sector_metrics"}
     assert status["market_breadth"]["status"] == "ok"
+    assert status["market_breadth"]["market_cache"] == market_cache_meta
+    assert status["top50_breadth"]["market_cache"] == market_cache_meta
+    assert status["sector_metrics"]["market_cache"] == market_cache_meta
     assert raw["market_breadth"] == {"ok": "market_breadth"}

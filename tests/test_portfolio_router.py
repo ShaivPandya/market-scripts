@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import pandas as pd
+from fastapi import Response
 
 
 def test_portfolio_all_timeframes_route_returns_supported_timeframes(monkeypatch):
@@ -38,7 +39,7 @@ def test_portfolio_all_timeframes_route_returns_supported_timeframes(monkeypatch
         lambda self, include_hedges=True: [{"ticker": "MU", "asset": "equity"}],
     )
 
-    payload = portfolio_router.get_portfolio(all_timeframes=True)
+    payload = portfolio_router.get_portfolio(Response(), all_timeframes=True)
 
     assert set(payload["timeframes"]) == portfolio_router.VALID_TIMEFRAMES
     assert payload["timeframes"]["Daily"]["positions"]["MU"] == [
@@ -89,9 +90,9 @@ def test_portfolio_cache_key_changes_when_holdings_change(monkeypatch):
         lambda self, include_hedges=True: list(current_holdings),
     )
 
-    first = portfolio_router.get_portfolio(all_timeframes=True)
+    first = portfolio_router.get_portfolio(Response(), all_timeframes=True)
     current_holdings[:] = [{"ticker": "NVDA", "asset": "equity", "role": "position"}]
-    second = portfolio_router.get_portfolio(all_timeframes=True)
+    second = portfolio_router.get_portfolio(Response(), all_timeframes=True)
 
     assert calls == ["NUAI", "NVDA"]
     assert first["timeframes"]["Daily"]["position_order"] == ["NUAI"]
