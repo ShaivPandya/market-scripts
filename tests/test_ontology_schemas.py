@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import subprocess
 from pathlib import Path
 from typing import get_args
 
@@ -32,6 +31,20 @@ from ontology.schemas.relations import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE_SCAN_EXCLUDED_PARTS = {
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "tests",
+}
+
+
+def _iter_source_python_files() -> list[Path]:
+    return sorted(
+        path
+        for path in ROOT.rglob("*.py")
+        if path.is_file() and SOURCE_SCAN_EXCLUDED_PARTS.isdisjoint(path.relative_to(ROOT).parts)
+    )
 
 
 def test_position_schema_normalizes_and_checks_risk_level():
@@ -243,26 +256,8 @@ def test_provenance_event_requires_lifecycle_redaction_retention_and_context():
 def test_literal_write_object_calls_use_registered_object_types():
     registered = set(NODE_SCHEMAS)
     offenders: list[str] = []
-    files = subprocess.check_output(
-        [
-            "rg",
-            "--files",
-            "-g",
-            "*.py",
-            "-g",
-            "!.venv/**",
-            "-g",
-            "!frontend/node_modules/**",
-            "-g",
-            "!**/__pycache__/**",
-            "-g",
-            "!tests/**",
-        ],
-        cwd=ROOT,
-        text=True,
-    ).splitlines()
-    for rel_path in files:
-        path = ROOT / rel_path
+    for path in _iter_source_python_files():
+        rel_path = path.relative_to(ROOT)
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (
