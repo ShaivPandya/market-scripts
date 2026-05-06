@@ -188,7 +188,7 @@ def _ontology_trace(max_depth: int = 3, **selector: str | None) -> dict:
     references = []
     for object_type in reference_types:
         references.extend(reads.list_objects(object_type, limit=500))
-    relations = []
+    relations: list[dict] = []
     for relation_type in sorted(PROVENANCE_RELATION_TYPES):
         relations.extend(
             _relation_payload(row)

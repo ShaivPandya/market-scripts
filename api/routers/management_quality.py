@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
@@ -303,11 +304,16 @@ def parse_management_quality_markdown(content: str) -> dict | None:
 
 
 def _render_management_quality_markdown(ticker: str, assessment: dict) -> str:
-    parsed = assessment.get("parsed") if isinstance(assessment.get("parsed"), dict) else {}
-    summary = parsed.get("summary") if isinstance(parsed.get("summary"), dict) else {}
-    scorecard = parsed.get("scorecard") if isinstance(parsed.get("scorecard"), list) else []
-    accomplishments = parsed.get("accomplishments") if isinstance(parsed.get("accomplishments"), list) else []
-    setbacks = parsed.get("setbacks") if isinstance(parsed.get("setbacks"), list) else []
+    raw_parsed = assessment.get("parsed")
+    parsed: dict[str, Any] = raw_parsed if isinstance(raw_parsed, dict) else {}
+    raw_summary = parsed.get("summary")
+    summary: dict[str, Any] = raw_summary if isinstance(raw_summary, dict) else {}
+    raw_scorecard = parsed.get("scorecard")
+    scorecard: list[Any] = raw_scorecard if isinstance(raw_scorecard, list) else []
+    raw_accomplishments = parsed.get("accomplishments")
+    accomplishments: list[Any] = raw_accomplishments if isinstance(raw_accomplishments, list) else []
+    raw_setbacks = parsed.get("setbacks")
+    setbacks: list[Any] = raw_setbacks if isinstance(raw_setbacks, list) else []
 
     lines = [
         f"# {ticker} Management Quality",
@@ -321,7 +327,8 @@ def _render_management_quality_markdown(ticker: str, assessment: dict) -> str:
         ("Business Value Understanding", "business_value_understanding"),
         ("Follow-through / Character", "follow_through"),
     ):
-        item = summary.get(key) if isinstance(summary.get(key), dict) else {}
+        raw_item = summary.get(key)
+        item: dict[str, Any] = raw_item if isinstance(raw_item, dict) else {}
         rating = item.get("rating") or "Insufficient evidence"
         text = item.get("text") or "Insufficient evidence."
         lines.append(f"- **{label}**: {rating} - {text}")
