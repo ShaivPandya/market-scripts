@@ -1116,8 +1116,12 @@ export async function runOntologyQueryAsync(body: OntologyQueryBody, signal?: Ab
   }
 }
 
-export const fetchEconomicGrowth = () =>
-  client.get("/economic-growth").then(r => r.data)
+type MacroFetchOptions = {
+  force_refresh?: boolean
+}
+
+export const fetchEconomicGrowth = (options?: MacroFetchOptions) =>
+  client.get("/economic-growth", { params: options }).then(r => r.data)
 
 export const uploadEconomicGrowthCrbFile = (file: File) => {
   const formData = new FormData()
@@ -1167,8 +1171,8 @@ export const analyzeEconomicGrowth = (body: {
   currency_periods: string[]
 }) => client.post("/economic-growth/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
-export const fetchLaborMarket = () =>
-  client.get("/labor-market").then(r => r.data)
+export const fetchLaborMarket = (options?: MacroFetchOptions) =>
+  client.get("/labor-market", { params: options }).then(r => r.data)
 
 export const analyzeLaborMarket = (body: {
   latest: Record<string, { value: number | null; date: string | null; change: number | null }>
@@ -1177,8 +1181,8 @@ export const analyzeLaborMarket = (body: {
   timestamp?: string | null
 }) => client.post("/labor-market/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
-export const fetchHousing = () =>
-  client.get("/housing").then(r => r.data)
+export const fetchHousing = (options?: MacroFetchOptions) =>
+  client.get("/housing", { params: options }).then(r => r.data)
 
 export const analyzeHousing = (body: {
   latest: Record<string, { value: number | null; date: string | null; change: number | null }>
@@ -1187,8 +1191,8 @@ export const analyzeHousing = (body: {
   timestamp?: string | null
 }) => client.post("/housing/analyze", body, { timeout: 180_000 }).then(r => r.data)
 
-export const fetchLiquidity = () =>
-  client.get("/liquidity").then(r => r.data)
+export const fetchLiquidity = (options?: MacroFetchOptions) =>
+  client.get("/liquidity", { params: options }).then(r => r.data)
 
 export const analyzeLiquidity = (body: {
   composite_score?: number | null

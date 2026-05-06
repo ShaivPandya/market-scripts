@@ -168,7 +168,8 @@ export function EconomicGrowth() {
       const latestDate = formatDisplayDate(result.crb.latest_date)
       setUploadError(null)
       setUploadNotice(latestDate ? `CRB updated through ${latestDate}` : "CRB file updated")
-      await queryClient.invalidateQueries({ queryKey: ["economic-growth"] })
+      const refreshed = await fetchEconomicGrowth({ force_refresh: true })
+      queryClient.setQueryData(["economic-growth"], refreshed)
     },
     onError: err => {
       setUploadNotice(null)
@@ -386,7 +387,11 @@ export function EconomicGrowth() {
               )}
               {uploadMutation.isPending ? "Uploading..." : "Upload CRB"}
             </button>
-            <RefreshButton queryKeys={[["economic-growth"]]} />
+            <RefreshButton
+              clearBackendCache={false}
+              beforeRefetch={() => fetchEconomicGrowth({ force_refresh: true })}
+              queryKeys={[["economic-growth"]]}
+            />
           </div>
           {(uploadNotice || uploadError) && (
             <p className={`max-w-[22rem] text-right text-xs font-medium ${uploadError ? "text-red-600" : "text-green-600"}`}>

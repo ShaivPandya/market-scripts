@@ -2,13 +2,15 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Query, UploadFile
 from pydantic import BaseModel
 
-from api.cache import delete_cached, get_or_set_cached, short_cache
+from api.cache import daily_cache, delete_cached
 from api.exceptions import ConfigurationError, DataFetchError, ValidationError
+from api.macro_snapshots import get_snapshot_backed_response
 from api.request_limits import read_upload_file_bytes
 from api.serializers import serialize_response
+from api.snapshot_keys import SNAPSHOT_ECONOMIC_GROWTH
 from api.state_storage import exists_text, read_bytes, read_text, write_bytes, write_text
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 from paths import PROJECT_ROOT
@@ -109,31 +111,38 @@ def _write_managed_crb(payload: bytes, metadata: dict) -> None:
 
 
 @router.get("/economic-growth")
-def get_economic_growth():
+def get_economic_growth(force_refresh: bool = Query(False)):
     key = ECONOMIC_GROWTH_CACHE_KEY
+    return _normalize_currency_payload(
+        get_snapshot_backed_response(
+            snapshot_key=SNAPSHOT_ECONOMIC_GROWTH,
+            cache=daily_cache,
+            cache_key=key,
+            source="economic_growth",
+            load_payload=load_economic_growth_payload,
+            force_refresh=force_refresh,
+        )
+    )
 
-    def loader():
-        try:
-            from macro.economic_growth.economic_growth import get_data
 
-            crb_bytes, crb_metadata = _load_managed_crb()
-            if crb_bytes is not None:
-                data = get_data(
-                    crb_bytes=crb_bytes,
-                    crb_filename=crb_metadata.get("filename")
-                    if isinstance(crb_metadata.get("filename"), str)
-                    else None,
-                    crb_uploaded_at=(
-                        crb_metadata.get("uploaded_at") if isinstance(crb_metadata.get("uploaded_at"), str) else None
-                    ),
-                )
-            else:
-                data = get_data()
-        except Exception as e:
-            raise DataFetchError(source="economic_growth", detail=str(e)) from e
-        return _normalize_currency_payload(serialize_response(data))
+def load_economic_growth_payload() -> dict:
+    try:
+        from macro.economic_growth.economic_growth import get_data
 
-    return _normalize_currency_payload(get_or_set_cached(short_cache, key, loader))
+        crb_bytes, crb_metadata = _load_managed_crb()
+        if crb_bytes is not None:
+            data = get_data(
+                crb_bytes=crb_bytes,
+                crb_filename=crb_metadata.get("filename") if isinstance(crb_metadata.get("filename"), str) else None,
+                crb_uploaded_at=(
+                    crb_metadata.get("uploaded_at") if isinstance(crb_metadata.get("uploaded_at"), str) else None
+                ),
+            )
+        else:
+            data = get_data()
+    except Exception as e:
+        raise DataFetchError(source="economic_growth", detail=str(e)) from e
+    return _normalize_currency_payload(serialize_response(data))
 
 
 @router.post("/economic-growth/crb-file")
@@ -150,7 +159,7 @@ async def upload_economic_growth_crb_file(
     filename = Path(file.filename or "crb.xlsx").name
     metadata = _crb_metadata_from_upload(payload, filename)
     _write_managed_crb(payload, metadata)
-    delete_cached(short_cache, ECONOMIC_GROWTH_CACHE_KEY)
+    delete_cached(daily_cache, ECONOMIC_GROWTH_CACHE_KEY)
     return serialize_response({"status": "ok", "crb": metadata})
 
 

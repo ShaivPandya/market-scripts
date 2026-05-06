@@ -105,7 +105,11 @@ export function Liquidity() {
             <Sparkles size={14} />
             AI Overview
           </button>
-          <RefreshButton queryKeys={[["liquidity"]]} />
+          <RefreshButton
+            clearBackendCache={false}
+            beforeRefetch={() => fetchLiquidity({ force_refresh: true })}
+            queryKeys={[["liquidity"]]}
+          />
         </div>
       </div>
 

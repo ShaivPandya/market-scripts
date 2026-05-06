@@ -129,7 +129,11 @@ export function Housing() {
             <Sparkles size={14} />
             AI Overview
           </button>
-          <RefreshButton queryKeys={[["housing"]]} />
+          <RefreshButton
+            clearBackendCache={false}
+            beforeRefetch={() => fetchHousing({ force_refresh: true })}
+            queryKeys={[["housing"]]}
+          />
         </div>
       </div>
 

@@ -1,31 +1,40 @@
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.cache import get_or_set_cached, short_cache
+from api.cache import daily_cache
 from api.exceptions import ConfigurationError, DataFetchError
+from api.macro_snapshots import get_snapshot_backed_response
 from api.serializers import serialize_response
+from api.snapshot_keys import SNAPSHOT_LABOR_MARKET
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 
 router = APIRouter()
 
 
+def load_labor_market_payload() -> dict:
+    try:
+        from macro.labor_market.labor_market import get_data
+
+        data = get_data()
+    except Exception as e:
+        raise DataFetchError(source="labor_market", detail=str(e)) from e
+
+    return serialize_response(data)
+
+
 @router.get("/labor-market")
-def get_labor_market():
+def get_labor_market(force_refresh: bool = Query(False)):
     key = "labor_market"
-
-    def loader():
-        try:
-            from macro.labor_market.labor_market import get_data
-
-            data = get_data()
-        except Exception as e:
-            raise DataFetchError(source="labor_market", detail=str(e)) from e
-
-        return serialize_response(data)
-
-    return get_or_set_cached(short_cache, key, loader)
+    return get_snapshot_backed_response(
+        snapshot_key=SNAPSHOT_LABOR_MARKET,
+        cache=daily_cache,
+        cache_key=key,
+        source="labor_market",
+        load_payload=load_labor_market_payload,
+        force_refresh=force_refresh,
+    )
 
 
 class LaborMarketAnalyzeRequest(BaseModel):
