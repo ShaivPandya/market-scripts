@@ -62,7 +62,9 @@ class OntologyRuntimeReadService:
         if not _ontology_primary_writes_enabled():
             return _legacy_get(object_uid)
         row = self.objects.get_object(object_uid)
-        return object_props(row) if row else None
+        if not row:
+            return None
+        return self._project_object(str(row.get("object_type") or ""), object_props(row))
 
     def list_objects(
         self,
@@ -74,9 +76,19 @@ class OntologyRuntimeReadService:
         if not _ontology_primary_writes_enabled():
             return _legacy_list_objects(object_type, filters=filters, limit=limit)
         return [
-            object_props(row)
+            self._project_object(object_type, object_props(row))
             for row in self.objects.query_objects(object_type, filters=_clean_filters(filters), limit=limit)
         ]
+
+    def management_quality_assessment(self, ticker: str) -> dict[str, Any] | None:
+        if not _ontology_primary_writes_enabled():
+            return None
+        normalized = _ticker(ticker)
+        rows = self.list_objects("ManagementQualityAssessment", filters={"ticker": normalized}, limit=20)
+        active = [row for row in rows if str(row.get("status") or "active").lower() == "active"]
+        candidates = active or rows
+        candidates.sort(key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""), reverse=True)
+        return candidates[0] if candidates else None
 
     def positions(self, *, include_hedges: bool = False, limit: int = 1000) -> list[dict[str, Any]]:
         if not _ontology_primary_writes_enabled():
@@ -229,6 +241,133 @@ class OntologyRuntimeReadService:
     def report_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.list_objects("ReportRun", limit=limit)
         return sorted(rows, key=lambda row: str(row.get("as_of") or row.get("synced_at") or ""), reverse=True)
+
+    def _raw_object(self, object_uid: str) -> dict[str, Any] | None:
+        row = self.objects.get_object(object_uid)
+        return object_props(row) if row else None
+
+    def _raw_objects(
+        self,
+        object_type: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return [
+            object_props(row)
+            for row in self.objects.query_objects(object_type, filters=_clean_filters(filters), limit=limit)
+        ]
+
+    def _project_object(self, object_type: str, row: dict[str, Any]) -> dict[str, Any]:
+        if object_type == "IdeaEvaluation":
+            return self._project_idea_evaluation(row)
+        if object_type == "IdeaComparisonRun":
+            return self._project_idea_comparison_run(row)
+        if object_type == "OptimizationRun":
+            return self._project_optimization_run(row)
+        if object_type == "OptimizationAlert":
+            return self._project_optimization_alert(row)
+        if object_type == "ManagementQualityAssessment":
+            return self._project_management_quality_assessment(row)
+        return row
+
+    def _project_idea_evaluation(self, row: dict[str, Any]) -> dict[str, Any]:
+        uid = str(row.get("id") or row.get("object_uid") or "")
+        factor_rows = self._raw_objects("FactorScore", filters={"parent_uid": uid}, limit=100) if uid else []
+        if factor_rows:
+            factors: dict[str, dict[str, Any]] = {}
+            for factor in sorted(factor_rows, key=lambda item: str(item.get("factor_name") or item.get("id") or "")):
+                name = str(factor.get("factor_name") or "").strip()
+                if not name:
+                    continue
+                factors[name] = {
+                    key: factor.get(key)
+                    for key in ("score", "status", "rationale", "missing", "weight")
+                    if factor.get(key) is not None
+                }
+            row["factor_scores"] = factors
+        missing_rows = (
+            self._raw_objects("MissingInformationRequirement", filters={"parent_uid": uid}, limit=100) if uid else []
+        )
+        if missing_rows:
+            row["missing_information"] = [
+                {
+                    "field": item.get("field"),
+                    "severity": item.get("severity"),
+                    "reason": item.get("reason"),
+                    "status": item.get("status"),
+                }
+                for item in sorted(missing_rows, key=lambda item: str(item.get("id") or ""))
+            ]
+        return row
+
+    def _project_idea_comparison_run(self, row: dict[str, Any]) -> dict[str, Any]:
+        uid = str(row.get("id") or row.get("object_uid") or "")
+        ranking_rows = self._raw_objects("IdeaComparisonRanking", filters={"comparison_run_id": uid}, limit=1000)
+        if ranking_rows:
+            rankings = sorted(
+                ranking_rows, key=lambda item: (int(item.get("rank") or 0), str(item.get("ticker") or ""))
+            )
+            row["rankings"] = rankings
+            row["ranking_count"] = len(rankings)
+        return row
+
+    def _project_optimization_run(self, row: dict[str, Any]) -> dict[str, Any]:
+        uid = str(row.get("id") or row.get("object_uid") or row.get("run_id") or "")
+        if uid:
+            snapshots = self._raw_objects("OptimizationActionSnapshot", filters={"run_id": uid}, limit=1000)
+            if snapshots:
+                row["snapshots"] = sorted(
+                    snapshots,
+                    key=lambda item: (
+                        str(item.get("ticker") or ""),
+                        str(item.get("created_at") or item.get("updated_at") or ""),
+                    ),
+                )
+            row = self._attach_source_freshness(row, uid)
+        return row
+
+    def _project_optimization_alert(self, row: dict[str, Any]) -> dict[str, Any]:
+        current_uid = str(row.get("current_snapshot_id") or "").strip()
+        previous_uid = str(row.get("previous_snapshot_id") or "").strip()
+        if current_uid and not isinstance(row.get("current_snapshot"), dict):
+            row["current_snapshot"] = self._raw_object(current_uid)
+        if previous_uid and not isinstance(row.get("previous_snapshot"), dict):
+            row["previous_snapshot"] = self._raw_object(previous_uid)
+        uid = str(row.get("id") or row.get("object_uid") or "")
+        return self._attach_source_freshness(row, uid) if uid else row
+
+    def _attach_source_freshness(self, row: dict[str, Any], uid: str) -> dict[str, Any]:
+        freshness_rows = self._raw_objects("SourceFreshness", filters={"parent_uid": uid}, limit=100)
+        if not freshness_rows:
+            return row
+        source_freshness: dict[str, dict[str, Any]] = {}
+        for item in freshness_rows:
+            name = str(item.get("source_name") or "").strip()
+            if not name:
+                continue
+            source_freshness[name] = {
+                key: item.get(key)
+                for key in ("status", "checked_at", "as_of", "freshness_category", "error", "metadata")
+                if item.get(key) is not None
+            }
+        row["source_freshness"] = source_freshness
+        return row
+
+    def _project_management_quality_assessment(self, row: dict[str, Any]) -> dict[str, Any]:
+        uid = str(row.get("id") or row.get("object_uid") or "")
+        if not uid:
+            return row
+        for child_type, key in (
+            ("ManagementQualityScorecardRow", "scorecard"),
+            ("ManagementQualityAccomplishment", "accomplishments"),
+            ("ManagementQualitySetback", "setbacks"),
+        ):
+            children = self._raw_objects(child_type, filters={"assessment_id": uid}, limit=200)
+            if children:
+                row[key] = sorted(children, key=lambda item: int(item.get("ordinal") or 0))
+        row["parsed"] = _management_quality_parsed_from_assessment(row)
+        return row
 
 
 def _legacy_get(object_uid: str) -> dict[str, Any] | None:
@@ -474,3 +613,53 @@ def _ticker_status_filter(ticker: str | None, status: str | None) -> dict[str, A
 
 def _first(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return rows[0] if rows else None
+
+
+def _management_quality_parsed_from_assessment(assessment: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "overall_rating": assessment.get("overall_rating"),
+        "bottom_line": assessment.get("bottom_line"),
+        "owner_mindset": {
+            "rating": assessment.get("owner_mindset_rating"),
+            "text": assessment.get("owner_mindset_text"),
+        },
+        "business_value_understanding": {
+            "rating": assessment.get("business_value_understanding_rating"),
+            "text": assessment.get("business_value_understanding_text"),
+        },
+        "follow_through": {
+            "rating": assessment.get("follow_through_rating"),
+            "text": assessment.get("follow_through_text"),
+        },
+    }
+    compact_summary = {key: value for key, value in summary.items() if value not in (None, "", {})}
+    return {
+        "summary": compact_summary or None,
+        "scorecard": [
+            {
+                "question": row.get("question"),
+                "rating": row.get("rating"),
+                "evidence": row.get("evidence"),
+            }
+            for row in assessment.get("scorecard", [])
+            if isinstance(row, dict)
+        ]
+        or None,
+        "accomplishments": [
+            {"title": row.get("title"), "text": row.get("text")}
+            for row in assessment.get("accomplishments", [])
+            if isinstance(row, dict)
+        ]
+        or None,
+        "setbacks": [
+            {
+                "title": row.get("title"),
+                "text": row.get("text"),
+                "response_rating": row.get("response_rating"),
+                "response_text": row.get("response_text"),
+            }
+            for row in assessment.get("setbacks", [])
+            if isinstance(row, dict)
+        ]
+        or None,
+    }

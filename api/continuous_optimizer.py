@@ -68,9 +68,12 @@ def _business_key(prefix: str, *parts: Any) -> str:
 def _write_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
     props = dict(properties)
     props.setdefault("updated_at", _now_iso())
+    if object_type == "OptimizationRun" and str(props.get("status") or "").lower() == "succeeded":
+        props["status"] = "completed"
     if not ontology_primary_writes_enabled():
         return _write_legacy_runtime_object(object_type, business_key, props)
-    row = OntologyObjectService().write_object(
+    service = OntologyObjectService()
+    row = service.write_object(
         object_type,
         business_key,
         props,
@@ -85,7 +88,136 @@ def _write_runtime_object(object_type: str, business_key: str, properties: dict[
     meta = row.get("_meta")
     if isinstance(meta, dict):
         payload["_meta"] = meta
+    _write_optimizer_graph(service, object_type, payload)
     return payload
+
+
+def _write_relation(
+    service: OntologyObjectService,
+    source_uid: Any,
+    target_uid: Any,
+    relation_type: str,
+    *,
+    properties: dict[str, Any] | None = None,
+) -> None:
+    source = str(source_uid or "").strip()
+    target = str(target_uid or "").strip()
+    if not source or not target:
+        return
+    props = {"ontology_run_id": "operational", **(properties or {})}
+    service.write_relation(
+        source,
+        target,
+        relation_type,
+        props,
+        _now_iso(),
+        actor=system_actor("continuous_optimizer"),
+        provenance=f"pv:continuous_optimizer:{relation_type}:{source}:{target}:{_stable_hash(props)}",
+    )
+
+
+def _write_child_object(
+    service: OntologyObjectService,
+    object_type: str,
+    business_key: str,
+    properties: dict[str, Any],
+) -> dict[str, Any]:
+    props = {**properties, "ontology_run_id": "operational"}
+    row = service.write_object(
+        object_type,
+        business_key,
+        props,
+        props.get("checked_at") or props.get("as_of") or _now_iso(),
+        actor=system_actor("continuous_optimizer"),
+        provenance=f"pv:continuous_optimizer:{object_type}:{business_key}:{_stable_hash(props)}",
+        input_hash=_stable_hash(props),
+    )
+    payload = dict(row.get("properties") or props)
+    payload["id"] = str(row.get("object_uid") or payload.get("id") or business_key)
+    payload["object_uid"] = payload["id"]
+    return payload
+
+
+def _freshness_category(status: Any) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"ok", "fresh"}:
+        return "fresh"
+    if normalized in {"stale", "degraded", "failed", "error"}:
+        return normalized
+    return "unknown"
+
+
+def _write_source_freshness(
+    service: OntologyObjectService,
+    parent_uid: str,
+    parent_type: str,
+    source_freshness: dict[str, Any],
+) -> None:
+    for source_name, raw in source_freshness.items():
+        payload = raw if isinstance(raw, dict) else {"status": str(raw)}
+        key = f"{parent_uid}:source:{source_name}"
+        freshness = _write_child_object(
+            service,
+            "SourceFreshness",
+            key,
+            {
+                "freshness_id": key,
+                "parent_uid": parent_uid,
+                "parent_type": parent_type,
+                "source_name": str(source_name),
+                "status": str(payload.get("status") or "unknown"),
+                "checked_at": payload.get("checked_at") or _now_iso(),
+                "as_of": payload.get("as_of"),
+                "freshness_category": _freshness_category(payload.get("status")),
+                "error": payload.get("error"),
+                "metadata": payload,
+            },
+        )
+        _write_relation(
+            service,
+            parent_uid,
+            freshness.get("id"),
+            "optimization_object_has_source_freshness",
+        )
+
+
+def _write_optimizer_graph(service: OntologyObjectService, object_type: str, payload: dict[str, Any]) -> None:
+    uid = _object_id(payload)
+    if not uid:
+        return
+    if object_type == "OptimizationRun":
+        _write_relation(service, payload.get("mission_id"), uid, "optimization_mission_has_run")
+        source_freshness = payload.get("source_freshness")
+        if isinstance(source_freshness, dict):
+            _write_source_freshness(service, uid, "OptimizationRun", source_freshness)
+    elif object_type == "OptimizationActionSnapshot":
+        _write_relation(service, payload.get("run_id"), uid, "optimization_run_has_snapshot")
+        ticker = str(payload.get("ticker") or "").strip().upper()
+        if ticker:
+            _write_relation(service, uid, f"position:{ticker}", "optimization_snapshot_targets_position")
+            _write_relation(service, uid, f"instrument:{ticker.lower()}", "optimization_snapshot_targets_instrument")
+    elif object_type == "OptimizationAlert":
+        _write_relation(service, uid, payload.get("current_snapshot_id"), "optimization_alert_current_snapshot")
+        _write_relation(service, uid, payload.get("previous_snapshot_id"), "optimization_alert_previous_snapshot")
+        approval_uid = _prefixed_uid(payload.get("approval_id") or payload.get("action_item_approval_id"), "approval")
+        _write_relation(service, uid, approval_uid, "optimization_alert_links_approval")
+        _write_relation(
+            service,
+            uid,
+            _prefixed_uid(payload.get("action_item_id"), "action_item"),
+            "optimization_alert_links_action_item",
+        )
+        evidence = _as_dict(payload.get("evidence"))
+        source_freshness = evidence.get("source_freshness")
+        if isinstance(source_freshness, dict):
+            _write_source_freshness(service, uid, "OptimizationAlert", source_freshness)
+
+
+def _prefixed_uid(value: Any, prefix: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text if text.startswith(f"{prefix}:") else f"{prefix}:{text}"
 
 
 def _write_legacy_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
@@ -423,10 +555,53 @@ def _stage_action_item(alert: dict[str, Any], snapshot: dict[str, Any]) -> str |
     return str(approval["id"]) if approval and approval.get("id") is not None else None
 
 
+def _ensure_default_ontology_mission() -> dict[str, Any]:
+    now = _now_iso()
+    try:
+        from portfolio import core_db
+
+        scenario = core_db._default_optimization_scenario()  # noqa: SLF001 - shared default seed contract.
+        source_config = core_db._default_optimization_sources()  # noqa: SLF001
+        thresholds = core_db._default_optimization_thresholds()  # noqa: SLF001
+        name = core_db.DEFAULT_OPTIMIZATION_MISSION_NAME
+        schedule = core_db.DEFAULT_OPTIMIZATION_SCHEDULE
+    except Exception:
+        scenario = {"preset": "balanced"}
+        source_config = {"mode": "recommend_and_stage"}
+        thresholds = {
+            "confidence_bucket_edges": [0.35, 0.65, 0.8],
+            "priority_bucket_edges": [0.75, 1.5, 2.5],
+            "stage_actions": True,
+            "suppress_low_severity_holds": True,
+        }
+        name = "Daily Command Center"
+        schedule = "Weekdays at 10:15 ET"
+
+    mission = _write_runtime_object(
+        "OptimizationMission",
+        "optimization_mission:default",
+        {
+            "id": "optimization_mission:default",
+            "mission_id": "default",
+            "name": name,
+            "status": "active",
+            "schedule_label": schedule,
+            "scenario": scenario,
+            "source_config": source_config,
+            "thresholds": thresholds,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    return mission
+
+
 def _get_mission(mission_id: Any) -> dict[str, Any] | None:
     reads = OntologyRuntimeReadService()
     if mission_id:
         key = str(mission_id)
+        if ontology_primary_writes_enabled():
+            return reads.get(key) if key.startswith("optimization_mission:") else None
         for candidate in (key, f"optimizationmission:{key}", f"optimization_mission:{key}"):
             mission = reads.get(candidate)
             if mission:
@@ -439,7 +614,11 @@ def _get_mission(mission_id: Any) -> dict[str, Any] | None:
     if active:
         return active[0]
     missions = reads.list_objects("OptimizationMission", limit=1)
-    return missions[0] if missions else None
+    if missions:
+        return missions[0]
+    if ontology_primary_writes_enabled():
+        return _ensure_default_ontology_mission()
+    return None
 
 
 def _create_run(mission: dict[str, Any], input_hash: str) -> dict[str, Any]:
@@ -564,7 +743,7 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
             alert_uid = _business_key(
                 "optimization_alert",
                 run_id,
-                snapshot.get("ticker") or uuid4().hex,
+                snapshot.get("id") or snapshot.get("snapshot_id") or snapshot.get("ticker") or uuid4().hex,
                 _alert_type(previous, snapshot),
             )
             alert = _write_runtime_object(
@@ -626,7 +805,7 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
             run_id,
             {
                 **run,
-                "status": "succeeded",
+                "status": "completed",
                 "completed_at": _now_iso(),
                 "summary": summary,
                 "source_freshness": source_freshness,

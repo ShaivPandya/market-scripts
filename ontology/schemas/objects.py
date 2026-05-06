@@ -1748,6 +1748,98 @@ class IdeaComparisonRunV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class IdeaComparisonRankingV1(OntologySchemaBase):
+    ranking_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    comparison_run_id: NonBlankStr
+    run_id: str | None = None
+    idea_id: NonBlankStr
+    evaluation_id: NonBlankStr
+    ticker: NonBlankStr
+    rank: int = Field(ge=1)
+    action: NonBlankStr
+    score: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence_level: NonBlankStr = "low"
+    rationale: str | None = None
+    created_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _ticker(cls, value: object) -> str:
+        return canonical_ticker(value)
+
+    @field_validator(
+        "ranking_id",
+        "comparison_run_id",
+        "idea_id",
+        "evaluation_id",
+        "action",
+        "confidence_level",
+        mode="before",
+    )
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("run_id", "rationale", "created_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class FactorScoreV1(OntologySchemaBase):
+    factor_score_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    parent_uid: NonBlankStr
+    parent_type: NonBlankStr
+    factor_name: NonBlankStr
+    score: float | None = Field(default=None, ge=0, le=100)
+    status: str | None = None
+    rationale: str | None = None
+    missing: list[str] = Field(default_factory=list)
+    weight: float | None = None
+    created_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("factor_score_id", "parent_uid", "parent_type", "factor_name", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("status", "rationale", "created_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class MissingInformationRequirementV1(OntologySchemaBase):
+    requirement_id: NonBlankStr
+    id: str | int | None = None
+    legacy_id: int | None = None
+    parent_uid: NonBlankStr
+    parent_type: NonBlankStr
+    field: NonBlankStr
+    severity: NonBlankStr = "medium"
+    reason: str | None = None
+    status: NonBlankStr = "open"
+    created_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("requirement_id", "parent_uid", "parent_type", "field", "severity", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("reason", "created_at", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 class OptimizationMissionV1(OntologySchemaBase):
     mission_id: NonBlankStr
     id: str | int | None = None
@@ -1907,6 +1999,180 @@ class OptimizationAlertV1(OntologySchemaBase):
         return clean_optional_text(value)
 
 
+class SourceFreshnessV1(OntologySchemaBase):
+    freshness_id: NonBlankStr
+    id: str | int | None = None
+    parent_uid: str | None = None
+    parent_type: str | None = None
+    source_name: NonBlankStr
+    status: NonBlankStr = "unknown"
+    checked_at: str | None = None
+    as_of: str | None = None
+    freshness_category: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    ontology_run_id: str | None = None
+
+    @field_validator("freshness_id", "source_name", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "parent_uid",
+        "parent_type",
+        "checked_at",
+        "as_of",
+        "freshness_category",
+        "error",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualityAssessmentV1(OntologySchemaBase):
+    assessment_id: NonBlankStr
+    id: str | int | None = None
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    status: NonBlankStr = "active"
+    overall_rating: str | None = None
+    bottom_line: str | None = None
+    owner_mindset_rating: str | None = None
+    owner_mindset_text: str | None = None
+    business_value_understanding_rating: str | None = None
+    business_value_understanding_text: str | None = None
+    follow_through_rating: str | None = None
+    follow_through_text: str | None = None
+    content_hash: str | None = None
+    document_id: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("assessment_id", "issuer_id", "status", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator(
+        "overall_rating",
+        "bottom_line",
+        "owner_mindset_rating",
+        "owner_mindset_text",
+        "business_value_understanding_rating",
+        "business_value_understanding_text",
+        "follow_through_rating",
+        "follow_through_text",
+        "content_hash",
+        "document_id",
+        "source_type",
+        "source_id",
+        "created_at",
+        "updated_at",
+        "ontology_run_id",
+        mode="before",
+    )
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualityScorecardRowV1(OntologySchemaBase):
+    row_id: NonBlankStr
+    id: str | int | None = None
+    assessment_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    question: NonBlankStr
+    rating: NonBlankStr
+    evidence: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("row_id", "assessment_id", "issuer_id", "question", "rating", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("evidence", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualityAccomplishmentV1(OntologySchemaBase):
+    accomplishment_id: NonBlankStr
+    id: str | int | None = None
+    assessment_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    title: str | None = None
+    text: NonBlankStr
+    period: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("accomplishment_id", "assessment_id", "issuer_id", "text", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("title", "period", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ManagementQualitySetbackV1(OntologySchemaBase):
+    setback_id: NonBlankStr
+    id: str | int | None = None
+    assessment_id: NonBlankStr
+    issuer_id: NonBlankStr
+    ticker: str | None = None
+    title: str | None = None
+    text: NonBlankStr
+    response_rating: str | None = None
+    response_text: str | None = None
+    ordinal: int = Field(default=0, ge=0)
+    ontology_run_id: str | None = None
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def _optional_ticker(cls, value: object) -> str | None:
+        return canonical_ticker(value) if clean_optional_text(value) else None
+
+    @field_validator("setback_id", "assessment_id", "issuer_id", "text", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("title", "response_rating", "response_text", "ontology_run_id", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
 OntologyObjectV1 = (
     PositionV1
     | AssetV1
@@ -1960,9 +2226,17 @@ OntologyObjectV1 = (
     | InvestmentIdeaV1
     | IdeaEvaluationV1
     | IdeaComparisonRunV1
+    | IdeaComparisonRankingV1
+    | FactorScoreV1
+    | MissingInformationRequirementV1
     | OptimizationMissionV1
     | OptimizationRunV1
     | OptimizationActionSnapshotV1
     | OptimizationAlertV1
+    | SourceFreshnessV1
+    | ManagementQualityAssessmentV1
+    | ManagementQualityScorecardRowV1
+    | ManagementQualityAccomplishmentV1
+    | ManagementQualitySetbackV1
 )
 JsonObject = dict[str, Any]

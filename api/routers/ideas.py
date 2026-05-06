@@ -140,7 +140,8 @@ def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> 
     payload = {**props, "ontology_run_id": "operational"}
     if not ontology_primary_writes_enabled():
         return _write_legacy_runtime_object(object_type, uid, payload)
-    row = OntologyObjectService().write_object(
+    service = OntologyObjectService()
+    row = service.write_object(
         object_type,
         uid,
         payload,
@@ -149,7 +150,253 @@ def _write_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> 
         provenance=f"pv:{object_type}:{uid}",
         input_hash=_stable_hash(payload),
     )
-    return _object_props(row) or payload
+    written = _object_props(row) or payload
+    if object_type == "IdeaEvaluation":
+        _write_idea_evaluation_graph(service, written, now=now)
+    elif object_type == "IdeaComparisonRun":
+        _write_idea_comparison_graph(service, written, now=now)
+    return written
+
+
+def _write_relation(
+    service: OntologyObjectService,
+    source_uid: Any,
+    target_uid: Any,
+    relation_type: str,
+    *,
+    now: str,
+    properties: dict[str, Any] | None = None,
+) -> None:
+    source = str(source_uid or "").strip()
+    target = str(target_uid or "").strip()
+    if not source or not target:
+        return
+    service.write_relation(
+        source,
+        target,
+        relation_type,
+        {"ontology_run_id": "operational", **(properties or {})},
+        now,
+        actor=actor_to_dict(admin_actor(source="ideas")),
+        provenance=f"pv:{relation_type}:{source}:{target}:{_stable_hash(properties or {})}",
+    )
+
+
+def _write_child_object(
+    service: OntologyObjectService,
+    object_type: str,
+    business_key: str,
+    props: dict[str, Any],
+    *,
+    now: str,
+) -> dict[str, Any]:
+    row = service.write_object(
+        object_type,
+        business_key,
+        {**props, "ontology_run_id": "operational"},
+        now,
+        actor=actor_to_dict(admin_actor(source="ideas")),
+        provenance=f"pv:{object_type}:{business_key}:{_stable_hash(props)}",
+        input_hash=_stable_hash(props),
+    )
+    return _object_props(row) or props
+
+
+def _write_evidence_graph(
+    service: OntologyObjectService,
+    parent_uid: str,
+    rows: Any,
+    *,
+    relation_type: str,
+    now: str,
+) -> None:
+    if not isinstance(rows, list):
+        return
+    for index, item in enumerate(rows, start=1):
+        if not isinstance(item, dict):
+            item = {"summary": str(item)}
+        summary = str(item.get("summary") or item.get("text") or item.get("url") or "").strip()
+        title = str(item.get("source") or item.get("title") or f"Evidence {index}").strip()
+        evidence_key = f"{parent_uid}:{relation_type}:{index}:{_stable_hash(item)}"
+        evidence = _write_child_object(
+            service,
+            "Evidence",
+            evidence_key,
+            {
+                "evidence_id": evidence_key,
+                "evidence_type": "idea_evaluator",
+                "title": title,
+                "summary": summary or title,
+                "confidence": _numeric_or_none(item.get("confidence"), minimum=0, maximum=1),
+                "observed_at": item.get("observed_at") or now,
+            },
+            now=now,
+        )
+        evidence_uid = str(evidence.get("id") or evidence.get("object_uid") or "")
+        _write_relation(service, parent_uid, evidence_uid, relation_type, now=now)
+        url = str(item.get("url") or "").strip()
+        if url:
+            citation_key = f"{evidence_uid}:{_stable_hash(url)}"
+            citation = _write_child_object(
+                service,
+                "Citation",
+                citation_key,
+                {
+                    "citation_id": citation_key,
+                    "title": title,
+                    "url": url,
+                    "document_artifact_id": item.get("document_artifact_id"),
+                    "source_record_id": item.get("source_record_id"),
+                },
+                now=now,
+            )
+            _write_relation(service, evidence_uid, citation.get("id"), "evidence_has_citation", now=now)
+
+
+def _write_idea_evaluation_graph(service: OntologyObjectService, evaluation: dict[str, Any], *, now: str) -> None:
+    evaluation_uid = str(evaluation.get("id") or evaluation.get("object_uid") or "")
+    idea_uid = str(evaluation.get("idea_id") or "")
+    if not evaluation_uid:
+        return
+    _write_relation(service, idea_uid, evaluation_uid, "idea_has_evaluation", now=now)
+
+    factors = evaluation.get("factor_scores")
+    if isinstance(factors, dict):
+        for factor_name, raw_factor in factors.items():
+            factor = raw_factor if isinstance(raw_factor, dict) else {"score": raw_factor}
+            factor_key = f"{evaluation_uid}:factor:{factor_name}"
+            factor_row = _write_child_object(
+                service,
+                "FactorScore",
+                factor_key,
+                {
+                    "factor_score_id": factor_key,
+                    "parent_uid": evaluation_uid,
+                    "parent_type": "IdeaEvaluation",
+                    "factor_name": str(factor_name),
+                    "score": _numeric_or_none(factor.get("score"), minimum=0, maximum=100),
+                    "status": factor.get("status"),
+                    "rationale": factor.get("rationale"),
+                    "missing": factor.get("missing") if isinstance(factor.get("missing"), list) else [],
+                    "created_at": evaluation.get("created_at") or evaluation.get("evaluated_at") or now,
+                },
+                now=now,
+            )
+            _write_relation(service, evaluation_uid, factor_row.get("id"), "research_object_has_factor_score", now=now)
+
+    missing = evaluation.get("missing_information")
+    if isinstance(missing, list):
+        for index, row in enumerate(missing, start=1):
+            if not isinstance(row, dict):
+                row = {"field": str(row), "severity": "medium", "reason": str(row)}
+            field = str(row.get("field") or "unspecified")
+            req_key = f"{evaluation_uid}:missing:{field}:{index}"
+            req = _write_child_object(
+                service,
+                "MissingInformationRequirement",
+                req_key,
+                {
+                    "requirement_id": req_key,
+                    "parent_uid": evaluation_uid,
+                    "parent_type": "IdeaEvaluation",
+                    "field": field,
+                    "severity": str(row.get("severity") or "medium"),
+                    "reason": row.get("reason"),
+                    "status": "open",
+                    "created_at": evaluation.get("created_at") or evaluation.get("evaluated_at") or now,
+                },
+                now=now,
+            )
+            _write_relation(
+                service,
+                evaluation_uid,
+                req.get("id"),
+                "research_object_has_missing_information",
+                now=now,
+            )
+
+    _write_evidence_graph(
+        service,
+        evaluation_uid,
+        evaluation.get("evidence"),
+        relation_type="research_object_supported_by_evidence",
+        now=now,
+    )
+    _write_evidence_graph(
+        service,
+        evaluation_uid,
+        evaluation.get("disconfirming_evidence"),
+        relation_type="research_object_disconfirmed_by_evidence",
+        now=now,
+    )
+    recommendation_id = _prefixed_uid(evaluation.get("recommendation_id"), "recommendation")
+    if recommendation_id:
+        _write_relation(
+            service,
+            evaluation_uid,
+            recommendation_id,
+            "research_object_links_recommendation",
+            now=now,
+        )
+    for approval_value in (
+        evaluation.get("approval_id"),
+        evaluation.get("recommendation_approval_id"),
+        evaluation.get("action_approval_id"),
+    ):
+        approval_uid = _prefixed_uid(approval_value, "approval")
+        if approval_uid:
+            _write_relation(service, evaluation_uid, approval_uid, "research_object_links_approval", now=now)
+    action_item_uid = _prefixed_uid(evaluation.get("action_item_id"), "action_item")
+    if action_item_uid:
+        _write_relation(service, evaluation_uid, action_item_uid, "research_object_links_action_item", now=now)
+
+
+def _prefixed_uid(value: Any, prefix: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text if text.startswith(f"{prefix}:") else f"{prefix}:{text}"
+
+
+def _write_idea_comparison_graph(service: OntologyObjectService, run: dict[str, Any], *, now: str) -> None:
+    run_uid = str(run.get("id") or run.get("object_uid") or run.get("run_id") or "")
+    rankings = run.get("rankings")
+    if not run_uid or not isinstance(rankings, list):
+        return
+    for index, row in enumerate(rankings, start=1):
+        if not isinstance(row, dict):
+            continue
+        rank = int(row.get("rank") or index)
+        idea_uid = _idea_uid(row.get("idea_id"))
+        evaluation_uid = _evaluation_uid(row.get("evaluation_id"))
+        ranking_key = f"{run_uid}:rank:{rank}:{idea_uid}"
+        ranking = _write_child_object(
+            service,
+            "IdeaComparisonRanking",
+            ranking_key,
+            {
+                "ranking_id": ranking_key,
+                "comparison_run_id": run_uid,
+                "run_id": run.get("run_id") or run_uid,
+                "idea_id": idea_uid,
+                "evaluation_id": evaluation_uid,
+                "ticker": row.get("ticker"),
+                "rank": rank,
+                "action": row.get("action") or "watch",
+                "score": _numeric_or_none(row.get("score"), minimum=0, maximum=100),
+                "confidence": _numeric_or_none(row.get("confidence"), minimum=0, maximum=1),
+                "confidence_level": row.get("confidence_level") or "low",
+                "rationale": row.get("rationale"),
+                "created_at": row.get("created_at") or run.get("created_at") or now,
+            },
+            now=now,
+        )
+        ranking_uid = ranking.get("id")
+        row["id"] = ranking_uid
+        row["run_id"] = run.get("run_id") or run_uid
+        _write_relation(service, run_uid, ranking_uid, "comparison_run_has_ranking", now=now)
+        _write_relation(service, ranking_uid, idea_uid, "ranking_targets_idea", now=now)
+        _write_relation(service, ranking_uid, evaluation_uid, "ranking_uses_evaluation", now=now)
 
 
 def _write_legacy_runtime_object(object_type: str, uid: str, props: dict[str, Any]) -> dict[str, Any]:
@@ -248,7 +495,10 @@ def _required_legacy_numeric_id(value: Any) -> int:
 
 def _get_idea(idea_id: Any) -> dict[str, Any] | None:
     reads = OntologyRuntimeReadService()
-    return reads.get(_idea_uid(idea_id))
+    text = str(idea_id or "").strip()
+    if ontology_primary_writes_enabled():
+        return reads.get(text) if text.startswith("investment_idea:") else None
+    return reads.get(_idea_uid(text))
 
 
 def _list_ideas(*, status: str | None = None, include_archived: bool = False, limit: int = 200) -> list[dict[str, Any]]:
@@ -266,7 +516,10 @@ def _list_idea_evaluations(idea_id: Any | None = None, *, limit: int = 100) -> l
 
 
 def _get_idea_evaluation(evaluation_id: Any) -> dict[str, Any] | None:
-    return OntologyRuntimeReadService().get(_evaluation_uid(evaluation_id))
+    text = str(evaluation_id or "").strip()
+    if ontology_primary_writes_enabled():
+        return OntologyRuntimeReadService().get(text) if text.startswith("idea_evaluation:") else None
+    return OntologyRuntimeReadService().get(_evaluation_uid(text))
 
 
 def _write_idea_evaluation(
@@ -379,6 +632,22 @@ def _read_state_text(folder: str, ticker: str) -> tuple[str | None, str | None]:
         return None, f"{folder}: {exc}"
 
 
+def _read_management_quality_text(ticker: str) -> tuple[str | None, str | None]:
+    if ontology_primary_writes_enabled():
+        try:
+            from api.routers.management_quality import _read_markdown_projection, _render_management_quality_markdown
+
+            assessment = OntologyRuntimeReadService().management_quality_assessment(ticker)
+            if assessment:
+                return (
+                    _read_markdown_projection(ticker) or _render_management_quality_markdown(ticker, assessment),
+                    None,
+                )
+        except Exception as exc:
+            return None, f"investment_management_quality: {exc}"
+    return _read_state_text("investment_management_quality", ticker)
+
+
 def _safe_tool(name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         from api.agent_tools import execute_tool
@@ -398,7 +667,7 @@ def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
     ticker = str(idea["ticker"]).upper()
     overview, overview_error = _read_state_text("investment_overviews", ticker)
     thesis, thesis_error = _read_state_text("investment_theses", ticker)
-    management_quality, management_quality_error = _read_state_text("investment_management_quality", ticker)
+    management_quality, management_quality_error = _read_management_quality_text(ticker)
 
     portfolio = _safe_tool("get_portfolio", {"include_hedges": True})
     signal_aggregator = _safe_tool("get_signal_aggregator", {"include_history": False, "lookback_weeks": 156})
@@ -1071,9 +1340,7 @@ def _idea_detail(idea_id: str) -> dict[str, Any]:
         raise NotFoundError("Investment idea", str(idea_id))
     overview, overview_error = _read_state_text("investment_overviews", str(idea["ticker"]).upper())
     thesis, thesis_error = _read_state_text("investment_theses", str(idea["ticker"]).upper())
-    management_quality, management_quality_error = _read_state_text(
-        "investment_management_quality", str(idea["ticker"]).upper()
-    )
+    management_quality, management_quality_error = _read_management_quality_text(str(idea["ticker"]).upper())
     overview_parsed = None
     if overview:
         try:
@@ -1163,7 +1430,8 @@ def list_idea_comparison_runs(limit: int = 20):
 
 @router.get("/ideas/comparison-runs/{run_id}")
 def get_idea_comparison_run(run_id: str):
-    run = OntologyRuntimeReadService().get(_comparison_uid(run_id))
+    key = run_id if ontology_primary_writes_enabled() else _comparison_uid(run_id)
+    run = OntologyRuntimeReadService().get(key)
     if not run:
         raise NotFoundError("Idea comparison run", run_id)
     return run

@@ -46,7 +46,11 @@ import { Dialog } from "@/components/shared/Dialog"
 import { ApprovalChangeSummary } from "@/components/shared/ApprovalChangeSummary"
 import { ActionButton, SelectInput, TextInput } from "@/components/shared/FormControls"
 import { EquityOverviewReadView } from "@/components/overview/EquityOverviewReadView"
-import type { ParsedManagementQuality, ManagementQualityBullet } from "@/lib/managementQualityTypes"
+import type {
+  ManagementQualityAssessment,
+  ManagementQualityBullet,
+  ParsedManagementQuality,
+} from "@/lib/managementQualityTypes"
 import type { ParsedOverview } from "@/lib/overviewTypes"
 import {
   DecisionStateBadge,
@@ -69,6 +73,7 @@ interface DossierData {
   management_quality: {
     content: string | null
     parsed: ParsedManagementQuality | null
+    assessment?: ManagementQualityAssessment | null
   }
   thesis: {
     meta: ThesisMeta | null

@@ -11,7 +11,19 @@ from pydantic import ValidationError
 from ontology.models import EntityType, OntologyEdge, OntologyNode
 from ontology.schema_definitions import SCHEMA_KIND_ONTOLOGY_OBJECT, ontology_schema_definitions
 from ontology.schemas.identity import action_item_id, evaluation_id, hedge_position_id, signal_id
-from ontology.schemas.objects import ActionItemV1, HedgePositionV1, InvestmentIdeaV1, PositionV1, ProvenanceEventV1
+from ontology.schemas.objects import (
+    ActionItemV1,
+    FactorScoreV1,
+    HedgePositionV1,
+    IdeaComparisonRankingV1,
+    InvestmentIdeaV1,
+    ManagementQualityAssessmentV1,
+    MissingInformationRequirementV1,
+    OptimizationRunV1,
+    PositionV1,
+    ProvenanceEventV1,
+    SourceFreshnessV1,
+)
 from ontology.schemas.registry import NODE_SCHEMAS, OntologySchemaValidationError, normalize_graph, normalize_node
 from ontology.schemas.relations import (
     PROVENANCE_RELATION_TYPES,
@@ -123,6 +135,51 @@ def test_runtime_migration_schema_rejects_unregistered_fields():
             status="watching",
             unregistered_field=True,
         )
+
+
+def test_first_class_research_optimizer_and_management_quality_objects_accept_uid_links():
+    ranking = IdeaComparisonRankingV1(
+        ranking_id="idea_comparison_ranking:run_1_rank_1",
+        comparison_run_id="idea_comparison_run:run_1",
+        idea_id="investment_idea:mu",
+        evaluation_id="idea_evaluation:eval_1",
+        ticker="mu",
+        rank=1,
+        action="buy",
+    )
+    factor = FactorScoreV1(
+        factor_score_id="factor_score:eval_1_management",
+        parent_uid="idea_evaluation:eval_1",
+        parent_type="IdeaEvaluation",
+        factor_name="management_quality",
+        score=82,
+    )
+    missing = MissingInformationRequirementV1(
+        requirement_id="missing_information_requirement:eval_1_valuation",
+        parent_uid="idea_evaluation:eval_1",
+        parent_type="IdeaEvaluation",
+        field="valuation",
+    )
+    run = OptimizationRunV1(run_id="optimization_run:run_1", mission_id="optimization_mission:default")
+    freshness = SourceFreshnessV1(
+        freshness_id="source_freshness:run_1_reports",
+        parent_uid=run.run_id,
+        parent_type="OptimizationRun",
+        source_name="reports",
+        status="ok",
+    )
+    assessment = ManagementQualityAssessmentV1(
+        assessment_id="management_quality_assessment:issuer_mu",
+        issuer_id="issuer:mu",
+        ticker="mu",
+    )
+
+    assert ranking.ticker == "MU"
+    assert factor.score == 82
+    assert missing.status == "open"
+    assert run.status == "running"
+    assert freshness.freshness_category is None
+    assert assessment.ticker == "MU"
 
 
 def test_every_entity_type_has_pydantic_schema_and_definition():

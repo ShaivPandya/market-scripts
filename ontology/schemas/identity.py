@@ -277,6 +277,27 @@ def idea_comparison_run_id(identifier: object) -> str:
     return f"idea_comparison_run:{slug(text)}"
 
 
+def idea_comparison_ranking_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("idea_comparison_ranking:"):
+        text = text.split(":", 1)[1]
+    return f"idea_comparison_ranking:{slug(text)}"
+
+
+def factor_score_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("factor_score:"):
+        text = text.split(":", 1)[1]
+    return f"factor_score:{slug(text)}"
+
+
+def missing_information_requirement_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("missing_information_requirement:"):
+        text = text.split(":", 1)[1]
+    return f"missing_information_requirement:{slug(text)}"
+
+
 def optimization_mission_id(identifier: object) -> str:
     text = str(identifier or "").strip()
     if text.startswith("optimization_mission:"):
@@ -303,3 +324,38 @@ def optimization_alert_id(identifier: object) -> str:
     if text.startswith("optimization_alert:"):
         text = text.split(":", 1)[1]
     return f"optimization_alert:{slug(text)}"
+
+
+def source_freshness_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("source_freshness:"):
+        text = text.split(":", 1)[1]
+    return f"source_freshness:{slug(text)}"
+
+
+def management_quality_assessment_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_assessment:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_assessment:{slug(text)}"
+
+
+def management_quality_scorecard_row_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_scorecard_row:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_scorecard_row:{slug(text)}"
+
+
+def management_quality_accomplishment_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_accomplishment:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_accomplishment:{slug(text)}"
+
+
+def management_quality_setback_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("management_quality_setback:"):
+        text = text.split(":", 1)[1]
+    return f"management_quality_setback:{slug(text)}"

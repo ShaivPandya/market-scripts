@@ -162,3 +162,123 @@ def test_legacy_runtime_backfill_reports_unmapped_provenance_refs(monkeypatch, t
 
     assert exc_info.value.unmapped_refs
     assert exc_info.value.unmapped_refs[0]["id"] == "link:bad"
+
+
+def test_legacy_runtime_backfill_promotes_domain_children_and_management_quality(monkeypatch, tmp_path):
+    monkeypatch.setenv("TALISMAN_ENABLE_LEGACY_BACKFILL", "true")
+    core_db = tmp_path / "core.db"
+    mgmt_dir = tmp_path / "investment_management_quality"
+    mgmt_dir.mkdir()
+    (mgmt_dir / "MU.md").write_text(
+        """# MU Management Quality
+
+## Executive Summary
+- **Overall Rating**: Strong
+
+## Management Scorecard
+| Question | Rating | Evidence |
+|----------|--------|----------|
+| Do managers think and act like owners? | Strong | Buybacks. |
+
+## Most Impressive Accomplishments
+- **HBM ramp (2025)**: Executed well.
+
+## Biggest Setbacks and Responses
+- **Inventory cycle (2023)**: Downturn. **Response**: Mixed - Costs reset.
+""",
+        encoding="utf-8",
+    )
+    (mgmt_dir / "RAW.md").write_text("unstructured source that still needs an assessment shell", encoding="utf-8")
+
+    with sqlite3.connect(core_db) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE investment_ideas (
+                id INTEGER, ticker TEXT, status TEXT, tags_json TEXT, metadata_json TEXT, created_at TEXT, updated_at TEXT,
+                latest_evaluation_id INTEGER, accepted_recommendation_id INTEGER
+            );
+            INSERT INTO investment_ideas VALUES (1, 'MU', 'watching', '[]', '{}', '2026-05-01', '2026-05-01', 10, 7);
+            CREATE TABLE idea_evaluations (
+                id INTEGER, idea_id INTEGER, ticker TEXT, evaluated_at TEXT, action TEXT, recommendation_status TEXT,
+                score REAL, confidence REAL, rationale TEXT, factor_scores_json TEXT, missing_information_json TEXT,
+                data_quality_json TEXT, evidence_json TEXT, disconfirming_evidence_json TEXT, portfolio_fit_json TEXT,
+                recommendation_record_json TEXT, recommendation_id INTEGER, approval_id INTEGER, action_approval_id INTEGER,
+                created_at TEXT
+            );
+            INSERT INTO idea_evaluations VALUES (
+                10, 1, 'MU', '2026-05-01', 'buy', 'clear', 82, 0.7, 'Good',
+                '{"management_quality":{"score":82,"status":"strong","rationale":"Good"}}',
+                '[{"field":"valuation","severity":"medium","reason":"Needs model."}]',
+                '{}',
+                '[{"source":"overview","summary":"Evidence","url":"https://example.test/mu"}]',
+                '[]',
+                '{}',
+                '{}',
+                7, 8, 9, '2026-05-01'
+            );
+            CREATE TABLE idea_comparison_runs (
+                id INTEGER, run_id TEXT, job_id TEXT, scope_statuses_json TEXT, summary TEXT, ranking_count INTEGER,
+                raw_result_json TEXT, created_at TEXT
+            );
+            INSERT INTO idea_comparison_runs VALUES (4, 'cmp-1', 'job-1', '["watching"]', 'Ranked', 1, '{}', '2026-05-01');
+            CREATE TABLE idea_comparison_rankings (
+                id INTEGER, run_id TEXT, idea_id INTEGER, evaluation_id INTEGER, ticker TEXT, rank INTEGER, action TEXT,
+                score REAL, confidence REAL, confidence_level TEXT, rationale TEXT, created_at TEXT
+            );
+            INSERT INTO idea_comparison_rankings VALUES (5, 'cmp-1', 1, 10, 'MU', 1, 'buy', 82, 0.7, 'high', 'Best', '2026-05-01');
+            CREATE TABLE optimization_missions (
+                id INTEGER, name TEXT, status TEXT, scenario_json TEXT, source_config_json TEXT, thresholds_json TEXT,
+                created_at TEXT, updated_at TEXT
+            );
+            INSERT INTO optimization_missions VALUES (1, 'Daily Command Center', 'active', '{}', '{}', '{}', '2026-05-01', '2026-05-01');
+            CREATE TABLE optimization_runs (
+                run_id TEXT, mission_id INTEGER, mission_name TEXT, status TEXT, started_at TEXT, completed_at TEXT,
+                input_hash TEXT, output_hash TEXT, summary_json TEXT, source_freshness_json TEXT, error TEXT
+            );
+            INSERT INTO optimization_runs VALUES (
+                'opt-run-1', 1, 'Daily Command Center', 'succeeded', '2026-05-01', '2026-05-01',
+                'in', 'out', '{}', '{"reports":{"status":"ok","checked_at":"2026-05-01"}}', NULL
+            );
+            CREATE TABLE optimization_action_snapshots (
+                id INTEGER, run_id TEXT, mission_id INTEGER, ticker TEXT, asset TEXT, direction TEXT, action TEXT,
+                conviction_band TEXT, priority_score REAL, confidence REAL, gate_status TEXT, severity TEXT,
+                state_hash TEXT, evidence_json TEXT, source_links_json TEXT, created_at TEXT
+            );
+            INSERT INTO optimization_action_snapshots VALUES (
+                3, 'opt-run-1', 1, 'MU', 'equity', 'long', 'Trim Long', 'medium', 2, 0.7,
+                'pass', 'high', 'state-1', '{}', '{}', '2026-05-01'
+            );
+            CREATE TABLE optimization_alerts (
+                id INTEGER, mission_id INTEGER, run_id TEXT, ticker TEXT, alert_type TEXT, severity TEXT, status TEXT,
+                previous_snapshot_id INTEGER, current_snapshot_id INTEGER, change_summary TEXT, evidence_json TEXT,
+                approval_id INTEGER, recommendation_id INTEGER, action_item_approval_id INTEGER, created_at TEXT,
+                dismissed_at TEXT, dismissed_note TEXT
+            );
+            INSERT INTO optimization_alerts VALUES (
+                2, 1, 'opt-run-1', 'MU', 'action_changed', 'high', 'open', NULL, 3, 'Changed', '{}',
+                8, NULL, 9, '2026-05-01', NULL, NULL
+            );
+            """
+        )
+
+    result = backfill_runtime_objects(core_db_path=core_db, management_quality_dir=mgmt_dir, dry_run=True)
+
+    assert result["objects"]["InvestmentIdea"] == 1
+    assert result["objects"]["IdeaEvaluation"] == 1
+    assert result["objects"]["FactorScore"] == 1
+    assert result["objects"]["MissingInformationRequirement"] == 1
+    assert result["objects"]["Evidence"] == 1
+    assert result["objects"]["Citation"] == 1
+    assert result["objects"]["IdeaComparisonRanking"] == 1
+    assert result["objects"]["SourceFreshness"] == 1
+    assert result["objects"]["OptimizationMission"] == 1
+    assert result["objects"]["OptimizationRun"] == 1
+    assert result["objects"]["OptimizationActionSnapshot"] == 1
+    assert result["objects"]["OptimizationAlert"] == 1
+    assert result["objects"]["ManagementQualityAssessment"] == 2
+    assert result["objects"]["DocumentArtifact"] == 2
+    assert result["objects"]["Issuer"] == 2
+    assert result["objects"]["ManagementQualityScorecardRow"] == 1
+    assert result["objects"]["ManagementQualityAccomplishment"] == 1
+    assert result["objects"]["ManagementQualitySetback"] == 1
+    assert result["relations"] >= 20

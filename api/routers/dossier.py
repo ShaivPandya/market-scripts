@@ -9,6 +9,7 @@ from fastapi import APIRouter
 
 from api.decision_state import normalize_action_item, normalize_approval
 from api.exceptions import NotFoundError
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -67,6 +68,16 @@ def get_dossier(ticker: str):
 
     # Management quality content
     management_quality_content = None
+    management_quality_assessment = None
+    if ontology_primary_writes_enabled():
+        try:
+            from api.routers.management_quality import _render_management_quality_markdown
+
+            management_quality_assessment = reads.management_quality_assessment(ticker)
+            if management_quality_assessment:
+                management_quality_content = _render_management_quality_markdown(ticker, management_quality_assessment)
+        except Exception:
+            management_quality_assessment = None
     try:
         from portfolio.management_quality_content import (
             management_quality_exists,
@@ -110,7 +121,10 @@ def get_dossier(ticker: str):
         "overview_parsed": overview_parsed,
         "management_quality": {
             "content": management_quality_content,
-            "parsed": management_quality_parsed,
+            "parsed": management_quality_assessment.get("parsed")
+            if management_quality_assessment
+            else management_quality_parsed,
+            "assessment": management_quality_assessment,
         },
         "thesis": {
             "meta": thesis_meta,

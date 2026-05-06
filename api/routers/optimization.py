@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response
-from ontology.object_service import OntologyObjectService
+from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.runtime_read_service import OntologyRuntimeReadService
 
 router = APIRouter()
@@ -29,6 +29,14 @@ def list_optimization_missions(status: str | None = None):
         filters={"status": status} if status else None,
         limit=100,
     )
+    if not missions:
+        from api.continuous_optimizer import _ensure_default_ontology_mission
+        from ontology.domain_write_service import ontology_primary_writes_enabled
+
+        if ontology_primary_writes_enabled():
+            seeded = _ensure_default_ontology_mission()
+            if not status or seeded.get("status") == status:
+                missions = [seeded]
     return {"missions": missions, "count": len(missions)}
 
 
@@ -39,7 +47,7 @@ def run_optimization_mission(mission_id: str, req: OptimizationRunRequest | None
         raise HTTPException(status_code=404, detail="Unknown optimization mission")
     body = req or OptimizationRunRequest()
     payload: dict[str, Any] = {
-        "mission_id": mission.get("id") or mission_id,
+        "mission_id": mission.get("object_uid") or mission.get("id") or mission_id,
         "source": body.source or "manual",
         "force": body.force,
     }
@@ -84,26 +92,17 @@ def dismiss_optimization_alert(alert_id: str, req: DismissOptimizationAlertReque
     if not alert:
         raise HTTPException(status_code=404, detail="Unknown optimization alert")
     props = {**alert, "status": "dismissed", "dismissal_note": req.note if req else None}
+    props["dismissed_at"] = props.get("dismissed_at") or datetime.now(UTC).isoformat()
     props.pop("_meta", None)
     props.pop("id", None)
     props.pop("object_uid", None)
-    row = OntologyObjectService().write_object(
-        "OptimizationAlert",
-        alert.get("object_uid") or alert.get("id") or alert_id,
-        props,
-        props.get("created_at") or props.get("as_of") or datetime.now(UTC).isoformat(),
-        provenance=f"pv:optimization_alert:{alert_id}:dismiss",
-    )
-    payload = dict(row.get("properties") or props)
-    object_uid = str(row.get("object_uid") or payload.get("id") or alert_id)
-    payload["id"] = object_uid
-    payload["object_uid"] = object_uid
-    meta = row.get("_meta")
-    if isinstance(meta, dict):
-        payload["_meta"] = meta
-    return payload
+    from api.continuous_optimizer import _write_runtime_object
+
+    return _write_runtime_object("OptimizationAlert", alert.get("object_uid") or alert.get("id") or alert_id, props)
 
 
 def _get_optimization_object(object_type: str, object_id: str) -> dict[str, Any] | None:
     reads = OntologyRuntimeReadService()
+    if ontology_primary_writes_enabled():
+        return reads.get(object_id)
     return reads.get(object_id) or reads.get(f"{object_type.lower()}:{object_id}")

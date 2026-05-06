@@ -25,7 +25,9 @@ from ontology.schemas.identity import (
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    factor_score_id,
     hedge_position_id,
+    idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
     instrument_id,
@@ -35,7 +37,12 @@ from ontology.schemas.identity import (
     issuer_id,
     kill_condition_id,
     macro_indicator_id,
+    management_quality_accomplishment_id,
+    management_quality_assessment_id,
+    management_quality_scorecard_row_id,
+    management_quality_setback_id,
     mandate_id,
+    missing_information_requirement_id,
     model_call_ref_id,
     object_version_ref_id,
     ontology_run_ref_id,
@@ -57,6 +64,7 @@ from ontology.schemas.identity import (
     schema_definition_ref_id,
     sector_id,
     signal_id,
+    source_freshness_id,
     source_record_object_id,
     thesis_claim_id,
     thesis_id,
@@ -84,7 +92,9 @@ from ontology.schemas.objects import (
     EvidenceV1,
     ExecutedActionV1,
     ExecutedDecisionRecordV1,
+    FactorScoreV1,
     HedgePositionV1,
+    IdeaComparisonRankingV1,
     IdeaComparisonRunV1,
     IdeaEvaluationV1,
     InstrumentV1,
@@ -94,7 +104,12 @@ from ontology.schemas.objects import (
     IssuerV1,
     KillConditionV1,
     MacroIndicatorV1,
+    ManagementQualityAccomplishmentV1,
+    ManagementQualityAssessmentV1,
+    ManagementQualityScorecardRowV1,
+    ManagementQualitySetbackV1,
     MandateV1,
+    MissingInformationRequirementV1,
     ModelCallRefV1,
     ObjectVersionRefV1,
     OntologyObjectV1,
@@ -117,6 +132,7 @@ from ontology.schemas.objects import (
     SchemaDefinitionRefV1,
     SectorV1,
     SignalV1,
+    SourceFreshnessV1,
     SourceRecordV1,
     ThesisClaimV1,
     ThesisV1,
@@ -193,10 +209,18 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "InvestmentIdea": InvestmentIdeaV1,
     "IdeaEvaluation": IdeaEvaluationV1,
     "IdeaComparisonRun": IdeaComparisonRunV1,
+    "IdeaComparisonRanking": IdeaComparisonRankingV1,
+    "FactorScore": FactorScoreV1,
+    "MissingInformationRequirement": MissingInformationRequirementV1,
     "OptimizationMission": OptimizationMissionV1,
     "OptimizationRun": OptimizationRunV1,
     "OptimizationActionSnapshot": OptimizationActionSnapshotV1,
     "OptimizationAlert": OptimizationAlertV1,
+    "SourceFreshness": SourceFreshnessV1,
+    "ManagementQualityAssessment": ManagementQualityAssessmentV1,
+    "ManagementQualityScorecardRow": ManagementQualityScorecardRowV1,
+    "ManagementQualityAccomplishment": ManagementQualityAccomplishmentV1,
+    "ManagementQualitySetback": ManagementQualitySetbackV1,
 }
 OPTIONAL_NODE_TYPES = {
     "Thesis",
@@ -226,10 +250,18 @@ OPTIONAL_NODE_TYPES = {
     "InvestmentIdea",
     "IdeaEvaluation",
     "IdeaComparisonRun",
+    "IdeaComparisonRanking",
+    "FactorScore",
+    "MissingInformationRequirement",
     "OptimizationMission",
     "OptimizationRun",
     "OptimizationActionSnapshot",
     "OptimizationAlert",
+    "SourceFreshness",
+    "ManagementQualityAssessment",
+    "ManagementQualityScorecardRow",
+    "ManagementQualityAccomplishment",
+    "ManagementQualitySetback",
     "Investor",
     "Account",
     "Portfolio",
@@ -615,6 +647,12 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return idea_evaluation_id(model.evaluation_id)
     if isinstance(model, IdeaComparisonRunV1):
         return idea_comparison_run_id(model.comparison_run_id)
+    if isinstance(model, IdeaComparisonRankingV1):
+        return idea_comparison_ranking_id(model.ranking_id)
+    if isinstance(model, FactorScoreV1):
+        return factor_score_id(model.factor_score_id)
+    if isinstance(model, MissingInformationRequirementV1):
+        return missing_information_requirement_id(model.requirement_id)
     if isinstance(model, OptimizationMissionV1):
         return optimization_mission_id(model.mission_id)
     if isinstance(model, OptimizationRunV1):
@@ -623,6 +661,16 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return optimization_action_snapshot_id(model.snapshot_id)
     if isinstance(model, OptimizationAlertV1):
         return optimization_alert_id(model.alert_id)
+    if isinstance(model, SourceFreshnessV1):
+        return source_freshness_id(model.freshness_id)
+    if isinstance(model, ManagementQualityAssessmentV1):
+        return management_quality_assessment_id(model.assessment_id)
+    if isinstance(model, ManagementQualityScorecardRowV1):
+        return management_quality_scorecard_row_id(model.row_id)
+    if isinstance(model, ManagementQualityAccomplishmentV1):
+        return management_quality_accomplishment_id(model.accomplishment_id)
+    if isinstance(model, ManagementQualitySetbackV1):
+        return management_quality_setback_id(model.setback_id)
     raise OntologySchemaValidationError(f"Unsupported node schema for type {node_type}")
 
 
@@ -829,8 +877,24 @@ def _label_for(node_type: str, label: str, model: OntologyObjectV1) -> str:
         return model.name
     if isinstance(model, InvestmentIdeaV1):
         return model.ticker
+    if isinstance(model, IdeaComparisonRankingV1):
+        return f"{model.ticker} rank {model.rank}"
+    if isinstance(model, FactorScoreV1):
+        return model.factor_name
+    if isinstance(model, MissingInformationRequirementV1):
+        return model.field
     if isinstance(model, OptimizationMissionV1):
         return model.name
     if isinstance(model, OptimizationAlertV1):
         return model.change_summary
+    if isinstance(model, SourceFreshnessV1):
+        return f"{model.source_name}: {model.status}"
+    if isinstance(model, ManagementQualityAssessmentV1):
+        return f"Management quality: {model.ticker or model.issuer_id}"
+    if isinstance(model, ManagementQualityScorecardRowV1):
+        return model.question
+    if isinstance(model, ManagementQualityAccomplishmentV1):
+        return model.title or model.text[:80]
+    if isinstance(model, ManagementQualitySetbackV1):
+        return model.title or model.text[:80]
     return label

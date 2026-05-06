@@ -29,7 +29,9 @@ from ontology.schemas.identity import (
     evidence_id,
     executed_action_id,
     executed_decision_record_id,
+    factor_score_id,
     hedge_position_id,
+    idea_comparison_ranking_id,
     idea_comparison_run_id,
     idea_evaluation_id,
     instrument_id,
@@ -39,7 +41,12 @@ from ontology.schemas.identity import (
     issuer_id,
     kill_condition_id,
     macro_indicator_id,
+    management_quality_accomplishment_id,
+    management_quality_assessment_id,
+    management_quality_scorecard_row_id,
+    management_quality_setback_id,
     mandate_id,
+    missing_information_requirement_id,
     model_call_ref_id,
     object_version_ref_id,
     ontology_run_ref_id,
@@ -61,6 +68,7 @@ from ontology.schemas.identity import (
     schema_definition_ref_id,
     sector_id,
     signal_id,
+    source_freshness_id,
     source_record_object_id,
     thesis_claim_id,
     thesis_id,
@@ -92,8 +100,15 @@ _GOVERNED_OBJECT_TYPES = {
     "Evaluation",
     "ExecutedAction",
     "ExecutedDecisionRecord",
+    "FactorScore",
     "HedgePosition",
+    "IdeaComparisonRanking",
     "KillCondition",
+    "ManagementQualityAccomplishment",
+    "ManagementQualityAssessment",
+    "ManagementQualityScorecardRow",
+    "ManagementQualitySetback",
+    "MissingInformationRequirement",
     "ObjectVersionRef",
     "PolicyGateResult",
     "Position",
@@ -620,6 +635,12 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         return idea_evaluation_id(props.get("evaluation_id") or props.get("id") or key)
     if object_type == "IdeaComparisonRun":
         return idea_comparison_run_id(props.get("comparison_run_id") or props.get("run_id") or props.get("id") or key)
+    if object_type == "IdeaComparisonRanking":
+        return idea_comparison_ranking_id(props.get("ranking_id") or props.get("id") or key)
+    if object_type == "FactorScore":
+        return factor_score_id(props.get("factor_score_id") or props.get("id") or key)
+    if object_type == "MissingInformationRequirement":
+        return missing_information_requirement_id(props.get("requirement_id") or props.get("id") or key)
     if object_type == "OptimizationMission":
         return optimization_mission_id(props.get("mission_id") or props.get("id") or key)
     if object_type == "OptimizationRun":
@@ -628,6 +649,16 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         return optimization_action_snapshot_id(props.get("snapshot_id") or props.get("id") or key)
     if object_type == "OptimizationAlert":
         return optimization_alert_id(props.get("alert_id") or props.get("id") or key)
+    if object_type == "SourceFreshness":
+        return source_freshness_id(props.get("freshness_id") or props.get("id") or key)
+    if object_type == "ManagementQualityAssessment":
+        return management_quality_assessment_id(props.get("assessment_id") or props.get("id") or key)
+    if object_type == "ManagementQualityScorecardRow":
+        return management_quality_scorecard_row_id(props.get("row_id") or props.get("id") or key)
+    if object_type == "ManagementQualityAccomplishment":
+        return management_quality_accomplishment_id(props.get("accomplishment_id") or props.get("id") or key)
+    if object_type == "ManagementQualitySetback":
+        return management_quality_setback_id(props.get("setback_id") or props.get("id") or key)
     if ":" in key and key.split(":", 1)[0]:
         return key
     return f"{_slug(object_type)}:{_slug(key)}"
@@ -803,6 +834,12 @@ def _with_object_identity_fields(object_type: str, business_key: str, props: dic
     elif object_type == "IdeaComparisonRun":
         out.setdefault("comparison_run_id", out.get("run_id") or out.get("id") or key)
         out.setdefault("run_id", out.get("comparison_run_id"))
+    elif object_type == "IdeaComparisonRanking":
+        out.setdefault("ranking_id", out.get("id") or key)
+    elif object_type == "FactorScore":
+        out.setdefault("factor_score_id", out.get("id") or key)
+    elif object_type == "MissingInformationRequirement":
+        out.setdefault("requirement_id", out.get("id") or key)
     elif object_type == "OptimizationMission":
         out.setdefault("mission_id", out.get("id") or key)
     elif object_type == "OptimizationRun":
@@ -811,6 +848,16 @@ def _with_object_identity_fields(object_type: str, business_key: str, props: dic
         out.setdefault("snapshot_id", out.get("id") or key)
     elif object_type == "OptimizationAlert":
         out.setdefault("alert_id", out.get("id") or key)
+    elif object_type == "SourceFreshness":
+        out.setdefault("freshness_id", out.get("id") or key)
+    elif object_type == "ManagementQualityAssessment":
+        out.setdefault("assessment_id", out.get("id") or key)
+    elif object_type == "ManagementQualityScorecardRow":
+        out.setdefault("row_id", out.get("id") or key)
+    elif object_type == "ManagementQualityAccomplishment":
+        out.setdefault("accomplishment_id", out.get("id") or key)
+    elif object_type == "ManagementQualitySetback":
+        out.setdefault("setback_id", out.get("id") or key)
     return out
 
 
