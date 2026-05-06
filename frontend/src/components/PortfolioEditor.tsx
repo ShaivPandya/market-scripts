@@ -603,20 +603,27 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
                       )}
                     </div>
 
-                    <div className="col-span-2 flex items-center gap-2">
-                      <input
-                        type="range"
-                        min={1}
-                        max={5}
-                        step={1}
-                        value={row.conviction}
-                        onChange={e => updatePositionRow(row._id, { conviction: Number(e.target.value) })}
-                        className="hig-slider w-full cursor-pointer"
-                        style={{ accentColor: "hsl(var(--accent))" }}
-                      />
-                      <span className="text-xs text-gray-500 whitespace-nowrap w-24 shrink-0">
-                        {row.conviction} · {CONVICTION_LABELS[row.conviction]}
-                      </span>
+                    <div className="col-span-2 min-w-0">
+                      <div className="flex min-w-0 flex-col justify-center gap-1 px-1">
+                        <input
+                          type="range"
+                          min={1}
+                          max={5}
+                          step={1}
+                          value={row.conviction}
+                          onChange={e => updatePositionRow(row._id, { conviction: Number(e.target.value) })}
+                          aria-label={`Conviction for ${row.ticker || "position"}`}
+                          aria-valuetext={`${row.conviction} ${CONVICTION_LABELS[row.conviction] ?? ""}`}
+                          className="hig-slider w-full min-w-0 cursor-pointer"
+                          style={{ accentColor: "hsl(var(--accent))" }}
+                        />
+                        <span
+                          className="block truncate text-center text-[11px] leading-none text-gray-500"
+                          title={`${row.conviction} · ${CONVICTION_LABELS[row.conviction] ?? ""}`}
+                        >
+                          {row.conviction} · {CONVICTION_LABELS[row.conviction]}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="col-span-2">

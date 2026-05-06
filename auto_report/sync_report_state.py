@@ -94,6 +94,18 @@ def build_payload(report_type: str, output_dir: Path | None = None) -> dict[str,
     }
 
 
+def _response_error_detail(response: requests.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        body = response.text
+    if isinstance(body, dict) and "detail" in body:
+        body = body["detail"]
+    if not isinstance(body, str):
+        body = json.dumps(body, default=str)
+    return body[:2000]
+
+
 def sync_payload(report_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     api_url = (os.getenv("TALISMAN_API_URL") or "").strip().rstrip("/")
     sync_secret = (os.getenv("REPORT_SYNC_SECRET") or "").strip()
@@ -118,7 +130,11 @@ def sync_payload(report_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         json=payload,
         timeout=90,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = _response_error_detail(response)
+        raise RuntimeError(f"Report sync API returned {response.status_code}: {detail}") from exc
     data = response.json()
     if not isinstance(data, dict):
         raise RuntimeError("Report sync API returned a non-object response.")

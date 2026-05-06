@@ -1611,6 +1611,15 @@ function EvaluationsTab({ evaluations }: { evaluations: Evaluation[] }) {
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "-"
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (dateOnly) {
+    const [, year, month, day] = dateOnly
+    return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })
+  }
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString("en-US", {
@@ -1662,21 +1671,30 @@ function evidenceTitle(ev: PositionRiskEvidence): string {
   return ev.name || ev.component || ev.source || "Risk driver"
 }
 
+function refreshCacheStatus(snapshot: PositionRiskSnapshot | null | undefined): string | null {
+  const meta = snapshot?._meta
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null
+  const status = (meta as Record<string, unknown>).cache_status
+  return typeof status === "string" ? status : null
+}
+
 function RiskTab({ ticker }: { ticker: string }) {
   const qc = useQueryClient()
   const [elapsed, setElapsed] = useState(0)
+  const tickerUpper = ticker.toUpperCase()
+  const riskQueryKey = ["position-risk", tickerUpper] as const
 
   const latestRiskQuery = useQuery({
-    queryKey: ["position-risk", ticker],
-    queryFn: () => fetchPositionRiskLatest(ticker),
+    queryKey: riskQueryKey,
+    queryFn: () => fetchPositionRiskLatest(tickerUpper),
     staleTime: 60 * 1000,
     retry: 1,
   })
 
   const refreshMutation = useMutation({
-    mutationFn: () => refreshPositionRisk(ticker),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["position-risk", ticker] })
+    mutationFn: () => refreshPositionRisk(tickerUpper),
+    onSuccess: snapshot => {
+      qc.setQueryData<PositionRiskSnapshot | null>(riskQueryKey, snapshot)
     },
   })
 
@@ -1692,7 +1710,6 @@ function RiskTab({ ticker }: { ticker: string }) {
   }, [refreshMutation.isPending])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const tickerUpper = ticker.toUpperCase()
   const snapshot: PositionRiskSnapshot | null | undefined = refreshMutation.data ?? latestRiskQuery.data
   const evidence = Array.isArray(snapshot?.evidence) ? snapshot.evidence : []
   const sourceStatus = snapshot?.source_status ?? {}
@@ -1710,6 +1727,7 @@ function RiskTab({ ticker }: { ticker: string }) {
   const noSnapshot = !latestRiskQuery.isLoading && !snapshot && !refreshMutation.data
   const qualityState = snapshot?.quality === "ok" ? "ok" : snapshot ? "degraded" : "missing"
   const marketAsOf = snapshot?.market_snapshot_as_of ?? snapshot?.as_of
+  const cacheStatus = refreshCacheStatus(refreshMutation.data)
 
   return (
     <div className="space-y-4">
@@ -1741,7 +1759,9 @@ function RiskTab({ ticker }: { ticker: string }) {
       {primaryError && <ErrorMessage message={errorMessage(primaryError)} />}
       {refreshMutation.isSuccess && (
         <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-400">
-          Risk refreshed using market snapshot from {formatDateTime(marketAsOf)}.
+          {cacheStatus === "hit"
+            ? `Risk cache is still fresh; using market snapshot from ${formatDateTime(marketAsOf)}.`
+            : `Risk refreshed using market snapshot from ${formatDateTime(marketAsOf)}.`}
         </div>
       )}
 

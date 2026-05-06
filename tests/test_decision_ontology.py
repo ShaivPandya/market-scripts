@@ -158,6 +158,29 @@ def test_decision_object_schemas_have_stable_identities():
     assert recommendation.id == "recommendation:daily_2026_05_02_buy_mu"
 
 
+def test_audit_event_identity_accepts_prefixed_business_key():
+    repo = _FakeTemporalRepo()
+    service = OntologyObjectService(repository=repo)
+    event_uid = audit_event_id("approval.created:abc")
+
+    row = service.write_object(
+        "AuditEvent",
+        event_uid,
+        AuditEventV1(
+            event_id=event_uid,
+            action_name="approval.created",
+            action_category="approval",
+            status="succeeded",
+        ).model_dump(mode="json"),
+        "2026-05-04T00:00:00+00:00",
+        actor={"actor_type": "system", "actor_id": "test"},
+        provenance="pv:test-audit",
+    )
+
+    assert audit_event_id(event_uid) == event_uid
+    assert row["object_uid"] == event_uid
+
+
 def test_decision_relation_registry_models_lineage_edges():
     expected = {
         "workflow_artifact_proposes_approval": ("WorkflowArtifact", "Approval"),

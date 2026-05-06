@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import pytest
+import requests
+
 from auto_report import sync_report_state
 
 
 class _FakeResponse:
+    status_code = 200
+    text = ""
+
     def raise_for_status(self) -> None:
         return None
 
@@ -35,3 +41,22 @@ def test_sync_payload_sends_report_sync_schema_headers(monkeypatch):
         "X-Api-Proxy-Secret": "proxy-secret",
     }
     assert captured["json"] == {"as_of": "2026-05-03"}
+
+
+def test_sync_payload_surfaces_api_error_detail(monkeypatch):
+    class ErrorResponse:
+        status_code = 422
+        text = ""
+
+        def raise_for_status(self) -> None:
+            raise requests.HTTPError("422", response=self)
+
+        def json(self):
+            return {"detail": "Node audit_event:abc has non-canonical identity"}
+
+    monkeypatch.setenv("TALISMAN_API_URL", "https://example.test")
+    monkeypatch.setenv("REPORT_SYNC_SECRET", "sync-secret")
+    monkeypatch.setattr(sync_report_state.requests, "post", lambda *_args, **_kwargs: ErrorResponse())
+
+    with pytest.raises(RuntimeError, match="non-canonical identity"):
+        sync_report_state.sync_payload("daily", {"as_of": "2026-05-03"})

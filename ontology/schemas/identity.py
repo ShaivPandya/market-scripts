@@ -158,7 +158,10 @@ def executed_decision_record_id(identifier: object) -> str:
 
 
 def audit_event_id(identifier: object) -> str:
-    return f"audit_event:{slug(identifier)}"
+    text = str(identifier or "").strip()
+    if text.startswith("audit_event:"):
+        text = text.split(":", 1)[1]
+    return f"audit_event:{slug(text)}"
 
 
 def sector_id(name: object) -> str:

@@ -77,6 +77,8 @@ class ModuleConfig:
     required: bool
     adapter_factory: Callable[[], SourceAdapter[Any]]
     refresh_when_unavailable: bool = False
+    freshness_policy: str = "market_day"
+    freshness_max_age_days: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +112,8 @@ _MODULES: dict[str, ModuleConfig] = {
         False,
         PositioningAdapter,
         refresh_when_unavailable=True,
+        freshness_policy="weekly_report",
+        freshness_max_age_days=10,
     ),
     "economic_growth": ModuleConfig(
         "economic_growth",
@@ -137,16 +141,19 @@ def get_latest_portfolio_risk() -> dict[str, Any] | None:
 
 
 def refresh_position_risk(ticker: str) -> dict[str, Any]:
-    if not risk_engine_enabled():
-        latest = get_latest_position_risk(ticker)
-        if latest is not None:
-            return latest
     ticker_norm = _ticker(ticker)
     now = datetime.now(UTC)
+    latest = get_latest_position_risk(ticker_norm)
+    if not risk_engine_enabled():
+        if latest is not None:
+            return latest
+    if latest is not None and _position_risk_snapshot_is_fresh(latest, now=now):
+        return _with_refresh_cache_status(latest, "hit")
+
     position = _load_portfolio_position(ticker_norm, now=now)
     bundle = load_global_risk_input_bundle(now=now)
     snapshot = _compute_position_snapshot(position, bundle)
-    return write_position_risk_snapshot(snapshot)
+    return _with_refresh_cache_status(write_position_risk_snapshot(snapshot), "refreshed")
 
 
 def refresh_portfolio_risk() -> dict[str, Any]:
@@ -511,7 +518,12 @@ def _evaluate_record(
     }
     if record is None:
         base_state["detail"] = "snapshot not found"
-        base_state["freshness"] = _freshness_state(None, now=now)
+        base_state["freshness"] = _freshness_state(
+            None,
+            now=now,
+            policy=config.freshness_policy,
+            max_age_days=config.freshness_max_age_days,
+        )
         return base_state, None
     if record.payload is None:
         state = {
@@ -523,14 +535,24 @@ def _evaluate_record(
             "as_of": record.as_of_date,
             "fetched_at": record.fetched_at,
             "version": record.version,
-            "freshness": _freshness_state(record.as_of_date or record.fetched_at, now=now),
+            "freshness": _freshness_state(
+                record.as_of_date or record.fetched_at,
+                now=now,
+                policy=config.freshness_policy,
+                max_age_days=config.freshness_max_age_days,
+            ),
             "scoring_fields_valid": False,
         }
         return state, None
 
     result = adapter.normalize(record.payload)
     valid, invalid_detail = _valid_for_scoring(config.name, record.payload, result.data)
-    freshness = _freshness_state(record.as_of_date or result.as_of or record.fetched_at, now=now)
+    freshness = _freshness_state(
+        record.as_of_date or result.as_of or record.fetched_at,
+        now=now,
+        policy=config.freshness_policy,
+        max_age_days=config.freshness_max_age_days,
+    )
     status = cast(str, result.status)
     quality = result.quality
     detail = result.detail
@@ -831,8 +853,41 @@ def _valid_for_scoring(module_name: str, payload: Any, data: Any) -> tuple[bool,
     return True, None
 
 
-def _freshness_state(value: Any, *, now: datetime) -> dict[str, Any]:
+def _freshness_state(
+    value: Any,
+    *,
+    now: datetime,
+    policy: str = "market_day",
+    max_age_days: int | None = None,
+) -> dict[str, Any]:
     observed = _observed_date(value)
+    normalized_policy = str(policy or "market_day").strip().lower()
+    if normalized_policy == "weekly_report":
+        window_days = max(1, int(max_age_days or 10))
+        oldest_acceptable = now.astimezone(_EASTERN).date() - timedelta(days=window_days)
+        if observed is None:
+            return {
+                "policy": "weekly_report",
+                "fresh": False,
+                "basis": "as_of_or_fetched_at",
+                "max_age_days": window_days,
+                "oldest_acceptable_date": oldest_acceptable.isoformat(),
+                "observed_as_of_date": None,
+                "reason": "snapshot has no parseable as-of date",
+            }
+        fresh = observed >= oldest_acceptable
+        return {
+            "policy": "weekly_report",
+            "fresh": fresh,
+            "basis": "as_of_or_fetched_at",
+            "max_age_days": window_days,
+            "oldest_acceptable_date": oldest_acceptable.isoformat(),
+            "observed_as_of_date": observed.isoformat(),
+            "reason": None
+            if fresh
+            else f"snapshot as-of {observed.isoformat()} is older than weekly report window {oldest_acceptable.isoformat()}",
+        }
+
     expected = _expected_market_date(now)
     if observed is None:
         return {
@@ -931,6 +986,57 @@ def _degraded_modules(source_status: dict[str, dict[str, Any]]) -> list[dict[str
         )
     rows.sort(key=lambda row: (not row["required"], row["module"]))
     return rows
+
+
+def _position_risk_snapshot_is_fresh(snapshot: dict[str, Any], *, now: datetime) -> bool:
+    source_status = snapshot.get("source_status")
+    if not isinstance(source_status, dict) or not source_status:
+        return False
+    expected_modules = {"portfolio", *REQUIRED_MODULES[1:], *OPTIONAL_MODULES}
+    if not expected_modules.issubset({str(module) for module in source_status}):
+        return False
+
+    for module, raw_state in source_status.items():
+        if not isinstance(raw_state, dict):
+            return False
+        status = str(raw_state.get("status") or "missing").lower()
+        if status != "ok" or not bool(raw_state.get("accepted", True)):
+            return False
+
+        if module == "portfolio":
+            observed = _observed_date(_source_status_freshness_value(raw_state) or snapshot.get("computed_at"))
+            if observed != now.astimezone(_EASTERN).date():
+                return False
+            continue
+
+        config = _MODULES.get(str(module))
+        if config is None:
+            continue
+        freshness = _freshness_state(
+            _source_status_freshness_value(raw_state),
+            now=now,
+            policy=config.freshness_policy,
+            max_age_days=config.freshness_max_age_days,
+        )
+        if not bool(freshness.get("fresh")):
+            return False
+
+    return True
+
+
+def _with_refresh_cache_status(snapshot: dict[str, Any], cache_status: str) -> dict[str, Any]:
+    out = dict(snapshot)
+    raw_meta = out.get("_meta")
+    meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+    meta["cache_status"] = cache_status
+    out["_meta"] = meta
+    return out
+
+
+def _source_status_freshness_value(state: dict[str, Any]) -> Any:
+    raw_freshness = state.get("freshness")
+    freshness: dict[str, Any] = raw_freshness if isinstance(raw_freshness, dict) else {}
+    return freshness.get("observed_as_of_date") or state.get("as_of") or state.get("fetched_at")
 
 
 def _confidence(source_status: dict[str, dict[str, Any]]) -> float:

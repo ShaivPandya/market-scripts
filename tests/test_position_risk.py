@@ -68,6 +68,27 @@ def test_position_risk_accepts_fresh_cached_modules(monkeypatch):
     assert read_latest_position_risk("MU")["result_id"] == snapshot["result_id"]
 
 
+def test_position_risk_refresh_returns_fresh_cached_snapshot(monkeypatch):
+    from api import position_risk as pr
+
+    _seed_required_snapshots(as_of="2099-01-01")
+    monkeypatch.setattr(
+        pr.SectorMapper, "resolve_sector", lambda self, ticker, asset: _Sector("Information Technology")
+    )
+
+    snapshot = pr.refresh_position_risk("MU")
+
+    def fail_bundle_load(*args, **kwargs):
+        raise AssertionError("fresh position risk snapshot should be reused")
+
+    monkeypatch.setattr(pr, "load_global_risk_input_bundle", fail_bundle_load)
+
+    cached = pr.refresh_position_risk("MU")
+
+    assert cached["result_id"] == snapshot["result_id"]
+    assert cached["_meta"]["cache_status"] == "hit"
+
+
 def test_position_risk_accepts_legacy_sector_metrics_without_sector(monkeypatch):
     from api import position_risk as pr
     from api.snapshot_keys import SNAPSHOT_SECTOR_METRICS
@@ -292,6 +313,46 @@ def test_missing_positioning_optional_snapshot_is_refreshed(monkeypatch):
     assert state["used"] is True
     assert state["refreshed"] is True
     assert not any(item["module"] == "positioning_summary" for item in snapshot["degraded_modules"])
+
+
+def test_positioning_weekly_report_cache_is_fresh_within_window():
+    from datetime import UTC, datetime
+
+    from api import position_risk as pr
+    from api.snapshot_keys import SNAPSHOT_POSITIONING_SUMMARY
+    from api.snapshot_store import write_snapshot_success
+
+    record = write_snapshot_success(
+        SNAPSHOT_POSITIONING_SUMMARY,
+        {"rows": _positioning_payload("2026-04-28")},
+        as_of_date="2026-04-28",
+    )
+
+    state, _ = pr._evaluate_record(
+        pr._MODULES["positioning_summary"],
+        record,
+        now=datetime(2026, 5, 6, 14, 58, tzinfo=UTC),
+    )
+
+    assert state["status"] == "ok"
+    assert state["accepted"] is True
+    assert state["freshness"]["policy"] == "weekly_report"
+    assert state["freshness"]["fresh"] is True
+
+    stale_record = write_snapshot_success(
+        SNAPSHOT_POSITIONING_SUMMARY,
+        {"rows": _positioning_payload("2026-04-21")},
+        as_of_date="2026-04-21",
+    )
+    stale_state, _ = pr._evaluate_record(
+        pr._MODULES["positioning_summary"],
+        stale_record,
+        now=datetime(2026, 5, 6, 14, 58, tzinfo=UTC),
+    )
+
+    assert stale_state["status"] == "stale"
+    assert stale_state["accepted"] is False
+    assert stale_state["freshness"]["fresh"] is False
 
 
 def test_position_risk_refresh_endpoint_does_not_enqueue_ontology_job(auth_client, monkeypatch):
