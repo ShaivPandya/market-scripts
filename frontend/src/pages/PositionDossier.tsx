@@ -106,8 +106,9 @@ interface Evaluation {
   risk_flag: string | null
   evaluated_at: string
 }
-interface Catalyst { id: number; description: string; category: string; status: string; target_date: string | null; evidence: string | null }
-interface KillCondition { id: number; condition: string; metric: string | null; threshold: string | null; status: string; triggered_at: string | null }
+type EntityId = number | string
+interface Catalyst { id: EntityId; description: string | null; category: string | null; status: string | null; target_date: string | null; evidence: string | null }
+interface KillCondition { id: EntityId; condition: string | null; metric: string | null; threshold: string | null; status: string | null; triggered_at: string | null }
 interface WorkflowRun { run_id: string; workflow_name: string; status: string; started_at: string; completed_at: string | null }
 interface ActionItem { id: number; description: string; action_type: string; urgency: string; status: string; created_at: string }
 interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
@@ -138,6 +139,15 @@ function formatTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function textOrFallback(value: unknown, fallback: string): string {
+  const text = String(value ?? "").trim()
+  return text || fallback
+}
+
+function statusOrFallback(value: unknown, fallback: string): string {
+  return textOrFallback(value, fallback)
 }
 
 function subjectLabel(entityType?: string | null): string {
@@ -292,6 +302,12 @@ export function PositionDossier() {
   const visibleTabs: Tab[] = isEquity ? ["Overview", "Management Quality", ...BASE_TABS] : [...BASE_TABS]
   const activeTab: Tab = (tab === "Overview" || tab === "Management Quality") && !isEquity ? "Thesis" : tab
   const pos = data.position
+  const thesisClaims = Array.isArray(data.thesis_claims) ? data.thesis_claims : []
+  const catalysts = Array.isArray(data.catalysts) ? data.catalysts : []
+  const killConditions = Array.isArray(data.kill_conditions) ? data.kill_conditions : []
+  const evaluations = Array.isArray(data.evaluations) ? data.evaluations : []
+  const researchNotes = Array.isArray(data.research_notes) ? data.research_notes : []
+  const workflowRuns = Array.isArray(data.workflow_runs) ? data.workflow_runs : []
   const positionQuantity = pos?.quantity ?? pos?.shares
   const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
   const meta = data.thesis?.meta
@@ -379,10 +395,10 @@ export function PositionDossier() {
             )}
           >
             {t}
-            {t === "Claims" && data.thesis_claims.length > 0 && <span className="ml-1 text-xs text-subtle">({data.thesis_claims.length})</span>}
-            {t === "Catalysts" && data.catalysts.length > 0 && <span className="ml-1 text-xs text-subtle">({data.catalysts.length})</span>}
-            {t === "Kill Conditions" && data.kill_conditions.length > 0 && <span className="ml-1 text-xs text-subtle">({data.kill_conditions.length})</span>}
-            {t === "Evaluations" && data.evaluations.length > 0 && <span className="ml-1 text-xs text-subtle">({data.evaluations.length})</span>}
+            {t === "Claims" && thesisClaims.length > 0 && <span className="ml-1 text-xs text-subtle">({thesisClaims.length})</span>}
+            {t === "Catalysts" && catalysts.length > 0 && <span className="ml-1 text-xs text-subtle">({catalysts.length})</span>}
+            {t === "Kill Conditions" && killConditions.length > 0 && <span className="ml-1 text-xs text-subtle">({killConditions.length})</span>}
+            {t === "Evaluations" && evaluations.length > 0 && <span className="ml-1 text-xs text-subtle">({evaluations.length})</span>}
           </button>
         ))}
       </div>
@@ -398,13 +414,13 @@ export function PositionDossier() {
           />
         )}
         {activeTab === "Thesis" && <ThesisTab thesis={data.thesis} ticker={data.ticker} position={data.position} />}
-        {activeTab === "Claims" && <ClaimsTab claims={data.thesis_claims} catalysts={data.catalysts} conditions={data.kill_conditions} ticker={ticker!} />}
-        {activeTab === "Catalysts" && <CatalystsTab catalysts={data.catalysts} ticker={ticker!} />}
-        {activeTab === "Kill Conditions" && <KillConditionsTab conditions={data.kill_conditions} ticker={ticker!} />}
-        {activeTab === "Evaluations" && <EvaluationsTab evaluations={data.evaluations} />}
+        {activeTab === "Claims" && <ClaimsTab claims={thesisClaims} catalysts={catalysts} conditions={killConditions} ticker={ticker!} />}
+        {activeTab === "Catalysts" && <CatalystsTab catalysts={catalysts} ticker={ticker!} />}
+        {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} ticker={ticker!} />}
+        {activeTab === "Evaluations" && <EvaluationsTab evaluations={evaluations} />}
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
-        {activeTab === "Research" && <ResearchTab notes={data.research_notes} />}
-        {activeTab === "Workflows" && <WorkflowsTab runs={data.workflow_runs} />}
+        {activeTab === "Research" && <ResearchTab notes={researchNotes} />}
+        {activeTab === "Workflows" && <WorkflowsTab runs={workflowRuns} />}
       </div>
 
       {/* Pending Approvals for this ticker */}
@@ -1234,8 +1250,8 @@ function ClaimsTab({
     } : prev)
   }
 
-  const catalystLabelById = new Map(catalysts.map(c => [c.id, c.description.split(": ", 1)[0]]))
-  const conditionLabelById = new Map(conditions.map(k => [k.id, k.condition.split(": ", 1)[0]]))
+  const catalystLabelById = new Map(catalysts.map(c => [c.id, textOrFallback(c.description, "Untitled catalyst").split(": ", 1)[0]]))
+  const conditionLabelById = new Map(conditions.map(k => [k.id, textOrFallback(k.condition, "Untitled condition").split(": ", 1)[0]]))
 
   return (
     <div className="space-y-4">
@@ -1316,13 +1332,13 @@ function ClaimsTab({
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <LinkCheckboxes
               title="Linked Catalysts"
-              items={catalysts.map(c => ({ id: c.id, label: c.description }))}
+              items={catalysts.flatMap(c => typeof c.id === "number" ? [{ id: c.id, label: textOrFallback(c.description, "Untitled catalyst") }] : [])}
               selectedIds={draft.linked_catalyst_ids}
               onToggle={id => toggleLinked("catalyst", id)}
             />
             <LinkCheckboxes
               title="Linked Kill Conditions"
-              items={conditions.map(k => ({ id: k.id, label: k.condition }))}
+              items={conditions.flatMap(k => typeof k.id === "number" ? [{ id: k.id, label: textOrFallback(k.condition, "Untitled condition") }] : [])}
               selectedIds={draft.linked_kill_condition_ids}
               onToggle={id => toggleLinked("kill", id)}
             />
@@ -1435,11 +1451,11 @@ function LinkCheckboxes({
 }
 
 function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: string }) {
-  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const [openMenuId, setOpenMenuId] = useState<EntityId | null>(null)
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const mutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) => updateCatalystStatus(id, status),
+    mutationFn: ({ id, status }: { id: EntityId; status: string }) => updateCatalystStatus(id, status),
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
       void invalidateApprovalSummaries(qc)
@@ -1453,50 +1469,53 @@ function CatalystsTab({ catalysts, ticker }: { catalysts: Catalyst[]; ticker: st
   return (
     <div className="space-y-3">
       <ProposalNotice proposal={proposal} />
-      {catalysts.map(c => (
-        <div key={c.id} className="rounded-lg border border-app px-4 py-3">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-medium text-app">{c.description}</span>
-            <button
-              type="button"
-              onClick={() => setOpenMenuId(openMenuId === c.id ? null : c.id)}
-              className={cn("text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:ring-1 hover:ring-blue-300", STATUS_COLORS[c.status] ?? "")}
-            >
-              {c.status.replace(/_/g, " ")}
-            </button>
-          </div>
-          {openMenuId === c.id && (
-            <div className="flex flex-wrap gap-1.5 mt-2 mb-1">
-              {statusOptions.filter(s => s !== c.status).map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => mutation.mutate({ id: c.id, status: s })}
-                  disabled={mutation.isPending}
-                  className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
-                >
-                  Propose {s.replace(/_/g, " ")}
-                </button>
-              ))}
+      {catalysts.map(c => {
+        const status = statusOrFallback(c.status, "pending")
+        return (
+          <div key={c.id} className="rounded-lg border border-app px-4 py-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium text-app">{textOrFallback(c.description, "Untitled catalyst")}</span>
+              <button
+                type="button"
+                onClick={() => setOpenMenuId(openMenuId === c.id ? null : c.id)}
+                className={cn("text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:ring-1 hover:ring-blue-300", STATUS_COLORS[status] ?? "")}
+              >
+                {status.replace(/_/g, " ")}
+              </button>
             </div>
-          )}
-          <div className="flex gap-3 text-xs text-subtle">
-            <span>{c.category}</span>
-            {c.target_date && <span>Target: {c.target_date}</span>}
+            {openMenuId === c.id && (
+              <div className="flex flex-wrap gap-1.5 mt-2 mb-1">
+                {statusOptions.filter(s => s !== status).map(s => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => mutation.mutate({ id: c.id, status: s })}
+                    disabled={mutation.isPending}
+                    className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
+                  >
+                    Propose {s.replace(/_/g, " ")}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-3 text-xs text-subtle">
+              <span>{textOrFallback(c.category, "uncategorized")}</span>
+              {c.target_date && <span>Target: {c.target_date}</span>}
+            </div>
+            {c.evidence && <p className="text-xs text-muted mt-1">{c.evidence}</p>}
           </div>
-          {c.evidence && <p className="text-xs text-muted mt-1">{c.evidence}</p>}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
 
 function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]; ticker: string }) {
-  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const [openMenuId, setOpenMenuId] = useState<EntityId | null>(null)
   const [proposal, setProposal] = useState<StagedMutationResponse | null>(null)
   const qc = useQueryClient()
   const mutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) => updateKillConditionStatus(id, status),
+    mutationFn: ({ id, status }: { id: EntityId; status: string }) => updateKillConditionStatus(id, status),
     onSuccess: result => {
       setProposal(result as StagedMutationResponse)
       void invalidateApprovalSummaries(qc)
@@ -1510,40 +1529,43 @@ function KillConditionsTab({ conditions, ticker }: { conditions: KillCondition[]
   return (
     <div className="space-y-3">
       <ProposalNotice proposal={proposal} />
-      {conditions.map(k => (
-        <div key={k.id} className={cn("rounded-lg border px-4 py-3", k.status === "triggered" ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30" : "border-app")}>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-medium text-app">{k.condition}</span>
-            <button
-              type="button"
-              onClick={() => setOpenMenuId(openMenuId === k.id ? null : k.id)}
-              className={cn("text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:ring-1 hover:ring-blue-300", STATUS_COLORS[k.status] ?? "")}
-            >
-              {k.status}
-            </button>
-          </div>
-          {openMenuId === k.id && (
-            <div className="flex flex-wrap gap-1.5 mt-2 mb-1">
-              {statusOptions.filter(s => s !== k.status).map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => mutation.mutate({ id: k.id, status: s })}
-                  disabled={mutation.isPending}
-                  className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
-                >
-                  Propose {s}
-                </button>
-              ))}
+      {conditions.map(k => {
+        const status = statusOrFallback(k.status, "active")
+        return (
+          <div key={k.id} className={cn("rounded-lg border px-4 py-3", status === "triggered" ? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30" : "border-app")}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium text-app">{textOrFallback(k.condition, "Untitled condition")}</span>
+              <button
+                type="button"
+                onClick={() => setOpenMenuId(openMenuId === k.id ? null : k.id)}
+                className={cn("text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:ring-1 hover:ring-blue-300", STATUS_COLORS[status] ?? "")}
+              >
+                {status}
+              </button>
             </div>
-          )}
-          <div className="flex gap-3 text-xs text-subtle">
-            {k.metric && <span>Metric: {k.metric}</span>}
-            {k.threshold && <span>Threshold: {k.threshold}</span>}
-            {k.triggered_at && <span>Triggered: {formatTime(k.triggered_at)}</span>}
+            {openMenuId === k.id && (
+              <div className="flex flex-wrap gap-1.5 mt-2 mb-1">
+                {statusOptions.filter(s => s !== status).map(s => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => mutation.mutate({ id: k.id, status: s })}
+                    disabled={mutation.isPending}
+                    className={cn("text-xs px-1.5 py-0.5 rounded font-medium transition-colors hover:ring-1 hover:ring-gray-300", STATUS_COLORS[s] ?? "")}
+                  >
+                    Propose {s}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-3 text-xs text-subtle">
+              {k.metric && <span>Metric: {k.metric}</span>}
+              {k.threshold && <span>Threshold: {k.threshold}</span>}
+              {k.triggered_at && <span>Triggered: {formatTime(k.triggered_at)}</span>}
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

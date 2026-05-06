@@ -142,6 +142,13 @@ export function PortfolioDashboard() {
     fetchPortfolioAllTimeframes,
   )
   const timeframeData = data?.timeframes?.[timeframe]
+  const loadError = error
+    ? String(error)
+    : !data
+    ? "Failed to load portfolio data."
+    : !timeframeData
+    ? `No ${timeframeLabel(timeframe)} portfolio data returned.`
+    : null
   const positions: Record<string, DataPoint[]> = useMemo(
     () => timeframeData?.positions ?? {},
     [timeframeData?.positions],
@@ -220,8 +227,8 @@ export function PortfolioDashboard() {
       </div>
 
       {isLoading && <LoadingSpinner message="Fetching portfolio data..." />}
-      {!isLoading && (error || !data || !timeframeData) && (
-        <ErrorMessage message={String(error) || "Failed to load"} />
+      {!isLoading && loadError && (
+        <ErrorMessage message={loadError} />
       )}
       {!isLoading && !error && warning && (
         <Notice tone="warning" className="mb-4">{warning}</Notice>

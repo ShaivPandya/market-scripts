@@ -1,5 +1,3 @@
-from typing import Any
-
 from fastapi import APIRouter
 
 from api.cache import get_or_set_cached, short_cache
@@ -15,55 +13,31 @@ VALID_TIMEFRAMES = {"This Week", "Daily", "Weekly", "Monthly"}
 @router.get("/portfolio")
 def get_portfolio(timeframe: str = "Daily", all_timeframes: bool = False):
     if all_timeframes:
-        key = "portfolio:all_timeframes"
+        key = "portfolio:all_timeframes:v2"
     else:
         if timeframe not in VALID_TIMEFRAMES:
             timeframe = "Daily"
-        key = f"portfolio:{timeframe}"
+        key = f"portfolio:v2:{timeframe}"
 
     def loader():
         try:
-            positions = OntologyRuntimeReadService().positions(include_hedges=True)
+            from portfolio import portfolio_dashboard
+
+            data = portfolio_dashboard.get_data(timeframe=timeframe, all_timeframes=all_timeframes)
         except Exception as e:
             raise DataFetchError(source="portfolio", detail=str(e)) from e
 
-        position_order = [str(row.get("ticker") or row.get("id") or "") for row in positions if row.get("ticker")]
-        analytics = {
-            "portfolio": {"position_count": len(positions)},
-            "per_position": {
-                str(row.get("ticker") or row.get("id")): {
-                    "weight": row.get("weight"),
-                    "current_notional": row.get("notional_base"),
-                    "cost_notional": row.get("cost_basis_base"),
-                }
-                for row in positions
-            },
-        }
+        if "error" in data and data["error"]:
+            raise DataFetchError(source="portfolio", detail=data["error"])
 
-        if all_timeframes:
-            result: dict[str, Any] = {
-                "timeframes": {
-                    "Current": {
-                        "positions": {},
-                        "metadata": {"source": "ontology"},
-                        "timeframe": "Current",
-                        "timestamp": None,
-                        "position_order": position_order,
-                    }
-                },
-                "timestamp": None,
-            }
-            result["analytics"] = serialize_value(analytics)
-        else:
-            result = {
-                "positions": {},
-                "metadata": {"source": "ontology", "position_count": len(positions)},
-                "timeframe": timeframe,
-                "timestamp": None,
-                "position_order": position_order,
-                "analytics": serialize_value(analytics),
-                "holdings": positions,
-            }
+        result = serialize_value(data)
+
+        try:
+            holdings = OntologyRuntimeReadService().positions(include_hedges=True)
+        except Exception:
+            holdings = []
+        if isinstance(result, dict) and holdings:
+            result["holdings"] = serialize_value(holdings)
 
         return result
 

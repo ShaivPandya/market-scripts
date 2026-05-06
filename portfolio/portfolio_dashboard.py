@@ -90,6 +90,7 @@ def _empty_payload(timeframe: str, warning: str | None = None) -> dict:
         "metadata": POSITION_META,
         "timeframe": timeframe,
         "timestamp": datetime.now(),
+        "position_order": POSITION_ORDER,
         "analytics": compute_analytics(positions, get_positions()),
     }
     if warning:
@@ -175,6 +176,7 @@ def fetch_portfolio_data(timeframe: str = "Daily") -> dict:
         "metadata": metadata,
         "timeframe": timeframe,
         "timestamp": datetime.now(),
+        "position_order": POSITION_ORDER,
         "analytics": analytics,
     }
     if warnings_out:
