@@ -37,6 +37,12 @@ def test_run_sizer_imports_packaged_module(monkeypatch):
     }
 
 
+def test_load_configured_book_size_prefers_github_env(monkeypatch):
+    monkeypatch.setenv("TALISMAN_BOOK_SIZE", "125000")
+
+    assert auto_daily_report.load_configured_book_size() == 125_000.0
+
+
 def test_compute_adjustments_uses_current_hedge_shares():
     weights_df = pd.DataFrame(
         [

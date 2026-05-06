@@ -6,9 +6,11 @@ import { ActionButton, SegmentedControl, SelectInput } from "@/components/shared
 import { DecisionStateBadge, EffectScopeBadge } from "@/components/shared/DecisionStateBadge"
 import {
   fetchHedgePositions,
+  fetchPortfolioSettings,
   fetchPortfolioPositions,
   saveHedgePositions,
   savePortfolioPositions,
+  updatePortfolioSettings,
   type HedgePosition,
   type PortfolioPosition,
   type StagedMutationResponse,
@@ -45,6 +47,11 @@ const DIRECTION_OPTIONS = [
   { value: "long", label: "Long" },
   { value: "short", label: "Short" },
 ]
+
+const MIN_BOOK_SIZE = 10_000
+const MAX_BOOK_SIZE = 10_000_000
+const DEFAULT_BOOK_SIZE = 100_000
+const SIZER_STATE_QUERY_KEY = ["portfolio-sizer", "state"] as const
 
 const CONVICTION_LABELS: Record<number, string> = {
   1: "Very Low",
@@ -112,6 +119,11 @@ function formatBaseCurrency(value: number, currency?: string | null) {
   } catch {
     return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)
   }
+}
+
+function parseBookSizeInput(value: string) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null
 }
 
 function valuationSummary(row: PortfolioPosition | HedgePosition) {
@@ -208,7 +220,10 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const [tab, setTab] = useState<EditorTab>("Positions")
   const [positionRows, setPositionRows] = useState<EditorRow[]>([])
   const [hedgeRows, setHedgeRows] = useState<HedgeEditorRow[]>([])
+  const [bookSizeInput, setBookSizeInput] = useState(String(DEFAULT_BOOK_SIZE))
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [settingsValidationError, setSettingsValidationError] = useState<string | null>(null)
+  const [settingsSavedMessage, setSettingsSavedMessage] = useState<string | null>(null)
   const [positionValidationError, setPositionValidationError] = useState<string | null>(null)
   const [hedgeValidationError, setHedgeValidationError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -219,14 +234,24 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
     if (!open) return
     setTab("Positions")
     setLoadError(null)
+    setSettingsValidationError(null)
+    setSettingsSavedMessage(null)
     setPositionValidationError(null)
     setHedgeValidationError(null)
     setLastProposal(null)
     setIsLoading(true)
-    Promise.all([fetchPortfolioPositions(), fetchHedgePositions()])
-      .then(([portfolioData, hedgeData]) => {
+    Promise.all([
+      fetchPortfolioPositions(),
+      fetchHedgePositions(),
+      fetchPortfolioSettings().catch(err => {
+        setSettingsValidationError(`Failed to load book size: ${String(err)}`)
+        return null
+      }),
+    ])
+      .then(([portfolioData, hedgeData, settingsData]) => {
         setPositionRows(portfolioData.positions.map(positionToRow))
         setHedgeRows(hedgeData.positions.map(hedgeToRow))
+        if (settingsData) setBookSizeInput(String(settingsData.book_size ?? DEFAULT_BOOK_SIZE))
       })
       .catch(err => setLoadError(String(err)))
       .finally(() => setIsLoading(false))
@@ -246,6 +271,16 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
   const hedgeMutation = useMutation({
     mutationFn: (positions: HedgePosition[]) => saveHedgePositions(positions),
     onSuccess: handleSaved,
+  })
+
+  const settingsMutation = useMutation({
+    mutationFn: (bookSize: number) => updatePortfolioSettings({ book_size: bookSize }),
+    onSuccess: settings => {
+      setBookSizeInput(String(settings.book_size))
+      setSettingsValidationError(null)
+      setSettingsSavedMessage(`Book size saved at ${formatBaseCurrency(settings.book_size)}.`)
+      queryClient.removeQueries({ queryKey: SIZER_STATE_QUERY_KEY, exact: false })
+    },
   })
 
   function updatePositionRow(id: string, patch: Partial<EditorRow>) {
@@ -270,6 +305,21 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
 
   function addHedgeRow() {
     setHedgeRows(prev => [...prev, newHedgeRow()])
+  }
+
+  function handleSaveBookSize() {
+    setSettingsValidationError(null)
+    setSettingsSavedMessage(null)
+    const bookSize = parseBookSizeInput(bookSizeInput)
+    if (bookSize == null) {
+      setSettingsValidationError("Book size must be a number.")
+      return
+    }
+    if (bookSize < MIN_BOOK_SIZE || bookSize > MAX_BOOK_SIZE) {
+      setSettingsValidationError(`Book size must be between ${formatBaseCurrency(MIN_BOOK_SIZE)} and ${formatBaseCurrency(MAX_BOOK_SIZE)}.`)
+      return
+    }
+    settingsMutation.mutate(bookSize)
   }
 
   function handleSavePositions() {
@@ -398,6 +448,52 @@ export function PortfolioEditor({ open, onOpenChange }: PortfolioEditorProps) {
               onChange={setTab}
               size="sm"
             />
+          </div>
+
+          <div className="mb-5 border-b border-gray-200 pb-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="w-full sm:max-w-xs">
+                <label className="mb-1 block text-xs font-medium text-gray-500" htmlFor="portfolio-book-size">
+                  Book Size
+                </label>
+                <input
+                  id="portfolio-book-size"
+                  type="number"
+                  value={bookSizeInput}
+                  onChange={e => {
+                    setBookSizeInput(e.target.value)
+                    setSettingsSavedMessage(null)
+                  }}
+                  placeholder={String(DEFAULT_BOOK_SIZE)}
+                  className="theme-input w-full text-sm"
+                  step="1000"
+                  min={MIN_BOOK_SIZE}
+                  max={MAX_BOOK_SIZE}
+                />
+              </div>
+              <ActionButton
+                onClick={handleSaveBookSize}
+                loading={settingsMutation.isPending}
+                loadingText="Saving book size..."
+                className="w-auto px-4"
+              >
+                Save Book Size
+              </ActionButton>
+              <span className="pb-2 text-xs text-gray-400">
+                {formatBaseCurrency(MIN_BOOK_SIZE)} - {formatBaseCurrency(MAX_BOOK_SIZE)}
+              </span>
+            </div>
+            {(settingsValidationError || settingsMutation.isError || settingsSavedMessage) && (
+              <p
+                className={`mt-2 text-xs ${
+                  settingsSavedMessage && !settingsValidationError && !settingsMutation.isError
+                    ? "text-emerald-700"
+                    : "text-red-700"
+                }`}
+              >
+                {settingsValidationError ?? (settingsMutation.isError ? String(settingsMutation.error) : settingsSavedMessage)}
+              </p>
+            )}
           </div>
 
           {lastProposal && (

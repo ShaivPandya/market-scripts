@@ -317,6 +317,25 @@ def run_sizer(portfolio_df, book: float, target_leverage: float = DEFAULT_LEVERA
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def load_configured_book_size() -> float | None:
+    env_value = (os.getenv("TALISMAN_BOOK_SIZE") or "").strip()
+    if env_value:
+        try:
+            parsed = float(env_value)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            log.warning("Ignoring invalid TALISMAN_BOOK_SIZE=%r", env_value)
+
+    try:
+        from api.portfolio_settings import get_configured_portfolio_book_size
+
+        return get_configured_portfolio_book_size()
+    except Exception:
+        log.debug("No configured portfolio book size available", exc_info=True)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Share adjustment computation (deterministic)
 # ---------------------------------------------------------------------------
@@ -1069,7 +1088,7 @@ def main():
         "--book",
         type=float,
         default=None,
-        help="Book size in USD (default: sum of abs(shares * cost_basis) from the portfolio db)",
+        help="Book size in USD (default: portfolio setting, then sum of abs(shares * cost_basis) from the portfolio db)",
     )
     parser.add_argument(
         "--no-search",
@@ -1097,17 +1116,22 @@ def main():
     if args.book:
         book = args.book
     else:
-        import pandas as pd
-
-        shares = pd.to_numeric(portfolio_df.get("shares"), errors="coerce")
-        cost_basis = pd.to_numeric(portfolio_df.get("cost_basis"), errors="coerce")
-        position_values = (shares.abs() * cost_basis).dropna()
-        if not position_values.empty and float(position_values.sum()) > 0:
-            book = float(position_values.sum())
-            log.info("Book size from portfolio db (shares * cost_basis): $%s", _format_currency(book))
+        configured_book = load_configured_book_size()
+        if configured_book is not None:
+            book = configured_book
+            log.info("Book size from portfolio settings: $%s", _format_currency(book))
         else:
-            book = 100_000.0
-            log.info("Using default book size: $%s", _format_currency(book))
+            import pandas as pd
+
+            shares = pd.to_numeric(portfolio_df.get("shares"), errors="coerce")
+            cost_basis = pd.to_numeric(portfolio_df.get("cost_basis"), errors="coerce")
+            position_values = (shares.abs() * cost_basis).dropna()
+            if not position_values.empty and float(position_values.sum()) > 0:
+                book = float(position_values.sum())
+                log.info("Book size from portfolio db (shares * cost_basis): $%s", _format_currency(book))
+            else:
+                book = 100_000.0
+                log.info("Using default book size: $%s", _format_currency(book))
 
     # ---------------------------------------------------------------
     # STEP 3: Load previous-day summary (feeds Pass 1 context)

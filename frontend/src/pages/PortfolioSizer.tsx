@@ -75,8 +75,9 @@ interface SizerRow {
 }
 
 const SIZER_STATE_KEY = ["portfolio-sizer", "state", "equity-beta-v2"] as const
-const MIN_BOOK_SIZE = 50_000
-const MAX_BOOK_SIZE = 150_000
+const DEFAULT_BOOK_SIZE = 100_000
+const MIN_BOOK_SIZE = 10_000
+const MAX_BOOK_SIZE = 10_000_000
 const SIZER_POLL_INTERVAL_MS = 2_000
 const SIZER_TABS: SizerTab[] = ["Weights", "Exposures", "Constraints", "Max Scaled"]
 const EXPOSURE_CLASSES: ExposureAssetClass[] = ["equity", "fx", "commodity", "bond"]
@@ -198,7 +199,7 @@ function clamp01(value: number) {
 }
 
 function clampBookSize(value: number) {
-  if (!Number.isFinite(value)) return MIN_BOOK_SIZE
+  if (!Number.isFinite(value)) return DEFAULT_BOOK_SIZE
   return Math.min(MAX_BOOK_SIZE, Math.max(MIN_BOOK_SIZE, Math.round(value)))
 }
 
@@ -282,7 +283,9 @@ export function PortfolioSizer() {
     errorMessage: string | null
   }>(SIZER_STATE_KEY)
 
-  const initialBookSize = clampBookSize(cachedState?.bookSize ?? 100_000)
+  const hasCachedBookSize = cachedState?.bookSize != null
+  const hasCachedRows = Boolean(cachedState?.rows && cachedState.rows.length > 0)
+  const initialBookSize = clampBookSize(cachedState?.bookSize ?? DEFAULT_BOOK_SIZE)
   const [bookSize, setBookSize] = useState(initialBookSize)
   const [bookSizeInput, setBookSizeInput] = useState(cachedState?.bookSizeInput ?? String(initialBookSize))
   const [targetLeverage, setTargetLeverage] = useState(cachedState?.targetLeverage ?? 2.0)
@@ -297,28 +300,35 @@ export function PortfolioSizer() {
   const runSeqRef = useRef(0)
 
   useEffect(() => {
-    if (cachedState?.rows && cachedState.rows.length > 0) return
-
     let canceled = false
     fetchSizerPrefill()
-      .then((data: unknown) => {
+      .then(data => {
         if (canceled) return
-        const positions = (data as { positions?: Array<{ ticker?: unknown; conviction?: unknown; direction?: unknown }> })?.positions ?? []
-        const prefilled = positions
-          .map(p => ({
-            ticker: String(p?.ticker ?? "").trim().toUpperCase(),
-            direction: String(p?.direction ?? "").trim().toLowerCase(),
-            conviction: typeof p?.conviction === "number" ? p.conviction : 3,
-          }))
-          .filter(p => p.ticker.length > 0)
-          .map(p => makeRow(p.ticker, p.direction, p.conviction))
+        const configuredBookSize = toNumber(data.book_size)
+        if (!hasCachedBookSize && configuredBookSize != null) {
+          const nextBookSize = clampBookSize(configuredBookSize)
+          setBookSize(nextBookSize)
+          setBookSizeInput(String(nextBookSize))
+        }
 
-        if (prefilled.length > 0) setRows(prefilled)
+        if (!hasCachedRows) {
+          const positions = data.positions ?? []
+          const prefilled = positions
+            .map(p => ({
+              ticker: String(p?.ticker ?? "").trim().toUpperCase(),
+              direction: String(p?.direction ?? "").trim().toLowerCase(),
+              conviction: typeof p?.conviction === "number" ? p.conviction : 3,
+            }))
+            .filter(p => p.ticker.length > 0)
+            .map(p => makeRow(p.ticker, p.direction, p.conviction))
+
+          if (prefilled.length > 0) setRows(prefilled)
+        }
       })
       .catch(() => {})
 
     return () => { canceled = true }
-  }, [cachedState?.rows])
+  }, [hasCachedBookSize, hasCachedRows])
 
   const refreshCurrentHoldings = useCallback(() => {
     fetchPortfolioPositions(true)
@@ -565,8 +575,8 @@ export function PortfolioSizer() {
             max={MAX_BOOK_SIZE}
             step={1_000}
             formatValue={v => currencyFormatter.format(v)}
-            minLabel="$50k"
-            maxLabel="$150k"
+            minLabel="$10k"
+            maxLabel="$10m"
           />
 
           <SliderInput
@@ -589,7 +599,7 @@ export function PortfolioSizer() {
               onChange={setBookSizeInput}
               placeholder="100000"
             />
-            <p className="text-xs text-gray-400">$50k - $150k · used for analysis run</p>
+            <p className="text-xs text-gray-400">$10k - $10m · used for analysis run</p>
           </div>
         </div>
 

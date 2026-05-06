@@ -24,6 +24,8 @@ class _FakeSession:
 
     def get(self, url: str, **kwargs):
         self.calls.append(("GET", url, kwargs))
+        if url.endswith("/api/v1/portfolio-settings"):
+            return _FakeResponse({"book_size": 125000})
         return _FakeResponse(
             {
                 "positions": [
@@ -34,13 +36,17 @@ class _FakeSession:
         )
 
 
-def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch):
+def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch, tmp_path):
+    from api.portfolio_settings import get_configured_portfolio_book_size
+
     session = _FakeSession()
     saved: list[tuple[list[dict], str]] = []
+    github_env = tmp_path / "github.env"
 
     monkeypatch.setenv("TALISMAN_API_URL", "https://example.test")
     monkeypatch.setenv("API_PROXY_SECRET", "proxy-secret")
     monkeypatch.setenv("TALISMAN_API_PASSWORD", "report-password")
+    monkeypatch.setenv("GITHUB_ENV", str(github_env))
     monkeypatch.setattr(fetch_state.requests, "Session", lambda: session)
     monkeypatch.setattr(
         "portfolio.portfolio_db.save_positions",
@@ -52,6 +58,7 @@ def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch):
     assert [call[:2] for call in session.calls] == [
         ("POST", "https://example.test/api/v1/auth/login"),
         ("GET", "https://example.test/api/v1/portfolio-positions"),
+        ("GET", "https://example.test/api/v1/portfolio-settings"),
     ]
     assert session.calls[0][2]["json"] == {"password": "report-password"}
     assert session.calls[0][2]["headers"] == {
@@ -60,6 +67,8 @@ def test_fetch_state_logs_in_before_fetch_when_password_present(monkeypatch):
         "X-Request-Schema-Version": "1",
     }
     assert session.calls[1][2]["params"] == {"include_hedges": "true"}
+    assert "TALISMAN_BOOK_SIZE=125000.00\n" in github_env.read_text(encoding="utf-8")
+    assert get_configured_portfolio_book_size() == 125000
     assert saved == [
         ([{"ticker": "MU", "role": "position"}], "position"),
         ([{"ticker": "SH", "role": "hedge"}], "hedge"),

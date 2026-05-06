@@ -520,6 +520,20 @@ export const fetchPortfolioPositions = (includeHedges = false) =>
 export const savePortfolioPositions = (positions: PortfolioPosition[], options?: StagedMutationOptions) =>
   client.put("/portfolio-positions", { positions, ...options }).then(r => r.data as StagedMutationResponse)
 
+export interface PortfolioSettings {
+  book_size: number
+  default_book_size: number
+  configured: boolean
+  min_book_size: number
+  max_book_size: number
+}
+
+export const fetchPortfolioSettings = () =>
+  client.get("/portfolio-settings").then(r => r.data as PortfolioSettings)
+
+export const updatePortfolioSettings = (settings: { book_size: number }) =>
+  client.put("/portfolio-settings", settings).then(r => r.data as PortfolioSettings)
+
 export interface HedgePosition {
   ticker: string
   asset?: PortfolioAsset | null
@@ -1323,8 +1337,20 @@ export const fetchHedgingPortfolioWeights = (book?: number) =>
 export const fetchHedgingRecommendations = (body: Record<string, unknown>) =>
   client.post("/hedging-tool/recommend", body, { timeout: 180_000 }).then(r => r.data as { analysis: string })
 
+export interface SizerPrefillResponse {
+  positions: {
+    ticker?: string
+    conviction?: number
+    direction?: string
+    instrument_type?: InstrumentType | null
+  }[]
+  book_size?: number
+  source?: string
+  count?: number
+}
+
 export const fetchSizerPrefill = () =>
-  client.get("/portfolio-sizer/prefill").then(r => r.data)
+  client.get("/portfolio-sizer/prefill").then(r => r.data as SizerPrefillResponse)
 
 // ─── POST endpoints ───────────────────────────────────────────────────────────
 
