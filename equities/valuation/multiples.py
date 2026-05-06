@@ -24,6 +24,8 @@ from utils.retry import yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
 
+VALUATION_CURRENT_CACHE_VERSION = "v1"
+VALUATION_PEER_ROW_CACHE_VERSION = "v1"
 VALUATION_COLUMNS = (
     "price_sales",
     "price_operating_income",
@@ -175,6 +177,30 @@ PROFILE_OVERRIDE_LOCAL_PATH = Path("data_cache/valuation/profile_overrides.json"
 PROFILE_OVERRIDE_GCS_KEY = "live/valuation/profile_overrides.json"
 VALUE_RANGE_LOCAL_PATH = Path("data_cache/valuation/value_ranges.json")
 VALUE_RANGE_GCS_KEY = "live/valuation/value_ranges.json"
+
+
+def _valuation_current_cache_key(ticker: str) -> str:
+    return f"valuation_current:{VALUATION_CURRENT_CACHE_VERSION}:{_clean_ticker(ticker)}"
+
+
+def _valuation_peer_row_cache_key(ticker: str) -> str:
+    return f"valuation_peer_row:{VALUATION_PEER_ROW_CACHE_VERSION}:{_clean_ticker(ticker)}"
+
+
+def _without_cache_meta(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    clean = dict(value)
+    clean.pop("_meta", None)
+    return clean
+
+
+def _get_or_set_daily_cache(key: str, loader):
+    from api.cache import daily_cache, get_or_set_cached
+    from api.serializers import serialize_value
+
+    return _without_cache_meta(get_or_set_cached(daily_cache, key, lambda: serialize_value(loader())))
+
 
 REVENUE_KEYS = (
     "Total Revenue",
@@ -707,6 +733,14 @@ def _default_value_range_multiples(
 
 def fetch_current_valuation(ticker: str, *, info: Mapping[str, Any] | None = None) -> dict[str, Any]:
     normalized = _clean_ticker(ticker)
+    return _get_or_set_daily_cache(
+        _valuation_current_cache_key(normalized),
+        lambda: _fetch_current_valuation_uncached(normalized, info=info),
+    )
+
+
+def _fetch_current_valuation_uncached(ticker: str, *, info: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    normalized = _clean_ticker(ticker)
     info_dict = dict(info or _fetch_info(normalized))
     ticker_obj = yf.Ticker(normalized)
 
@@ -889,16 +923,29 @@ def fetch_valuation_metrics_batch(tickers: Sequence[str], *, max_workers: int | 
 
 
 def _batch_row(ticker: str) -> dict[str, Any]:
-    info = _fetch_info(ticker)
-    current = fetch_current_valuation(ticker, info=info)
+    normalized = _clean_ticker(ticker)
+    raw = _get_or_set_daily_cache(_valuation_peer_row_cache_key(normalized), lambda: _batch_row_uncached(normalized))
+    info = dict(raw.get("info") or {})
+    metrics = raw.get("metrics") or {}
     profile = resolve_profile(info, read_profile_override(ticker))
-    effective = effective_profile_weights(profile["weights"], current["metrics"])
-    row = {key: current["metrics"].get(key, {}).get("value") for key in VALUATION_COLUMNS}
+    effective = effective_profile_weights(profile["weights"], metrics)
+    row = {key: metrics.get(key, {}).get("value") for key in VALUATION_COLUMNS}
     row.update({f"{key}_profile_weight": effective.get(key, 0.0) for key in VALUATION_COLUMNS})
     row["valuation_profile_id"] = profile["id"]
-    row["sector"] = info.get("sector")
-    row["industry"] = info.get("industry")
+    row["sector"] = raw.get("sector") or info.get("sector")
+    row["industry"] = raw.get("industry") or info.get("industry")
     return row
+
+
+def _batch_row_uncached(ticker: str) -> dict[str, Any]:
+    info = _fetch_info(ticker)
+    current = fetch_current_valuation(ticker, info=info)
+    return {
+        "info": info,
+        "metrics": current["metrics"],
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+    }
 
 
 def effective_profile_weights(

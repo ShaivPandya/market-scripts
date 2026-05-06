@@ -1,3 +1,4 @@
+from api.routers import valuation as valuation_router
 from equities.valuation import multiples
 
 
@@ -40,21 +41,30 @@ def test_get_position_valuation_endpoint(auth_client, monkeypatch):
 
 
 def test_update_position_valuation_profile_override_endpoint(auth_client, monkeypatch):
+    deleted_keys = []
+
     monkeypatch.setattr(multiples, "read_profile_override", lambda ticker: None)
     monkeypatch.setattr(
         multiples,
         "write_profile_override",
         lambda ticker, profile_id: {"ticker": ticker, "profile_override": profile_id},
     )
+    monkeypatch.setattr(valuation_router, "delete_cached", lambda cache, key: deleted_keys.append(key))
 
     resp = auth_client.put("/api/v1/valuation/ZZVALUATION/profile-override", json={"profile_id": "bank_financial"})
 
     assert resp.status_code == 200
     assert resp.json()["profile_override"] == "bank_financial"
+    assert deleted_keys
+    assert all(key.startswith("position_valuation:") for key in deleted_keys)
+    assert all(not key.startswith(("valuation_current:", "valuation_peer_row:")) for key in deleted_keys)
 
 
 def test_update_position_valuation_value_range_endpoint(auth_client, monkeypatch):
+    deleted_keys = []
+
     monkeypatch.setattr(multiples, "read_profile_override", lambda ticker: None)
+    monkeypatch.setattr(valuation_router, "delete_cached", lambda cache, key: deleted_keys.append(key))
 
     def _write(ticker, payload):
         return {"ticker": ticker, "value_range": payload}
@@ -77,3 +87,6 @@ def test_update_position_valuation_value_range_endpoint(auth_client, monkeypatch
     assert resp.json()["ticker"] == "ZZVALUATION"
     assert resp.json()["value_range"]["metric"] == "price_sales"
     assert resp.json()["value_range"]["scenarios"]["bull"]["multiple"] == 8.0
+    assert deleted_keys
+    assert all(key.startswith("position_valuation:") for key in deleted_keys)
+    assert all(not key.startswith(("valuation_current:", "valuation_peer_row:")) for key in deleted_keys)

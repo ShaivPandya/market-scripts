@@ -213,6 +213,19 @@ export function PositionDossier() {
     fetchThesisStatus,
   )
 
+  const isEquity =
+    String(data?.position?.asset ?? "") === "equity" &&
+    String(data?.position?.instrument_type ?? "security") !== "future"
+
+  useEffect(() => {
+    if (!ticker || !isEquity) return
+    void qc.prefetchQuery({
+      queryKey: ["valuation", ticker],
+      queryFn: () => fetchPositionValuation(ticker),
+      staleTime: 300_000,
+    })
+  }, [isEquity, qc, ticker])
+
   const statusMutation = useMutation({
     mutationFn: () => updateThesisStatus(ticker!, newStatus, statusReason),
     onSuccess: result => {
@@ -305,8 +318,6 @@ export function PositionDossier() {
   const approvalItems = approvalSummaryData?.items ?? []
   const approvalSummaryInitialLoading = approvalSummary.isPending && !approvalSummaryData
   const approvalSummaryError = approvalSummary.error
-  const isEquity =
-    String(data.position?.asset ?? "") === "equity" && String(data.position?.instrument_type ?? "security") !== "future"
   const visibleTabs: Tab[] = isEquity ? ["Overview", "Management Quality", "Valuation", ...BASE_TABS] : [...BASE_TABS]
   const activeTab: Tab = (tab === "Overview" || tab === "Management Quality" || tab === "Valuation") && !isEquity ? "Thesis" : tab
   const pos = data.position

@@ -1,4 +1,5 @@
 import math
+import uuid
 
 import pandas as pd
 
@@ -75,6 +76,109 @@ def test_compute_current_multiples_uses_provider_fallbacks_for_pe_and_pb():
     assert result["metrics"]["price_earnings"]["status"] == "degraded"
     assert result["metrics"]["price_book"]["value"] == 2.4
     assert result["metrics"]["price_book"]["status"] == "degraded"
+
+
+def test_fetch_current_valuation_uses_daily_cache(monkeypatch):
+    ticker = f"ZZCUR{uuid.uuid4().hex[:8]}".upper()
+    calls = 0
+
+    def _uncached(symbol, *, info=None):
+        nonlocal calls
+        calls += 1
+        return {
+            "market_cap": 1000.0,
+            "enterprise_value": 1200.0,
+            "net_debt": 200.0,
+            "metrics": {
+                "price_sales": {
+                    "key": "price_sales",
+                    "label": "EV/S",
+                    "value": 3.0,
+                    "status": "ok",
+                }
+            },
+        }
+
+    monkeypatch.setattr(multiples, "_fetch_current_valuation_uncached", _uncached)
+
+    first = multiples.fetch_current_valuation(ticker, info={"marketCap": 1000})
+    second = multiples.fetch_current_valuation(ticker, info={"marketCap": 2000})
+
+    assert calls == 1
+    assert first == second
+    assert "_meta" not in first
+
+
+def test_batch_row_uses_daily_cache(monkeypatch):
+    ticker = f"ZZPEER{uuid.uuid4().hex[:8]}".upper()
+    calls = 0
+    override = None
+    metrics = {
+        key: {"key": key, "label": multiples.VALUATION_LABELS[key], "value": value, "status": "ok"}
+        for key, value in {
+            "price_sales": 3.0,
+            "price_operating_income": 10.0,
+            "price_fcf": 12.0,
+            "price_earnings": 15.0,
+            "price_book": 2.0,
+        }.items()
+    }
+
+    def _uncached(symbol):
+        nonlocal calls
+        calls += 1
+        return {
+            "info": {"sector": "Consumer Defensive", "industry": "Beverages"},
+            "metrics": metrics,
+            "sector": "Consumer Defensive",
+            "industry": "Beverages",
+        }
+
+    monkeypatch.setattr(multiples, "_batch_row_uncached", _uncached)
+    monkeypatch.setattr(multiples, "read_profile_override", lambda symbol: override)
+
+    first = multiples._batch_row(ticker)
+    override = "bank_financial"
+    second = multiples._batch_row(ticker)
+
+    assert calls == 1
+    assert first["price_sales"] == second["price_sales"] == 3.0
+    assert first["valuation_profile_id"] == "general_equity"
+    assert second["valuation_profile_id"] == "bank_financial"
+    assert first["price_book_profile_weight"] == 0.1
+    assert second["price_book_profile_weight"] == 0.5
+    assert "_meta" not in first
+
+
+def test_profile_recomputes_with_cached_current_valuation(monkeypatch):
+    ticker = f"ZZPROF{uuid.uuid4().hex[:8]}".upper()
+    calls = 0
+    override = None
+
+    metrics = {
+        key: {"key": key, "label": multiples.VALUATION_LABELS[key], "value": 10.0, "status": "ok"}
+        for key in multiples.VALUATION_COLUMNS
+    }
+
+    def _uncached(symbol, *, info=None):
+        nonlocal calls
+        calls += 1
+        return {"market_cap": 1000.0, "enterprise_value": 1100.0, "net_debt": 100.0, "metrics": metrics}
+
+    monkeypatch.setattr(multiples, "_fetch_current_valuation_uncached", _uncached)
+    monkeypatch.setattr(multiples, "_fetch_info", lambda symbol: {"marketCap": 1000.0, "sector": "Technology"})
+    monkeypatch.setattr(multiples, "read_profile_override", lambda symbol: override)
+    monkeypatch.setattr(multiples, "read_value_range_assumption", lambda symbol: None)
+
+    first = multiples.get_position_valuation(ticker, include_peers=False)
+    override = "bank_financial"
+    second = multiples.get_position_valuation(ticker, include_peers=False)
+
+    assert calls == 1
+    assert first["profile"]["id"] == "general_equity"
+    assert second["profile"]["id"] == "bank_financial"
+    assert first["profile"]["effective_weights"]["price_book"] == 0.1
+    assert second["profile"]["effective_weights"]["price_book"] == 0.5
 
 
 def test_resolve_profile_handles_banks_software_cyclicals_and_override():
