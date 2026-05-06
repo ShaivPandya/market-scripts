@@ -11,6 +11,7 @@ from api.macro_snapshots import get_snapshot_backed_response
 from api.request_limits import read_upload_file_bytes
 from api.serializers import serialize_response
 from api.snapshot_keys import SNAPSHOT_ECONOMIC_GROWTH
+from api.snapshot_store import delete_snapshot
 from api.state_storage import exists_text, read_bytes, read_text, write_bytes, write_text
 from llm_utils import MODEL_LOW, api_key_env, call_llm_text, has_llm_api_key
 from paths import PROJECT_ROOT
@@ -160,6 +161,7 @@ async def upload_economic_growth_crb_file(
     metadata = _crb_metadata_from_upload(payload, filename)
     _write_managed_crb(payload, metadata)
     delete_cached(daily_cache, ECONOMIC_GROWTH_CACHE_KEY)
+    delete_snapshot(SNAPSHOT_ECONOMIC_GROWTH)
     return serialize_response({"status": "ok", "crb": metadata})
 
 

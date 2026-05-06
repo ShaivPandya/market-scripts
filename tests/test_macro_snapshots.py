@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import contextmanager
+
 from api.snapshot_store import SnapshotRecord
 
 
@@ -167,3 +170,89 @@ def test_housing_snapshot_key_is_defined():
     from api.snapshot_keys import SNAPSHOT_HOUSING
 
     assert SNAPSHOT_HOUSING == "housing:current:v1"
+
+
+def test_delete_snapshot_removes_sqlite_snapshot(monkeypatch, tmp_path):
+    from api import snapshot_store
+
+    monkeypatch.setattr(snapshot_store, "use_postgres_state", lambda: False)
+    monkeypatch.setattr(snapshot_store, "_SQLITE_PATH", tmp_path / "computed_snapshots.sqlite3")
+
+    snapshot_store.write_snapshot_success(
+        "test:snapshot",
+        {"ok": True},
+        as_of_date="2026-05-01",
+    )
+    assert snapshot_store.read_snapshot("test:snapshot") is not None
+
+    snapshot_store.delete_snapshot("test:snapshot")
+
+    assert snapshot_store.read_snapshot("test:snapshot") is None
+
+
+def test_delete_snapshot_expires_postgres_current_version(monkeypatch):
+    from api import snapshot_store
+
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class _Conn:
+        def execute(self, sql: str, params: tuple[object, ...]):
+            calls.append((sql, params))
+
+        def commit(self):
+            return None
+
+    class _Repo:
+        @contextmanager
+        def _connect(self):
+            yield _Conn()
+
+    monkeypatch.setattr(snapshot_store, "use_postgres_state", lambda: True)
+    monkeypatch.setattr(snapshot_store, "TemporalOntologyRepository", _Repo)
+
+    snapshot_store.delete_snapshot("economic_growth:current:v1")
+
+    sql, params = calls[0]
+    assert "UPDATE computed_snapshot_versions" in sql
+    assert "tx_to IS NULL" in sql
+    assert params[1] == "economic_growth:current:v1"
+
+
+def test_economic_growth_crb_upload_invalidates_cache_and_snapshot(monkeypatch):
+    from api.routers import economic_growth
+
+    writes: list[tuple[bytes, dict]] = []
+    cache_deletes: list[tuple[object, str]] = []
+    snapshot_deletes: list[str] = []
+
+    class _File:
+        filename = "crb.xlsx"
+
+    async def fake_read_upload_file_bytes(file, *, limit_bytes: int, limit_label: str) -> bytes:
+        assert file.filename == "crb.xlsx"
+        assert limit_bytes == economic_growth.MAX_CRB_UPLOAD_SIZE_BYTES
+        assert limit_label == "10 MiB"
+        return b"excel-bytes"
+
+    metadata = {
+        "filename": "crb.xlsx",
+        "uploaded_at": "2026-05-06T12:00:00+00:00",
+        "rows": 2,
+        "latest_date": "2026-05-05",
+        "latest_value": 123.4,
+        "size_bytes": 11,
+    }
+
+    monkeypatch.setattr(economic_growth, "read_upload_file_bytes", fake_read_upload_file_bytes)
+    monkeypatch.setattr(economic_growth, "_crb_metadata_from_upload", lambda payload, filename: metadata)
+    monkeypatch.setattr(economic_growth, "_write_managed_crb", lambda payload, meta: writes.append((payload, meta)))
+    monkeypatch.setattr(economic_growth, "delete_cached", lambda cache, key: cache_deletes.append((cache, key)))
+    monkeypatch.setattr(economic_growth, "delete_snapshot", lambda snapshot_key: snapshot_deletes.append(snapshot_key))
+
+    result = asyncio.run(economic_growth.upload_economic_growth_crb_file(_File()))
+
+    assert result["status"] == "ok"
+    assert result["crb"] == metadata
+    assert writes == [(b"excel-bytes", metadata)]
+    assert cache_deletes == [(economic_growth.daily_cache, economic_growth.ECONOMIC_GROWTH_CACHE_KEY)]
+    assert snapshot_deletes == [economic_growth.SNAPSHOT_ECONOMIC_GROWTH]
