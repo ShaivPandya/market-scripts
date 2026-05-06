@@ -137,6 +137,18 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _legacy_int_id(value: str | int | None) -> int | None:
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    if ":" in text:
+        text = text.rsplit(":", 1)[-1]
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def _flatten_object(row: Mapping[str, Any]) -> dict[str, Any]:
     props = dict(row.get("properties") or row.get("properties_json") or {})
     props["id"] = str(row.get("object_uid") or props.get("id") or "")
@@ -284,8 +296,8 @@ def start_event(
                 workflow_run_id=workflow_run_id,
                 ontology_run_id=ontology_run_id,
                 agent_session_id=agent_session_id,
-                action_run_id=action_run_id,
-                approval_id=approval_id,
+                action_run_id=_legacy_int_id(action_run_id),
+                approval_id=_legacy_int_id(approval_id),
                 audit_event_id=audit_event_id,
                 input_hash=input_hash(input_value),
                 summary=redacted_summary(summary),
@@ -632,7 +644,7 @@ def record_workflow_artifact(
                 artifact_index=artifact_index,
                 artifact_hash=artifact_hash,
                 summary=redacted_summary(_shape_summary(artifact_value)),
-                approval_id=approval_id,
+                approval_id=_legacy_int_id(approval_id),
                 provenance_event_id=provenance_event_id,
                 redaction_policy=DEFAULT_REDACTION_POLICY,
                 retention_class=retention_class,

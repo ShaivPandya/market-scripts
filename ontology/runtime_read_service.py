@@ -8,7 +8,7 @@ still being filled out route by route.
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import Any, cast
 
 from ontology.object_service import OntologyObjectService
 
@@ -49,7 +49,7 @@ def get_hedge_positions() -> list[dict[str, Any]]:
     if not _ontology_primary_writes_enabled():
         _legacy_get_hedge_positions = importlib.import_module("portfolio.portfolio_db").get_hedge_positions
 
-        return _legacy_get_hedge_positions()
+        return cast(list[dict[str, Any]], _legacy_get_hedge_positions())
     rows = OntologyRuntimeReadService().positions(include_hedges=True)
     return [row for row in rows if str(row.get("role") or "").lower() == "hedge"]
 
@@ -251,7 +251,7 @@ def _legacy_get(object_uid: str) -> dict[str, Any] | None:
     if prefix == "thesis":
         thesis_db = importlib.import_module("portfolio.thesis_db")
 
-        return thesis_db.get_thesis_meta(raw_id)
+        return cast(dict[str, Any] | None, thesis_db.get_thesis_meta(raw_id))
     if prefix == "investment_idea":
         try:
             return core_db.get_investment_idea(int(raw_id))
@@ -312,15 +312,15 @@ def _legacy_list_objects(
     if object_type == "Position":
         return _legacy_positions(portfolio_db, include_hedges=False)[:limit]
     if object_type == "HedgePosition":
-        return portfolio_db.get_hedge_positions()[:limit]
+        return cast(list[dict[str, Any]], portfolio_db.get_hedge_positions())[:limit]
     if object_type == "Thesis":
         thesis_db = importlib.import_module("portfolio.thesis_db")
-        rows = thesis_db.get_all_thesis_meta()
+        thesis_rows = cast(list[dict[str, Any]], thesis_db.get_all_thesis_meta())
         ticker = filters.get("ticker")
         status = filters.get("status")
         return [
             row
-            for row in rows
+            for row in thesis_rows
             if (not ticker or str(row.get("ticker") or "").upper() == str(ticker).upper())
             and (not status or row.get("status") == status)
         ][:limit]
@@ -328,22 +328,22 @@ def _legacy_list_objects(
         thesis_db = importlib.import_module("portfolio.thesis_db")
         ticker = filters.get("ticker")
         if ticker:
-            return thesis_db.get_evaluations(str(ticker).upper(), limit=limit)
-        return thesis_db.get_latest_evaluations()[:limit]
+            return cast(list[dict[str, Any]], thesis_db.get_evaluations(str(ticker).upper(), limit=limit))
+        return cast(list[dict[str, Any]], thesis_db.get_latest_evaluations())[:limit]
     if object_type == "ActionItem":
         return core_db.get_action_items(status=filters.get("status"), ticker=filters.get("ticker"))[:limit]
     if object_type == "WatchTrigger":
         return core_db.get_watch_triggers(status=filters.get("status"), ticker=filters.get("ticker"))[:limit]
     if object_type == "Catalyst":
         ticker = filters.get("ticker")
-        rows = core_db.get_catalysts(str(ticker)) if ticker else []
+        catalyst_rows = core_db.get_catalysts(str(ticker)) if ticker else []
         status = filters.get("status")
-        return [row for row in rows if not status or row.get("status") == status][:limit]
+        return [row for row in catalyst_rows if not status or row.get("status") == status][:limit]
     if object_type == "KillCondition":
         ticker = filters.get("ticker")
-        rows = core_db.get_kill_conditions(str(ticker)) if ticker else []
+        condition_rows = core_db.get_kill_conditions(str(ticker)) if ticker else []
         status = filters.get("status")
-        return [row for row in rows if not status or row.get("status") == status][:limit]
+        return [row for row in condition_rows if not status or row.get("status") == status][:limit]
     if object_type == "ThesisClaim":
         return core_db.get_thesis_claims(
             ticker=filters.get("ticker"),
@@ -392,10 +392,10 @@ def _legacy_list_objects(
         idea_id = _optional_int(filters.get("idea_id"))
         if idea_id is not None:
             return core_db.get_idea_evaluations(idea_id, limit=limit)
-        rows: list[dict[str, Any]] = []
+        idea_rows: list[dict[str, Any]] = []
         for idea in core_db.list_investment_ideas(include_archived=True, limit=500):
-            rows.extend(core_db.get_idea_evaluations(int(idea["id"]), limit=limit))
-        return sorted(rows, key=lambda row: str(row.get("evaluated_at") or ""), reverse=True)[:limit]
+            idea_rows.extend(core_db.get_idea_evaluations(int(idea["id"]), limit=limit))
+        return sorted(idea_rows, key=lambda row: str(row.get("evaluated_at") or ""), reverse=True)[:limit]
     if object_type == "IdeaComparisonRun":
         return core_db.list_idea_comparison_runs(limit=limit)
     if object_type == "OptimizationMission":
@@ -422,11 +422,11 @@ def _legacy_list_objects(
 
 def _legacy_positions(portfolio_db: Any, *, include_hedges: bool) -> list[dict[str, Any]]:
     try:
-        return portfolio_db.get_positions(include_hedges=include_hedges)
+        return cast(list[dict[str, Any]], portfolio_db.get_positions(include_hedges=include_hedges))
     except TypeError as exc:
         if "include_hedges" not in str(exc):
             raise
-        return portfolio_db.get_positions()
+        return cast(list[dict[str, Any]], portfolio_db.get_positions())
 
 
 def _find_by_id(rows: list[dict[str, Any]], raw_id: str) -> dict[str, Any] | None:

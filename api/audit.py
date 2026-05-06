@@ -232,8 +232,9 @@ def emit_audit_event(
     try:
         now = datetime.now(UTC).isoformat()
         event_key = idempotency_key or f"{action_name}:{status}:{rid}:{_stable_hash(object_refs)}:{now}"
-        payload = {
-            "event_id": audit_event_id(event_key),
+        event_id = audit_event_id(event_key)
+        payload: dict[str, Any] = {
+            "event_id": event_id,
             "occurred_at": now,
             "actor_id": actor_id,
             "actor_type": actor_type,
@@ -262,11 +263,11 @@ def emit_audit_event(
         }
         row = OntologyObjectService().write_object(
             "AuditEvent",
-            payload["event_id"],
+            event_id,
             payload,
             now,
             actor={"actor_type": actor_type, "actor_id": actor_id},
-            provenance=lineage_root_id or payload["event_id"],
+            provenance=lineage_root_id or event_id,
             input_hash=idempotency_key or _stable_hash(payload),
         )
         props = dict(row.get("properties") or row.get("properties_json") or {})

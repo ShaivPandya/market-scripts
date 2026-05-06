@@ -294,8 +294,8 @@ def _linked_context(definition: dict[str, Any], fallback_ticker: str | None) -> 
 
         reads = OntologyRuntimeReadService()
         claim_ids = {str(item) for item in _as_list(definition.get("linked_claim_ids")) if str(item).strip()}
-        claims = [reads.get(claim_id) for claim_id in claim_ids]
-        claims = [claim for claim in claims if claim]
+        claim_matches = [reads.get(claim_id) for claim_id in claim_ids]
+        claims = [claim for claim in claim_matches if claim is not None]
         if not claims and ticker and definition.get("include_ticker_claims", True):
             claims = reads.thesis_claims(ticker=ticker, status="active", limit=20)
         context["claims"] = claims

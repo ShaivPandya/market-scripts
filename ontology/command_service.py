@@ -145,7 +145,17 @@ class OntologyCommandService:
         now = _now()
         input_hash = _stable_hash({"action_id": action_id, "payload": payload_dict})
         entity_type = _entity_type_for_action(action_id)
-        approval_uid = approval_id(f"{entity_type}:{input_hash}")
+        normalized_supersedes_id = _normalize_approval_uid(supersedes_approval_id) if supersedes_approval_id else None
+        uid_hash = input_hash
+        if normalized_supersedes_id:
+            uid_hash = _stable_hash(
+                {
+                    "action_id": action_id,
+                    "payload": payload_dict,
+                    "supersedes_approval_id": normalized_supersedes_id,
+                }
+            )
+        approval_uid = approval_id(f"{entity_type}:{uid_hash}")
         provenance_id = _provenance_id("approval", approval_uid, input_hash)
         ticker = _ticker_from_payload(payload_dict)
         target_uid, target_type = _target_for_action(action_id, payload_dict)
@@ -172,13 +182,13 @@ class OntologyCommandService:
             "policy_gate_result": policy_gate_result,
             "policy_gate_result_id": policy_gate_result.get("policy_gate_result_id") if policy_gate_result else None,
             "policy_gate_decision": policy_gate_result.get("decision") if policy_gate_result else None,
-            "base_state_hash": _base_state_hash(action_id, payload_dict, target_uid),
+            "base_state_hash": _base_state_hash(action_id, payload_dict),
             "requested_by_actor_id": context.actor.actor_id,
             "created_at": now,
             "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
         }
-        if supersedes_approval_id:
-            props["supersedes_approval_id"] = _normalize_approval_uid(supersedes_approval_id)
+        if normalized_supersedes_id:
+            props["supersedes_approval_id"] = normalized_supersedes_id
 
         row = self.objects.write_object(
             "Approval",
@@ -244,6 +254,8 @@ class OntologyCommandService:
             raise OntologyCommandValidationError("Approval status must be approved or rejected.")
         if status == "approved" and not str(note or "").strip():
             raise OntologyCommandValidationError("Approval note is required.")
+        if status == "approved":
+            _ensure_fresh_base_state(approval)
 
         now = _now()
         props = {
@@ -962,8 +974,23 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
         _non_blank(record.get("action"), "action")
 
 
-def _base_state_hash(action_id: str, payload: Mapping[str, Any], target_uid: str | None) -> str:
-    return _stable_hash({"action_id": action_id, "payload": dict(payload), "target_object_uid": target_uid})
+def _base_state_hash(action_id: str, payload: Mapping[str, Any]) -> str | None:
+    from portfolio.action_registry import compute_action_base_state_hash
+
+    return compute_action_base_state_hash(action_id, dict(payload))
+
+
+def _ensure_fresh_base_state(approval: Mapping[str, Any]) -> None:
+    stored_hash = str(approval.get("base_state_hash") or "").strip()
+    action_id = str(approval.get("action_id") or "").strip()
+    proposed_change = _dict(approval.get("proposed_change"))
+    if not stored_hash or not action_id or not proposed_change:
+        return
+    current_hash = _base_state_hash(action_id, proposed_change)
+    if current_hash and current_hash != stored_hash:
+        raise OntologyCommandConflict(
+            "Approval base state changed before application; refresh and create a new proposal"
+        )
 
 
 def _provenance_id(*parts: Any) -> str:

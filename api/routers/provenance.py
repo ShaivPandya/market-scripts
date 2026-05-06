@@ -138,13 +138,16 @@ def get_governance_lineage_report(
     )
 
 
-def _legacy_numeric_id(value: str | None) -> int | str | None:
+def _legacy_numeric_id(value: str | None) -> int | None:
     if value is None:
         return None
+    text = str(value).strip()
+    if ":" in text:
+        text = text.rsplit(":", 1)[-1]
     try:
-        return int(value)
+        return int(text)
     except (TypeError, ValueError):
-        return value
+        raise ValidationError(f"Legacy provenance selector must be numeric: {value}") from None
 
 
 def _ontology_trace(max_depth: int = 3, **selector: str | None) -> dict:

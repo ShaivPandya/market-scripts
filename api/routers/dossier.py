@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter
 
@@ -87,7 +88,7 @@ def get_dossier(ticker: str):
             pass
 
     evaluations = reads.evaluations(ticker, limit=52)
-    status_history = []
+    status_history: list[dict[str, Any]] = []
     catalysts = reads.catalysts(ticker)
     kill_conditions = reads.kill_conditions(ticker)
     thesis_claims = reads.thesis_claims(ticker=ticker)

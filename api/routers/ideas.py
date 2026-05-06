@@ -194,8 +194,9 @@ def _write_legacy_runtime_object(object_type: str, uid: str, props: dict[str, An
             job_id=props.get("job_id"),
         )
     if object_type == "IdeaComparisonRun":
-        rankings = []
-        for row in props.get("rankings") if isinstance(props.get("rankings"), list) else []:
+        rankings: list[dict[str, Any]] = []
+        ranking_rows = props.get("rankings")
+        for row in ranking_rows if isinstance(ranking_rows, list) else []:
             if not isinstance(row, dict):
                 continue
             rankings.append(
@@ -872,7 +873,7 @@ def _normalize_comparison_result(evaluations: list[dict[str, Any]], parsed: Any)
     rankings = parsed.get("rankings")
     raw_rows: list[Any] = rankings if isinstance(rankings, list) else []
     ordered: list[tuple[int, dict[str, Any]]] = []
-    seen: set[int] = set()
+    seen: set[str] = set()
 
     for fallback_rank, row in enumerate(raw_rows, start=1):
         if not isinstance(row, dict):

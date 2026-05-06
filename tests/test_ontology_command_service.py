@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from ontology.command_service import (
+    OntologyCommandConflict,
     OntologyCommandContext,
     OntologyCommandService,
     OntologyCommandValidationError,
@@ -97,3 +98,55 @@ def test_unsupported_action_is_rejected_before_any_write():
     with pytest.raises(OntologyCommandValidationError):
         service.propose_action("legacy_unregistered_write", {}, context)
     assert fake.objects == {}
+
+
+def test_restaged_approval_uses_distinct_uid_and_survives_original_rejection(monkeypatch):
+    import portfolio.action_registry as action_registry
+
+    monkeypatch.setattr(action_registry, "compute_action_base_state_hash", lambda _action_id, _payload: "base")
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+    payload = {"item_id": 1, "resolution_note": "Done"}
+
+    original = service.propose_action("complete_action_item", payload, context, reason="Complete item")
+    replacement = service.propose_action(
+        "complete_action_item",
+        payload,
+        context,
+        reason="Restage item",
+        supersedes_approval_id=original["id"],
+    )
+
+    assert replacement["id"] != original["id"]
+    assert replacement["supersedes_approval_id"] == original["id"]
+
+    rejected = service.resolve_approval(original["id"], "rejected", "Superseded", context)
+
+    assert rejected["status"] == "rejected"
+    assert service.get_approval(replacement["id"], actor=context.actor)["status"] == "pending"
+
+
+def test_approve_rejects_stale_ontology_base_state(monkeypatch):
+    import portfolio.action_registry as action_registry
+
+    current_hash = {"value": "old"}
+    monkeypatch.setattr(
+        action_registry,
+        "compute_action_base_state_hash",
+        lambda _action_id, _payload: current_hash["value"],
+    )
+    service = OntologyCommandService(FakeObjectService())  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="test", source_id="unit")
+
+    approval = service.propose_action(
+        "complete_action_item",
+        {"item_id": 1, "resolution_note": "Done"},
+        context,
+        reason="Complete item",
+    )
+    current_hash["value"] = "new"
+
+    with pytest.raises(OntologyCommandConflict, match="base state changed"):
+        service.resolve_approval(approval["id"], "approved", "Apply", context)
+
+    assert service.get_approval(approval["id"], actor=context.actor)["status"] == "pending"
