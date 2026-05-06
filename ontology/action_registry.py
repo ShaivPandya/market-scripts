@@ -89,10 +89,13 @@ class ActionNotFoundError(ActionError):
 
 
 def _assert_legacy_action_runtime_enabled() -> None:
-    raise ActionConflictError(
-        "Legacy action_registry execution is disabled in ontology-primary runtime; "
-        "use ontology.command_service.OntologyCommandService instead."
-    )
+    from ontology.domain_write_service import ontology_primary_writes_enabled
+
+    if ontology_primary_writes_enabled():
+        raise ActionConflictError(
+            "Legacy action_registry execution is disabled in ontology-primary runtime; "
+            "use ontology.command_service.OntologyCommandService instead."
+        )
 
 
 @dataclass(frozen=True)

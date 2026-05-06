@@ -124,6 +124,15 @@ def output_hash(value: Any) -> str | None:
     return stable_hash(value) if value is not None else None
 
 
+def _ontology_primary_writes_enabled() -> bool:
+    try:
+        from ontology.domain_write_service import ontology_primary_writes_enabled
+
+        return ontology_primary_writes_enabled()
+    except Exception:
+        return False
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -256,6 +265,48 @@ def start_event(
     producer_name: str | None = None,
     producer_version: str | None = None,
 ) -> dict | None:
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
+
+            actor_type, actor_id, parent_actor_id = _actor_fields(actor)
+            return core_db.upsert_provenance_event(
+                event_id=event_id,
+                event_type=event_type,
+                event_name=event_name,
+                status="started",
+                started_at=started_at,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                parent_actor_id=parent_actor_id,
+                request_id=request_id if request_id is not None else (request_id_var.get("") or None),
+                parent_event_id=parent_event_id,
+                workflow_run_id=workflow_run_id,
+                ontology_run_id=ontology_run_id,
+                agent_session_id=agent_session_id,
+                action_run_id=action_run_id,
+                approval_id=approval_id,
+                audit_event_id=audit_event_id,
+                input_hash=input_hash(input_value),
+                summary=redacted_summary(summary),
+                metadata=redacted_summary(metadata),
+                schema_version=schema_version,
+                criticality=criticality,
+                lineage_root_id=lineage_root_id,
+                idempotency_key=idempotency_key,
+                producer_name=producer_name,
+                producer_version=producer_version,
+                redaction_policy=DEFAULT_REDACTION_POLICY,
+                retention_class=retention_class,
+            )
+        except Exception as exc:
+            logger.debug("Failed to start provenance event type=%s name=%s", event_type, event_name, exc_info=True)
+            if fail_closed:
+                raise ProvenanceWriteError(
+                    f"Failed to write mandatory provenance event {event_type}:{event_name}"
+                ) from exc
+            return None
+
     try:
         actor_type, actor_id, parent_actor_id = _actor_fields(actor)
         started = started_at or _now()
@@ -317,6 +368,24 @@ def finish_event(
 ) -> dict | None:
     if not event_id:
         return None
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
+
+            return core_db.finish_provenance_event(
+                event_id,
+                status=status,
+                output_hash=output_hash(output_value),
+                summary=redacted_summary(summary),
+                metadata=redacted_summary(metadata),
+                error=error,
+            )
+        except Exception as exc:
+            logger.debug("Failed to finish provenance event id=%s", event_id, exc_info=True)
+            if fail_closed:
+                raise ProvenanceWriteError(f"Failed to finish mandatory provenance event {event_id}") from exc
+            return None
+
     try:
         completed = _now()
         objects = OntologyObjectService()
@@ -386,6 +455,37 @@ def link_refs(
 ) -> dict | None:
     if not event_id:
         return None
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
+
+            return core_db.upsert_provenance_link(
+                link_id=link_id,
+                event_id=event_id,
+                source_ref_type=source_ref_type,
+                source_ref_id=str(source_ref_id),
+                source_ref_version=source_ref_version,
+                target_ref_type=target_ref_type,
+                target_ref_id=str(target_ref_id),
+                target_ref_version=target_ref_version,
+                link_type=link_type,
+                metadata=redacted_summary(metadata),
+                lineage_root_id=lineage_root_id,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to link provenance refs event=%s source=%s:%s target=%s:%s",
+                event_id,
+                source_ref_type,
+                source_ref_id,
+                target_ref_type,
+                target_ref_id,
+                exc_info=True,
+            )
+            if fail_closed:
+                raise ProvenanceWriteError(f"Failed to write mandatory provenance link for event {event_id}") from exc
+            return None
+
     try:
         uid = link_id or deterministic_id(
             "provenance_link",
@@ -449,6 +549,28 @@ def record_source_ref(
     record_key_hash = stable_hash(record_key)
     record_hash = stable_hash(record_value)
     record_ref_id = deterministic_id("source_record", source_name, record_kind, record_key_hash)
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
+
+            return core_db.upsert_source_record_ref(
+                record_ref_id=record_ref_id,
+                adapter_run_event_id=adapter_run_event_id,
+                source_name=source_name,
+                record_kind=record_kind,
+                record_key_hash=record_key_hash,
+                record_hash=record_hash,
+                as_of=as_of,
+                summary=redacted_summary(summary),
+                redaction_policy=DEFAULT_REDACTION_POLICY,
+                retention_class=retention_class,
+            )
+        except Exception as exc:
+            logger.debug("Failed to record source ref source=%s kind=%s", source_name, record_kind, exc_info=True)
+            if fail_closed:
+                raise ProvenanceWriteError(f"Failed to write mandatory source ref {source_name}:{record_kind}") from exc
+            return None
+
     try:
         now = _now()
         row = OntologyObjectService().write_object(
@@ -499,6 +621,32 @@ def record_workflow_artifact(
 ) -> dict | None:
     artifact_hash = stable_hash(artifact_value)
     artifact_id = deterministic_id("workflow_artifact", workflow_run_id, artifact_key, artifact_index, artifact_hash)
+    if not _ontology_primary_writes_enabled():
+        try:
+            from portfolio import core_db
+
+            return core_db.upsert_workflow_artifact_record(
+                artifact_id=artifact_id,
+                workflow_run_id=workflow_run_id,
+                artifact_key=artifact_key,
+                artifact_index=artifact_index,
+                artifact_hash=artifact_hash,
+                summary=redacted_summary(_shape_summary(artifact_value)),
+                approval_id=approval_id,
+                provenance_event_id=provenance_event_id,
+                redaction_policy=DEFAULT_REDACTION_POLICY,
+                retention_class=retention_class,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to record workflow artifact run=%s key=%s", workflow_run_id, artifact_key, exc_info=True
+            )
+            if fail_closed:
+                raise ProvenanceWriteError(
+                    f"Failed to write mandatory workflow artifact {workflow_run_id}:{artifact_key}"
+                ) from exc
+            return None
+
     try:
         now = _now()
         row = OntologyObjectService().write_object(
