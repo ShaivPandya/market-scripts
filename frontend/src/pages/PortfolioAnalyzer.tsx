@@ -281,7 +281,8 @@ const COLUMN_ORDER = [
 
 const SCORE_MIN = 0
 const SCORE_MAX = 100
-const SCORE_STEP = 1
+const SCORE_PRECISION = 1
+const SLIDER_STEP = 10
 
 type MetricScores = AnalyzerScenarioState["metric_scores"]
 type BrakeScores = AnalyzerScenarioState["brakes"]
@@ -313,8 +314,13 @@ type LegacyScenarioState = Partial<AnalyzerScenarioState> & {
 
 function clampScore(value: number) {
   if (!Number.isFinite(value)) return SCORE_MIN
-  const stepped = Math.round(value / SCORE_STEP) * SCORE_STEP
+  const stepped = Math.round(value / SCORE_PRECISION) * SCORE_PRECISION
   return Math.min(SCORE_MAX, Math.max(SCORE_MIN, stepped))
+}
+
+function clampSliderScore(value: number) {
+  if (!Number.isFinite(value)) return SCORE_MIN
+  return clampScore(Math.round(value / SLIDER_STEP) * SLIDER_STEP)
 }
 
 function normalizeScoreMap<T extends Record<string, number>>(values: Partial<T> | undefined, defaults: T): T {
@@ -1105,12 +1111,12 @@ export function PortfolioAnalyzer() {
     setScenario(prev => ({
       ...prev,
       preset: "custom",
-      metric_scores: { ...prev.metric_scores, [key]: clampScore(value) },
+      metric_scores: { ...prev.metric_scores, [key]: clampSliderScore(value) },
     }))
   }
 
   function setBrake(key: keyof AnalyzerScenarioState["brakes"], value: number) {
-    setScenario(prev => ({ ...prev, preset: "custom", brakes: { ...prev.brakes, [key]: clampScore(value) } }))
+    setScenario(prev => ({ ...prev, preset: "custom", brakes: { ...prev.brakes, [key]: clampSliderScore(value) } }))
   }
 
   function handleBrief() {
@@ -1191,37 +1197,37 @@ export function PortfolioAnalyzer() {
           <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-5">
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Momentum</h3>
-              <SliderInput label="Price Momentum" value={scenario.metric_scores.price_momentum} onChange={v => setMetricScore("price_momentum", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Price Momentum" value={scenario.metric_scores.price_momentum} onChange={v => setMetricScore("price_momentum", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Fundamental Momentum</h3>
-              <SliderInput label="Revenue" value={scenario.metric_scores.revenue} onChange={v => setMetricScore("revenue", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="EPS" value={scenario.metric_scores.eps} onChange={v => setMetricScore("eps", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Revenue" value={scenario.metric_scores.revenue} onChange={v => setMetricScore("revenue", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="EPS" value={scenario.metric_scores.eps} onChange={v => setMetricScore("eps", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Valuation</h3>
-              <SliderInput label="EV/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="EV/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="EV/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="P/B" value={scenario.metric_scores.price_book} onChange={v => setMetricScore("price_book", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="EV/S" value={scenario.metric_scores.price_sales} onChange={v => setMetricScore("price_sales", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="EV/Operating Income" value={scenario.metric_scores.price_operating_income} onChange={v => setMetricScore("price_operating_income", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="EV/FCF" value={scenario.metric_scores.price_fcf} onChange={v => setMetricScore("price_fcf", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="P/E" value={scenario.metric_scores.price_earnings} onChange={v => setMetricScore("price_earnings", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="P/B" value={scenario.metric_scores.price_book} onChange={v => setMetricScore("price_book", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Qualitative</h3>
-              <SliderInput label="Business Quality (Quant)" value={scenario.metric_scores.quality} onChange={v => setMetricScore("quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="Business Quality (Overview)" value={scenario.metric_scores.business_quality_qualitative} onChange={v => setMetricScore("business_quality_qualitative", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="Industry Quality" value={scenario.metric_scores.industry_quality} onChange={v => setMetricScore("industry_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="Management Quality" value={scenario.metric_scores.management_quality} onChange={v => setMetricScore("management_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Business Quality (Quant)" value={scenario.metric_scores.quality} onChange={v => setMetricScore("quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="Business Quality (Overview)" value={scenario.metric_scores.business_quality_qualitative} onChange={v => setMetricScore("business_quality_qualitative", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="Industry Quality" value={scenario.metric_scores.industry_quality} onChange={v => setMetricScore("industry_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="Management Quality" value={scenario.metric_scores.management_quality} onChange={v => setMetricScore("management_quality", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-app">Risk Brakes</h3>
-              <SliderInput label="Drawdown" value={scenario.brakes.drawdown_sensitivity} onChange={v => setBrake("drawdown_sensitivity", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="Contrarian" value={scenario.brakes.contrarian_penalty} onChange={v => setBrake("contrarian_penalty", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
-              <SliderInput label="Short Squeeze" value={scenario.brakes.short_squeeze_brake} onChange={v => setBrake("short_squeeze_brake", v)} min={SCORE_MIN} max={SCORE_MAX} step={SCORE_STEP} />
+              <SliderInput label="Drawdown" value={scenario.brakes.drawdown_sensitivity} onChange={v => setBrake("drawdown_sensitivity", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="Contrarian" value={scenario.brakes.contrarian_penalty} onChange={v => setBrake("contrarian_penalty", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
+              <SliderInput label="Short Squeeze" value={scenario.brakes.short_squeeze_brake} onChange={v => setBrake("short_squeeze_brake", v)} min={SCORE_MIN} max={SCORE_MAX} step={SLIDER_STEP} />
             </section>
           </div>
         )}
