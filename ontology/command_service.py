@@ -736,7 +736,9 @@ class OntologyCommandService:
         if action_id in {"create_thesis_claim", "update_thesis_claim"}:
             ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
             claim = _non_blank(payload.get("claim") or payload.get("status") or "Thesis claim update", "claim")
-            claim_legacy_id = _legacy_int(payload.get("claim_id") or payload.get("thesis_claim_id") or payload.get("id"))
+            claim_legacy_id = _legacy_int(
+                payload.get("claim_id") or payload.get("thesis_claim_id") or payload.get("id")
+            )
             row = self.objects.write_object(
                 "ThesisClaim",
                 str(claim_legacy_id) if claim_legacy_id is not None else f"{ticker}:{claim}",
@@ -772,16 +774,16 @@ class OntologyCommandService:
                 or payload.get("summary")
                 or ""
             )
-            ticker = _optional_ticker(payload)
+            note_ticker = _optional_ticker(payload)
             title = str(payload.get("title") or payload.get("name") or payload.get("headline") or "").strip()
             if not title:
-                title = f"Research note {ticker or _stable_hash(payload)[:12]}"
+                title = f"Research note {note_ticker or _stable_hash(payload)[:12]}"
             raw_document_id = (
                 payload.get("document_id")
                 or payload.get("note_id")
                 or payload.get("research_note_id")
                 or payload.get("id")
-                or f"{ticker or 'general'}:{title}:{_stable_hash(content or payload)}"
+                or f"{note_ticker or 'general'}:{title}:{_stable_hash(content or payload)}"
             )
             document_id = _strip_uid_prefix(raw_document_id, "document_artifact")
             row = self.objects.write_object(
@@ -791,7 +793,7 @@ class OntologyCommandService:
                     "document_type": "research_note",
                     "document_id": document_id,
                     "title": title,
-                    "ticker": ticker,
+                    "ticker": note_ticker,
                     "content_hash": _stable_hash(content or payload),
                     "artifact_uri": payload.get("artifact_uri") or payload.get("source_path"),
                     "status": str(payload.get("status") or "active"),
