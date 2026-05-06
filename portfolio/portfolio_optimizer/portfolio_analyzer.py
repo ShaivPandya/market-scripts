@@ -155,6 +155,16 @@ from utils.retry import yf_download, yf_ticker_info
 
 LOGGER = logging.getLogger(__name__)
 
+from portfolio.portfolio_optimizer.analyzer_scenarios import (
+    SCENARIO_BRAKE_DEFAULTS,
+    SCENARIO_FACTOR_DEFAULTS,
+    SCENARIO_FUNDAMENTAL_DEFAULTS,
+    SCENARIO_METRIC_SCORE_DEFAULTS,
+    SCENARIO_VALUATION_DEFAULTS,
+    VALUATION_COLUMNS,
+    VALUATION_LABELS,
+    normalize_analyzer_scenario,
+)
 from portfolio.portfolio_optimizer.composite_signal import (
     DEFAULT_WEIGHTS_SHORT,
     combine_signals,
@@ -221,55 +231,6 @@ SIGNAL_ANCHOR_MODE = "spdr_sector_top10_anchor"
 INTERACTIVE_SIGNAL_ANCHOR_TOP_N = 3
 INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE = 20
 
-SCENARIO_FACTOR_DEFAULTS = {
-    "quality": 0.30,
-    "price_momentum": 0.40,
-    "fundamental_momentum": 0.30,
-    "valuation": 0.0,
-}
-SCENARIO_FUNDAMENTAL_DEFAULTS = {
-    "revenue": 2.0,
-    "eps": 1.0,
-}
-SCENARIO_VALUATION_DEFAULTS = {
-    "price_sales": 1.0,
-    "price_operating_income": 1.0,
-    "price_fcf": 1.0,
-    "price_earnings": 1.0,
-    "price_book": 1.0,
-}
-SCENARIO_METRIC_SCORE_DEFAULTS = {
-    "quality": 0.0,
-    "price_momentum": 0.0,
-    "revenue": 0.0,
-    "eps": 0.0,
-    "price_sales": 0.0,
-    "price_operating_income": 0.0,
-    "price_fcf": 0.0,
-    "price_earnings": 0.0,
-    "price_book": 0.0,
-}
-SCENARIO_BRAKE_DEFAULTS = {
-    "drawdown_sensitivity": 0.0,
-    "contrarian_penalty": 0.0,
-    "short_squeeze_brake": 0.0,
-}
-VALUATION_COLUMNS = (
-    "price_sales",
-    "price_operating_income",
-    "price_fcf",
-    "price_earnings",
-    "price_book",
-)
-VALUATION_LABELS = {
-    "price_sales": "EV/S",
-    "price_operating_income": "EV/EBIT",
-    "price_fcf": "EV/FCF",
-    "price_earnings": "P/E",
-    "price_book": "P/B",
-}
-
-
 # -----------------------------
 # Currency metadata for non-USD instruments
 # -----------------------------
@@ -301,116 +262,6 @@ def _safe_float(value: Any) -> float:
     except (TypeError, ValueError):
         return np.nan
     return out if np.isfinite(out) else np.nan
-
-
-def _nonnegative_weight_group(
-    values: Mapping[str, Any] | None,
-    defaults: Mapping[str, float],
-    *,
-    group_name: str,
-) -> dict[str, float]:
-    raw = dict(values or {})
-    out = {key: max(0.0, _safe_float(raw.get(key, default))) for key, default in defaults.items()}
-    total = sum(out.values())
-    if total <= 0:
-        raise ValueError(f"{group_name} must include at least one positive weight.")
-    return {key: value / total for key, value in out.items()}
-
-
-def _clamped_brakes(values: Mapping[str, Any] | None) -> dict[str, float]:
-    raw = dict(values or {})
-    out: dict[str, float] = {}
-    for key, default in SCENARIO_BRAKE_DEFAULTS.items():
-        value = _safe_float(raw.get(key, default))
-        if not np.isfinite(value):
-            value = default
-        value = max(0.0, value)
-        if value > 1.0:
-            value = value / 100.0
-        out[key] = float(min(1.0, value))
-    return out
-
-
-def _weights_from_metric_scores(values: Mapping[str, Any] | None) -> dict[str, dict[str, float]]:
-    raw = dict(values or {})
-    scores = {
-        key: max(0.0, _safe_float(raw.get(key, default))) for key, default in SCENARIO_METRIC_SCORE_DEFAULTS.items()
-    }
-    total = sum(scores.values())
-    if total <= 0:
-        raise ValueError("metric_scores must include at least one positive score.")
-
-    fundamental_total = scores["revenue"] + scores["eps"]
-    valuation_total = sum(scores[key] for key in VALUATION_COLUMNS)
-
-    factor_weights = _nonnegative_weight_group(
-        {
-            "quality": scores["quality"],
-            "price_momentum": scores["price_momentum"],
-            "fundamental_momentum": fundamental_total,
-            "valuation": valuation_total,
-        },
-        SCENARIO_FACTOR_DEFAULTS,
-        group_name="factor_weights",
-    )
-    fundamental_momentum_weights = (
-        _nonnegative_weight_group(
-            {"revenue": scores["revenue"], "eps": scores["eps"]},
-            SCENARIO_FUNDAMENTAL_DEFAULTS,
-            group_name="fundamental_momentum_weights",
-        )
-        if fundamental_total > 0
-        else _nonnegative_weight_group(
-            None,
-            SCENARIO_FUNDAMENTAL_DEFAULTS,
-            group_name="fundamental_momentum_weights",
-        )
-    )
-    valuation_weights = (
-        _nonnegative_weight_group(
-            {key: scores[key] for key in VALUATION_COLUMNS},
-            SCENARIO_VALUATION_DEFAULTS,
-            group_name="valuation_weights",
-        )
-        if valuation_total > 0
-        else _nonnegative_weight_group(None, SCENARIO_VALUATION_DEFAULTS, group_name="valuation_weights")
-    )
-
-    return {
-        "factor_weights": factor_weights,
-        "fundamental_momentum_weights": fundamental_momentum_weights,
-        "valuation_weights": valuation_weights,
-    }
-
-
-def normalize_analyzer_scenario(scenario: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    raw = dict(scenario or {})
-    weights = (
-        _weights_from_metric_scores(raw.get("metric_scores"))
-        if raw.get("metric_scores") is not None
-        else {
-            "factor_weights": _nonnegative_weight_group(
-                raw.get("factor_weights"),
-                SCENARIO_FACTOR_DEFAULTS,
-                group_name="factor_weights",
-            ),
-            "fundamental_momentum_weights": _nonnegative_weight_group(
-                raw.get("fundamental_momentum_weights"),
-                SCENARIO_FUNDAMENTAL_DEFAULTS,
-                group_name="fundamental_momentum_weights",
-            ),
-            "valuation_weights": _nonnegative_weight_group(
-                raw.get("valuation_weights"),
-                SCENARIO_VALUATION_DEFAULTS,
-                group_name="valuation_weights",
-            ),
-        }
-    )
-    return {
-        "preset": str(raw.get("preset") or "balanced"),
-        **weights,
-        "brakes": _clamped_brakes(raw.get("brakes")),
-    }
 
 
 def _get_yf_statement(ticker_obj: yf.Ticker, attr_names: tuple[str, ...]) -> pd.DataFrame | None:

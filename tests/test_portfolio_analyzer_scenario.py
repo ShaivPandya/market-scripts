@@ -138,6 +138,55 @@ def test_metric_score_cache_key_is_ratio_based_and_brakes_accept_scores():
     assert _cache_key(raw_score_req) == _cache_key(normalized_req)
 
 
+def test_default_balanced_mission_includes_small_valuation_sleeve():
+    scenario = normalize_analyzer_scenario()
+
+    assert math.isclose(scenario["factor_weights"]["quality"], 0.30)
+    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.35)
+    assert math.isclose(scenario["factor_weights"]["fundamental_momentum"], 0.25)
+    assert math.isclose(scenario["factor_weights"]["valuation"], 0.10)
+    assert math.isclose(scenario["fundamental_momentum_weights"]["revenue"], 0.60)
+    assert math.isclose(scenario["fundamental_momentum_weights"]["eps"], 0.40)
+    assert "price_book" in scenario["valuation_weights"]
+
+
+def test_core_db_default_mission_uses_shared_balanced_scenario():
+    import portfolio.core_db as core_db
+
+    assert core_db._default_optimization_scenario() == normalize_analyzer_scenario({"preset": "balanced"})
+
+
+def test_preset_only_request_uses_named_mission_weights():
+    scenario = normalize_analyzer_scenario({"preset": "value_dislocation"})
+    req = AnalyzerRequest(scenario={"preset": "value_dislocation"})
+
+    assert math.isclose(scenario["factor_weights"]["valuation"], 0.50)
+    assert math.isclose(scenario["factor_weights"]["price_momentum"], 0.10)
+    assert _cache_key(req) == _cache_key(
+        AnalyzerRequest(
+            scenario={
+                "preset": "value_dislocation",
+                "metric_scores": {
+                    "quality": 25,
+                    "price_momentum": 10,
+                    "revenue": 10,
+                    "eps": 5,
+                    "price_sales": 8,
+                    "price_operating_income": 10,
+                    "price_fcf": 17,
+                    "price_earnings": 10,
+                    "price_book": 5,
+                },
+                "brakes": {
+                    "drawdown_sensitivity": 30,
+                    "contrarian_penalty": 30,
+                    "short_squeeze_brake": 35,
+                },
+            }
+        )
+    )
+
+
 def test_valuation_signal_ranks_lower_positive_multiples_higher():
     raw = pd.DataFrame(
         {
@@ -278,17 +327,7 @@ def _course_rows(rows: list[dict]) -> pd.DataFrame:
 def _balanced_course(rows: list[dict]) -> dict:
     return build_course_of_action(
         _course_rows(rows),
-        normalize_analyzer_scenario(
-            {
-                "preset": "balanced",
-                "factor_weights": {
-                    "quality": 0.30,
-                    "price_momentum": 0.40,
-                    "fundamental_momentum": 0.30,
-                    "valuation": 0.0,
-                },
-            }
-        ),
+        normalize_analyzer_scenario({"preset": "balanced"}),
     )
 
 

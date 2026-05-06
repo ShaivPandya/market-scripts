@@ -74,6 +74,7 @@ from typing import Any, cast
 
 from api.postgres import use_postgres_state
 from api.postgres_compat import PostgresCompatConnection
+from portfolio.portfolio_optimizer.analyzer_scenarios import default_analyzer_scenario
 
 logger = logging.getLogger(__name__)
 
@@ -3650,27 +3651,7 @@ _OPTIMIZATION_ALERT_JSON_FIELDS = ("evidence_json",)
 
 
 def _default_optimization_scenario() -> dict[str, Any]:
-    return {
-        "preset": "balanced",
-        "factor_weights": {
-            "quality": 0.30,
-            "price_momentum": 0.40,
-            "fundamental_momentum": 0.30,
-            "valuation": 0.0,
-        },
-        "fundamental_momentum_weights": {"revenue": 0.67, "eps": 0.33},
-        "valuation_weights": {
-            "price_sales": 0.25,
-            "price_operating_income": 0.25,
-            "price_fcf": 0.25,
-            "price_earnings": 0.25,
-        },
-        "brakes": {
-            "drawdown_sensitivity": 0.0,
-            "contrarian_penalty": 0.0,
-            "short_squeeze_brake": 0.0,
-        },
-    }
+    return default_analyzer_scenario("balanced")
 
 
 def _default_optimization_sources() -> dict[str, Any]:

@@ -8,15 +8,23 @@ from pydantic import BaseModel, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
 from api.serializers import serialize_dataframe, serialize_value
+from portfolio.portfolio_optimizer.analyzer_scenarios import (
+    SCENARIO_BRAKE_DEFAULTS,
+    SCENARIO_FACTOR_DEFAULTS,
+    SCENARIO_FUNDAMENTAL_DEFAULTS,
+    SCENARIO_METRIC_SCORE_DEFAULTS,
+    SCENARIO_VALUATION_DEFAULTS,
+    normalize_analyzer_scenario,
+)
 
 router = APIRouter()
 
 
 class AnalyzerFactorWeights(BaseModel):
-    quality: float = Field(default=0.30, ge=0)
-    price_momentum: float = Field(default=0.40, ge=0)
-    fundamental_momentum: float = Field(default=0.30, ge=0)
-    valuation: float = Field(default=0.0, ge=0)
+    quality: float = Field(default=SCENARIO_FACTOR_DEFAULTS["quality"], ge=0)
+    price_momentum: float = Field(default=SCENARIO_FACTOR_DEFAULTS["price_momentum"], ge=0)
+    fundamental_momentum: float = Field(default=SCENARIO_FACTOR_DEFAULTS["fundamental_momentum"], ge=0)
+    valuation: float = Field(default=SCENARIO_FACTOR_DEFAULTS["valuation"], ge=0)
 
     @model_validator(mode="after")
     def require_nonzero(self):
@@ -26,8 +34,8 @@ class AnalyzerFactorWeights(BaseModel):
 
 
 class AnalyzerFundamentalMomentumWeights(BaseModel):
-    revenue: float = Field(default=2.0, ge=0)
-    eps: float = Field(default=1.0, ge=0)
+    revenue: float = Field(default=SCENARIO_FUNDAMENTAL_DEFAULTS["revenue"], ge=0)
+    eps: float = Field(default=SCENARIO_FUNDAMENTAL_DEFAULTS["eps"], ge=0)
 
     @model_validator(mode="after")
     def require_nonzero(self):
@@ -37,11 +45,11 @@ class AnalyzerFundamentalMomentumWeights(BaseModel):
 
 
 class AnalyzerValuationWeights(BaseModel):
-    price_sales: float = Field(default=1.0, ge=0)
-    price_operating_income: float = Field(default=1.0, ge=0)
-    price_fcf: float = Field(default=1.0, ge=0)
-    price_earnings: float = Field(default=1.0, ge=0)
-    price_book: float = Field(default=1.0, ge=0)
+    price_sales: float = Field(default=SCENARIO_VALUATION_DEFAULTS["price_sales"], ge=0)
+    price_operating_income: float = Field(default=SCENARIO_VALUATION_DEFAULTS["price_operating_income"], ge=0)
+    price_fcf: float = Field(default=SCENARIO_VALUATION_DEFAULTS["price_fcf"], ge=0)
+    price_earnings: float = Field(default=SCENARIO_VALUATION_DEFAULTS["price_earnings"], ge=0)
+    price_book: float = Field(default=SCENARIO_VALUATION_DEFAULTS["price_book"], ge=0)
 
     @model_validator(mode="after")
     def require_nonzero(self):
@@ -52,15 +60,17 @@ class AnalyzerValuationWeights(BaseModel):
 
 
 class AnalyzerMetricScores(BaseModel):
-    quality: float = Field(default=0.0, ge=0, le=100)
-    price_momentum: float = Field(default=0.0, ge=0, le=100)
-    revenue: float = Field(default=0.0, ge=0, le=100)
-    eps: float = Field(default=0.0, ge=0, le=100)
-    price_sales: float = Field(default=0.0, ge=0, le=100)
-    price_operating_income: float = Field(default=0.0, ge=0, le=100)
-    price_fcf: float = Field(default=0.0, ge=0, le=100)
-    price_earnings: float = Field(default=0.0, ge=0, le=100)
-    price_book: float = Field(default=0.0, ge=0, le=100)
+    quality: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["quality"], ge=0, le=100)
+    price_momentum: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_momentum"], ge=0, le=100)
+    revenue: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["revenue"], ge=0, le=100)
+    eps: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["eps"], ge=0, le=100)
+    price_sales: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_sales"], ge=0, le=100)
+    price_operating_income: float = Field(
+        default=SCENARIO_METRIC_SCORE_DEFAULTS["price_operating_income"], ge=0, le=100
+    )
+    price_fcf: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_fcf"], ge=0, le=100)
+    price_earnings: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_earnings"], ge=0, le=100)
+    price_book: float = Field(default=SCENARIO_METRIC_SCORE_DEFAULTS["price_book"], ge=0, le=100)
 
     @model_validator(mode="after")
     def require_nonzero(self):
@@ -81,9 +91,9 @@ class AnalyzerMetricScores(BaseModel):
 
 
 class AnalyzerScenarioBrakes(BaseModel):
-    drawdown_sensitivity: float = Field(default=0.0, ge=0, le=100)
-    contrarian_penalty: float = Field(default=0.0, ge=0, le=100)
-    short_squeeze_brake: float = Field(default=0.0, ge=0, le=100)
+    drawdown_sensitivity: float = Field(default=SCENARIO_BRAKE_DEFAULTS["drawdown_sensitivity"], ge=0, le=100)
+    contrarian_penalty: float = Field(default=SCENARIO_BRAKE_DEFAULTS["contrarian_penalty"], ge=0, le=100)
+    short_squeeze_brake: float = Field(default=SCENARIO_BRAKE_DEFAULTS["short_squeeze_brake"], ge=0, le=100)
 
 
 class AnalyzerScenario(BaseModel):
@@ -109,87 +119,10 @@ class AnalyzerBriefRequest(BaseModel):
     action: dict[str, Any]
 
 
-def _normalize_group(values: dict[str, Any]) -> dict[str, float]:
-    numeric = {k: max(0.0, float(v or 0.0)) for k, v in values.items()}
-    total = sum(numeric.values())
-    if total <= 0:
-        return numeric
-    return {k: round(v / total, 8) for k, v in numeric.items()}
-
-
-def _unit_brake_value(value: Any) -> float:
-    numeric = max(0.0, float(value or 0.0))
-    if numeric > 1.0:
-        numeric = numeric / 100.0
-    return round(max(0.0, min(1.0, numeric)), 8)
-
-
-def _scenario_from_metric_scores(metric_scores: dict[str, Any]) -> dict[str, dict[str, float]]:
-    scores = {key: max(0.0, float(value or 0.0)) for key, value in metric_scores.items()}
-    total = sum(scores.values())
-    if total <= 0:
-        raise ValueError("metric_scores must include at least one positive score.")
-
-    fundamental_total = scores.get("revenue", 0.0) + scores.get("eps", 0.0)
-    valuation_total = (
-        scores.get("price_sales", 0.0)
-        + scores.get("price_operating_income", 0.0)
-        + scores.get("price_fcf", 0.0)
-        + scores.get("price_earnings", 0.0)
-        + scores.get("price_book", 0.0)
-    )
-
-    factor_weights = _normalize_group(
-        {
-            "quality": scores.get("quality", 0.0),
-            "price_momentum": scores.get("price_momentum", 0.0),
-            "fundamental_momentum": fundamental_total,
-            "valuation": valuation_total,
-        }
-    )
-    fundamental_momentum_weights = (
-        _normalize_group({"revenue": scores.get("revenue", 0.0), "eps": scores.get("eps", 0.0)})
-        if fundamental_total > 0
-        else _normalize_group(AnalyzerFundamentalMomentumWeights().model_dump())
-    )
-    valuation_weights = (
-        _normalize_group(
-            {
-                "price_sales": scores.get("price_sales", 0.0),
-                "price_operating_income": scores.get("price_operating_income", 0.0),
-                "price_fcf": scores.get("price_fcf", 0.0),
-                "price_earnings": scores.get("price_earnings", 0.0),
-                "price_book": scores.get("price_book", 0.0),
-            }
-        )
-        if valuation_total > 0
-        else _normalize_group(AnalyzerValuationWeights().model_dump())
-    )
-
-    return {
-        "factor_weights": factor_weights,
-        "fundamental_momentum_weights": fundamental_momentum_weights,
-        "valuation_weights": valuation_weights,
-    }
-
-
 def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
-    scenario = req.scenario or AnalyzerScenario()
-    raw = scenario.model_dump()
-    weights = (
-        _scenario_from_metric_scores(raw["metric_scores"])
-        if raw.get("metric_scores") is not None
-        else {
-            "factor_weights": _normalize_group(raw["factor_weights"]),
-            "fundamental_momentum_weights": _normalize_group(raw["fundamental_momentum_weights"]),
-            "valuation_weights": _normalize_group(raw["valuation_weights"]),
-        }
-    )
-    return {
-        "preset": raw.get("preset") or "balanced",
-        **weights,
-        "brakes": {k: _unit_brake_value(v) for k, v in raw["brakes"].items()},
-    }
+    if req.scenario is None:
+        return normalize_analyzer_scenario()
+    return normalize_analyzer_scenario(req.scenario.model_dump(exclude_unset=True))
 
 
 def _cache_key(req: AnalyzerRequest) -> str:
