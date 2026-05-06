@@ -45,6 +45,7 @@ RESEARCH_ACTION_IDS = {
     "save_thesis_content",
     "save_management_quality_content",
     "save_evaluation",
+    "create_research_note",
     "create_portfolio_news_digest",
     "delete_portfolio_news_digest",
     "create_action_item",
@@ -558,12 +559,13 @@ class OntologyCommandService:
             for position in _list(payload.get("positions")):
                 row = dict(position)
                 ticker = _non_blank(row.get("ticker"), "ticker").upper()
-                instr_uid = instrument_id(row.get("instrument_id") or ticker)
+                instr_key = str(row.get("instrument_id") or ticker)
+                instr_uid = instrument_id(instr_key)
                 self.objects.write_object(
                     "Instrument",
-                    instr_uid,
+                    instr_key,
                     {
-                        "instrument_id": instr_uid,
+                        "instrument_id": instr_key,
                         "ticker": ticker,
                         "asset_class": row.get("asset") or "security",
                         "instrument_type": row.get("instrument_type") or "security",
@@ -669,7 +671,7 @@ class OntologyCommandService:
                     "source_type": context.source_type,
                     "source_id": context.source_id,
                     "created_at": now,
-                    "deleted_at": now if status == "deleted" else None,
+                    "updated_at": now if status == "deleted" else None,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
                 now,
@@ -734,18 +736,65 @@ class OntologyCommandService:
         if action_id in {"create_thesis_claim", "update_thesis_claim"}:
             ticker = _non_blank(payload.get("ticker") or payload.get("instrument"), "ticker").upper()
             claim = _non_blank(payload.get("claim") or payload.get("status") or "Thesis claim update", "claim")
+            claim_legacy_id = _legacy_int(payload.get("claim_id") or payload.get("thesis_claim_id") or payload.get("id"))
             row = self.objects.write_object(
                 "ThesisClaim",
-                payload.get("claim_id") or f"{ticker}:{claim}",
+                str(claim_legacy_id) if claim_legacy_id is not None else f"{ticker}:{claim}",
                 {
                     "ticker": ticker,
                     "claim": claim,
+                    "legacy_id": claim_legacy_id,
                     "expected_evidence": payload.get("expected_evidence"),
                     "disconfirming_evidence": payload.get("disconfirming_evidence"),
                     "source_requirements": _list(payload.get("source_requirements")),
                     "cadence": payload.get("cadence"),
                     "confidence": payload.get("confidence"),
                     "status": payload.get("status") or "active",
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor,
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            refs.append(_version_ref_from_row(row))
+            return refs
+        if action_id == "create_research_note":
+            content = str(
+                payload.get("content")
+                or payload.get("note")
+                or payload.get("body")
+                or payload.get("text")
+                or payload.get("summary")
+                or ""
+            )
+            ticker = _optional_ticker(payload)
+            title = str(payload.get("title") or payload.get("name") or payload.get("headline") or "").strip()
+            if not title:
+                title = f"Research note {ticker or _stable_hash(payload)[:12]}"
+            raw_document_id = (
+                payload.get("document_id")
+                or payload.get("note_id")
+                or payload.get("research_note_id")
+                or payload.get("id")
+                or f"{ticker or 'general'}:{title}:{_stable_hash(content or payload)}"
+            )
+            document_id = _strip_uid_prefix(raw_document_id, "document_artifact")
+            row = self.objects.write_object(
+                "DocumentArtifact",
+                document_id,
+                {
+                    "document_type": "research_note",
+                    "document_id": document_id,
+                    "title": title,
+                    "ticker": ticker,
+                    "content_hash": _stable_hash(content or payload),
+                    "artifact_uri": payload.get("artifact_uri") or payload.get("source_path"),
+                    "status": str(payload.get("status") or "active"),
                     "source_type": context.source_type,
                     "source_id": context.source_id,
                     "created_at": now,
@@ -824,12 +873,12 @@ class OntologyCommandService:
             )
             return refs
         if action_id == "create_action_item":
-            item_key = f"action_item:{_stable_hash(payload)}"
+            description = _non_blank(payload.get("description"), "description")
             row = self.objects.write_object(
                 "ActionItem",
-                item_key,
+                description,
                 {
-                    "description": _non_blank(payload.get("description"), "description"),
+                    "description": description,
                     "action_type": str(payload.get("action_type") or "review"),
                     "ticker": _optional_ticker(payload),
                     "urgency": str(payload.get("urgency") or "normal"),
@@ -847,12 +896,16 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(row))
             return refs
         if action_id in {"complete_action_item", "dismiss_action_item"}:
-            item_key = str(payload.get("item_id") or payload.get("id") or _stable_hash(payload))
+            item_id = payload.get("item_id") or payload.get("id")
+            legacy_id = _legacy_int(item_id)
+            item_key = str(legacy_id) if legacy_id is not None else _strip_uid_prefix(item_id, "action_item")
+            description = str(payload.get("description") or f"Action item {item_key}").strip()
             row = self.objects.write_object(
                 "ActionItem",
-                item_key,
+                item_key or description,
                 {
-                    "description": str(payload.get("description") or f"Action item {item_key}"),
+                    "description": description,
+                    "legacy_id": legacy_id,
                     "action_type": str(payload.get("action_type") or "review"),
                     "ticker": _optional_ticker(payload),
                     "urgency": str(payload.get("urgency") or "normal"),
@@ -871,12 +924,12 @@ class OntologyCommandService:
             refs.append(_version_ref_from_row(row))
             return refs
         if action_id == "create_watch_trigger":
-            trigger_key = f"watch_trigger:{_stable_hash(payload)}"
+            condition = _non_blank(payload.get("condition"), "condition")
             row = self.objects.write_object(
                 "WatchTrigger",
-                trigger_key,
+                condition,
                 {
-                    "condition": _non_blank(payload.get("condition"), "condition"),
+                    "condition": condition,
                     "trigger_type": str(payload.get("trigger_type") or "custom"),
                     "ticker": _optional_ticker(payload),
                     "status": "active",
@@ -900,17 +953,21 @@ class OntologyCommandService:
             "update_watch_trigger_check",
             "update_watch_trigger_definition",
         }:
-            trigger_key = str(payload.get("trigger_id") or payload.get("id") or _stable_hash(payload))
+            trigger_id = payload.get("trigger_id") or payload.get("id")
+            legacy_id = _legacy_int(trigger_id)
+            trigger_key = str(legacy_id) if legacy_id is not None else _strip_uid_prefix(trigger_id, "watch_trigger")
             status = "cancelled"
             if action_id == "fire_watch_trigger":
                 status = "fired"
             elif action_id in {"update_watch_trigger_check", "update_watch_trigger_definition"}:
                 status = str(payload.get("status") or "active")
+            condition = str(payload.get("condition") or f"Watch trigger {trigger_key}").strip()
             row = self.objects.write_object(
                 "WatchTrigger",
-                trigger_key,
+                trigger_key or condition,
                 {
-                    "condition": str(payload.get("condition") or f"Watch trigger {trigger_key}"),
+                    "condition": condition,
+                    "legacy_id": legacy_id,
                     "trigger_type": str(payload.get("trigger_type") or "custom"),
                     "ticker": _optional_ticker(payload),
                     "status": status,
@@ -1357,7 +1414,10 @@ def _validate_governed_action(action_id: str, payload: Mapping[str, Any]) -> Non
 def _base_state_hash(action_id: str, payload: Mapping[str, Any]) -> str | None:
     from portfolio.action_registry import compute_action_base_state_hash
 
-    return compute_action_base_state_hash(action_id, dict(payload))
+    try:
+        return compute_action_base_state_hash(action_id, dict(payload))
+    except Exception:
+        return _stable_hash({"action_id": action_id, "payload": dict(payload)})
 
 
 def _ensure_fresh_base_state(approval: Mapping[str, Any]) -> None:
@@ -1401,6 +1461,24 @@ def _int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _legacy_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or ":" in text:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _strip_uid_prefix(value: Any, prefix: str) -> str:
+    text = str(value or "").strip()
+    marker = f"{prefix}:"
+    return text.removeprefix(marker).strip() if text.startswith(marker) else text
 
 
 def _list(value: Any) -> list[Any]:

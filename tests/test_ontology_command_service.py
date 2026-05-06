@@ -184,6 +184,52 @@ def test_create_recommendation_approval_applies_with_real_schema_normalization()
     assert any(row["object_type"] == "ExecutedDecisionRecord" for row in repo.objects.values())
 
 
+@pytest.mark.parametrize(
+    ("action_id", "payload", "expected_uid"),
+    [
+        (
+            "create_action_item",
+            {
+                "description": "Review daily report flag for OKLO 2026-05-06",
+                "action_type": "review",
+                "ticker": "OKLO",
+                "urgency": "normal",
+            },
+            "action_item:review_daily_report_flag_for_oklo_2026_05_06",
+        ),
+        (
+            "create_watch_trigger",
+            {
+                "condition": "Watch OKLO breadth reversal",
+                "trigger_type": "custom",
+                "ticker": "OKLO",
+            },
+            "watch_trigger:watch_oklo_breadth_reversal",
+        ),
+        (
+            "create_research_note",
+            {
+                "title": "OKLO daily report flag",
+                "ticker": "OKLO",
+                "note": "Review daily report flag for OKLO.",
+                "document_id": "daily:2026-05-06:oklo-flag",
+            },
+            "document_artifact:research_note:daily_2026_05_06_oklo_flag",
+        ),
+    ],
+)
+def test_research_object_approvals_apply_with_schema_canonical_ids(action_id, payload, expected_uid):
+    repo = NormalizingTemporalRepo()
+    service = OntologyCommandService(OntologyObjectService(repository=repo))  # type: ignore[arg-type]
+    context = OntologyCommandContext(actor=admin_actor(source="test"), source_type="workflow", source_id="daily")
+
+    approval = service.propose_action(action_id, payload, context, reason="Apply research object")
+    applied = service.resolve_approval(approval["id"], "approved", "approved", context)
+
+    assert applied["application_status"] == "applied"
+    assert expected_uid in repo.objects
+
+
 def test_unsupported_action_is_rejected_before_any_write():
     fake = FakeObjectService()
     service = OntologyCommandService(fake)  # type: ignore[arg-type]

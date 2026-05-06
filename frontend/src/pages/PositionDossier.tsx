@@ -317,6 +317,16 @@ export function PositionDossier() {
   const workflowRuns = Array.isArray(data.workflow_runs) ? data.workflow_runs : []
   const positionQuantity = pos?.quantity ?? pos?.shares
   const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
+  const hasPositionSummary = Boolean(
+    pos && (
+      positionQuantity != null ||
+      (pos.instrument_type === "future" && pos.contract_multiplier != null) ||
+      pos.avg_cost != null ||
+      pos.market_value != null ||
+      pos.pnl_pct != null ||
+      pos.weight != null
+    ),
+  )
   const meta = data.thesis?.meta
 
   return (
@@ -358,7 +368,7 @@ export function PositionDossier() {
       </div>
 
       {/* Position summary bar */}
-      {pos && (
+      {hasPositionSummary && pos && (
         <div className="theme-surface rounded-xl p-3 mb-4 flex flex-wrap gap-6 text-sm">
           {positionQuantity != null && <div><span className="text-subtle">{positionQuantityLabel}</span> <span className="font-medium text-app ml-1">{String(positionQuantity)}</span></div>}
           {pos.instrument_type === "future" && pos.contract_multiplier != null && <div><span className="text-subtle">Multiplier</span> <span className="font-medium text-app ml-1">{String(pos.contract_multiplier)}</span></div>}
@@ -1309,7 +1319,6 @@ function ValueRangePanel({
   }
 
   const metricLabel = valuation.metrics[draft.metric]?.label ?? draft.metric
-  const denominatorLabel = valuation.metrics[draft.metric]?.denominator_label ?? valuation.value_range?.denominator_label ?? "Denominator"
   const currentPrice = formatSharePrice(valuation.market_data?.current_price)
   const saveErrorText = saveError instanceof Error ? saveError.message : saveError ? String(saveError) : null
 
@@ -1376,7 +1385,6 @@ function ValueRangePanel({
                   value={draft.scenarios[scenario].denominator}
                   onChange={value => updateScenario(scenario, { denominator: value })}
                   placeholder="1.5B"
-                  helperText={denominatorLabel}
                 />
               </div>
               {computed.reason && <p className="mt-2 text-xs text-subtle">{computed.reason}</p>}
