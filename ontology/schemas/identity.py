@@ -100,6 +100,55 @@ def object_version_ref_id(identifier: object) -> str:
     return f"object_version_ref:{slug(identifier)}"
 
 
+def relation_version_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("relation_version_ref:"):
+        text = text.split(":", 1)[1]
+    return f"relation_version_ref:{slug(text)}"
+
+
+def schema_definition_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("schema_definition_ref:"):
+        text = text.split(":", 1)[1]
+    return f"schema_definition_ref:{slug(text)}"
+
+
+def ontology_run_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("ontology_run_ref:"):
+        text = text.split(":", 1)[1]
+    return f"ontology_run_ref:{slug(text)}"
+
+
+def agent_session_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("agent_session_ref:"):
+        text = text.split(":", 1)[1]
+    return f"agent_session_ref:{slug(text)}"
+
+
+def model_call_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("model_call_ref:"):
+        text = text.split(":", 1)[1]
+    return f"model_call_ref:{slug(text)}"
+
+
+def tool_call_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("tool_call_ref:"):
+        text = text.split(":", 1)[1]
+    return f"tool_call_ref:{slug(text)}"
+
+
+def computed_snapshot_ref_id(identifier: object) -> str:
+    text = str(identifier or "").strip()
+    if text.startswith("computed_snapshot_ref:"):
+        text = text.split(":", 1)[1]
+    return f"computed_snapshot_ref:{slug(text)}"
+
+
 def executed_action_id(identifier: object) -> str:
     return f"executed_action:{slug(identifier)}"
 
@@ -185,13 +234,6 @@ def provenance_event_id(identifier: object) -> str:
     if text.startswith("provenance_event:"):
         text = text.split(":", 1)[1]
     return f"provenance_event:{slug(text)}"
-
-
-def provenance_link_id(identifier: object) -> str:
-    text = str(identifier or "").strip()
-    if text.startswith("provenance_link:"):
-        text = text.split(":", 1)[1]
-    return f"provenance_link:{slug(text)}"
 
 
 def workflow_run_id(identifier: object) -> str:

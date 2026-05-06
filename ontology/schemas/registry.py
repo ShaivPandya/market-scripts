@@ -13,11 +13,13 @@ from ontology.schemas.identity import (
     action_event_id,
     action_item_id,
     action_run_id,
+    agent_session_ref_id,
     approval_id,
     asset_id,
     audit_event_id,
     catalyst_id,
     citation_id,
+    computed_snapshot_ref_id,
     document_artifact_id,
     evaluation_id,
     evidence_id,
@@ -34,7 +36,9 @@ from ontology.schemas.identity import (
     kill_condition_id,
     macro_indicator_id,
     mandate_id,
+    model_call_ref_id,
     object_version_ref_id,
+    ontology_run_ref_id,
     optimization_action_snapshot_id,
     optimization_alert_id,
     optimization_mission_id,
@@ -43,18 +47,20 @@ from ontology.schemas.identity import (
     portfolio_id,
     position_id,
     provenance_event_id,
-    provenance_link_id,
     recommendation_id,
+    relation_version_ref_id,
     report_run_id,
     research_note_id,
     risk_limit_id,
     risk_metric_id,
     scenario_id,
+    schema_definition_ref_id,
     sector_id,
     signal_id,
     source_record_object_id,
     thesis_claim_id,
     thesis_id,
+    tool_call_ref_id,
     trade_proposal_id,
     watch_trigger_id,
     workflow_artifact_id,
@@ -66,11 +72,13 @@ from ontology.schemas.objects import (
     ActionEventV1,
     ActionItemV1,
     ActionRunV1,
+    AgentSessionRefV1,
     ApprovalV1,
     AssetV1,
     AuditEventV1,
     CatalystV1,
     CitationV1,
+    ComputedSnapshotRefV1,
     DocumentArtifactV1,
     EvaluationV1,
     EvidenceV1,
@@ -87,8 +95,10 @@ from ontology.schemas.objects import (
     KillConditionV1,
     MacroIndicatorV1,
     MandateV1,
+    ModelCallRefV1,
     ObjectVersionRefV1,
     OntologyObjectV1,
+    OntologyRunRefV1,
     OptimizationActionSnapshotV1,
     OptimizationAlertV1,
     OptimizationMissionV1,
@@ -97,18 +107,20 @@ from ontology.schemas.objects import (
     PortfolioV1,
     PositionV1,
     ProvenanceEventV1,
-    ProvenanceLinkV1,
     RecommendationV1,
+    RelationVersionRefV1,
     ReportRunV1,
     ResearchNoteV1,
     RiskLimitV1,
     RiskMetricV1,
     ScenarioV1,
+    SchemaDefinitionRefV1,
     SectorV1,
     SignalV1,
     SourceRecordV1,
     ThesisClaimV1,
     ThesisV1,
+    ToolCallRefV1,
     TradeProposalV1,
     WatchTriggerV1,
     WorkflowArtifactV1,
@@ -166,7 +178,13 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "ActionRun": ActionRunV1,
     "ActionEvent": ActionEventV1,
     "ProvenanceEvent": ProvenanceEventV1,
-    "ProvenanceLink": ProvenanceLinkV1,
+    "RelationVersionRef": RelationVersionRefV1,
+    "SchemaDefinitionRef": SchemaDefinitionRefV1,
+    "OntologyRunRef": OntologyRunRefV1,
+    "AgentSessionRef": AgentSessionRefV1,
+    "ModelCallRef": ModelCallRefV1,
+    "ToolCallRef": ToolCallRefV1,
+    "ComputedSnapshotRef": ComputedSnapshotRefV1,
     "WorkflowRun": WorkflowRunV1,
     "WorkflowArtifact": WorkflowArtifactV1,
     "Recommendation": RecommendationV1,
@@ -198,7 +216,13 @@ OPTIONAL_NODE_TYPES = {
     "ReportRun",
     "DocumentArtifact",
     "ProvenanceEvent",
-    "ProvenanceLink",
+    "RelationVersionRef",
+    "SchemaDefinitionRef",
+    "OntologyRunRef",
+    "AgentSessionRef",
+    "ModelCallRef",
+    "ToolCallRef",
+    "ComputedSnapshotRef",
     "InvestmentIdea",
     "IdeaEvaluation",
     "IdeaComparisonRun",
@@ -556,8 +580,20 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return action_event_id(model.legacy_id or f"{model.action_run_id}:{model.event_type}:{model.created_at}")
     if isinstance(model, ProvenanceEventV1):
         return provenance_event_id(model.event_id)
-    if isinstance(model, ProvenanceLinkV1):
-        return provenance_link_id(model.link_id)
+    if isinstance(model, RelationVersionRefV1):
+        return relation_version_ref_id(model.ref_id)
+    if isinstance(model, SchemaDefinitionRefV1):
+        return schema_definition_ref_id(model.ref_id)
+    if isinstance(model, OntologyRunRefV1):
+        return ontology_run_ref_id(model.run_id)
+    if isinstance(model, AgentSessionRefV1):
+        return agent_session_ref_id(model.session_id)
+    if isinstance(model, ModelCallRefV1):
+        return model_call_ref_id(model.call_id)
+    if isinstance(model, ToolCallRefV1):
+        return tool_call_ref_id(model.call_id)
+    if isinstance(model, ComputedSnapshotRefV1):
+        return computed_snapshot_ref_id(model.snapshot_key)
     if isinstance(model, WorkflowRunV1):
         return workflow_run_id(model.run_id)
     if isinstance(model, WorkflowArtifactV1):
@@ -629,16 +665,19 @@ def _validate_relation(
         definition = get_relation_definition(relation_type)
     except ValueError as exc:
         raise OntologySchemaValidationError(str(exc)) from exc
-    expected = (definition.source_type, definition.target_type)
+    expected_source_types = definition.allowed_source_types or frozenset({definition.source_type})
+    expected_target_types = definition.allowed_target_types or frozenset({definition.target_type})
     source_type = node_types.get(source_id)
     target_type = node_types.get(target_id)
     if source_type is None:
         raise OntologySchemaValidationError(f"Edge {relation_type} has missing source node: {source_id}")
     if target_type is None:
         raise OntologySchemaValidationError(f"Edge {relation_type} has missing target node: {target_id}")
-    if (source_type, target_type) != expected:
+    if source_type not in expected_source_types or target_type not in expected_target_types:
+        expected_source = "|".join(sorted(expected_source_types))
+        expected_target = "|".join(sorted(expected_target_types))
         raise OntologySchemaValidationError(
-            f"Edge {relation_type} must connect {expected[0]}->{expected[1]}, got {source_type}->{target_type}"
+            f"Edge {relation_type} must connect {expected_source}->{expected_target}, got {source_type}->{target_type}"
         )
 
 

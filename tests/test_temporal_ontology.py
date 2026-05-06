@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ontology.object_service import OntologyObjectService, OntologyWriteContractError
+from ontology.object_service import OntologyObjectService, OntologyWriteContractError, relation_uid_for
 from ontology.temporal_repository import ObjectVersionWrite, RelationVersionWrite
 
 
@@ -201,6 +201,9 @@ def test_object_service_writes_registered_runtime_migration_types():
             "event_type": "unit",
             "event_name": "test",
             "status": "started",
+            "lineage_root_id": "pv:unit",
+            "redaction_policy": "audit_summary_v1",
+            "retention_class": "provenance_365d",
         },
         valid_from="2026-05-01T00:00:00Z",
         provenance="pv:unit",
@@ -214,30 +217,90 @@ def test_object_service_writes_registered_runtime_migration_types():
     assert event["object_uid"] == "provenance_event:pv_unit"
 
 
-def test_provenance_link_relation_is_registered_and_temporal():
+def test_typed_provenance_relation_is_registered_and_temporal():
     repo = _FakeTemporalRepo()
     service = OntologyObjectService(repository=repo)
 
     row = service.write_relation(
         "provenance_event:pv_unit",
-        "provenance_link:link_1",
-        "provenance_event_records_link",
+        "object_version_ref:version_1",
+        "provenance_produced",
         {
+            "event_id": "pv:unit",
             "ontology_run_id": "operational",
-            "link_type": "produced",
             "source_ref_type": "producer_event",
             "source_ref_id": "pv:unit",
             "target_ref_type": "ontology_object_version",
             "target_ref_id": "version-1",
+            "redaction_policy": "audit_summary_v1",
+            "retention_class": "provenance_365d",
         },
         valid_from="2026-05-01T00:00:00Z",
         provenance="pv:unit",
     )
 
     write = repo.relation_writes[0]
-    assert write.relation_type == "provenance_event_records_link"
-    assert write.relation_schema_name == "provenance_event_records_link"
-    assert row["_meta"]["temporal"]["relation_uid"].startswith("provenance_event_records_link:")
+    assert write.relation_type == "provenance_produced"
+    assert write.relation_schema_name == "provenance_produced"
+    assert row["_meta"]["temporal"]["relation_uid"].startswith("provenance_produced:")
+
+
+def test_provenance_relation_uid_uses_full_ref_tuple():
+    props = {
+        "event_id": "pv:unit",
+        "source_ref_type": "producer_event",
+        "source_ref_id": "pv:unit",
+        "source_ref_version": "event-v1",
+        "target_ref_type": "ontology_object_version",
+        "target_ref_id": "version-1",
+        "target_ref_version": "object-v1",
+    }
+
+    uid = relation_uid_for("provenance_event:pv_unit", "object_version_ref:version_1", "provenance_produced", props)
+    same = relation_uid_for(
+        "provenance_event:pv_unit",
+        "object_version_ref:version_1",
+        "provenance_produced",
+        dict(props),
+    )
+    different_event = relation_uid_for(
+        "provenance_event:pv_unit",
+        "object_version_ref:version_1",
+        "provenance_produced",
+        {**props, "event_id": "pv:other"},
+    )
+    different_target_version = relation_uid_for(
+        "provenance_event:pv_unit",
+        "object_version_ref:version_1",
+        "provenance_produced",
+        {**props, "target_ref_version": "object-v2"},
+    )
+
+    assert uid == same
+    assert uid != different_event
+    assert uid != different_target_version
+
+
+def test_typed_provenance_relation_requires_redaction_retention_and_refs():
+    service = OntologyObjectService(repository=_FakeTemporalRepo())
+
+    with pytest.raises(OntologyWriteContractError, match="redaction_policy"):
+        service.write_relation(
+            "provenance_event:pv_unit",
+            "object_version_ref:version_1",
+            "provenance_produced",
+            {
+                "event_id": "pv:unit",
+                "ontology_run_id": "operational",
+                "source_ref_type": "producer_event",
+                "source_ref_id": "pv:unit",
+                "target_ref_type": "ontology_object_version",
+                "target_ref_id": "version-1",
+                "retention_class": "provenance_365d",
+            },
+            valid_from="2026-05-01T00:00:00Z",
+            provenance="pv:unit",
+        )
 
 
 def test_postgres_snapshot_success_uses_temporal_versions(monkeypatch):

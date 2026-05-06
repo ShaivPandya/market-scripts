@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 
-from ontology.legacy_backfill import backfill_runtime_objects
+import pytest
+
+from ontology.legacy_backfill import LegacyBackfillUnmappedRefs, backfill_runtime_objects
 
 
 def test_legacy_runtime_backfill_dry_run_covers_contract_domains(monkeypatch, tmp_path):
@@ -30,10 +32,32 @@ def test_legacy_runtime_backfill_dry_run_covers_contract_domains(monkeypatch, tm
             INSERT INTO provenance_events VALUES ('pv:1', 'unit', 'test', 'succeeded', '2026-05-01', 'provenance_365d');
             CREATE TABLE provenance_links (
                 id TEXT, event_id TEXT, source_ref_type TEXT, source_ref_id TEXT, target_ref_type TEXT,
-                target_ref_id TEXT, link_type TEXT, created_at TEXT
+                target_ref_id TEXT, link_type TEXT, created_at TEXT, source_ref_version TEXT, target_ref_version TEXT,
+                lineage_root_id TEXT, metadata_json TEXT
             );
             INSERT INTO provenance_links VALUES (
-                'link:1', 'pv:1', 'source_record', 'src:1', 'ontology_object_version', 'version:1', 'produced', '2026-05-01'
+                'link:1', 'pv:1', 'source_record', 'src:1', 'ontology_object_version', 'version:1', 'produced',
+                '2026-05-01', NULL, 'object-version-1', 'pv:1', '{}'
+            );
+            INSERT INTO provenance_links VALUES (
+                'link:2', 'pv:1', 'relation_version', 'relation:1', 'schema_definition', 'Position', 'schema_bound',
+                '2026-05-01', 'relation-version-1', '1', 'pv:1', '{}'
+            );
+            INSERT INTO provenance_links VALUES (
+                'link:3', 'pv:1', 'ontology_run', 'run-1', 'workflow_run', 'wf-1', 'executed',
+                '2026-05-01', NULL, NULL, 'pv:1', '{}'
+            );
+            INSERT INTO provenance_links VALUES (
+                'link:4', 'pv:1', 'agent_session', 'session-1', 'model_call', 'model-call-1', 'executed',
+                '2026-05-01', NULL, NULL, 'pv:1', '{}'
+            );
+            INSERT INTO provenance_links VALUES (
+                'link:5', 'pv:1', 'model_call', 'model-call-1', 'tool_call', 'tool-call-1', 'executed',
+                '2026-05-01', NULL, NULL, 'pv:1', '{}'
+            );
+            INSERT INTO provenance_links VALUES (
+                'link:6', 'pv:1', 'tool_call', 'tool-call-1', 'computed_snapshot_version', 'snapshot:1', 'produced',
+                '2026-05-01', NULL, 'snapshot-version-1', 'pv:1', '{}'
             );
             CREATE TABLE recommendations (
                 id INTEGER, action TEXT, instrument TEXT, created_at TEXT
@@ -44,6 +68,10 @@ def test_legacy_runtime_backfill_dry_run_covers_contract_domains(monkeypatch, tm
                 record_hash TEXT, created_at TEXT
             );
             INSERT INTO source_record_refs VALUES ('src:1', 'pv:1', 'unit', 'record', 'key-hash', 'payload-hash', '2026-05-01');
+            CREATE TABLE workflow_runs (
+                run_id TEXT, workflow_name TEXT, ticker TEXT, status TEXT, started_at TEXT, completed_at TEXT
+            );
+            INSERT INTO workflow_runs VALUES ('wf-1', 'unit_workflow', 'MU', 'completed', '2026-05-01', '2026-05-01');
             """
         )
     with sqlite3.connect(portfolio_db) as conn:
@@ -91,12 +119,46 @@ def test_legacy_runtime_backfill_dry_run_covers_contract_domains(monkeypatch, tm
     assert result["objects"]["InvestmentIdea"] == 1
     assert result["objects"]["OptimizationMission"] == 1
     assert result["objects"]["ProvenanceEvent"] == 1
-    assert result["objects"]["ProvenanceLink"] == 1
+    assert "ProvenanceLink" not in result["objects"]
+    assert result["objects"]["ObjectVersionRef"] == 1
+    assert result["objects"]["RelationVersionRef"] == 1
+    assert result["objects"]["SchemaDefinitionRef"] == 1
+    assert result["objects"]["OntologyRunRef"] == 1
+    assert result["objects"]["AgentSessionRef"] == 1
+    assert result["objects"]["ModelCallRef"] == 1
+    assert result["objects"]["ToolCallRef"] == 1
+    assert result["objects"]["ComputedSnapshotRef"] == 1
     assert result["objects"]["Recommendation"] == 1
     assert result["objects"]["SourceRecord"] == 1
+    assert result["objects"]["WorkflowRun"] == 1
     assert result["objects"]["Position"] == 1
     assert result["objects"]["Thesis"] == 1
     assert result["objects"]["Evaluation"] == 1
     assert result["objects"]["AuditEvent"] == 1
-    assert result["relations"] == 1
+    assert result["relations"] == 6
     assert result["computed_snapshots"] == 1
+
+
+def test_legacy_runtime_backfill_reports_unmapped_provenance_refs(monkeypatch, tmp_path):
+    monkeypatch.setenv("TALISMAN_ENABLE_LEGACY_BACKFILL", "true")
+    core_db = tmp_path / "core.db"
+
+    with sqlite3.connect(core_db) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE provenance_links (
+                id TEXT, event_id TEXT, source_ref_type TEXT, source_ref_id TEXT, target_ref_type TEXT,
+                target_ref_id TEXT, link_type TEXT, created_at TEXT
+            );
+            INSERT INTO provenance_links VALUES (
+                'link:bad', 'pv:1', 'legacy_shadow_ref', 'shadow:1', 'ontology_object_version', 'version:1',
+                'produced', '2026-05-01'
+            );
+            """
+        )
+
+    with pytest.raises(LegacyBackfillUnmappedRefs) as exc_info:
+        backfill_runtime_objects(core_db_path=core_db, dry_run=True)
+
+    assert exc_info.value.unmapped_refs
+    assert exc_info.value.unmapped_refs[0]["id"] == "link:bad"

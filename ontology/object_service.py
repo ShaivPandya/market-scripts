@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -15,12 +16,14 @@ from ontology.schemas.identity import (
     action_event_id,
     action_item_id,
     action_run_id,
+    agent_session_ref_id,
     approval_id,
     asset_id,
     audit_event_id,
     canonical_ticker,
     catalyst_id,
     citation_id,
+    computed_snapshot_ref_id,
     document_artifact_id,
     evaluation_id,
     evidence_id,
@@ -37,7 +40,9 @@ from ontology.schemas.identity import (
     kill_condition_id,
     macro_indicator_id,
     mandate_id,
+    model_call_ref_id,
     object_version_ref_id,
+    ontology_run_ref_id,
     optimization_action_snapshot_id,
     optimization_alert_id,
     optimization_mission_id,
@@ -46,25 +51,27 @@ from ontology.schemas.identity import (
     portfolio_id,
     position_id,
     provenance_event_id,
-    provenance_link_id,
     recommendation_id,
+    relation_version_ref_id,
     report_run_id,
     research_note_id,
     risk_limit_id,
     risk_metric_id,
     scenario_id,
+    schema_definition_ref_id,
     sector_id,
     signal_id,
     source_record_object_id,
     thesis_claim_id,
     thesis_id,
+    tool_call_ref_id,
     trade_proposal_id,
     watch_trigger_id,
     workflow_artifact_id,
     workflow_run_id,
 )
 from ontology.schemas.registry import NODE_SCHEMAS, normalize_edge, normalize_node
-from ontology.schemas.relations import RELATION_REGISTRY
+from ontology.schemas.relations import PROVENANCE_RELATION_TYPES, RELATION_REGISTRY, get_relation_definition
 from ontology.temporal_repository import (
     ObjectVersionWrite,
     RelationVersionWrite,
@@ -240,9 +247,10 @@ class OntologyObjectService:
             source_record_id=source_record_id,
         )
         normalized = normalize_relation_payload(source_uid, target_uid, relation_type, properties or {})
+        _require_registered_relation_properties(relation_type, normalized["properties"], source_uid, target_uid)
         row = self.repo.write_relation_version(
             RelationVersionWrite(
-                relation_uid=relation_uid_for(source_uid, target_uid, relation_type),
+                relation_uid=relation_uid_for(source_uid, target_uid, relation_type, normalized["properties"]),
                 source_object_uid=source_uid,
                 target_object_uid=target_uid,
                 relation_type=relation_type,
@@ -380,6 +388,7 @@ def normalize_relation_payload(
                 target_id=target_uid,
                 relation_type=cast(Any, relation_type),
                 properties=props,
+                schema_version=1,
                 relation_schema_name=relation_type,
                 relation_schema_version=1,
             ),
@@ -468,6 +477,34 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("object_version_ref:"):
             return key
         return object_version_ref_id(props.get("ref_id") or key)
+    if object_type == "RelationVersionRef":
+        if key.startswith("relation_version_ref:"):
+            return key
+        return relation_version_ref_id(props.get("ref_id") or props.get("version_id") or key)
+    if object_type == "SchemaDefinitionRef":
+        if key.startswith("schema_definition_ref:"):
+            return key
+        return schema_definition_ref_id(props.get("ref_id") or key)
+    if object_type == "OntologyRunRef":
+        if key.startswith("ontology_run_ref:"):
+            return key
+        return ontology_run_ref_id(props.get("run_id") or key)
+    if object_type == "AgentSessionRef":
+        if key.startswith("agent_session_ref:"):
+            return key
+        return agent_session_ref_id(props.get("session_id") or key)
+    if object_type == "ModelCallRef":
+        if key.startswith("model_call_ref:"):
+            return key
+        return model_call_ref_id(props.get("call_id") or key)
+    if object_type == "ToolCallRef":
+        if key.startswith("tool_call_ref:"):
+            return key
+        return tool_call_ref_id(props.get("call_id") or key)
+    if object_type == "ComputedSnapshotRef":
+        if key.startswith("computed_snapshot_ref:"):
+            return key
+        return computed_snapshot_ref_id(props.get("snapshot_key") or props.get("snapshot_id") or key)
     if object_type == "ExecutedAction":
         if key.startswith("executed_action:"):
             return key
@@ -577,8 +614,6 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         return document_artifact_id(props.get("document_type") or "document", props.get("document_id") or key)
     if object_type == "ProvenanceEvent":
         return provenance_event_id(props.get("event_id") or props.get("id") or key)
-    if object_type == "ProvenanceLink":
-        return provenance_link_id(props.get("link_id") or props.get("id") or key)
     if object_type == "InvestmentIdea":
         return investment_idea_id(props.get("idea_id") or props.get("id") or key)
     if object_type == "IdeaEvaluation":
@@ -598,9 +633,29 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
     return f"{_slug(object_type)}:{_slug(key)}"
 
 
-def relation_uid_for(source_uid: str, target_uid: str, relation_type: str) -> str:
-    raw = f"{relation_type}:{source_uid}->{target_uid}"
-    return raw if len(raw) <= 180 else f"{relation_type}:{_slug(source_uid)}:{_slug(target_uid)}"
+def relation_uid_for(
+    source_uid: str,
+    target_uid: str,
+    relation_type: str,
+    properties: Mapping[str, Any] | None = None,
+) -> str:
+    props = dict(properties or {})
+    if relation_type in PROVENANCE_RELATION_TYPES:
+        raw = ":".join(
+            [
+                relation_type,
+                str(props.get("event_id") or "unknown_event"),
+                str(props.get("source_ref_type") or "unknown_source"),
+                str(props.get("source_ref_id") or source_uid),
+                str(props.get("source_ref_version") or "latest"),
+                str(props.get("target_ref_type") or "unknown_target"),
+                str(props.get("target_ref_id") or target_uid),
+                str(props.get("target_ref_version") or "latest"),
+            ]
+        )
+    else:
+        raw = f"{relation_type}:{source_uid}->{target_uid}"
+    return raw if len(raw) <= 180 else f"{relation_type}:{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:32]}"
 
 
 def with_temporal_meta(row: dict[str, Any]) -> dict[str, Any]:
@@ -698,13 +753,49 @@ def _require_write_provenance(surface: str, name: str, provenance_event_id: str 
     raise OntologyWriteContractError(f"Ontology {surface} write '{name}' requires provenance")
 
 
+def _require_registered_relation_properties(
+    relation_type: str,
+    properties: Mapping[str, Any],
+    source_uid: str,
+    target_uid: str,
+) -> None:
+    definition = get_relation_definition(relation_type)
+    missing = [name for name in sorted(definition.required_properties) if _missing_property(properties.get(name))]
+    if missing:
+        fields = ", ".join(missing)
+        raise OntologyWriteContractError(
+            f"Ontology relation write '{relation_type}' {source_uid}->{target_uid} missing required properties: {fields}"
+        )
+
+
+def _missing_property(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
 def _with_object_identity_fields(object_type: str, business_key: str, props: dict[str, Any]) -> dict[str, Any]:
     out = dict(props)
     key = str(business_key or "").strip()
     if object_type == "ProvenanceEvent":
         out.setdefault("event_id", out.get("id") or key)
-    elif object_type == "ProvenanceLink":
-        out.setdefault("link_id", out.get("id") or key)
+    elif object_type == "RelationVersionRef":
+        out.setdefault("ref_id", out.get("version_id") or out.get("relation_uid") or out.get("id") or key)
+        out.setdefault("version_id", out.get("ref_id"))
+    elif object_type == "SchemaDefinitionRef":
+        out.setdefault("ref_id", out.get("id") or key)
+    elif object_type == "OntologyRunRef":
+        out.setdefault("run_id", out.get("id") or key)
+    elif object_type == "AgentSessionRef":
+        out.setdefault("session_id", out.get("id") or key)
+    elif object_type == "ModelCallRef":
+        out.setdefault("call_id", out.get("id") or key)
+    elif object_type == "ToolCallRef":
+        out.setdefault("call_id", out.get("id") or key)
+    elif object_type == "ComputedSnapshotRef":
+        out.setdefault("snapshot_key", out.get("snapshot_id") or out.get("id") or key)
     elif object_type == "InvestmentIdea":
         out.setdefault("idea_id", out.get("id") or key)
     elif object_type == "IdeaEvaluation":

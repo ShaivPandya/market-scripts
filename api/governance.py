@@ -7,8 +7,8 @@ from typing import Any
 
 from api.audit import summarize_for_audit
 from api.provenance import deterministic_id, stable_hash
+from api.provenance import link_refs as write_provenance_relation
 from ontology.object_service import OntologyObjectService
-from ontology.schemas.identity import provenance_event_id, provenance_link_id
 
 SCHEMA_VERSION = 1
 CRITICAL_FINANCIAL = "financial_critical"
@@ -523,28 +523,18 @@ def record_now_tx(conn: Any, event_bundle: dict[str, Any]) -> dict[str, int]:
             )
             audit_count += 1
         for link in event_bundle.get("provenance_links") or []:
-            link_id = str(link.get("link_id") or deterministic_id("provenance_link", link))
-            objects.write_object(
-                "ProvenanceLink",
-                link_id,
-                {**link, "link_id": link_id},
-                now,
-                provenance=link.get("lineage_root_id") or link.get("event_id") or link_id,
-            )
-            objects.write_relation(
-                provenance_event_id(link.get("event_id") or link_id),
-                provenance_link_id(link_id),
-                "provenance_event_records_link",
-                {
-                    "ontology_run_id": OPERATIONAL,
-                    "link_type": link.get("link_type"),
-                    "source_ref_type": link.get("source_ref_type"),
-                    "source_ref_id": link.get("source_ref_id"),
-                    "target_ref_type": link.get("target_ref_type"),
-                    "target_ref_id": link.get("target_ref_id"),
-                },
-                now,
-                provenance=link.get("lineage_root_id") or link.get("event_id") or link_id,
+            write_provenance_relation(
+                event_id=str(link.get("event_id") or ""),
+                source_ref_type=str(link.get("source_ref_type") or ""),
+                source_ref_id=str(link.get("source_ref_id") or ""),
+                source_ref_version=link.get("source_ref_version"),
+                target_ref_type=str(link.get("target_ref_type") or ""),
+                target_ref_id=str(link.get("target_ref_id") or ""),
+                target_ref_version=link.get("target_ref_version"),
+                link_type=str(link.get("link_type") or ""),
+                metadata=link.get("metadata"),
+                lineage_root_id=link.get("lineage_root_id"),
+                fail_closed=True,
             )
             link_count += 1
         return {"provenance_events": provenance_count, "audit_events": audit_count, "provenance_links": link_count}

@@ -1417,7 +1417,7 @@ class ProvenanceEventV1(OntologySchemaBase):
     id: str | None = None
     event_type: NonBlankStr
     event_name: NonBlankStr
-    status: NonBlankStr = "started"
+    status: Literal["started", "succeeded", "failed"] = "started"
     started_at: str | None = None
     completed_at: str | None = None
     actor_type: str | None = None
@@ -1441,10 +1441,10 @@ class ProvenanceEventV1(OntologySchemaBase):
     idempotency_key: str | None = None
     producer_name: str | None = None
     producer_version: str | None = None
-    redaction_policy: str | None = None
-    retention_class: NonBlankStr = "provenance_365d"
+    redaction_policy: NonBlankStr
+    retention_class: NonBlankStr
 
-    @field_validator("event_id", "event_type", "event_name", "status", "retention_class", mode="before")
+    @field_validator("event_id", "event_type", "event_name", "retention_class", "redaction_policy", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
@@ -1470,53 +1470,145 @@ class ProvenanceEventV1(OntologySchemaBase):
         "idempotency_key",
         "producer_name",
         "producer_version",
-        "redaction_policy",
         mode="before",
     )
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
 
+    @model_validator(mode="after")
+    def _has_context_anchor(self) -> ProvenanceEventV1:
+        if any(
+            (
+                self.actor_type,
+                self.actor_id,
+                self.request_id,
+                self.parent_event_id,
+                self.workflow_run_id,
+                self.ontology_run_id,
+                self.agent_session_id,
+                self.action_run_id,
+                self.approval_id,
+                self.audit_event_id,
+                self.lineage_root_id,
+            )
+        ):
+            return self
+        raise ValueError(
+            "ProvenanceEvent requires at least one actor, request, session, workflow, action, approval, ontology run, parent event, audit event, or lineage root anchor"
+        )
 
-class ProvenanceLinkV1(OntologySchemaBase):
-    link_id: NonBlankStr
-    id: str | None = None
-    event_id: NonBlankStr
-    source_ref_type: NonBlankStr
-    source_ref_id: NonBlankStr
-    source_ref_version: str | None = None
-    target_ref_type: NonBlankStr
-    target_ref_id: NonBlankStr
-    target_ref_version: str | None = None
-    link_type: NonBlankStr
-    metadata: dict[str, Any] | list[Any] | str | int | float | bool | None = None
-    lineage_root_id: str | None = None
-    created_at: str | None = None
-    ontology_run_id: str | None = None
 
-    @field_validator(
-        "link_id",
-        "event_id",
-        "source_ref_type",
-        "source_ref_id",
-        "target_ref_type",
-        "target_ref_id",
-        "link_type",
-        mode="before",
-    )
+class RelationVersionRefV1(OntologySchemaBase):
+    ref_id: NonBlankStr
+    relation_uid: str | None = None
+    relation_type: str | None = None
+    version_id: NonBlankStr
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ref_id", "version_id", "ontology_run_id", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return clean_text(value)
 
-    @field_validator(
-        "id",
-        "source_ref_version",
-        "target_ref_version",
-        "lineage_root_id",
-        "created_at",
-        "ontology_run_id",
-        mode="before",
-    )
+    @field_validator("relation_uid", "relation_type", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class SchemaDefinitionRefV1(OntologySchemaBase):
+    ref_id: NonBlankStr
+    schema_kind: NonBlankStr
+    schema_name: NonBlankStr
+    schema_version_value: int = Field(alias="schema_version_value")
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("ref_id", "schema_kind", "schema_name", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+
+class OntologyRunRefV1(OntologySchemaBase):
+    run_id: NonBlankStr
+    status: str | None = None
+    as_of: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("run_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("status", "as_of", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class AgentSessionRefV1(OntologySchemaBase):
+    session_id: NonBlankStr
+    actor_id: str | None = None
+    started_at: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("session_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("actor_id", "started_at", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ModelCallRefV1(OntologySchemaBase):
+    call_id: NonBlankStr
+    model: str | None = None
+    provider: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("call_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("model", "provider", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ToolCallRefV1(OntologySchemaBase):
+    call_id: NonBlankStr
+    tool_name: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("call_id", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("tool_name", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+
+class ComputedSnapshotRefV1(OntologySchemaBase):
+    snapshot_key: NonBlankStr
+    snapshot_id: str | None = None
+    status: str | None = None
+    ontology_run_id: NonBlankStr = "operational"
+
+    @field_validator("snapshot_key", "ontology_run_id", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        return clean_text(value)
+
+    @field_validator("snapshot_id", "status", mode="before")
     @classmethod
     def _optional_text(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -1853,7 +1945,13 @@ OntologyObjectV1 = (
     | ActionRunV1
     | ActionEventV1
     | ProvenanceEventV1
-    | ProvenanceLinkV1
+    | RelationVersionRefV1
+    | SchemaDefinitionRefV1
+    | OntologyRunRefV1
+    | AgentSessionRefV1
+    | ModelCallRefV1
+    | ToolCallRefV1
+    | ComputedSnapshotRefV1
     | WorkflowRunV1
     | WorkflowArtifactV1
     | RecommendationV1

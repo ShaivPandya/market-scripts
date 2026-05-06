@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import Field, field_validator
 
@@ -67,7 +67,45 @@ POLICY_GATE_EVALUATES_RECOMMENDATION: RelationType = "policy_gate_evaluates_reco
 POLICY_GATE_EVALUATES_TRADE_PROPOSAL: RelationType = "policy_gate_evaluates_trade_proposal"
 POLICY_GATE_USES_RISK_METRIC: RelationType = "policy_gate_uses_risk_metric"
 POLICY_GATE_USES_SCENARIO: RelationType = "policy_gate_uses_scenario"
-PROVENANCE_EVENT_RECORDS_LINK: RelationType = "provenance_event_records_link"
+PROVENANCE_USED: RelationType = "provenance_used"
+PROVENANCE_PRODUCED: RelationType = "provenance_produced"
+PROVENANCE_SCHEMA_BOUND: RelationType = "provenance_schema_bound"
+PROVENANCE_EXECUTED: RelationType = "provenance_executed"
+PROVENANCE_EXECUTED_AS: RelationType = "provenance_executed_as"
+PROVENANCE_TRIGGERED: RelationType = "provenance_triggered"
+PROVENANCE_PROPOSED: RelationType = "provenance_proposed"
+PROVENANCE_RESOLVED_BY: RelationType = "provenance_resolved_by"
+PROVENANCE_APPROVED_EXECUTION: RelationType = "provenance_approved_execution"
+PROVENANCE_AUDITED_BY: RelationType = "provenance_audited_by"
+PROVENANCE_UPDATED: RelationType = "provenance_updated"
+
+PROVENANCE_RELATION_TYPES: frozenset[RelationType] = frozenset(
+    {
+        PROVENANCE_USED,
+        PROVENANCE_PRODUCED,
+        PROVENANCE_SCHEMA_BOUND,
+        PROVENANCE_EXECUTED,
+        PROVENANCE_EXECUTED_AS,
+        PROVENANCE_TRIGGERED,
+        PROVENANCE_PROPOSED,
+        PROVENANCE_RESOLVED_BY,
+        PROVENANCE_APPROVED_EXECUTION,
+        PROVENANCE_AUDITED_BY,
+        PROVENANCE_UPDATED,
+    }
+)
+PROVENANCE_ENDPOINT_TYPES: frozenset[EntityType] = frozenset(get_args(EntityType))
+PROVENANCE_REQUIRED_PROPERTIES = frozenset(
+    {
+        "event_id",
+        "source_ref_type",
+        "source_ref_id",
+        "target_ref_type",
+        "target_ref_id",
+        "redaction_policy",
+        "retention_class",
+    }
+)
 
 
 class RelationCardinality(StrEnum):
@@ -85,6 +123,8 @@ class RelationDefinition:
     cardinality: RelationCardinality
     required_properties: frozenset[str]
     optional: bool = False
+    allowed_source_types: frozenset[EntityType] | None = None
+    allowed_target_types: frozenset[EntityType] | None = None
 
 
 RELATION_REGISTRY: dict[str, RelationDefinition] = {
@@ -541,15 +581,18 @@ RELATION_REGISTRY: dict[str, RelationDefinition] = {
         required_properties=frozenset({"ontology_run_id"}),
         optional=True,
     ),
-    PROVENANCE_EVENT_RECORDS_LINK: RelationDefinition(
-        name=PROVENANCE_EVENT_RECORDS_LINK,
-        source_type="ProvenanceEvent",
-        target_type="ProvenanceLink",
-        cardinality=RelationCardinality.MANY_TO_MANY,
-        required_properties=frozenset({"ontology_run_id", "link_type"}),
-        optional=True,
-    ),
 }
+for _provenance_relation_type in PROVENANCE_RELATION_TYPES:
+    RELATION_REGISTRY[_provenance_relation_type] = RelationDefinition(
+        name=_provenance_relation_type,
+        source_type="ProvenanceEvent",
+        target_type="ObjectVersionRef",
+        cardinality=RelationCardinality.MANY_TO_MANY,
+        required_properties=PROVENANCE_REQUIRED_PROPERTIES,
+        optional=True,
+        allowed_source_types=PROVENANCE_ENDPOINT_TYPES,
+        allowed_target_types=PROVENANCE_ENDPOINT_TYPES,
+    )
 
 ALLOWED_RELATIONS: dict[str, tuple[EntityType, EntityType]] = {
     name: (definition.source_type, definition.target_type) for name, definition in RELATION_REGISTRY.items()
@@ -560,6 +603,7 @@ RELATION_TYPE_SQL_VALUES = ", ".join(f"'{relation_type}'" for relation_type in R
 
 class RelationPropertiesV1(OntologySchemaBase):
     ontology_run_id: NonBlankStr
+    event_id: str | None = None
     source: str | None = None
     action_id: str | None = None
     object_uid: str | None = None
@@ -574,8 +618,14 @@ class RelationPropertiesV1(OntologySchemaBase):
     link_type: str | None = None
     source_ref_type: str | None = None
     source_ref_id: str | None = None
+    source_ref_version: str | None = None
     target_ref_type: str | None = None
     target_ref_id: str | None = None
+    target_ref_version: str | None = None
+    redaction_policy: str | None = None
+    retention_class: str | None = None
+    lineage_root_id: str | None = None
+    metadata: dict[str, Any] | list[Any] | str | int | float | bool | None = None
 
     @field_validator("ontology_run_id", mode="before")
     @classmethod
@@ -597,8 +647,14 @@ class RelationPropertiesV1(OntologySchemaBase):
         "link_type",
         "source_ref_type",
         "source_ref_id",
+        "source_ref_version",
         "target_ref_type",
         "target_ref_id",
+        "target_ref_version",
+        "event_id",
+        "redaction_policy",
+        "retention_class",
+        "lineage_root_id",
         mode="before",
     )
     @classmethod

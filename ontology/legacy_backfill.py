@@ -15,15 +15,34 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from api.provenance import (
+    DEFAULT_REDACTION_POLICY,
+    FINANCIAL_RETENTION_CLASS,
+    LINK_RELATION_TYPES,
+    REF_AGENT_SESSION,
+    REF_COMPUTED_SNAPSHOT_VERSION,
+    REF_MODEL_CALL,
+    REF_ONTOLOGY_OBJECT_VERSION,
+    REF_ONTOLOGY_RUN,
+    REF_RELATION_VERSION,
+    REF_SCHEMA_DEFINITION,
+    REF_TOOL_CALL,
+    ref_object_uid_for,
+)
 from ontology.command_service import OntologyCommandContext, OntologyCommandService
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
-from ontology.schemas.identity import provenance_event_id, provenance_link_id
 from ontology.temporal_repository import SnapshotVersionWrite, TemporalOntologyRepository, payload_hash
 
 
 class LegacyBackfillDisabled(RuntimeError):
     pass
+
+
+class LegacyBackfillUnmappedRefs(RuntimeError):
+    def __init__(self, unmapped_refs: list[dict[str, Any]]):
+        super().__init__(f"Legacy provenance backfill has unmapped refs: {unmapped_refs}")
+        self.unmapped_refs = unmapped_refs
 
 
 def _enabled() -> bool:
@@ -93,7 +112,7 @@ def backfill_runtime_objects(
 
     path = Path(core_db_path)
     mutations: list[tuple[str, str, dict[str, Any], str]] = []
-    link_relations: list[tuple[str, str, dict[str, Any], str]] = []
+    link_relations: list[tuple[str, str, str, dict[str, Any], str]] = []
     snapshot_versions: list[SnapshotVersionWrite] = []
     cutover_time = _now()
     with _connect(path) as conn:
@@ -136,6 +155,7 @@ def backfill_runtime_objects(
             "actor_type": "system",
             "actor_id": "legacy_backfill",
             "criticality": "operational",
+            "redaction_policy": DEFAULT_REDACTION_POLICY,
             "retention_class": "financial_lineage_7y",
         },
         cutover_time,
@@ -155,11 +175,11 @@ def backfill_runtime_objects(
             temporal_confidence="backfilled",
         )
         written += 1
-    for source_uid, target_uid, properties, valid_from in link_relations:
+    for relation_type, source_uid, target_uid, properties, valid_from in link_relations:
         service.write_relation(
             source_uid,
             target_uid,
-            "provenance_event_records_link",
+            relation_type,
             properties,
             valid_from,
             actor=actor,
@@ -284,6 +304,7 @@ def _runtime_object_rows(conn: sqlite3.Connection, *, cutover_time: str) -> list
     rows.extend(_optimization_rows(conn, cutover_time=cutover_time))
     rows.extend(_idea_rows(conn, cutover_time=cutover_time))
     rows.extend(_provenance_rows(conn, cutover_time=cutover_time))
+    rows.extend(_provenance_ref_rows(conn, cutover_time=cutover_time))
     rows.extend(_core_operational_rows(conn, cutover_time=cutover_time))
     return rows
 
@@ -354,10 +375,10 @@ def _provenance_rows(conn: sqlite3.Connection, *, cutover_time: str) -> list[tup
     rows: list[tuple[str, str, dict[str, Any], str]] = []
     for row in _select_all(conn, "provenance_events"):
         props = _rename_json_fields(row, {"summary_json": "summary", "metadata_json": "metadata"})
+        props.setdefault("redaction_policy", DEFAULT_REDACTION_POLICY)
+        props.setdefault("retention_class", FINANCIAL_RETENTION_CLASS)
+        props.setdefault("lineage_root_id", props.get("id"))
         rows.append(("ProvenanceEvent", str(props.get("id")), props, _valid_from(props, cutover_time)))
-    for row in _select_all(conn, "provenance_links"):
-        props = _rename_json_fields(row, {"metadata_json": "metadata"})
-        rows.append(("ProvenanceLink", str(props.get("id")), props, _valid_from(props, cutover_time)))
     return rows
 
 
@@ -560,27 +581,89 @@ def _snapshot_versions(
     return versions
 
 
+def _provenance_ref_rows(conn: sqlite3.Connection, *, cutover_time: str) -> list[tuple[str, str, dict[str, Any], str]]:
+    rows: list[tuple[str, str, dict[str, Any], str]] = []
+    seen: set[tuple[str, str]] = set()
+    unmapped: list[dict[str, Any]] = []
+    for row in _select_all(conn, "provenance_links"):
+        for ref_type_key, ref_id_key, ref_version_key in (
+            ("source_ref_type", "source_ref_id", "source_ref_version"),
+            ("target_ref_type", "target_ref_id", "target_ref_version"),
+        ):
+            ref_type = str(row.get(ref_type_key) or "")
+            ref_id = str(row.get(ref_id_key) or "")
+            try:
+                mutation = _ref_object_mutation(
+                    ref_type,
+                    ref_id,
+                    _optional_text(row.get(ref_version_key)),
+                    cutover_time,
+                )
+            except Exception as exc:  # noqa: BLE001 - backfill reports all unmapped legacy refs together.
+                unmapped.append(
+                    {
+                        "id": row.get("id"),
+                        "reason": str(exc),
+                        "ref_role": ref_type_key.removesuffix("_ref_type"),
+                        "ref_type": ref_type,
+                        "ref_id": ref_id,
+                    }
+                )
+                continue
+            if mutation is None:
+                continue
+            object_type, business_key, *_ = mutation
+            identity = (object_type, business_key)
+            if identity not in seen:
+                rows.append(mutation)
+                seen.add(identity)
+    if unmapped:
+        raise LegacyBackfillUnmappedRefs(unmapped)
+    return rows
+
+
 def _provenance_link_relation_rows(
     conn: sqlite3.Connection, *, cutover_time: str
-) -> list[tuple[str, str, dict[str, Any], str]]:
-    rows: list[tuple[str, str, dict[str, Any], str]] = []
+) -> list[tuple[str, str, str, dict[str, Any], str]]:
+    rows: list[tuple[str, str, str, dict[str, Any], str]] = []
+    unmapped: list[dict[str, Any]] = []
     for row in _select_all(conn, "provenance_links"):
         valid_from = str(row.get("created_at") or cutover_time)
+        link_type = str(row.get("link_type") or "")
+        relation_type = LINK_RELATION_TYPES.get(link_type)
+        if relation_type is None:
+            unmapped.append({"id": row.get("id"), "reason": "unsupported_link_type", "link_type": link_type})
+            continue
+        try:
+            source_uid = ref_object_uid_for(str(row.get("source_ref_type") or ""), row.get("source_ref_id"))
+            target_uid = ref_object_uid_for(str(row.get("target_ref_type") or ""), row.get("target_ref_id"))
+        except Exception as exc:  # noqa: BLE001 - backfill reports all unmapped legacy refs together.
+            unmapped.append({"id": row.get("id"), "reason": str(exc), "row": row})
+            continue
         rows.append(
             (
-                provenance_event_id(row.get("event_id")),
-                provenance_link_id(row.get("id")),
+                relation_type,
+                source_uid,
+                target_uid,
                 {
+                    "event_id": row.get("event_id"),
                     "ontology_run_id": "operational",
-                    "link_type": row.get("link_type"),
                     "source_ref_type": row.get("source_ref_type"),
                     "source_ref_id": row.get("source_ref_id"),
+                    "source_ref_version": row.get("source_ref_version"),
                     "target_ref_type": row.get("target_ref_type"),
                     "target_ref_id": row.get("target_ref_id"),
+                    "target_ref_version": row.get("target_ref_version"),
+                    "redaction_policy": DEFAULT_REDACTION_POLICY,
+                    "retention_class": FINANCIAL_RETENTION_CLASS,
+                    "lineage_root_id": row.get("lineage_root_id") or row.get("event_id"),
+                    "metadata": row.get("metadata") or row.get("metadata_json"),
                 },
                 valid_from,
             )
         )
+    if unmapped:
+        raise LegacyBackfillUnmappedRefs(unmapped)
     return rows
 
 
@@ -804,6 +887,77 @@ def _source_record_props(row: dict[str, Any]) -> dict[str, Any]:
         },
         "ontology_run_id": "operational",
     }
+
+
+def _ref_object_mutation(
+    ref_type: str,
+    ref_id: str,
+    ref_version: str | None,
+    cutover_time: str,
+) -> tuple[str, str, dict[str, Any], str] | None:
+    if not ref_id:
+        raise LegacyBackfillUnmappedRefs([{"ref_type": ref_type, "ref_id": ref_id, "reason": "missing_ref_id"}])
+    if ref_type == REF_ONTOLOGY_OBJECT_VERSION:
+        return (
+            "ObjectVersionRef",
+            ref_object_uid_for(ref_type, ref_id),
+            {
+                "ref_id": ref_id,
+                "object_uid": ref_id,
+                "version_id": ref_version or ref_id,
+                "temporal_confidence": "backfilled",
+                "ontology_run_id": "operational",
+            },
+            cutover_time,
+        )
+    if ref_type == REF_RELATION_VERSION:
+        return (
+            "RelationVersionRef",
+            ref_object_uid_for(ref_type, ref_id),
+            {
+                "ref_id": ref_id,
+                "relation_uid": ref_id,
+                "version_id": ref_version or ref_id,
+                "ontology_run_id": "operational",
+            },
+            cutover_time,
+        )
+    if ref_type == REF_SCHEMA_DEFINITION:
+        schema_version_value = 1
+        if ref_version:
+            try:
+                schema_version_value = int(ref_version)
+            except (TypeError, ValueError):
+                schema_version_value = 1
+        return (
+            "SchemaDefinitionRef",
+            ref_object_uid_for(ref_type, ref_id),
+            {
+                "ref_id": ref_id,
+                "schema_kind": "unknown",
+                "schema_name": ref_id,
+                "schema_version_value": schema_version_value,
+                "ontology_run_id": "operational",
+            },
+            cutover_time,
+        )
+    if ref_type == REF_ONTOLOGY_RUN:
+        return ("OntologyRunRef", ref_object_uid_for(ref_type, ref_id), {"run_id": ref_id}, cutover_time)
+    if ref_type == REF_AGENT_SESSION:
+        return ("AgentSessionRef", ref_object_uid_for(ref_type, ref_id), {"session_id": ref_id}, cutover_time)
+    if ref_type == REF_MODEL_CALL:
+        return ("ModelCallRef", ref_object_uid_for(ref_type, ref_id), {"call_id": ref_id}, cutover_time)
+    if ref_type == REF_TOOL_CALL:
+        return ("ToolCallRef", ref_object_uid_for(ref_type, ref_id), {"call_id": ref_id}, cutover_time)
+    if ref_type == REF_COMPUTED_SNAPSHOT_VERSION:
+        return (
+            "ComputedSnapshotRef",
+            ref_object_uid_for(ref_type, ref_id),
+            {"snapshot_key": ref_id, "snapshot_id": ref_version},
+            cutover_time,
+        )
+    ref_object_uid_for(ref_type, ref_id)
+    return None
 
 
 def _recommendation_decision_state(row: dict[str, Any]) -> str:
