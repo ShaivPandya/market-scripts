@@ -360,29 +360,6 @@ class TestWatchTriggers:
 
 
 # ---------------------------------------------------------------------------
-# Research Notes
-# ---------------------------------------------------------------------------
-
-
-class TestResearchNotes:
-    def test_create_and_list(self):
-        note = core_db.create_research_note("Earnings Summary", "MU beat by 5%", ticker="MU", note_type="earnings")
-        assert note["ticker"] == "MU"
-        assert note["note_type"] == "earnings"
-
-        notes = core_db.get_research_notes(ticker="MU")
-        assert len(notes) == 1
-
-    def test_list_all(self):
-        core_db.create_research_note("Note 1", "Content 1", ticker="MU")
-        core_db.create_research_note("Note 2", "Content 2", ticker="CRWD")
-        core_db.create_research_note("Note 3", "Content 3")
-
-        all_notes = core_db.get_research_notes()
-        assert len(all_notes) == 3
-
-
-# ---------------------------------------------------------------------------
 # Pending Approvals
 # ---------------------------------------------------------------------------
 

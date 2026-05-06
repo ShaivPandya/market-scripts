@@ -693,16 +693,6 @@ class StateMigrator:
                 "created_at",
                 "updated_at",
             ],
-            "research_notes": [
-                "id",
-                "ticker",
-                "title",
-                "content",
-                "note_type",
-                "source_type",
-                "source_id",
-                "created_at",
-            ],
             "pending_approvals": [
                 "id",
                 "entity_type",

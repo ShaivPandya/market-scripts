@@ -61,7 +61,6 @@ from ontology.schemas.identity import (
     recommendation_id,
     relation_version_ref_id,
     report_run_id,
-    research_note_id,
     risk_limit_id,
     risk_metric_id,
     scenario_id,
@@ -113,7 +112,6 @@ _GOVERNED_OBJECT_TYPES = {
     "PolicyGateResult",
     "Position",
     "Recommendation",
-    "ResearchNote",
     "Thesis",
     "ThesisClaim",
     "TradeProposal",
@@ -589,10 +587,6 @@ def object_uid_for(object_type: str, business_key: str, properties: Mapping[str,
         if key.startswith("watch_trigger:"):
             return key
         return watch_trigger_id(props.get("legacy_id") or key)
-    if object_type == "ResearchNote":
-        if key.startswith("research_note:"):
-            return key
-        return research_note_id(props.get("legacy_id") or key)
     if object_type == "Approval":
         if key.startswith("approval:"):
             return key

@@ -375,7 +375,6 @@ from api.routers import (
     provenance,
     recommendations,
     report_sync,
-    research_notes,
     triggers,
     workflow_runs,
     workspace,
@@ -393,7 +392,6 @@ app.include_router(provenance.router, prefix=_V1, dependencies=_auth_dep, tags=[
 app.include_router(recommendations.router, prefix=_V1, dependencies=_auth_dep, tags=["recommendations"])
 app.include_router(optimization.router, prefix=_V1, dependencies=_auth_dep, tags=["optimization"])
 app.include_router(policy_gate.router, prefix=_V1, dependencies=_auth_dep, tags=["policy-gate"])
-app.include_router(research_notes.router, prefix=_V1, dependencies=_auth_dep, tags=["research"])
 app.include_router(workflow_runs.router, prefix=_V1, dependencies=_auth_dep, tags=["workflows"])
 app.include_router(admin_jobs.router, prefix=_V1, tags=["admin"])
 app.include_router(report_sync.router, prefix=_V1, tags=["reports"])

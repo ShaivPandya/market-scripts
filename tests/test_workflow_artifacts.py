@@ -137,23 +137,15 @@ def test_persist_kill_condition_updates():
     assert {a["action_id"] for a in approvals} == {"update_kill_condition_status"}
 
 
-def test_persist_research_notes_and_digest_deletes():
+def test_persist_digest_deletes():
     from portfolio.news_digests import save_digest
 
     digest = save_digest("# Morning Digest\n\n## Movers\n- MU update\n", filename="digest.md")
     artifacts = {
-        "research_notes": [
-            {
-                "ticker": "MU",
-                "title": "Follow-up",
-                "content": "Need to revisit sizing after earnings.",
-                "note_type": "workflow_output",
-            }
-        ],
         "news_digest_deletes": [{"digest_id": digest["id"]}],
     }
 
     count = persist_artifacts("test-run-notes", "MU", artifacts)
-    assert count == 2
+    assert count == 1
     approvals = core_db.get_pending_approvals()
-    assert {a["action_id"] for a in approvals} == {"create_research_note", "delete_portfolio_news_digest"}
+    assert {a["action_id"] for a in approvals} == {"delete_portfolio_news_digest"}

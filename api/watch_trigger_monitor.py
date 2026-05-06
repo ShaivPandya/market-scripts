@@ -672,36 +672,6 @@ def _result_fingerprint(result: dict[str, Any]) -> str:
     )
 
 
-def _research_note_content(trigger: dict[str, Any], result: dict[str, Any]) -> str:
-    lines = [
-        f"Trigger: {_clean_text(trigger.get('condition'))}",
-        f"Type: {result.get('type') or trigger.get('trigger_type')}",
-        f"Evidence: {_clean_text(result.get('evidence'))}",
-    ]
-    news_block = result.get("news") or result.get("news_enrichment") or {}
-    matches = news_block.get("matches") if isinstance(news_block, dict) else []
-    if matches:
-        lines.append("")
-        lines.append("News evidence:")
-        for match in matches[:MAX_STORY_MATCHES]:
-            lines.append(f"- {_clean_text(match.get('headline'))}")
-            if match.get("sources"):
-                lines.append(f"  Sources: {', '.join(str(source) for source in match.get('sources') or [])}")
-    verifications = news_block.get("verifications") if isinstance(news_block, dict) else []
-    citations = [
-        citation
-        for verification in verifications or []
-        for citation in verification.get("citations") or []
-        if isinstance(citation, dict) and citation.get("url")
-    ]
-    if citations:
-        lines.append("")
-        lines.append("Verified sources:")
-        for citation in citations[:10]:
-            lines.append(f"- [{_clean_text(citation.get('title'))}]({_clean_text(citation.get('url'))})")
-    return "\n".join(lines)
-
-
 def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     from ontology.domain_write_service import ontology_primary_writes_enabled
     from ontology.runtime_read_service import OntologyRuntimeReadService
@@ -793,18 +763,6 @@ def run_watch_trigger_monitor(_payload: dict[str, Any] | None = None) -> dict[st
                     source_id=source_id,
                     reason=f"Create action item for fired watch trigger {trigger_id}",
                 )
-                if result.get("news") or result.get("news_enrichment"):
-                    propose_action(
-                        "create_research_note",
-                        {
-                            "title": f"Watch trigger evidence: {_clean_text(trigger.get('condition'))[:120]}",
-                            "content": _research_note_content(trigger, result)[:20000],
-                            "ticker": trigger.get("ticker"),
-                            "note_type": "workflow_output",
-                        },
-                        source_id=source_id,
-                        reason=f"Create evidence note for fired watch trigger {trigger_id}",
-                    )
             else:
                 propose_action(
                     "update_watch_trigger_check",

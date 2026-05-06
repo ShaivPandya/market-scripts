@@ -457,7 +457,7 @@ _FRESH_RX = re.compile(
     flags=re.IGNORECASE,
 )
 _RETRIEVAL_INTENT_RX = re.compile(
-    r"\b(past|previous|earlier|history|conversation|research note|notes|thesis|what did i|what have i|wrote|written)\b",
+    r"\b(past|previous|earlier|history|conversation|thesis|what did i|what have i|wrote|written)\b",
     flags=re.IGNORECASE,
 )
 _HEDGE_CONTEXT_RX = re.compile(r"\b(hedge|hedges|hedging|beta|net exposure|gross exposure)\b", flags=re.IGNORECASE)
@@ -482,7 +482,7 @@ _DATA_SEEKING_RX = re.compile(
     r"positioning|sentiment|sector|yield|curve|bond|labor|housing|growth|central bank|industry|"
     r"thesis|catalysts?|kill conditions?|dossier|workflow|approvals?|action items?|triggers?|search|news|"
     r"commodity|commodities|country|index|indices|fx|currency|financials|dcf|valuation|chart|"
-    r"screener|screen|analyzer|sizer|hedging|workspace|research note|weekly report"
+    r"screener|screen|analyzer|sizer|hedging|workspace|weekly report"
     r")\b",
     flags=re.IGNORECASE,
 )
@@ -777,8 +777,6 @@ def _select_tool_names(user_text: str) -> list[str]:
         add("run_portfolio_sizer", "get_portfolio_sizer_prefill")
     if "news digest" in text or "uploaded news" in text or "portfolio news" in text:
         add("get_portfolio_news")
-    if "research note" in text:
-        add("get_research_notes", "propose_research_note")
     if "workspace" in text:
         add("get_workspace")
 

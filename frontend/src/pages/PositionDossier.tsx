@@ -88,7 +88,6 @@ interface DossierData {
   workflow_runs: WorkflowRun[]
   action_items: ActionItem[]
   watch_triggers: Trigger[]
-  research_notes: ResearchNote[]
   pending_approvals: ApprovalRecord[]
 }
 
@@ -117,9 +116,8 @@ interface KillCondition { id: EntityId; condition: string | null; metric: string
 interface WorkflowRun { run_id: string; workflow_name: string; status: string; started_at: string; completed_at: string | null }
 interface ActionItem { id: number; description: string; action_type: string; urgency: string; status: string; created_at: string }
 interface Trigger { id: number; condition: string; trigger_type: string; status: string; created_at: string; last_checked_at: string | null; last_evidence: string | null }
-interface ResearchNote { id: number; title: string; content: string; note_type: string | null; created_at: string }
 
-const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Research", "Workflows"] as const
+const BASE_TABS = ["Thesis", "Claims", "Catalysts", "Kill Conditions", "Evaluations", "Risk", "Workflows"] as const
 type Tab = "Overview" | "Management Quality" | typeof BASE_TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -311,7 +309,6 @@ export function PositionDossier() {
   const catalysts = Array.isArray(data.catalysts) ? data.catalysts : []
   const killConditions = Array.isArray(data.kill_conditions) ? data.kill_conditions : []
   const evaluations = Array.isArray(data.evaluations) ? data.evaluations : []
-  const researchNotes = Array.isArray(data.research_notes) ? data.research_notes : []
   const workflowRuns = Array.isArray(data.workflow_runs) ? data.workflow_runs : []
   const positionQuantity = pos?.quantity ?? pos?.shares
   const positionQuantityLabel = pos?.instrument_type === "future" ? "Contracts" : "Quantity"
@@ -424,7 +421,6 @@ export function PositionDossier() {
         {activeTab === "Kill Conditions" && <KillConditionsTab conditions={killConditions} ticker={ticker!} />}
         {activeTab === "Evaluations" && <EvaluationsTab evaluations={evaluations} />}
         {activeTab === "Risk" && <RiskTab ticker={data.ticker} />}
-        {activeTab === "Research" && <ResearchTab notes={researchNotes} />}
         {activeTab === "Workflows" && <WorkflowsTab runs={workflowRuns} />}
       </div>
 
@@ -1870,26 +1866,6 @@ function RiskTab({ ticker }: { ticker: string }) {
           </pre>
         </details>
       )}
-    </div>
-  )
-}
-
-function ResearchTab({ notes }: { notes: ResearchNote[] }) {
-  if (!notes.length) return <p className="text-sm text-muted">No research notes.</p>
-  return (
-    <div className="space-y-4">
-      {notes.map(n => (
-        <div key={n.id} className="rounded-lg border border-app px-4 py-3">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-semibold text-app">{n.title}</span>
-            <span className="text-xs text-subtle">{formatTime(n.created_at)}</span>
-          </div>
-          {n.note_type && <span className="text-xs text-subtle">{n.note_type}</span>}
-          <div className="prose prose-sm dark:prose-invert max-w-none mt-2">
-            <MarkdownRenderer content={n.content} />
-          </div>
-        </div>
-      ))}
     </div>
   )
 }

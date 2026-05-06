@@ -249,7 +249,7 @@ def get_analyzer_job(job_id: str):
 @router.post("/portfolio-analyzer/course-of-action/brief")
 def generate_course_of_action_brief(req: AnalyzerBriefRequest):
     try:
-        from llm_utils import MODEL_LOW, call_llm_text, has_llm_api_key
+        from llm_utils import MODEL_MID, call_llm_text, has_llm_api_key
 
         if not has_llm_api_key():
             raise HTTPException(status_code=424, detail="No configured LLM API key for analyzer briefs.")
@@ -263,7 +263,7 @@ def generate_course_of_action_brief(req: AnalyzerBriefRequest):
         )
         text, _citations, _response = call_llm_text(
             prompt=prompt,
-            model=MODEL_LOW,
+            model=MODEL_MID,
             max_tokens=600,
             system="You summarize deterministic portfolio-analysis evidence. You never add facts not present in the input.",
             max_web_search_uses=0,

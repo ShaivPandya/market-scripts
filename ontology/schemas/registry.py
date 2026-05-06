@@ -57,7 +57,6 @@ from ontology.schemas.identity import (
     recommendation_id,
     relation_version_ref_id,
     report_run_id,
-    research_note_id,
     risk_limit_id,
     risk_metric_id,
     scenario_id,
@@ -125,7 +124,6 @@ from ontology.schemas.objects import (
     RecommendationV1,
     RelationVersionRefV1,
     ReportRunV1,
-    ResearchNoteV1,
     RiskLimitV1,
     RiskMetricV1,
     ScenarioV1,
@@ -189,7 +187,6 @@ NODE_SCHEMAS: dict[EntityType, type[OntologySchemaBase]] = {
     "Citation": CitationV1,
     "ActionItem": ActionItemV1,
     "WatchTrigger": WatchTriggerV1,
-    "ResearchNote": ResearchNoteV1,
     "Approval": ApprovalV1,
     "ActionRun": ActionRunV1,
     "ActionEvent": ActionEventV1,
@@ -230,7 +227,6 @@ OPTIONAL_NODE_TYPES = {
     "ThesisClaim",
     "ActionItem",
     "WatchTrigger",
-    "ResearchNote",
     "Approval",
     "ActionRun",
     "ActionEvent",
@@ -602,8 +598,6 @@ def expected_node_id(node_type: str, model: OntologyObjectV1) -> str:
         return action_item_id(model.legacy_id or model.description)
     if isinstance(model, WatchTriggerV1):
         return watch_trigger_id(model.legacy_id or model.condition)
-    if isinstance(model, ResearchNoteV1):
-        return research_note_id(model.legacy_id or model.title)
     if isinstance(model, ApprovalV1):
         return approval_id(model.legacy_id or f"{model.entity_type}:{model.action_input_hash or model.created_at}")
     if isinstance(model, ActionRunV1):

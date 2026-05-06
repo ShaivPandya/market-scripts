@@ -106,7 +106,6 @@ def get_dossier(ticker: str):
     workflow_runs = reads.workflow_runs(ticker=ticker, limit=10)
     action_items = [normalize_action_item(a) for a in reads.action_items(ticker=ticker, status="open")]
     watch_triggers = reads.watch_triggers(ticker=ticker)
-    research_notes = reads.research_notes(ticker=ticker, limit=20)
     pending_approvals = [normalize_approval(a) for a in reads.approvals(ticker=ticker, status="pending")]
 
     # Ontology risk is loaded lazily by the frontend Risk tab. Keep the field
@@ -139,6 +138,5 @@ def get_dossier(ticker: str):
         "workflow_runs": workflow_runs,
         "action_items": action_items,
         "watch_triggers": watch_triggers,
-        "research_notes": research_notes,
         "pending_approvals": pending_approvals,
     }

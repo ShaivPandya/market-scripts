@@ -77,43 +77,6 @@ def _extract_as_of(report_type: str, payload: dict[str, Any]) -> str:
     raise ValueError(f"{report_type} report sync payload is missing as_of.")
 
 
-def _create_report_notes(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
-    count = 0
-    report_md = str(payload.get("report_md") or payload.get("report") or "").strip()
-    if report_md:
-        _propose_report_action(
-            "create_research_note",
-            {
-                "title": f"{report_type.title()} Report - {as_of}",
-                "content": report_md[:20000],
-                "note_type": "workflow_output",
-            },
-            source_id=report_id,
-            reason=f"{report_type.title()} report note ({as_of})",
-        )
-        count += 1
-
-    summary = _as_dict(payload.get("summary"))
-    thesis = _as_dict(summary.get("thesis_monitoring"))
-    for item in _as_list(thesis.get("material_developments")):
-        if not isinstance(item, dict) or not item.get("summary"):
-            continue
-        ticker = str(item.get("ticker") or "").upper() or None
-        _propose_report_action(
-            "create_research_note",
-            {
-                "title": f"{ticker or 'Portfolio'} thesis development - {as_of}",
-                "content": str(item["summary"]),
-                "ticker": ticker,
-                "note_type": "risk_assessment" if item.get("type") in {"contradicts_thesis", "new_risk"} else "general",
-            },
-            source_id=report_id,
-            reason=f"{report_type.title()} thesis development note ({as_of})",
-        )
-        count += 1
-    return count
-
-
 def _create_report_action_items(report_type: str, as_of: str, report_id: str, payload: dict[str, Any]) -> int:
     summary = _as_dict(payload.get("summary"))
     count = 0
@@ -314,7 +277,6 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
             raise
 
     thesis_evaluations = _persist_weekly_thesis_evaluations(as_of, payload) if report_type == "weekly" else 0
-    research_notes = _create_report_notes(report_type, as_of, report_id, payload)
     action_items = _create_report_action_items(report_type, as_of, report_id, payload)
     watch_trigger_approvals = _create_watch_trigger_approvals(report_type, as_of, report_id, payload)
     thesis_claims = _persist_thesis_claims(report_id, payload)
@@ -325,7 +287,6 @@ def persist_report_sync(report_type: str, payload: dict[str, Any]) -> dict[str, 
         "counts": {
             "recommendations": len(persisted_recommendations),
             "thesis_evaluations": thesis_evaluations,
-            "research_notes": research_notes,
             "action_items": action_items,
             "watch_trigger_approvals": watch_trigger_approvals,
             "thesis_claims": thesis_claims,

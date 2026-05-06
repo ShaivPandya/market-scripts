@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,11 +27,11 @@ from ontology.schemas.identity import (
     management_quality_setback_id,
     portfolio_id,
     recommendation_id,
-    research_note_id,
     thesis_id,
 )
 
 OPERATIONAL_ONTOLOGY_RUN_ID = "operational"
+logger = logging.getLogger(__name__)
 ACTIONABLE_ACTIONS = {"buy", "sell", "reduce", "exit", "rebalance", "hedge"}
 FINANCIAL_ACTION_IDS = {"update_portfolio_positions", "update_hedge_positions", "create_recommendation"}
 RESEARCH_ACTION_IDS = {
@@ -44,7 +45,6 @@ RESEARCH_ACTION_IDS = {
     "save_thesis_content",
     "save_management_quality_content",
     "save_evaluation",
-    "create_research_note",
     "create_portfolio_news_digest",
     "delete_portfolio_news_digest",
     "create_action_item",
@@ -185,6 +185,7 @@ class OntologyCommandService:
             "resolution_state": "pending",
             "application_state": "pending",
             "application_status": "pending",
+            "application_attempts": 0,
             "risk_class": "financial" if action_id in FINANCIAL_ACTION_IDS else "research",
             "policy_gate_result": policy_gate_result,
             "policy_gate_result_id": policy_gate_result.get("policy_gate_result_id") if policy_gate_result else None,
@@ -264,35 +265,36 @@ class OntologyCommandService:
         if status == "approved":
             _ensure_fresh_base_state(approval)
 
-        now = _now()
-        props = {
-            **{k: v for k, v in approval.items() if not k.startswith("_")},
-            "status": status,
-            "resolution_state": status,
-            "application_state": "pending" if status == "rejected" else "applying",
-            "application_status": "not_applicable" if status == "rejected" else "applying",
-            "resolved_by_actor_id": context.actor.actor_id,
-            "resolved_at": now,
-            "resolved_note": note,
-            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
-        }
-        props.pop("id", None)
-        props.pop("object_uid", None)
         input_hash = str(approval.get("action_input_hash") or _stable_hash(approval))
+        now = _now()
         provenance_id = _provenance_id("approval_resolution", approval["id"], status, input_hash)
-        row = self.objects.write_object(
-            "Approval",
-            approval["id"],
-            props,
-            now,
-            actor=actor_to_dict(context.actor),
-            provenance=provenance_id,
-            input_hash=input_hash,
-        )
-        resolved = _flatten_object(row)
-        if status == "approved":
-            resolved = self._apply_approval(resolved, context, provenance_id=provenance_id, input_hash=input_hash)
-        else:
+        attempts = _int(approval.get("application_attempts"))
+        if status == "rejected":
+            props = {
+                **{k: v for k, v in approval.items() if not k.startswith("_")},
+                "status": "rejected",
+                "resolution_state": "rejected",
+                "application_state": "not_applicable",
+                "application_status": "not_applicable",
+                "application_completed_at": now,
+                "application_error": None,
+                "resolved_by_actor_id": context.actor.actor_id,
+                "resolved_at": now,
+                "resolved_note": note,
+                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+            }
+            props.pop("id", None)
+            props.pop("object_uid", None)
+            row = self.objects.write_object(
+                "Approval",
+                approval["id"],
+                props,
+                now,
+                actor=actor_to_dict(context.actor),
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+            resolved = _flatten_object(row)
             self._write_audit(
                 "approval.rejected",
                 "approval",
@@ -302,7 +304,107 @@ class OntologyCommandService:
                 object_refs=[{"type": "Approval", "id": approval["id"]}],
                 after_summary={"note": note},
             )
-        return resolved
+            return resolved
+
+        applying_props = {
+            **{k: v for k, v in approval.items() if not k.startswith("_")},
+            "status": "pending",
+            "resolution_state": "pending",
+            "application_state": "applying",
+            "application_status": "applying",
+            "application_attempts": attempts + 1,
+            "application_started_at": now,
+            "application_completed_at": None,
+            "application_error": None,
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
+        applying_props.pop("id", None)
+        applying_props.pop("object_uid", None)
+        row = self.objects.write_object(
+            "Approval",
+            approval["id"],
+            applying_props,
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        resolved = _flatten_object(row)
+        try:
+            return self._apply_approval(
+                resolved,
+                context,
+                provenance_id=provenance_id,
+                input_hash=input_hash,
+                note=note,
+            )
+        except OntologyCommandError as exc:
+            error = exc.message
+        except Exception as exc:
+            error = str(exc).strip() or exc.__class__.__name__
+        failed_now = _now()
+        failed_action_id = str(resolved.get("action_id") or "").strip()
+        if failed_action_id:
+            self.objects.write_object(
+                "ActionRun",
+                action_run_id(f"{approval['id']}:{failed_action_id}"),
+                {
+                    "action_id": failed_action_id,
+                    "action_schema_name": failed_action_id,
+                    "action_schema_version": int(resolved.get("action_schema_version") or 1),
+                    "actor_type": context.actor.actor_type,
+                    "actor_id": context.actor.actor_id,
+                    "source_type": context.source_type,
+                    "source_id": context.source_id,
+                    "approval_id": approval["id"],
+                    "input_hash": input_hash,
+                    "status": "failed",
+                    "execution_state": "failed",
+                    "error": error[:1000],
+                    "started_at": resolved.get("application_started_at") or failed_now,
+                    "completed_at": failed_now,
+                    "provenance_event_id": provenance_id,
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                failed_now,
+                actor=actor_to_dict(context.actor),
+                provenance=provenance_id,
+                input_hash=input_hash,
+            )
+        failed_props = {
+            **{k: v for k, v in resolved.items() if not k.startswith("_")},
+            "status": "pending",
+            "resolution_state": "pending",
+            "application_state": "failed",
+            "application_status": "failed",
+            "application_completed_at": failed_now,
+            "application_error": error[:1000],
+            "resolved_by_actor_id": None,
+            "resolved_at": None,
+            "resolved_note": None,
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
+        failed_props.pop("id", None)
+        failed_props.pop("object_uid", None)
+        self.objects.write_object(
+            "Approval",
+            approval["id"],
+            failed_props,
+            failed_now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
+        )
+        self._write_audit(
+            "approval.apply.failed",
+            "approval",
+            "failed",
+            actor=context.actor,
+            provenance_id=provenance_id,
+            object_refs=[{"type": "Approval", "id": approval["id"]}],
+            after_summary={"application_status": "failed", "error": error[:1000]},
+        )
+        raise OntologyCommandConflict(f"Approval {approval['id']} application failed: {error}") from None
 
     def _apply_approval(
         self,
@@ -311,30 +413,34 @@ class OntologyCommandService:
         *,
         provenance_id: str,
         input_hash: str,
+        note: str | None,
     ) -> dict[str, Any]:
         action_id = _non_blank(approval.get("action_id"), "action_id")
         payload = _dict(approval.get("proposed_change"))
         now = _now()
         run_uid = action_run_id(f"{approval['id']}:{action_id}")
+        run_props = {
+            "action_id": action_id,
+            "action_schema_name": action_id,
+            "action_schema_version": 1,
+            "actor_type": context.actor.actor_type,
+            "actor_id": context.actor.actor_id,
+            "source_type": context.source_type,
+            "source_id": context.source_id,
+            "approval_id": approval["id"],
+            "input_hash": input_hash,
+            "started_at": now,
+            "provenance_event_id": provenance_id,
+            "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+        }
         run = self.objects.write_object(
             "ActionRun",
             run_uid,
             {
-                "action_id": action_id,
-                "action_schema_name": action_id,
-                "action_schema_version": 1,
-                "actor_type": context.actor.actor_type,
-                "actor_id": context.actor.actor_id,
-                "source_type": context.source_type,
-                "source_id": context.source_id,
-                "approval_id": approval["id"],
-                "input_hash": input_hash,
-                "status": "succeeded",
-                "execution_state": "succeeded",
-                "started_at": now,
-                "completed_at": now,
-                "provenance_event_id": provenance_id,
-                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                **run_props,
+                "status": "running",
+                "execution_state": "running",
+                "completed_at": None,
             },
             now,
             actor=actor_to_dict(context.actor),
@@ -343,6 +449,20 @@ class OntologyCommandService:
         )
         version_refs = self._write_action_targets(
             action_id, payload, context, provenance_id=provenance_id, input_hash=input_hash
+        )
+        run = self.objects.write_object(
+            "ActionRun",
+            run_uid,
+            {
+                **run_props,
+                "status": "succeeded",
+                "execution_state": "succeeded",
+                "completed_at": _now(),
+            },
+            now,
+            actor=actor_to_dict(context.actor),
+            provenance=provenance_id,
+            input_hash=input_hash,
         )
         decision_uid = executed_decision_record_id(f"{approval['id']}:{run_uid}")
         decision = self.objects.write_object(
@@ -387,8 +507,15 @@ class OntologyCommandService:
         )
         applied_props = {
             **{k: v for k, v in approval.items() if not k.startswith("_") and k != "id"},
+            "status": "approved",
+            "resolution_state": "approved",
             "application_state": "applied",
             "application_status": "applied",
+            "application_completed_at": now,
+            "application_error": None,
+            "resolved_by_actor_id": context.actor.actor_id,
+            "resolved_at": now,
+            "resolved_note": note,
             "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
         }
         applied_props.pop("object_uid", None)
@@ -515,28 +642,6 @@ class OntologyCommandService:
                     "created_at": now,
                     "updated_at": now,
                     "instrument_id": instrument_id(ticker),
-                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
-                },
-                now,
-                actor=actor,
-                provenance=provenance_id,
-                input_hash=input_hash,
-            )
-            refs.append(_version_ref_from_row(row))
-            return refs
-        if action_id == "create_research_note":
-            note_key = research_note_id(_stable_hash(payload))
-            row = self.objects.write_object(
-                "ResearchNote",
-                note_key,
-                {
-                    "title": _non_blank(payload.get("title"), "title"),
-                    "content": _non_blank(payload.get("content"), "content"),
-                    "ticker": _optional_ticker(payload),
-                    "note_type": str(payload.get("note_type") or "general"),
-                    "source_type": context.source_type,
-                    "source_id": context.source_id,
-                    "created_at": now,
                     "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
                 },
                 now,
@@ -1156,27 +1261,30 @@ class OntologyCommandService:
     ) -> None:
         now = _now()
         event_uid = audit_event_id(f"{action_name}:{_stable_hash(object_refs)}:{now}")
-        self.objects.write_object(
-            "AuditEvent",
-            event_uid,
-            {
-                "event_id": event_uid,
-                "occurred_at": now,
-                "actor_type": actor.actor_type,
-                "actor_id": actor.actor_id,
-                "action_name": action_name,
-                "action_category": category,
-                "status": status,
-                "object_refs": object_refs,
-                "after_summary": after_summary,
-                "lineage_root_id": provenance_id,
-                "retention_class": "audit_7y",
-                "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
-            },
-            now,
-            actor=actor_to_dict(actor),
-            provenance=provenance_id,
-        )
+        try:
+            self.objects.write_object(
+                "AuditEvent",
+                event_uid,
+                {
+                    "event_id": event_uid,
+                    "occurred_at": now,
+                    "actor_type": actor.actor_type,
+                    "actor_id": actor.actor_id,
+                    "action_name": action_name,
+                    "action_category": category,
+                    "status": status,
+                    "object_refs": object_refs,
+                    "after_summary": after_summary,
+                    "lineage_root_id": provenance_id,
+                    "retention_class": "audit_7y",
+                    "ontology_run_id": OPERATIONAL_ONTOLOGY_RUN_ID,
+                },
+                now,
+                actor=actor_to_dict(actor),
+                provenance=provenance_id,
+            )
+        except Exception:
+            logger.warning("Failed to write ontology command audit event %s", action_name, exc_info=True)
 
 
 def _flatten_object(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -1285,6 +1393,13 @@ def _non_blank(value: Any, field: str) -> str:
 
 def _dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _list(value: Any) -> list[Any]:

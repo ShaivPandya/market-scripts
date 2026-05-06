@@ -385,7 +385,6 @@ _LEGACY_TABLES = {
     "provenance_links",
     "recommendations",
     "report_runs",
-    "research_notes",
     "source_record_refs",
     "thesis_claims",
     "thesis_evaluations",
@@ -895,12 +894,6 @@ def _core_operational_rows(
         )
         props["ontology_run_id"] = "operational"
         rows.append(("ThesisClaim", f"thesis_claim:{props.get('legacy_id')}", props, _valid_from(props, cutover_time)))
-    for row in _select_all(conn, "research_notes"):
-        props = _with_legacy_id(row, "id")
-        props["ontology_run_id"] = "operational"
-        rows.append(
-            ("ResearchNote", f"research_note:{props.get('legacy_id')}", props, _valid_from(props, cutover_time))
-        )
     for row in _select_all(conn, "action_items"):
         props = _with_legacy_id(row, "id")
         props["ontology_run_id"] = "operational"

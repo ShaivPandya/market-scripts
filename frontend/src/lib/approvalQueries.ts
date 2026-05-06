@@ -18,7 +18,6 @@ const THESIS_FACING_ACTIONS = new Set([
   "create_thesis_claim",
   "update_thesis_claim",
   "create_recommendation",
-  "create_research_note",
 ])
 
 const PORTFOLIO_ACTIONS = new Set(["update_portfolio_positions", "update_hedge_positions"])

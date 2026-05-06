@@ -27,7 +27,6 @@ PROPOSAL_TOOL_NAMES = {
     "propose_thesis_content_update",
     "propose_catalyst",
     "propose_kill_condition",
-    "propose_research_note",
     "propose_news_digest_delete",
 }
 
@@ -209,17 +208,6 @@ def _proposal_tool_cases(digest_id: str) -> dict[str, tuple[dict, str, str]]:
             "create_kill_condition",
             "kill_condition",
         ),
-        "propose_research_note": (
-            {
-                "ticker": "mu",
-                "title": "HBM supply note",
-                "content": "Watch supply expansion.",
-                "note_type": "general",
-                "reason": "Save research context",
-            },
-            "create_research_note",
-            "research_note",
-        ),
         "propose_news_digest_delete": (
             {"digest_id": digest_id, "reason": "Remove stale digest"},
             "delete_portfolio_news_digest",
@@ -352,7 +340,6 @@ def test_agent_capability_registry_covers_user_facing_app_surface():
         "run_portfolio_sizer",
         "run_hedging_tool",
         "get_workspace",
-        "get_research_notes",
         "get_weekly_report",
         "search_agent_capabilities",
     }
@@ -397,7 +384,6 @@ def test_agent_capability_registry_does_not_expose_direct_mutations():
         "update_portfolio_positions",
         "update_hedge_positions",
         "save_thesis",
-        "create_research_note",
         "delete_portfolio_news_digest",
         "approve_item",
         "reject_item",

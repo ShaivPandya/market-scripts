@@ -2149,12 +2149,12 @@ export const fetchApprovals = (status?: string) =>
 export const fetchApprovalSummary = (params?: ApprovalSummaryParams) =>
   client.get("/approvals/summary", { params }).then(r => r.data as ApprovalSummaryResponse)
 export const approveItem = (id: string, note: string) =>
-  client.post(`/approvals/${id}/approve`, { note }).then(r => r.data as ApprovalRecord)
+  client.post(`/approvals/${encodeURIComponent(id)}/approve`, { note }).then(r => r.data as ApprovalRecord)
 export const rejectItem = (id: string, note?: string) =>
-  client.post(`/approvals/${id}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
+  client.post(`/approvals/${encodeURIComponent(id)}/reject`, note ? { note } : {}).then(r => r.data as ApprovalRecord)
 export const rejectAndRestageApproval = (id: string, note?: string) =>
   client
-    .post(`/approvals/${id}/reject-and-restage`, note ? { note } : {})
+    .post(`/approvals/${encodeURIComponent(id)}/reject-and-restage`, note ? { note } : {})
     .then(r => r.data as RejectAndRestageResponse)
 export const bulkApprove = (ids: string[], note: string) =>
   client.post("/approvals/bulk-approve", { ids, note }).then(r => r.data)
@@ -2245,12 +2245,6 @@ export const createKillCondition = (body: { ticker: string; condition: string; m
   client.post("/kill-conditions", body).then(r => r.data as StagedMutationResponse)
 export const updateKillConditionStatus = (id: number | string, status: string, options?: StagedMutationOptions) =>
   client.put(`/kill-conditions/${id}/status`, { status, ...options }).then(r => r.data as StagedMutationResponse)
-
-// Research Notes
-export const fetchResearchNotes = (params?: { ticker?: string; limit?: number }) =>
-  client.get("/research-notes", { params }).then(r => r.data)
-export const createResearchNote = (body: { title: string; content: string; ticker?: string; note_type?: string } & StagedMutationOptions) =>
-  client.post("/research-notes", body).then(r => r.data as StagedMutationResponse)
 
 // Workflow Runs
 interface AgentWorkflowResponse {
