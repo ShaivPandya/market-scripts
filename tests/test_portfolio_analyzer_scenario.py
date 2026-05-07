@@ -1,10 +1,12 @@
 import math
+from uuid import uuid4
 
 import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from api.routers.analyzer import AnalyzerRequest, _cache_key
+from api.routers import analyzer as analyzer_router
+from api.routers.analyzer import AnalyzerRequest, _cache_key, _compute_analyzer_result_cached
 from portfolio.portfolio_optimizer import portfolio_analyzer as analyzer_module
 from portfolio.portfolio_optimizer.portfolio_analyzer import (
     INTERACTIVE_SIGNAL_ANCHOR_MIN_UNIQUE,
@@ -70,6 +72,41 @@ def test_analyzer_cache_key_changes_with_scenario_weights():
     )
 
     assert _cache_key(quality_req) != _cache_key(value_req)
+
+
+def test_analyzer_cache_key_changes_with_freshness_bucket():
+    req = AnalyzerRequest()
+
+    assert _cache_key(req, freshness_bucket=123) == _cache_key(req, freshness_bucket=123)
+    assert _cache_key(req, freshness_bucket=123) != _cache_key(req, freshness_bucket=124)
+
+
+def test_analyzer_short_cache_reuses_result_within_bucket(monkeypatch):
+    calls: list[dict] = []
+    source_token = {"test_token": uuid4().hex}
+
+    def fake_get_data(**kwargs):
+        calls.append(kwargs)
+        return {
+            "status": "ok",
+            "error": None,
+            "course_of_action": {
+                "summary": {"as_of": "2026-05-04T14:15:00+00:00"},
+                "action_queue": [],
+            },
+        }
+
+    analyzer_router.short_cache.clear()
+    monkeypatch.setattr(analyzer_router, "_cache_freshness_bucket", lambda _now_s=None: 321)
+    monkeypatch.setattr(analyzer_module, "analyzer_source_cache_token", lambda: source_token)
+    monkeypatch.setattr(analyzer_module, "get_data", fake_get_data)
+
+    req = AnalyzerRequest()
+    first = _compute_analyzer_result_cached(req)
+    second = _compute_analyzer_result_cached(req)
+
+    assert first["course_of_action"] == second["course_of_action"]
+    assert len(calls) == 1
 
 
 def test_metric_scores_normalize_across_all_alpha_metrics():

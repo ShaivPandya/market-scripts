@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from api.async_job_runner import enqueue_registered_job, enqueue_response, poll_registered_job
+from api.cache import get_or_set_cached, short_cache
 from api.serializers import serialize_dataframe, serialize_value
 from portfolio.portfolio_optimizer.analyzer_scenarios import (
     SCENARIO_BRAKE_DEFAULTS,
@@ -19,6 +21,9 @@ from portfolio.portfolio_optimizer.analyzer_scenarios import (
 )
 
 router = APIRouter()
+
+_ANALYZER_STRATEGY_VERSION = "v4_qualitative_course_of_action"
+_ANALYZER_CACHE_FRESHNESS_SECONDS = 5 * 60
 
 
 class AnalyzerFactorWeights(BaseModel):
@@ -154,8 +159,11 @@ def _canonical_scenario(req: AnalyzerRequest) -> dict[str, Any]:
     return normalize_analyzer_scenario(req.scenario.model_dump(exclude_unset=True))
 
 
-def _cache_key(req: AnalyzerRequest) -> str:
-    strategy_version = "v4_qualitative_course_of_action"
+def _cache_freshness_bucket(now_s: float | None = None) -> int:
+    return int((time.time() if now_s is None else now_s) // _ANALYZER_CACHE_FRESHNESS_SECONDS)
+
+
+def _cache_key(req: AnalyzerRequest, *, freshness_bucket: int | None = None) -> str:
     scenario = json.dumps(_canonical_scenario(req), sort_keys=True, separators=(",", ":"))
     source_token = {}
     try:
@@ -165,10 +173,11 @@ def _cache_key(req: AnalyzerRequest) -> str:
     except Exception:
         source_token = {"status": "unavailable"}
     source = json.dumps(source_token, sort_keys=True, separators=(",", ":"), default=str)
-    return f"portfolio_analyzer:{strategy_version}:scenario={scenario}:source={source}"
+    bucket = _cache_freshness_bucket() if freshness_bucket is None else freshness_bucket
+    return f"portfolio_analyzer:{_ANALYZER_STRATEGY_VERSION}:scenario={scenario}:source={source}:bucket={bucket}"
 
 
-def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
+def _compute_analyzer_result_uncached(req: AnalyzerRequest) -> dict[str, Any]:
     try:
         from portfolio.portfolio_optimizer.portfolio_analyzer import get_data
 
@@ -193,6 +202,17 @@ def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
         else:
             result[k] = serialize_value(v)
     return result
+
+
+def _compute_analyzer_result_cached(req: AnalyzerRequest) -> dict[str, Any]:
+    # This is independent from the async-job DB cache. In-memory short_cache is
+    # per process/container; cross-process reuse depends on api.cache disk/GCS
+    # fallback when those backends are shared or enabled.
+    return get_or_set_cached(short_cache, _cache_key(req), lambda: _compute_analyzer_result_uncached(req))
+
+
+def _compute_analyzer_result(req: AnalyzerRequest) -> dict[str, Any]:
+    return _compute_analyzer_result_cached(req)
 
 
 @router.post("/portfolio-analyzer")

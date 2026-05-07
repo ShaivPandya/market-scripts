@@ -17,6 +17,7 @@ from ontology.domain_write_service import ontology_primary_writes_enabled
 from ontology.object_service import OntologyObjectService
 from ontology.policy import system_actor
 from ontology.runtime_read_service import OntologyRuntimeReadService
+from ontology.schemas.registry import NODE_SCHEMAS
 
 
 def _stable_hash(value: Any) -> str:
@@ -65,6 +66,14 @@ def _business_key(prefix: str, *parts: Any) -> str:
     return f"{prefix}:{':'.join(clean)}" if clean else f"{prefix}:{uuid4().hex}"
 
 
+def _schema_write_properties(object_type: str, properties: dict[str, Any]) -> dict[str, Any]:
+    schema_cls = NODE_SCHEMAS.get(object_type)
+    if schema_cls is None:
+        return dict(properties)
+    allowed = set(getattr(schema_cls, "model_fields", {})) - {"schema_version"}
+    return {key: value for key, value in properties.items() if key in allowed}
+
+
 def _write_runtime_object(object_type: str, business_key: str, properties: dict[str, Any]) -> dict[str, Any]:
     props = dict(properties)
     props.setdefault("updated_at", _now_iso())
@@ -72,16 +81,20 @@ def _write_runtime_object(object_type: str, business_key: str, properties: dict[
         props["status"] = "completed"
     if not ontology_primary_writes_enabled():
         return _write_legacy_runtime_object(object_type, business_key, props)
+    write_props = _schema_write_properties(object_type, props)
     service = OntologyObjectService()
     row = service.write_object(
         object_type,
         business_key,
-        props,
-        props.get("created_at") or props.get("started_at") or props.get("as_of") or props["updated_at"],
+        write_props,
+        write_props.get("created_at")
+        or write_props.get("started_at")
+        or write_props.get("as_of")
+        or write_props["updated_at"],
         actor=system_actor("continuous_optimizer"),
-        provenance=f"pv:continuous_optimizer:{object_type}:{business_key}:{_stable_hash(props)}",
+        provenance=f"pv:continuous_optimizer:{object_type}:{business_key}:{_stable_hash(write_props)}",
     )
-    payload = dict(row.get("properties") or props)
+    payload = dict(row.get("properties") or write_props)
     object_uid = str(row.get("object_uid") or business_key)
     payload["id"] = object_uid
     payload["object_uid"] = object_uid
@@ -688,9 +701,10 @@ def run_continuous_optimizer(payload: dict[str, Any] | None = None) -> dict[str,
 
     source_freshness: dict[str, Any] = {}
     try:
-        from portfolio.portfolio_optimizer.portfolio_analyzer import get_data as get_analyzer_data
+        from api.routers.analyzer import AnalyzerRequest, AnalyzerScenario, _compute_analyzer_result_cached
 
-        analyzer_payload = get_analyzer_data(scenario=scenario)
+        analyzer_req = AnalyzerRequest(scenario=AnalyzerScenario.model_validate(scenario))
+        analyzer_payload = _compute_analyzer_result_cached(analyzer_req)
         if analyzer_payload.get("error"):
             raise RuntimeError(str(analyzer_payload["error"]))
         course = analyzer_payload.get("course_of_action") if isinstance(analyzer_payload, dict) else None

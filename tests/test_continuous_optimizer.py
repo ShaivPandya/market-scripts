@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import portfolio.core_db as core_db
 
 
@@ -41,19 +43,23 @@ def _action(
     }
 
 
-def _patch_analyzer(monkeypatch, actions: list[dict]):
+def _patch_analyzer(monkeypatch, actions: list[dict], *, calls: list[dict] | None = None):
     from portfolio.portfolio_optimizer import portfolio_analyzer
 
-    monkeypatch.setattr(
-        portfolio_analyzer,
-        "get_data",
-        lambda scenario=None: {
+    source_token = {"test_token": uuid4().hex}
+
+    def fake_get_data(**kwargs):
+        if calls is not None:
+            calls.append(kwargs)
+        return {
             "course_of_action": {
                 "summary": {"as_of": "2026-05-04T14:15:00+00:00", "mission": "balanced"},
                 "action_queue": actions,
             }
-        },
-    )
+        }
+
+    monkeypatch.setattr(portfolio_analyzer, "analyzer_source_cache_token", lambda: source_token)
+    monkeypatch.setattr(portfolio_analyzer, "get_data", fake_get_data)
 
 
 def _patch_context(monkeypatch, risk_level: str | None = None):
@@ -97,6 +103,20 @@ def test_continuous_optimizer_suppresses_unchanged_repeated_runs(tmp_path, monke
     assert result["alerts_created"] == 0
     assert len(core_db.get_optimization_runs()) == 2
     assert len(core_db.get_optimization_snapshots(ticker="TSM")) == 2
+
+
+def test_continuous_optimizer_reuses_cached_analyzer_result(tmp_path, monkeypatch):
+    _reset_core_db(tmp_path, monkeypatch)
+    _patch_context(monkeypatch)
+    calls: list[dict] = []
+    _patch_analyzer(monkeypatch, [_action("TSM", "Increase Long", band="medium")], calls=calls)
+
+    from api.continuous_optimizer import run_continuous_optimizer
+
+    run_continuous_optimizer({"source": "test"})
+    run_continuous_optimizer({"source": "test"})
+
+    assert len(calls) == 1
 
 
 def test_continuous_optimizer_alerts_and_stages_on_material_action_change(tmp_path, monkeypatch):
