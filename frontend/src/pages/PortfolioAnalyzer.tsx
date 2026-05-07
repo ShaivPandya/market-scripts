@@ -574,10 +574,11 @@ function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: str
 }
 
 function actionIsHold(action: string) {
-  return action === "Hold Long" || action === "Hold Short" || action === "Watch"
+  return action === "Hold Long" || action === "Hold Short" || action === "Watch" || action === "Pass"
 }
 
 function workspaceActionType(action: AnalyzerCourseAction) {
+  if (["Initiate Long", "Initiate Short"].includes(action.action)) return "enter"
   if (["Research Long", "Research Short"].includes(action.action)) return "research"
   if (["Review", "Squeeze Review"].includes(action.action)) return "review"
   if (action.action === "Exit Review") return "exit"
@@ -589,6 +590,10 @@ function workspaceActionVerb(action: AnalyzerCourseAction) {
   switch (action.action) {
     case "Increase Long":
       return "Increase long exposure"
+    case "Initiate Long":
+      return "Initiate long review"
+    case "Initiate Short":
+      return "Initiate short review"
     case "Trim Long":
       return "Trim long exposure"
     case "Press Short":
@@ -605,6 +610,8 @@ function workspaceActionVerb(action: AnalyzerCourseAction) {
       return "Review short squeeze risk"
     case "Review":
       return "Review position"
+    case "Pass":
+      return "Pass"
     default:
       return action.action || "Review position"
   }
@@ -1053,26 +1060,8 @@ function ContinuousOptimizationPanel({
   )
 }
 
-export function PortfolioAnalyzer() {
+function ContinuousOptimizationContainer() {
   const queryClient = useQueryClient()
-  const cachedState = queryClient.getQueryData<{
-    result: AnalyzerResponse | null
-    scenario: AnalyzerScenarioState
-  }>(ANALYZER_STATE_KEY)
-
-  const [scenario, setScenario] = useState<AnalyzerScenarioState>(
-    normalizeScenarioState(cachedState?.scenario),
-  )
-  const [cachedResult, setCachedResult] = useState<AnalyzerResponse | null>(cachedState?.result ?? null)
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
-  const [briefTicker, setBriefTicker] = useState<string | null>(null)
-  const [workspaceProposal, setWorkspaceProposal] = useState<{ ticker: string; response: StagedMutationResponse } | null>(null)
-
-  const llmSettings = useApiQuery<LLMSettings>(LLM_SETTINGS_QUERY_KEY, fetchLLMSettings, 30_000)
-  const llmReady = Boolean(
-    llmSettings.data?.available_providers.find(provider => provider.provider === llmSettings.data?.provider)?.configured,
-  )
   const optimizerMissions = useApiQuery<{ missions: OptimizationMission[]; count: number }>(
     OPTIMIZATION_MISSIONS_QUERY_KEY,
     fetchOptimizationMissions,
@@ -1088,9 +1077,83 @@ export function PortfolioAnalyzer() {
     () => fetchOptimizationRuns({ limit: 5 }),
     30_000,
   )
+  const runOptimizerMutation = useMutation({
+    mutationFn: (missionId: string) => runOptimizationMissionAsync(missionId, { source: "manual" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_ALERTS_QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_RUNS_QUERY_KEY })
+    },
+  })
+  const dismissAlertMutation = useMutation({
+    mutationFn: (alert: OptimizationAlert) => dismissOptimizationAlert(alert.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_ALERTS_QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_RUNS_QUERY_KEY })
+    },
+  })
 
+  const optimizationMission = optimizerMissions.data?.missions?.[0] ?? null
+  const latestOptimizationRun = optimizerRuns.data?.runs?.[0] ?? null
+  const openOptimizerAlerts = optimizerAlerts.data?.alerts ?? []
+
+  return (
+    <>
+      <ContinuousOptimizationPanel
+        mission={optimizationMission}
+        latestRun={latestOptimizationRun}
+        alerts={openOptimizerAlerts}
+        running={runOptimizerMutation.isPending}
+        dismissingId={dismissAlertMutation.variables?.id ?? null}
+        onRun={() => {
+          if (optimizationMission) runOptimizerMutation.mutate(optimizationMission.id)
+        }}
+        onDismiss={alert => dismissAlertMutation.mutate(alert)}
+      />
+      {runOptimizerMutation.isError && <ErrorMessage message={String(runOptimizerMutation.error)} />}
+      {dismissAlertMutation.isError && <ErrorMessage message={String(dismissAlertMutation.error)} />}
+    </>
+  )
+}
+
+export interface AnalyzerWorkbenchProps {
+  universeMode?: "portfolio" | "portfolio_plus_ideas"
+  title?: string
+  subtitle?: string
+  stateKey?: readonly unknown[]
+  showPageHeader?: boolean
+  showContinuousOptimization?: boolean
+}
+
+export function AnalyzerWorkbench({
+  universeMode = "portfolio",
+  title = "Portfolio Analyzer",
+  subtitle = "Course-of-action recommender for current portfolio directions. Analysis only; sizing remains in Portfolio Sizer.",
+  stateKey = ANALYZER_STATE_KEY,
+  showPageHeader = true,
+  showContinuousOptimization = false,
+}: AnalyzerWorkbenchProps = {}) {
+  const queryClient = useQueryClient()
+  const cachedState = queryClient.getQueryData<{
+    result: AnalyzerResponse | null
+    scenario: AnalyzerScenarioState
+  }>(stateKey)
+
+  const [scenario, setScenario] = useState<AnalyzerScenarioState>(
+    normalizeScenarioState(cachedState?.scenario),
+  )
+  const [cachedResult, setCachedResult] = useState<AnalyzerResponse | null>(cachedState?.result ?? null)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
+  const [briefTicker, setBriefTicker] = useState<string | null>(null)
+  const [workspaceProposal, setWorkspaceProposal] = useState<{ ticker: string; response: StagedMutationResponse } | null>(null)
+
+  const llmSettings = useApiQuery<LLMSettings>(LLM_SETTINGS_QUERY_KEY, fetchLLMSettings, 30_000)
+  const llmReady = Boolean(
+    llmSettings.data?.available_providers.find(provider => provider.provider === llmSettings.data?.provider)?.configured,
+  )
   const mutation = useMutation({
-    mutationFn: (nextScenario: AnalyzerScenarioState) => runPortfolioAnalyzerAsync({ scenario: toScenarioRequest(nextScenario) }),
+    mutationFn: (nextScenario: AnalyzerScenarioState) =>
+      runPortfolioAnalyzerAsync({ scenario: toScenarioRequest(nextScenario), universe_mode: universeMode }),
     onSuccess: result => setCachedResult((result as AnalyzerResponse) ?? null),
   })
 
@@ -1111,25 +1174,9 @@ export function PortfolioAnalyzer() {
     },
   })
 
-  const runOptimizerMutation = useMutation({
-    mutationFn: (missionId: string) => runOptimizationMissionAsync(missionId, { source: "manual" }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_ALERTS_QUERY_KEY })
-      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_RUNS_QUERY_KEY })
-    },
-  })
-
-  const dismissAlertMutation = useMutation({
-    mutationFn: (alert: OptimizationAlert) => dismissOptimizationAlert(alert.id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_ALERTS_QUERY_KEY })
-      void queryClient.invalidateQueries({ queryKey: OPTIMIZATION_RUNS_QUERY_KEY })
-    },
-  })
-
   useEffect(() => {
-    queryClient.setQueryData(ANALYZER_STATE_KEY, { result: cachedResult, scenario })
-  }, [cachedResult, queryClient, scenario])
+    queryClient.setQueryData(stateKey, { result: cachedResult, scenario })
+  }, [cachedResult, queryClient, scenario, stateKey])
 
   const data = (mutation.data as AnalyzerResponse | undefined) ?? cachedResult
   const rows = toRows(data?.weights_df)
@@ -1140,9 +1187,6 @@ export function PortfolioAnalyzer() {
     [actionQueue, selectedTicker],
   )
   const summary = course?.summary
-  const optimizationMission = optimizerMissions.data?.missions?.[0] ?? null
-  const latestOptimizationRun = optimizerRuns.data?.runs?.[0] ?? null
-  const openOptimizerAlerts = optimizerAlerts.data?.alerts ?? []
 
   const actionableCount = actionQueue.filter(action => !actionIsHold(action.action) && action.gate_status !== "review").length
   const reviewCount = actionQueue.filter(action => action.gate_status === "review" || action.action.includes("Review")).length
@@ -1209,26 +1253,14 @@ export function PortfolioAnalyzer() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Portfolio Analyzer</h1>
-        <p className="text-sm text-gray-400 mt-0.5">
-          Course-of-action recommender for current portfolio directions. Analysis only; sizing remains in Portfolio Sizer.
-        </p>
-      </div>
+      {showPageHeader && (
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">{title}</h1>
+          <p className="text-sm text-gray-400 mt-0.5">{subtitle}</p>
+        </div>
+      )}
 
-      <ContinuousOptimizationPanel
-        mission={optimizationMission}
-        latestRun={latestOptimizationRun}
-        alerts={openOptimizerAlerts}
-        running={runOptimizerMutation.isPending}
-        dismissingId={dismissAlertMutation.variables?.id ?? null}
-        onRun={() => {
-          if (optimizationMission) runOptimizerMutation.mutate(optimizationMission.id)
-        }}
-        onDismiss={alert => dismissAlertMutation.mutate(alert)}
-      />
-      {runOptimizerMutation.isError && <ErrorMessage message={String(runOptimizerMutation.error)} />}
-      {dismissAlertMutation.isError && <ErrorMessage message={String(dismissAlertMutation.error)} />}
+      {showContinuousOptimization && <ContinuousOptimizationContainer />}
 
       <div className="theme-surface mb-6 p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1433,4 +1465,8 @@ export function PortfolioAnalyzer() {
       )}
     </div>
   )
+}
+
+export function PortfolioAnalyzer() {
+  return <AnalyzerWorkbench showContinuousOptimization />
 }

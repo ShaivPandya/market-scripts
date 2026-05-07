@@ -16,11 +16,14 @@ import {
   fetchIdeaEvaluationJob,
   fetchIdeas,
   startIdeaComparisonEvaluationJob,
+  updateIdea,
+  type IdeaAnalyzerDirection,
   type IdeaComparisonJobResponse,
   type IdeaComparisonRun,
   type IdeaListResponse,
   type IdeaStatus,
 } from "@/lib/api"
+import { AnalyzerWorkbench } from "@/pages/PortfolioAnalyzer"
 import {
   formatDate,
   formatLabel,
@@ -33,7 +36,13 @@ import {
 import { cn } from "@/lib/utils"
 
 const ACTIVE_COMPARISON_JOB_KEY = "idea-watchlist-active-comparison-job-v1"
+const IDEA_WATCHLIST_ANALYZER_STATE_KEY = ["idea-watchlist", "analyzer", "state"] as const
 const ACTIONABLE_IDEA_STATUSES = new Set<IdeaStatus | string>(["watching", "researching", "ready_for_review"])
+const ANALYZER_DIRECTIONS: { value: IdeaAnalyzerDirection; label: string }[] = [
+  { value: "inactive", label: "Inactive" },
+  { value: "long", label: "Long" },
+  { value: "short", label: "Short" },
+]
 
 const STATUS_TONE: Record<string, StatusTone> = {
   watching: "neutral",
@@ -63,6 +72,11 @@ function writeActiveComparisonJob(jobId: string | null) {
 
 function StatusPill({ status }: { status: string }) {
   return <StatusBadge tone={STATUS_TONE[status] ?? "neutral"}>{formatLabel(status)}</StatusBadge>
+}
+
+function analyzerDirection(idea: { metadata?: Record<string, unknown> }): IdeaAnalyzerDirection {
+  const direction = String(idea.metadata?.analyzer_direction || "inactive").toLowerCase()
+  return direction === "long" || direction === "short" ? direction : "inactive"
 }
 
 function ComparativeRankingPanel({ run }: { run: IdeaComparisonRun | null }) {
@@ -279,6 +293,16 @@ export function IdeaWatchlist() {
     },
   })
 
+  const directionMutation = useMutation({
+    mutationFn: ({ ideaId, direction }: { ideaId: string; direction: IdeaAnalyzerDirection }) =>
+      updateIdea(ideaId, { analyzer_direction: direction }),
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({ queryKey: ["ideas"] })
+      void qc.invalidateQueries({ queryKey: ["idea", variables.ideaId] })
+      qc.removeQueries({ queryKey: IDEA_WATCHLIST_ANALYZER_STATE_KEY })
+    },
+  })
+
   const rows = useMemo(() => ideas.map(idea => {
     const evaluation = latestEvaluation(idea, null)
     const activeJob = activeJobs[String(idea.id)]
@@ -382,10 +406,10 @@ export function IdeaWatchlist() {
           <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No ideas.</p>
         ) : (
           <div className="max-h-[19rem] overflow-auto rounded-lg border border-app bg-card">
-            <table className="w-full min-w-[840px] border-collapse text-sm">
+            <table className="w-full min-w-[960px] border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-card-muted">
                 <tr>
-                  {["Ticker", "Status", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
+                  {["Ticker", "Status", "Analyzer", "Latest Action", "Score", "Gaps", "Last Evaluated", "Accepted", "Actions"].map(label => (
                     <th key={label} className="border-b border-app px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
                       {label}
                     </th>
@@ -408,6 +432,26 @@ export function IdeaWatchlist() {
                           <div className="max-w-[14rem] truncate text-xs text-subtle">{idea.company_name || "N/A"}</div>
                         </td>
                         <td className="px-3 py-3"><StatusPill status={activeJob ? "researching" : idea.status} /></td>
+                        <td className="px-3 py-3">
+                          <select
+                            value={analyzerDirection(idea)}
+                            onClick={event => event.stopPropagation()}
+                            onChange={event => {
+                              event.stopPropagation()
+                              directionMutation.mutate({
+                                ideaId,
+                                direction: event.target.value as IdeaAnalyzerDirection,
+                              })
+                            }}
+                            disabled={directionMutation.isPending && directionMutation.variables?.ideaId === ideaId}
+                            className="h-9 rounded-md border border-app bg-card px-2 text-sm text-app"
+                            aria-label={`Analyzer direction for ${idea.ticker}`}
+                          >
+                            {ANALYZER_DIRECTIONS.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </td>
                         <td className="px-3 py-3">{activeJob ? <StatusBadge tone="info">Running</StatusBadge> : <ActionPill action={evaluation?.action} />}</td>
                         <td className="px-3 py-3 font-mono text-app">{scoreText(evaluation?.score)}</td>
                         <td className="px-3 py-3 text-app">{missingCount(evaluation)}</td>
@@ -439,6 +483,20 @@ export function IdeaWatchlist() {
             </table>
           </div>
         )}
+      </section>
+      {directionMutation.error && (
+        <div className="mt-4">
+          <ErrorMessage message={directionMutation.error instanceof Error ? directionMutation.error.message : "Could not update analyzer direction."} />
+        </div>
+      )}
+
+      <section className="mt-5">
+        <AnalyzerWorkbench
+          universeMode="portfolio_plus_ideas"
+          title="Portfolio + Idea Analyzer"
+          subtitle="Manual analyzer run using current portfolio rows plus watchlist ideas marked long or short."
+          stateKey={IDEA_WATCHLIST_ANALYZER_STATE_KEY}
+        />
       </section>
     </main>
   )

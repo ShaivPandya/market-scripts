@@ -11,6 +11,15 @@ const ACTION_TONE: Record<string, StatusTone> = {
   do_nothing: "neutral",
 }
 
+const CANONICAL_FACTORS = [
+  "macro_support",
+  "industry_attractiveness",
+  "business_quality",
+  "management_quality",
+  "valuation_asymmetry",
+  "portfolio_fit",
+]
+
 export function ActionPill({ action }: { action?: string | null }) {
   if (!action) return <span className="text-sm text-subtle">N/A</span>
   return <StatusBadge tone={ACTION_TONE[action] ?? "neutral"}>{formatLabel(action)}</StatusBadge>
@@ -63,6 +72,69 @@ function MissingRows({ rows }: { rows: IdeaMissingInformation[] }) {
   )
 }
 
+function formatMaybeNumber(value: unknown, digits = 2) {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "N/A"
+}
+
+function AnalyzerContextPanel({ context }: { context: Record<string, unknown> }) {
+  const status = String(context.status || "unavailable")
+  const coverage = context.coverage && typeof context.coverage === "object" ? context.coverage as Record<string, unknown> : {}
+  const diagnostics =
+    context.diagnostic_subfactors && typeof context.diagnostic_subfactors === "object"
+      ? context.diagnostic_subfactors as Record<string, Record<string, unknown>>
+      : {}
+  const gates = Array.isArray(context.gate_reasons) ? context.gate_reasons : []
+  const warnings = Array.isArray(context.warnings) ? context.warnings : []
+
+  return (
+    <section className="space-y-3">
+      <h3 className="section-title text-sm">Analyzer Context</h3>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Action</span>
+          <p className="mt-2 text-sm font-semibold text-app">{String(context.action_label || formatLabel(status))}</p>
+        </div>
+        <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Scenario</span>
+          <p className="mt-2 font-mono text-sm font-semibold text-app">{formatMaybeNumber(context.scenario_score)}</p>
+        </div>
+        <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Confidence</span>
+          <p className="mt-2 font-mono text-sm font-semibold text-app">
+            {typeof context.confidence === "number" ? `${Math.round(context.confidence * 100)}%` : "N/A"}
+          </p>
+        </div>
+        <div className="rounded-lg border border-app bg-card-muted px-3 py-3">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">Coverage</span>
+          <p className="mt-2 font-mono text-sm font-semibold text-app">
+            {typeof coverage.ratio === "number" ? `${Math.round(coverage.ratio * 100)}%` : "N/A"}
+          </p>
+        </div>
+      </div>
+      <div className="rounded-lg border border-app bg-card-muted px-3 py-3 text-sm text-muted">
+        <div className="flex flex-wrap gap-x-4 gap-y-2">
+          <span>Gate: {String(context.gate_status || "N/A")}</span>
+          <span>Source: {context.source_timestamp ? formatDate(String(context.source_timestamp)) : "N/A"}</span>
+        </div>
+        {gates.length > 0 && <p className="mt-2 leading-6">Gates: {gates.map(String).join("; ")}</p>}
+        {warnings.length > 0 && <p className="mt-2 leading-6">Warnings: {warnings.map(String).join("; ")}</p>}
+        {Object.keys(diagnostics).length > 0 && (
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {Object.entries(diagnostics).map(([name, row]) => (
+              <div key={name} className="rounded-md border border-app bg-card px-3 py-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-subtle">{formatLabel(name)}</span>
+                <p className="mt-1 font-mono text-sm text-app">
+                  Signal {formatMaybeNumber(row.signal)} / Score {formatMaybeNumber(row.mapped_score, 1)}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function EvaluationPanel({
   evaluation,
   onAccept,
@@ -80,10 +152,16 @@ export function EvaluationPanel({
     return <p className="rounded-lg border border-app bg-card-muted px-3 py-4 text-sm text-muted">No evaluation yet.</p>
   }
 
-  const factors = Object.entries(evaluation.factor_scores || {})
+  const factors = CANONICAL_FACTORS
+    .map(name => [name, evaluation.factor_scores?.[name]] as const)
+    .filter((entry): entry is readonly [string, IdeaFactorScore] => Boolean(entry[1]))
   const evidence = evaluation.evidence || []
   const disconfirming = evaluation.disconfirming_evidence || []
   const accepted = Boolean(evaluation.accepted_at || evaluation.recommendation_id)
+  const analyzerContext =
+    evaluation.analyzer_context && Object.keys(evaluation.analyzer_context).length > 0
+      ? evaluation.analyzer_context
+      : null
 
   return (
     <div className="space-y-5">
@@ -105,6 +183,8 @@ export function EvaluationPanel({
           {factors.map(([name, factor]) => <FactorScore key={name} name={name} factor={factor} />)}
         </div>
       )}
+
+      {analyzerContext && <AnalyzerContextPanel context={analyzerContext} />}
 
       <section className="space-y-3">
         <h3 className="section-title text-sm">Missing Information</h3>

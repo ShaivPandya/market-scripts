@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -21,7 +21,7 @@ from portfolio.portfolio_optimizer.analyzer_scenarios import (
 
 router = APIRouter()
 
-_ANALYZER_STRATEGY_VERSION = "v4_qualitative_course_of_action"
+_ANALYZER_STRATEGY_VERSION = "v5_qualitative_idea_universe"
 
 
 class AnalyzerFactorWeights(BaseModel):
@@ -145,6 +145,7 @@ class AnalyzerRequest(BaseModel):
     target_leverage: float | None = None
     beta_neutral: bool | None = None
     scenario: AnalyzerScenario | None = None
+    universe_mode: Literal["portfolio", "portfolio_plus_ideas"] = "portfolio"
 
 
 class AnalyzerBriefRequest(BaseModel):
@@ -164,11 +165,17 @@ def _cache_key(req: AnalyzerRequest, *, freshness_bucket: int | None = None) -> 
     try:
         from portfolio.portfolio_optimizer.portfolio_analyzer import analyzer_source_cache_token
 
-        source_token = analyzer_source_cache_token()
+        try:
+            source_token = analyzer_source_cache_token(universe_mode=req.universe_mode)
+        except TypeError:
+            source_token = analyzer_source_cache_token()
     except Exception:
         source_token = {"status": "unavailable"}
     source = json.dumps(source_token, sort_keys=True, separators=(",", ":"), default=str)
-    return f"portfolio_analyzer:{_ANALYZER_STRATEGY_VERSION}:scenario={scenario}:source={source}"
+    return (
+        f"portfolio_analyzer:{_ANALYZER_STRATEGY_VERSION}:"
+        f"universe={req.universe_mode}:scenario={scenario}:source={source}"
+    )
 
 
 def _compute_analyzer_result_uncached(req: AnalyzerRequest) -> dict[str, Any]:
@@ -180,6 +187,7 @@ def _compute_analyzer_result_uncached(req: AnalyzerRequest) -> dict[str, Any]:
             target_leverage=req.target_leverage,
             beta_neutral=True if req.beta_neutral is None else req.beta_neutral,
             scenario=_canonical_scenario(req),
+            universe_mode=req.universe_mode,
         )
     except Exception as e:
         raise RuntimeError(str(e)) from e

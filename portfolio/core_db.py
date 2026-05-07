@@ -317,6 +317,8 @@ CREATE TABLE IF NOT EXISTS idea_evaluations (
     catalyst                     TEXT,
     invalidation                 TEXT,
     portfolio_fit_json           TEXT NOT NULL DEFAULT '{}',
+    analyzer_context_json        TEXT NOT NULL DEFAULT '{}',
+    evaluation_schema_version    TEXT,
     recommendation_record_json   TEXT NOT NULL DEFAULT '{}',
     recommendation_id            INTEGER,
     approval_id                  INTEGER,
@@ -990,6 +992,13 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             "risk_level": "TEXT",
             "risk_source_status_json": "TEXT",
             "risk_bindings_json": "TEXT",
+        },
+    )
+    _add_missing(
+        "idea_evaluations",
+        {
+            "analyzer_context_json": "TEXT NOT NULL DEFAULT '{}'",
+            "evaluation_schema_version": "TEXT",
         },
     )
     _add_missing(
@@ -4075,6 +4084,7 @@ _IDEA_EVALUATION_JSON_FIELDS = (
     "evidence_json",
     "disconfirming_evidence_json",
     "portfolio_fit_json",
+    "analyzer_context_json",
     "recommendation_record_json",
     "raw_result_json",
 )
@@ -4135,6 +4145,7 @@ def _parse_idea_evaluation_json_fields(d: dict) -> dict:
         d.get("disconfirming_evidence_json") if isinstance(d.get("disconfirming_evidence_json"), list) else []
     )
     d["portfolio_fit"] = d.get("portfolio_fit_json") if isinstance(d.get("portfolio_fit_json"), dict) else {}
+    d["analyzer_context"] = d.get("analyzer_context_json") if isinstance(d.get("analyzer_context_json"), dict) else {}
     d["recommendation_record"] = (
         d.get("recommendation_record_json") if isinstance(d.get("recommendation_record_json"), dict) else {}
     )
@@ -4378,6 +4389,8 @@ def create_idea_evaluation(
         result.get("disconfirming_evidence") if isinstance(result.get("disconfirming_evidence"), list) else []
     )
     portfolio_fit = result.get("portfolio_fit") if isinstance(result.get("portfolio_fit"), dict) else {}
+    analyzer_context = result.get("analyzer_context") if isinstance(result.get("analyzer_context"), dict) else {}
+    evaluation_schema_version = result.get("evaluation_schema_version")
     recommendation_record = (
         result.get("recommendation_record") if isinstance(result.get("recommendation_record"), dict) else {}
     )
@@ -4388,8 +4401,9 @@ def create_idea_evaluation(
             "(idea_id, ticker, job_id, evaluated_at, action, recommendation_status, score, confidence, "
             "thesis_statement, rationale, factor_scores_json, missing_information_json, data_quality_json, "
             "evidence_json, disconfirming_evidence_json, catalyst, invalidation, portfolio_fit_json, "
-            "recommendation_record_json, recommendation_id, approval_id, action_approval_id, raw_result_json, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "analyzer_context_json, evaluation_schema_version, recommendation_record_json, recommendation_id, "
+            "approval_id, action_approval_id, raw_result_json, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 int(idea_id),
                 str(idea["ticker"]).upper(),
@@ -4409,6 +4423,8 @@ def create_idea_evaluation(
                 result.get("catalyst"),
                 result.get("invalidation"),
                 json.dumps(portfolio_fit, default=str),
+                json.dumps(analyzer_context, default=str),
+                str(evaluation_schema_version) if evaluation_schema_version else None,
                 json.dumps(recommendation_record, default=str),
                 result.get("recommendation_id"),
                 result.get("approval_id"),

@@ -276,6 +276,137 @@ def test_evaluate_all_persists_comparative_run_and_excludes_inactive(auth_client
     assert [row["ticker"] for row in listed_payload["runs"][0]["rankings"]] == ["AAPL", "MSFT"]
 
 
+def test_create_update_defaults_analyzer_direction(auth_client):
+    created = auth_client.post(
+        "/api/v1/ideas",
+        json={"ticker": "NFLX", "company_name": "Netflix", "user_notes": "Direction defaults.", "tags": []},
+    )
+    assert created.status_code == 200
+    idea = created.json()["idea"]
+    assert idea["metadata"]["analyzer_direction"] == "inactive"
+
+    updated = auth_client.put(f"/api/v1/ideas/{idea['id']}", json={"analyzer_direction": "long"})
+    assert updated.status_code == 200
+    assert updated.json()["idea"]["metadata"]["analyzer_direction"] == "long"
+
+
+def test_analyzer_context_overrides_canonical_scores_and_preserves_six_factor_average():
+    from api.routers import ideas as ideas_router
+
+    context = {
+        "idea": {"id": "idea:1", "ticker": "AAPL"},
+        "ticker": "AAPL",
+        "tool_errors": [],
+        "evaluated_at": "2026-05-05T12:00:00+00:00",
+        "analyzer_context": {
+            "status": "available",
+            "row": {
+                "industry_quality_score": 80,
+                "business_quality_qual_score": 70,
+                "management_quality_score": 90,
+                "valuation_signal": 1.5,
+                "fundamental_momentum_signal": 3,
+                "price_mom_signal": -3,
+            },
+            "warnings": [],
+            "qualitative_evidence": {},
+        },
+    }
+    result = ideas_router._normalize_llm_result(
+        context,
+        {
+            "action": "watch",
+            "recommendation_status": "clear",
+            "score": 10,
+            "confidence": 0.8,
+            "rationale": "Test result.",
+            "factor_scores": {
+                "macro_support": {"score": 60},
+                "industry_attractiveness": {"score": 10},
+                "business_quality": {"score": 10},
+                "management_quality": {"score": 10},
+                "valuation_asymmetry": {"score": 10},
+                "portfolio_fit": {"score": 40},
+                "fundamental_momentum": {"score": 100},
+            },
+        },
+    )
+
+    assert result["evaluation_schema_version"] == ideas_router.IDEA_EVALUATION_SCHEMA_VERSION
+    assert result["factor_scores"]["industry_attractiveness"]["score"] == 80
+    assert result["factor_scores"]["business_quality"]["score"] == 70
+    assert result["factor_scores"]["management_quality"]["score"] == 90
+    assert result["factor_scores"]["valuation_asymmetry"]["score"] == 75
+    assert result["score"] == 69.2
+    assert "fundamental_momentum" not in result["factor_scores"]
+    assert "price_momentum" not in result["factor_scores"]
+
+
+def test_evaluate_all_computes_one_analyzer_result_for_enabled_ideas(auth_client, monkeypatch):
+    from api.routers import ideas as ideas_router
+
+    calls = {"analyzer": 0}
+
+    def fake_analyzer_result():
+        calls["analyzer"] += 1
+        return {"status": "ok", "raw_result": {"weights_df": []}}
+
+    monkeypatch.setattr(ideas_router, "_compute_portfolio_plus_ideas_analyzer_result", fake_analyzer_result)
+    monkeypatch.setattr(
+        ideas_router,
+        "_analyzer_contexts_from_result",
+        lambda _result: {
+            "MSFT": {
+                "status": "available",
+                "ticker": "MSFT",
+                "row": {
+                    "industry_quality_score": 80,
+                    "business_quality_qual_score": 80,
+                    "management_quality_score": 80,
+                    "valuation_signal": 0,
+                },
+            },
+            "AAPL": {
+                "status": "available",
+                "ticker": "AAPL",
+                "row": {
+                    "industry_quality_score": 70,
+                    "business_quality_qual_score": 70,
+                    "management_quality_score": 70,
+                    "valuation_signal": 0,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        ideas_router,
+        "_call_llm_comparison_ranker",
+        lambda evaluations: ideas_router._deterministic_comparison_result(evaluations),
+    )
+
+    for ticker, direction in [("MSFT", "long"), ("AAPL", "short")]:
+        created = auth_client.post(
+            "/api/v1/ideas",
+            json={
+                "ticker": ticker,
+                "company_name": ticker,
+                "user_notes": f"Review {ticker}.",
+                "tags": ["test"],
+                "status": "watching",
+                "analyzer_direction": direction,
+            },
+        )
+        assert created.status_code == 200
+
+    started = auth_client.post("/api/v1/ideas/evaluate-all/async", json={})
+    assert started.status_code in {200, 202}
+    job = _poll_until_done(auth_client, started.json()["job_id"])
+
+    assert job["status"] == "done"
+    assert calls["analyzer"] == 1
+    assert {row["analyzer_context"]["status"] for row in job["result"]["evaluations"]} == {"available"}
+
+
 def test_critical_missing_information_forces_watch():
     from api.routers import ideas as ideas_router
 

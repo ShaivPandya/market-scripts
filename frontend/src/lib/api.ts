@@ -206,6 +206,7 @@ export interface RecommendationRecord extends DecisionStateFields {
 
 export type IdeaStatus = "watching" | "researching" | "ready_for_review" | "accepted" | "rejected" | "archived"
 export type IdeaAction = "buy" | "watch" | "avoid" | "do_nothing"
+export type IdeaAnalyzerDirection = "inactive" | "long" | "short"
 
 export interface InvestmentIdea {
   id: string
@@ -269,6 +270,8 @@ export interface IdeaEvaluation {
   invalidation: string | null
   portfolio_fit: Record<string, unknown>
   recommendation_record?: Partial<RecommendationRecord> & Record<string, unknown>
+  analyzer_context?: Record<string, unknown>
+  evaluation_schema_version?: string | null
   recommendation_id: string | null
   approval_id: string | null
   action_approval_id: string | null
@@ -1489,11 +1492,14 @@ export interface AnalyzerCourseOfAction {
   factor_breakdown?: Record<string, AnalyzerFactorBreakdown[]>
 }
 
-type AnalyzerRequest = {
+export type AnalyzerUniverseMode = "portfolio" | "portfolio_plus_ideas"
+
+export type AnalyzerRequest = {
   book?: number
   target_leverage?: number
   beta_neutral?: boolean
   scenario?: AnalyzerScenarioRequest
+  universe_mode?: AnalyzerUniverseMode
 }
 
 export const runPortfolioAnalyzer = (body: AnalyzerRequest = {}) =>
@@ -2191,6 +2197,7 @@ export const createIdea = (body: {
   user_notes?: string | null
   tags?: string[]
   status?: IdeaStatus
+  analyzer_direction?: IdeaAnalyzerDirection
 }) => client.post("/ideas", body).then(r => r.data as IdeaDetailResponse)
 
 export const updateIdea = (id: string, body: {
@@ -2199,6 +2206,7 @@ export const updateIdea = (id: string, body: {
   user_notes?: string | null
   tags?: string[]
   status?: IdeaStatus
+  analyzer_direction?: IdeaAnalyzerDirection
 }) => client.put(`/ideas/${encodeURIComponent(id)}`, body).then(r => r.data as IdeaDetailResponse)
 
 export const deleteIdea = (id: string) =>

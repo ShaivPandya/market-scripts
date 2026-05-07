@@ -20,6 +20,7 @@ import {
   uploadManagementQualityDocument,
   uploadOverviewDocument,
   type IdeaAction,
+  type IdeaAnalyzerDirection,
   type IdeaEvaluationJobResponse,
   type IdeaStatus,
   type InvestmentIdea,
@@ -46,6 +47,12 @@ const IDEA_STATUSES: { value: IdeaStatus; label: string }[] = [
   { value: "rejected", label: "Rejected" },
 ]
 
+const ANALYZER_DIRECTIONS: { value: IdeaAnalyzerDirection; label: string }[] = [
+  { value: "inactive", label: "Inactive" },
+  { value: "long", label: "Long" },
+  { value: "short", label: "Short" },
+]
+
 const STATUS_TONE: Record<string, StatusTone> = {
   watching: "neutral",
   researching: "info",
@@ -63,6 +70,11 @@ function normalizeTagsString(value: string): string {
   return value.split(",").map(t => t.trim()).filter(Boolean).join(",")
 }
 
+function analyzerDirection(idea: InvestmentIdea | null): IdeaAnalyzerDirection {
+  const direction = String(idea?.metadata?.analyzer_direction || "inactive").toLowerCase()
+  return direction === "long" || direction === "short" ? direction : "inactive"
+}
+
 export function IdeaDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -72,6 +84,7 @@ export function IdeaDetail() {
   const [editNotes, setEditNotes] = useState("")
   const [editTags, setEditTags] = useState("")
   const [editStatus, setEditStatus] = useState<IdeaStatus>("watching")
+  const [editAnalyzerDirection, setEditAnalyzerDirection] = useState<IdeaAnalyzerDirection>("inactive")
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
   const [managementUploadMessage, setManagementUploadMessage] = useState<string | null>(null)
   const [acceptMessage, setAcceptMessage] = useState<string | null>(null)
@@ -92,21 +105,34 @@ export function IdeaDetail() {
   const originalNotes = selectedIdea?.user_notes || ""
   const originalTagsString = (selectedIdea?.tags || []).join(", ")
   const originalStatus = (selectedIdea?.status as IdeaStatus) || "watching"
+  const originalAnalyzerDirection = analyzerDirection(selectedIdea)
 
   const isDirty = useMemo(() => {
     if (!selectedIdea) return false
     return (
       editNotes !== originalNotes ||
       normalizeTagsString(editTags) !== normalizeTagsString(originalTagsString) ||
-      editStatus !== originalStatus
+      editStatus !== originalStatus ||
+      editAnalyzerDirection !== originalAnalyzerDirection
     )
-  }, [selectedIdea, editNotes, editTags, editStatus, originalNotes, originalTagsString, originalStatus])
+  }, [
+    selectedIdea,
+    editNotes,
+    editTags,
+    editStatus,
+    editAnalyzerDirection,
+    originalNotes,
+    originalTagsString,
+    originalStatus,
+    originalAnalyzerDirection,
+  ])
 
   useEffect(() => {
     if (!selectedIdea) return
     setEditNotes(selectedIdea.user_notes || "")
     setEditTags((selectedIdea.tags || []).join(", "))
     setEditStatus((selectedIdea.status as IdeaStatus) || "watching")
+    setEditAnalyzerDirection(analyzerDirection(selectedIdea))
   }, [selectedIdea])
 
   useEffect(() => {
@@ -173,6 +199,7 @@ export function IdeaDetail() {
         user_notes: editNotes,
         tags: editTags.split(",").map(t => t.trim()).filter(Boolean),
         status: editStatus,
+        analyzer_direction: editAnalyzerDirection,
       })
     },
     onSuccess: data => {
@@ -455,9 +482,15 @@ export function IdeaDetail() {
 
             {tab === "Thesis" && (
               <section className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-[1fr_11rem]">
+                <div className="grid gap-3 md:grid-cols-[1fr_11rem_11rem]">
                   <TextInput label="Tags" value={editTags} onChange={setEditTags} placeholder="quality, cyclical" />
                   <SelectInput label="Status" value={editStatus} onChange={value => setEditStatus(value as IdeaStatus)} options={IDEA_STATUSES} />
+                  <SelectInput
+                    label="Analyzer"
+                    value={editAnalyzerDirection}
+                    onChange={value => setEditAnalyzerDirection(value as IdeaAnalyzerDirection)}
+                    options={ANALYZER_DIRECTIONS}
+                  />
                 </div>
                 <div>
                   <label className="theme-field-label" htmlFor="idea-notes">Notes</label>

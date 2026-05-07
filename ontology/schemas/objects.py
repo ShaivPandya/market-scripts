@@ -2035,6 +2035,8 @@ class IdeaEvaluationV1(OntologySchemaBase):
     catalyst: str | None = None
     invalidation: str | None = None
     portfolio_fit: dict[str, Any] = Field(default_factory=dict)
+    analyzer_context: dict[str, Any] = Field(default_factory=dict)
+    evaluation_schema_version: str | None = None
     recommendation_record: dict[str, Any] | None = None
     recommendation_id: str | int | None = None
     approval_id: str | int | None = None
@@ -2066,6 +2068,7 @@ class IdeaEvaluationV1(OntologySchemaBase):
         "accepted_by",
         "created_at",
         "ontology_run_id",
+        "evaluation_schema_version",
         mode="before",
     )
     @classmethod

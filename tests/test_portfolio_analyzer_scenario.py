@@ -968,3 +968,84 @@ def test_course_of_action_factor_conflict_downgrades_to_review():
     assert action["action"] == "Review"
     assert action["factor_conflict"] is True
     assert "Conflicting factor evidence" in action["gate_reasons"]
+
+
+def test_portfolio_plus_ideas_universe_injects_only_enabled_non_duplicates(monkeypatch):
+    monkeypatch.setattr(
+        analyzer_module,
+        "_get_positions_df",
+        lambda: pd.DataFrame(
+            [
+                {
+                    "ticker": "AAPL",
+                    "asset": "equity",
+                    "direction": "long",
+                    "instrument_type": "security",
+                    "quantity": 10,
+                    "contract_multiplier": 1,
+                }
+            ]
+        ),
+    )
+
+    class FakeReadService:
+        def list_objects(self, object_type, limit=500):
+            assert object_type == "InvestmentIdea"
+            assert limit == 500
+            return [
+                {"id": "1", "ticker": "MSFT", "status": "watching", "metadata": {"analyzer_direction": "long"}},
+                {"id": "2", "ticker": "TSLA", "status": "researching", "metadata": {"analyzer_direction": "short"}},
+                {"id": "3", "ticker": "AAPL", "status": "watching", "metadata": {"analyzer_direction": "short"}},
+                {"id": "4", "ticker": "META", "status": "accepted", "metadata": {"analyzer_direction": "long"}},
+                {"id": "5", "ticker": "NFLX", "status": "watching", "metadata": {}},
+            ]
+
+    monkeypatch.setattr("ontology.runtime_read_service.OntologyRuntimeReadService", FakeReadService)
+
+    universe = analyzer_module._positions_df_for_universe("portfolio_plus_ideas")
+
+    assert universe["ticker"].tolist() == ["AAPL", "MSFT", "TSLA"]
+    idea_rows = universe[universe["source_type"].eq("idea")]
+    assert set(idea_rows["ticker"]) == {"MSFT", "TSLA"}
+    assert idea_rows.set_index("ticker").loc["MSFT", "quantity"] == 0
+    assert idea_rows.set_index("ticker").loc["TSLA", "direction"] == "short"
+
+
+def test_idea_only_course_actions_use_initiate_and_pass_labels():
+    course = _balanced_course(
+        [
+            {
+                "ticker": "IDEALONG",
+                "source_type": "idea",
+                "direction": "long",
+                "scenario_score": 0.90,
+                "score_delta": 0.20,
+            },
+            {
+                "ticker": "IDEASHORT",
+                "source_type": "idea",
+                "direction": "short",
+                "scenario_score": -0.90,
+                "score_delta": -0.20,
+            },
+            {
+                "ticker": "BADLONG",
+                "source_type": "idea",
+                "direction": "long",
+                "scenario_score": -0.90,
+                "score_delta": -0.20,
+            },
+            {
+                "ticker": "OWNED",
+                "source_type": "portfolio",
+                "direction": "long",
+                "scenario_score": 0.90,
+                "score_delta": 0.20,
+            },
+        ]
+    )
+
+    assert _first_action(course, "IDEALONG")["action"] == "Initiate Long"
+    assert _first_action(course, "IDEASHORT")["action"] == "Initiate Short"
+    assert _first_action(course, "BADLONG")["action"] == "Pass"
+    assert _first_action(course, "OWNED")["action"] == "Increase Long"

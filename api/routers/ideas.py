@@ -23,8 +23,18 @@ from ontology.runtime_read_service import OntologyRuntimeReadService
 router = APIRouter()
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "auto_report" / "prompts"
-IDEA_EVALUATION_VERSION = "v1"
+IDEA_EVALUATION_VERSION = "v2_analyzer_context"
+IDEA_EVALUATION_SCHEMA_VERSION = "idea_evaluator_v2_analyzer_context"
 IDEA_ACTIONS = {"buy", "watch", "avoid", "do_nothing"}
+IDEA_ANALYZER_DIRECTIONS = {"inactive", "long", "short"}
+CANONICAL_IDEA_FACTORS = (
+    "macro_support",
+    "industry_attractiveness",
+    "business_quality",
+    "management_quality",
+    "valuation_asymmetry",
+    "portfolio_fit",
+)
 type IdeaComparisonStatus = Literal["watching", "researching", "ready_for_review"]
 type IdeaStatus = Literal["watching", "researching", "ready_for_review", "accepted", "rejected", "archived"]
 ACTIONABLE_IDEA_STATUSES: tuple[IdeaComparisonStatus, ...] = ("watching", "researching", "ready_for_review")
@@ -47,6 +57,7 @@ class IdeaCreateRequest(BaseModel):
     user_notes: str | None = None
     tags: list[str] = Field(default_factory=list)
     status: IdeaStatus = "watching"
+    analyzer_direction: Literal["inactive", "long", "short"] = "inactive"
 
     @field_validator("ticker")
     @classmethod
@@ -63,6 +74,7 @@ class IdeaUpdateRequest(BaseModel):
     user_notes: str | None = None
     tags: list[str] | None = None
     status: IdeaStatus | None = None
+    analyzer_direction: Literal["inactive", "long", "short"] | None = None
 
     @field_validator("ticker")
     @classmethod
@@ -112,6 +124,45 @@ def _now() -> str:
 def _stable_hash(value: Any) -> str:
     raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _normalize_analyzer_direction(value: Any) -> str:
+    direction = str(value or "inactive").strip().lower()
+    return direction if direction in IDEA_ANALYZER_DIRECTIONS else "inactive"
+
+
+def _idea_analyzer_direction(idea: dict[str, Any]) -> str:
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    return _normalize_analyzer_direction(cast(dict[str, Any], metadata).get("analyzer_direction"))
+
+
+def _with_analyzer_direction_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    direction = _normalize_analyzer_direction(payload.pop("analyzer_direction", "inactive"))
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    payload["metadata"] = {**cast(dict[str, Any], metadata), "analyzer_direction": direction}
+    return payload
+
+
+def _canonical_factor_score(factor_scores: dict[str, Any], key: str) -> float | None:
+    row = factor_scores.get(key)
+    if not isinstance(row, dict):
+        return None
+    return _numeric_or_none(row.get("score"), minimum=0, maximum=100)
+
+
+def _canonical_score_from_factors(factor_scores: dict[str, Any]) -> float | None:
+    scores = [
+        score for key in CANONICAL_IDEA_FACTORS if (score := _canonical_factor_score(factor_scores, key)) is not None
+    ]
+    return round(sum(scores) / len(scores), 1) if scores else None
+
+
+def _map_zscore_to_score(value: Any) -> float | None:
+    signal = _numeric_or_none(value)
+    if signal is None:
+        return None
+    clipped = max(-3.0, min(3.0, signal))
+    return round(((clipped + 3.0) / 6.0) * 100.0, 1)
 
 
 def _object_props(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -764,7 +815,123 @@ def _safe_tool(name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
-def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
+def _records_from_table(value: Any) -> list[dict[str, Any]]:
+    try:
+        from api.serializers import serialize_dataframe
+
+        if hasattr(value, "to_dict"):
+            return cast(list[dict[str, Any]], serialize_dataframe(value))
+    except Exception:
+        pass
+    if isinstance(value, list):
+        return [cast(dict[str, Any], row) for row in value if isinstance(row, dict)]
+    return []
+
+
+def _compute_portfolio_plus_ideas_analyzer_result() -> dict[str, Any]:
+    try:
+        from portfolio.portfolio_optimizer.portfolio_analyzer import get_data
+
+        data = get_data(universe_mode="portfolio_plus_ideas")
+        if data.get("error"):
+            return {"status": "error", "error": str(data.get("error")), "raw_result": data}
+        return {"status": "ok", "raw_result": data}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc), "raw_result": {}}
+
+
+def _analyzer_contexts_from_result(analyzer_result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    if analyzer_result.get("status") != "ok":
+        return {}
+    raw_result = analyzer_result.get("raw_result") if isinstance(analyzer_result.get("raw_result"), dict) else {}
+    weights = {
+        str(row.get("ticker") or "").strip().upper(): row
+        for row in _records_from_table(cast(dict[str, Any], raw_result).get("weights_df"))
+        if str(row.get("ticker") or "").strip()
+    }
+    course = raw_result.get("course_of_action") if isinstance(raw_result.get("course_of_action"), dict) else {}
+    action_rows = course.get("action_queue") if isinstance(course.get("action_queue"), list) else []
+    actions = {
+        str(row.get("ticker") or "").strip().upper(): cast(dict[str, Any], row)
+        for row in action_rows
+        if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+    }
+    summary = course.get("summary") if isinstance(course.get("summary"), dict) else {}
+    source_timestamp = summary.get("as_of") or raw_result.get("timestamp")
+
+    contexts: dict[str, dict[str, Any]] = {}
+    for ticker, row in weights.items():
+        action = actions.get(ticker, {})
+        contexts[ticker] = {
+            "status": "available",
+            "ticker": ticker,
+            "source_timestamp": source_timestamp,
+            "source_type": row.get("source_type") or action.get("source_type") or "portfolio",
+            "action_label": action.get("action"),
+            "scenario_score": action.get("scenario_score", row.get("scenario_score")),
+            "baseline_score": action.get("baseline_score", row.get("baseline_score")),
+            "score_delta": action.get("score_delta", row.get("score_delta")),
+            "confidence": action.get("confidence"),
+            "gate_status": action.get("gate_status"),
+            "gate_reasons": action.get("gate_reasons") if isinstance(action.get("gate_reasons"), list) else [],
+            "coverage": action.get("data_coverage") if isinstance(action.get("data_coverage"), dict) else {},
+            "warnings": action.get("warnings") if isinstance(action.get("warnings"), list) else [],
+            "factor_breakdown": action.get("factor_breakdown")
+            if isinstance(action.get("factor_breakdown"), list)
+            else [],
+            "row": row,
+            "diagnostic_subfactors": {
+                "fundamental_momentum": {
+                    "signal": row.get("fundamental_momentum_signal"),
+                    "mapped_score": _map_zscore_to_score(row.get("fundamental_momentum_signal")),
+                },
+                "price_momentum": {
+                    "signal": row.get("price_mom_signal"),
+                    "mapped_score": _map_zscore_to_score(row.get("price_mom_signal")),
+                },
+            },
+            "qualitative_evidence": {
+                "business_quality": row.get("business_quality_qual_evidence"),
+                "industry_quality": row.get("industry_quality_evidence"),
+                "management_quality": row.get("management_quality_evidence"),
+            },
+        }
+    return contexts
+
+
+def _analyzer_context_for_idea(
+    idea: dict[str, Any],
+    *,
+    analyzer_result: dict[str, Any] | None = None,
+    analyzer_contexts: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    direction = _idea_analyzer_direction(idea)
+    ticker = str(idea.get("ticker") or "").strip().upper()
+    if direction == "inactive":
+        return {"status": "inactive", "ticker": ticker, "direction": direction}
+
+    result = analyzer_result or _compute_portfolio_plus_ideas_analyzer_result()
+    if result.get("status") != "ok":
+        return {
+            "status": "error",
+            "ticker": ticker,
+            "direction": direction,
+            "error": str(result.get("error") or "Analyzer unavailable."),
+        }
+    contexts = analyzer_contexts or _analyzer_contexts_from_result(result)
+    context = dict(contexts.get(ticker) or {})
+    if not context:
+        return {
+            "status": "missing",
+            "ticker": ticker,
+            "direction": direction,
+            "reason": "No analyzer row was produced for this active idea.",
+        }
+    context["direction"] = direction
+    return context
+
+
+def _build_context(idea: dict[str, Any], analyzer_context: dict[str, Any] | None = None) -> dict[str, Any]:
     ticker = str(idea["ticker"]).upper()
     overview, overview_error = _read_state_text("investment_overviews", ticker)
     thesis, thesis_error = _read_state_text("investment_theses", ticker)
@@ -791,10 +958,15 @@ def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
         tool_errors.append(thesis_error)
     if management_quality_error:
         tool_errors.append(management_quality_error)
+    analyzer_payload = analyzer_context if isinstance(analyzer_context, dict) else _analyzer_context_for_idea(idea)
+    analyzer_status = str(analyzer_payload.get("status") or "")
+    if analyzer_status in {"error", "missing"}:
+        tool_errors.append(f"analyzer_context: {analyzer_payload.get('error') or analyzer_payload.get('reason')}")
 
     return {
         "idea": idea,
         "ticker": ticker,
+        "analyzer_context": analyzer_payload,
         "overview_content": _safe_text(overview),
         "thesis_content": _safe_text(thesis),
         "management_quality_content": _safe_text(management_quality),
@@ -807,6 +979,18 @@ def _build_context(idea: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_context_for_evaluation(
+    idea: dict[str, Any], analyzer_context: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    import inspect
+
+    if "analyzer_context" in inspect.signature(_build_context).parameters:
+        return _build_context(idea, analyzer_context=analyzer_context)
+    context = _build_context(idea)
+    context["analyzer_context"] = analyzer_context or {"status": "inactive", "ticker": context.get("ticker")}
+    return context
+
+
 def _factor(score: float, status: str, rationale: str, missing: list[str] | None = None) -> dict[str, Any]:
     return {
         "score": max(0, min(100, round(float(score), 1))),
@@ -814,6 +998,118 @@ def _factor(score: float, status: str, rationale: str, missing: list[str] | None
         "rationale": rationale,
         "missing": missing or [],
     }
+
+
+def _ensure_canonical_factor_rows(factor_scores: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key in CANONICAL_IDEA_FACTORS:
+        row = factor_scores.get(key)
+        if isinstance(row, dict):
+            score = _numeric_or_none(row.get("score"), minimum=0, maximum=100)
+            normalized[key] = {
+                **row,
+                "score": 50.0 if score is None else round(score, 1),
+                "status": str(row.get("status") or "reviewable"),
+            }
+        else:
+            normalized[key] = _factor(50, "missing", f"{key} was not returned by the evaluator.")
+    return normalized
+
+
+def _append_analyzer_evidence(result: dict[str, Any], analyzer_context: dict[str, Any]) -> None:
+    evidence = result.setdefault("evidence", [])
+    if not isinstance(evidence, list):
+        result["evidence"] = evidence = []
+    source_timestamp = analyzer_context.get("source_timestamp")
+    qualitative = analyzer_context.get("qualitative_evidence")
+    if isinstance(qualitative, dict):
+        for label, value in qualitative.items():
+            if value in (None, "", [], {}):
+                continue
+            evidence.append(
+                {
+                    "source": f"analyzer:{label}",
+                    "summary": _safe_text(value, max_len=700),
+                    "observed_at": source_timestamp,
+                }
+            )
+    warnings = analyzer_context.get("warnings")
+    for warning in warnings if isinstance(warnings, list) else []:
+        evidence.append(
+            {
+                "source": "analyzer_warning",
+                "summary": str(warning),
+                "observed_at": source_timestamp,
+            }
+        )
+
+
+def _merge_analyzer_context_into_result(context: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    analyzer_context = context.get("analyzer_context") if isinstance(context.get("analyzer_context"), dict) else {}
+    result["evaluation_schema_version"] = IDEA_EVALUATION_SCHEMA_VERSION
+    result["analyzer_context"] = analyzer_context
+
+    factor_scores_raw = result.get("factor_scores")
+    factor_scores = _ensure_canonical_factor_rows(
+        cast(dict[str, Any], factor_scores_raw) if isinstance(factor_scores_raw, dict) else {}
+    )
+    if analyzer_context.get("status") == "available":
+        row = analyzer_context.get("row") if isinstance(analyzer_context.get("row"), dict) else {}
+        analyzer_factor_specs = {
+            "industry_attractiveness": ("industry_quality_score", "Analyzer raw industry_quality_score"),
+            "business_quality": ("business_quality_qual_score", "Analyzer raw business_quality_qual_score"),
+            "management_quality": ("management_quality_score", "Analyzer raw management_quality_score"),
+        }
+        for factor_name, (column, label) in analyzer_factor_specs.items():
+            score = _numeric_or_none(row.get(column), minimum=0, maximum=100)
+            if score is None:
+                continue
+            factor_scores[factor_name] = _factor(
+                score,
+                "analyzer_raw_score",
+                f"{label} is used directly on its native 0-100 scale, not the parallel z-scored signal.",
+            )
+
+        valuation_score = _map_zscore_to_score(row.get("valuation_signal"))
+        if valuation_score is not None:
+            factor_scores["valuation_asymmetry"] = _factor(
+                valuation_score,
+                "analyzer_mapped_signal",
+                "Analyzer valuation_signal z-score is clipped to +/-3 and linearly mapped to 0-100 with 50 neutral.",
+            )
+        _append_analyzer_evidence(result, analyzer_context)
+    elif analyzer_context.get("status") in {"error", "missing"}:
+        missing = result.setdefault("missing_information", [])
+        if isinstance(missing, list):
+            missing.append(
+                {
+                    "field": "analyzer_context",
+                    "severity": "medium",
+                    "reason": str(
+                        analyzer_context.get("error") or analyzer_context.get("reason") or "Analyzer unavailable."
+                    ),
+                }
+            )
+        confidence = _numeric_or_none(result.get("confidence"), minimum=0, maximum=1)
+        result["confidence"] = min(confidence if confidence is not None else 0.45, 0.49)
+        data_quality = result.get("data_quality") if isinstance(result.get("data_quality"), dict) else {}
+        result["data_quality"] = {
+            **data_quality,
+            "source_quality": "degraded",
+            "quality": "degraded",
+            "analyzer_context_quality": "failed",
+        }
+
+    result["factor_scores"] = factor_scores
+    canonical_score = _canonical_score_from_factors(factor_scores)
+    if canonical_score is not None:
+        result["score"] = canonical_score
+    if (
+        _has_critical_missing(cast(list[dict[str, Any]], result.get("missing_information") or []))
+        and result.get("action") == "buy"
+    ):
+        result["action"] = "watch"
+    return result
 
 
 def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = None) -> dict[str, Any]:
@@ -966,6 +1262,7 @@ def _deterministic_evaluation(context: dict[str, Any], *, reason: str | None = N
         "invalidation": "Do not act if the missing overview, valuation, or management evidence cannot support the thesis.",
         "portfolio_fit": {"status": "needs_review", "note": "No position change is staged by evaluation."},
     }
+    result = _merge_analyzer_context_into_result(context, result)
     result["recommendation_record"] = _recommendation_record_from_result(idea, result)
     return result
 
@@ -1024,15 +1321,7 @@ def _normalize_llm_result(context: dict[str, Any], parsed: Any) -> dict[str, Any
         "invalidation": parsed.get("invalidation"),
         "portfolio_fit": parsed.get("portfolio_fit") if isinstance(parsed.get("portfolio_fit"), dict) else {},
     }
-    if result["score"] is None and factor_scores:
-        scores = []
-        for row in factor_scores.values():
-            if not isinstance(row, dict):
-                continue
-            row_score = row.get("score")
-            if isinstance(row_score, int | float):
-                scores.append(float(row_score))
-        result["score"] = round(sum(scores) / len(scores), 1) if scores else None
+    result = _merge_analyzer_context_into_result(context, result)
     if not result["rationale"]:
         result["rationale"] = "No rationale returned; review the factor scores and missing information before acting."
     if not result["disconfirming_evidence"]:
@@ -1058,7 +1347,9 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
             _read_prompt("recommendations_system.md"),
             (
                 "You are evaluating independent watchlist ideas. Return only valid JSON. "
-                "Do not invent missing evidence. If critical evidence is missing, action must be watch, avoid, or do_nothing."
+                "Do not invent missing evidence. If critical evidence is missing, action must be watch, avoid, or do_nothing. "
+                "The canonical score denominator is exactly six factors. Do not add fundamental_momentum or "
+                "price_momentum as top-level factors; they are analyzer diagnostics only."
             ),
         ]
     )
@@ -1068,7 +1359,10 @@ def _call_llm_evaluator(context: dict[str, Any]) -> dict[str, Any]:
         "Return JSON with keys: thesis_statement, action, recommendation_status, score, confidence, rationale, "
         "factor_scores, missing_information, data_quality, evidence, disconfirming_evidence, catalyst, invalidation, portfolio_fit. "
         "factor_scores must include macro_support, industry_attractiveness, business_quality, management_quality, "
-        "valuation_asymmetry, and portfolio_fit. action must be one of buy, watch, avoid, do_nothing.\n\n"
+        "valuation_asymmetry, and portfolio_fit. Analyzer raw qualitative scores, when present, will override "
+        "business/industry/management quality factors on the native 0-100 scale. Analyzer valuation_signal, when "
+        "present, will be clipped to +/-3 and mapped to 0-100 with 50 neutral. action must be one of buy, watch, "
+        "avoid, do_nothing.\n\n"
         f"Context JSON:\n{json.dumps(context, default=str, sort_keys=True)}"
     )
     try:
@@ -1139,7 +1433,7 @@ def _recommendation_record_from_result(idea: dict[str, Any], result: dict[str, A
         "alternatives": [],
         "opportunity_cost": [],
         "source_quality_summary": data_quality,
-        "validation_status": "idea_evaluator_v1",
+        "validation_status": IDEA_EVALUATION_SCHEMA_VERSION,
         "idempotency_key": f"idea:{idea.get('id')}:evaluation:{result.get('evaluated_at')}:action:{action}",
         "source_type": "idea_evaluator",
         "report_id": f"idea-evaluation-{idea.get('id')}-{_stable_hash(result)}",
@@ -1170,6 +1464,15 @@ def _cache_key(req: IdeaEvaluationRequest) -> str:
         "metadata": idea.get("metadata"),
         "version": IDEA_EVALUATION_VERSION,
     }
+    try:
+        from portfolio.portfolio_optimizer.portfolio_analyzer import analyzer_source_cache_token
+
+        try:
+            token["analyzer_source"] = analyzer_source_cache_token(universe_mode="portfolio_plus_ideas")
+        except TypeError:
+            token["analyzer_source"] = analyzer_source_cache_token()
+    except Exception:
+        token["analyzer_source"] = {"status": "unavailable"}
     return f"idea_evaluation:{IDEA_EVALUATION_VERSION}:{_stable_hash(token)}"
 
 
@@ -1364,18 +1667,33 @@ def _compute_idea_evaluation_result(
     idea = _get_idea(req.idea_id)
     if not idea:
         raise RuntimeError(f"No investment idea with id {req.idea_id}")
+    total = 5
     if callable(progress_callback):
-        progress_callback("context", 1, 4)
-    context = _build_context(idea)
+        progress_callback("analyzer", 1, total)
+    analyzer_result = (
+        _compute_portfolio_plus_ideas_analyzer_result() if _idea_analyzer_direction(idea) != "inactive" else None
+    )
+    analyzer_contexts = _analyzer_contexts_from_result(analyzer_result) if analyzer_result else {}
+    analyzer_context = _analyzer_context_for_idea(
+        idea,
+        analyzer_result=analyzer_result,
+        analyzer_contexts=analyzer_contexts,
+    )
     if callable(progress_callback):
-        progress_callback("evaluation", 2, 4)
+        progress_callback("context", 2, total)
+    context = _build_context_for_evaluation(idea, analyzer_context=analyzer_context)
+    if callable(progress_callback):
+        progress_callback("evaluation", 3, total)
     result = _call_llm_evaluator(context)
+    if result.get("evaluation_schema_version") != IDEA_EVALUATION_SCHEMA_VERSION:
+        result = _merge_analyzer_context_into_result(context, result)
+        result["recommendation_record"] = _recommendation_record_from_result(idea, result)
     result["job_id"] = job_id
     if callable(progress_callback):
-        progress_callback("persisting", 3, 4)
+        progress_callback("persisting", 4, total)
     evaluation = _write_idea_evaluation(idea, result, job_id=job_id)
     idea = _get_idea(req.idea_id)
-    return {"idea": idea, "evaluation": evaluation, "result": result, "final_count": 4}
+    return {"idea": idea, "evaluation": evaluation, "result": result, "final_count": total}
 
 
 def _actionable_ideas(scope_statuses: Sequence[str]) -> list[dict[str, Any]]:
@@ -1395,25 +1713,38 @@ def _compute_idea_comparison_evaluation_result(
 ) -> dict[str, Any]:
     scope_statuses = req.scope_statuses or list(ACTIONABLE_IDEA_STATUSES)
     ideas = _actionable_ideas(scope_statuses)
-    total = max(len(ideas) + 2, 1)
+    total = max(len(ideas) + 3, 1)
     if callable(progress_callback):
         progress_callback("selecting", 0, total)
+    if callable(progress_callback):
+        progress_callback("analyzer", 1, total)
+    has_analyzer_ideas = any(_idea_analyzer_direction(idea) != "inactive" for idea in ideas)
+    analyzer_result = _compute_portfolio_plus_ideas_analyzer_result() if has_analyzer_ideas else None
+    analyzer_contexts = _analyzer_contexts_from_result(analyzer_result) if analyzer_result else {}
 
     evaluations: list[dict[str, Any]] = []
     for index, idea in enumerate(ideas, start=1):
         if callable(progress_callback):
-            progress_callback("evaluating", index, total)
-        context = _build_context(idea)
+            progress_callback("evaluating", index + 1, total)
+        analyzer_context = _analyzer_context_for_idea(
+            idea,
+            analyzer_result=analyzer_result,
+            analyzer_contexts=analyzer_contexts,
+        )
+        context = _build_context_for_evaluation(idea, analyzer_context=analyzer_context)
         result = _call_llm_evaluator(context)
+        if result.get("evaluation_schema_version") != IDEA_EVALUATION_SCHEMA_VERSION:
+            result = _merge_analyzer_context_into_result(context, result)
+            result["recommendation_record"] = _recommendation_record_from_result(idea, result)
         result["job_id"] = job_id
         evaluations.append(_write_idea_evaluation(idea, result, job_id=job_id))
 
     if callable(progress_callback):
-        progress_callback("ranking", len(ideas) + 1, total)
+        progress_callback("ranking", len(ideas) + 2, total)
     comparison = _call_llm_comparison_ranker(evaluations)
 
     if callable(progress_callback):
-        progress_callback("persisting", len(ideas) + 2, total)
+        progress_callback("persisting", len(ideas) + 3, total)
     run = _write_runtime_object(
         "IdeaComparisonRun",
         _comparison_uid(job_id or _stable_hash(comparison)),
@@ -1488,7 +1819,7 @@ def list_ideas(status: str | None = None, include_archived: bool = False, limit:
 
 @router.post("/ideas")
 def create_idea(body: IdeaCreateRequest):
-    payload = body.model_dump()
+    payload = _with_analyzer_direction_metadata(body.model_dump())
     payload.update({"source_type": "user", "source_id": "ideas.create", "created_at": _now()})
     uid = _idea_uid(f"{payload['ticker']}:{_stable_hash(payload)}")
     idea = _write_runtime_object("InvestmentIdea", uid, payload)
@@ -1549,6 +1880,12 @@ def update_idea(idea_id: str, body: IdeaUpdateRequest):
     if not current:
         raise NotFoundError("Investment idea", str(idea_id))
     updates = body.model_dump(exclude_unset=True)
+    if "analyzer_direction" in updates:
+        metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+        current["metadata"] = {
+            **cast(dict[str, Any], metadata),
+            "analyzer_direction": _normalize_analyzer_direction(updates.pop("analyzer_direction")),
+        }
     current.update(updates)
     current["updated_at"] = _now()
     current.pop("_meta", None)

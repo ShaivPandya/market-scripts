@@ -447,7 +447,17 @@ _PORTFOLIO_SOURCE_FIELDS = (
     "base_currency",
     "country",
     "exchange",
+    "source_type",
+    "source_id",
+    "idea_id",
+    "company_name",
 )
+
+ANALYZER_UNIVERSE_PORTFOLIO = "portfolio"
+ANALYZER_UNIVERSE_PORTFOLIO_PLUS_IDEAS = "portfolio_plus_ideas"
+ANALYZER_UNIVERSE_MODES = {ANALYZER_UNIVERSE_PORTFOLIO, ANALYZER_UNIVERSE_PORTFOLIO_PLUS_IDEAS}
+ANALYZER_IDEA_DIRECTIONS = {"long", "short"}
+ANALYZER_ACTIONABLE_IDEA_STATUSES = {"watching", "researching", "ready_for_review"}
 
 
 def _source_scalar_text(value: Any) -> str:
@@ -485,14 +495,104 @@ def _normalize_position_source_records(raw: pd.DataFrame) -> list[dict[str, Any]
             value = row.get(field, None)
             if field == "contrarian":
                 record[field] = _source_scalar_text(value).lower() in true_values
-            elif field in {"asset", "direction", "instrument_type"}:
+            elif field in {"asset", "direction", "instrument_type", "source_type"}:
                 record[field] = _source_scalar_text(value).lower()
             elif field in {"price_symbol", "currency", "base_currency", "country", "exchange"}:
                 record[field] = _source_scalar_text(value).upper()
+            elif field in {"source_id", "idea_id", "company_name"}:
+                record[field] = _source_scalar_text(value)
             else:
                 record[field] = serialize_value(value)
         records.append(record)
     return records
+
+
+def _normalize_analyzer_universe_mode(value: Any = None) -> str:
+    mode = str(value or ANALYZER_UNIVERSE_PORTFOLIO).strip().lower()
+    if mode not in ANALYZER_UNIVERSE_MODES:
+        raise ValueError(f"Unsupported analyzer universe_mode: {value}")
+    return mode
+
+
+def _normalize_idea_analyzer_direction(value: Any) -> str:
+    direction = str(value or "").strip().lower()
+    return direction if direction in ANALYZER_IDEA_DIRECTIONS else "inactive"
+
+
+def _idea_analyzer_direction(idea: Mapping[str, Any]) -> str:
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    return _normalize_idea_analyzer_direction(cast(Mapping[str, Any], metadata).get("analyzer_direction"))
+
+
+def _portfolio_ticker_set(meta: pd.DataFrame) -> set[str]:
+    if meta.empty:
+        return set()
+    df = meta.copy()
+    if "ticker" not in df.columns:
+        df = df.reset_index().rename(columns={df.index.name or "index": "ticker"})
+    return {str(ticker).strip().upper() for ticker in df["ticker"].tolist() if str(ticker).strip()}
+
+
+def _synthetic_idea_rows(existing_tickers: set[str]) -> list[dict[str, Any]]:
+    try:
+        from ontology.runtime_read_service import OntologyRuntimeReadService
+
+        ideas = OntologyRuntimeReadService().list_objects("InvestmentIdea", limit=500)
+    except Exception:
+        LOGGER.warning("analyzer idea universe read failed", exc_info=True)
+        return []
+
+    rows: list[dict[str, Any]] = []
+    seen = {ticker.upper() for ticker in existing_tickers}
+    for idea in ideas:
+        if not isinstance(idea, Mapping):
+            continue
+        ticker = str(idea.get("ticker") or "").strip().upper()
+        if not ticker or ticker in seen:
+            continue
+        if str(idea.get("status") or "").strip().lower() not in ANALYZER_ACTIONABLE_IDEA_STATUSES:
+            continue
+        direction = _idea_analyzer_direction(idea)
+        if direction not in ANALYZER_IDEA_DIRECTIONS:
+            continue
+        rows.append(
+            {
+                "ticker": ticker,
+                "asset": "equity",
+                "instrument_type": "security",
+                "direction": direction,
+                "quantity": 0,
+                "contract_multiplier": 1,
+                "price_symbol": ticker,
+                "source_type": "idea",
+                "source_id": str(idea.get("id") or idea.get("object_uid") or ""),
+                "idea_id": str(idea.get("id") or idea.get("object_uid") or ""),
+                "company_name": str(idea.get("company_name") or ""),
+            }
+        )
+        seen.add(ticker)
+    return rows
+
+
+def _positions_df_for_universe(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> pd.DataFrame:
+    mode = _normalize_analyzer_universe_mode(universe_mode)
+    meta = _get_positions_df()
+    if "ticker" not in meta.columns:
+        meta = meta.reset_index().rename(columns={meta.index.name or "index": "ticker"})
+    meta["ticker"] = meta["ticker"].fillna("").astype(str).str.strip().str.upper()
+    meta = meta[meta["ticker"].ne("")]
+    if "source_type" not in meta.columns:
+        meta["source_type"] = "portfolio"
+    else:
+        meta["source_type"] = meta["source_type"].fillna("portfolio").astype(str).str.strip().str.lower()
+
+    if mode == ANALYZER_UNIVERSE_PORTFOLIO:
+        return meta
+
+    idea_rows = _synthetic_idea_rows(_portfolio_ticker_set(meta))
+    if not idea_rows:
+        return meta
+    return pd.concat([meta, pd.DataFrame(idea_rows)], ignore_index=True, sort=False)
 
 
 def _read_overview_markdown(ticker: str) -> str | None:
@@ -536,9 +636,10 @@ def _read_management_quality_markdown(ticker: str) -> str | None:
     return None
 
 
-def analyzer_source_cache_token() -> dict[str, Any]:
+def analyzer_source_cache_token(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> dict[str, Any]:
+    mode = _normalize_analyzer_universe_mode(universe_mode)
     try:
-        meta = _get_positions_df()
+        meta = _positions_df_for_universe(mode)
         position_records = _normalize_position_source_records(meta)
         tickers = [str(record["ticker"]) for record in position_records]
     except Exception:
@@ -557,10 +658,18 @@ def analyzer_source_cache_token() -> dict[str, Any]:
             }
         )
     return {
+        "universe_mode": mode,
         "tickers": tickers,
         "portfolio_metadata_hash": _hash_json(position_records),
         "qualitative_sources": sources,
     }
+
+
+def _analyzer_source_cache_token_for_mode(mode: str) -> dict[str, Any]:
+    try:
+        return analyzer_source_cache_token(universe_mode=mode)
+    except TypeError:
+        return analyzer_source_cache_token()
 
 
 def _empty_qualitative_row(
@@ -1047,12 +1156,14 @@ def _conviction_band(score: float, confidence: float) -> str:
 
 
 def _sizing_implication(action: str) -> str:
-    if action in {"Increase Long", "Research Long"}:
+    if action in {"Increase Long", "Research Long", "Initiate Long"}:
         return "increase exposure"
     if action in {"Trim Long", "Exit Review"}:
         return "trim exposure"
-    if action in {"Press Short", "Research Short"}:
+    if action in {"Press Short", "Research Short", "Initiate Short"}:
         return "press short"
+    if action == "Pass":
+        return "do not initiate"
     if action in {"Cover Short", "Squeeze Review"}:
         return "cover short"
     if action.startswith("Hold"):
@@ -1130,8 +1241,34 @@ def _action_for_position(
     return "Watch"
 
 
+def _action_for_idea_candidate(
+    *,
+    direction: str,
+    score: float,
+    gate_reasons: list[str],
+    warnings: list[str],
+) -> str:
+    direction_l = direction.strip().lower()
+    if direction_l == "long":
+        if score >= 0.75:
+            return "Research Long" if gate_reasons else "Initiate Long"
+        if score <= -0.75:
+            return "Pass"
+        return "Watch"
+    if direction_l == "short":
+        squeeze_warning = any("squeeze" in warning.lower() for warning in warnings)
+        if score <= -0.75:
+            return "Research Short" if gate_reasons else "Initiate Short"
+        if score >= 0.75:
+            return "Pass" if not squeeze_warning else "Watch"
+        return "Watch"
+    return "Watch"
+
+
 def _course_priority(action: str, score: float, delta: float, confidence: float) -> float:
     action_boost = {
+        "Initiate Long": 2.2,
+        "Initiate Short": 2.2,
         "Increase Long": 2.0,
         "Trim Long": 2.0,
         "Press Short": 2.0,
@@ -1141,6 +1278,7 @@ def _course_priority(action: str, score: float, delta: float, confidence: float)
         "Research Long": 1.4,
         "Research Short": 1.4,
         "Review": 1.2,
+        "Pass": 0.1,
         "Watch": 0.3,
         "Hold Long": 0.0,
         "Hold Short": 0.0,
@@ -1161,6 +1299,7 @@ def build_course_of_action(
         ticker = str(row.get("ticker") or "")
         asset = str(row.get("asset") or "")
         direction = str(row.get("direction") or "").strip().lower()
+        source_type = str(row.get("source_type") or "portfolio").strip().lower()
         score = _finite_float(row.get("scenario_score"))
         delta = _finite_float(row.get("score_delta"))
         penalty = max(0.0, _finite_float(row.get("scenario_penalty")))
@@ -1196,12 +1335,20 @@ def build_course_of_action(
         if strong_candidate and conflict:
             gate_reasons.append("Conflicting factor evidence")
 
-        action = _action_for_position(
-            direction=direction,
-            score=score,
-            gate_reasons=gate_reasons,
-            warnings=warnings,
-        )
+        if source_type == "idea":
+            action = _action_for_idea_candidate(
+                direction=direction,
+                score=score,
+                gate_reasons=gate_reasons,
+                warnings=warnings,
+            )
+        else:
+            action = _action_for_position(
+                direction=direction,
+                score=score,
+                gate_reasons=gate_reasons,
+                warnings=warnings,
+            )
         gate_status = "review" if gate_reasons else "pass" if strong_candidate else "watch"
         conviction_band = _conviction_band(score, confidence if not gate_reasons else min(confidence, 0.6))
         sizing = {
@@ -1215,6 +1362,10 @@ def build_course_of_action(
                 "ticker": ticker,
                 "asset": asset,
                 "direction": direction,
+                "source_type": source_type,
+                "source_id": row.get("source_id"),
+                "idea_id": row.get("idea_id"),
+                "company_name": row.get("company_name"),
                 "action": action,
                 "conviction_band": conviction_band,
                 "priority_score": _course_priority(action, score, delta, confidence),
@@ -1250,7 +1401,14 @@ def build_course_of_action(
     for item in action_queue:
         action_counts[str(item["action"])] = action_counts.get(str(item["action"]), 0) + 1
 
-    strongest_actions = {"Increase Long", "Press Short", "Research Long", "Research Short"}
+    strongest_actions = {
+        "Increase Long",
+        "Press Short",
+        "Research Long",
+        "Research Short",
+        "Initiate Long",
+        "Initiate Short",
+    }
     risk_actions = {"Trim Long", "Exit Review", "Cover Short", "Squeeze Review", "Review"}
     strongest_opportunities = [
         {"ticker": item["ticker"], "action": item["action"], "priority_score": item["priority_score"]}
@@ -2363,7 +2521,7 @@ def overlay_anchor_long_equity_signals(
     return signal_composite_out, sub_out, metadata
 
 
-_ANALYZER_INPUTS_VERSION = "v1"
+_ANALYZER_INPUTS_VERSION = "v2"
 _ANALYZER_INPUT_SNAPSHOT_SCHEMA_VERSION = "v1"
 _ANALYZER_INPUT_SNAPSHOT_FRESH_SECONDS = 300
 _ANALYZER_INPUT_SNAPSHOT_RETENTION_SECONDS = 24 * 60 * 60
@@ -2679,13 +2837,14 @@ def cleanup_analyzer_input_snapshots(max_age_seconds: int = _ANALYZER_INPUT_SNAP
     return deleted
 
 
-def _compute_analyzer_inputs() -> dict:
+def _compute_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> dict:
     """Compute scenario-independent inputs (positions, prices, signals, raw factor data).
 
     Phase A of the split analyzer pipeline. Cached by `_cached_analyzer_inputs`
     so preset switches do not redownload prices or recompute composite signals.
     """
-    meta = _get_positions_df()
+    mode = _normalize_analyzer_universe_mode(universe_mode)
+    meta = _positions_df_for_universe(mode)
     meta["direction"] = meta["direction"].fillna("")
     meta = meta.set_index("ticker")
     meta = prepare_instrument_metadata(meta)
@@ -2797,11 +2956,13 @@ def _compute_analyzer_inputs() -> dict:
         "valuation_df": valuation_df,
         "qualitative_df": qualitative_df,
         "direction_display": direction_display,
+        "universe_mode": mode,
     }
 
 
-def _cached_analyzer_inputs() -> dict:
-    token = analyzer_source_cache_token()
+def _cached_analyzer_inputs(universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO) -> dict:
+    mode = _normalize_analyzer_universe_mode(universe_mode)
+    token = _analyzer_source_cache_token_for_mode(mode)
     snapshot_key = _analyzer_input_snapshot_key(token)
     key = f"{_ANALYZER_INPUT_SNAPSHOT_SCHEMA_VERSION}:{_ANALYZER_INPUTS_VERSION}:{snapshot_key}"
     with _ANALYZER_INPUTS_LOCK:
@@ -2858,7 +3019,12 @@ def _cached_analyzer_inputs() -> dict:
             return durable_hit
 
         LOGGER.info("analyzer input cache miss key=%s; computing", snapshot_key)
-        inputs = _compute_analyzer_inputs()
+        import inspect
+
+        if "universe_mode" in inspect.signature(_compute_analyzer_inputs).parameters:
+            inputs = _compute_analyzer_inputs(universe_mode=mode)
+        else:
+            inputs = _compute_analyzer_inputs()
         _write_analyzer_input_snapshot(snapshot_key, inputs)
         with _ANALYZER_INPUTS_LOCK:
             _ANALYZER_INPUTS_CACHE[key] = inputs
@@ -2872,6 +3038,12 @@ def _cached_analyzer_inputs() -> dict:
         if owner:
             with _ANALYZER_INPUTS_FLIGHT_LOCK:
                 _ANALYZER_INPUTS_FLIGHTS.pop(key, None)
+
+
+def _meta_series(meta: pd.DataFrame, tickers: list[str], column: str, default: Any) -> pd.Series:
+    if column in meta.columns:
+        return meta[column].reindex(tickers).fillna(default)
+    return pd.Series(default, index=tickers)
 
 
 def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
@@ -2954,6 +3126,10 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
             "quantity": meta["quantity"].values,
             "contract_multiplier": meta["contract_multiplier"].values,
             "direction": direction_display.values,
+            "source_type": _meta_series(meta, tickers, "source_type", "portfolio").astype(str).str.lower().values,
+            "source_id": _meta_series(meta, tickers, "source_id", "").astype(str).values,
+            "idea_id": _meta_series(meta, tickers, "idea_id", "").astype(str).values,
+            "company_name": _meta_series(meta, tickers, "company_name", "").astype(str).values,
             "contrarian": meta["contrarian"].values,
             "drawdown_52w": meta["drawdown_52w"].values,
             "stabilized_10d": meta["stabilized_10d"].values,
@@ -3021,7 +3197,10 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
     }
 
 
-def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
+def analyze_portfolio(
+    scenario: Mapping[str, Any] | None = None,
+    universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
+) -> dict:
     """
     Build an informational signal table for conviction analysis.
 
@@ -3030,7 +3209,8 @@ def analyze_portfolio(scenario: Mapping[str, Any] | None = None) -> dict:
     """
     try:
         scenario_config = normalize_analyzer_scenario(scenario)
-        inputs = _cached_analyzer_inputs()
+        mode = _normalize_analyzer_universe_mode(universe_mode)
+        inputs = _cached_analyzer_inputs(universe_mode=mode)
         return _apply_scenario(inputs, scenario_config)
     except Exception as e:
         import traceback
@@ -3509,6 +3689,7 @@ def get_data(
     target_leverage: float | None = None,
     beta_neutral: bool = True,
     scenario: Mapping[str, Any] | None = None,
+    universe_mode: str = ANALYZER_UNIVERSE_PORTFOLIO,
 ) -> dict:
     """
     Fetch portfolio analyzer results for GUI consumption.
@@ -3517,12 +3698,13 @@ def get_data(
         book: Legacy optimizer argument, ignored for analyzer output.
         target_leverage: Legacy optimizer argument, ignored for analyzer output.
         beta_neutral: Legacy optimizer argument, ignored for analyzer output.
+        universe_mode: portfolio-only or portfolio plus explicitly enabled ideas.
 
     Returns:
         Dictionary with analyzer results or error.
     """
     _ = (book, target_leverage, beta_neutral)
-    return analyze_portfolio(scenario=scenario)
+    return analyze_portfolio(scenario=scenario, universe_mode=universe_mode)
 
 
 # -----------------------------
