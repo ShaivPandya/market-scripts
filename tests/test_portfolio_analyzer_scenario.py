@@ -137,10 +137,12 @@ def _sample_analyzer_inputs() -> dict:
             "drawdown_52w": pd.Series([0.12], index=tickers, dtype="float64"),
             "stabilized_10d": pd.Series([True], index=tickers, dtype="bool"),
             "days_since_new_low": pd.Series([12], index=tickers, dtype="int64"),
+            "drawdown_metrics_available": pd.Series([True], index=tickers, dtype="bool"),
             "no_new_high_20d": pd.Series([True], index=tickers, dtype="bool"),
             "days_since_high": pd.Series([40], index=tickers, dtype="int64"),
             "avg20_roc63": pd.Series([0.04], index=tickers, dtype="float64"),
             "avg10_rel_roc": pd.Series([0.03], index=tickers, dtype="float64"),
+            "short_squeeze_metrics_available": pd.Series([True], index=tickers, dtype="bool"),
         }
     )
     valuation_df = pd.DataFrame(
@@ -605,8 +607,11 @@ def test_compute_qualitative_signals_maps_rubric_scores_to_signal_scale():
     raw = pd.DataFrame(
         {
             "business_quality_qual_score": [80, 35],
+            "business_quality_qual_confidence": [1.0, 1.0],
             "industry_quality_score": [70, 45],
+            "industry_quality_confidence": [1.0, 1.0],
             "management_quality_score": [90, 30],
+            "management_quality_confidence": [1.0, 1.0],
         },
         index=["STRONG", "WEAK"],
     )
@@ -771,6 +776,410 @@ def _balanced_course(rows: list[dict]) -> dict:
 
 def _first_action(course: dict, ticker: str) -> dict:
     return next(item for item in course["action_queue"] if item["ticker"] == ticker)
+
+
+def _quality_only_scenario(*, short_squeeze_brake: float = 0, drawdown_sensitivity: float = 0) -> dict:
+    return normalize_analyzer_scenario(
+        {
+            "metric_scores": {
+                "quality": 100,
+                "price_momentum": 0,
+                "revenue": 0,
+                "eps": 0,
+                "price_sales": 0,
+                "price_operating_income": 0,
+                "price_fcf": 0,
+                "price_earnings": 0,
+                "price_book": 0,
+                "business_quality_qualitative": 0,
+                "industry_quality": 0,
+                "management_quality": 0,
+            },
+            "brakes": {
+                "drawdown_sensitivity": drawdown_sensitivity,
+                "contrarian_penalty": 0,
+                "short_squeeze_brake": short_squeeze_brake,
+            },
+        }
+    )
+
+
+def _minimal_qualitative_df(tickers: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "business_quality_qual_score": [math.nan] * len(tickers),
+            "business_quality_qual_confidence": [math.nan] * len(tickers),
+            "business_quality_qual_status": ["missing_overview"] * len(tickers),
+            "business_quality_qual_evidence": [""] * len(tickers),
+            "industry_quality_score": [math.nan] * len(tickers),
+            "industry_quality_confidence": [math.nan] * len(tickers),
+            "industry_quality_status": ["missing_overview"] * len(tickers),
+            "industry_quality_evidence": [""] * len(tickers),
+            "management_quality_score": [math.nan] * len(tickers),
+            "management_quality_confidence": [math.nan] * len(tickers),
+            "management_quality_status": ["missing_management_quality"] * len(tickers),
+            "management_quality_evidence": [""] * len(tickers),
+            "overview_source_hash": [None] * len(tickers),
+            "management_quality_source_hash": [None] * len(tickers),
+        },
+        index=tickers,
+    )
+
+
+def _minimal_valuation_df(tickers: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "price_sales": [math.nan] * len(tickers),
+            "price_operating_income": [math.nan] * len(tickers),
+            "price_fcf": [math.nan] * len(tickers),
+            "price_earnings": [math.nan] * len(tickers),
+            "price_book": [math.nan] * len(tickers),
+            "valuation_profile_id": [""] * len(tickers),
+        },
+        index=tickers,
+    )
+
+
+def _scenario_inputs(rows: list[dict]) -> dict:
+    tickers = [str(row["ticker"]) for row in rows]
+    defaults = {
+        "asset": "equity",
+        "instrument_type": "security",
+        "quantity": 1.0,
+        "contract_multiplier": 1.0,
+        "direction": "long",
+        "source_type": "portfolio",
+        "source_id": "",
+        "idea_id": "",
+        "company_name": "",
+        "contrarian": False,
+        "contrarian_eligible": False,
+        "drawdown_52w": math.nan,
+        "stabilized_10d": False,
+        "days_since_new_low": math.nan,
+        "drawdown_metrics_available": False,
+        "no_new_high_20d": True,
+        "days_since_high": math.nan,
+        "avg20_roc63": math.nan,
+        "avg10_rel_roc": math.nan,
+        "short_squeeze_metrics_available": False,
+        "quality_signal": 0.0,
+        "price_mom_signal": 0.0,
+        "rev_mom_signal": 0.0,
+        "eps_mom_signal": 0.0,
+        "baseline_score": 0.0,
+    }
+    records = []
+    for row in rows:
+        record = {**defaults, **row}
+        record["price_symbol"] = record.get("price_symbol") or record["ticker"]
+        record["direction_intended"] = record.get("direction_intended") or record["direction"]
+        records.append(record)
+    meta = pd.DataFrame(records).set_index("ticker")
+    signal_subcomponents = {
+        key: pd.Series([record[key] for record in records], index=tickers, dtype="float64")
+        for key in ("quality_signal", "price_mom_signal", "rev_mom_signal", "eps_mom_signal")
+    }
+    return {
+        "meta": meta,
+        "tickers": tickers,
+        "valuation_df": _minimal_valuation_df(tickers),
+        "qualitative_df": _minimal_qualitative_df(tickers),
+        "signal_effective": pd.Series([record["baseline_score"] for record in records], index=tickers),
+        "signal_subcomponents": signal_subcomponents,
+        "signal_anchor_meta": {},
+        "direction_display": meta["direction"].astype(str),
+    }
+
+
+def test_short_squeeze_brake_does_not_make_short_score_more_negative():
+    result = analyzer_module._apply_scenario(
+        _scenario_inputs(
+            [
+                {
+                    "ticker": "RISKY",
+                    "direction": "short",
+                    "quality_signal": -1.0,
+                    "no_new_high_20d": False,
+                    "days_since_high": 0,
+                    "avg20_roc63": 30.0,
+                    "avg10_rel_roc": 20.0,
+                    "short_squeeze_metrics_available": True,
+                },
+                {
+                    "ticker": "OTHER",
+                    "direction": "short",
+                    "quality_signal": 1.0,
+                    "no_new_high_20d": True,
+                    "days_since_high": 40,
+                    "avg20_roc63": -10.0,
+                    "avg10_rel_roc": -5.0,
+                    "short_squeeze_metrics_available": True,
+                },
+            ]
+        ),
+        _quality_only_scenario(short_squeeze_brake=100),
+    )
+
+    risky = result["weights_df"].set_index("ticker").loc["RISKY"]
+    assert risky["short_cover_risk"] > 0
+    assert risky["scenario_score"] > -1.0
+
+
+def test_high_squeeze_risk_short_position_is_not_press_short():
+    course = _balanced_course(
+        [
+            {
+                "ticker": "SQUEEZE",
+                "direction": "short",
+                "scenario_score": -1.20,
+                "score_delta": -0.40,
+                "short_cover_risk": 0.80,
+                "short_squeeze_risk": True,
+                "short_squeeze_cover_risk": 0.80,
+                "quality_signal": -1.0,
+                "price_mom_signal": -1.0,
+                "fundamental_momentum_signal": -1.0,
+            }
+        ]
+    )
+
+    action = _first_action(course, "SQUEEZE")
+    assert action["action"] in {"Squeeze Review", "Cover Short"}
+    assert action["action"] != "Press Short"
+    assert "Short squeeze risk elevated" in action["warnings"]
+    assert action["risk_flags"]["short_squeeze_risk"] is True
+
+
+def test_high_squeeze_risk_short_idea_is_watch_or_pass():
+    course = _balanced_course(
+        [
+            {
+                "ticker": "SHORTIDEA",
+                "source_type": "idea",
+                "direction": "short",
+                "scenario_score": -1.20,
+                "score_delta": -0.40,
+                "short_cover_risk": 0.80,
+                "short_squeeze_risk": True,
+                "short_squeeze_cover_risk": 0.80,
+                "quality_signal": -1.0,
+                "price_mom_signal": -1.0,
+                "fundamental_momentum_signal": -1.0,
+            }
+        ]
+    )
+
+    assert _first_action(course, "SHORTIDEA")["action"] in {"Watch", "Pass"}
+
+
+def test_drawdown_brake_penalizes_longs_not_shorts():
+    result = analyzer_module._apply_scenario(
+        _scenario_inputs(
+            [
+                {
+                    "ticker": "LONGDD",
+                    "direction": "long",
+                    "quality_signal": 0.0,
+                    "drawdown_52w": 0.60,
+                    "stabilized_10d": True,
+                    "days_since_new_low": 30,
+                    "drawdown_metrics_available": True,
+                },
+                {
+                    "ticker": "SHORTDD",
+                    "direction": "short",
+                    "quality_signal": 0.0,
+                    "drawdown_52w": 0.60,
+                    "stabilized_10d": True,
+                    "days_since_new_low": 30,
+                    "drawdown_metrics_available": True,
+                },
+            ]
+        ),
+        _quality_only_scenario(drawdown_sensitivity=100),
+    )
+
+    rows = result["weights_df"].set_index("ticker")
+    assert rows.loc["LONGDD", "long_risk_penalty"] > 0
+    assert rows.loc["LONGDD", "scenario_score"] < 0
+    assert rows.loc["SHORTDD", "long_risk_penalty"] == 0
+    assert rows.loc["SHORTDD", "scenario_score"] == 0
+
+
+def test_short_squeeze_brake_affects_shorts_not_longs():
+    result = analyzer_module._apply_scenario(
+        _scenario_inputs(
+            [
+                {
+                    "ticker": "LONGSQ",
+                    "direction": "long",
+                    "quality_signal": 0.0,
+                    "no_new_high_20d": False,
+                    "days_since_high": 0,
+                    "avg20_roc63": 30.0,
+                    "avg10_rel_roc": 20.0,
+                    "short_squeeze_metrics_available": True,
+                },
+                {
+                    "ticker": "SHORTSQ",
+                    "direction": "short",
+                    "quality_signal": 0.0,
+                    "no_new_high_20d": False,
+                    "days_since_high": 0,
+                    "avg20_roc63": 30.0,
+                    "avg10_rel_roc": 20.0,
+                    "short_squeeze_metrics_available": True,
+                },
+            ]
+        ),
+        _quality_only_scenario(short_squeeze_brake=100),
+    )
+
+    rows = result["weights_df"].set_index("ticker")
+    assert rows.loc["LONGSQ", "short_cover_risk"] == 0
+    assert rows.loc["SHORTSQ", "short_cover_risk"] > 0
+    assert rows.loc["SHORTSQ", "scenario_score"] > 0
+
+
+def test_missing_short_squeeze_metrics_warn_without_false_penalty():
+    result = analyzer_module._apply_scenario(
+        _scenario_inputs(
+            [
+                {
+                    "ticker": "MISSINGRISK",
+                    "direction": "short",
+                    "quality_signal": -1.0,
+                    "no_new_high_20d": False,
+                    "avg20_roc63": 30.0,
+                    "avg10_rel_roc": 20.0,
+                    "short_squeeze_metrics_available": False,
+                },
+                {
+                    "ticker": "OTHER",
+                    "direction": "short",
+                    "quality_signal": 1.0,
+                    "short_squeeze_metrics_available": True,
+                    "no_new_high_20d": True,
+                    "days_since_high": 40,
+                    "avg20_roc63": -10.0,
+                    "avg10_rel_roc": -5.0,
+                },
+            ]
+        ),
+        _quality_only_scenario(short_squeeze_brake=100),
+    )
+
+    row = result["weights_df"].set_index("ticker").loc["MISSINGRISK"]
+    action = _first_action(result["course_of_action"], "MISSINGRISK")
+    assert row["short_cover_risk"] == 0
+    assert bool(row["short_squeeze_risk"]) is False
+    assert bool(row["short_squeeze_data_missing"]) is True
+    assert "Short squeeze metrics unavailable" in action["warnings"]
+    assert "Risk metrics unavailable" in action["warnings"]
+
+
+def test_contrarian_gating_only_deactivates_contrarian_positions():
+    dates = pd.bdate_range("2025-01-01", periods=252)
+    falling = pd.Series(np.linspace(100.0, 60.0, len(dates)), index=dates)
+    prices = pd.DataFrame({"GATED": falling, "PLAIN": falling}, index=dates)
+    meta = pd.DataFrame(
+        {
+            "asset": ["equity", "equity"],
+            "direction": ["long", "long"],
+            "contrarian": [True, False],
+        },
+        index=["GATED", "PLAIN"],
+    )
+
+    out = analyzer_module.apply_contrarian_gating(meta, prices)
+
+    assert out.loc["GATED", "direction"] == ""
+    assert out.loc["PLAIN", "direction"] == "long"
+    assert bool(out.loc["PLAIN", "drawdown_metrics_available"]) is True
+
+
+def test_qualitative_confidence_attenuates_qualitative_contribution():
+    raw = pd.DataFrame(
+        {
+            "business_quality_qual_score": [90, 90],
+            "business_quality_qual_confidence": [1.0, 0.1],
+        },
+        index=["HIGHCONF", "LOWCONF"],
+    )
+
+    signal, sub_signals = compute_qualitative_signals(
+        raw,
+        {
+            "business_quality_qualitative": 1.0,
+            "industry_quality": 0.0,
+            "management_quality": 0.0,
+        },
+        ["HIGHCONF", "LOWCONF"],
+    )
+
+    assert signal["HIGHCONF"] > signal["LOWCONF"]
+    assert (
+        sub_signals["business_quality_qualitative"]["LOWCONF"] < sub_signals["business_quality_qualitative"]["HIGHCONF"]
+    )
+
+
+def test_scenario_normalization_treats_ui_scores_as_relative_weights():
+    scenario = normalize_analyzer_scenario(
+        {
+            "metric_scores": {
+                "quality": 10,
+                "price_momentum": 20,
+                "revenue": 0,
+                "eps": 0,
+                "price_sales": 0,
+                "price_operating_income": 0,
+                "price_fcf": 0,
+                "price_earnings": 0,
+                "price_book": 0,
+                "business_quality_qualitative": 0,
+                "industry_quality": 0,
+                "management_quality": 0,
+            },
+            "brakes": {
+                "drawdown_sensitivity": 80,
+                "contrarian_penalty": 20,
+                "short_squeeze_brake": 10,
+            },
+        }
+    )
+
+    assert math.isclose(sum(scenario["factor_weights"].values()), 1.0)
+    assert math.isclose(scenario["factor_weights"]["quality"], 1 / 3)
+    assert math.isclose(scenario["factor_weights"]["price_momentum"], 2 / 3)
+    assert scenario["brakes"] == {
+        "drawdown_sensitivity": 0.8,
+        "contrarian_penalty": 0.2,
+        "short_squeeze_brake": 0.1,
+    }
+
+
+def test_analyze_portfolio_api_shape_is_backward_compatible(monkeypatch):
+    monkeypatch.setattr(
+        analyzer_module,
+        "_cached_analyzer_inputs",
+        lambda universe_mode="portfolio": _scenario_inputs(
+            [
+                {"ticker": "AAA", "direction": "long", "quality_signal": 1.0},
+                {"ticker": "BBB", "direction": "short", "quality_signal": -1.0},
+            ]
+        ),
+    )
+
+    result = analyzer_module.analyze_portfolio(_quality_only_scenario())
+
+    assert result["status"] == "ok"
+    assert result["scenario"]["factor_weights"]["quality"] == 1.0
+    assert isinstance(result["weights_df"], pd.DataFrame)
+    assert isinstance(result["course_of_action"]["action_queue"], list)
+    assert {"scenario_score", "scenario_penalty", "long_risk_penalty", "short_cover_risk"}.issubset(
+        result["weights_df"].columns
+    )
 
 
 def test_course_of_action_uses_absolute_score_not_positive_delta_for_longs():

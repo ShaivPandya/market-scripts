@@ -72,6 +72,10 @@ QUALITATIVE_LABELS = {
     "management_quality": "Management quality",
 }
 
+# Scenario UI controls use 0-100 "importance" scores. They are normalized below
+# into relative factor/metric weights before touching z-score-like alpha signals.
+# Brake scores are also normalized to 0.0-1.0; portfolio_analyzer.py then maps
+# them into bounded risk magnitudes around the action thresholds near +/-0.75.
 SCENARIO_PRESETS: dict[str, dict[str, Any]] = {
     "balanced": {
         "preset": "balanced",
@@ -90,9 +94,9 @@ SCENARIO_PRESETS: dict[str, dict[str, Any]] = {
             "management_quality": 6,
         },
         "brakes": {
-            "drawdown_sensitivity": 0,
-            "contrarian_penalty": 0,
-            "short_squeeze_brake": 0,
+            "drawdown_sensitivity": 10,
+            "contrarian_penalty": 5,
+            "short_squeeze_brake": 10,
         },
     },
     "capital_preservation": {
@@ -163,6 +167,9 @@ SCENARIO_PRESETS: dict[str, dict[str, Any]] = {
     },
     "short_defense": {
         "preset": "short_defense",
+        # This mission is a short-risk review mode: improving quality/momentum,
+        # squeeze pressure, and eligibility failures should push shorts toward
+        # review/cover instead of mechanically ranking them as better shorts.
         "metric_scores": {
             "quality": 20,
             "price_momentum": 40,
@@ -221,6 +228,11 @@ def _nonnegative_weight_group(
 
 
 def _clamped_brakes(values: Mapping[str, Any] | None) -> dict[str, float]:
+    """Normalize UI brake scores into bounded relative intensities.
+
+    Values in [0, 1] are already normalized. Values above 1 are interpreted as
+    0-100 UI scores, so 80 means 0.80 brake intensity, not 80 score points.
+    """
     raw = dict(values or {})
     out: dict[str, float] = {}
     for key, default in SCENARIO_BRAKE_DEFAULTS.items():

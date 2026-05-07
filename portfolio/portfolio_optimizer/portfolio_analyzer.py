@@ -224,6 +224,11 @@ CONTRARIAN_LOOKBACK_TD = 252
 CONTRARIAN_SIGNAL_DD_SCALE = 0.20
 CONTRARIAN_SIGNAL_CLIP = 3.0
 CONTRARIAN_SHORT_NO_HIGH_DAYS = 20
+MAX_DRAWDOWN_RISK_PENALTY = 0.90
+MAX_CONTRARIAN_RISK_PRESSURE = 0.75
+MAX_SHORT_SQUEEZE_COVER_RISK = 1.00
+ELEVATED_SHORT_COVER_RISK = 0.45
+HIGH_SHORT_COVER_RISK = 0.75
 
 # Duration (in years) for bond/Treasury futures instruments
 DURATION_OF_TICKER: dict[str, float] = {
@@ -920,8 +925,15 @@ def compute_qualitative_signals(
     sub_signals: dict[str, pd.Series] = {}
     for metric, output in QUALITATIVE_METRIC_OUTPUT.items():
         score_col = str(output["score"])
+        confidence_col = str(output["confidence"])
         scores = pd.to_numeric(raw_df[score_col], errors="coerce") if score_col in raw_df else pd.Series(np.nan)
-        sub_signals[metric] = scores.reindex(tickers).map(_qualitative_score_to_signal)
+        confidence = (
+            pd.to_numeric(raw_df[confidence_col], errors="coerce")
+            if confidence_col in raw_df
+            else pd.Series(np.nan, index=raw_df.index)
+        )
+        confidence = confidence.reindex(tickers).fillna(0.0).clip(lower=0.0, upper=1.0)
+        sub_signals[metric] = scores.reindex(tickers).map(_qualitative_score_to_signal) * confidence
 
     composite = pd.Series(np.nan, index=tickers, dtype="float64")
     for ticker in tickers:
@@ -950,41 +962,121 @@ def _combine_weighted_components(
     return combine_signals(active_components, active_weights, tickers).reindex(tickers).fillna(0.0)
 
 
-def _compute_scenario_penalties(
+@dataclass(frozen=True)
+class ScenarioRiskOutputs:
+    long_risk_penalty: pd.Series
+    short_cover_risk: pd.Series
+    risk_parts: dict[str, pd.Series]
+    risk_flags: dict[str, pd.Series]
+
+
+def _meta_numeric_series(meta: pd.DataFrame, tickers: list[str], column: str) -> pd.Series:
+    if column in meta.columns:
+        return pd.to_numeric(meta[column].reindex(tickers), errors="coerce")
+    return pd.Series(np.nan, index=tickers, dtype="float64")
+
+
+def _meta_bool_series(meta: pd.DataFrame, tickers: list[str], column: str, default: bool = False) -> pd.Series:
+    if column not in meta.columns:
+        return pd.Series(default, index=tickers, dtype="bool")
+    series = meta[column].reindex(tickers)
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(default).astype(bool)
+    return parse_bool_column(series.fillna(default))
+
+
+def _infer_drawdown_metrics_available(meta: pd.DataFrame, tickers: list[str]) -> pd.Series:
+    if "drawdown_metrics_available" in meta.columns:
+        return _meta_bool_series(meta, tickers, "drawdown_metrics_available")
+    drawdown = _meta_numeric_series(meta, tickers, "drawdown_52w")
+    days_since_new_low = _meta_numeric_series(meta, tickers, "days_since_new_low")
+    return (drawdown.notna() & days_since_new_low.notna()).astype(bool)
+
+
+def _infer_short_squeeze_metrics_available(meta: pd.DataFrame, tickers: list[str]) -> pd.Series:
+    if "short_squeeze_metrics_available" in meta.columns:
+        return _meta_bool_series(meta, tickers, "short_squeeze_metrics_available")
+    days_since_high = _meta_numeric_series(meta, tickers, "days_since_high")
+    avg20 = _meta_numeric_series(meta, tickers, "avg20_roc63")
+    avg10 = _meta_numeric_series(meta, tickers, "avg10_rel_roc")
+    return (days_since_high.notna() & avg20.notna() & avg10.notna()).astype(bool)
+
+
+def _compute_scenario_risk(
     meta: pd.DataFrame,
     tickers: list[str],
     brakes: Mapping[str, float],
-) -> tuple[pd.Series, dict[str, pd.Series]]:
+) -> ScenarioRiskOutputs:
     direction = meta["direction_intended"].reindex(tickers).fillna(meta["direction"].reindex(tickers)).astype(str)
     direction = direction.str.strip().str.lower()
+    asset = meta["asset"].reindex(tickers).fillna("").astype(str).str.strip().str.lower()
+    is_equity = asset.eq("equity")
     is_long = direction.eq("long")
     is_short = direction.eq("short")
 
-    drawdown = pd.to_numeric(meta["drawdown_52w"].reindex(tickers), errors="coerce").fillna(0.0)
-    drawdown_penalty = ((drawdown - CONTRARIAN_DD_THRESHOLD).clip(lower=0.0) / 0.75).clip(upper=1.0)
-    drawdown_penalty = drawdown_penalty.where(is_long, 0.0) * 1.5 * float(brakes.get("drawdown_sensitivity", 0.0))
+    drawdown_brake = max(0.0, float(brakes.get("drawdown_sensitivity", 0.0) or 0.0))
+    contrarian_brake = max(0.0, float(brakes.get("contrarian_penalty", 0.0) or 0.0))
+    short_squeeze_brake = max(0.0, float(brakes.get("short_squeeze_brake", 0.0) or 0.0))
 
-    contrarian = meta["contrarian"].reindex(tickers).fillna(False).astype(bool)
-    contrarian_eligible = meta["contrarian_eligible"].reindex(tickers).fillna(False).astype(bool)
-    contrarian_penalty = (contrarian & ~contrarian_eligible).astype(float) * float(
-        brakes.get("contrarian_penalty", 0.0)
+    drawdown = _meta_numeric_series(meta, tickers, "drawdown_52w")
+    drawdown_available = _infer_drawdown_metrics_available(meta, tickers)
+    drawdown_relevant = is_equity & is_long & (drawdown_brake > 0)
+    drawdown_missing = drawdown_relevant & ~drawdown_available
+    drawdown_scale = max(SEVERE_DD_THRESHOLD - CONTRARIAN_DD_THRESHOLD, 0.01)
+    drawdown_raw = ((drawdown - CONTRARIAN_DD_THRESHOLD).clip(lower=0.0) / drawdown_scale).clip(upper=1.0)
+    drawdown_raw = drawdown_raw.where(drawdown_relevant & drawdown_available, 0.0).fillna(0.0)
+    drawdown_penalty = drawdown_raw * MAX_DRAWDOWN_RISK_PENALTY * drawdown_brake
+
+    contrarian = _meta_bool_series(meta, tickers, "contrarian")
+    contrarian_eligible = _meta_bool_series(meta, tickers, "contrarian_eligible")
+    contrarian_not_eligible = contrarian & ~contrarian_eligible
+    contrarian_pressure = (
+        (contrarian_not_eligible & is_equity & (is_long | is_short)).astype(float)
+        * MAX_CONTRARIAN_RISK_PRESSURE
+        * contrarian_brake
     )
 
-    no_new_high = meta["no_new_high_20d"].reindex(tickers).fillna(False).astype(bool)
-    avg20 = pd.to_numeric(meta["avg20_roc63"].reindex(tickers), errors="coerce").fillna(0.0)
-    avg10 = pd.to_numeric(meta["avg10_rel_roc"].reindex(tickers), errors="coerce").fillna(0.0)
-    high_penalty = (~no_new_high).astype(float) * 0.7
-    momentum_penalty = (avg20.clip(lower=0.0) / 20.0).clip(upper=0.5) + (avg10.clip(lower=0.0) / 10.0).clip(upper=0.5)
-    short_squeeze_penalty = (high_penalty + momentum_penalty).clip(upper=1.5).where(is_short, 0.0)
-    short_squeeze_penalty = short_squeeze_penalty * float(brakes.get("short_squeeze_brake", 0.0))
+    short_squeeze_available = _infer_short_squeeze_metrics_available(meta, tickers)
+    short_squeeze_relevant = is_equity & is_short & (short_squeeze_brake > 0)
+    short_squeeze_missing = short_squeeze_relevant & ~short_squeeze_available
+    no_new_high = _meta_bool_series(meta, tickers, "no_new_high_20d")
+    avg20 = _meta_numeric_series(meta, tickers, "avg20_roc63").fillna(0.0)
+    avg10 = _meta_numeric_series(meta, tickers, "avg10_rel_roc").fillna(0.0)
+    recent_high_component = (~no_new_high).astype(float) * 0.50
+    absolute_momentum_component = (avg20.clip(lower=0.0) / 20.0).clip(upper=1.0) * 0.30
+    relative_momentum_component = (avg10.clip(lower=0.0) / 10.0).clip(upper=1.0) * 0.20
+    short_squeeze_raw = (recent_high_component + absolute_momentum_component + relative_momentum_component).clip(
+        upper=1.0
+    )
+    short_squeeze_raw = short_squeeze_raw.where(short_squeeze_relevant & short_squeeze_available, 0.0).fillna(0.0)
+    short_squeeze_cover_risk = short_squeeze_raw * MAX_SHORT_SQUEEZE_COVER_RISK * short_squeeze_brake
 
-    parts = {
+    long_contrarian_penalty = contrarian_pressure.where(is_long, 0.0)
+    short_contrarian_cover_risk = contrarian_pressure.where(is_short, 0.0)
+    long_risk_penalty = (drawdown_penalty + long_contrarian_penalty).reindex(tickers).fillna(0.0)
+    short_cover_risk = (short_squeeze_cover_risk + short_contrarian_cover_risk).reindex(tickers).fillna(0.0)
+
+    risk_parts = {
         "Drawdown brake": drawdown_penalty.reindex(tickers).fillna(0.0),
-        "Contrarian brake": contrarian_penalty.reindex(tickers).fillna(0.0),
-        "Short squeeze brake": short_squeeze_penalty.reindex(tickers).fillna(0.0),
+        "Contrarian brake": contrarian_pressure.reindex(tickers).fillna(0.0),
+        "Short squeeze brake": short_squeeze_cover_risk.reindex(tickers).fillna(0.0),
     }
-    total = sum(parts.values(), pd.Series(0.0, index=tickers, dtype="float64"))
-    return total.reindex(tickers).fillna(0.0), parts
+    risk_flags = {
+        "drawdown_risk": (drawdown_raw > 0).reindex(tickers).fillna(False).astype(bool),
+        "drawdown_data_missing": drawdown_missing.reindex(tickers).fillna(False).astype(bool),
+        "contrarian_not_eligible": contrarian_not_eligible.reindex(tickers).fillna(False).astype(bool),
+        "short_squeeze_risk": (short_squeeze_raw >= 0.40).reindex(tickers).fillna(False).astype(bool),
+        "short_squeeze_data_missing": short_squeeze_missing.reindex(tickers).fillna(False).astype(bool),
+    }
+    risk_flags["risk_data_missing"] = (
+        risk_flags["drawdown_data_missing"] | risk_flags["short_squeeze_data_missing"]
+    ).astype(bool)
+    return ScenarioRiskOutputs(
+        long_risk_penalty=long_risk_penalty,
+        short_cover_risk=short_cover_risk,
+        risk_parts=risk_parts,
+        risk_flags=risk_flags,
+    )
 
 
 def _scenario_drivers(
@@ -1207,16 +1299,52 @@ def _deterministic_rationale(
     )
 
 
+def _row_bool_value(value: Any) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "t", "yes", "y"}
+    return bool(value)
+
+
+def _risk_flags_from_row(row: pd.Series) -> dict[str, bool]:
+    return {
+        "drawdown_risk": _row_bool_value(row.get("drawdown_risk")),
+        "drawdown_data_missing": _row_bool_value(row.get("drawdown_data_missing")),
+        "contrarian_not_eligible": _row_bool_value(row.get("contrarian_not_eligible")),
+        "short_squeeze_risk": _row_bool_value(row.get("short_squeeze_risk")),
+        "short_squeeze_data_missing": _row_bool_value(row.get("short_squeeze_data_missing")),
+        "risk_data_missing": _row_bool_value(row.get("risk_data_missing")),
+    }
+
+
+def _risk_parts_from_row(row: pd.Series) -> dict[str, float]:
+    parts = {
+        "drawdown_risk_penalty": _finite_float(row.get("drawdown_risk_penalty")),
+        "contrarian_risk_pressure": _finite_float(row.get("contrarian_risk_pressure")),
+        "short_squeeze_cover_risk": _finite_float(row.get("short_squeeze_cover_risk")),
+    }
+    return {key: round(float(value), 4) for key, value in parts.items() if abs(float(value)) > 1e-9}
+
+
 def _action_for_position(
     *,
     direction: str,
     score: float,
     gate_reasons: list[str],
-    warnings: list[str],
+    risk_flags: Mapping[str, bool],
+    short_cover_risk: float,
 ) -> str:
     direction_l = direction.strip().lower()
     gated = bool(gate_reasons)
-    squeeze_warning = any("squeeze" in warning.lower() for warning in warnings)
+    squeeze_risk = bool(risk_flags.get("short_squeeze_risk")) or short_cover_risk >= ELEVATED_SHORT_COVER_RISK
 
     if direction_l == "long":
         if score >= 0.75:
@@ -1228,10 +1356,12 @@ def _action_for_position(
         return "Hold Long"
 
     if direction_l == "short":
+        if squeeze_risk:
+            return "Cover Short" if score >= 0.75 or short_cover_risk >= HIGH_SHORT_COVER_RISK else "Squeeze Review"
         if score <= -0.75:
             return "Review" if gated else "Press Short"
         if score >= 0.75:
-            return "Squeeze Review" if gated or squeeze_warning else "Cover Short"
+            return "Review" if gated else "Cover Short"
         return "Hold Short"
 
     if score >= 0.75:
@@ -1246,7 +1376,8 @@ def _action_for_idea_candidate(
     direction: str,
     score: float,
     gate_reasons: list[str],
-    warnings: list[str],
+    risk_flags: Mapping[str, bool],
+    short_cover_risk: float,
 ) -> str:
     direction_l = direction.strip().lower()
     if direction_l == "long":
@@ -1256,11 +1387,13 @@ def _action_for_idea_candidate(
             return "Pass"
         return "Watch"
     if direction_l == "short":
-        squeeze_warning = any("squeeze" in warning.lower() for warning in warnings)
+        squeeze_risk = bool(risk_flags.get("short_squeeze_risk")) or short_cover_risk >= ELEVATED_SHORT_COVER_RISK
+        if squeeze_risk:
+            return "Pass" if score >= 0.0 or short_cover_risk >= HIGH_SHORT_COVER_RISK else "Watch"
         if score <= -0.75:
             return "Research Short" if gate_reasons else "Initiate Short"
         if score >= 0.75:
-            return "Pass" if not squeeze_warning else "Watch"
+            return "Pass"
         return "Watch"
     return "Watch"
 
@@ -1303,6 +1436,10 @@ def build_course_of_action(
         score = _finite_float(row.get("scenario_score"))
         delta = _finite_float(row.get("score_delta"))
         penalty = max(0.0, _finite_float(row.get("scenario_penalty")))
+        short_cover_risk = max(0.0, _finite_float(row.get("short_cover_risk")))
+        long_risk_penalty = max(0.0, _finite_float(row.get("long_risk_penalty")))
+        risk_flags = _risk_flags_from_row(row)
+        risk_parts = _risk_parts_from_row(row)
         breakdown = _build_factor_breakdown(row, factor_weights)
         factor_breakdown_by_ticker[ticker] = breakdown
         coverage, available_count, applicable_count = _coverage_from_breakdown(breakdown)
@@ -1313,8 +1450,16 @@ def build_course_of_action(
         warnings.extend(missing_reasons)
         if conflict:
             warnings.append("Major factor conflict: strong positive and negative signals are both present")
-        if penalty >= 0.1:
-            warnings.append(f"Risk brakes reduce the scenario score by {penalty:.2f}")
+        if risk_flags["drawdown_risk"]:
+            warnings.append("Drawdown risk elevated")
+        if risk_flags["short_squeeze_risk"]:
+            warnings.append("Short squeeze risk elevated")
+        if risk_flags["short_squeeze_data_missing"]:
+            warnings.append("Short squeeze metrics unavailable")
+        if risk_flags["risk_data_missing"]:
+            warnings.append("Risk metrics unavailable")
+        if risk_flags["contrarian_not_eligible"]:
+            warnings.append("Contrarian setup is not eligible")
 
         score_strength = min(abs(score) / 1.75, 1.0)
         confidence = 0.20 + 0.55 * score_strength + 0.25 * coverage + min(abs(delta) / 1.5, 1.0) * 0.05
@@ -1334,20 +1479,24 @@ def build_course_of_action(
             gate_reasons.append("Insufficient applicable data coverage")
         if strong_candidate and conflict:
             gate_reasons.append("Conflicting factor evidence")
+        if strong_candidate and risk_flags["risk_data_missing"]:
+            gate_reasons.append("Risk metrics unavailable")
 
         if source_type == "idea":
             action = _action_for_idea_candidate(
                 direction=direction,
                 score=score,
                 gate_reasons=gate_reasons,
-                warnings=warnings,
+                risk_flags=risk_flags,
+                short_cover_risk=short_cover_risk,
             )
         else:
             action = _action_for_position(
                 direction=direction,
                 score=score,
                 gate_reasons=gate_reasons,
-                warnings=warnings,
+                risk_flags=risk_flags,
+                short_cover_risk=short_cover_risk,
             )
         gate_status = "review" if gate_reasons else "pass" if strong_candidate else "watch"
         conviction_band = _conviction_band(score, confidence if not gate_reasons else min(confidence, 0.6))
@@ -1372,6 +1521,10 @@ def build_course_of_action(
                 "scenario_score": score,
                 "score_delta": delta,
                 "baseline_score": _finite_float(row.get("baseline_score")),
+                "long_risk_penalty": long_risk_penalty,
+                "short_cover_risk": short_cover_risk,
+                "risk_parts": risk_parts,
+                "risk_flags": risk_flags,
                 "confidence": confidence,
                 "gate_status": gate_status,
                 "gate_reasons": gate_reasons,
@@ -1422,7 +1575,11 @@ def build_course_of_action(
     ][:3]
     low_coverage_count = sum(1 for item in action_queue if float(item["data_coverage"]["ratio"]) < 0.67)
     conflict_count = sum(1 for item in action_queue if item["factor_conflict"])
-    missing_data_count = sum(1 for item in action_queue if any("Missing" in w for w in item["warnings"]))
+    missing_data_count = sum(
+        1
+        for item in action_queue
+        if any("Missing" in warning or "unavailable" in warning.lower() for warning in item["warnings"])
+    )
 
     return {
         "summary": {
@@ -1636,7 +1793,7 @@ def parse_bool_column(series: pd.Series) -> pd.Series:
 
 def compute_contrarian_long_metrics(local_prices: pd.DataFrame, tickers: list) -> pd.DataFrame:
     """
-    Compute drawdown/stabilization metrics for contrarian long gating.
+    Compute drawdown/stabilization metrics for equity longs.
 
     - Drawdown is computed from 52-week high using local adjusted close prices.
     - Stabilization means no strictly lower low for CONTRARIAN_STABILIZATION_DAYS
@@ -1647,6 +1804,7 @@ def compute_contrarian_long_metrics(local_prices: pd.DataFrame, tickers: list) -
             "drawdown_52w": pd.Series(np.nan, index=tickers, dtype="float64"),
             "stabilized_10d": pd.Series(False, index=tickers, dtype="bool"),
             "days_since_new_low": pd.Series(np.nan, index=tickers, dtype="float64"),
+            "drawdown_metrics_available": pd.Series(False, index=tickers, dtype="bool"),
             "contrarian_eligible": pd.Series(False, index=tickers, dtype="bool"),
         }
     )
@@ -1693,6 +1851,7 @@ def compute_contrarian_long_metrics(local_prices: pd.DataFrame, tickers: list) -
         metrics.at[ticker, "drawdown_52w"] = drawdown_52w
         metrics.at[ticker, "stabilized_10d"] = bool(stabilized)
         metrics.at[ticker, "days_since_new_low"] = int(days_since_new_low)
+        metrics.at[ticker, "drawdown_metrics_available"] = True
         metrics.at[ticker, "contrarian_eligible"] = bool(contrarian_eligible)
 
     return metrics
@@ -1704,7 +1863,7 @@ def compute_contrarian_short_metrics(
     tickers: list,
 ) -> pd.DataFrame:
     """
-    Compute momentum/confirmation metrics for contrarian short gating.
+    Compute momentum/confirmation metrics for equity shorts.
 
     - no_new_high_20d: True if the 252-day high was NOT set in the last 20 trading days.
     - avg20_roc63: 20-day average of 63-day Rate of Change (%).
@@ -1717,6 +1876,7 @@ def compute_contrarian_short_metrics(
             "days_since_high": pd.Series(np.nan, index=tickers, dtype="float64"),
             "avg20_roc63": pd.Series(np.nan, index=tickers, dtype="float64"),
             "avg10_rel_roc": pd.Series(np.nan, index=tickers, dtype="float64"),
+            "short_squeeze_metrics_available": pd.Series(False, index=tickers, dtype="bool"),
             "contrarian_eligible": pd.Series(False, index=tickers, dtype="bool"),
         }
     )
@@ -1770,6 +1930,7 @@ def compute_contrarian_short_metrics(
 
         metrics.at[ticker, "avg20_roc63"] = float(avg20_roc63_val)
         metrics.at[ticker, "avg10_rel_roc"] = float(avg10_rel_roc_val)
+        metrics.at[ticker, "short_squeeze_metrics_available"] = True
         metrics.at[ticker, "contrarian_eligible"] = bool(
             no_new_high_20d and avg20_roc63_val < 0 and avg10_rel_roc_val < 0
         )
@@ -1779,10 +1940,13 @@ def compute_contrarian_short_metrics(
 
 def apply_contrarian_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply contrarian gating:
-    - For contrarian equity longs, require drawdown threshold + stabilization.
-    - For contrarian equity shorts, require no new 252d high for 20 days + negative momentum.
-    - If not eligible, set effective direction to inactive ("").
+    Compute risk metrics for all equity longs/shorts and apply contrarian gating only
+    to positions explicitly marked contrarian.
+
+    - Equity longs get drawdown/stabilization metrics for drawdown brakes.
+    - Equity shorts get new-high/adverse-momentum metrics for squeeze brakes.
+    - Contrarian longs/shorts still require their relevant eligibility checks; if not
+      eligible, their effective direction is set to inactive ("").
     """
     out = meta.copy()
 
@@ -1798,29 +1962,35 @@ def apply_contrarian_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> p
     out["drawdown_52w"] = np.nan
     out["stabilized_10d"] = False
     out["days_since_new_low"] = np.nan
+    out["drawdown_metrics_available"] = False
     # Short contrarian columns
     out["no_new_high_20d"] = False
     out["days_since_high"] = np.nan
     out["avg20_roc63"] = np.nan
     out["avg10_rel_roc"] = np.nan
+    out["short_squeeze_metrics_available"] = False
     # Shared
     out["contrarian_eligible"] = False
 
-    # --- Contrarian longs ---
-    long_mask = out["contrarian"] & out["asset"].str.lower().eq("equity") & out["direction_intended"].eq("long")
+    asset = out["asset"].fillna("").astype(str).str.lower()
+
+    # --- Equity longs: risk metrics for all, gating only for contrarian names ---
+    long_mask = asset.eq("equity") & out["direction_intended"].eq("long")
     long_tickers = out.index[long_mask].tolist()
     if long_tickers:
         metrics = compute_contrarian_long_metrics(local_prices=local_prices, tickers=long_tickers)
         out.loc[long_tickers, "drawdown_52w"] = metrics["drawdown_52w"]
         out.loc[long_tickers, "stabilized_10d"] = metrics["stabilized_10d"].astype(bool)
         out.loc[long_tickers, "days_since_new_low"] = metrics["days_since_new_low"]
+        out.loc[long_tickers, "drawdown_metrics_available"] = metrics["drawdown_metrics_available"].astype(bool)
         out.loc[long_tickers, "contrarian_eligible"] = metrics["contrarian_eligible"].astype(bool)
 
-    gated_long = long_mask & ~out["contrarian_eligible"]
+    contrarian_long_mask = out["contrarian"] & long_mask
+    gated_long = contrarian_long_mask & ~out["contrarian_eligible"]
     out.loc[gated_long, "direction"] = ""
 
-    # --- Contrarian shorts ---
-    short_mask = out["contrarian"] & out["asset"].str.lower().eq("equity") & out["direction_intended"].eq("short")
+    # --- Equity shorts: risk metrics for all, gating only for contrarian names ---
+    short_mask = asset.eq("equity") & out["direction_intended"].eq("short")
     short_tickers = out.index[short_mask].tolist()
     if short_tickers and MARKET_TICKER_LONG in local_prices.columns:
         benchmark = local_prices[MARKET_TICKER_LONG]
@@ -1833,9 +2003,13 @@ def apply_contrarian_gating(meta: pd.DataFrame, local_prices: pd.DataFrame) -> p
         out.loc[short_tickers, "days_since_high"] = metrics["days_since_high"]
         out.loc[short_tickers, "avg20_roc63"] = metrics["avg20_roc63"]
         out.loc[short_tickers, "avg10_rel_roc"] = metrics["avg10_rel_roc"]
+        out.loc[short_tickers, "short_squeeze_metrics_available"] = metrics["short_squeeze_metrics_available"].astype(
+            bool
+        )
         out.loc[short_tickers, "contrarian_eligible"] = metrics["contrarian_eligible"].astype(bool)
 
-    gated_short = short_mask & ~out["contrarian_eligible"]
+    contrarian_short_mask = out["contrarian"] & short_mask
+    gated_short = contrarian_short_mask & ~out["contrarian_eligible"]
     out.loc[gated_short, "direction"] = ""
 
     return out
@@ -3105,15 +3279,20 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
         scenario_config["factor_weights"],
         tickers,
     )
-    scenario_penalty, penalty_parts = _compute_scenario_penalties(meta, tickers, scenario_config["brakes"])
-    scenario_score = (scenario_base_score - scenario_penalty).reindex(tickers).fillna(0.0)
+    scenario_risk = _compute_scenario_risk(meta, tickers, scenario_config["brakes"])
+    scenario_penalty = (scenario_risk.long_risk_penalty + scenario_risk.short_cover_risk).reindex(tickers).fillna(0.0)
+    scenario_score = (
+        (scenario_base_score - scenario_risk.long_risk_penalty + scenario_risk.short_cover_risk)
+        .reindex(tickers)
+        .fillna(0.0)
+    )
     baseline_score = signal_effective.reindex(tickers).fillna(0.0)
     score_delta = scenario_score - baseline_score
     scenario_driver = _scenario_drivers(
         tickers,
         scenario_components,
         scenario_config["factor_weights"],
-        penalty_parts,
+        scenario_risk.risk_parts,
         score_delta,
     )
 
@@ -3134,16 +3313,29 @@ def _apply_scenario(inputs: dict, scenario_config: Mapping[str, Any]) -> dict:
             "drawdown_52w": meta["drawdown_52w"].values,
             "stabilized_10d": meta["stabilized_10d"].values,
             "days_since_new_low": meta["days_since_new_low"].values,
+            "drawdown_metrics_available": _infer_drawdown_metrics_available(meta, tickers).values,
             "no_new_high_20d": meta["no_new_high_20d"].values,
             "days_since_high": meta["days_since_high"].values,
             "avg20_roc63": meta["avg20_roc63"].values,
             "avg10_rel_roc": meta["avg10_rel_roc"].values,
+            "short_squeeze_metrics_available": _infer_short_squeeze_metrics_available(meta, tickers).values,
             "signal": signal_effective.values,
             "baseline_score": baseline_score.values,
             "scenario_score": scenario_score.values,
             "score_delta": score_delta.values,
             "scenario_driver": scenario_driver,
             "scenario_penalty": scenario_penalty.values,
+            "long_risk_penalty": scenario_risk.long_risk_penalty.values,
+            "short_cover_risk": scenario_risk.short_cover_risk.values,
+            "drawdown_risk_penalty": scenario_risk.risk_parts["Drawdown brake"].values,
+            "contrarian_risk_pressure": scenario_risk.risk_parts["Contrarian brake"].values,
+            "short_squeeze_cover_risk": scenario_risk.risk_parts["Short squeeze brake"].values,
+            "drawdown_risk": scenario_risk.risk_flags["drawdown_risk"].values,
+            "drawdown_data_missing": scenario_risk.risk_flags["drawdown_data_missing"].values,
+            "contrarian_not_eligible": scenario_risk.risk_flags["contrarian_not_eligible"].values,
+            "short_squeeze_risk": scenario_risk.risk_flags["short_squeeze_risk"].values,
+            "short_squeeze_data_missing": scenario_risk.risk_flags["short_squeeze_data_missing"].values,
+            "risk_data_missing": scenario_risk.risk_flags["risk_data_missing"].values,
             "quality_signal": signal_subcomponents["quality_signal"].values,
             "eps_mom_signal": signal_subcomponents["eps_mom_signal"].values,
             "rev_mom_signal": signal_subcomponents["rev_mom_signal"].values,
