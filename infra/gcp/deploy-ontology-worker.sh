@@ -4,7 +4,7 @@
 #
 # Tunables:
 #   ONTOLOGY_WORKER_POOL=talisman-ontology-worker
-#   ONTOLOGY_WORKER_CPU=2  ONTOLOGY_WORKER_MEMORY=2Gi
+#   ONTOLOGY_WORKER_CPU=1  ONTOLOGY_WORKER_MEMORY=512Mi
 #   ONTOLOGY_WORKER_INSTANCES=1
 #   ONTOLOGY_WORKER_POLL_INTERVAL_SECONDS=0.25
 
@@ -54,6 +54,6 @@ gcloud run worker-pools deploy "${ONTOLOGY_WORKER_POOL}" \
   --args=-m,api.job_worker_loop,run \
   --set-env-vars="$(join_kv "${ONTOLOGY_WORKER_ENV_VARS[@]}")" \
   --set-secrets="$(join_kv "${WORKER_SECRETS[@]}")" \
-  --cpu="${ONTOLOGY_WORKER_CPU:-2}" \
-  --memory="${ONTOLOGY_WORKER_MEMORY:-2Gi}" \
+  --cpu="${ONTOLOGY_WORKER_CPU:-1}" \
+  --memory="${ONTOLOGY_WORKER_MEMORY:-512Mi}" \
   --instances="${ONTOLOGY_WORKER_INSTANCES}"

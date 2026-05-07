@@ -4,7 +4,7 @@
 #
 # Tunables:
 #   SIZER_WORKER_POOL=talisman-sizer-worker
-#   SIZER_WORKER_CPU=2  SIZER_WORKER_MEMORY=2Gi
+#   SIZER_WORKER_CPU=1  SIZER_WORKER_MEMORY=512Mi
 #   SIZER_WORKER_INSTANCES=1
 #   SIZER_WORKER_POLL_INTERVAL_SECONDS=0.25
 
@@ -53,6 +53,6 @@ gcloud run worker-pools deploy "${SIZER_WORKER_POOL}" \
   --args=-m,api.job_worker_loop,run \
   --set-env-vars="$(join_kv "${SIZER_WORKER_ENV_VARS[@]}")" \
   --set-secrets="$(join_kv "${WORKER_SECRETS[@]}")" \
-  --cpu="${SIZER_WORKER_CPU:-2}" \
-  --memory="${SIZER_WORKER_MEMORY:-2Gi}" \
+  --cpu="${SIZER_WORKER_CPU:-1}" \
+  --memory="${SIZER_WORKER_MEMORY:-512Mi}" \
   --instances="${SIZER_WORKER_INSTANCES}"

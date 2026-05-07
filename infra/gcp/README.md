@@ -18,18 +18,19 @@ This repository now has the code-level migration pieces for the GCP state move:
 - `iam.sh` — idempotently grants the project-, bucket-, and Cloud Run-job-level IAM bindings the deploy SAs need (cloudsql.client, logging.logWriter, bucket objectAdmin, job executor on scheduled jobs, and job executor with overrides on the async runner).
 - `deploy-api.sh` — Cloud Run service `${API_SERVICE}` (matches the `firebase.json` rewrite). Tunables: `API_CPU`, `API_MEMORY`, `API_CONCURRENCY`, `API_MIN_INSTANCES`, `API_MAX_INSTANCES`, `API_TIMEOUT`. Defaults are `1` vCPU, `1Gi`, and concurrency `20` because long-running analysis is offloaded to Cloud Run Jobs; raise these if synchronous endpoints show memory pressure or CPU saturation.
 - `deploy-async-job.sh` — generic Cloud Run Job running `python -m api.async_job_runner run`. Tunables: `ASYNC_JOB_CPU`, `ASYNC_JOB_MEMORY`, `ASYNC_JOB_TIMEOUT`, `ASYNC_JOB_MAX_RETRIES`.
-- `deploy-agent-worker.sh` — warm Cloud Run worker pool running `python -m api.agent_worker_loop run` for durable agent workflow turns.
-- `deploy-sizer-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with sizer job/queue defaults from env for low-latency portfolio sizer jobs.
-- `deploy-ontology-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with ontology job/queue defaults from env for low-latency ontology query jobs.
+- `deploy-agent-worker.sh` — warm Cloud Run worker pool running `python -m api.agent_worker_loop run` for durable agent workflow turns. Defaults to `1` vCPU and `512Mi`.
+- `deploy-sizer-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with sizer job/queue defaults from env for low-latency portfolio sizer jobs. Defaults to `1` vCPU and `512Mi`.
+- `deploy-ontology-worker.sh` — warm Cloud Run worker pool running `python -m api.job_worker_loop run` with ontology job/queue defaults from env for low-latency ontology query jobs. Defaults to `1` vCPU and `512Mi`.
 - `deploy-worker.sh` — deprecated stub; do not redeploy the legacy worker pool.
 - `deploy-migration-job.sh` — Cloud Run Job that runs `python -m api.gcp_state_migration migrate`.
 - `deploy-top50-refresh-job.sh` — Cloud Run Job that refreshes the cached S&P 500 top-50.
 - `deploy-backend.sh` — build via Cloud Build at the current short git SHA, run Alembic migrations, then roll API + Cloud Run Jobs to that SHA. Refuses to run on a dirty tree (override with `ALLOW_DIRTY=1`); skip the build with `SKIP_BUILD=1`. Routine deploys skip IAM, Scheduler, and monitoring reconciliation by default; use `FULL_SYNC=1` after infrastructure/config changes.
 - `deploy-frontend.sh` — builds `frontend/dist` and deploys Firebase Hosting for the configured `PROJECT_ID`.
 - `deploy-all.sh` — deploys the full production stack by running `deploy-backend.sh` first and `deploy-frontend.sh` second. `SKIP_BUILD=1` skips the backend container build; `SKIP_FRONTEND_BUILD=1` deploys the existing `frontend/dist`.
-- `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23z UTC, market-snapshot-refresh weekday 23:15z UTC) and delete the old high-frequency cache-warm job unless `SCHEDULE_CACHE_WARM=1` is set. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo.
+- `setup-scheduler.sh` — idempotently create/update the required Cloud Scheduler jobs (async-job-sweep hourly, top50-refresh weekday 23z UTC, market-snapshot-refresh weekday 23:15z UTC) and delete optional/legacy jobs unless explicitly enabled. Pulls `X-Scheduler-Secret` and `X-Api-Proxy-Secret` from Secret Manager so the values never live in this repo.
 - `setup-governance-monitoring.sh` — idempotently creates/updates governance audit/provenance log-based metrics and the alert policy in `monitoring-governance-alerts.json`.
 - `cleanup-stale.sh` — dry-runs (or `--apply` deletes) GCP resources that pre-date the current scripts and are no longer referenced.
+- `cleanup-legacy-worker.sh` — dry-runs (or `--apply` deletes) only the deprecated `talisman-worker` Cloud Run worker pool.
 
 First-time setup:
 
@@ -112,6 +113,15 @@ Set `AGENT_WORKER_INSTANCES`, `SIZER_WORKER_INSTANCES`, and
 `ONTOLOGY_WORKER_INSTANCES` in `infra/gcp/config.sh` to control warm worker
 capacity.
 
+Warm worker pools default to `1` vCPU and `512Mi` memory. If Cloud Monitoring
+shows p95 memory approaching roughly `400Mi` after rollout, raise the affected
+`*_WORKER_MEMORY` setting before the next deploy.
+
+The legacy governance outbox drain scheduler is disabled by default because the
+runtime job is now a no-op. To recreate it for a temporary safety check, run
+`SCHEDULE_GOVERNANCE_OUTBOX_DRAIN=1 ./infra/gcp/setup-scheduler.sh`; override
+the cadence with `GOVERNANCE_OUTBOX_DRAIN_SCHEDULE` if needed.
+
 Scheduled cache warming is disabled by default. The cache-warm endpoint remains
 available for manual/admin use, and can be scheduled with
 `SCHEDULE_CACHE_WARM=1 CACHE_WARM_SCHEDULE="0 * * * *" ./infra/gcp/setup-scheduler.sh`,
@@ -156,7 +166,7 @@ override. `iam.sh` applies that binding after the job exists.
 Legacy cleanup after cutover:
 
 ```bash
-gcloud run worker-pools delete talisman-worker --region="${REGION}" --project="${PROJECT_ID}"
+./infra/gcp/cleanup-legacy-worker.sh --apply
 gcloud redis instances delete talisman --region="${REGION}" --project="${PROJECT_ID}"
 gcloud secrets delete REDIS_URL --project="${PROJECT_ID}"
 ```

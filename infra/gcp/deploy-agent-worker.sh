@@ -4,7 +4,7 @@
 #
 # Tunables:
 #   AGENT_WORKER_POOL=talisman-agent-worker
-#   AGENT_WORKER_CPU=2  AGENT_WORKER_MEMORY=2Gi
+#   AGENT_WORKER_CPU=1  AGENT_WORKER_MEMORY=512Mi
 #   AGENT_WORKER_INSTANCES=1
 #   AGENT_WORKER_POLL_INTERVAL_SECONDS=0.25
 
@@ -53,6 +53,6 @@ gcloud run worker-pools deploy "${AGENT_WORKER_POOL}" \
   --args=-m,api.agent_worker_loop,run \
   --set-env-vars="$(join_kv "${AGENT_WORKER_ENV_VARS[@]}")" \
   --set-secrets="$(join_kv "${WORKER_SECRETS[@]}")" \
-  --cpu="${AGENT_WORKER_CPU:-2}" \
-  --memory="${AGENT_WORKER_MEMORY:-2Gi}" \
+  --cpu="${AGENT_WORKER_CPU:-1}" \
+  --memory="${AGENT_WORKER_MEMORY:-512Mi}" \
   --instances="${AGENT_WORKER_INSTANCES}"
